@@ -4,11 +4,15 @@
 
 Arashi is a Git worktree manager for meta-repositories that automatically manages worktrees across multiple related repositories. When working on features that span multiple repositories, Arashi simplifies the workflow by ensuring all related repositories maintain synchronized worktrees.
 
+## Documentation
+
+📋 **For complete design documents, specifications, and planning, see the [Arashi Specifications Repository](https://github.com/corwinm/arashi-arashi).**
+
 ## Status
 
 🚧 **Under Active Development** - Phase 1 Complete
 
-This project is currently in early development. See [DESIGN.md](./DESIGN.md) for the complete feature roadmap and implementation plan.
+This project is currently in early development. See the [Design Document](https://github.com/corwinm/arashi-arashi/tree/main/setup/.specify/memory/design.md) in the specs repository for the complete feature roadmap and implementation plan.
 
 ## Installation (Coming Soon)
 
@@ -20,24 +24,24 @@ npm install -g arashi
 
 ### Direct Binary Download
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/user/arashi/releases):
+Download the latest release for your platform from [GitHub Releases](https://github.com/corwinm/arashi/releases):
 
 **macOS (Apple Silicon)**
 ```bash
-curl -L https://github.com/user/arashi/releases/latest/download/arashi-macos-arm64 -o arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-macos-arm64 -o arashi
 chmod +x arashi
 sudo mv arashi /usr/local/bin/
 ```
 
 **Linux (x64)**
 ```bash
-curl -L https://github.com/user/arashi/releases/latest/download/arashi-linux-x64 -o arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-linux-x64 -o arashi
 chmod +x arashi
 sudo mv arashi /usr/local/bin/
 ```
 
 **Windows (x64)**
-- Download `arashi-windows-x64.exe` from [GitHub Releases](https://github.com/user/arashi/releases)
+- Download `arashi-windows-x64.exe` from [GitHub Releases](https://github.com/corwinm/arashi/releases)
 - Add to your PATH
 
 ## Vision
@@ -89,7 +93,7 @@ arashi remove feature-new-api
 
 ```bash
 # Clone the repository
-git clone https://github.com/user/arashi.git
+git clone https://github.com/corwinm/arashi.git
 cd arashi
 
 # Install dependencies
@@ -113,14 +117,16 @@ bun run lint
 
 ### Contributing
 
-We welcome contributions! Please see our [Design Document](./DESIGN.md) for the feature roadmap and implementation details.
+We welcome contributions! Please see our [Specifications Repository](https://github.com/corwinm/arashi-arashi) for:
+- [Design Document](https://github.com/corwinm/arashi-arashi/tree/main/setup/.specify/memory/design.md) - Feature roadmap and technical design
+- [Contributing Guide](https://github.com/corwinm/arashi-arashi/blob/main/setup/CONTRIBUTING.md) - Specs-first development workflow
 
-**Development Workflow:**
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with tests
-4. Submit a PR with a conventional commit message
-5. PRs are squash-merged with conventional commit format
+**Quick Summary:**
+1. Specs are created in the [arashi-arashi repository](https://github.com/corwinm/arashi-arashi) first
+2. Implementation happens in this repository
+3. Use conventional commits
+4. All PRs require review
+5. Squash merge with conventional commit message
 
 **Commit Message Format:**
 We use [Conventional Commits](https://www.conventionalcommits.org/):
@@ -138,14 +144,9 @@ Arashi is built with:
 - **CLI Framework:** Commander.js
 - **User Prompts:** @inquirer/prompts
 
-## Documentation
-
-- [Design Document](./DESIGN.md) - Complete feature roadmap and technical design
-- [Contributing Guide](./DESIGN.md#contributing) - How to contribute to Arashi
-
 ## Roadmap
 
-See [DESIGN.md](./DESIGN.md) for the complete feature roadmap organized by implementation phases.
+See the [Design Document](https://github.com/corwinm/arashi-arashi/tree/main/setup/.specify/memory/design.md) in the specs repository for the complete feature roadmap organized by implementation phases.
 
 ### Current Phase: Foundation (Phase 1)
 - [x] Project setup and structure
