@@ -10,6 +10,36 @@ Arashi is a Git worktree manager for meta-repositories that automatically manage
 
 This project is currently in early development. See [DESIGN.md](./DESIGN.md) for the complete feature roadmap and implementation plan.
 
+## Installation (Coming Soon)
+
+### npm (Recommended)
+
+```bash
+npm install -g arashi
+```
+
+### Direct Binary Download
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/user/arashi/releases):
+
+**macOS (Apple Silicon)**
+```bash
+curl -L https://github.com/user/arashi/releases/latest/download/arashi-macos-arm64 -o arashi
+chmod +x arashi
+sudo mv arashi /usr/local/bin/
+```
+
+**Linux (x64)**
+```bash
+curl -L https://github.com/user/arashi/releases/latest/download/arashi-linux-x64 -o arashi
+chmod +x arashi
+sudo mv arashi /usr/local/bin/
+```
+
+**Windows (x64)**
+- Download `arashi-windows-x64.exe` from [GitHub Releases](https://github.com/user/arashi/releases)
+- Add to your PATH
+
 ## Vision
 
 Arashi will enable developers to:
@@ -50,7 +80,18 @@ arashi remove feature-new-api
 
 ## Development
 
+### Prerequisites
+
+- [Bun](https://bun.sh/) >= 1.3.0 (for development)
+- Node.js >= 18.0.0 (for npm installation)
+
+### Setup
+
 ```bash
+# Clone the repository
+git clone https://github.com/user/arashi.git
+cd arashi
+
 # Install dependencies
 bun install
 
@@ -60,8 +101,33 @@ bun run dev
 # Build single-file executable
 bun run build
 
+# Build for all platforms
+bun run build:all
+
 # Run tests (coming soon)
 bun test
+
+# Type check
+bun run lint
+```
+
+### Contributing
+
+We welcome contributions! Please see our [Design Document](./DESIGN.md) for the feature roadmap and implementation details.
+
+**Development Workflow:**
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with tests
+4. Submit a PR with a conventional commit message
+5. PRs are squash-merged with conventional commit format
+
+**Commit Message Format:**
+We use [Conventional Commits](https://www.conventionalcommits.org/):
+```
+feat: add interactive mode for repo selection
+fix: handle worktrees with uncommitted changes
+docs: update installation instructions
 ```
 
 ## Architecture

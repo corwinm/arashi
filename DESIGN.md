@@ -646,22 +646,265 @@ tests/
     └── full-workflow.test.ts
 ```
 
-#### Task 5.4: Installation Scripts
+#### Task 5.4: CI/CD Workflows
+**Status:** Not Started  
+**Files:** `.github/workflows/ci.yml`, `.github/workflows/release.yml`
+
+**CI Workflow (Pull Requests & Main Branch):**
+- Trigger: Pull requests and pushes to main
+- Jobs:
+  - Lint and type check
+  - Run tests
+  - Build binaries for all platforms
+  - Validate binaries
+- PR Requirements:
+  - All checks must pass
+  - Requires code review
+  - Squash merge with conventional commit message
+
+**Release Workflow (On-Demand):**
+- Trigger: Manual workflow dispatch
+- Jobs:
+  - Analyze commits (conventional commits)
+  - Determine version bump (major/minor/patch)
+  - Generate changelog
+  - Bump version in package.json
+  - Create git tag
+  - Build binaries for all platforms
+  - Create GitHub release with binaries
+  - Publish to npm registry
+
+**GitHub Actions Workflow Files:**
+
+`.github/workflows/ci.yml`:
+```yaml
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun run lint
+      - run: bun test
+
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: bun-darwin-arm64
+            name: arashi-macos-arm64
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            name: arashi-linux-x64
+          - os: windows-latest
+            target: bun-windows-x64
+            name: arashi-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun build src/index.ts --compile --target=${{ matrix.target }} --outfile dist/${{ matrix.name }}
+      - run: ./dist/${{ matrix.name }} --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/${{ matrix.name }}
+```
+
+`.github/workflows/release.yml`:
+```yaml
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: false
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+      
+      - name: Setup Node.js for npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      
+      - run: bun install
+
+      - name: Determine version bump
+        id: version
+        run: |
+          # Install conventional-changelog tools
+          npm install -g conventional-changelog-cli conventional-recommended-bump
+          
+          # Determine bump type
+          if [ "${{ github.event.inputs.bump }}" = "auto" ] || [ -z "${{ github.event.inputs.bump }}" ]; then
+            BUMP=$(conventional-recommended-bump -p angular)
+          else
+            BUMP="${{ github.event.inputs.bump }}"
+          fi
+          
+          echo "bump=$BUMP" >> $GITHUB_OUTPUT
+          
+          # Get current version
+          CURRENT=$(node -p "require('./package.json').version")
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          
+          # Calculate new version
+          NEW=$(npm version $BUMP --no-git-tag-version --preid=beta | sed 's/v//')
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        run: |
+          conventional-changelog -p angular -i CHANGELOG.md -s
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json CHANGELOG.md
+          git commit -m "chore(release): v${{ steps.version.outputs.new }}"
+          git tag "v${{ steps.version.outputs.new }}"
+          git push origin main --tags
+
+      - name: Build binaries
+        run: bun run build:all
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.new }}
+          name: v${{ steps.version.outputs.new }}
+          generate_release_notes: true
+          files: |
+            dist/arashi-macos-arm64
+            dist/arashi-linux-x64
+            dist/arashi-windows-x64.exe
+
+      - name: Publish to npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+```
+
+#### Task 5.5: npm Package Setup
+**Status:** Not Started  
+**Files:** `bin/arashi.js`, updated `package.json`
+
+**Functionality:**
+- Create platform detection shim
+- Include pre-built binaries in package
+- Select appropriate binary at runtime
+- Publish to npm registry
+
+**Platform Detection Shim (`bin/arashi.js`):**
+```javascript
+#!/usr/bin/env node
+const { spawn } = require('child_process');
+const { join } = require('path');
+const { platform, arch } = process;
+
+// Determine binary name based on platform
+let binaryName;
+if (platform === 'darwin' && arch === 'arm64') {
+  binaryName = 'arashi-macos-arm64';
+} else if (platform === 'linux' && arch === 'x64') {
+  binaryName = 'arashi-linux-x64';
+} else if (platform === 'win32' && arch === 'x64') {
+  binaryName = 'arashi-windows-x64.exe';
+} else {
+  console.error(`Unsupported platform: ${platform}-${arch}`);
+  process.exit(1);
+}
+
+// Execute binary
+const binaryPath = join(__dirname, '..', 'dist', binaryName);
+const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
+
+child.on('exit', (code) => {
+  process.exit(code || 0);
+});
+```
+
+**Updated package.json:**
+```json
+{
+  "name": "arashi",
+  "version": "0.1.0",
+  "description": "Git worktree manager for meta-repositories",
+  "bin": {
+    "arashi": "./bin/arashi.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": ["darwin", "linux", "win32"],
+  "cpu": ["x64", "arm64"],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/user/arashi.git"
+  },
+  "keywords": [
+    "git",
+    "worktree",
+    "meta-repo",
+    "monorepo",
+    "cli",
+    "development"
+  ],
+  "author": "",
+  "license": "MIT"
+}
+```
+
+#### Task 5.6: Installation Scripts
 **Status:** Not Started  
 **Files:** `install.sh`, `install.ps1`
 
 **Functionality:**
 - Detect operating system and architecture
-- Download appropriate binary
+- Download appropriate binary from GitHub releases
 - Install to system PATH
 - Verify installation
 - Provide next steps
 
 **Installation Methods:**
-1. **Direct binary download**
-2. **Install script (curl/wget)**
-3. **npm package** (future)
-4. **Homebrew tap** (future)
+1. **npm (Recommended)**: `npm install -g arashi`
+2. **Direct binary download** from GitHub releases
+3. **Install script (curl/wget)** for automated installation
 
 ## Design Decisions
 
@@ -794,6 +1037,199 @@ Should we validate/sandbox hook execution?
 - Works on macOS, Linux, Windows
 - No runtime dependencies
 - Easy installation
+
+## Distribution Strategy
+
+### Release Channels
+
+Arashi will be distributed through two primary channels:
+
+#### 1. GitHub Releases (Binary Downloads)
+- Pre-built binaries attached to GitHub releases
+- Platform-specific executables:
+  - `arashi-macos-arm64` - macOS Apple Silicon
+  - `arashi-linux-x64` - Linux x64
+  - `arashi-windows-x64.exe` - Windows x64
+- No dependencies required
+- Direct download and use
+
+#### 2. npm Package
+- Published to npm registry as `arashi`
+- Includes pre-built binaries for all platforms
+- Platform detection and binary selection at install time
+- Easy installation via `npm install -g arashi`
+
+### CI/CD Pipeline
+
+#### Continuous Integration (PR & Push)
+
+**Trigger:** Pull requests and pushes to main branch
+
+**Workflow:**
+1. **Checkout code**
+2. **Setup Bun** (latest version)
+3. **Install dependencies** (`bun install`)
+4. **Lint code** (`bun run lint`)
+5. **Run tests** (`bun test`)
+6. **Build binaries** for all platforms
+7. **Validate binaries** (run `--version` on each)
+8. **Report status** to PR/commit
+
+**Requirements:**
+- All tests must pass
+- Type checking must succeed
+- Builds for all platforms must complete
+- PRs require review before merge
+- PRs use **squash merge** with **conventional commit** message
+
+#### Release Pipeline (On-Demand)
+
+**Trigger:** Manual workflow dispatch
+
+**Workflow:**
+1. **Analyze commits** since last release
+   - Parse conventional commit messages
+   - Determine version bump (major/minor/patch)
+   - Generate changelog
+2. **Bump version** in package.json
+3. **Update CHANGELOG.md**
+4. **Commit version bump** with conventional message
+5. **Create git tag** (e.g., v0.2.0)
+6. **Build binaries** for all platforms
+7. **Create GitHub release**
+   - Attach binaries
+   - Include changelog
+   - Mark as draft/pre-release if < 1.0.0
+8. **Publish to npm**
+   - Pack npm package with binaries
+   - Publish to npm registry
+9. **Notify** on completion
+
+### Conventional Commits
+
+Arashi uses [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Types:**
+- `feat:` - New feature (minor version bump)
+- `fix:` - Bug fix (patch version bump)
+- `docs:` - Documentation only
+- `style:` - Code style changes (formatting, etc.)
+- `refactor:` - Code refactoring
+- `perf:` - Performance improvements
+- `test:` - Adding or updating tests
+- `chore:` - Maintenance tasks
+- `ci:` - CI/CD changes
+- `build:` - Build system changes
+- `revert:` - Revert previous commit
+
+**Breaking Changes:**
+- Add `!` after type: `feat!:` or `fix!:`
+- Or add `BREAKING CHANGE:` in footer
+- Results in major version bump
+
+**Examples:**
+```bash
+feat(create): add interactive mode for repo selection
+fix(remove): handle worktrees with uncommitted changes
+docs: update installation instructions for npm
+feat!: change config file format to support templates
+```
+
+### Version Bump Strategy
+
+**Semantic Versioning (semver):**
+- `MAJOR.MINOR.PATCH` (e.g., 1.2.3)
+
+**Automatic Bumping:**
+- `fix:`, `perf:`, `refactor:` → Patch (0.1.0 → 0.1.1)
+- `feat:` → Minor (0.1.0 → 0.2.0)
+- `feat!:`, `fix!:`, `BREAKING CHANGE:` → Major (0.1.0 → 1.0.0)
+
+**Pre-1.0.0 Handling:**
+- Breaking changes bump minor (0.1.0 → 0.2.0)
+- Features bump patch (0.1.0 → 0.1.1)
+- Fixes bump patch (0.1.0 → 0.1.1)
+
+### npm Package Structure
+
+```json
+{
+  "name": "arashi",
+  "version": "0.1.0",
+  "bin": {
+    "arashi": "./bin/arashi.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": ["darwin", "linux", "win32"],
+  "cpu": ["x64", "arm64"],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+```
+
+**Installation Shim (`bin/arashi.js`):**
+- Detects platform and architecture
+- Selects appropriate binary from `dist/`
+- Executes binary with arguments
+
+### Installation Methods
+
+#### 1. npm (Recommended)
+```bash
+npm install -g arashi
+```
+
+#### 2. Direct Binary Download
+```bash
+# macOS (Apple Silicon)
+curl -L https://github.com/user/arashi/releases/latest/download/arashi-macos-arm64 -o arashi
+chmod +x arashi
+sudo mv arashi /usr/local/bin/
+
+# Linux
+curl -L https://github.com/user/arashi/releases/latest/download/arashi-linux-x64 -o arashi
+chmod +x arashi
+sudo mv arashi /usr/local/bin/
+
+# Windows
+# Download arashi-windows-x64.exe from GitHub releases
+# Add to PATH
+```
+
+#### 3. Install Script (Future)
+```bash
+curl -fsSL https://raw.githubusercontent.com/user/arashi/main/install.sh | bash
+```
+
+### GitHub Actions Secrets
+
+Required secrets for CI/CD:
+- `NPM_TOKEN` - npm authentication token for publishing
+- `GITHUB_TOKEN` - Automatically provided by GitHub Actions
+
+### Release Checklist
+
+When preparing a release:
+1. Ensure all PRs are merged with conventional commit messages
+2. Trigger release workflow via GitHub Actions UI
+3. Review generated changelog
+4. Verify binaries are built correctly
+5. Test npm package installation
+6. Announce release (GitHub Discussions, social media)
 
 ## Future Enhancements
 
