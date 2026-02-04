@@ -74,33 +74,37 @@ describe("US2: Spinner Display", () => {
     expect(typeof s.fail).toBe("function");
   });
 
-  test("spinner can be started and stopped", () => {
+  test("spinner can be started and stopped without throwing", () => {
     const s = spinner("Processing...");
     
-    // Note: In test environments, spinners may not actually spin
-    // We just verify we can call start/stop without errors
-    s.start();
-    s.stop();
+    // Verify we can call start/stop without throwing errors
+    expect(() => {
+      s.start();
+      s.stop();
+    }).not.toThrow();
     
-    expect(true).toBe(true); // Verify no errors thrown
+    // Verify spinner text was set initially
+    expect(s.text).toBe("Processing...");
   });
 
-  test("spinner succeed displays success message", () => {
+  test("spinner succeed completes without throwing", () => {
     const s = spinner("Working...");
-    s.start();
-    s.succeed("Complete!");
     
-    // Verify no errors thrown
-    expect(true).toBe(true);
+    // Verify we can call succeed without throwing
+    expect(() => {
+      s.start();
+      s.succeed("Complete!");
+    }).not.toThrow();
   });
 
-  test("spinner fail displays error message", () => {
+  test("spinner fail completes without throwing", () => {
     const s = spinner("Trying...");
-    s.start();
-    s.fail("Failed!");
     
-    // Verify no errors thrown
-    expect(true).toBe(true);
+    // Verify we can call fail without throwing
+    expect(() => {
+      s.start();
+      s.fail("Failed!");
+    }).not.toThrow();
   });
 });
 
