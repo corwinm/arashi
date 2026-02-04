@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "repos_dir": "./repos",
+  "auto_setup": true,
+  "discovered_repos": {},
+  "future_feature": "some value",
+  "custom_metadata": {
+    "team": "backend",
+    "owner": "alice"
+  }
+}

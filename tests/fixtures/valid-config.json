@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "repos_dir": "./repos",
+  "auto_setup": true,
+  "discovered_repos": {
+    "example-repo": {
+      "path": "./repos/example-repo",
+      "default_branch": "main",
+      "is_bare": false,
+      "worktrees": [
+        {
+          "branch": "feature-123",
+          "path": "./repos/example-repo.worktrees/feature-123",
+          "created_at": "2026-02-03T10:30:00Z",
+          "metadata": {
+            "jira_ticket": "PROJ-123"
+          }
+        }
+      ],
+      "hooks": {
+        "post_create": "./.arashi/hooks/post-create.sh"
+      }
+    }
+  }
+}
