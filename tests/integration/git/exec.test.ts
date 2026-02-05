@@ -13,10 +13,15 @@ import { GitErrorCode } from "../../../src/types/git";
 
 describe("exec() - Integration Tests", () => {
   let testRepo: GitTestRepo;
+  let defaultBranch: string;
 
   beforeEach(async () => {
     testRepo = new GitTestRepo();
     await testRepo.withInitialCommit();
+    
+    // Detect the actual default branch name (main or master)
+    const branchResult = await exec(["branch", "--show-current"], testRepo.path);
+    defaultBranch = branchResult.stdout.trim() || "main";
   });
 
   afterEach(() => {
@@ -52,7 +57,7 @@ describe("exec() - Integration Tests", () => {
     const result = await exec(["branch", "--list"], testRepo.path);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("main");
+    expect(result.stdout).toContain(defaultBranch);
     // stderr might contain warnings but command succeeds
   });
 
@@ -92,7 +97,7 @@ describe("exec() - Integration Tests", () => {
     const result = await exec(["branch", "--list"], testRepo.path);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("main");
+    expect(result.stdout).toContain(defaultBranch);
     expect(result.stdout).toContain("feature-test");
   });
 
