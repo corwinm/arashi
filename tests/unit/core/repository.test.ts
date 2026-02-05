@@ -9,6 +9,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { rm, mkdir } from "fs/promises";
 import { join } from "path";
 import { spawn } from "child_process";
+import { stat } from "fs/promises";
 import {
   discoverRepositories,
   type Repository,
@@ -17,6 +18,10 @@ import {
   validateWorkspace,
   type WorkspaceConfiguration,
   type ValidationResult,
+  cloneRepository,
+  type CloneOperation,
+  type CloneOptions,
+  CloneStatus,
 } from "../../../src/core/repository.js";
 
 // Test workspace directory
@@ -563,5 +568,130 @@ describe("User Story 5: validateWorkspace()", () => {
     expect(missing2).toBeDefined();
     expect(missing2!.url).toBe("https://github.com/example/repo2.git");
   });
+});
+
+// ============================================================================
+// User Story 4: Repository Cloning (T077-T080)
+// ============================================================================
+
+describe("User Story 4: cloneRepository()", () => {
+  const CLONE_TEST_WORKSPACE = join(TEST_WORKSPACE, "clone-tests");
+  
+  beforeEach(async () => {
+    await rm(CLONE_TEST_WORKSPACE, { recursive: true, force: true });
+    await mkdir(CLONE_TEST_WORKSPACE, { recursive: true });
+  });
+  
+  afterEach(async () => {
+    await rm(CLONE_TEST_WORKSPACE, { recursive: true, force: true });
+  });
+
+  // T077: Unit test for cloneRepository() successful clone
+  test("T077: successfully clones a repository from URL", async () => {
+    // Arrange: Create a source repository to clone from
+    const sourceRepo = join(CLONE_TEST_WORKSPACE, "source");
+    await createGitRepo(sourceRepo);
+    await Bun.write(join(sourceRepo, "README.md"), "# Test Repo");
+    await exec("git add .", sourceRepo);
+    await exec("git commit -m 'Add README'", sourceRepo);
+    
+    const targetPath = join(CLONE_TEST_WORKSPACE, "cloned");
+    
+    // Act: Clone the repository
+    const result: CloneOperation = await cloneRepository(sourceRepo, targetPath);
+    
+    // Assert: Verify clone completed successfully
+    expect(result.status).toBe(CloneStatus.COMPLETED);
+    expect(result.url).toBe(sourceRepo);
+    expect(result.targetPath).toBe(targetPath);
+    expect(result.error).toBeUndefined();
+    
+    // Verify repository exists and is valid
+    const gitDir = join(targetPath, ".git");
+    const gitDirStats = await stat(gitDir);
+    expect(gitDirStats.isDirectory()).toBe(true);
+    
+    // Verify files were cloned
+    const readmeFile = Bun.file(join(targetPath, "README.md"));
+    expect(await readmeFile.exists()).toBe(true);
+    const readmeContent = await readmeFile.text();
+    expect(readmeContent).toBe("# Test Repo");
+  }, 10000);
+
+  // T078: Unit test for cloneRepository() with target already exists error
+  test("T078: fails when target path already exists", async () => {
+    // Arrange: Create a source repo and an existing target directory
+    const sourceRepo = join(CLONE_TEST_WORKSPACE, "source");
+    await createGitRepo(sourceRepo);
+    
+    const targetPath = join(CLONE_TEST_WORKSPACE, "existing");
+    await mkdir(targetPath, { recursive: true });
+    await Bun.write(join(targetPath, "file.txt"), "existing content");
+    
+    // Act: Attempt to clone
+    const result: CloneOperation = await cloneRepository(sourceRepo, targetPath);
+    
+    // Assert: Clone should fail with TARGET_EXISTS error
+    expect(result.status).toBe(CloneStatus.FAILED);
+    expect(result.error).toBeDefined();
+    expect(result.error!.code).toBe("TARGET_EXISTS");
+    expect(result.error!.message).toContain("already exists");
+  });
+
+  // T079: Unit test for cloneRepository() with invalid URL error
+  test("T079: fails with invalid URL", async () => {
+    // Arrange: Invalid URL
+    const invalidUrl = "https://invalid-git-url-that-does-not-exist.com/repo.git";
+    const targetPath = join(CLONE_TEST_WORKSPACE, "target");
+    
+    // Act: Attempt to clone from invalid URL
+    const result: CloneOperation = await cloneRepository(invalidUrl, targetPath, {
+      timeout: 5000, // Shorter timeout for test
+    });
+    
+    // Assert: Clone should fail
+    expect(result.status).toBe(CloneStatus.FAILED);
+    expect(result.error).toBeDefined();
+    // Error could be NETWORK_ERROR or INVALID_URL depending on failure mode
+    expect(["NETWORK_ERROR", "INVALID_URL", "UNKNOWN"]).toContain(result.error!.code);
+  }, 10000);
+
+  // T080: Unit test for cloneRepository() with progress callbacks
+  test("T080: reports progress during clone", async () => {
+    // Arrange: Create a source repository with some content
+    const sourceRepo = join(CLONE_TEST_WORKSPACE, "source");
+    await createGitRepo(sourceRepo);
+    
+    // Add multiple commits to generate progress updates
+    for (let i = 1; i <= 5; i++) {
+      await Bun.write(join(sourceRepo, `file${i}.txt`), `Content ${i}`);
+      await exec("git add .", sourceRepo);
+      await exec(`git commit -m 'Add file ${i}'`, sourceRepo);
+    }
+    
+    const targetPath = join(CLONE_TEST_WORKSPACE, "cloned-with-progress");
+    
+    // Track progress updates
+    const progressUpdates: CloneProgress[] = [];
+    
+    // Act: Clone with progress callback
+    const result: CloneOperation = await cloneRepository(sourceRepo, targetPath, {
+      onProgress: (progress) => {
+        progressUpdates.push({ ...progress });
+      },
+    });
+    
+    // Assert: Should have received progress updates
+    expect(result.status).toBe(CloneStatus.COMPLETED);
+    expect(progressUpdates.length).toBeGreaterThan(0);
+    
+    // Verify progress updates have expected structure
+    if (progressUpdates.length > 0) {
+      const firstProgress = progressUpdates[0];
+      expect(firstProgress).toHaveProperty("phase");
+      expect(firstProgress).toHaveProperty("percentage");
+      expect(firstProgress).toHaveProperty("message");
+    }
+  }, 10000);
 });
 

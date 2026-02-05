@@ -6,10 +6,10 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { rm, mkdir } from "fs/promises";
+import { rm, mkdir, stat } from "fs/promises";
 import { join } from "path";
-import { discoverRepositories } from "../../src/core/repository.js";
-import { createStandardTestRepos } from "../helpers/create-test-repos";
+import { discoverRepositories, cloneRepository, CloneStatus } from "../../src/core/repository.js";
+import { createStandardTestRepos } from "../helpers/create-test-repos.js";
 
 const TEST_WORKSPACE = join(import.meta.dir, "../temp-integration-workspace");
 
@@ -230,4 +230,63 @@ describe("Integration: Setup Script Detection", () => {
     // Clean up
     await rm(workspaceDir, { recursive: true, force: true });
   });
+});
+
+// ============================================================================
+// User Story 4: Repository Cloning Integration (T081)
+// ============================================================================
+
+describe("Integration: Repository Cloning", () => {
+  // T081: Integration test for cloneRepository() with real Git URL
+  test("T081: clones repository from local git path", async () => {
+    // Arrange: Create a source repository with content
+    const sourceRepo = join(TEST_WORKSPACE, "clone-source");
+    await rm(sourceRepo, { recursive: true, force: true });
+    await mkdir(sourceRepo, { recursive: true });
+    
+    // Initialize git repo
+    await Bun.spawn(["git", "init", "-b", "main"], { cwd: sourceRepo, stdout: "ignore" }).exited;
+    await Bun.spawn(["git", "config", "user.name", "Test"], { cwd: sourceRepo, stdout: "ignore" }).exited;
+    await Bun.spawn(["git", "config", "user.email", "test@test.com"], { cwd: sourceRepo, stdout: "ignore" }).exited;
+    
+    // Add some content
+    await Bun.write(join(sourceRepo, "README.md"), "# Test Repository\n\nThis is a test.");
+    await Bun.write(join(sourceRepo, "code.ts"), "export const version = '1.0.0';");
+    
+    await Bun.spawn(["git", "add", "."], { cwd: sourceRepo, stdout: "ignore" }).exited;
+    await Bun.spawn(["git", "commit", "-m", "Initial commit"], { cwd: sourceRepo, stdout: "ignore" }).exited;
+    
+    const targetPath = join(TEST_WORKSPACE, "clone-target");
+    await rm(targetPath, { recursive: true, force: true });
+    
+    // Act: Clone the repository
+    const result = await cloneRepository(sourceRepo, targetPath);
+    
+    // Assert: Clone completed successfully
+    expect(result.status).toBe(CloneStatus.COMPLETED);
+    expect(result.url).toBe(sourceRepo);
+    expect(result.targetPath).toBe(targetPath);
+    expect(result.error).toBeUndefined();
+    expect(result.duration).toBeGreaterThan(0);
+    
+    // Verify cloned repository structure
+    const gitDir = join(targetPath, ".git");
+    const gitDirStat = await stat(gitDir);
+    expect(gitDirStat.isDirectory()).toBe(true);
+    
+    // Verify files were cloned
+    const readmeFile = Bun.file(join(targetPath, "README.md"));
+    expect(await readmeFile.exists()).toBe(true);
+    const readmeContent = await readmeFile.text();
+    expect(readmeContent).toContain("Test Repository");
+    
+    const codeFile = Bun.file(join(targetPath, "code.ts"));
+    expect(await codeFile.exists()).toBe(true);
+    const codeContent = await codeFile.text();
+    expect(codeContent).toContain("version = '1.0.0'");
+    
+    // Clean up
+    await rm(sourceRepo, { recursive: true, force: true });
+    await rm(targetPath, { recursive: true, force: true });
+  }, 15000);
 });

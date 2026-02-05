@@ -136,6 +136,114 @@ export interface ValidationOptions {
   discoveryOptions?: DiscoveryOptions;
 }
 
+/**
+ * Status of a clone operation (T071)
+ */
+export enum CloneStatus {
+  PENDING = "PENDING",
+  IN_PROGRESS = "IN_PROGRESS",
+  COMPLETED = "COMPLETED",
+  FAILED = "FAILED",
+}
+
+/**
+ * Phase of clone operation (T073)
+ */
+export enum ClonePhase {
+  VALIDATING = "VALIDATING",
+  CLONING = "CLONING",
+  RECEIVING = "RECEIVING",
+  RESOLVING = "RESOLVING",
+  COMPLETED = "COMPLETED",
+}
+
+/**
+ * Error codes for clone operations (T075)
+ */
+export enum CloneErrorCode {
+  TARGET_EXISTS = "TARGET_EXISTS",
+  INVALID_URL = "INVALID_URL",
+  NETWORK_ERROR = "NETWORK_ERROR",
+  AUTH_FAILED = "AUTH_FAILED",
+  TIMEOUT = "TIMEOUT",
+  DISK_FULL = "DISK_FULL",
+  UNKNOWN = "UNKNOWN",
+}
+
+/**
+ * Clone progress information (T072)
+ */
+export interface CloneProgress {
+  /** Current phase of the clone operation */
+  phase: ClonePhase;
+  /** Percentage complete (0-100) */
+  percentage: number;
+  /** Number of objects received */
+  objectsReceived?: number;
+  /** Total number of objects */
+  objectsTotal?: number;
+  /** Number of deltas resolved */
+  deltasResolved?: number;
+  /** Total number of deltas */
+  deltasTotal?: number;
+  /** Bytes received */
+  bytesReceived?: number;
+  /** Human-readable status message */
+  message: string;
+}
+
+/**
+ * Clone error information (T074)
+ */
+export interface CloneError {
+  /** Error code */
+  code: CloneErrorCode;
+  /** Error message */
+  message: string;
+  /** Original error if available */
+  cause?: Error;
+}
+
+/**
+ * Clone operation result (T070)
+ */
+export interface CloneOperation {
+  /** Unique identifier for this operation */
+  id: string;
+  /** Source Git URL */
+  url: string;
+  /** Target path for cloned repository */
+  targetPath: string;
+  /** Current status */
+  status: CloneStatus;
+  /** Progress information */
+  progress?: CloneProgress;
+  /** Error information if failed */
+  error?: CloneError;
+  /** Start time */
+  startTime: Date;
+  /** End time if completed or failed */
+  endTime?: Date;
+  /** Duration in milliseconds */
+  duration?: number;
+}
+
+/**
+ * Options for cloning repositories (T076)
+ */
+export interface CloneOptions {
+  /** Specific branch to clone (default: default branch) */
+  branch?: string;
+  /** Shallow clone depth (default: full clone) */
+  depth?: number;
+  /** Timeout in milliseconds (default: 30000) */
+  timeout?: number;
+  /** Progress callback */
+  onProgress?: (progress: CloneProgress) => void;
+  /** Whether to overwrite existing directory (default: false) */
+  force?: boolean;
+}
+
 // ============================================================================
 // Error Classes (T011)
 // ============================================================================
@@ -207,11 +315,11 @@ export class RepositoryMetadataError extends RepositoryError {
 // Implementation Functions
 // ============================================================================
 
-import { readdir, stat } from "fs/promises";
+import { readdir, stat, rm } from "fs/promises";
 import { join, basename, resolve } from "path";
-import { fileExists } from "../lib/filesystem";
-import { spinner as createSpinner, warn } from "../lib/logger";
-import * as git from "../lib/git";
+import { fileExists } from "../lib/filesystem.js";
+import { spinner as createSpinner, warn } from "../lib/logger.js";
+import * as git from "../lib/git.js";
 
 // ============================================================================
 // User Story 1: Repository Discovery (T019-T028)
@@ -588,5 +696,241 @@ export async function validateWorkspace(
   };
 }
 
-// User Story 4: Repository Cloning (Phase 8) - To be implemented
+// ============================================================================
+// User Story 4: Repository Cloning (T082-T092)
+// ============================================================================
+
+/**
+ * Clones a git repository from a URL to a target path (T082-T092)
+ * 
+ * Executes git clone with progress reporting and comprehensive error handling.
+ * Supports shallow clones, specific branches, and progress callbacks.
+ * 
+ * @param url - Git repository URL to clone from
+ * @param targetPath - Target directory path for cloned repository
+ * @param options - Optional clone options
+ * @returns CloneOperation with status and progress information
+ */
+export async function cloneRepository(
+  url: string,
+  targetPath: string,
+  options: CloneOptions = {}
+): Promise<CloneOperation> {
+  // T084: Create CloneOperation object with unique ID and PENDING status
+  const operation: CloneOperation = {
+    id: crypto.randomUUID(),
+    url,
+    targetPath,
+    status: CloneStatus.PENDING,
+    startTime: new Date(),
+  };
+  
+  try {
+    // T083: Implement pre-flight check: verify target path doesn't exist
+    let targetExists = false;
+    try {
+      await stat(targetPath);
+      targetExists = true;
+    } catch {
+      // Target doesn't exist, which is what we want
+      targetExists = false;
+    }
+    
+    if (targetExists && !options.force) {
+      operation.status = CloneStatus.FAILED;
+      operation.error = {
+        code: CloneErrorCode.TARGET_EXISTS,
+        message: `Target path already exists: ${targetPath}`,
+      };
+      operation.endTime = new Date();
+      operation.duration = operation.endTime.getTime() - operation.startTime.getTime();
+      return operation;
+    }
+    
+    // Clean up if force mode and target exists
+    if (targetExists && options.force) {
+      await rm(targetPath, { recursive: true, force: true });
+    }
+    
+    // T085: Execute git clone command using git utilities spawn
+    operation.status = CloneStatus.IN_PROGRESS;
+    
+    // Build git clone arguments
+    const args = ["clone"];
+    
+    // T091: Support CloneOptions: depth, branch, timeout
+    if (options.depth) {
+      args.push("--depth", options.depth.toString());
+    }
+    
+    if (options.branch) {
+      args.push("--branch", options.branch);
+    }
+    
+    args.push("--progress"); // Enable progress output
+    args.push(url);
+    args.push(targetPath);
+    
+    // T086, T087, T088: Implement progress parsing and callbacks
+    let lastProgress: CloneProgress = {
+      phase: ClonePhase.VALIDATING,
+      percentage: 0,
+      message: "Starting clone...",
+    };
+    
+    const updateProgress = (progress: CloneProgress) => {
+      lastProgress = progress;
+      operation.progress = progress;
+      if (options.onProgress) {
+        options.onProgress(progress);
+      }
+    };
+    
+    updateProgress({
+      phase: ClonePhase.CLONING,
+      percentage: 0,
+      message: "Cloning repository...",
+    });
+    
+    // Execute git clone
+    try {
+      const result = await git.exec(args, process.cwd(), {
+        timeout: options.timeout || 30000,
+      });
+      
+      // T086: Parse progress from stderr (git outputs progress to stderr)
+      if (result.stderr) {
+        parseCloneProgress(result.stderr, updateProgress);
+      }
+      
+      // T089: Handle clone success: verify .git directory, update status to COMPLETED
+      let gitDirExists = false;
+      try {
+        const gitDirStat = await stat(join(targetPath, ".git"));
+        gitDirExists = gitDirStat.isDirectory();
+      } catch {
+        gitDirExists = false;
+      }
+      
+      if (!gitDirExists) {
+        throw new Error("Clone completed but .git directory not found");
+      }
+      
+      operation.status = CloneStatus.COMPLETED;
+      operation.progress = {
+        phase: ClonePhase.COMPLETED,
+        percentage: 100,
+        message: "Clone completed successfully",
+      };
+      
+    } catch (error: any) {
+      // T090: Handle clone failure: categorize error, cleanup partial clone, update status to FAILED
+      await handleCloneFailure(operation, error, targetPath);
+    }
+    
+  } catch (error: any) {
+    // T090: Handle unexpected errors
+    await handleCloneFailure(operation, error, targetPath);
+  }
+  
+  // Calculate duration
+  operation.endTime = new Date();
+  operation.duration = operation.endTime.getTime() - operation.startTime.getTime();
+  
+  return operation;
+}
+
+/**
+ * Parse git clone progress output (T086-T087)
+ */
+function parseCloneProgress(
+  output: string,
+  callback: (progress: CloneProgress) => void
+): void {
+  const lines = output.split("\n");
+  
+  for (const line of lines) {
+    // Parse "Receiving objects: XX% (X/Y)"
+    const receivingMatch = line.match(/Receiving objects:\s+(\d+)%\s+\((\d+)\/(\d+)\)/);
+    if (receivingMatch) {
+      callback({
+        phase: ClonePhase.RECEIVING,
+        percentage: parseInt(receivingMatch[1]),
+        objectsReceived: parseInt(receivingMatch[2]),
+        objectsTotal: parseInt(receivingMatch[3]),
+        message: `Receiving objects: ${receivingMatch[1]}%`,
+      });
+      continue;
+    }
+    
+    // Parse "Resolving deltas: XX% (X/Y)"
+    const resolvingMatch = line.match(/Resolving deltas:\s+(\d+)%\s+\((\d+)\/(\d+)\)/);
+    if (resolvingMatch) {
+      callback({
+        phase: ClonePhase.RESOLVING,
+        percentage: parseInt(resolvingMatch[1]),
+        deltasResolved: parseInt(resolvingMatch[2]),
+        deltasTotal: parseInt(resolvingMatch[3]),
+        message: `Resolving deltas: ${resolvingMatch[1]}%`,
+      });
+      continue;
+    }
+  }
+}
+
+/**
+ * Handle clone failure with proper error categorization and cleanup (T090)
+ */
+async function handleCloneFailure(
+  operation: CloneOperation,
+  error: any,
+  targetPath: string
+): Promise<void> {
+  operation.status = CloneStatus.FAILED;
+  
+  // Categorize error
+  let errorCode = CloneErrorCode.UNKNOWN;
+  let errorMessage = error.message || "Clone failed";
+  
+  if (error.message?.includes("timeout") || error.message?.includes("timed out")) {
+    errorCode = CloneErrorCode.TIMEOUT;
+    errorMessage = "Clone operation timed out";
+  } else if (error.message?.includes("Authentication") || error.message?.includes("Permission denied")) {
+    errorCode = CloneErrorCode.AUTH_FAILED;
+    errorMessage = "Authentication failed";
+  } else if (error.message?.includes("not found") || error.message?.includes("repository not found")) {
+    errorCode = CloneErrorCode.INVALID_URL;
+    errorMessage = "Repository not found or URL is invalid";
+  } else if (error.message?.includes("network") || error.message?.includes("Could not resolve host")) {
+    errorCode = CloneErrorCode.NETWORK_ERROR;
+    errorMessage = "Network error during clone";
+  } else if (error.message?.includes("disk") || error.message?.includes("No space left")) {
+    errorCode = CloneErrorCode.DISK_FULL;
+    errorMessage = "Insufficient disk space";
+  }
+  
+  operation.error = {
+    code: errorCode,
+    message: errorMessage,
+    cause: error instanceof Error ? error : undefined,
+  };
+  
+  // Cleanup partial clone
+  try {
+    let targetExists = false;
+    try {
+      await stat(targetPath);
+      targetExists = true;
+    } catch {
+      targetExists = false;
+    }
+    
+    if (targetExists) {
+      await rm(targetPath, { recursive: true, force: true });
+    }
+  } catch (cleanupError) {
+    // Ignore cleanup errors
+  }
+}
+
 // User Story 6: Metadata Gathering (Phase 9) - To be implemented
