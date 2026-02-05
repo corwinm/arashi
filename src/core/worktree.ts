@@ -368,7 +368,6 @@ export async function detectRepositoryType(
     const configFile = Bun.file(configPath);
     const exists = await configFile.exists();
     if (exists) {
-      console.log(`[DEBUG] ${repo.name}: Detected as meta-repo (has .arashi/config.json)`);
       return {
         type: 'meta-repo',
         reason: 'Contains .arashi/config.json'
@@ -383,19 +382,11 @@ export async function detectRepositoryType(
     const reposDir = basename(config.repos_dir);
     const pathParts = repo.path.split(sep);
     
-    console.log(`[DEBUG] ${repo.name}: Checking if child repo...`);
-    console.log(`[DEBUG]   - repos_dir from config: ${config.repos_dir}`);
-    console.log(`[DEBUG]   - reposDir (basename): ${reposDir}`);
-    console.log(`[DEBUG]   - repo.path: ${repo.path}`);
-    console.log(`[DEBUG]   - pathParts: ${pathParts.join(' / ')}`);
-    console.log(`[DEBUG]   - pathParts.includes('${reposDir}'): ${pathParts.includes(reposDir)}`);
-    
     if (pathParts.includes(reposDir)) {
       // Find parent name (directory before repos/)
       const reposDirIndex = pathParts.lastIndexOf(reposDir);
       const parentName = reposDirIndex > 0 ? pathParts[reposDirIndex - 1] : 'unknown';
       
-      console.log(`[DEBUG] ${repo.name}: Detected as CHILD repo (parent: ${parentName})`);
       return {
         type: 'child',
         parentName,
@@ -403,12 +394,9 @@ export async function detectRepositoryType(
         reason: `Located in ${reposDir}/ folder of parent repository '${parentName}'`
       };
     }
-  } else {
-    console.log(`[DEBUG] ${repo.name}: config is null, cannot detect child repos`);
   }
   
   // Default → standalone
-  console.log(`[DEBUG] ${repo.name}: Detected as standalone`);
   return {
     type: 'standalone',
     reason: 'Not a meta-repo and not in repos/ folder'
@@ -456,10 +444,6 @@ export async function calculateWorktreePath(
   // Detect repository type (or use provided type)
   const typeInfo = knownType ?? await detectRepositoryType(repo, config);
   
-  console.log(`[DEBUG] calculateWorktreePath for ${repo.name}:`);
-  console.log(`[DEBUG]   - Type: ${typeInfo.type}`);
-  console.log(`[DEBUG]   - Branch: ${branchName}`);
-  
   // Apply appropriate path calculation strategy
   if (typeInfo.type === 'child') {
     // Nested strategy for child repositories
@@ -476,10 +460,6 @@ export async function calculateWorktreePath(
     
     const parentWorktreePath = join(repo.path, '..', '..', '..', `${typeInfo.parentName}-${branchName}`);
     
-    console.log(`[DEBUG]   - Strategy: nested`);
-    console.log(`[DEBUG]   - Parent worktree: ${parentWorktreePath}`);
-    console.log(`[DEBUG]   - Child worktree: ${worktreePath}`);
-    
     return {
       path: worktreePath,
       repositoryType: 'child',
@@ -489,9 +469,6 @@ export async function calculateWorktreePath(
   } else {
     // Sibling strategy for meta-repo and standalone
     const worktreePath = join(repo.path, '..', `${repo.name}-${branchName}`);
-    
-    console.log(`[DEBUG]   - Strategy: sibling`);
-    console.log(`[DEBUG]   - Worktree path: ${worktreePath}`);
     
     return {
       path: worktreePath,
