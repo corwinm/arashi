@@ -162,3 +162,72 @@ describe("Repository Management MVP Integration", () => {
     await rm(perfTestPath, { recursive: true, force: true });
   }, 10000); // Increased timeout for performance test
 });
+
+// ============================================================================
+// User Story 3: Setup Script Detection Integration (T056)
+// ============================================================================
+
+describe("Integration: Setup Script Detection", () => {
+  test("T056: discovers repositories and correctly identifies setup scripts", async () => {
+    // Arrange: Create test workspace with mixed repos
+    const workspaceDir = join(TEST_WORKSPACE, "setup-test-workspace");
+    await mkdir(workspaceDir, { recursive: true });
+    
+    // Create repo with setup.sh
+    const repo1Path = join(workspaceDir, "has-setup");
+    await mkdir(repo1Path, { recursive: true });
+    const proc1 = Bun.spawn(["git", "init", "-b", "main"], { cwd: repo1Path, stdout: "ignore" });
+    await proc1.exited;
+    await Bun.write(join(repo1Path, "setup.sh"), "#!/bin/bash\necho 'Setup'");
+    
+    // Create repo with setup.bash
+    const repo2Path = join(workspaceDir, "has-bash-setup");
+    await mkdir(repo2Path, { recursive: true });
+    const proc2 = Bun.spawn(["git", "init", "-b", "main"], { cwd: repo2Path, stdout: "ignore" });
+    await proc2.exited;
+    await Bun.write(join(repo2Path, "setup.bash"), "#!/bin/bash\necho 'Bash Setup'");
+    
+    // Create repo with .arashi/setup.sh
+    const repo3Path = join(workspaceDir, "has-arashi-setup");
+    await mkdir(join(repo3Path, ".arashi"), { recursive: true });
+    const proc3 = Bun.spawn(["git", "init", "-b", "main"], { cwd: repo3Path, stdout: "ignore" });
+    await proc3.exited;
+    await Bun.write(join(repo3Path, ".arashi", "setup.sh"), "#!/bin/bash\necho 'Arashi Setup'");
+    
+    // Create repo without setup script
+    const repo4Path = join(workspaceDir, "no-setup");
+    await mkdir(repo4Path, { recursive: true });
+    const proc4 = Bun.spawn(["git", "init", "-b", "main"], { cwd: repo4Path, stdout: "ignore" });
+    await proc4.exited;
+    
+    // Act: Discover repositories
+    const result = await discoverRepositories(workspaceDir);
+    
+    // Assert: All repos discovered
+    expect(result.repositories).toHaveLength(4);
+    
+    // Find each repo and verify setup script detection
+    const hasSetupRepo = result.repositories.find(r => r.name === "has-setup");
+    expect(hasSetupRepo).toBeDefined();
+    expect(hasSetupRepo!.hasSetupScript).toBe(true);
+    expect(hasSetupRepo!.setupScriptPath).toBe(join(repo1Path, "setup.sh"));
+    
+    const hasBashSetupRepo = result.repositories.find(r => r.name === "has-bash-setup");
+    expect(hasBashSetupRepo).toBeDefined();
+    expect(hasBashSetupRepo!.hasSetupScript).toBe(true);
+    expect(hasBashSetupRepo!.setupScriptPath).toBe(join(repo2Path, "setup.bash"));
+    
+    const hasArashiSetupRepo = result.repositories.find(r => r.name === "has-arashi-setup");
+    expect(hasArashiSetupRepo).toBeDefined();
+    expect(hasArashiSetupRepo!.hasSetupScript).toBe(true);
+    expect(hasArashiSetupRepo!.setupScriptPath).toBe(join(repo3Path, ".arashi", "setup.sh"));
+    
+    const noSetupRepo = result.repositories.find(r => r.name === "no-setup");
+    expect(noSetupRepo).toBeDefined();
+    expect(noSetupRepo!.hasSetupScript).toBe(false);
+    expect(noSetupRepo!.setupScriptPath).toBeUndefined();
+    
+    // Clean up
+    await rm(workspaceDir, { recursive: true, force: true });
+  });
+});

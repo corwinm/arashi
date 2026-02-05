@@ -273,10 +273,9 @@ export async function discoverRepositories(
 }
 
 /**
- * Create Repository info object (T026, updated T040)
+ * Create Repository info object (T026, updated T040, T055)
  * 
- * Now includes default branch detection (US2).
- * Setup script detection will be added in Phase 6 (US3).
+ * Now includes default branch detection (US2) and setup script detection (US3).
  */
 async function createRepositoryInfo(repoPath: string): Promise<Repository> {
   const name = basename(repoPath);
@@ -290,12 +289,15 @@ async function createRepositoryInfo(repoPath: string): Promise<Repository> {
     warn(`Could not detect default branch for ${name}: ${error instanceof Error ? error.message : 'unknown error'}`);
   }
   
+  // T055: Integrate detectSetupScript()
+  const setupResult = await detectSetupScript(repoPath);
+  
   return {
     name,
     path: repoPath,
     defaultBranch,
-    hasSetupScript: false, // Will be detected in Phase 6 (US3)
-    setupScriptPath: undefined,
+    hasSetupScript: setupResult.hasSetupScript,
+    setupScriptPath: setupResult.setupScriptPath,
     remoteUrl: undefined,
   };
 }
@@ -400,7 +402,73 @@ export async function detectDefaultBranch(
   );
 }
 
-// User Story 3: Setup Script Detection (Phase 6) - To be implemented
+// ============================================================================
+// User Story 3: Setup Script Detection (T050-T055)
+// ============================================================================
+
+/**
+ * Result of setup script detection
+ */
+export interface SetupScriptResult {
+  /** Whether a setup script was found */
+  hasSetupScript: boolean;
+  /** Absolute path to the setup script if found */
+  setupScriptPath?: string;
+}
+
+/**
+ * Default setup script patterns to look for
+ */
+const DEFAULT_SETUP_PATTERNS = [
+  "setup.sh",
+  "setup.bash",
+  ".arashi/setup.sh",
+];
+
+/**
+ * Detects setup scripts in a repository (T050-T054)
+ * 
+ * Checks for the presence of setup scripts using configurable patterns.
+ * Default patterns include: setup.sh, setup.bash, .arashi/setup.sh
+ * 
+ * @param repositoryPath - Absolute path to repository root
+ * @param patterns - Optional custom script patterns to look for
+ * @returns Object with hasSetupScript flag and setupScriptPath if found
+ */
+export async function detectSetupScript(
+  repositoryPath: string,
+  patterns: string[] = DEFAULT_SETUP_PATTERNS
+): Promise<SetupScriptResult> {
+  // T051: Implement file existence check for setup.sh in repository root
+  // T052: Support configurable script patterns
+  for (const pattern of patterns) {
+    const scriptPath = join(repositoryPath, pattern);
+    
+    try {
+      // Check if file exists
+      const file = Bun.file(scriptPath);
+      const exists = await file.exists();
+      
+      if (exists) {
+        // T054: Return object with hasSetupScript flag and setupScriptPath
+        return {
+          hasSetupScript: true,
+          setupScriptPath: scriptPath,
+        };
+      }
+    } catch {
+      // File doesn't exist or can't be accessed, continue to next pattern
+      continue;
+    }
+  }
+  
+  // No setup script found
+  return {
+    hasSetupScript: false,
+    setupScriptPath: undefined,
+  };
+}
+
 // User Story 4: Repository Cloning (Phase 8) - To be implemented
 // User Story 5: Workspace Validation (Phase 7) - To be implemented
 // User Story 6: Metadata Gathering (Phase 9) - To be implemented

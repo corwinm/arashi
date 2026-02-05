@@ -212,7 +212,7 @@ describe("Repository Discovery (US1)", () => {
 // ============================================================================
 
 // @ts-expect-error - Function not yet implemented
-import { detectDefaultBranch } from "../../../src/core/repository.js";
+import { detectDefaultBranch, detectSetupScript } from "../../../src/core/repository.js";
 
 describe("Default Branch Detection (US2)", () => {
   beforeEach(async () => {
@@ -344,6 +344,84 @@ describe("Default Branch Detection (US2)", () => {
     
     // Assert: Should find master in fallback check
     expect(branch).toBe("master");
+  });
+});
+
+// ============================================================================
+// User Story 3: Detect Setup Scripts (T046-T049)
+// ============================================================================
+
+describe("User Story 3: detectSetupScript()", () => {
+  // T046: Unit test for detectSetupScript() with setup.sh present
+  test("T046: detects setup.sh when present in repository root", async () => {
+    // Arrange: Create repo with setup.sh
+    const repoPath = join(TEST_WORKSPACE, "setup-repo");
+    await mkdir(repoPath, { recursive: true });
+    const setupPath = join(repoPath, "setup.sh");
+    await Bun.write(setupPath, "#!/bin/bash\necho 'Setup script'");
+    await exec(`chmod +x ${setupPath}`, repoPath);
+    
+    // Act
+    const result = await detectSetupScript(repoPath);
+    
+    // Assert
+    expect(result.hasSetupScript).toBe(true);
+    expect(result.setupScriptPath).toBe(setupPath);
+  });
+
+  // T047: Unit test for detectSetupScript() with no setup script
+  test("T047: returns false when no setup script exists", async () => {
+    // Arrange: Create repo without setup.sh
+    const repoPath = join(TEST_WORKSPACE, "no-setup-repo");
+    await mkdir(repoPath, { recursive: true });
+    
+    // Act
+    const result = await detectSetupScript(repoPath);
+    
+    // Assert
+    expect(result.hasSetupScript).toBe(false);
+    expect(result.setupScriptPath).toBeUndefined();
+  });
+
+  // T048: Unit test for detectSetupScript() with multiple script patterns
+  test("T048: detects multiple script patterns (setup.bash, .arashi/setup.sh)", async () => {
+    // Arrange: Test setup.bash
+    const repo1Path = join(TEST_WORKSPACE, "bash-setup-repo");
+    await mkdir(repo1Path, { recursive: true });
+    const bashSetupPath = join(repo1Path, "setup.bash");
+    await Bun.write(bashSetupPath, "#!/bin/bash\necho 'Bash setup'");
+    
+    // Act & Assert for setup.bash
+    const result1 = await detectSetupScript(repo1Path);
+    expect(result1.hasSetupScript).toBe(true);
+    expect(result1.setupScriptPath).toBe(bashSetupPath);
+    
+    // Arrange: Test .arashi/setup.sh
+    const repo2Path = join(TEST_WORKSPACE, "arashi-setup-repo");
+    await mkdir(join(repo2Path, ".arashi"), { recursive: true });
+    const arashiSetupPath = join(repo2Path, ".arashi", "setup.sh");
+    await Bun.write(arashiSetupPath, "#!/bin/bash\necho 'Arashi setup'");
+    
+    // Act & Assert for .arashi/setup.sh
+    const result2 = await detectSetupScript(repo2Path);
+    expect(result2.hasSetupScript).toBe(true);
+    expect(result2.setupScriptPath).toBe(arashiSetupPath);
+  });
+
+  // T049: Unit test for detectSetupScript() with custom patterns from config
+  test("T049: supports custom patterns from options", async () => {
+    // Arrange: Create repo with custom script name
+    const repoPath = join(TEST_WORKSPACE, "custom-setup-repo");
+    await mkdir(repoPath, { recursive: true });
+    const customPath = join(repoPath, "install.sh");
+    await Bun.write(customPath, "#!/bin/bash\necho 'Custom install'");
+    
+    // Act: Pass custom patterns
+    const result = await detectSetupScript(repoPath, ["install.sh", "bootstrap.sh"]);
+    
+    // Assert
+    expect(result.hasSetupScript).toBe(true);
+    expect(result.setupScriptPath).toBe(customPath);
   });
 });
 
