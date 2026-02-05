@@ -10,8 +10,8 @@ import {
   isValidBranchName,
   type RepositoryFilter,
   type WorktreeOperationOptions,
-  type Repository,
 } from "../../../src/core/worktree.ts";
+import type { Repository } from "../../../src/core/repository.ts";
 
 // ============================================================================
 // Test Fixtures

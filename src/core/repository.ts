@@ -794,9 +794,7 @@ export async function cloneRepository(
     
     // Execute git clone
     try {
-      const result = await git.exec(args, process.cwd(), {
-        timeout: options.timeout || 30000,
-      });
+      const result = await git.exec(args, process.cwd());
       
       // T086: Parse progress from stderr (git outputs progress to stderr)
       if (result.stderr) {

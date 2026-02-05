@@ -78,18 +78,18 @@ export function createCommand(): Command {
 
 async function executeCreate(branchName: string, options: CreateCommandOptions): Promise<void> {
   // 1. Load configuration
-  const arashiConfig = await config.load();
+  const arashiConfig = await config.loadConfig('.');
   
   // 2. Discover repositories
-  const discoveredRepos = await discoverRepositories(arashiConfig);
+  const discoveryResult = await discoverRepositories(arashiConfig.repos_dir);
   
-  if (discoveredRepos.length === 0) {
+  if (discoveryResult.repositories.length === 0) {
     logger.error('No repositories found in configuration');
     logger.info('Run "arashi add <path>" to add repositories');
     process.exit(1);
   }
   
-  logger.info(`Found ${discoveredRepos.length} configured repositories`);
+  logger.info(`Found ${discoveryResult.repositories.length} configured repositories`);
   
   // 3. Apply repository filter
   const filter: RepositoryFilter = {
@@ -98,7 +98,7 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
     selectedRepositories: null,
   };
   
-  const selectedRepos = await applyRepositoryFilter(filter, discoveredRepos);
+  const selectedRepos = await applyRepositoryFilter(filter, discoveryResult.repositories);
   
   if (selectedRepos.length === 0) {
     logger.warn('No repositories selected for worktree creation');

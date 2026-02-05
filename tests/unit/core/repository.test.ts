@@ -22,6 +22,8 @@ import {
   type CloneOperation,
   type CloneOptions,
   CloneStatus,
+  type CloneProgress,
+  CloneErrorCode,
 } from "../../../src/core/repository.js";
 
 // Test workspace directory
@@ -219,7 +221,6 @@ describe("Repository Discovery (US1)", () => {
 // User Story 2: Default Branch Detection (T029-T034)
 // ============================================================================
 
-// @ts-expect-error - Function not yet implemented
 import { detectDefaultBranch, detectSetupScript } from "../../../src/core/repository.js";
 
 describe("Default Branch Detection (US2)", () => {
@@ -634,7 +635,7 @@ describe("User Story 4: cloneRepository()", () => {
     // Assert: Clone should fail with TARGET_EXISTS error
     expect(result.status).toBe(CloneStatus.FAILED);
     expect(result.error).toBeDefined();
-    expect(result.error!.code).toBe("TARGET_EXISTS");
+    expect(result.error!.code).toBe(CloneErrorCode.TARGET_EXISTS);
     expect(result.error!.message).toContain("already exists");
   });
 

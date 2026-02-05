@@ -40,7 +40,8 @@ describe("exec() - Integration Tests", () => {
       const arashiError = error as ArashiError;
       
       // Error code depends on whether directory exists or not
-      expect([GitErrorCode.NOT_A_REPOSITORY, GitErrorCode.NOT_FOUND]).toContain(arashiError.code);
+      const validCodes: string[] = [GitErrorCode.NOT_A_REPOSITORY, GitErrorCode.NOT_FOUND];
+      expect(validCodes).toContain(arashiError.code);
       expect(arashiError.context.stderr).toBeTruthy();
     }
   });
@@ -119,7 +120,8 @@ describe("exec() - Integration Tests", () => {
       const arashiError = error as ArashiError;
       
       // The error code should be NOT_FOUND or GIT_ERROR depending on git version
-      expect([GitErrorCode.NOT_FOUND, GitErrorCode.GIT_ERROR]).toContain(arashiError.code);
+      const validCodes: string[] = [GitErrorCode.NOT_FOUND, GitErrorCode.GIT_ERROR];
+      expect(validCodes).toContain(arashiError.code);
       expect(arashiError.context.stderr).toContain("pathspec");
     }
   });
@@ -169,12 +171,13 @@ describe("exec() - Integration Tests", () => {
     } catch (error) {
       if (error instanceof ArashiError) {
         // Should be either NOT_A_REPOSITORY, NOT_FOUND, PERMISSION_DENIED, or GIT_FATAL
-        expect([
+        const validCodes: string[] = [
           GitErrorCode.NOT_A_REPOSITORY,
           GitErrorCode.NOT_FOUND,
           GitErrorCode.PERMISSION_DENIED,
           GitErrorCode.GIT_FATAL
-        ]).toContain(error.code);
+        ];
+        expect(validCodes).toContain(error.code);
       }
     }
   });

@@ -11,7 +11,7 @@
  * Feature: 001-worktree-orchestration
  */
 
-import type { Repository } from "../types.ts";
+import type { Repository } from "./repository.ts";
 
 // ============================================================================
 // Core Types (T005)
@@ -805,9 +805,13 @@ export async function checkBranchConflicts(
   // T036: Build ConflictCheckResult
   for (const result of results) {
     if (result.hasConflict) {
-      conflicts.push(result.conflict);
+      if (result.conflict) {
+        conflicts.push(result.conflict);
+      }
     } else {
-      nonConflicting.push(result.repo);
+      if (result.repo) {
+        nonConflicting.push(result.repo);
+      }
     }
   }
   
