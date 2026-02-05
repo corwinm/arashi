@@ -619,7 +619,6 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
             discoveredRepos[repo.name] = {
               path: repo.path,
               default_branch: repo.defaultBranch,
-              is_bare: repo.isBare,
               worktrees: [],
             };
           }
