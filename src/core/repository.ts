@@ -88,6 +88,54 @@ export interface RepositoryDiscoveryResult {
   duration: number;
 }
 
+/**
+ * Configuration for expected repositories (T056)
+ */
+export interface WorkspaceConfiguration {
+  /** Base workspace path */
+  workspacePath: string;
+  /** Expected repositories */
+  repositories: RepositoryConfig[];
+}
+
+/**
+ * Expected repository configuration (T057)
+ */
+export interface RepositoryConfig {
+  /** Repository name */
+  name: string;
+  /** Expected path relative to workspace (optional) */
+  path?: string;
+  /** Git URL for cloning if missing (optional) */
+  url?: string;
+}
+
+/**
+ * Result of workspace validation (T058)
+ */
+export interface ValidationResult {
+  /** Whether workspace is valid (no missing repos, no errors) */
+  isValid: boolean;
+  /** Repositories present in both config and workspace */
+  present: Repository[];
+  /** Repositories in config but missing from workspace */
+  missing: RepositoryConfig[];
+  /** Repositories in workspace but not in config */
+  extra: Repository[];
+  /** Errors encountered during validation */
+  errors: DiscoveryError[];
+}
+
+/**
+ * Options for workspace validation (T059)
+ */
+export interface ValidationOptions {
+  /** Whether to treat extra repos as errors (default: false) */
+  strictMode?: boolean;
+  /** Discovery options to use when scanning */
+  discoveryOptions?: DiscoveryOptions;
+}
+
 // ============================================================================
 // Error Classes (T011)
 // ============================================================================
@@ -469,6 +517,76 @@ export async function detectSetupScript(
   };
 }
 
+// ============================================================================
+// User Story 5: Workspace Validation (T064-T069)
+// ============================================================================
+
+/**
+ * Validates workspace structure against expected configuration (T064-T069)
+ * 
+ * Compares discovered repositories with expected configuration to identify
+ * present, missing, and extra repositories.
+ * 
+ * @param config - Workspace configuration with expected repositories
+ * @param options - Optional validation options
+ * @returns Validation result with categorized repositories
+ */
+export async function validateWorkspace(
+  config: WorkspaceConfiguration,
+  options: ValidationOptions = {}
+): Promise<ValidationResult> {
+  // T065: Run discoverRepositories() to get actual repositories
+  const discoveryResult = await discoverRepositories(
+    config.workspacePath,
+    options.discoveryOptions
+  );
+  
+  const actualRepos = discoveryResult.repositories;
+  const expectedRepos = config.repositories;
+  
+  // T067: Implement set-based comparison (present, missing, extra)
+  const present: Repository[] = [];
+  const missing: RepositoryConfig[] = [];
+  const extra: Repository[] = [];
+  
+  // T066: Parse WorkspaceConfiguration to get expected repositories
+  // Create a map of expected repos by name for quick lookup
+  const expectedMap = new Map<string, RepositoryConfig>();
+  for (const expectedRepo of expectedRepos) {
+    expectedMap.set(expectedRepo.name, expectedRepo);
+  }
+  
+  // Create a set of actual repo names for quick lookup
+  const actualNames = new Set(actualRepos.map(r => r.name));
+  
+  // Find present repositories (in both expected and actual)
+  for (const actualRepo of actualRepos) {
+    if (expectedMap.has(actualRepo.name)) {
+      present.push(actualRepo);
+    } else {
+      // Repository exists but not in config
+      extra.push(actualRepo);
+    }
+  }
+  
+  // Find missing repositories (in expected but not in actual)
+  for (const expectedRepo of expectedRepos) {
+    if (!actualNames.has(expectedRepo.name)) {
+      missing.push(expectedRepo);
+    }
+  }
+  
+  // T068, T069: Build ValidationResult with categorized repositories and isValid flag
+  const isValid = missing.length === 0 && discoveryResult.errors.length === 0;
+  
+  return {
+    isValid,
+    present,
+    missing,
+    extra,
+    errors: discoveryResult.errors,
+  };
+}
+
 // User Story 4: Repository Cloning (Phase 8) - To be implemented
-// User Story 5: Workspace Validation (Phase 7) - To be implemented
 // User Story 6: Metadata Gathering (Phase 9) - To be implemented

@@ -14,6 +14,9 @@ import {
   type Repository,
   type RepositoryDiscoveryResult,
   type DiscoveryOptions,
+  validateWorkspace,
+  type WorkspaceConfiguration,
+  type ValidationResult,
 } from "../../../src/core/repository.js";
 
 // Test workspace directory
@@ -422,6 +425,143 @@ describe("User Story 3: detectSetupScript()", () => {
     // Assert
     expect(result.hasSetupScript).toBe(true);
     expect(result.setupScriptPath).toBe(customPath);
+  });
+});
+
+// ============================================================================
+// User Story 5: Workspace Validation (T060-T063)
+// ============================================================================
+
+describe("User Story 5: validateWorkspace()", () => {
+  // T060: Unit test for validateWorkspace() with all repos present
+  test("T060: returns valid result when all configured repos exist", async () => {
+    // Arrange: Create workspace with 3 repos
+    const workspacePath = join(TEST_WORKSPACE, "validation-all-present");
+    await mkdir(workspacePath, { recursive: true });
+    
+    // Create 3 test repos
+    for (const name of ["repo-1", "repo-2", "repo-3"]) {
+      await createGitRepo(join(workspacePath, name));
+    }
+    
+    // Configuration expecting these 3 repos
+    const config: WorkspaceConfiguration = {
+      workspacePath,
+      repositories: [
+        { name: "repo-1" },
+        { name: "repo-2" },
+        { name: "repo-3" },
+      ],
+    };
+    
+    // Act
+    const result: ValidationResult = await validateWorkspace(config);
+    
+    // Assert
+    expect(result.isValid).toBe(true);
+    expect(result.present).toHaveLength(3);
+    expect(result.missing).toHaveLength(0);
+    expect(result.extra).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // T061: Unit test for validateWorkspace() with missing repos
+  test("T061: identifies missing repositories", async () => {
+    // Arrange: Create workspace with only 2 out of 5 repos
+    const workspacePath = join(TEST_WORKSPACE, "validation-missing");
+    await mkdir(workspacePath, { recursive: true });
+    
+    // Create only 2 repos
+    await createGitRepo(join(workspacePath, "repo-1"));
+    await createGitRepo(join(workspacePath, "repo-2"));
+    
+    // Configuration expecting 5 repos
+    const config: WorkspaceConfiguration = {
+      workspacePath,
+      repositories: [
+        { name: "repo-1" },
+        { name: "repo-2" },
+        { name: "repo-3" }, // missing
+        { name: "repo-4" }, // missing
+        { name: "repo-5" }, // missing
+      ],
+    };
+    
+    // Act
+    const result: ValidationResult = await validateWorkspace(config);
+    
+    // Assert
+    expect(result.isValid).toBe(false); // Invalid due to missing repos
+    expect(result.present).toHaveLength(2);
+    expect(result.missing).toHaveLength(3);
+    expect(result.missing.map(r => r.name)).toEqual(["repo-3", "repo-4", "repo-5"]);
+    expect(result.extra).toHaveLength(0);
+  });
+
+  // T062: Unit test for validateWorkspace() with extra repos
+  test("T062: identifies extra repositories not in config", async () => {
+    // Arrange: Create workspace with 5 repos
+    const workspacePath = join(TEST_WORKSPACE, "validation-extra");
+    await mkdir(workspacePath, { recursive: true });
+    
+    // Create 5 repos
+    for (const name of ["repo-1", "repo-2", "extra-1", "extra-2", "extra-3"]) {
+      await createGitRepo(join(workspacePath, name));
+    }
+    
+    // Configuration expecting only 2 repos
+    const config: WorkspaceConfiguration = {
+      workspacePath,
+      repositories: [
+        { name: "repo-1" },
+        { name: "repo-2" },
+      ],
+    };
+    
+    // Act
+    const result: ValidationResult = await validateWorkspace(config);
+    
+    // Assert
+    expect(result.isValid).toBe(true); // Valid - extra repos don't affect validity
+    expect(result.present).toHaveLength(2);
+    expect(result.missing).toHaveLength(0);
+    expect(result.extra).toHaveLength(3);
+    expect(result.extra.map(r => r.name).sort()).toEqual(["extra-1", "extra-2", "extra-3"]);
+  });
+
+  // T063: Unit test for validateWorkspace() reporting missing repo details
+  test("T063: provides detailed information about missing repositories", async () => {
+    // Arrange: Create workspace with 1 repo
+    const workspacePath = join(TEST_WORKSPACE, "validation-details");
+    await mkdir(workspacePath, { recursive: true });
+    
+    await createGitRepo(join(workspacePath, "present-repo"));
+    
+    // Configuration with detailed info for missing repos
+    const config: WorkspaceConfiguration = {
+      workspacePath,
+      repositories: [
+        { name: "present-repo" },
+        { name: "missing-repo-1", path: "custom/path/repo1", url: "https://github.com/example/repo1.git" },
+        { name: "missing-repo-2", url: "https://github.com/example/repo2.git" },
+      ],
+    };
+    
+    // Act
+    const result: ValidationResult = await validateWorkspace(config);
+    
+    // Assert
+    expect(result.isValid).toBe(false);
+    expect(result.missing).toHaveLength(2);
+    
+    const missing1 = result.missing.find(r => r.name === "missing-repo-1");
+    expect(missing1).toBeDefined();
+    expect(missing1!.path).toBe("custom/path/repo1");
+    expect(missing1!.url).toBe("https://github.com/example/repo1.git");
+    
+    const missing2 = result.missing.find(r => r.name === "missing-repo-2");
+    expect(missing2).toBeDefined();
+    expect(missing2!.url).toBe("https://github.com/example/repo2.git");
   });
 });
 
