@@ -9,6 +9,9 @@ import { Command } from 'commander';
 import * as config from '../lib/config.ts';
 import * as logger from '../lib/logger.ts';
 import { discoverRepositories } from '../core/repository.ts';
+import { fileExists } from '../lib/filesystem.ts';
+import * as git from '../lib/git.ts';
+import { join, resolve, basename } from 'path';
 import { 
   createCoordinatedWorktrees, 
   applyRepositoryFilter,
@@ -80,34 +83,67 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
   // 1. Load configuration
   const arashiConfig = await config.loadConfig('.');
   
-  // 2. Discover repositories
+  // 2. Discover repositories (child repos in repos_dir)
   const discoveryResult = await discoverRepositories(arashiConfig.repos_dir);
   
-  if (discoveryResult.repositories.length === 0) {
+  // 3. Include the meta-repo itself in the repository list
+  // The meta-repo needs to have its worktree created first, then child repos are nested inside it
+  const allRepositories = [...discoveryResult.repositories];
+  
+  // Check if current directory is a git repository (meta-repo)
+  const currentDir = resolve('.');
+  const gitDir = join(currentDir, '.git');
+  
+  if (await fileExists(gitDir)) {
+    // Meta-repo detected - add it at the beginning so it's processed first
+    
+    // Detect default branch
+    let defaultBranch = 'main';
+    try {
+      const result = await git.exec(
+        ['symbolic-ref', '--short', 'HEAD'],
+        currentDir
+      );
+      defaultBranch = result.stdout.trim();
+    } catch {
+      // Fallback to 'main' if detection fails
+    }
+    
+    const metaRepo = {
+      name: basename(currentDir),
+      path: currentDir,
+      defaultBranch,
+      hasSetupScript: false,
+    };
+    
+    allRepositories.unshift(metaRepo);
+  }
+  
+  if (allRepositories.length === 0) {
     logger.error('No repositories found in configuration');
     logger.info('Run "arashi add <path>" to add repositories');
     process.exit(1);
   }
   
-  logger.info(`Found ${discoveryResult.repositories.length} configured repositories`);
+  logger.info(`Found ${allRepositories.length} ${allRepositories.length === 1 ? 'repository' : 'repositories'}`);
   
-  // 3. Apply repository filter
+  // 4. Apply repository filter
   const filter: RepositoryFilter = {
     mode: options.interactive ? 'interactive' : options.only ? 'explicit' : 'all',
     explicitList: options.only ? options.only.split(',').map(s => s.trim()) : [],
     selectedRepositories: null,
   };
   
-  const selectedRepos = await applyRepositoryFilter(filter, discoveryResult.repositories);
+  const selectedRepos = await applyRepositoryFilter(filter, allRepositories);
   
   if (selectedRepos.length === 0) {
     logger.warn('No repositories selected for worktree creation');
     process.exit(0);
   }
   
-  logger.info(`Creating worktrees in ${selectedRepos.length} repositories...`);
+  logger.info(`Creating worktrees in ${selectedRepos.length} ${selectedRepos.length === 1 ? 'repository' : 'repositories'}...`);
   
-  // 4. Build options for worktree orchestration
+  // 5. Build options for worktree orchestration
   const worktreeOptions: WorktreeOperationOptions = {
     executeHooks: !options.noHooks,
     showProgress: !options.noProgress,
@@ -116,14 +152,14 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
     dryRun: options.dryRun || false,
   };
   
-  // 5. Execute coordinated worktree creation
+  // 6. Execute coordinated worktree creation
   const summary = await createCoordinatedWorktrees(
     branchName,
     selectedRepos,
     worktreeOptions
   );
   
-  // 6. Display results
+  // 7. Display results
   console.log('');
   if (summary.rolledBack) {
     logger.error('Operation failed and was rolled back');
