@@ -84,14 +84,16 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
   const arashiConfig = await config.loadConfig('.');
   
   // 2. Discover repositories (child repos in repos_dir)
-  const discoveryResult = await discoverRepositories(arashiConfig.repos_dir);
+  // Convert repos_dir to absolute path since it may be relative (e.g., "./repos")
+  const currentDir = resolve('.');
+  const reposDirAbsolute = resolve(currentDir, arashiConfig.repos_dir);
+  const discoveryResult = await discoverRepositories(reposDirAbsolute);
   
   // 3. Include the meta-repo itself in the repository list
   // The meta-repo needs to have its worktree created first, then child repos are nested inside it
   const allRepositories = [...discoveryResult.repositories];
   
   // Check if current directory is a git repository (meta-repo)
-  const currentDir = resolve('.');
   const gitDir = join(currentDir, '.git');
   
   if (await fileExists(gitDir)) {
