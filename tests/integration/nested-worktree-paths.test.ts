@@ -27,7 +27,7 @@ describe("Nested Worktree Paths Integration", () => {
   });
 
   async function initGitRepo(path: string) {
-    await spawn(["git", "init"], { cwd: path }).exited;
+    await spawn(["git", "init", "-b", "main"], { cwd: path }).exited;
     await spawn(["git", "config", "user.name", "Test User"], { cwd: path }).exited;
     await spawn(["git", "config", "user.email", "test@example.com"], { cwd: path }).exited;
     
