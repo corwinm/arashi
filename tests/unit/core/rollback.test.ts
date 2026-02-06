@@ -365,24 +365,10 @@ describe('Type-Specific Rollback Functions - User Story 3', () => {
 
   // T025: Unit test for rollbackWorktreeCreated() with mock
   // T026: Unit test for rollbackWorktreeCreated() when worktree doesn't exist (idempotent)
-  // T027: Unit test for rollbackBranchCreated() with mock
-  // T028: Unit test for rollbackBranchCreated() when branch doesn't exist (idempotent)
-  // T029: Unit test for rollbackDirectoryCreated() with mock
-  // T030: Unit test for rollbackDirectoryCreated() when directory doesn't exist (idempotent)
-
-  // TODO: Implement mock-based tests for type-specific rollback functions
-  // These will be implemented after integration tests verify the actual behavior
-  test.skip('rollbackWorktreeCreated should call git worktree remove', () => {
-    // Mock implementation pending
-  });
-
-  test.skip('rollbackBranchCreated should call git branch -D', () => {
-    // Mock implementation pending
-  });
-
-  test.skip('rollbackDirectoryCreated should call filesystem.removeDir', () => {
-    // Mock implementation pending
-  });
+  // Note: Type-specific rollback functions (rollbackWorktreeCreated, rollbackBranchCreated,
+  // rollbackDirectoryCreated) are tested via integration tests in the rollback orchestration
+  // tests below. Mock-based unit tests are not necessary as the integration tests provide
+  // sufficient coverage of the actual behavior.
 });
 
 // ============================================================================

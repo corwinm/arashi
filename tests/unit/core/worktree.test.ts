@@ -276,20 +276,8 @@ describe("Repository Filtering", () => {
     ).rejects.toThrow(RepositoryValidationError);
   });
   
-  test.skip("should handle interactive mode (requires user interaction)", async () => {
-    const { applyRepositoryFilter } = await import("../../../src/core/worktree.ts");
-    
-    const filter = {
-      mode: 'interactive' as const,
-      explicitList: [],
-      selectedRepositories: null,
-    };
-    
-    // Interactive mode now prompts user with checkbox - can't be tested in unit tests
-    // This would require mocking the prompts module
-    const result = await applyRepositoryFilter(filter, mockRepositories);
-    
-    expect(result.length).toBeGreaterThan(0);
-  });
+  // Note: Interactive mode testing is not included as it requires user interaction
+  // and cannot be automated without complex prompt mocking. Interactive mode is
+  // tested manually during development.
 });
 

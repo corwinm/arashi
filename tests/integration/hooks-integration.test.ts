@@ -62,33 +62,6 @@ describe("Hook System Integration", () => {
 		expect(result?.stderr).toContain("ERROR: Validation failed");
 	});
 
-	test.skip("executes long-running script that times out", async () => {
-		// Note: Skipped due to Bun issue with timeout + stream processing
-		// Timeout works correctly (verified), but takes longer than expected in tests
-		createHookInRepo(
-			testRepo,
-			"setup",
-			`
-			echo "Starting long operation..."
-			sleep 10
-			echo "This should never print"
-		`
-		);
-
-		const result = await runLifecycleHook(
-			"setup",
-			testRepo,
-			{},
-			{ timeout: 500 }
-		);
-
-		expect(result).not.toBeNull();
-		expect(result?.success).toBe(false);
-		expect(result?.timedOut).toBe(true);
-		expect(result?.killed).toBe(true);
-		expect(result?.duration).toBeLessThan(1000);
-	});
-
 	test("executes script with large output", async () => {
 		createHookInRepo(
 			testRepo,

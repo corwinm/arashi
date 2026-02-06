@@ -12,6 +12,10 @@
  */
 
 import type { Repository } from "./repository.ts";
+import { basename, sep, join } from "path";
+import type { Config as ArashiConfig } from "../lib/config.ts";
+import { loadConfig, ConfigNotFoundError } from "../lib/config.ts";
+import { isBareRepo } from "../lib/git.ts";
 
 // ============================================================================
 // Core Types (T005)
@@ -49,6 +53,33 @@ export type OperationState =
   | 'ROLLING_BACK'
   | 'COMPLETED'
   | 'FAILED';
+
+/**
+ * Classification of repository based on location and configuration
+ * Feature: 001-nested-worktree-paths
+ */
+export type RepositoryType = 
+  | 'meta-repo'    // Repository with .arashi/config.json
+  | 'child'        // Repository inside a meta-repo's repos/ folder
+  | 'standalone';  // Independent repository (not meta-repo or child)
+
+/**
+ * Result of repository type detection
+ * Feature: 001-nested-worktree-paths
+ */
+export interface RepositoryTypeInfo {
+  /** Detected or forced repository type */
+  type: RepositoryType;
+  
+  /** For 'child' type: parent repository name */
+  parentName?: string;
+  
+  /** For 'child' type: repos directory name from config */
+  reposDir?: string;
+  
+  /** Human-readable explanation of type classification */
+  reason: string;
+}
 
 // ============================================================================
 // Configuration and Options (T006)
@@ -317,6 +348,164 @@ export class InsufficientPermissionsError extends Error {
 }
 
 // ============================================================================
+// Repository Type Detection (001-nested-worktree-paths)
+// ============================================================================
+
+/**
+ * Detect repository type based on location and configuration
+ * Feature: 001-nested-worktree-paths (T009)
+ * 
+ * @param repo - Repository to classify
+ * @param config - Arashi configuration (null if not in meta-repo context)
+ * @returns Repository type information with classification reason
+ */
+export async function detectRepositoryType(
+  repo: Repository,
+  config: ArashiConfig | null
+): Promise<RepositoryTypeInfo> {
+  // Check if repository has .arashi/config.json → meta-repo
+  const configPath = join(repo.path, '.arashi', 'config.json');
+  try {
+    const configFile = Bun.file(configPath);
+    const exists = await configFile.exists();
+    if (exists) {
+      return {
+        type: 'meta-repo',
+        reason: 'Contains .arashi/config.json'
+      };
+    }
+  } catch (error) {
+    // File system access error - treat as not meta-repo
+  }
+  
+  // Check if this is a child repository
+  // A child repo must be directly inside a repos_dir/ folder, and that repos_dir
+  // must be inside a meta-repo (has .arashi/config.json)
+  if (config) {
+    const reposDir = basename(config.repos_dir);
+    const pathParts = repo.path.split(sep);
+    
+    // Check if the immediate parent directory is the repos_dir
+    const parentDir = pathParts[pathParts.length - 2];
+    if (parentDir === reposDir) {
+      // Check if grandparent has .arashi/config.json (is a meta-repo)
+      const grandparentPath = join(repo.path, '..', '..');
+      const metaConfigPath = join(grandparentPath, '.arashi', 'config.json');
+      
+      try {
+        const metaConfigFile = Bun.file(metaConfigPath);
+        const metaExists = await metaConfigFile.exists();
+        
+        if (metaExists) {
+          const parentName = pathParts[pathParts.length - 3];
+          return {
+            type: 'child',
+            parentName,
+            reposDir,
+            reason: `Located in ${reposDir}/ folder of parent repository '${parentName}'`
+          };
+        }
+      } catch (error) {
+        // Not a child repo - fall through to standalone
+      }
+    }
+  }
+  
+  // Default → standalone
+  return {
+    type: 'standalone',
+    reason: 'Not a meta-repo and not in repos/ folder'
+  };
+}
+
+/**
+ * Calculate nested worktree path for child repositories
+ * Feature: 001-nested-worktree-paths (T009)
+ * 
+ * @param repo - Child repository
+ * @param parentWorktreeName - Name of parent worktree folder (e.g., 'feature-branch' or 'parent-feature-branch')
+ * @param reposDir - Name of repos directory (e.g., "repos")
+ * @returns Absolute path to nested worktree
+ */
+export function calculateChildWorktreePath(
+  repo: Repository,
+  parentWorktreeName: string,
+  reposDir: string
+): string {
+  // Navigate up from child repo to workspace level: ../../../
+  // Then append parent worktree path and child location
+  return join(repo.path, '..', '..', '..', parentWorktreeName, reposDir, repo.name);
+}
+
+/**
+ * Calculate destination path for a new worktree based on repository type
+ * Feature: 001-nested-worktree-paths (T010)
+ * 
+ * @param repo - Repository for which to calculate path
+ * @param branchName - Target branch name
+ * @param config - Arashi configuration
+ * @param knownType - Optional pre-computed repository type (optimization)
+ * @returns Worktree path result with metadata
+ */
+export async function calculateWorktreePath(
+  repo: Repository,
+  branchName: string,
+  config: ArashiConfig,
+  knownType?: RepositoryTypeInfo
+): Promise<{ path: string; repositoryType: RepositoryType; strategy: 'sibling' | 'nested'; parentWorktreePath?: string }> {
+  // Detect repository type (or use provided type)
+  const typeInfo = knownType ?? await detectRepositoryType(repo, config);
+  
+  // Apply appropriate path calculation strategy
+  if (typeInfo.type === 'child') {
+    // Nested strategy for child repositories
+    if (!typeInfo.parentName || !typeInfo.reposDir) {
+      throw new Error(`Child repository type missing parentName or reposDir: ${repo.name}`);
+    }
+    
+    // Determine parent repository path (navigate up from child: ../../../)
+    const parentRepoPath = join(repo.path, '..', '..');
+    
+    // Check if parent is bare to determine worktree naming
+    const parentIsBare = await isBareRepo(parentRepoPath);
+    
+    // Bare parent: Use branch name only
+    // Non-bare parent: Combine parent name + branch
+    const parentWorktreeName = parentIsBare ? branchName : `${typeInfo.parentName}-${branchName}`;
+    
+    const worktreePath = calculateChildWorktreePath(
+      repo,
+      parentWorktreeName,
+      typeInfo.reposDir
+    );
+    
+    const parentWorktreePath = join(repo.path, '..', '..', '..', parentWorktreeName);
+    
+    return {
+      path: worktreePath,
+      repositoryType: 'child',
+      strategy: 'nested',
+      parentWorktreePath
+    };
+  } else {
+    // Sibling strategy for meta-repo and standalone
+    // Check if repository is bare to determine naming convention
+    const isBare = await isBareRepo(repo.path);
+    
+    // Bare repos: Use branch name only (e.g., 'feature-branch/')
+    // Non-bare repos: Combine folder name + branch (e.g., 'my-repo-feature-branch/')
+    const worktreeName = isBare ? branchName : `${repo.name}-${branchName}`;
+    const worktreePath = join(repo.path, '..', worktreeName);
+    
+    return {
+      path: worktreePath,
+      repositoryType: typeInfo.type,
+      strategy: 'sibling'
+    };
+  }
+}
+
+// ============================================================================
 // Helper Functions (T013)
 // ============================================================================
 
@@ -387,7 +576,6 @@ import * as git from "../lib/git.ts";
 import * as logger from "../lib/logger.ts";
 import * as hooks from "../lib/hooks.ts";
 import * as prompts from "../lib/prompts.ts";
-import { join } from "path";
 
 /**
  * Create coordinated worktrees across multiple repositories (T018)
@@ -424,7 +612,26 @@ export async function createCoordinatedWorktrees(
   };
   
   try {
-    // 1. Validate branch name (T018)
+    // 1. Load Arashi configuration (T012)
+    // Try to load config, but provide default if not found (for standalone repos or tests)
+    let config: ArashiConfig;
+    try {
+      config = await loadConfig('.');
+    } catch (error) {
+      if (error instanceof ConfigNotFoundError) {
+        // No config found - use minimal default for standalone repos
+        config = {
+          version: "1.0.0",
+          repos_dir: "./repos",
+          auto_setup: false,
+          discovered_repos: {},
+        };
+      } else {
+        throw error; // Re-throw other config errors
+      }
+    }
+    
+    // 2. Validate branch name (T018)
     if (!isValidBranchName(branchName)) {
       throw new InvalidBranchNameError(
         `Invalid branch name: ${branchName}`,
@@ -464,6 +671,7 @@ export async function createCoordinatedWorktrees(
         branchName,
         operationLog,
         opts,
+        config,
         conflictsToHandle,
         resolvedStrategy
       );
@@ -518,6 +726,7 @@ export async function createCoordinatedWorktrees(
  * @param branchName - Branch name to create
  * @param operationLog - Operation log for rollback tracking
  * @param options - Operation options
+ * @param config - Arashi configuration for path calculation
  * @param conflicts - Detected conflicts (for reuse logic)
  * @param strategy - Resolved conflict strategy
  * @returns RepositoryResult with status and details
@@ -527,6 +736,7 @@ async function processRepository(
   branchName: string,
   operationLog: OperationLog,
   options: Required<WorktreeOperationOptions>,
+  config: ArashiConfig,
   conflicts: BranchConflict[] = [],
   strategy: ConflictResolutionStrategy | null = null
 ): Promise<RepositoryResult> {
@@ -632,7 +842,8 @@ async function processRepository(
       spinner.text = `Creating worktree for ${repo.name}...`;
     }
     
-    const worktreePath = join(repo.path, "..", `${repo.name}-${branchName}`);
+    const pathResult = await calculateWorktreePath(repo, branchName, config);
+    const worktreePath = pathResult.path;
     try {
       await git.exec(
         ["worktree", "add", worktreePath, branchName],
