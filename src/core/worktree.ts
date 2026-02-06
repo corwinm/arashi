@@ -15,6 +15,7 @@ import type { Repository } from "./repository.ts";
 import { basename, sep, join } from "path";
 import type { Config as ArashiConfig } from "../lib/config.ts";
 import { loadConfig, ConfigNotFoundError } from "../lib/config.ts";
+import { isBareRepo } from "../lib/git.ts";
 
 // ============================================================================
 // Core Types (T005)
@@ -377,22 +378,36 @@ export async function detectRepositoryType(
     // File system access error - treat as not meta-repo
   }
   
-  // Check if path contains repos_dir segment → child
+  // Check if this is a child repository
+  // A child repo must be directly inside a repos_dir/ folder, and that repos_dir
+  // must be inside a meta-repo (has .arashi/config.json)
   if (config) {
     const reposDir = basename(config.repos_dir);
     const pathParts = repo.path.split(sep);
     
-    if (pathParts.includes(reposDir)) {
-      // Find parent name (directory before repos/)
-      const reposDirIndex = pathParts.lastIndexOf(reposDir);
-      const parentName = reposDirIndex > 0 ? pathParts[reposDirIndex - 1] : 'unknown';
+    // Check if the immediate parent directory is the repos_dir
+    const parentDir = pathParts[pathParts.length - 2];
+    if (parentDir === reposDir) {
+      // Check if grandparent has .arashi/config.json (is a meta-repo)
+      const grandparentPath = join(repo.path, '..', '..');
+      const metaConfigPath = join(grandparentPath, '.arashi', 'config.json');
       
-      return {
-        type: 'child',
-        parentName,
-        reposDir,
-        reason: `Located in ${reposDir}/ folder of parent repository '${parentName}'`
-      };
+      try {
+        const metaConfigFile = Bun.file(metaConfigPath);
+        const metaExists = await metaConfigFile.exists();
+        
+        if (metaExists) {
+          const parentName = pathParts[pathParts.length - 3];
+          return {
+            type: 'child',
+            parentName,
+            reposDir,
+            reason: `Located in ${reposDir}/ folder of parent repository '${parentName}'`
+          };
+        }
+      } catch (error) {
+        // Not a child repo - fall through to standalone
+      }
     }
   }
   
@@ -408,20 +423,17 @@ export async function detectRepositoryType(
  * Feature: 001-nested-worktree-paths (T009)
  * 
  * @param repo - Child repository
- * @param branchName - Target branch name
- * @param parentName - Parent repository name
+ * @param parentWorktreeName - Name of parent worktree folder (e.g., 'feature-branch' or 'parent-feature-branch')
  * @param reposDir - Name of repos directory (e.g., "repos")
  * @returns Absolute path to nested worktree
  */
 export function calculateChildWorktreePath(
   repo: Repository,
-  branchName: string,
-  parentName: string,
+  parentWorktreeName: string,
   reposDir: string
 ): string {
   // Navigate up from child repo to workspace level: ../../../
   // Then append parent worktree path and child location
-  const parentWorktreeName = `${parentName}-${branchName}`;
   return join(repo.path, '..', '..', '..', parentWorktreeName, reposDir, repo.name);
 }
 
@@ -451,14 +463,23 @@ export async function calculateWorktreePath(
       throw new Error(`Child repository type missing parentName or reposDir: ${repo.name}`);
     }
     
+    // Determine parent repository path (navigate up from child: ../../../)
+    const parentRepoPath = join(repo.path, '..', '..');
+    
+    // Check if parent is bare to determine worktree naming
+    const parentIsBare = await isBareRepo(parentRepoPath);
+    
+    // Bare parent: Use branch name only
+    // Non-bare parent: Combine parent name + branch
+    const parentWorktreeName = parentIsBare ? branchName : `${typeInfo.parentName}-${branchName}`;
+    
     const worktreePath = calculateChildWorktreePath(
       repo,
-      branchName,
-      typeInfo.parentName,
+      parentWorktreeName,
       typeInfo.reposDir
     );
     
-    const parentWorktreePath = join(repo.path, '..', '..', '..', `${typeInfo.parentName}-${branchName}`);
+    const parentWorktreePath = join(repo.path, '..', '..', '..', parentWorktreeName);
     
     return {
       path: worktreePath,
@@ -468,7 +489,13 @@ export async function calculateWorktreePath(
     };
   } else {
     // Sibling strategy for meta-repo and standalone
-    const worktreePath = join(repo.path, '..', `${repo.name}-${branchName}`);
+    // Check if repository is bare to determine naming convention
+    const isBare = await isBareRepo(repo.path);
+    
+    // Bare repos: Use branch name only (e.g., 'feature-branch/')
+    // Non-bare repos: Combine folder name + branch (e.g., 'my-repo-feature-branch/')
+    const worktreeName = isBare ? branchName : `${repo.name}-${branchName}`;
+    const worktreePath = join(repo.path, '..', worktreeName);
     
     return {
       path: worktreePath,

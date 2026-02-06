@@ -75,3 +75,24 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
     exitCode,
   };
 }
+
+/**
+ * Check if a repository is bare (has no working directory)
+ * 
+ * A bare repository only contains the git database and is typically used
+ * as a central remote. It has no working directory for checked-out files.
+ * 
+ * @param repoPath - Path to the repository
+ * @returns true if repository is bare, false otherwise
+ * @throws {ArashiError} If git command fails or path is not a git repository
+ * 
+ * @example
+ * const isBare = await isBarerepo('/path/to/repo.git');
+ * if (isBare) {
+ *   console.log('This is a bare repository');
+ * }
+ */
+export async function isBareRepo(repoPath: string): Promise<boolean> {
+  const result = await exec(['rev-parse', '--is-bare-repository'], repoPath);
+  return result.stdout.trim() === 'true';
+}
