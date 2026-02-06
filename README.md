@@ -82,6 +82,183 @@ arashi remove feature-new-api
 - `arashi setup` - Run setup scripts
 - `arashi status` - Show status of all repositories
 
+## Integration with fzf, tmux, and sesh
+
+The `arashi list` command outputs clean, full paths perfect for piping to tools like fzf. Here are powerful workflow integrations:
+
+### Basic: Change Directory with fzf
+
+Navigate to any worktree interactively:
+
+```bash
+# Interactive worktree selection
+cd $(arashi list | fzf)
+```
+
+**Add as a shell keybinding** for instant access:
+
+#### Bash/Zsh
+
+Add to your `~/.bashrc` or `~/.zshrc`:
+
+```bash
+# Ctrl+G to select and navigate to worktree
+bind '"\C-g":"cd \$(arashi list | fzf)\n"'  # Bash
+bindkey -s '^g' 'cd $(arashi list | fzf)\n'  # Zsh
+```
+
+Press `Ctrl+G` from anywhere to fuzzy-find and jump to a worktree.
+
+#### Fish
+
+Add to your `~/.config/fish/config.fish`:
+
+```fish
+# Ctrl+G to select and navigate to worktree
+function __arashi_worktree_jump
+    set -l worktree (arashi list | fzf)
+    and cd $worktree
+    commandline -f repaint
+end
+bind \cg __arashi_worktree_jump
+```
+
+### Advanced: tmux Session Management
+
+Create or switch to a tmux session for a worktree:
+
+```bash
+# Function to create/attach tmux session for worktree
+arashi-tmux() {
+  local worktree=$(arashi list | fzf)
+  if [ -n "$worktree" ]; then
+    # Create session name from last path component
+    local session_name=$(basename "$worktree")
+    
+    # Create session if it doesn't exist
+    if ! tmux has-session -t "$session_name" 2>/dev/null; then
+      tmux new-session -d -s "$session_name" -c "$worktree"
+    fi
+    
+    # Switch to or attach session
+    if [ -n "$TMUX" ]; then
+      tmux switch-client -t "$session_name"
+    else
+      tmux attach-session -t "$session_name"
+    fi
+  fi
+}
+
+# Bind to Ctrl+G
+bind '"\C-g":"arashi-tmux\n"'  # Bash
+bindkey -s '^g' 'arashi-tmux\n'  # Zsh
+```
+
+**What this does:**
+1. Fuzzy-find a worktree with fzf
+2. Create a named tmux session for that worktree (if needed)
+3. Switch to the session, preserving your current context
+
+### Simplified: Using sesh
+
+[sesh](https://github.com/joshmedeski/sesh) is a smart session manager for tmux. Integrate arashi with sesh for the ultimate workflow:
+
+#### Setup
+
+```bash
+# Install sesh
+brew install joshmedeski/sesh/sesh
+
+# Add arashi as a sesh source
+# ~/.config/sesh/sesh.toml
+[sources]
+arashi = "arashi list"
+```
+
+#### Usage
+
+```bash
+# Select from all sessions + arashi worktrees
+sesh connect $(sesh list | fzf)
+
+# Or create a keybinding (Ctrl+A)
+bind '"\C-a":"sesh connect \$(sesh list | fzf)\n"'
+```
+
+**Benefits of sesh:**
+- Unified list of existing tmux sessions + arashi worktrees
+- Smart session naming and path handling
+- Automatic tmux session creation
+- Works seamlessly with zoxide and other tools
+
+### Fish + tmux Integration
+
+For Fish shell users, here's a complete solution:
+
+```fish
+# ~/.config/fish/functions/arashi_session.fish
+function arashi_session
+    set -l worktree (arashi list | fzf \
+        --preview 'cd {} && git status' \
+        --preview-window=right:60% \
+        --height=80%)
+    
+    if test -n "$worktree"
+        set -l session_name (basename $worktree)
+        
+        if not tmux has-session -t $session_name 2>/dev/null
+            tmux new-session -d -s $session_name -c $worktree
+        end
+        
+        if set -q TMUX
+            tmux switch-client -t $session_name
+        else
+            tmux attach-session -t $session_name
+        end
+    end
+end
+
+# Bind to Ctrl+G
+bind \cg arashi_session
+```
+
+This includes:
+- Live git status preview in fzf
+- Automatic session creation with smart naming
+- Works both inside and outside tmux
+
+### Comparison Table
+
+| Method | Setup Complexity | Features | Best For |
+|--------|-----------------|----------|----------|
+| **Basic fzf** | Low | Quick navigation | Simple cd workflows |
+| **tmux function** | Medium | Session management | Multi-project work |
+| **sesh** | Low-Medium | Unified session list | Power users with multiple sources |
+
+### Tips
+
+- **Preview window:** Add `--preview 'cd {} && git status'` to fzf for live status
+- **Layout:** Try `--preview-window=right:60%` for side-by-side preview
+- **Height:** Use `--height=80%` to avoid fullscreen fzf
+- **Multi-select:** Add `--multi` to fzf for batch operations
+
+### Example Workflow
+
+```bash
+# Morning routine:
+1. Press Ctrl+G
+2. Type "feature" to filter worktrees
+3. Select your feature branch worktree
+4. tmux session is created/attached
+5. Start coding immediately!
+
+# No more:
+cd ~/projects/repo
+cd ../feature-worktree
+tmux new -s feature-branch
+cd ~/projects/repo/feature-worktree
+```
+
 ## Development
 
 ### Prerequisites
