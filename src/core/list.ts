@@ -219,15 +219,19 @@ export async function listCommand(options?: ListCommandOptions): Promise<void> {
     s?.succeed('Discovery complete');
     
     // Format and display
+    let output_str: string;
     if (opts.json) {
-      console.log(formatAsJson(output));
+      output_str = formatAsJson(output);
     } else if (opts.table || opts.verbose) {
       // Table format when explicitly requested or in verbose mode
-      console.log(formatAsTable(output, opts.verbose || false));
+      output_str = formatAsTable(output, opts.verbose || false);
     } else {
       // Simple list format (default) - perfect for piping to fzf
-      console.log(formatAsSimpleList(output));
+      output_str = formatAsSimpleList(output);
     }
+    
+    // Use process.stdout.write directly for better pipe compatibility with fzf
+    process.stdout.write(output_str + '\n');
   } catch (error) {
     s?.fail('Failed to list worktrees');
     throw error;

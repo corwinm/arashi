@@ -12,19 +12,25 @@ import {
 // Capture console output
 let consoleOutput: string[] = [];
 let originalLog: any;
+let originalError: any;
 
 beforeEach(() => {
   consoleOutput = [];
   
-  // Mock console.log to capture output
+  // Mock console.log and console.error to capture output
   originalLog = console.log;
+  originalError = console.error;
   console.log = (...args: any[]) => {
+    consoleOutput.push(args.join(" "));
+  };
+  console.error = (...args: any[]) => {
     consoleOutput.push(args.join(" "));
   };
 });
 
 afterEach(() => {
   console.log = originalLog;
+  console.error = originalError;
   
   // Clean up environment
   delete process.env.NO_COLOR;

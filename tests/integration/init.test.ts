@@ -182,7 +182,8 @@ describe('init command - success cases', () => {
     const result = await runInitCommand(testDir, ['--force']);
     
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('backed up');
+    // The backup message is in stdout ("Backing up:") and warning is in stderr
+    expect(result.stdout + result.stderr).toContain('backed up');
     
     // Verify config reset to defaults
     loadedConfig = await config.loadConfig(testDir);
@@ -245,7 +246,8 @@ describe('init command - error cases', () => {
     const result = await runInitCommand(testDir);
     
     expect(result.exitCode).toBe(1); // NOT_GIT_REPOSITORY
-    expect(result.stdout).toContain('Not a git repository');
+    // Error message is in stderr, help text is in stdout
+    expect(result.stderr).toContain('Not a git repository');
     expect(result.stdout).toContain('git init');
     
     // Verify no files created
@@ -264,7 +266,8 @@ describe('init command - error cases', () => {
     const result = await runInitCommand(testDir);
     
     expect(result.exitCode).toBe(2); // CONFIG_EXISTS
-    expect(result.stdout).toContain('already exists');
+    // Error message is in stderr, help text is in stdout
+    expect(result.stderr).toContain('already exists');
     expect(result.stdout).toContain('--force');
     
     await cleanup(testDir);
@@ -535,7 +538,8 @@ describe('init command - output format', () => {
     const result = await runInitCommand(nonGitDir);
     
     expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain('Not a git repository');
+    // Error message is in stderr, help text is in stdout
+    expect(result.stderr).toContain('Not a git repository');
     expect(result.stdout).toContain('git init');
     
     await cleanup(nonGitDir);
