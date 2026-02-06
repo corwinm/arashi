@@ -110,14 +110,23 @@ async function runListCommand(cwd: string, options?: { verbose?: boolean; json?:
   const originalLog = console.log;
   const originalWarn = console.warn;
   const originalError = console.error;
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
   let capturedOutput = '';
   
-  // Mock console.log/warn/error to capture output
+  // Mock console.log/warn/error and process.stdout.write to capture output
   console.log = (message: string) => {
     capturedOutput += message + '\n';
   };
   console.warn = () => {}; // Suppress warnings
   console.error = () => {}; // Suppress errors
+  
+  // Mock process.stdout.write to capture direct writes
+  (process.stdout.write as any) = (chunk: any) => {
+    if (typeof chunk === 'string') {
+      capturedOutput += chunk;
+    }
+    return true;
+  };
   
   try {
     process.chdir(cwd);
@@ -130,6 +139,7 @@ async function runListCommand(cwd: string, options?: { verbose?: boolean; json?:
     console.log = originalLog;
     console.warn = originalWarn;
     console.error = originalError;
+    process.stdout.write = originalStdoutWrite;
   }
 }
 

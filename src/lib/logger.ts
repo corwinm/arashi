@@ -63,7 +63,7 @@ export function success(message: string): void {
 export function warn(message: string): void {
   const symbol = getSymbol("⚠", "[WARN]");
   const formatted = applyColor(`${symbol} ${message}`, chalk.yellow);
-  console.log(formatted);
+  console.error(formatted);
 }
 
 /**
@@ -74,7 +74,7 @@ export function warn(message: string): void {
 export function error(message: string): void {
   const symbol = getSymbol("✗", "[ERR]");
   const formatted = applyColor(`${symbol} ${message}`, chalk.red);
-  console.log(formatted);
+  console.error(formatted);
 }
 
 // ============================================================================

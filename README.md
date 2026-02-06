@@ -22,27 +22,30 @@ This project is currently in early development. See the [Design Document](https:
 npm install -g arashi
 ```
 
+The npm package includes everything you need for full fzf compatibility.
+
 ### Direct Binary Download
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/corwinm/arashi/releases):
+Download and extract the latest release for your platform from [GitHub Releases](https://github.com/corwinm/arashi/releases):
 
 **macOS (Apple Silicon)**
 ```bash
-curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-macos-arm64 -o arashi
-chmod +x arashi
-sudo mv arashi /usr/local/bin/
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-macos-arm64.tar.gz -o arashi.tar.gz
+tar xzf arashi.tar.gz
+cd arashi-macos-arm64
+sudo cp arashi arashi.bin /usr/local/bin/
 ```
 
 **Linux (x64)**
 ```bash
-curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-linux-x64 -o arashi
-chmod +x arashi
-sudo mv arashi /usr/local/bin/
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-linux-x64.tar.gz -o arashi.tar.gz
+tar xzf arashi.tar.gz
+cd arashi-linux-x64
+sudo cp arashi arashi.bin /usr/local/bin/
 ```
 
 **Windows (x64)**
-- Download `arashi-windows-x64.exe` from [GitHub Releases](https://github.com/corwinm/arashi/releases)
-- Add to your PATH
+- Windows support coming soon (wrapper script needs PowerShell equivalent)
 
 ## Vision
 

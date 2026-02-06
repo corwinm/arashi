@@ -3,6 +3,23 @@ import { Command } from 'commander';
 import { createCommand as createInitCommand } from './commands/init.ts';
 import { createCommand } from './commands/create.ts';
 import { createCommand as createListCommand } from './commands/list.ts';
+import { closeSync } from 'fs';
+
+// CRITICAL FIX FOR FZF COMPATIBILITY:
+// We need to close stdin file descriptor 0 to allow fzf to access /dev/tty
+// Standard process.stdin.destroy() doesn't actually close FD 0 in Bun compiled executables
+try {
+  // Close file descriptor 0 (stdin) using the low-level fs.closeSync
+  closeSync(0);
+} catch (e) {
+  // If closeSync fails (e.g., stdin already closed), fall back to process API
+  try {
+    process.stdin.pause();
+    process.stdin.destroy();
+  } catch (e2) {
+    // Ignore all errors - stdin closing is best-effort
+  }
+}
 
 const program = new Command();
 

@@ -81,4 +81,13 @@ async function executeList(options: CliOptions): Promise<void> {
   };
 
   await listCommand(listOptions);
+  
+  // Aggressively close stdin to prevent TTY conflicts with fzf
+  if (process.stdin.readable) {
+    process.stdin.pause();
+    process.stdin.destroy();
+  }
+  
+  // Hard exit
+  process.exit(0);
 }

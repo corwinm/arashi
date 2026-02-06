@@ -1,0 +1,35 @@
+#!/bin/bash
+# Wrapper for arashi to fix fzf compatibility
+# Bun's compiled executables don't properly close stdin, which blocks fzf
+# from accessing /dev/tty for keyboard input. This wrapper closes stdin (0<&-)
+# before executing the binary.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BINARY="$SCRIPT_DIR/arashi.bin"
+
+# Use platform-specific binary if main binary doesn't exist
+if [ ! -f "$BINARY" ]; then
+  PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
+  ARCH=$(uname -m)
+  
+  case "$PLATFORM-$ARCH" in
+    darwin-arm64)
+      BINARY="$SCRIPT_DIR/arashi-macos-arm64"
+      ;;
+    linux-x86_64)
+      BINARY="$SCRIPT_DIR/arashi-linux-x64"
+      ;;
+    *)
+      echo "Error: Unsupported platform $PLATFORM-$ARCH" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [ ! -f "$BINARY" ]; then
+  echo "Error: arashi binary not found at $BINARY" >&2
+  exit 1
+fi
+
+# Execute with stdin closed (0<&-) for fzf compatibility
+exec "$BINARY" "$@" 0<&-
