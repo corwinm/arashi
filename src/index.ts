@@ -4,6 +4,7 @@ import { createCommand as createInitCommand } from './commands/init.ts';
 import { createCommand } from './commands/create.ts';
 import { createCommand as createListCommand } from './commands/list.ts';
 import { createCommand as createAddCommand } from './commands/add.ts';
+import { createCommand as createStatusCommand } from './commands/status.ts';
 import { closeSync } from 'fs';
 import pkg from '../package.json' with { type: 'json' };
 
@@ -35,5 +36,6 @@ program.addCommand(createInitCommand());
 program.addCommand(createAddCommand());
 program.addCommand(createCommand());
 program.addCommand(createListCommand());
+program.addCommand(createStatusCommand());
 
 program.parse();

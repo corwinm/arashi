@@ -183,6 +183,54 @@ export async function configExists(repoPath: string): Promise<boolean> {
 }
 
 /**
+ * Find the workspace root by walking up the directory tree
+ * 
+ * Searches for .arashi/config.json starting from the given path and
+ * walking up parent directories until found or reaching the filesystem root.
+ * Similar to how git finds .git directory.
+ * 
+ * @param startPath - Path to start searching from (defaults to current directory)
+ * @returns Absolute path to workspace root
+ * @throws {ConfigNotFoundError} If no workspace found in any parent directory
+ * 
+ * @example
+ * ```typescript
+ * // From /workspace/repos/myrepo/src
+ * const workspaceRoot = await findWorkspaceRoot();
+ * // Returns: /workspace
+ * ```
+ */
+export async function findWorkspaceRoot(startPath: string = process.cwd()): Promise<string> {
+  const { dirname, resolve, parse } = await import('path');
+  
+  let currentPath = resolve(startPath);
+  const rootPath = parse(currentPath).root;
+  
+  // Walk up the directory tree
+  while (true) {
+    // Check if .arashi/config.json exists in current directory
+    if (await configExists(currentPath)) {
+      return currentPath;
+    }
+    
+    // Check if we've reached the filesystem root
+    if (currentPath === rootPath) {
+      throw new ConfigNotFoundError(getConfigPath(startPath));
+    }
+    
+    // Move to parent directory
+    const parentPath = dirname(currentPath);
+    
+    // Additional safety check for infinite loops
+    if (parentPath === currentPath) {
+      throw new ConfigNotFoundError(getConfigPath(startPath));
+    }
+    
+    currentPath = parentPath;
+  }
+}
+
+/**
  * Generate default configuration
  * 
  * Creates a minimal valid configuration with sensible defaults:
