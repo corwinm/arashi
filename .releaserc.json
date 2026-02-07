@@ -53,6 +53,19 @@
       }
     ],
     [
+      "@semantic-release/git",
+      {
+        "assets": ["package.json", "CHANGELOG.md"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "echo '🔨 Building binaries with version ${nextRelease.version}...' && bun run build:all && ls -lh bin/ && echo '✅ Binaries built successfully'"
+      }
+    ],
+    [
       "@semantic-release/github",
       {
         "assets": [
@@ -69,13 +82,6 @@
             "label": "arashi-windows-x64.exe (Windows x64)"
           }
         ]
-      }
-    ],
-    [
-      "@semantic-release/git",
-      {
-        "assets": ["package.json", "CHANGELOG.md"],
-        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }
     ]
   ]

@@ -1,17 +1,25 @@
-# Release Workflow v2.0.0
+# Release Workflow v3.0.0
 # Contract: specs/019-release-workflow/contracts/workflow-interface.md
 #
-# This workflow automates the complete release process:
-# - Parses conventional commits to determine semantic version bump
-# - Updates package.json version (via semantic-release)
-# - Builds multi-platform binaries with correct version embedded
-# - Creates GitHub release with generated changelog
+# This workflow automates the complete release process using semantic-release:
+# - Parses conventional commits to determine semantic version bump  
+# - Updates package.json and CHANGELOG.md
+# - Commits changes and creates git tag
+# - Builds multi-platform binaries with correct version (via @semantic-release/exec)
+# - Creates GitHub release with binaries
 # - Publishes package to npm registry (if NPM_TOKEN configured)
 #
 # Trigger: Manual workflow dispatch from GitHub Actions UI
 # Target: Complete release in under 10 minutes from trigger to publication
 #
-# IMPORTANT: Binaries are built AFTER version bump to ensure embedded version matches release
+# Plugin order matters:
+#   1. commit-analyzer: Determine release type
+#   2. release-notes-generator: Generate changelog content
+#   3. changelog: Update CHANGELOG.md file
+#   4. npm: Update package.json version
+#   5. git: Commit changes and create tag
+#   6. exec: Build binaries with new version
+#   7. github: Create GitHub release with binaries
 
 name: Release
 
@@ -30,12 +38,9 @@ permissions:
   issues: write           # Comment on closed issues (optional)
 
 jobs:
-  version:
-    name: Determine Version
+  release:
+    name: Release
     runs-on: ubuntu-latest
-    outputs:
-      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
-      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
     steps:
       - name: Checkout repository (full history)
         uses: actions/checkout@v4
@@ -65,244 +70,29 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Run semantic-release (version bump only)
-        id: semantic
+      - name: Run semantic-release
         run: |
-          # Temporarily rename the main config and create version-bump-only config
-          mv .releaserc.json .releaserc.json.bak
-          
-          cat > .releaserc.json << 'EOF'
-          {
-            "branches": ["main"],
-            "plugins": [
-              "@semantic-release/commit-analyzer",
-              "@semantic-release/release-notes-generator",
-              "@semantic-release/changelog",
-              ["@semantic-release/npm", {"npmPublish": false}],
-              [
-                "@semantic-release/git",
-                {
-                  "assets": ["package.json", "CHANGELOG.md"],
-                  "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
-                }
-              ]
-            ]
-          }
-          EOF
-          
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
             echo "🧪 Running in DRY-RUN mode - no release will be created"
             bunx semantic-release --dry-run
           else
-            echo "🚀 Running semantic-release to bump version..."
+            echo "🚀 Running semantic-release..."
             bunx semantic-release
-          fi
-          
-          # Restore original config
-          mv .releaserc.json.bak .releaserc.json
-          
-          # Output whether a new release was published
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          # Check if version changed by comparing with the commit before this run
-          git fetch origin main
-          OLD_VERSION=$(git show HEAD~1:package.json 2>/dev/null | node -p "try { JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf-8')).version } catch(e) { '0.0.0' }" || echo "0.0.0")
-          
-          echo "Current version: $NEW_VERSION"
-          echo "Previous version: $OLD_VERSION"
-          
-          if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then
-            echo "new_release_published=true" >> $GITHUB_OUTPUT
-            echo "new_release_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-            echo "✅ Version bumped from $OLD_VERSION to $NEW_VERSION"
-          else
-            echo "new_release_published=false" >> $GITHUB_OUTPUT
-            echo "ℹ️ No version change detected"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_ENV: production
 
-  build:
-    name: Build Binaries
-    needs: version
-    if: needs.version.outputs.new_release_published == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository (with updated version)
-        uses: actions/checkout@v4
-        with:
-          ref: main  # Get the version-bumped commit
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Verify version in package.json
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "📦 Building binaries for version: $VERSION"
-          if [ "$VERSION" != "${{ needs.version.outputs.new_release_version }}" ]; then
-            echo "⚠️ Warning: package.json version ($VERSION) doesn't match expected version (${{ needs.version.outputs.new_release_version }})"
-          fi
-
-      - name: Build all platform binaries
-        run: |
-          echo "🔨 Building binaries for all platforms..."
-          bun run build:all
-          
-          echo ""
-          echo "📦 Built binaries:"
-          ls -lh bin/
-          
-          # Verify all required binaries exist
-          REQUIRED_BINARIES=("bin/arashi-macos-arm64" "bin/arashi-linux-x64" "bin/arashi-windows-x64.exe")
-          MISSING=0
-          
-          for binary in "${REQUIRED_BINARIES[@]}"; do
-            if [ -f "$binary" ]; then
-              SIZE=$(du -h "$binary" | cut -f1)
-              echo "✅ $binary ($SIZE)"
-              # Verify binary version
-              chmod +x "$binary" 2>/dev/null || true
-              if [ -x "$binary" ]; then
-                BINARY_VERSION=$("$binary" -V 2>&1 || echo "unknown")
-                echo "   Version: $BINARY_VERSION"
-              fi
-            else
-              echo "❌ Missing: $binary"
-              MISSING=1
-            fi
-          done
-          
-          if [ $MISSING -eq 1 ]; then
-            echo "❌ Error: Not all required binaries were built"
-            exit 1
-          fi
-          
-          echo "✅ All binaries built successfully"
-        env:
-          NODE_ENV: production
-
-      - name: Upload binary artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: arashi-binaries
-          path: bin/arashi-*
-          retention-days: 1
-          if-no-files-found: error
-
-  release:
-    name: Create GitHub Release
-    needs: [version, build]
-    if: needs.version.outputs.new_release_published == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: arashi-binaries
-          path: bin
-
-      - name: Verify all binaries present
-        run: |
-          cd bin
-          echo "📦 Verifying downloaded artifacts..."
-          
-          REQUIRED_BINARIES=("arashi-macos-arm64" "arashi-linux-x64" "arashi-windows-x64.exe")
-          MISSING=0
-          
-          for binary in "${REQUIRED_BINARIES[@]}"; do
-            if [ -f "$binary" ]; then
-              SIZE=$(du -h "$binary" | cut -f1)
-              echo "✅ $binary ($SIZE)"
-            else
-              echo "❌ Missing: $binary"
-              MISSING=1
-            fi
-          done
-          
-          if [ $MISSING -eq 1 ]; then
-            echo "❌ Error: Not all required binaries are present"
-            exit 1
-          fi
-          
-          echo "✅ All binaries verified"
-
-      - name: Create GitHub Release
-        run: |
-          # Temporarily rename the main config and create GitHub-release-only config
-          mv .releaserc.json .releaserc.json.bak
-          
-          cat > .releaserc.json << 'EOF'
-          {
-            "branches": ["main"],
-            "plugins": [
-              "@semantic-release/commit-analyzer",
-              "@semantic-release/release-notes-generator",
-              [
-                "@semantic-release/github",
-                {
-                  "assets": [
-                    {"path": "bin/arashi-linux-x64", "label": "arashi-linux-x64 (Linux x64)"},
-                    {"path": "bin/arashi-macos-arm64", "label": "arashi-macos-arm64 (macOS ARM64)"},
-                    {"path": "bin/arashi-windows-x64.exe", "label": "arashi-windows-x64.exe (Windows x64)"}
-                  ]
-                }
-              ]
-            ]
-          }
-          EOF
-          
-          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
-            echo "🧪 DRY-RUN mode - skipping GitHub release creation"
-          else
-            echo "🚀 Creating GitHub release for v${{ needs.version.outputs.new_release_version }}..."
-            bunx semantic-release
-          fi
-          
-          # Restore original config
-          mv .releaserc.json.bak .releaserc.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_ENV: production
-
-      - name: Publish to npm
-        if: github.event.inputs.dry_run != 'true'
-        run: |
-          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
-            echo "📦 Publishing to npm..."
-            echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
-            npm publish --access public
-            echo "✅ Published to npm"
-          else
-            echo "⚠️ Skipping npm publish - NPM_TOKEN not configured"
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
       - name: Release Summary
         if: always()
         run: |
           echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Version bumped to ${{ needs.version.outputs.new_release_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Semantic release completed" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Multi-platform binaries built with correct version" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ GitHub release created" >> $GITHUB_STEP_SUMMARY
-          if [ -n "${{ secrets.NPM_TOKEN }}" ] && [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
+          echo "- ✅ GitHub release created with binaries" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.npm_token_check.outputs.npm_available }}" == "true" ] && [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
             echo "- ✅ Package published to npm" >> $GITHUB_STEP_SUMMARY
           else
             echo "- ⚠️ npm publishing skipped" >> $GITHUB_STEP_SUMMARY
