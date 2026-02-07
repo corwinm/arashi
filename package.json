@@ -7,8 +7,10 @@
     "arashi": "./bin/arashi"
   },
   "files": [
-    "bin/",
-    "dist/",
+    "bin/arashi",
+    "bin/arashi.bat",
+    "bin/arashi.ps1",
+    "scripts/postinstall.js",
     "README.md",
     "LICENSE"
   ],
@@ -33,7 +35,7 @@
     "build:windows": "bun build src/index.ts --compile --target=bun-windows-x64 --outfile bin/arashi-windows-x64.exe",
     "test": "bun test",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "bun run build:all"
+    "postinstall": "node scripts/postinstall.js"
   },
   "repository": {
     "type": "git",
