@@ -91,15 +91,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install semantic-release
         run: |
           cd repos/arashi
-          npm install semantic-release @semantic-release/git @semantic-release/changelog @semantic-release/npm @semantic-release/github
+          bun install semantic-release @semantic-release/git @semantic-release/changelog @semantic-release/npm @semantic-release/github
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -148,10 +146,10 @@ jobs:
           cd repos/arashi
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
             echo "🧪 Running in DRY-RUN mode - no release will be created"
-            npx semantic-release --dry-run
+            bunx semantic-release --dry-run
           else
             echo "🚀 Running semantic-release..."
-            npx semantic-release
+            bunx semantic-release
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
