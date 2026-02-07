@@ -5,6 +5,7 @@ import { createCommand } from './commands/create.ts';
 import { createCommand as createListCommand } from './commands/list.ts';
 import { createCommand as createAddCommand } from './commands/add.ts';
 import { closeSync } from 'fs';
+import pkg from '../package.json' with { type: 'json' };
 
 // CRITICAL FIX FOR FZF COMPATIBILITY:
 // We need to close stdin file descriptor 0 to allow fzf to access /dev/tty
@@ -27,7 +28,7 @@ const program = new Command();
 program
   .name('arashi')
   .description('Git worktree manager for meta-repositories')
-  .version('0.1.0');
+  .version(pkg.version);
 
 // Register commands
 program.addCommand(createInitCommand());
