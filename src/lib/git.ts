@@ -41,6 +41,7 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
       cwd,
       stdout: "pipe",
       stderr: "pipe",
+      env: process.env as Record<string, string>,
     });
   } catch (error) {
     // Handle spawn errors (e.g., directory doesn't exist, git not found)
@@ -127,6 +128,7 @@ export async function clone(gitUrl: string, destPath: string): Promise<CommandRe
       cwd: parentDir,
       stdout: 'pipe',
       stderr: 'pipe',
+      env: process.env as Record<string, string>,
     });
 
     const stdout = await new Response(proc.stdout).text();
@@ -227,4 +229,90 @@ export async function getDefaultBranch(repoPath: string): Promise<string> {
     args: ['branch', '-r', '--list'],
     cwd: repoPath,
   });
+}
+
+/**
+ * Result of git status command execution
+ * 
+ * @interface GitStatusResult
+ * @property {string} output - Git status output (stdout)
+ * @property {string | null} error - Error message if command failed (stderr)
+ */
+export interface GitStatusResult {
+  output: string;
+  error: string | null;
+}
+
+/**
+ * Get git status for a repository using porcelain format
+ * 
+ * Executes `git status --porcelain=v1 --branch` to get machine-readable status.
+ * This format is stable across git versions and provides consistent output for parsing.
+ * 
+ * @param repoPath - Path to the repository
+ * @returns Promise resolving to GitStatusResult with output or error
+ * 
+ * @example
+ * const result = await getGitStatus('/path/to/repo');
+ * if (result.error) {
+ *   console.error('Git status failed:', result.error);
+ * } else {
+ *   console.log('Status output:', result.output);
+ * }
+ */
+export async function getGitStatus(repoPath: string): Promise<GitStatusResult> {
+  try {
+    const result = await exec(['status', '--porcelain=v1', '--branch'], repoPath);
+    return {
+      output: result.stdout.trim(),
+      error: null,
+    };
+  } catch (error) {
+    // Return error information instead of throwing
+    if (error instanceof ArashiError) {
+      return {
+        output: '',
+        error: error.message,
+      };
+    }
+    return {
+      output: '',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Get full human-readable git status for verbose output
+ * 
+ * Executes `git status` without porcelain format to get the full
+ * human-readable output including git's helpful messages.
+ * 
+ * @param repoPath - Path to the repository
+ * @returns Promise resolving to GitStatusResult with output or error
+ * 
+ * @example
+ * const result = await getFullGitStatus('/path/to/repo');
+ * console.log(result.output); // Full git status output with colors and hints
+ */
+export async function getFullGitStatus(repoPath: string): Promise<GitStatusResult> {
+  try {
+    const result = await exec(['status'], repoPath);
+    return {
+      output: result.stdout.trim(),
+      error: null,
+    };
+  } catch (error) {
+    // Return error information instead of throwing
+    if (error instanceof ArashiError) {
+      return {
+        output: '',
+        error: error.message,
+      };
+    }
+    return {
+      output: '',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
 }
