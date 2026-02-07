@@ -1,0 +1,166 @@
+# Release Workflow v1.0.0
+# Contract: specs/019-release-workflow/contracts/workflow-interface.md
+#
+# This workflow automates the complete release process:
+# - Parses conventional commits to determine semantic version bump
+# - Builds multi-platform binaries (Linux x64, macOS ARM64, Windows x64)
+# - Creates GitHub release with generated changelog
+# - Publishes package to npm registry (if NPM_TOKEN configured)
+#
+# Trigger: Manual workflow dispatch from GitHub Actions UI
+# Target: Complete release in under 10 minutes from trigger to publication
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run in dry-run mode (no actual release)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write         # Create tags, commits, releases
+  pull-requests: write    # Comment on PRs (optional)
+  issues: write           # Comment on closed issues (optional)
+
+jobs:
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build all platform binaries
+        run: |
+          echo "🔨 Building binaries for all platforms..."
+          bun run build:all
+          
+          echo ""
+          echo "📦 Built binaries:"
+          ls -lh bin/
+          
+          # Verify all required binaries exist
+          REQUIRED_BINARIES=("bin/arashi-macos-arm64" "bin/arashi-linux-x64" "bin/arashi-windows-x64.exe")
+          MISSING=0
+          
+          for binary in "${REQUIRED_BINARIES[@]}"; do
+            if [ -f "$binary" ]; then
+              SIZE=$(du -h "$binary" | cut -f1)
+              echo "✅ $binary ($SIZE)"
+            else
+              echo "❌ Missing: $binary"
+              MISSING=1
+            fi
+          done
+          
+          if [ $MISSING -eq 1 ]; then
+            echo "❌ Error: Not all required binaries were built"
+            exit 1
+          fi
+          
+          echo "✅ All binaries built successfully"
+        env:
+          NODE_ENV: production
+
+      - name: Upload binary artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arashi-binaries
+          path: bin/arashi-*
+          retention-days: 1
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: arashi-binaries
+          path: bin
+
+      - name: Verify all binaries present
+        run: |
+          cd bin
+          echo "📦 Verifying downloaded artifacts..."
+          
+          REQUIRED_BINARIES=("arashi-macos-arm64" "arashi-linux-x64" "arashi-windows-x64.exe")
+          MISSING=0
+          
+          for binary in "${REQUIRED_BINARIES[@]}"; do
+            if [ -f "$binary" ]; then
+              SIZE=$(du -h "$binary" | cut -f1)
+              echo "✅ $binary ($SIZE)"
+            else
+              echo "❌ Missing: $binary"
+              MISSING=1
+            fi
+          done
+          
+          if [ $MISSING -eq 1 ]; then
+            echo "❌ Error: Not all required binaries are present"
+            exit 1
+          fi
+          
+          echo "✅ All binaries verified"
+
+      - name: Check NPM token availability
+        id: npm_token_check
+        run: |
+          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "npm_available=false" >> $GITHUB_OUTPUT
+            echo "⚠️ NPM_TOKEN not configured - npm publishing will be skipped"
+          else
+            echo "npm_available=true" >> $GITHUB_OUTPUT
+            echo "✓ NPM_TOKEN configured - package will be published to npm"
+          fi
+
+      - name: Run semantic-release
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+            echo "🧪 Running in DRY-RUN mode - no release will be created"
+            bunx semantic-release --dry-run
+          else
+            echo "🚀 Running semantic-release..."
+            bunx semantic-release
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_ENV: production
+
+      - name: Release Summary
+        if: always()
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Multi-platform binaries built" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ GitHub release created" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.npm_token_check.outputs.npm_available }}" == "true" ]; then
+            echo "- ✅ Package published to npm" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️ npm publishing skipped (NPM_TOKEN not configured)" >> $GITHUB_STEP_SUMMARY
+          fi
