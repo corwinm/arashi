@@ -37,12 +37,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/user/arashi.git"
+    "url": "git+https://github.com/corwinm/arashi.git"
   },
   "bugs": {
-    "url": "https://github.com/user/arashi/issues"
+    "url": "https://github.com/corwinm/arashi/issues"
   },
-  "homepage": "https://github.com/user/arashi#readme",
+  "homepage": "https://github.com/corwinm/arashi#readme",
   "keywords": [
     "git",
     "worktree",
