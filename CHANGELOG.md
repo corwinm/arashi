@@ -1,3 +1,14 @@
+## [1.1.0](https://github.com/corwinm/arashi/compare/v1.0.0...v1.1.0) (2026-02-07)
+
+### Features
+
+* implement postinstall script to download binaries from GitHub releases ([c169732](https://github.com/corwinm/arashi/commit/c1697325f06185bd4006e0003691142db61319bf))
+* skip binary download in development environment ([136b391](https://github.com/corwinm/arashi/commit/136b391a973b78bd4fb56e0bb4e65e13bb2b3498))
+
+### Code Refactoring
+
+* move all dependencies to devDependencies ([6a813ef](https://github.com/corwinm/arashi/commit/6a813eff22da11495dfa5781bf9bf5333663216e))
+
 ## 1.0.0 (2026-02-07)
 
 ### Features
