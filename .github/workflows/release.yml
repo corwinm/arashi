@@ -1,14 +1,17 @@
-# Release Workflow v1.0.0
+# Release Workflow v2.0.0
 # Contract: specs/019-release-workflow/contracts/workflow-interface.md
 #
 # This workflow automates the complete release process:
 # - Parses conventional commits to determine semantic version bump
-# - Builds multi-platform binaries (Linux x64, macOS ARM64, Windows x64)
+# - Updates package.json version (via semantic-release)
+# - Builds multi-platform binaries with correct version embedded
 # - Creates GitHub release with generated changelog
 # - Publishes package to npm registry (if NPM_TOKEN configured)
 #
 # Trigger: Manual workflow dispatch from GitHub Actions UI
 # Target: Complete release in under 10 minutes from trigger to publication
+#
+# IMPORTANT: Binaries are built AFTER version bump to ensure embedded version matches release
 
 name: Release
 
@@ -27,18 +30,117 @@ permissions:
   issues: write           # Comment on closed issues (optional)
 
 jobs:
-  build:
-    name: Build Binaries
+  version:
+    name: Determine Version
     runs-on: ubuntu-latest
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (full history)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
         run: bun install
+
+      - name: Check NPM token availability
+        id: npm_token_check
+        run: |
+          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "npm_available=false" >> $GITHUB_OUTPUT
+            echo "⚠️ NPM_TOKEN not configured - npm publishing will be skipped"
+          else
+            echo "npm_available=true" >> $GITHUB_OUTPUT
+            echo "✓ NPM_TOKEN configured - package will be published to npm"
+          fi
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run semantic-release (version bump only)
+        id: semantic
+        run: |
+          # Create a temporary .releaserc.json that only does version bumping
+          cat > .releaserc.temp.json << 'EOF'
+          {
+            "branches": ["main"],
+            "plugins": [
+              "@semantic-release/commit-analyzer",
+              "@semantic-release/release-notes-generator",
+              "@semantic-release/changelog",
+              ["@semantic-release/npm", {"npmPublish": false}],
+              [
+                "@semantic-release/git",
+                {
+                  "assets": ["package.json", "CHANGELOG.md"],
+                  "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+                }
+              ]
+            ]
+          }
+          EOF
+          
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+            echo "🧪 Running in DRY-RUN mode - no release will be created"
+            bunx semantic-release --dry-run --extends .releaserc.temp.json
+          else
+            echo "🚀 Running semantic-release to bump version..."
+            bunx semantic-release --extends .releaserc.temp.json
+          fi
+          
+          # Output whether a new release was published
+          if [ -f .VERSION ]; then
+            echo "new_release_published=true" >> $GITHUB_OUTPUT
+            echo "new_release_version=$(cat .VERSION)" >> $GITHUB_OUTPUT
+          else
+            NEW_VERSION=$(node -p "require('./package.json').version")
+            # Check if version changed by comparing with previous commit
+            git fetch origin main
+            OLD_VERSION=$(git show origin/main:package.json | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf-8')).version" || echo "0.0.0")
+            if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then
+              echo "new_release_published=true" >> $GITHUB_OUTPUT
+              echo "new_release_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+            else
+              echo "new_release_published=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_ENV: production
+
+  build:
+    name: Build Binaries
+    needs: version
+    if: needs.version.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (with updated version)
+        uses: actions/checkout@v4
+        with:
+          ref: main  # Get the version-bumped commit
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Verify version in package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "📦 Building binaries for version: $VERSION"
+          if [ "$VERSION" != "${{ needs.version.outputs.new_release_version }}" ]; then
+            echo "⚠️ Warning: package.json version ($VERSION) doesn't match expected version (${{ needs.version.outputs.new_release_version }})"
+          fi
 
       - name: Build all platform binaries
         run: |
@@ -57,6 +159,12 @@ jobs:
             if [ -f "$binary" ]; then
               SIZE=$(du -h "$binary" | cut -f1)
               echo "✅ $binary ($SIZE)"
+              # Verify binary version
+              chmod +x "$binary" 2>/dev/null || true
+              if [ -x "$binary" ]; then
+                BINARY_VERSION=$("$binary" -V 2>&1 || echo "unknown")
+                echo "   Version: $BINARY_VERSION"
+              fi
             else
               echo "❌ Missing: $binary"
               MISSING=1
@@ -81,14 +189,15 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Create Release
-    needs: build
+    name: Create GitHub Release
+    needs: [version, build]
+    if: needs.version.outputs.new_release_published == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository (full history)
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: main
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -127,40 +236,63 @@ jobs:
           
           echo "✅ All binaries verified"
 
-      - name: Check NPM token availability
-        id: npm_token_check
+      - name: Create GitHub Release
         run: |
-          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
-            echo "npm_available=false" >> $GITHUB_OUTPUT
-            echo "⚠️ NPM_TOKEN not configured - npm publishing will be skipped"
-          else
-            echo "npm_available=true" >> $GITHUB_OUTPUT
-            echo "✓ NPM_TOKEN configured - package will be published to npm"
-          fi
-
-      - name: Run semantic-release
-        run: |
+          # Create a temporary .releaserc.json for GitHub release only
+          cat > .releaserc.release.json << 'EOF'
+          {
+            "branches": ["main"],
+            "plugins": [
+              "@semantic-release/commit-analyzer",
+              "@semantic-release/release-notes-generator",
+              [
+                "@semantic-release/github",
+                {
+                  "assets": [
+                    {"path": "bin/arashi-linux-x64", "label": "arashi-linux-x64 (Linux x64)"},
+                    {"path": "bin/arashi-macos-arm64", "label": "arashi-macos-arm64 (macOS ARM64)"},
+                    {"path": "bin/arashi-windows-x64.exe", "label": "arashi-windows-x64.exe (Windows x64)"}
+                  ]
+                }
+              ]
+            ]
+          }
+          EOF
+          
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
-            echo "🧪 Running in DRY-RUN mode - no release will be created"
-            bunx semantic-release --dry-run
+            echo "🧪 DRY-RUN mode - skipping GitHub release creation"
           else
-            echo "🚀 Running semantic-release..."
-            bunx semantic-release
+            echo "🚀 Creating GitHub release for v${{ needs.version.outputs.new_release_version }}..."
+            bunx semantic-release --extends .releaserc.release.json
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_ENV: production
+
+      - name: Publish to npm
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "📦 Publishing to npm..."
+            echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+            npm publish --access public
+            echo "✅ Published to npm"
+          else
+            echo "⚠️ Skipping npm publish - NPM_TOKEN not configured"
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Release Summary
         if: always()
         run: |
           echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Multi-platform binaries built" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Version bumped to ${{ needs.version.outputs.new_release_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Multi-platform binaries built with correct version" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ GitHub release created" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.npm_token_check.outputs.npm_available }}" == "true" ]; then
+          if [ -n "${{ secrets.NPM_TOKEN }}" ] && [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
             echo "- ✅ Package published to npm" >> $GITHUB_STEP_SUMMARY
           else
-            echo "- ⚠️ npm publishing skipped (NPM_TOKEN not configured)" >> $GITHUB_STEP_SUMMARY
+            echo "- ⚠️ npm publishing skipped" >> $GITHUB_STEP_SUMMARY
           fi
