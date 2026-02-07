@@ -68,8 +68,10 @@ jobs:
       - name: Run semantic-release (version bump only)
         id: semantic
         run: |
-          # Create a temporary .releaserc.json that only does version bumping
-          cat > .releaserc.temp.json << 'EOF'
+          # Temporarily rename the main config and create version-bump-only config
+          mv .releaserc.json .releaserc.json.bak
+          
+          cat > .releaserc.json << 'EOF'
           {
             "branches": ["main"],
             "plugins": [
@@ -90,27 +92,31 @@ jobs:
           
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
             echo "🧪 Running in DRY-RUN mode - no release will be created"
-            bunx semantic-release --dry-run --extends .releaserc.temp.json
+            bunx semantic-release --dry-run
           else
             echo "🚀 Running semantic-release to bump version..."
-            bunx semantic-release --extends .releaserc.temp.json
+            bunx semantic-release
           fi
           
+          # Restore original config
+          mv .releaserc.json.bak .releaserc.json
+          
           # Output whether a new release was published
-          if [ -f .VERSION ]; then
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          # Check if version changed by comparing with the commit before this run
+          git fetch origin main
+          OLD_VERSION=$(git show HEAD~1:package.json 2>/dev/null | node -p "try { JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf-8')).version } catch(e) { '0.0.0' }" || echo "0.0.0")
+          
+          echo "Current version: $NEW_VERSION"
+          echo "Previous version: $OLD_VERSION"
+          
+          if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then
             echo "new_release_published=true" >> $GITHUB_OUTPUT
-            echo "new_release_version=$(cat .VERSION)" >> $GITHUB_OUTPUT
+            echo "new_release_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "✅ Version bumped from $OLD_VERSION to $NEW_VERSION"
           else
-            NEW_VERSION=$(node -p "require('./package.json').version")
-            # Check if version changed by comparing with previous commit
-            git fetch origin main
-            OLD_VERSION=$(git show origin/main:package.json | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf-8')).version" || echo "0.0.0")
-            if [ "$NEW_VERSION" != "$OLD_VERSION" ]; then
-              echo "new_release_published=true" >> $GITHUB_OUTPUT
-              echo "new_release_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-            else
-              echo "new_release_published=false" >> $GITHUB_OUTPUT
-            fi
+            echo "new_release_published=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No version change detected"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -238,8 +244,10 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          # Create a temporary .releaserc.json for GitHub release only
-          cat > .releaserc.release.json << 'EOF'
+          # Temporarily rename the main config and create GitHub-release-only config
+          mv .releaserc.json .releaserc.json.bak
+          
+          cat > .releaserc.json << 'EOF'
           {
             "branches": ["main"],
             "plugins": [
@@ -263,8 +271,11 @@ jobs:
             echo "🧪 DRY-RUN mode - skipping GitHub release creation"
           else
             echo "🚀 Creating GitHub release for v${{ needs.version.outputs.new_release_version }}..."
-            bunx semantic-release --extends .releaserc.release.json
+            bunx semantic-release
           fi
+          
+          # Restore original config
+          mv .releaserc.json.bak .releaserc.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_ENV: production
