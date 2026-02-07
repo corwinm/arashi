@@ -39,7 +39,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install
-        working-directory: repos/arashi
 
       - name: Build all platform binaries
         run: |
@@ -70,7 +69,6 @@ jobs:
           fi
           
           echo "✅ All binaries built successfully"
-        working-directory: repos/arashi
         env:
           NODE_ENV: production
 
@@ -78,7 +76,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: arashi-binaries
-          path: repos/arashi/bin/arashi-*
+          path: bin/arashi-*
           retention-days: 1
           if-no-files-found: error
 
@@ -96,19 +94,17 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Install semantic-release
-        run: |
-          cd repos/arashi
-          bun install semantic-release @semantic-release/git @semantic-release/changelog @semantic-release/npm @semantic-release/github
+        run: bun install semantic-release @semantic-release/git @semantic-release/changelog @semantic-release/npm @semantic-release/github
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           name: arashi-binaries
-          path: repos/arashi/bin
+          path: bin
 
       - name: Verify all binaries present
         run: |
-          cd repos/arashi/bin
+          cd bin
           echo "📦 Verifying downloaded artifacts..."
           
           REQUIRED_BINARIES=("arashi-macos-arm64" "arashi-linux-x64" "arashi-windows-x64.exe")
@@ -144,7 +140,6 @@ jobs:
 
       - name: Run semantic-release
         run: |
-          cd repos/arashi
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
             echo "🧪 Running in DRY-RUN mode - no release will be created"
             bunx semantic-release --dry-run
