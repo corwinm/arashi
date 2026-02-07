@@ -168,67 +168,22 @@ bindkey -s '^g' 'arashi-tmux\n'  # Zsh
 
 #### Setup
 
-```bash
-# Install sesh
-brew install joshmedeski/sesh/sesh
-
-# Add arashi as a sesh source
-# ~/.config/sesh/sesh.toml
-[sources]
-arashi = "arashi list"
-```
+Follow sesh's [installation instructions](https://github.com/joshmedeski/sesh?tab=readme-ov-file#how-to-install)
 
 #### Usage
 
 ```bash
-# Select from all sessions + arashi worktrees
-sesh connect $(sesh list | fzf)
+# Select from arashi worktrees
+sesh connect $(arashi list | fzf)
 
-# Or create a keybinding (Ctrl+A)
-bind '"\C-a":"sesh connect \$(sesh list | fzf)\n"'
+# Or create a keybinding (Ctrl+G)
+bind '"\C-g":"sesh connect \$(arashi list | fzf)\n"'
 ```
 
 **Benefits of sesh:**
-- Unified list of existing tmux sessions + arashi worktrees
 - Smart session naming and path handling
 - Automatic tmux session creation
 - Works seamlessly with zoxide and other tools
-
-### Fish + tmux Integration
-
-For Fish shell users, here's a complete solution:
-
-```fish
-# ~/.config/fish/functions/arashi_session.fish
-function arashi_session
-    set -l worktree (arashi list | fzf \
-        --preview 'cd {} && git status' \
-        --preview-window=right:60% \
-        --height=80%)
-    
-    if test -n "$worktree"
-        set -l session_name (basename $worktree)
-        
-        if not tmux has-session -t $session_name 2>/dev/null
-            tmux new-session -d -s $session_name -c $worktree
-        end
-        
-        if set -q TMUX
-            tmux switch-client -t $session_name
-        else
-            tmux attach-session -t $session_name
-        end
-    end
-end
-
-# Bind to Ctrl+G
-bind \cg arashi_session
-```
-
-This includes:
-- Live git status preview in fzf
-- Automatic session creation with smart naming
-- Works both inside and outside tmux
 
 ### Comparison Table
 
@@ -248,7 +203,7 @@ This includes:
 ### Example Workflow
 
 ```bash
-# Morning routine:
+1. Run `arashi create feature-new-api` to set up worktrees across repos
 1. Press Ctrl+G
 2. Type "feature" to filter worktrees
 3. Select your feature branch worktree
@@ -281,9 +236,6 @@ bun install
 
 # Run in development mode
 bun run dev
-
-# Build single-file executable
-bun run build
 
 # Build for all platforms
 bun run build:all
@@ -327,16 +279,6 @@ Arashi is built with:
 ## Roadmap
 
 See the [Design Document](https://github.com/corwinm/arashi-arashi/tree/main/setup/.specify/memory/design.md) in the specs repository for the complete feature roadmap organized by implementation phases.
-
-### Current Phase: Foundation (Phase 1)
-- [x] Project setup and structure
-- [x] Type definitions
-- [ ] Utility libraries (git, config, filesystem, logger, prompts)
-
-### Next Phase: Core Commands (Phase 2)
-- [ ] `init` command
-- [ ] `add` command
-- [ ] `create` command
 
 ## Why "Arashi"?
 
