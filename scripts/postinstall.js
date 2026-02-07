@@ -90,6 +90,18 @@ function downloadFile(url, dest) {
 // Main installation logic
 async function install() {
   try {
+    // Skip postinstall in development (when installing from the repo)
+    // Check if we're in development by looking for src/ directory
+    const srcDir = join(__dirname, "..", "src");
+    try {
+      await access(srcDir, constants.F_OK);
+      console.log("✓ Development environment detected, skipping binary download");
+      console.log("  Run 'bun run build:all' to build binaries locally");
+      return;
+    } catch {
+      // Not in development, continue with download
+    }
+
     // Get version from package.json
     const packageJsonPath = join(__dirname, "..", "package.json");
     const { readFile } = await import("node:fs/promises");
