@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/corwinm/arashi/compare/v1.1.0...v1.1.1) (2026-02-07)
+
+### Bug Fixes
+
+* use package.json version instead of hardcoded value in CLI ([e66b6f5](https://github.com/corwinm/arashi/commit/e66b6f50513a8bf66b45ebbcabcda2bab176df91))
+
 ## [1.1.0](https://github.com/corwinm/arashi/compare/v1.0.0...v1.1.0) (2026-02-07)
 
 ### Features
