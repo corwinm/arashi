@@ -28,15 +28,8 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.target }}
+    name: Build Binaries
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true  # Stop all builds if any platform fails (atomic release guarantee)
-      matrix:
-        target:
-          - bun-linux-x64
-          - bun-darwin-arm64
-          - bun-windows-x64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,36 +41,44 @@ jobs:
         run: bun install
         working-directory: repos/arashi
 
-      - name: Build binary for ${{ matrix.target }}
+      - name: Build all platform binaries
         run: |
-          echo "🔨 Building binary for ${{ matrix.target }}..."
-          mkdir -p dist
-          bun build src/index.ts \
-            --compile \
-            --target=${{ matrix.target }} \
-            --minify \
-            --sourcemap \
-            --bytecode \
-            --outfile dist/arashi-${{ matrix.target }}
+          echo "🔨 Building binaries for all platforms..."
+          bun run build:all
           
-          # Check binary size
-          BINARY_SIZE=$(du -h dist/arashi-${{ matrix.target }}* | cut -f1)
-          echo "✅ Binary built successfully: $BINARY_SIZE"
+          echo ""
+          echo "📦 Built binaries:"
+          ls -lh bin/
           
-          # Verify binary exists
-          if [ ! -f dist/arashi-${{ matrix.target }}* ]; then
-            echo "❌ Error: Binary not found after build"
+          # Verify all required binaries exist
+          REQUIRED_BINARIES=("bin/arashi-macos-arm64" "bin/arashi-linux-x64" "bin/arashi-windows-x64.exe")
+          MISSING=0
+          
+          for binary in "${REQUIRED_BINARIES[@]}"; do
+            if [ -f "$binary" ]; then
+              SIZE=$(du -h "$binary" | cut -f1)
+              echo "✅ $binary ($SIZE)"
+            else
+              echo "❌ Missing: $binary"
+              MISSING=1
+            fi
+          done
+          
+          if [ $MISSING -eq 1 ]; then
+            echo "❌ Error: Not all required binaries were built"
             exit 1
           fi
+          
+          echo "✅ All binaries built successfully"
         working-directory: repos/arashi
         env:
           NODE_ENV: production
 
-      - name: Upload binary artifact
+      - name: Upload binary artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: arashi-${{ matrix.target }}
-          path: repos/arashi/dist/arashi-${{ matrix.target }}*
+          name: arashi-binaries
+          path: repos/arashi/bin/arashi-*
           retention-days: 1
           if-no-files-found: error
 
@@ -102,15 +103,15 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          path: repos/arashi/dist
-          merge-multiple: true
+          name: arashi-binaries
+          path: repos/arashi/bin
 
       - name: Verify all binaries present
         run: |
-          cd repos/arashi/dist
+          cd repos/arashi/bin
           echo "📦 Verifying downloaded artifacts..."
           
-          REQUIRED_BINARIES=("arashi-bun-linux-x64" "arashi-bun-darwin-arm64" "arashi-bun-windows-x64.exe")
+          REQUIRED_BINARIES=("arashi-macos-arm64" "arashi-linux-x64" "arashi-windows-x64.exe")
           MISSING=0
           
           for binary in "${REQUIRED_BINARIES[@]}"; do

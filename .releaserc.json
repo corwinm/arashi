@@ -57,16 +57,16 @@
       {
         "assets": [
           {
-            "path": "dist/arashi-bun-linux-x64",
-            "label": "arashi-bun-linux-x64 (Linux x64)"
+            "path": "bin/arashi-linux-x64",
+            "label": "arashi-linux-x64 (Linux x64)"
           },
           {
-            "path": "dist/arashi-bun-darwin-arm64",
-            "label": "arashi-bun-darwin-arm64 (macOS ARM64)"
+            "path": "bin/arashi-macos-arm64",
+            "label": "arashi-macos-arm64 (macOS ARM64)"
           },
           {
-            "path": "dist/arashi-bun-windows-x64.exe",
-            "label": "arashi-bun-windows-x64.exe (Windows x64)"
+            "path": "bin/arashi-windows-x64.exe",
+            "label": "arashi-windows-x64.exe (Windows x64)"
           }
         ]
       }
