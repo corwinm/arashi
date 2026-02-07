@@ -12,6 +12,7 @@ coverage/
 *.tmp
 *.swp
 Thumbs.db
+bin/arashi.bin
 
 # Test workspace directories (dynamically created during tests)
 tests/temp-integration-workspace/
