@@ -178,6 +178,8 @@ sesh connect $(arashi list | fzf)
 
 # Or create a keybinding (Ctrl+G)
 bind '"\C-g":"sesh connect \$(arashi list | fzf)\n"'
+# zsh:
+bindkey -s '^g' 'sesh connect $(arashi list | fzf)\n'
 ```
 
 **Benefits of sesh:**
