@@ -1,3 +1,11 @@
+## [1.1.2](https://github.com/corwinm/arashi/compare/v1.1.1...v1.1.2) (2026-02-07)
+
+
+### Bug Fixes
+
+* rebuild binaries after version bump to ensure correct version is embedded ([8cdcdf6](https://github.com/corwinm/arashi/commit/8cdcdf6fdab84557824988526a8e80fe1f9baf78))
+* use temporary config file replacement for semantic-release ([12804b7](https://github.com/corwinm/arashi/commit/12804b7a1224666245de566d003568a77d427324))
+
 ## [1.1.1](https://github.com/corwinm/arashi/compare/v1.1.0...v1.1.1) (2026-02-07)
 
 ### Bug Fixes
