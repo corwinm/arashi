@@ -1,3 +1,9 @@
+## [1.1.3](https://github.com/corwinm/arashi/compare/v1.1.2...v1.1.3) (2026-02-07)
+
+### Bug Fixes
+
+* simplify release workflow and build binaries after version bump ([fb4cb26](https://github.com/corwinm/arashi/commit/fb4cb26faae144a5dd77a68794a465be04848cda))
+
 ## [1.1.2](https://github.com/corwinm/arashi/compare/v1.1.1...v1.1.2) (2026-02-07)
 
 
