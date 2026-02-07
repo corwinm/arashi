@@ -83,3 +83,53 @@ export class ArashiError extends Error {
     };
   }
 }
+
+/**
+ * Error codes for Add Command specific errors
+ */
+export enum AddCommandErrorCode {
+  INVALID_URL = 'INVALID_URL',
+  DUPLICATE_NAME = 'DUPLICATE_NAME',
+  CLONE_FAILED = 'CLONE_FAILED',
+  BRANCH_DETECTION_FAILED = 'BRANCH_DETECTION_FAILED',
+  CONFIG_UPDATE_FAILED = 'CONFIG_UPDATE_FAILED',
+}
+
+/**
+ * Custom error class for add command operations
+ * Provides specific error codes for programmatic handling
+ */
+export class AddCommandError extends Error {
+  /** Error name (always 'AddCommandError') */
+  readonly name = 'AddCommandError' as const;
+  
+  /** Structured error code for programmatic handling */
+  readonly code: AddCommandErrorCode;
+  
+  /** Additional context for debugging */
+  readonly context?: Record<string, any>;
+
+  constructor(message: string, code: AddCommandErrorCode, context?: Record<string, any>) {
+    super(message);
+    this.code = code;
+    this.context = context;
+    
+    // Maintain proper stack trace for where error was thrown (V8 only)
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, AddCommandError);
+    }
+  }
+
+  /**
+   * Serialize error to JSON for logging/debugging
+   */
+  toJSON(): object {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code,
+      context: this.context,
+      stack: this.stack
+    };
+  }
+}

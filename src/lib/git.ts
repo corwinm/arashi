@@ -7,6 +7,7 @@
  * @module git
  */
 
+import { dirname, basename } from "path";
 import type { CommandResult } from "../types/git";
 import { ArashiError } from "./errors";
 
@@ -95,4 +96,135 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
 export async function isBareRepo(repoPath: string): Promise<boolean> {
   const result = await exec(['rev-parse', '--is-bare-repository'], repoPath);
   return result.stdout.trim() === 'true';
+}
+
+/**
+ * Clone a Git repository
+ * 
+ * @param gitUrl - Git repository URL to clone (HTTPS, SSH, Git, File, or SCP format)
+ * @param destPath - Destination path where repository will be cloned
+ * @returns Command result with stdout, stderr, and exit code
+ * @throws {ArashiError} If clone operation fails
+ * 
+ * @example
+ * await clone('https://github.com/user/repo.git', '/path/to/destination');
+ */
+export async function clone(gitUrl: string, destPath: string): Promise<CommandResult> {
+  if (!gitUrl || typeof gitUrl !== 'string' || gitUrl.trim() === '') {
+    throw new Error('Git URL cannot be empty');
+  }
+
+  if (!destPath || typeof destPath !== 'string' || destPath.trim() === '') {
+    throw new Error('Destination path cannot be empty');
+  }
+
+  // Clone to the parent directory, letting Git create the repo directory
+  const parentDir = dirname(destPath);
+  const repoName = basename(destPath);
+
+  try {
+    const proc = Bun.spawn(['git', 'clone', gitUrl, repoName], {
+      cwd: parentDir,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      const errorMessage = stderr.trim() || stdout.trim() || 'Git clone failed with no output';
+      throw new ArashiError(`Git clone failed: ${errorMessage}`, {
+        stdout,
+        stderr,
+        exitCode,
+        args: ['clone', gitUrl, repoName],
+        cwd: parentDir,
+      });
+    }
+
+    return {
+      stdout,
+      stderr,
+      exitCode,
+    };
+  } catch (error) {
+    if (error instanceof ArashiError) {
+      throw error;
+    }
+    throw new ArashiError(`Failed to spawn git clone: ${(error as Error).message}`, {
+      stdout: '',
+      stderr: (error as Error).message,
+      exitCode: -1,
+      args: ['clone', gitUrl, repoName],
+      cwd: parentDir,
+    });
+  }
+}
+
+/**
+ * Get the default branch of a repository
+ * 
+ * Uses the following priority order:
+ * 1. git symbolic-ref refs/remotes/origin/HEAD (most reliable)
+ * 2. Check common branch names (main, master, develop)
+ * 3. Get first remote branch
+ * 
+ * @param repoPath - Path to the cloned repository
+ * @returns Name of the default branch (e.g., 'main', 'master')
+ * @throws {ArashiError} If unable to detect default branch
+ * 
+ * @example
+ * const branch = await getDefaultBranch('/path/to/repo');
+ * console.log(`Default branch: ${branch}`);
+ */
+export async function getDefaultBranch(repoPath: string): Promise<string> {
+  // Try method 1: symbolic-ref (most reliable)
+  try {
+    const result = await exec(['symbolic-ref', 'refs/remotes/origin/HEAD', '--short'], repoPath);
+    const branch = result.stdout.trim().replace(/^origin\//, '');
+    if (branch) {
+      return branch;
+    }
+  } catch (error) {
+    // Fall through to next method
+  }
+
+  // Try method 2: Check common default branch names
+  const commonBranches = ['main', 'master', 'develop'];
+  for (const branch of commonBranches) {
+    try {
+      await exec(['show-ref', '--verify', `refs/remotes/origin/${branch}`], repoPath);
+      return branch;
+    } catch (error) {
+      // Branch doesn't exist, try next
+    }
+  }
+
+  // Try method 3: Get first remote branch
+  try {
+    const result = await exec(['branch', '-r', '--list'], repoPath);
+    const branches = result.stdout
+      .trim()
+      .split('\n')
+      .map(b => b.trim())
+      .filter(b => b && !b.includes('HEAD'));
+    
+    if (branches.length > 0) {
+      const firstBranch = branches[0].replace(/^origin\//, '');
+      return firstBranch;
+    }
+  } catch (error) {
+    // Fall through to error
+  }
+
+  // Unable to detect default branch
+  throw new ArashiError('Unable to detect default branch: repository has no remote branches', {
+    stdout: '',
+    stderr: 'No remote branches found',
+    exitCode: 1,
+    args: ['branch', '-r', '--list'],
+    cwd: repoPath,
+  });
 }
