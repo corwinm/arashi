@@ -21,6 +21,7 @@ import {
   InvalidBranchNameError,
   RepositoryValidationError,
   ConflictAbortedError,
+  UserAbortedError,
 } from '../core/worktree.ts';
 
 interface CreateCommandOptions {
@@ -66,6 +67,9 @@ export function createCommand(): Command {
           process.exit(1);
         } else if (error instanceof ConflictAbortedError) {
           logger.warn('Operation aborted by user');
+          process.exit(2);
+        } else if (error instanceof UserAbortedError) {
+          logger.warn('Operation cancelled by user');
           process.exit(2);
         } else if (error instanceof Error) {
           logger.error(`Unexpected error: ${error.message}`);

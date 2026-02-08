@@ -33,10 +33,10 @@ describe('remove command - US3 dirty warning', () => {
 
     try {
       const exitCode = await executeRemove(branchName, { force: false }, {
-        multiSelect: async () => [branchName],
+        multiSelect: async () => ({ status: 'ok', value: [branchName] }),
         confirm: async () => {
           confirmCalls += 1;
-          return true;
+          return { status: 'ok', value: true };
         },
       });
       expect(exitCode).toBe(0);

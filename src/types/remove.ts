@@ -69,6 +69,8 @@ export interface RemoveCommandOptions {
   keepBranches?: boolean;
   /** Skip confirmation prompts */
   force?: boolean;
+  /** Treat argument as worktree path */
+  path?: boolean;
   /** Output JSON */
   json?: boolean;
 }

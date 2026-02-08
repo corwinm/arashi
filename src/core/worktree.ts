@@ -320,6 +320,16 @@ export class ConflictAbortedError extends Error {
 }
 
 /**
+ * Error thrown when user cancels an interactive prompt
+ */
+export class UserAbortedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UserAbortedError';
+  }
+}
+
+/**
  * Error thrown when branch name is invalid
  */
 export class InvalidBranchNameError extends Error {
@@ -1096,16 +1106,23 @@ export async function resolveConflicts(
     'How would you like to proceed?',
     choices
   );
-  
+
+  if (strategy.status === 'cancelled') {
+    throw new ConflictAbortedError(
+      'Operation cancelled by user due to branch conflicts',
+      conflicts
+    );
+  }
+
   // T040: Handle ABORT strategy
-  if (strategy === 'ABORT') {
+  if (strategy.value === 'ABORT') {
     throw new ConflictAbortedError(
       "Operation aborted by user due to branch conflicts",
       conflicts
     );
   }
-  
-  return strategy;
+
+  return strategy.value;
 }
 
 /**
@@ -1190,16 +1207,20 @@ export async function applyRepositoryFilter(
         'Select repositories to create worktrees in:',
         choices
       );
+
+      if (selectedRepos.status === 'cancelled') {
+        throw new UserAbortedError('Repository selection cancelled by user');
+      }
       
       // T053: Validate non-empty result
-      if (selectedRepos.length === 0) {
+      if (selectedRepos.value.length === 0) {
         throw new RepositoryValidationError(
           "No repositories selected",
           ""
         );
       }
       
-      return selectedRepos;
+      return selectedRepos.value;
       
     default:
       throw new Error(`Unknown filter mode: ${(filter as any).mode}`);

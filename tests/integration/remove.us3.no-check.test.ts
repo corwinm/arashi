@@ -32,8 +32,8 @@ describe('remove command - US3 no-check-dirty', () => {
 
     try {
       const exitCode = await executeRemove(branchName, { checkDirty: false, force: false }, {
-        multiSelect: async () => [branchName],
-        confirm: async () => true,
+        multiSelect: async () => ({ status: 'ok', value: [branchName] }),
+        confirm: async () => ({ status: 'ok', value: true }),
       });
       expect(exitCode).toBe(0);
     } finally {

@@ -4,6 +4,7 @@
 
 import { realpathSync } from 'fs';
 import chalk from 'chalk';
+import { resolve as resolvePath } from 'path';
 import * as git from '../lib/git.ts';
 import { ArashiError } from '../lib/errors.ts';
 import { GitErrorCode } from '../types/git.ts';
@@ -112,6 +113,31 @@ export async function discoverWorktreesByBranch(
   return results;
 }
 
+export async function discoverWorktreesByPath(
+  worktreePath: string,
+  repositories: RepositoryTarget[]
+): Promise<WorktreeInfo[]> {
+  const results: WorktreeInfo[] = [];
+  const targetPath = normalizePath(worktreePath);
+
+  for (const repo of repositories) {
+    try {
+      const result = await git.exec(['worktree', 'list', '--porcelain'], repo.path);
+      const worktrees = parseWorktreeList(result.stdout, repo.name, repo.path);
+      for (const worktree of worktrees) {
+        const candidatePath = normalizePath(worktree.path);
+        if (candidatePath === targetPath) {
+          results.push(worktree);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return results;
+}
+
 export async function discoverAllWorktrees(
   repositories: RepositoryTarget[]
 ): Promise<WorktreeInfo[]> {
@@ -127,6 +153,14 @@ export async function discoverAllWorktrees(
   }
 
   return results;
+}
+
+function normalizePath(pathInput: string): string {
+  try {
+    return realpathSync(pathInput);
+  } catch {
+    return resolvePath(pathInput);
+  }
 }
 
 export async function getDirtyStatus(worktreePath: string): Promise<DirtyStatus> {

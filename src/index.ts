@@ -9,19 +9,31 @@ import { createCommand as createRemoveCommand } from './commands/remove.ts';
 import { closeSync } from 'fs';
 import pkg from '../package.json' with { type: 'json' };
 
-// CRITICAL FIX FOR FZF COMPATIBILITY:
-// We need to close stdin file descriptor 0 to allow fzf to access /dev/tty
-// Standard process.stdin.destroy() doesn't actually close FD 0 in Bun compiled executables
-try {
-  // Close file descriptor 0 (stdin) using the low-level fs.closeSync
-  closeSync(0);
-} catch (e) {
-  // If closeSync fails (e.g., stdin already closed), fall back to process API
+// FZF compatibility: close stdin for list or forced remove when piping output
+const argv = process.argv.slice(2);
+let command = "";
+let forceRemove = false;
+for (const arg of argv) {
+  if (arg.startsWith('-')) {
+    if (arg === '-f' || arg === '--force') {
+      forceRemove = true;
+    }
+    continue;
+  }
+  command = arg;
+  break;
+}
+
+if (!process.stdout.isTTY && (command === 'list' || (command === 'remove' && forceRemove))) {
   try {
-    process.stdin.pause();
-    process.stdin.destroy();
-  } catch (e2) {
-    // Ignore all errors - stdin closing is best-effort
+    closeSync(0);
+  } catch (e) {
+    try {
+      process.stdin.pause();
+      process.stdin.destroy();
+    } catch {
+      // Ignore all errors - stdin closing is best-effort
+    }
   }
 }
 
