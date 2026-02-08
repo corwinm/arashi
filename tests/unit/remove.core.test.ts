@@ -9,10 +9,10 @@ import { join } from 'path';
 import { spawn } from 'bun';
 import {
   parseWorktreeList,
-  getDirtyStatus,
   createRemovalSummary,
   formatRemovalSummaryHuman,
 } from '../../src/core/remove.ts';
+import { getWorktreeDirtyStatus } from '../../src/core/worktree.ts';
 
 describe('remove core helpers', () => {
   test('parseWorktreeList parses porcelain output', () => {
@@ -36,7 +36,7 @@ describe('remove core helpers', () => {
     expect(worktrees[1].isMain).toBe(false);
   });
 
-  test('getDirtyStatus detects untracked files', async () => {
+  test('getWorktreeDirtyStatus detects untracked files', async () => {
     const repoPath = await mkdtemp(join(tmpdir(), 'arashi-remove-dirty-'));
     await spawn(['git', 'init', '-b', 'main'], { cwd: repoPath }).exited;
     await spawn(['git', 'config', 'user.email', 'test@example.com'], { cwd: repoPath }).exited;
@@ -45,7 +45,7 @@ describe('remove core helpers', () => {
 
     await Bun.write(join(repoPath, 'dirty.txt'), 'dirty');
 
-    const status = await getDirtyStatus(repoPath);
+    const status = await getWorktreeDirtyStatus(repoPath);
     expect(status.isDirty).toBe(true);
     expect(status.untrackedFiles).toBeGreaterThan(0);
 

@@ -12,10 +12,12 @@
  */
 
 import type { Repository } from "./repository.ts";
-import { basename, sep, join } from "path";
+import { basename, sep, join, parse, resolve } from "path";
+import { existsSync } from "fs";
 import type { Config as ArashiConfig } from "../lib/config.ts";
 import { loadConfig, ConfigNotFoundError } from "../lib/config.ts";
 import { isBareRepo } from "../lib/git.ts";
+import type { DirtyStatus, WorktreeEntry, WorktreeInfo } from "../types/remove.ts";
 
 // ============================================================================
 // Core Types (T005)
@@ -513,6 +515,166 @@ export async function calculateWorktreePath(
       strategy: 'sibling'
     };
   }
+}
+
+// ============================================================================
+// Worktree Entry Utilities (Remove workflow)
+// ============================================================================
+
+function resolveParentPathForChild(
+  worktreePath: string,
+  reposDirName: string,
+  repoName: string
+): string | null {
+  const normalized = resolve(worktreePath);
+  const parsed = parse(normalized);
+  const parts = normalized
+    .slice(parsed.root.length)
+    .split(sep)
+    .filter(part => part.length > 0);
+
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    if (parts[i] !== reposDirName) {
+      continue;
+    }
+    if (parts[i + 1] !== repoName) {
+      continue;
+    }
+    const parentParts = parts.slice(0, i);
+    return join(parsed.root, ...parentParts);
+  }
+
+  return null;
+}
+
+export function attachWorktreeRelationships(
+  entries: WorktreeEntry[],
+  options: {
+    reposDirName: string;
+    childRepoNames: Set<string>;
+  }
+): void {
+  const normalizedMap = new Map<string, WorktreeEntry>();
+
+  for (const entry of entries) {
+    entry.parentPath = null;
+    entry.childrenPaths = [];
+    normalizedMap.set(resolve(entry.path), entry);
+  }
+
+  for (const entry of entries) {
+    if (!options.childRepoNames.has(entry.repository)) {
+      continue;
+    }
+
+    const parentPath = resolveParentPathForChild(entry.path, options.reposDirName, entry.repository);
+    entry.parentPath = parentPath;
+  }
+
+  for (const entry of entries) {
+    if (!entry.parentPath) {
+      continue;
+    }
+    const parent = normalizedMap.get(resolve(entry.parentPath));
+    if (!parent) {
+      continue;
+    }
+    parent.childrenPaths.push(entry.path);
+  }
+}
+
+export async function getWorktreeDirtyStatus(worktreePath: string): Promise<DirtyStatus> {
+  try {
+    const result = await git.exec(['status', '--porcelain'], worktreePath);
+    const lines = result.stdout.trim().split('\n').filter(line => line.length > 0);
+    let modifiedFiles = 0;
+    let untrackedFiles = 0;
+    let stagedFiles = 0;
+
+    for (const line of lines) {
+      if (line.startsWith('??')) {
+        untrackedFiles += 1;
+        continue;
+      }
+
+      const indexStatus = line[0];
+      const worktreeStatus = line[1];
+
+      if (indexStatus !== ' ' && indexStatus !== '?') {
+        stagedFiles += 1;
+      }
+
+      if (worktreeStatus !== ' ' && worktreeStatus !== '?') {
+        modifiedFiles += 1;
+      }
+    }
+
+    return {
+      isDirty: lines.length > 0,
+      modifiedFiles,
+      untrackedFiles,
+      stagedFiles,
+    };
+  } catch {
+    return {
+      isDirty: true,
+      modifiedFiles: 0,
+      untrackedFiles: 0,
+      stagedFiles: 0,
+    };
+  }
+}
+
+export async function resolveWorktreeStatuses(
+  entries: WorktreeEntry[],
+  includeDirtyDetails: boolean
+): Promise<void> {
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!existsSync(entry.path)) {
+        entry.status = 'prunable';
+        entry.isDirty = false;
+        entry.dirtyDetails = undefined;
+        return;
+      }
+
+      if (!includeDirtyDetails) {
+        entry.status = 'present';
+        entry.isDirty = undefined;
+        entry.dirtyDetails = undefined;
+        return;
+      }
+
+      const status = await getWorktreeDirtyStatus(entry.path);
+      entry.isDirty = status.isDirty;
+      entry.dirtyDetails = status;
+      entry.status = status.isDirty ? 'dirty' : 'present';
+    })
+  );
+}
+
+export async function buildWorktreeEntries(
+  worktrees: WorktreeInfo[],
+  options: {
+    reposDirName: string;
+    childRepoNames: Set<string>;
+    includeDirtyDetails: boolean;
+  }
+): Promise<WorktreeEntry[]> {
+  const entries: WorktreeEntry[] = worktrees.map(worktree => ({
+    ...worktree,
+    status: 'present',
+    parentPath: null,
+    childrenPaths: [],
+  }));
+
+  attachWorktreeRelationships(entries, {
+    reposDirName: options.reposDirName,
+    childRepoNames: options.childRepoNames,
+  });
+  await resolveWorktreeStatuses(entries, options.includeDirtyDetails);
+
+  return entries;
 }
 
 // ============================================================================

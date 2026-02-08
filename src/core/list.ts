@@ -375,6 +375,18 @@ export function validateWorktreeListItem(item: any): asserts item is WorktreeLis
   if (item.subRepositories !== undefined && !Array.isArray(item.subRepositories)) {
     throw new ListCommandError('subRepositories must be array when present');
   }
+
+  if (item.parentPath !== undefined && item.parentPath !== null) {
+    if (typeof item.parentPath !== 'string' || !isAbsolute(item.parentPath)) {
+      throw new ListCommandError('parentPath must be absolute string or null');
+    }
+  }
+
+  if (item.childrenPaths !== undefined) {
+    if (!Array.isArray(item.childrenPaths) || item.childrenPaths.some((path: any) => typeof path !== 'string' || !isAbsolute(path))) {
+      throw new ListCommandError('childrenPaths must be array of absolute strings when present');
+    }
+  }
 }
 
 /**

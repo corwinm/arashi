@@ -13,6 +13,8 @@ export interface DirtyStatus {
   stagedFiles: number;
 }
 
+export type WorktreeStatus = 'present' | 'prunable' | 'dirty';
+
 export interface WorktreeInfo {
   /** Absolute filesystem path to worktree */
   path: string;
@@ -26,6 +28,29 @@ export interface WorktreeInfo {
   isDirty?: boolean;
   /** Optional detailed dirty status */
   dirtyDetails?: DirtyStatus;
+}
+
+export interface WorktreeEntry extends WorktreeInfo {
+  /** Status derived from filesystem + git state */
+  status: WorktreeStatus;
+  /** Parent worktree path if nested */
+  parentPath: string | null;
+  /** Child worktree paths if parent */
+  childrenPaths: string[];
+}
+
+export interface WorktreeGroup {
+  /** Parent entry for the group */
+  parent: WorktreeEntry;
+  /** Child entries grouped under the parent */
+  children: WorktreeEntry[];
+}
+
+export interface WorktreeGrouping {
+  /** Parent/child groups */
+  groups: WorktreeGroup[];
+  /** Entries without a parent or missing parent */
+  orphans: WorktreeEntry[];
 }
 
 export interface RemovalOperation {

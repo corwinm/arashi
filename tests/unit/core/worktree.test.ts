@@ -10,8 +10,10 @@ import {
   isValidBranchName,
   type RepositoryFilter,
   type WorktreeOperationOptions,
+  resolveWorktreeStatuses,
 } from "../../../src/core/worktree.ts";
 import type { Repository } from "../../../src/core/repository.ts";
+import type { WorktreeEntry } from "../../../src/types/remove.ts";
 
 // ============================================================================
 // Test Fixtures
@@ -281,3 +283,21 @@ describe("Repository Filtering", () => {
   // tested manually during development.
 });
 
+describe("Worktree Status Resolution", () => {
+  test("marks missing worktree directories as prunable", async () => {
+    const entry: WorktreeEntry = {
+      path: `/tmp/arashi-missing-${Date.now()}`,
+      branch: "feature-missing",
+      repository: "repo-a",
+      isMain: false,
+      status: "present",
+      parentPath: null,
+      childrenPaths: [],
+    };
+
+    await resolveWorktreeStatuses([entry], true);
+
+    expect(entry.status).toBe("prunable");
+    expect(entry.isDirty).toBe(false);
+  });
+});

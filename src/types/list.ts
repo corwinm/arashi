@@ -42,6 +42,10 @@ export interface WorktreeListItem {
   hasChanges: boolean;
   /** True for main worktree, false for linked worktrees */
   isMain: boolean;
+  /** Parent worktree path when nested under a parent */
+  parentPath?: string | null;
+  /** Child worktree paths when acting as a parent */
+  childrenPaths?: string[];
   /** Nested sub-repositories (only present in verbose mode) */
   subRepositories?: SubRepositoryInfo[];
 }
