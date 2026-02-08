@@ -1,3 +1,16 @@
+## [1.2.0](https://github.com/corwinm/arashi/compare/v1.1.3...v1.2.0) (2026-02-08)
+
+### Features
+
+* **remove:** add remove command workflow ([#17](https://github.com/corwinm/arashi/issues/17)) ([a32b5e4](https://github.com/corwinm/arashi/commit/a32b5e4e90bcb4254684ad145c2fd95c547d87aa))
+* **status:** implement status command with workspace discovery ([#15](https://github.com/corwinm/arashi/issues/15)) ([3af1162](https://github.com/corwinm/arashi/commit/3af1162372b3cd0f28bc8e9d00c3cfb7a3bd15ce)), closes [#26](https://github.com/corwinm/arashi/issues/26)
+
+### Bug Fixes
+
+* improve prompt handling and vim navigation ([#18](https://github.com/corwinm/arashi/issues/18)) ([940a636](https://github.com/corwinm/arashi/commit/940a6369d45c50066f3417213d490a1bf94d7c5e))
+* isBareRepo now correctly detects worktrees of bare repositories ([#16](https://github.com/corwinm/arashi/issues/16)) ([6eb14e3](https://github.com/corwinm/arashi/commit/6eb14e3d114e88808893446a13020944a7a8fbb8))
+* **remove:** align selection with worktree hierarchy ([#19](https://github.com/corwinm/arashi/issues/19)) ([02bbb32](https://github.com/corwinm/arashi/commit/02bbb327336973d1bd8e0bcedcc69b7cd266a00b))
+
 ## [1.1.3](https://github.com/corwinm/arashi/compare/v1.1.2...v1.1.3) (2026-02-07)
 
 ### Bug Fixes
