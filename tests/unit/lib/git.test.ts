@@ -194,7 +194,7 @@ describe("isBareRepo()", () => {
 
   test("should return true when checking a worktree of a bare repository", async () => {
     const bareRepoPath = createTempDir();
-    const worktreePath = createTempDir();
+    const worktreePath = join(createTempDir(), 'worktree');
     
     try {
       // Create a bare repository
@@ -216,6 +216,7 @@ describe("isBareRepo()", () => {
       }
       
       // Create a worktree from the bare repository
+      // git worktree add will create the worktreePath directory
       Bun.spawnSync(['git', 'worktree', 'add', worktreePath, 'main'], { cwd: bareRepoPath });
       
       // Check if isBareRepo correctly identifies the worktree's parent as bare
