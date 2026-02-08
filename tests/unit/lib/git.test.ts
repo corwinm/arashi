@@ -203,22 +203,27 @@ describe("isBareRepo()", () => {
       
       // Create an initial commit in a temporary non-bare repo
       const tempRepoPath = createTempDir();
+      let branchName = 'main';
       try {
         Bun.spawnSync(['git', 'init'], { cwd: tempRepoPath });
         Bun.spawnSync(['git', 'config', 'user.email', 'test@example.com'], { cwd: tempRepoPath });
         Bun.spawnSync(['git', 'config', 'user.name', 'Test User'], { cwd: tempRepoPath });
         await createInitialCommit(tempRepoPath);
         
+        // Get the actual branch name (might be master or main depending on git config)
+        const branchResult = Bun.spawnSync(['git', 'branch', '--show-current'], { cwd: tempRepoPath });
+        branchName = new TextDecoder().decode(branchResult.stdout).trim();
+        
         // Push to bare repo
         Bun.spawnSync(['git', 'remote', 'add', 'origin', bareRepoPath], { cwd: tempRepoPath });
-        Bun.spawnSync(['git', 'push', '-u', 'origin', 'main'], { cwd: tempRepoPath });
+        Bun.spawnSync(['git', 'push', '-u', 'origin', branchName], { cwd: tempRepoPath });
       } finally {
         removeTempDir(tempRepoPath);
       }
       
-      // Create a worktree from the bare repository
+      // Create a worktree from the bare repository using the actual branch name
       // git worktree add will create the worktreePath directory
-      const worktreeResult = Bun.spawnSync(['git', 'worktree', 'add', worktreePath, 'main'], { cwd: bareRepoPath });
+      const worktreeResult = Bun.spawnSync(['git', 'worktree', 'add', worktreePath, branchName], { cwd: bareRepoPath });
       
       // Ensure worktree was created successfully
       if (worktreeResult.exitCode !== 0) {
