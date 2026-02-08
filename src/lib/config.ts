@@ -7,7 +7,7 @@
  * @module config
  */
 
-import { join, dirname } from 'path';
+import { join, dirname, basename, resolve } from 'path';
 import { mkdir } from 'fs/promises';
 
 // ============================================================================
@@ -66,8 +66,25 @@ export interface Config {
   repos_dir: string;
   /** Whether to automatically run setup hooks */
   auto_setup: boolean;
+  /** Optional workspace-level hooks settings */
+  hooks?: {
+    /** Timeout in milliseconds for long-running operations */
+    timeout?: number;
+  };
   /** Map of repository names to their configurations */
   discovered_repos: Record<string, RepoConfig>;
+}
+
+/**
+ * Resolved repository information from workspace configuration.
+ */
+export interface WorkspaceRepository {
+  /** Repository identifier from config or workspace name */
+  name: string;
+  /** Absolute path to repository root */
+  path: string;
+  /** Default branch from config, if present */
+  defaultBranch?: string;
 }
 
 // ============================================================================
@@ -599,4 +616,32 @@ export async function removeRepo(repoPath: string, name: string): Promise<void> 
   
   // Save updated configuration
   await saveConfig(repoPath, config);
+}
+
+/**
+ * Load workspace configuration and build absolute repository list.
+ *
+ * Includes the workspace root repository plus discovered repositories.
+ */
+export async function loadWorkspaceRepositories(
+  workspaceRoot: string
+): Promise<{ config: Config; repositories: WorkspaceRepository[] }> {
+  const config = await loadConfig(workspaceRoot);
+  const repositories: WorkspaceRepository[] = [];
+  const mainName = basename(workspaceRoot);
+
+  repositories.push({
+    name: mainName,
+    path: resolve(workspaceRoot),
+  });
+
+  for (const [name, repoConfig] of Object.entries(config.discovered_repos)) {
+    repositories.push({
+      name,
+      path: resolve(workspaceRoot, repoConfig.path),
+      defaultBranch: repoConfig.default_branch,
+    });
+  }
+
+  return { config, repositories };
 }
