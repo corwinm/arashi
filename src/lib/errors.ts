@@ -133,3 +133,49 @@ export class AddCommandError extends Error {
     };
   }
 }
+
+/**
+ * Error codes for Remove Command specific errors
+ */
+export enum RemoveCommandErrorCode {
+  NO_REPOSITORIES = 'NO_REPOSITORIES',
+  BRANCH_NOT_FOUND = 'BRANCH_NOT_FOUND',
+  WORKTREE_LOCKED = 'WORKTREE_LOCKED',
+  WORKTREE_IN_USE = 'WORKTREE_IN_USE',
+  CONFIG_ERROR = 'CONFIG_ERROR',
+  INVALID_OPTIONS = 'INVALID_OPTIONS',
+}
+
+/**
+ * Custom error class for remove command operations
+ */
+export class RemoveCommandError extends Error {
+  /** Error name (always 'RemoveCommandError') */
+  readonly name = 'RemoveCommandError' as const;
+
+  /** Structured error code for programmatic handling */
+  readonly code: RemoveCommandErrorCode;
+
+  /** Additional context for debugging */
+  readonly context?: Record<string, any>;
+
+  constructor(message: string, code: RemoveCommandErrorCode, context?: Record<string, any>) {
+    super(message);
+    this.code = code;
+    this.context = context;
+
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, RemoveCommandError);
+    }
+  }
+
+  toJSON(): object {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code,
+      context: this.context,
+      stack: this.stack,
+    };
+  }
+}
