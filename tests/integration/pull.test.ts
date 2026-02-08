@@ -41,6 +41,7 @@ async function seedRemote(remotePath: string, baseDir: string, seedName: string)
   await runGit(seedPath, ['add', '.']);
   await runGit(seedPath, ['commit', '-m', 'Initial commit']);
   await runGit(seedPath, ['push', 'origin', 'HEAD:main']);
+  await runGit(remotePath, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
 }
 
 async function createWorkspaceWithRepo(baseDir: string, options?: { hooksTimeoutMs?: number }): Promise<{
@@ -97,7 +98,8 @@ async function createWorkspaceWithRepo(baseDir: string, options?: { hooksTimeout
 async function createRemoteCommit(remotePath: string, baseDir: string, name: string, fileName: string): Promise<void> {
   const workdir = join(baseDir, name);
   await runGit(baseDir, ['clone', remotePath, workdir]);
-  await runGit(workdir, ['checkout', '-B', 'main']);
+  await runGit(workdir, ['fetch', 'origin', 'main']);
+  await runGit(workdir, ['checkout', '-B', 'main', 'origin/main']);
   await runGit(workdir, ['config', 'user.email', 'test@example.com']);
   await runGit(workdir, ['config', 'user.name', 'Test User']);
   await writeFile(join(workdir, fileName), `update ${Date.now()}`);
