@@ -71,6 +71,9 @@ arashi create feature-new-api
 # Check status across all repos
 arashi status
 
+# Sync repos to the parent branch
+arashi sync
+
 # Remove worktree when done
 arashi remove feature-new-api
 
@@ -89,6 +92,7 @@ Note: `arashi remove` requires an interactive TTY. In non-interactive runs it ex
 - `arashi remove <branch|path>` - Remove worktrees and branches
 - `arashi setup` - Run setup scripts
 - `arashi status` - Show status of all repositories
+- `arashi sync` - Align repositories to the parent branch
 
 ## Integration with fzf, tmux, and sesh
 
