@@ -73,6 +73,9 @@ arashi status
 
 # Remove worktree when done
 arashi remove feature-new-api
+
+# Remove a specific worktree path
+arashi remove -f "$(arashi list | fzf)"
 ```
 
 Note: `arashi remove` requires an interactive TTY. In non-interactive runs it exits with a clear error.
@@ -83,7 +86,7 @@ Note: `arashi remove` requires an interactive TTY. In non-interactive runs it ex
 - `arashi add <git-url>` - Add a repository to the repos folder
 - `arashi create <branch>` - Create coordinated worktrees
 - `arashi list` - List all worktrees
-- `arashi remove <branch>` - Remove worktrees and branches
+- `arashi remove <branch|path>` - Remove worktrees and branches
 - `arashi setup` - Run setup scripts
 - `arashi status` - Show status of all repositories
 
@@ -98,6 +101,9 @@ Navigate to any worktree interactively:
 ```bash
 # Interactive worktree selection
 cd $(arashi list | fzf)
+
+# Remove a selected worktree
+arashi remove -f "$(arashi list | fzf)"
 ```
 
 **Add as a shell keybinding** for instant access:

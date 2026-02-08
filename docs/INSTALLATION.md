@@ -102,6 +102,7 @@ npm install -g arashi
 # Use anywhere
 arashi list | fzf          # ✓ Works perfectly
 cd $(arashi list | fzf)    # ✓ Interactive navigation
+arashi remove -f "$(arashi list | fzf)"  # ✓ Pick a worktree via fzf
 ```
 
 ## Windows Support

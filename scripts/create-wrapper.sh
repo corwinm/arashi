@@ -16,15 +16,23 @@ cat > "$DIST_DIR/arashi-wrapper.sh" << 'EOF'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 command=""
+force_remove="false"
 for arg in "$@"; do
   case "$arg" in
-    -*) continue ;;
+    -*)
+      case "$arg" in
+        -f|--force) force_remove="true" ;;
+      esac
+      continue
+      ;;
     *) command="$arg"; break ;;
   esac
 done
 
-if [ "$command" = "list" ] && [ ! -t 1 ]; then
-  exec "$SCRIPT_DIR/arashi.bin" "$@" 0<&-
+if [ ! -t 1 ]; then
+  if [ "$command" = "list" ] || { [ "$command" = "remove" ] && [ "$force_remove" = "true" ]; }; then
+    exec "$SCRIPT_DIR/arashi.bin" "$@" 0<&-
+  fi
 fi
 
 exec "$SCRIPT_DIR/arashi.bin" "$@"

@@ -9,18 +9,22 @@ import { createCommand as createRemoveCommand } from './commands/remove.ts';
 import { closeSync } from 'fs';
 import pkg from '../package.json' with { type: 'json' };
 
-// FZF compatibility: close stdin only when piping `list` output
+// FZF compatibility: close stdin for list or forced remove when piping output
 const argv = process.argv.slice(2);
 let command = "";
+let forceRemove = false;
 for (const arg of argv) {
   if (arg.startsWith('-')) {
+    if (arg === '-f' || arg === '--force') {
+      forceRemove = true;
+    }
     continue;
   }
   command = arg;
   break;
 }
 
-if (command === 'list' && !process.stdout.isTTY) {
+if (!process.stdout.isTTY && (command === 'list' || (command === 'remove' && forceRemove))) {
   try {
     closeSync(0);
   } catch (e) {

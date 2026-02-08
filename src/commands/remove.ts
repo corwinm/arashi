@@ -12,6 +12,7 @@ import * as logger from '../lib/logger.ts';
 import { loadConfig, findWorkspaceRoot, type Config } from '../lib/config.ts';
 import { RemoveCommandError, RemoveCommandErrorCode } from '../lib/errors.ts';
 import { getDefaultBranch } from '../lib/git.ts';
+import { existsSync } from 'fs';
 import type { RemoveCommandOptions, WorktreeInfo, RemovalOperation } from '../types/remove.ts';
 import {
   attachDirtyStatus,
@@ -20,6 +21,7 @@ import {
   deleteBranch,
   discoverAllWorktrees,
   discoverWorktreesByBranch,
+  discoverWorktreesByPath,
   detachWorktree,
   formatRemovalSummaryHuman,
   formatRemovalSummaryJson,
@@ -33,17 +35,19 @@ interface CliOptions {
   keepWorktrees?: boolean;
   keepBranches?: boolean;
   force?: boolean;
+  path?: boolean;
   json?: boolean;
 }
 
 export function createCommand(): Command {
   return new Command('remove')
     .description('Remove worktrees and delete branches')
-    .argument('[branch]', 'Branch name to remove (optional - prompts if omitted)')
+    .argument('[target]', 'Branch name or worktree path to remove (optional - prompts if omitted)')
     .option('--no-check-dirty', 'Skip uncommitted changes check')
     .option('--keep-worktrees', 'Delete branches but keep worktree directories')
     .option('--keep-branches', 'Remove worktrees but keep git branches')
     .option('-f, --force', 'Skip confirmation prompts')
+    .option('--path', 'Treat argument as worktree path')
     .option('--json', 'Output results as JSON')
     .action(async (branch?: string, options?: CliOptions) => {
       try {
@@ -100,9 +104,24 @@ export async function executeRemove(
   const prompt = promptHandlers || { confirm: promptConfirm, multiSelect: promptMultiSelect };
   const allowNonInteractive = Boolean(promptHandlers);
   const defaultBranches = await getDefaultBranchMap(workspaceRoot, config.discovered_repos);
+  const usedPathMode = { value: false };
+  const pathWorktrees: WorktreeInfo[] = [];
   let targetBranches: string[] = [];
   if (branchArg) {
-    targetBranches = [branchArg];
+    const inputPath = resolveInputPath(branchArg);
+    const matchingByPath = await discoverWorktreesByPath(inputPath, repositories);
+    if (matchingByPath.length > 0) {
+      usedPathMode.value = true;
+      pathWorktrees.push(...matchingByPath);
+    } else if (options.path) {
+      throw new RemoveCommandError(
+        `Worktree path not found: ${branchArg}`,
+        RemoveCommandErrorCode.BRANCH_NOT_FOUND,
+        { path: branchArg }
+      );
+    } else {
+      targetBranches = [branchArg];
+    }
   } else {
     const allWorktrees = await discoverAllWorktrees(repositories);
     const selectable = allWorktrees.filter(wt => !wt.isMain && wt.branch);
@@ -132,45 +151,72 @@ export async function executeRemove(
   const skippedMain: WorktreeInfo[] = [];
   const worktreeCounts: Record<string, number> = {};
 
-  for (const branch of targetBranches) {
-    const worktrees = await discoverWorktreesByBranch(branch, repositories);
-    const mainWorktrees = worktrees.filter(wt => wt.isMain);
-    const removable = worktrees.filter(wt => !wt.isMain);
-
-    if (mainWorktrees.length > 0) {
-      skippedMain.push(...mainWorktrees);
-    }
-
-    worktreesToRemove.push(...removable);
-    worktreeCounts[branch] = removable.length;
-  }
-
   const branchPresence: Record<string, string[]> = {};
   const missingBranches: Record<string, string[]> = {};
 
-  for (const branch of targetBranches) {
-    branchPresence[branch] = [];
-    missingBranches[branch] = [];
-
-    for (const repo of repositories) {
-      const exists = await branchExists(repo.path, branch);
-      if (exists) {
-        branchPresence[branch].push(repo.name);
-      } else {
-        missingBranches[branch].push(repo.name);
+  if (usedPathMode.value) {
+    const mainWorktrees = pathWorktrees.filter(wt => wt.isMain);
+    const removable = pathWorktrees.filter(wt => !wt.isMain);
+    if (mainWorktrees.length > 0) {
+      skippedMain.push(...mainWorktrees);
+    }
+    worktreesToRemove.push(...removable);
+    targetBranches = Array.from(new Set(removable.map(wt => wt.branch).filter(Boolean)));
+    for (const wt of removable) {
+      if (!wt.branch) {
+        continue;
+      }
+      branchPresence[wt.branch] = branchPresence[wt.branch] || [];
+      if (!branchPresence[wt.branch].includes(wt.repository)) {
+        branchPresence[wt.branch].push(wt.repository);
       }
     }
+  } else {
+    for (const branch of targetBranches) {
+      const worktrees = await discoverWorktreesByBranch(branch, repositories);
+      const mainWorktrees = worktrees.filter(wt => wt.isMain);
+      const removable = worktrees.filter(wt => !wt.isMain);
 
-    if (branchPresence[branch].length === 0 && worktreeCounts[branch] === 0) {
-      throw new RemoveCommandError(
-        `Branch '${branch}' not found in any repository`,
-        RemoveCommandErrorCode.BRANCH_NOT_FOUND,
-        { branch }
-      );
+      if (mainWorktrees.length > 0) {
+        skippedMain.push(...mainWorktrees);
+      }
+
+      worktreesToRemove.push(...removable);
+      worktreeCounts[branch] = removable.length;
+    }
+
+    for (const branch of targetBranches) {
+      branchPresence[branch] = [];
+      missingBranches[branch] = [];
+
+      for (const repo of repositories) {
+        const exists = await branchExists(repo.path, branch);
+        if (exists) {
+          branchPresence[branch].push(repo.name);
+        } else {
+          missingBranches[branch].push(repo.name);
+        }
+      }
+
+      if (branchPresence[branch].length === 0 && worktreeCounts[branch] === 0) {
+        throw new RemoveCommandError(
+          `Branch '${branch}' not found in any repository`,
+          RemoveCommandErrorCode.BRANCH_NOT_FOUND,
+          { branch }
+        );
+      }
     }
   }
 
   warnOnDefaultMainRemoval(skippedMain, defaultBranches);
+  if (usedPathMode.value && worktreesToRemove.length === 0) {
+    if (skippedMain.length > 0) {
+      logger.info('Selected worktree is main and cannot be removed');
+    } else {
+      logger.info('No removable worktrees found for the provided path');
+    }
+    return 0;
+  }
 
   if (options.checkDirty !== false && worktreesToRemove.length > 0) {
     const s = logger.spinner('Checking for uncommitted changes...').start();
@@ -243,7 +289,7 @@ export async function executeRemove(
     }
   }
 
-  if (!options.keepBranches) {
+  if (!options.keepBranches && targetBranches.length > 0) {
     for (const branch of targetBranches) {
       for (const repoName of branchPresence[branch]) {
         const repoPath = getRepoPath(repositories, repoName);
@@ -495,6 +541,17 @@ function resolveConfirmation(outcome: PromptOutcome<boolean>): 'confirmed' | 'de
     return 'cancelled';
   }
   return outcome.value ? 'confirmed' : 'declined';
+}
+
+function resolveInputPath(input: string): string {
+  if (existsSync(input)) {
+    return input;
+  }
+  const resolved = resolve(input);
+  if (existsSync(resolved)) {
+    return resolved;
+  }
+  return input;
 }
 
 function formatWorktreeRemovalError(error: unknown): string {

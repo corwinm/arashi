@@ -42,6 +42,11 @@ arashi list | fzf
 # Should show the list and respond to typing/arrow keys/enter
 ```
 
+To use fzf to choose a worktree for forced removal:
+```bash
+arashi remove -f "$(arashi list | fzf)"
+```
+
 ## Alternative Approaches Tried
 - ❌ `process.stdin.destroy()` - Doesn't close FD 0 in Bun
 - ❌ `process.stdin.unref()` - Doesn't help with FD ownership
