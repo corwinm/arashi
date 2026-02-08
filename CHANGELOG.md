@@ -3,7 +3,7 @@
 ### Features
 
 * **remove:** add remove command workflow ([#17](https://github.com/corwinm/arashi/issues/17)) ([a32b5e4](https://github.com/corwinm/arashi/commit/a32b5e4e90bcb4254684ad145c2fd95c547d87aa))
-* **status:** implement status command with workspace discovery ([#15](https://github.com/corwinm/arashi/issues/15)) ([3af1162](https://github.com/corwinm/arashi/commit/3af1162372b3cd0f28bc8e9d00c3cfb7a3bd15ce)), closes [#26](https://github.com/corwinm/arashi/issues/26)
+* **status:** implement status command with workspace discovery ([#15](https://github.com/corwinm/arashi/issues/15)) ([3af1162](https://github.com/corwinm/arashi/commit/3af1162372b3cd0f28bc8e9d00c3cfb7a3bd15ce))
 
 ### Bug Fixes
 
