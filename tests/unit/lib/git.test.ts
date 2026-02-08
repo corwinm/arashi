@@ -6,9 +6,10 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { exec } from "../../../src/lib/git";
+import { exec, isBareRepo } from "../../../src/lib/git";
 import { ArashiError } from "../../../src/lib/errors";
-import { GitTestRepo, createFile, commitChanges } from "../../helpers/git-test-utils";
+import { GitTestRepo, createFile, commitChanges, createTempDir, removeTempDir, initBareGitRepo, createInitialCommit } from "../../helpers/git-test-utils";
+import { join } from "path";
 
 describe("exec()", () => {
   let testRepo: GitTestRepo;
@@ -159,5 +160,99 @@ describe("exec()", () => {
     results.forEach(result => {
       expect(result.exitCode).toBe(0);
     });
+  });
+});
+
+describe("isBareRepo()", () => {
+  let testRepo: GitTestRepo;
+
+  beforeEach(async () => {
+    testRepo = new GitTestRepo();
+    await testRepo.withInitialCommit();
+  });
+
+  afterEach(() => {
+    testRepo.cleanup();
+  });
+
+  test("should return false for a regular non-bare repository", async () => {
+    const result = await isBareRepo(testRepo.path);
+    expect(result).toBe(false);
+  });
+
+  test("should return true for a bare repository", async () => {
+    const bareRepoPath = createTempDir();
+    
+    try {
+      initBareGitRepo(bareRepoPath);
+      const result = await isBareRepo(bareRepoPath);
+      expect(result).toBe(true);
+    } finally {
+      removeTempDir(bareRepoPath);
+    }
+  });
+
+  test("should return true when checking a worktree of a bare repository", async () => {
+    const bareRepoPath = createTempDir();
+    const worktreeParent = createTempDir();
+    const worktreePath = join(worktreeParent, 'worktree');
+    
+    try {
+      // Create a bare repository
+      initBareGitRepo(bareRepoPath);
+      
+      // Create an initial commit in a temporary non-bare repo
+      const tempRepoPath = createTempDir();
+      let branchName = 'main';
+      try {
+        Bun.spawnSync(['git', 'init'], { cwd: tempRepoPath });
+        Bun.spawnSync(['git', 'config', 'user.email', 'test@example.com'], { cwd: tempRepoPath });
+        Bun.spawnSync(['git', 'config', 'user.name', 'Test User'], { cwd: tempRepoPath });
+        await createInitialCommit(tempRepoPath);
+        
+        // Get the actual branch name (might be master or main depending on git config)
+        const branchResult = Bun.spawnSync(['git', 'branch', '--show-current'], { cwd: tempRepoPath });
+        branchName = new TextDecoder().decode(branchResult.stdout).trim();
+        
+        // Push to bare repo
+        Bun.spawnSync(['git', 'remote', 'add', 'origin', bareRepoPath], { cwd: tempRepoPath });
+        Bun.spawnSync(['git', 'push', '-u', 'origin', branchName], { cwd: tempRepoPath });
+      } finally {
+        removeTempDir(tempRepoPath);
+      }
+      
+      // Create a worktree from the bare repository using the actual branch name
+      // git worktree add will create the worktreePath directory
+      const worktreeResult = Bun.spawnSync(['git', 'worktree', 'add', worktreePath, branchName], { cwd: bareRepoPath });
+      
+      // Ensure worktree was created successfully
+      if (worktreeResult.exitCode !== 0) {
+        throw new Error(`Failed to create worktree: ${new TextDecoder().decode(worktreeResult.stderr)}`);
+      }
+      
+      // Check if isBareRepo correctly identifies the worktree's parent as bare
+      const result = await isBareRepo(worktreePath);
+      expect(result).toBe(true);
+    } finally {
+      removeTempDir(bareRepoPath);
+      removeTempDir(worktreeParent);
+    }
+  });
+
+  test("should return false when checking a worktree of a non-bare repository", async () => {
+    const worktreePath = createTempDir();
+    
+    try {
+      // Create a worktree from the regular (non-bare) repository
+      Bun.spawnSync(['git', 'worktree', 'add', worktreePath, '-b', 'feature-branch'], { cwd: testRepo.path });
+      
+      // Check if isBareRepo correctly identifies the worktree's parent as non-bare
+      const result = await isBareRepo(worktreePath);
+      expect(result).toBe(false);
+    } finally {
+      // Clean up worktree
+      Bun.spawnSync(['git', 'worktree', 'remove', worktreePath, '--force'], { cwd: testRepo.path });
+      removeTempDir(worktreePath);
+    }
   });
 });

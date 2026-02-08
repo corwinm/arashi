@@ -84,8 +84,11 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
  * A bare repository only contains the git database and is typically used
  * as a central remote. It has no working directory for checked-out files.
  * 
- * @param repoPath - Path to the repository
- * @returns true if repository is bare, false otherwise
+ * This function correctly handles worktrees by checking the main/common
+ * git directory to determine if the parent repository is bare.
+ * 
+ * @param repoPath - Path to the repository or worktree
+ * @returns true if repository (or parent of worktree) is bare, false otherwise
  * @throws {ArashiError} If git command fails or path is not a git repository
  * 
  * @example
@@ -93,10 +96,48 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
  * if (isBare) {
  *   console.log('This is a bare repository');
  * }
+ * 
+ * @example
+ * // For a worktree of a bare repository
+ * const isBare = await isBareRepo('/path/to/worktree');
+ * // Returns true if the main repository is bare
  */
 export async function isBareRepo(repoPath: string): Promise<boolean> {
+  // Get the common git directory (main repository location)
+  // For regular repos: returns .git
+  // For worktrees: returns the main repository's .git directory  
+  const commonDirResult = await exec(['rev-parse', '--git-common-dir'], repoPath);
+  const commonDir = commonDirResult.stdout.trim();
+  
+  // Check if the current path is bare
   const result = await exec(['rev-parse', '--is-bare-repository'], repoPath);
-  return result.stdout.trim() === 'true';
+  const isBareInCwd = result.stdout.trim() === 'true';
+  
+  // If the current directory reports as bare, it's definitely bare
+  if (isBareInCwd) {
+    return true;
+  }
+  
+  // For worktrees of a bare repository:
+  // - commonDir will point to the bare repository (not ending in /.git)
+  // - We need to check if that common directory is itself bare
+  // 
+  // For regular repos or worktrees of regular repos:
+  // - commonDir will be ".git" or end with "/.git"
+  if (commonDir === '.git' || commonDir.endsWith('/.git')) {
+    // This is a regular repository or a worktree of a regular repository
+    return false;
+  }
+  
+  // commonDir doesn't end with /.git, so it might be a bare repo
+  // We need to check by running git command in the common directory
+  try {
+    const bareCheckResult = await exec(['rev-parse', '--is-bare-repository'], commonDir);
+    return bareCheckResult.stdout.trim() === 'true';
+  } catch (error) {
+    // If we can't check the common directory, assume it's not bare
+    return false;
+  }
 }
 
 /**
@@ -212,7 +253,7 @@ export async function getDefaultBranch(repoPath: string): Promise<string> {
       .split('\n')
       .map(b => b.trim())
       .filter(b => b && !b.includes('HEAD'));
-    
+
     if (branches.length > 0) {
       const firstBranch = branches[0].replace(/^origin\//, '');
       return firstBranch;
