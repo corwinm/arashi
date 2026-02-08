@@ -4,11 +4,14 @@
 When piping `arashi list` to `fzf`, the interactive interface would not respond to keyboard input. This is due to a limitation in Bun's compiled executables where stdin (file descriptor 0) remains open, preventing fzf from accessing `/dev/tty` for keyboard input.
 
 ## Solution
-We use a shell wrapper that closes stdin before executing the arashi binary:
+We use a shell wrapper that closes stdin when piping `arashi list` output:
 
 ```bash
 #!/bin/bash
-exec arashi.bin "$@" 0<&-
+if [ "$command" = "list" ] && [ ! -t 1 ]; then
+  exec arashi.bin "$@" 0<&-
+fi
+exec arashi.bin "$@"
 ```
 
 The `0<&-` syntax closes file descriptor 0 (stdin) before execution.
@@ -30,7 +33,7 @@ chmod +x ~/.local/bin/arashi
 1. **Root Cause**: Bun's compiled executables keep stdin open even when `process.stdin.destroy()` or `fs.closeSync(0)` is called
 2. **Impact**: When stdin is open, fzf cannot exclusively access `/dev/tty` for keyboard input
 3. **Fix**: The shell wrapper closes stdin at the OS level before the binary runs
-4. **Result**: fzf can properly open `/dev/tty` and receive keyboard input
+4. **Result**: fzf can properly open `/dev/tty` and receive keyboard input while interactive commands keep stdin
 
 ## Testing
 To verify fzf works correctly:

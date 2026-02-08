@@ -10,9 +10,12 @@ Arashi uses a wrapper script approach to ensure compatibility with interactive t
 
 Bun's compiled executables have a limitation where stdin (file descriptor 0) remains open even after calling `process.stdin.destroy()` or `fs.closeSync(0)`. This prevents tools like fzf from exclusively accessing `/dev/tty` for keyboard input.
 
-The wrapper solves this by closing stdin before executing the binary:
+The wrapper solves this by closing stdin when piping `arashi list` output:
 ```bash
-exec "$SCRIPT_DIR/arashi.bin" "$@" 0<&-
+if [ "$command" = "list" ] && [ ! -t 1 ]; then
+  exec "$SCRIPT_DIR/arashi.bin" "$@" 0<&-
+fi
+exec "$SCRIPT_DIR/arashi.bin" "$@"
 ```
 
 ## Distribution Methods

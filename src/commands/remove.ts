@@ -7,7 +7,7 @@
 import { Command } from 'commander';
 import { basename, resolve } from 'path';
 import chalk from 'chalk';
-import { confirm as promptConfirm, multiSelect as promptMultiSelect, type Choice } from '../lib/prompts.ts';
+import { confirm as promptConfirm, multiSelect as promptMultiSelect, type Choice, type PromptOutcome } from '../lib/prompts.ts';
 import * as logger from '../lib/logger.ts';
 import { loadConfig, findWorkspaceRoot, type Config } from '../lib/config.ts';
 import { RemoveCommandError, RemoveCommandErrorCode } from '../lib/errors.ts';
@@ -59,8 +59,8 @@ export async function executeRemove(
   branchArg: string | undefined,
   options: RemoveCommandOptions,
   promptHandlers?: {
-    confirm: (message: string, defaultValue?: boolean) => Promise<boolean>;
-    multiSelect: (message: string, choices: Choice<string>[]) => Promise<string[]>;
+    confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
+    multiSelect: (message: string, choices: Choice<string>[]) => Promise<PromptOutcome<string[]>>;
   }
 ): Promise<number> {
   const startTime = Date.now();
@@ -98,6 +98,7 @@ export async function executeRemove(
   }
 
   const prompt = promptHandlers || { confirm: promptConfirm, multiSelect: promptMultiSelect };
+  const allowNonInteractive = Boolean(promptHandlers);
   const defaultBranches = await getDefaultBranchMap(workspaceRoot, config.discovered_repos);
   let targetBranches: string[] = [];
   if (branchArg) {
@@ -112,11 +113,17 @@ export async function executeRemove(
     }
 
     await attachDirtyStatus(selectable);
+    ensureInteractive(allowNonInteractive);
     const choices = buildBranchChoices(selectable, defaultBranches);
-    targetBranches = await prompt.multiSelect('Select worktrees to remove:', choices);
+    const selection = await prompt.multiSelect('Select worktrees to remove:', choices);
+    if (selection.status === 'cancelled') {
+      logger.info('Selection cancelled');
+      return 0;
+    }
+    targetBranches = selection.value;
 
     if (targetBranches.length === 0) {
-      logger.info('No branches selected');
+      logger.info('No worktrees selected to remove');
       return 0;
     }
   }
@@ -172,13 +179,18 @@ export async function executeRemove(
   }
 
   if (!options.force) {
-    const confirmed = await promptConfirmation(
+    ensureInteractive(allowNonInteractive);
+    const confirmation = await promptConfirmation(
       worktreesToRemove,
       branchPresence,
       options.checkDirty !== false,
       prompt.confirm
     );
-    if (!confirmed) {
+    if (confirmation === 'cancelled') {
+      logger.info('Operation cancelled');
+      return 0;
+    }
+    if (confirmation === 'declined') {
       logger.info('Operation cancelled by user');
       return 0;
     }
@@ -378,8 +390,8 @@ async function promptConfirmation(
   worktrees: WorktreeInfo[],
   branchPresence: Record<string, string[]>,
   checkDirty: boolean,
-  confirm: typeof promptConfirm
-): Promise<boolean> {
+  confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>
+): Promise<'confirmed' | 'declined' | 'cancelled'> {
   if (checkDirty) {
     const dirty = worktrees.filter(wt => wt.isDirty);
     if (dirty.length > 0) {
@@ -396,20 +408,22 @@ async function promptConfirmation(
         logger.info(`  • ${wt.repository}: ${wt.path}${detailText}`);
       }
 
-      return await confirm(
+      const outcome = await confirm(
         'Are you sure you want to remove these worktrees? This will discard all uncommitted changes.',
         false
       );
+      return resolveConfirmation(outcome);
     }
   }
 
   const worktreeCount = worktrees.length;
   const branchCount = Object.values(branchPresence).reduce((sum, repos) => sum + repos.length, 0);
 
-  return await confirm(
+  const outcome = await confirm(
     `Remove ${worktreeCount} ${worktreeCount === 1 ? 'worktree' : 'worktrees'} and delete ${branchCount} ${branchCount === 1 ? 'branch' : 'branches'}?`,
     false
   );
+  return resolveConfirmation(outcome);
 }
 
 async function getWorkspaceRoot(): Promise<string> {
@@ -440,9 +454,16 @@ function handleError(error: unknown, options: RemoveCommandOptions): void {
       if (error.code === RemoveCommandErrorCode.BRANCH_NOT_FOUND) {
         logger.info('Hint: Run "arashi list" to see all worktrees');
       }
+      if (error.code === RemoveCommandErrorCode.NON_INTERACTIVE) {
+        logger.info('Hint: Run this command in an interactive terminal');
+      }
     }
 
-    process.exit(error.code === RemoveCommandErrorCode.BRANCH_NOT_FOUND ? 2 : 1);
+    const exitCode = error.code === RemoveCommandErrorCode.BRANCH_NOT_FOUND ||
+      error.code === RemoveCommandErrorCode.NON_INTERACTIVE
+      ? 2
+      : 1;
+    process.exit(exitCode);
   }
 
   const message = error instanceof Error ? error.message : 'Unknown error';
@@ -458,6 +479,22 @@ function handleError(error: unknown, options: RemoveCommandOptions): void {
     logger.error(`Unexpected error: ${message}`);
   }
   process.exit(1);
+}
+
+function ensureInteractive(allowNonInteractive: boolean): void {
+  if (!allowNonInteractive && !process.stdin.isTTY) {
+    throw new RemoveCommandError(
+      'Non-interactive terminal detected. Run this command in an interactive TTY.',
+      RemoveCommandErrorCode.NON_INTERACTIVE
+    );
+  }
+}
+
+function resolveConfirmation(outcome: PromptOutcome<boolean>): 'confirmed' | 'declined' | 'cancelled' {
+  if (outcome.status === 'cancelled') {
+    return 'cancelled';
+  }
+  return outcome.value ? 'confirmed' : 'declined';
 }
 
 function formatWorktreeRemovalError(error: unknown): string {

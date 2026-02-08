@@ -75,6 +75,8 @@ arashi status
 arashi remove feature-new-api
 ```
 
+Note: `arashi remove` requires an interactive TTY. In non-interactive runs it exits with a clear error.
+
 ## Planned Commands
 
 - `arashi init` - Initialize arashi in current repository

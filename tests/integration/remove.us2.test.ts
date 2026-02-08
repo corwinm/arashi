@@ -33,8 +33,8 @@ describe('remove command - US2 multi-select', () => {
 
     try {
       const exitCode = await executeRemove(undefined, { force: false }, {
-        multiSelect: async () => [branchA, branchB],
-        confirm: async () => true,
+        multiSelect: async () => ({ status: 'ok', value: [branchA, branchB] }),
+        confirm: async () => ({ status: 'ok', value: true }),
       });
       expect(exitCode).toBe(0);
     } finally {
@@ -67,8 +67,8 @@ describe('remove command - US2 multi-select', () => {
 
     try {
       const exitCode = await executeRemove(undefined, { force: false }, {
-        multiSelect: async () => [],
-        confirm: async () => true,
+        multiSelect: async () => ({ status: 'ok', value: [] }),
+        confirm: async () => ({ status: 'ok', value: true }),
       });
       expect(exitCode).toBe(0);
     } finally {

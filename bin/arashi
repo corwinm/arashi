@@ -38,5 +38,17 @@ if [ ! -f "$BINARY" ]; then
   exit 1
 fi
 
-# Execute with stdin closed (0<&-) for fzf compatibility
-exec "$BINARY" "$@" 0<&-
+# Close stdin only when piping list output (fzf compatibility)
+command=""
+for arg in "$@"; do
+  case "$arg" in
+    -*) continue ;;
+    *) command="$arg"; break ;;
+  esac
+done
+
+if [ "$command" = "list" ] && [ ! -t 1 ]; then
+  exec "$BINARY" "$@" 0<&-
+fi
+
+exec "$BINARY" "$@"

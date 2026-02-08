@@ -14,7 +14,20 @@ cat > "$DIST_DIR/arashi-wrapper.sh" << 'EOF'
 # Wrapper for arashi that closes stdin before execution
 # This is required for proper fzf integration with Bun compiled executables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$SCRIPT_DIR/arashi.bin" "$@" 0<&-
+
+command=""
+for arg in "$@"; do
+  case "$arg" in
+    -*) continue ;;
+    *) command="$arg"; break ;;
+  esac
+done
+
+if [ "$command" = "list" ] && [ ! -t 1 ]; then
+  exec "$SCRIPT_DIR/arashi.bin" "$@" 0<&-
+fi
+
+exec "$SCRIPT_DIR/arashi.bin" "$@"
 EOF
 
 chmod +x "$DIST_DIR/arashi-wrapper.sh"
