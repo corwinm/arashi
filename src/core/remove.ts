@@ -4,16 +4,18 @@
 
 import { realpathSync } from 'fs';
 import chalk from 'chalk';
-import { resolve as resolvePath } from 'path';
+import { basename, resolve as resolvePath } from 'path';
 import * as git from '../lib/git.ts';
 import { ArashiError } from '../lib/errors.ts';
 import { GitErrorCode } from '../types/git.ts';
 import type {
-  DirtyStatus,
+  WorktreeEntry,
+  WorktreeGrouping,
   WorktreeInfo,
   RemovalSummary,
   RemovalOperation,
 } from '../types/remove.ts';
+import { buildWorktreeEntries, resolveWorktreeStatuses } from './worktree.ts';
 
 export interface RepositoryTarget {
   name: string;
@@ -163,56 +165,73 @@ function normalizePath(pathInput: string): string {
   }
 }
 
-export async function getDirtyStatus(worktreePath: string): Promise<DirtyStatus> {
-  try {
-    const result = await git.exec(['status', '--porcelain'], worktreePath);
-    const lines = result.stdout.trim().split('\n').filter(line => line.length > 0);
-    let modifiedFiles = 0;
-    let untrackedFiles = 0;
-    let stagedFiles = 0;
+export function groupWorktreesByParent(entries: WorktreeEntry[]): WorktreeGrouping {
+  const groups: WorktreeGrouping['groups'] = [];
+  const orphans: WorktreeEntry[] = [];
+  const entryByPath = new Map<string, WorktreeEntry>();
+  const groupByParent = new Map<string, { parent: WorktreeEntry; children: WorktreeEntry[] }>();
 
-    for (const line of lines) {
-      if (line.startsWith('??')) {
-        untrackedFiles++;
-        continue;
-      }
+  for (const entry of entries) {
+    entryByPath.set(normalizePath(entry.path), entry);
+  }
 
-      const indexStatus = line[0];
-      const worktreeStatus = line[1];
+  for (const entry of entries) {
+    if (entry.childrenPaths.length > 0) {
+      groupByParent.set(normalizePath(entry.path), { parent: entry, children: [] });
+    }
+  }
 
-      if (indexStatus !== ' ' && indexStatus !== '?') {
-        stagedFiles++;
-      }
-
-      if (worktreeStatus !== ' ' && worktreeStatus !== '?') {
-        modifiedFiles++;
-      }
+  for (const entry of entries) {
+    if (!entry.parentPath) {
+      continue;
     }
 
-    return {
-      isDirty: lines.length > 0,
-      modifiedFiles,
-      untrackedFiles,
-      stagedFiles,
-    };
-  } catch {
-    return {
-      isDirty: true,
-      modifiedFiles: 0,
-      untrackedFiles: 0,
-      stagedFiles: 0,
-    };
+    const parent = entryByPath.get(normalizePath(entry.parentPath));
+    if (!parent) {
+      orphans.push(entry);
+      continue;
+    }
+
+    let group = groupByParent.get(normalizePath(parent.path));
+    if (!group) {
+      group = { parent, children: [] };
+      groupByParent.set(normalizePath(parent.path), group);
+    }
+    group.children.push(entry);
   }
+
+  for (const entry of entries) {
+    if (entry.parentPath) {
+      continue;
+    }
+    if (groupByParent.has(normalizePath(entry.path))) {
+      continue;
+    }
+    orphans.push(entry);
+  }
+
+  for (const group of groupByParent.values()) {
+    groups.push(group);
+  }
+
+  return { groups, orphans };
 }
 
-export async function attachDirtyStatus(worktrees: WorktreeInfo[]): Promise<void> {
-  await Promise.all(
-    worktrees.map(async (wt) => {
-      const status = await getDirtyStatus(wt.path);
-      wt.isDirty = status.isDirty;
-      wt.dirtyDetails = status;
-    })
-  );
+export async function refreshRemainingChildStatuses(
+  removed: WorktreeEntry,
+  remaining: WorktreeEntry[],
+  includeDirtyDetails: boolean
+): Promise<void> {
+  if (removed.childrenPaths.length === 0) {
+    return;
+  }
+
+  const children = remaining.filter(entry => removed.childrenPaths.includes(entry.path));
+  if (children.length === 0) {
+    return;
+  }
+
+  await resolveWorktreeStatuses(children, includeDirtyDetails);
 }
 
 export async function removeWorktree(

@@ -92,6 +92,31 @@ export async function createWorktreesForBranch(
   return worktrees;
 }
 
+export async function createNestedWorktrees(
+  workspace: RemoveTestWorkspace,
+  parentBranch: string,
+  childBranches: Record<string, string>
+): Promise<{ parentPath: string; childPaths: Record<string, string> }> {
+  const baseDir = join(workspace.rootPath, 'worktrees');
+  await mkdir(baseDir, { recursive: true });
+
+  const parentPath = join(baseDir, `parent-${parentBranch}`);
+  await createWorktree(workspace.rootPath, parentBranch, parentPath);
+
+  const childBase = join(parentPath, 'repos');
+  await mkdir(childBase, { recursive: true });
+
+  const childPaths: Record<string, string> = {};
+  for (const repo of workspace.repos) {
+    const branchName = childBranches[repo.name] ?? parentBranch;
+    const worktreePath = join(childBase, repo.name);
+    await createWorktree(repo.path, branchName, worktreePath);
+    childPaths[repo.name] = worktreePath;
+  }
+
+  return { parentPath, childPaths };
+}
+
 export async function markWorktreeDirty(worktreePath: string): Promise<void> {
   const filePath = join(worktreePath, 'dirty.txt');
   await writeFile(filePath, 'dirty');

@@ -4,6 +4,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync } from 'fs';
+import { rm } from 'fs/promises';
 import { spawn } from 'bun';
 import { executeRemove } from '../../src/commands/remove.ts';
 import {
@@ -33,7 +34,10 @@ describe('remove command - US2 multi-select', () => {
 
     try {
       const exitCode = await executeRemove(undefined, { force: false }, {
-        multiSelect: async () => ({ status: 'ok', value: [branchA, branchB] }),
+        multiSelect: async (_message, choices) => ({
+          status: 'ok',
+          value: choices.map(choice => choice.value),
+        }),
         confirm: async () => ({ status: 'ok', value: true }),
       });
       expect(exitCode).toBe(0);
@@ -56,6 +60,34 @@ describe('remove command - US2 multi-select', () => {
         expect(exitCode).not.toBe(0);
       }
     }
+  });
+
+  test('marks missing worktree directories as prunable', async () => {
+    const branchName = 'feature-missing';
+    const worktrees = await createWorktreesForBranch(workspace, branchName, true);
+    const missingPath = worktrees['repo-a'];
+    await rm(missingPath, { recursive: true, force: true });
+
+    const originalCwd = process.cwd();
+    process.chdir(workspace.rootPath);
+
+    let observedChoiceNames: string[] = [];
+
+    try {
+      const exitCode = await executeRemove(undefined, { force: false }, {
+        multiSelect: async (_message, choices) => {
+          observedChoiceNames = choices.map(choice => choice.name);
+          return { status: 'ok', value: [] };
+        },
+        confirm: async () => ({ status: 'ok', value: true }),
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    const prunableChoice = observedChoiceNames.find(name => name.includes(branchName) && name.includes('prunable'));
+    expect(prunableChoice).toBeDefined();
   });
 
   test('exits cleanly when no branches are selected', async () => {
