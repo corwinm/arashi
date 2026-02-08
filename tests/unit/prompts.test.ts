@@ -1,21 +1,29 @@
-import { describe, test, expect, mock } from "bun:test";
-import * as inquirer from "@inquirer/prompts";
-import {
-  confirm,
-  select,
-  multiSelect,
-  input,
-  type Choice,
-} from "../../src/lib/prompts";
+import { describe, test, expect, mock, beforeAll } from "bun:test";
+import type { Choice } from "../../src/lib/prompts";
 
 // Mock @inquirer/prompts
 const mockConfirm = mock(() => Promise.resolve(true));
 const mockSelect = mock(() => Promise.resolve("main"));
-const mockCheckbox = mock(() => Promise.resolve(["opt1"]));
+const mockCheckbox = mock((options?: { choices?: unknown[] }) => {
+  if (!options || !options.choices || options.choices.length === 0) {
+    return Promise.reject(new Error("No choices provided"));
+  }
+  return Promise.resolve(["opt1"]);
+});
 const mockInput = mock(() => Promise.resolve("test input"));
 
-// We'll use spyOn to intercept the actual inquirer calls
-// Note: In real tests, we'd use more sophisticated mocking
+mock.module("@inquirer/prompts", () => ({
+  confirm: mockConfirm,
+  select: mockSelect,
+  checkbox: mockCheckbox,
+  input: mockInput,
+}));
+
+let promptApi: typeof import("../../src/lib/prompts");
+
+beforeAll(async () => {
+  promptApi = await import("../../src/lib/prompts");
+});
 
 describe("Types", () => {
   test("Choice type is correctly defined", () => {
@@ -54,18 +62,18 @@ describe("Types", () => {
 
 describe("US1: Confirmation Prompts", () => {
   test("confirm function exists and has correct signature", () => {
-    expect(typeof confirm).toBe("function");
+    expect(typeof promptApi.confirm).toBe("function");
   });
 
   test("confirm returns a Promise", () => {
-    const result = confirm("Test?", true);
+    const result = promptApi.confirm("Test?", true);
     expect(result).toBeInstanceOf(Promise);
   });
 });
 
 describe("US2: Single Selection Prompts", () => {
   test("select function exists and has correct signature", () => {
-    expect(typeof select).toBe("function");
+    expect(typeof promptApi.select).toBe("function");
   });
 
   test("select returns a Promise", () => {
@@ -74,12 +82,12 @@ describe("US2: Single Selection Prompts", () => {
       { value: "b", name: "Option B" },
     ];
     
-    const result = select("Choose:", choices);
+    const result = promptApi.select("Choose:", choices);
     expect(result).toBeInstanceOf(Promise);
   });
 
   test("select throws error for empty choices array", async () => {
-    await expect(select("Choose:", [])).rejects.toThrow();
+    await expect(promptApi.select("Choose:", [])).rejects.toThrow();
   });
 
   test("select accepts choices with descriptions", () => {
@@ -88,7 +96,7 @@ describe("US2: Single Selection Prompts", () => {
       { value: "b", name: "Option B", description: "Second option" },
     ];
     
-    const result = select("Choose:", choices);
+    const result = promptApi.select("Choose:", choices);
     expect(result).toBeInstanceOf(Promise);
   });
 
@@ -98,14 +106,14 @@ describe("US2: Single Selection Prompts", () => {
       name: `Option ${i}`,
     }));
     
-    const result = select("Choose:", choices);
+    const result = promptApi.select("Choose:", choices);
     expect(result).toBeInstanceOf(Promise);
   });
 });
 
 describe("US3: Multi-Selection Prompts", () => {
   test("multiSelect function exists and has correct signature", () => {
-    expect(typeof multiSelect).toBe("function");
+    expect(typeof promptApi.multiSelect).toBe("function");
   });
 
   test("multiSelect returns a Promise", () => {
@@ -114,28 +122,28 @@ describe("US3: Multi-Selection Prompts", () => {
       { value: "b", name: "Option B" },
     ];
     
-    const result = multiSelect("Choose multiple:", choices);
+    const result = promptApi.multiSelect("Choose multiple:", choices);
     expect(result).toBeInstanceOf(Promise);
   });
 
   test("multiSelect throws ValidationError for empty choices array", async () => {
     // Inquirer checkbox requires at least one selectable choice
-    await expect(multiSelect("Choose:", [])).rejects.toThrow();
+    await expect(promptApi.multiSelect("Choose:", [])).rejects.toThrow();
   });
 });
 
 describe("US4: Text Input Prompts", () => {
   test("input function exists and has correct signature", () => {
-    expect(typeof input).toBe("function");
+    expect(typeof promptApi.input).toBe("function");
   });
 
   test("input returns a Promise", () => {
-    const result = input("Enter name:");
+    const result = promptApi.input("Enter name:");
     expect(result).toBeInstanceOf(Promise);
   });
 
   test("input accepts default value", () => {
-    const result = input("Enter name:", "default");
+    const result = promptApi.input("Enter name:", "default");
     expect(result).toBeInstanceOf(Promise);
   });
 });
@@ -150,7 +158,7 @@ describe("Performance", () => {
     }));
     
     // Just creating the promise should be fast
-    const result = select("Choose:", choices);
+    const result = promptApi.select("Choose:", choices);
     
     const duration = performance.now() - start;
     expect(duration).toBeLessThan(50); // Should be <50ms to create
@@ -166,7 +174,7 @@ describe("Performance", () => {
       description: `Description for choice ${i}`,
     }));
     
-    const result = multiSelect("Select multiple:", choices);
+    const result = promptApi.multiSelect("Select multiple:", choices);
     
     const duration = performance.now() - start;
     expect(duration).toBeLessThan(50);
@@ -177,9 +185,9 @@ describe("Performance", () => {
 describe("API Contract Validation", () => {
   test("confirm matches contract signature", () => {
     // confirm(message: string, defaultValue?: boolean): Promise<boolean>
-    const result1 = confirm("Test?");
-    const result2 = confirm("Test?", true);
-    const result3 = confirm("Test?", false);
+    const result1 = promptApi.confirm("Test?");
+    const result2 = promptApi.confirm("Test?", true);
+    const result3 = promptApi.confirm("Test?", false);
     
     expect(result1).toBeInstanceOf(Promise);
     expect(result2).toBeInstanceOf(Promise);
@@ -189,7 +197,7 @@ describe("API Contract Validation", () => {
   test("select matches contract signature", () => {
     // select<T>(message: string, choices: Choice<T>[]): Promise<T>
     const choices: Choice<string>[] = [{ value: "a", name: "A" }];
-    const result = select("Test?", choices);
+    const result = promptApi.select("Test?", choices);
     
     expect(result).toBeInstanceOf(Promise);
   });
@@ -197,15 +205,15 @@ describe("API Contract Validation", () => {
   test("multiSelect matches contract signature", () => {
     // multiSelect<T>(message: string, choices: Choice<T>[]): Promise<T[]>
     const choices: Choice<string>[] = [{ value: "a", name: "A" }];
-    const result = multiSelect("Test?", choices);
+    const result = promptApi.multiSelect("Test?", choices);
     
     expect(result).toBeInstanceOf(Promise);
   });
 
   test("input matches contract signature", () => {
     // input(message: string, defaultValue?: string): Promise<string>
-    const result1 = input("Test?");
-    const result2 = input("Test?", "default");
+    const result1 = promptApi.input("Test?");
+    const result2 = promptApi.input("Test?", "default");
     
     expect(result1).toBeInstanceOf(Promise);
     expect(result2).toBeInstanceOf(Promise);
