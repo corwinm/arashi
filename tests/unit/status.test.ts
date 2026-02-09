@@ -1,59 +1,57 @@
 /**
  * Unit Tests: Status Command
- * 
+ *
  * Tests for git status parsing, branch tracking parsing, and output formatting.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect } from "bun:test";
 import {
   parseGitStatus,
   parseBranchLine,
-  type GitFileStatus,
-  type BranchTrackingInfo,
-} from '../../src/commands/status.ts';
+} from "../../src/commands/status.ts";
 
-describe('parseGitStatus', () => {
-  test('parses clean repository output', () => {
-    const output = '## main...origin/main';
+describe("parseGitStatus", () => {
+  test("parses clean repository output", () => {
+    const output = "## main...origin/main";
     const result = parseGitStatus(output);
-    
+
     expect(result.files).toHaveLength(0);
-    expect(result.branch.localBranch).toBe('main');
-    expect(result.branch.remoteBranch).toBe('origin/main');
+    expect(result.branch.localBranch).toBe("main");
+    expect(result.branch.remoteBranch).toBe("origin/main");
     expect(result.branch.ahead).toBe(0);
     expect(result.branch.behind).toBe(0);
     expect(result.branch.isDetached).toBe(false);
   });
 
-  test('parses dirty repository with modified files', () => {
+  test("parses dirty repository with modified files", () => {
     const output = `## main
  M src/file.ts
 M  staged-file.ts`;
     const result = parseGitStatus(output);
-    
+
     expect(result.files).toHaveLength(2);
-    expect(result.files[0].path).toBe('src/file.ts');
-    expect(result.files[0].stagingStatus).toBe(' ');
-    expect(result.files[0].workingStatus).toBe('M');
-    expect(result.files[1].path).toBe('staged-file.ts');
-    expect(result.files[1].stagingStatus).toBe('M');
-    expect(result.files[1].workingStatus).toBe(' ');
+    expect(result.files[0].path).toBe("src/file.ts");
+    expect(result.files[0].stagingStatus).toBe(" ");
+    expect(result.files[0].workingStatus).toBe("M");
+    expect(result.files[1].path).toBe("staged-file.ts");
+    expect(result.files[1].stagingStatus).toBe("M");
+    expect(result.files[1].workingStatus).toBe(" ");
   });
 
-  test('parses untracked files', () => {
+  test("parses untracked files", () => {
     const output = `## main
 ?? test.txt
 ?? newfile.md`;
     const result = parseGitStatus(output);
-    
+
     expect(result.files).toHaveLength(2);
-    expect(result.files[0].workingStatus).toBe('?');
-    expect(result.files[0].path).toBe('test.txt');
-    expect(result.files[1].workingStatus).toBe('?');
-    expect(result.files[1].path).toBe('newfile.md');
+    expect(result.files[0].workingStatus).toBe("?");
+    expect(result.files[0].path).toBe("test.txt");
+    expect(result.files[1].workingStatus).toBe("?");
+    expect(result.files[1].path).toBe("newfile.md");
   });
 
-  test('parses multiple file types', () => {
+  test("parses multiple file types", () => {
     const output = `## feature-branch
 M  staged.ts
  M modified.ts
@@ -61,78 +59,78 @@ A  added.ts
  D deleted.ts
 ?? untracked.txt`;
     const result = parseGitStatus(output);
-    
+
     expect(result.files).toHaveLength(5);
-    expect(result.files[0].stagingStatus).toBe('M'); // staged modified
-    expect(result.files[1].workingStatus).toBe('M'); // unstaged modified
-    expect(result.files[2].stagingStatus).toBe('A'); // added
-    expect(result.files[3].workingStatus).toBe('D'); // deleted
-    expect(result.files[4].workingStatus).toBe('?'); // untracked
+    expect(result.files[0].stagingStatus).toBe("M"); // staged modified
+    expect(result.files[1].workingStatus).toBe("M"); // unstaged modified
+    expect(result.files[2].stagingStatus).toBe("A"); // added
+    expect(result.files[3].workingStatus).toBe("D"); // deleted
+    expect(result.files[4].workingStatus).toBe("?"); // untracked
   });
 });
 
-describe('parseBranchLine', () => {
-  test('parses branch with no remote', () => {
-    const branch = parseBranchLine('## feature-branch');
-    
-    expect(branch.localBranch).toBe('feature-branch');
+describe("parseBranchLine", () => {
+  test("parses branch with no remote", () => {
+    const branch = parseBranchLine("## feature-branch");
+
+    expect(branch.localBranch).toBe("feature-branch");
     expect(branch.remoteBranch).toBeNull();
     expect(branch.ahead).toBe(0);
     expect(branch.behind).toBe(0);
     expect(branch.isDetached).toBe(false);
   });
 
-  test('parses branch with remote tracking', () => {
-    const branch = parseBranchLine('## main...origin/main');
-    
-    expect(branch.localBranch).toBe('main');
-    expect(branch.remoteBranch).toBe('origin/main');
+  test("parses branch with remote tracking", () => {
+    const branch = parseBranchLine("## main...origin/main");
+
+    expect(branch.localBranch).toBe("main");
+    expect(branch.remoteBranch).toBe("origin/main");
     expect(branch.ahead).toBe(0);
     expect(branch.behind).toBe(0);
     expect(branch.isDetached).toBe(false);
   });
 
-  test('parses ahead commits', () => {
-    const branch = parseBranchLine('## main...origin/main [ahead 2]');
-    
-    expect(branch.localBranch).toBe('main');
-    expect(branch.remoteBranch).toBe('origin/main');
+  test("parses ahead commits", () => {
+    const branch = parseBranchLine("## main...origin/main [ahead 2]");
+
+    expect(branch.localBranch).toBe("main");
+    expect(branch.remoteBranch).toBe("origin/main");
     expect(branch.ahead).toBe(2);
     expect(branch.behind).toBe(0);
     expect(branch.isDetached).toBe(false);
   });
 
-  test('parses behind commits', () => {
-    const branch = parseBranchLine('## main...origin/main [behind 3]');
-    
+  test("parses behind commits", () => {
+    const branch = parseBranchLine("## main...origin/main [behind 3]");
+
     expect(branch.ahead).toBe(0);
     expect(branch.behind).toBe(3);
   });
 
-  test('parses ahead and behind (diverged)', () => {
-    const branch = parseBranchLine('## main...origin/main [ahead 2, behind 1]');
-    
-    expect(branch.localBranch).toBe('main');
-    expect(branch.remoteBranch).toBe('origin/main');
+  test("parses ahead and behind (diverged)", () => {
+    const branch = parseBranchLine("## main...origin/main [ahead 2, behind 1]");
+
+    expect(branch.localBranch).toBe("main");
+    expect(branch.remoteBranch).toBe("origin/main");
     expect(branch.ahead).toBe(2);
     expect(branch.behind).toBe(1);
     expect(branch.isDetached).toBe(false);
   });
 
-  test('parses detached HEAD state', () => {
-    const branch = parseBranchLine('## HEAD (no branch)');
-    
-    expect(branch.localBranch).toBe('');
+  test("parses detached HEAD state", () => {
+    const branch = parseBranchLine("## HEAD (no branch)");
+
+    expect(branch.localBranch).toBe("");
     expect(branch.remoteBranch).toBeNull();
     expect(branch.ahead).toBe(0);
     expect(branch.behind).toBe(0);
     expect(branch.isDetached).toBe(true);
   });
 
-  test('parses detached HEAD at commit', () => {
-    const branch = parseBranchLine('## HEAD (detached at abc1234)');
-    
+  test("parses detached HEAD at commit", () => {
+    const branch = parseBranchLine("## HEAD (detached at abc1234)");
+
     expect(branch.isDetached).toBe(true);
-    expect(branch.localBranch).toBe('');
+    expect(branch.localBranch).toBe("");
   });
 });

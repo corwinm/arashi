@@ -1,6 +1,6 @@
 /**
  * Repository Management - Core Module
- * 
+ *
  * Provides repository discovery, default branch detection, setup script detection,
  * workspace validation, cloning, and metadata gathering capabilities.
  */
@@ -255,11 +255,11 @@ export class RepositoryError extends Error {
   constructor(
     message: string,
     public readonly repository: string,
-    public readonly cause?: Error
+    public readonly cause?: Error,
   ) {
     super(message);
     this.name = "RepositoryError";
-    
+
     // Maintain proper stack trace (V8 engines)
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, this.constructor);
@@ -302,11 +302,7 @@ export class RepositoryCloneError extends RepositoryError {
  */
 export class RepositoryMetadataError extends RepositoryError {
   constructor(repository: string, cause?: Error) {
-    super(
-      `Failed to gather metadata for ${repository}`,
-      repository,
-      cause
-    );
+    super(`Failed to gather metadata for ${repository}`, repository, cause);
     this.name = "RepositoryMetadataError";
   }
 }
@@ -327,33 +323,35 @@ import * as git from "../lib/git.js";
 
 /**
  * Discovers git repositories in a workspace directory (T019)
- * 
+ *
  * Recursively scans the workspace directory up to the specified depth,
  * identifying valid git repositories and gathering basic information.
  */
 export async function discoverRepositories(
   workspacePath: string,
-  options: DiscoveryOptions = {}
+  options: DiscoveryOptions = {},
 ): Promise<RepositoryDiscoveryResult> {
   const startTime = Date.now();
   const repositories: Repository[] = [];
   const errors: DiscoveryError[] = [];
   let scannedDirectories = 0;
-  
+
   const maxDepth = options.maxDepth ?? 3;
   const followSymlinks = options.followSymlinks ?? false;
   const excludePatterns = options.excludePatterns ?? ["node_modules", ".git"];
-  
+
   // T027: Add progress spinner
   const s = createSpinner("Discovering repositories...");
   s.start();
-  
+
   try {
     // T020: Implement recursive scanDirectory
     await scanDirectory(workspacePath, 0);
-    
-    s.succeed(`Found ${repositories.length} ${repositories.length === 1 ? 'repository' : 'repositories'}`);
-    
+
+    s.succeed(
+      `Found ${repositories.length} ${repositories.length === 1 ? "repository" : "repositories"}`,
+    );
+
     // T028: Return RepositoryDiscoveryResult
     return {
       repositories,
@@ -367,7 +365,7 @@ export async function discoverRepositories(
     s.fail("Discovery failed");
     throw error;
   }
-  
+
   /**
    * Recursively scan a directory for git repositories (T020)
    */
@@ -376,14 +374,14 @@ export async function discoverRepositories(
     if (depth > maxDepth) {
       return;
     }
-    
+
     scannedDirectories++;
-    
+
     try {
       // T021: Implement .git directory detection
       const gitDir = join(dirPath, ".git");
       const hasGit = await fileExists(gitDir);
-      
+
       if (hasGit) {
         // T022: Early termination when .git found
         // Found a repository - don't scan subdirectories
@@ -391,22 +389,22 @@ export async function discoverRepositories(
         repositories.push(repo);
         return;
       }
-      
+
       // Not a repo - scan subdirectories
       const entries = await readdir(dirPath, { withFileTypes: true });
-      
+
       for (const entry of entries) {
         // T024: Implement excludePatterns filtering
-        if (excludePatterns.some(pattern => entry.name.includes(pattern))) {
+        if (excludePatterns.some((pattern) => entry.name.includes(pattern))) {
           continue;
         }
-        
+
         // Handle directories
         if (entry.isDirectory()) {
           const subPath = join(dirPath, entry.name);
           await scanDirectory(subPath, depth + 1);
         }
-        
+
         // Handle symlinks if configured
         if (entry.isSymbolicLink() && followSymlinks) {
           try {
@@ -421,7 +419,7 @@ export async function discoverRepositories(
           }
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       // T025: Implement error collection for non-fatal errors
       errors.push(classifyError(dirPath, error));
     }
@@ -430,24 +428,26 @@ export async function discoverRepositories(
 
 /**
  * Create Repository info object (T026, updated T040, T055)
- * 
+ *
  * Now includes default branch detection (US2) and setup script detection (US3).
  */
 async function createRepositoryInfo(repoPath: string): Promise<Repository> {
   const name = basename(repoPath);
-  
+
   // T040: Integrate detectDefaultBranch()
   let defaultBranch = "main"; // fallback
   try {
     defaultBranch = await detectDefaultBranch(repoPath);
   } catch (error) {
     // T041: Add warning logging when detection fails
-    warn(`Could not detect default branch for ${name}: ${error instanceof Error ? error.message : 'unknown error'}`);
+    warn(
+      `Could not detect default branch for ${name}: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
   }
-  
+
   // T055: Integrate detectSetupScript()
   const setupResult = await detectSetupScript(repoPath);
-  
+
   return {
     name,
     path: repoPath,
@@ -461,24 +461,28 @@ async function createRepositoryInfo(repoPath: string): Promise<Repository> {
 /**
  * Classify an error into an ErrorCode
  */
-function classifyError(path: string, error: any): DiscoveryError {
+function classifyError(path: string, error: unknown): DiscoveryError {
+  const candidate =
+    typeof error === "object" && error !== null
+      ? (error as { code?: unknown; message?: unknown })
+      : {};
   let code: ErrorCode;
   let message: string;
-  
-  if (error.code === "EACCES" || error.code === "EPERM") {
+
+  if (candidate.code === "EACCES" || candidate.code === "EPERM") {
     code = ErrorCode.PERMISSION_DENIED;
     message = "Permission denied";
-  } else if (error.code === "ENOTDIR") {
+  } else if (candidate.code === "ENOTDIR") {
     code = ErrorCode.NOT_A_DIRECTORY;
     message = "Not a directory";
-  } else if (error.code === "ELOOP") {
+  } else if (candidate.code === "ELOOP") {
     code = ErrorCode.SYMLINK_LOOP;
     message = "Symbolic link loop detected";
   } else {
     code = ErrorCode.IO_ERROR;
-    message = error.message || "I/O error";
+    message = typeof candidate.message === "string" ? candidate.message : "I/O error";
   }
-  
+
   return {
     path,
     message,
@@ -493,56 +497,45 @@ function classifyError(path: string, error: any): DiscoveryError {
 
 /**
  * Detects the default branch for a repository (T035)
- * 
+ *
  * Uses git symbolic-ref with fallback strategies to reliably detect
  * the default branch across different repository configurations.
- * 
+ *
  * @param repositoryPath - Absolute path to repository root
  * @returns Default branch name (e.g., "main", "master", "develop")
  * @throws {RepositoryInvalidError} If default branch cannot be determined
  */
-export async function detectDefaultBranch(
-  repositoryPath: string
-): Promise<string> {
+export async function detectDefaultBranch(repositoryPath: string): Promise<string> {
   try {
     // T036: Implement primary method - git symbolic-ref
-    const result = await git.exec(
-      ["symbolic-ref", "refs/remotes/origin/HEAD"],
-      repositoryPath
-    );
-    
+    const result = await git.exec(["symbolic-ref", "refs/remotes/origin/HEAD"], repositoryPath);
+
     // Parse output format: "refs/remotes/origin/main"
     const match = result.stdout.trim().match(/refs\/remotes\/origin\/(.+)/);
     if (match && match[1]) {
       return match[1].trim();
     }
-  } catch (error) {
+  } catch {
     // Fall through to fallback methods
   }
-  
+
   // T037: Implement fallback 1 - Check common branch names
   const commonBranches = ["main", "master", "develop", "trunk"];
   for (const branch of commonBranches) {
     try {
-      await git.exec(
-        ["rev-parse", "--verify", `refs/heads/${branch}`],
-        repositoryPath
-      );
-      
+      await git.exec(["rev-parse", "--verify", `refs/heads/${branch}`], repositoryPath);
+
       // Branch exists
       return branch;
     } catch {
       // Branch doesn't exist, try next
     }
   }
-  
+
   // T038: Implement fallback 2 - Get current branch from HEAD
   try {
-    const result = await git.exec(
-      ["rev-parse", "--abbrev-ref", "HEAD"],
-      repositoryPath
-    );
-    
+    const result = await git.exec(["rev-parse", "--abbrev-ref", "HEAD"], repositoryPath);
+
     const currentBranch = result.stdout.trim();
     if (currentBranch && currentBranch !== "HEAD") {
       return currentBranch;
@@ -550,12 +543,9 @@ export async function detectDefaultBranch(
   } catch {
     // Fall through to error
   }
-  
+
   // T039: Add error handling
-  throw new RepositoryInvalidError(
-    repositoryPath,
-    new Error("Could not determine default branch")
-  );
+  throw new RepositoryInvalidError(repositoryPath, new Error("Could not determine default branch"));
 }
 
 // ============================================================================
@@ -575,36 +565,32 @@ export interface SetupScriptResult {
 /**
  * Default setup script patterns to look for
  */
-const DEFAULT_SETUP_PATTERNS = [
-  "setup.sh",
-  "setup.bash",
-  ".arashi/setup.sh",
-];
+const DEFAULT_SETUP_PATTERNS = ["setup.sh", "setup.bash", ".arashi/setup.sh"];
 
 /**
  * Detects setup scripts in a repository (T050-T054)
- * 
+ *
  * Checks for the presence of setup scripts using configurable patterns.
  * Default patterns include: setup.sh, setup.bash, .arashi/setup.sh
- * 
+ *
  * @param repositoryPath - Absolute path to repository root
  * @param patterns - Optional custom script patterns to look for
  * @returns Object with hasSetupScript flag and setupScriptPath if found
  */
 export async function detectSetupScript(
   repositoryPath: string,
-  patterns: string[] = DEFAULT_SETUP_PATTERNS
+  patterns: string[] = DEFAULT_SETUP_PATTERNS,
 ): Promise<SetupScriptResult> {
   // T051: Implement file existence check for setup.sh in repository root
   // T052: Support configurable script patterns
   for (const pattern of patterns) {
     const scriptPath = join(repositoryPath, pattern);
-    
+
     try {
       // Check if file exists
       const file = Bun.file(scriptPath);
       const exists = await file.exists();
-      
+
       if (exists) {
         // T054: Return object with hasSetupScript flag and setupScriptPath
         return {
@@ -617,7 +603,7 @@ export async function detectSetupScript(
       continue;
     }
   }
-  
+
   // No setup script found
   return {
     hasSetupScript: false,
@@ -631,42 +617,42 @@ export async function detectSetupScript(
 
 /**
  * Validates workspace structure against expected configuration (T064-T069)
- * 
+ *
  * Compares discovered repositories with expected configuration to identify
  * present, missing, and extra repositories.
- * 
+ *
  * @param config - Workspace configuration with expected repositories
  * @param options - Optional validation options
  * @returns Validation result with categorized repositories
  */
 export async function validateWorkspace(
   config: WorkspaceConfiguration,
-  options: ValidationOptions = {}
+  options: ValidationOptions = {},
 ): Promise<ValidationResult> {
   // T065: Run discoverRepositories() to get actual repositories
   const discoveryResult = await discoverRepositories(
     config.workspacePath,
-    options.discoveryOptions
+    options.discoveryOptions,
   );
-  
+
   const actualRepos = discoveryResult.repositories;
   const expectedRepos = config.repositories;
-  
+
   // T067: Implement set-based comparison (present, missing, extra)
   const present: Repository[] = [];
   const missing: RepositoryConfig[] = [];
   const extra: Repository[] = [];
-  
+
   // T066: Parse WorkspaceConfiguration to get expected repositories
   // Create a map of expected repos by name for quick lookup
   const expectedMap = new Map<string, RepositoryConfig>();
   for (const expectedRepo of expectedRepos) {
     expectedMap.set(expectedRepo.name, expectedRepo);
   }
-  
+
   // Create a set of actual repo names for quick lookup
-  const actualNames = new Set(actualRepos.map(r => r.name));
-  
+  const actualNames = new Set(actualRepos.map((r) => r.name));
+
   // Find present repositories (in both expected and actual)
   for (const actualRepo of actualRepos) {
     if (expectedMap.has(actualRepo.name)) {
@@ -676,17 +662,17 @@ export async function validateWorkspace(
       extra.push(actualRepo);
     }
   }
-  
+
   // Find missing repositories (in expected but not in actual)
   for (const expectedRepo of expectedRepos) {
     if (!actualNames.has(expectedRepo.name)) {
       missing.push(expectedRepo);
     }
   }
-  
+
   // T068, T069: Build ValidationResult with categorized repositories and isValid flag
   const isValid = missing.length === 0 && discoveryResult.errors.length === 0;
-  
+
   return {
     isValid,
     present,
@@ -702,10 +688,10 @@ export async function validateWorkspace(
 
 /**
  * Clones a git repository from a URL to a target path (T082-T092)
- * 
+ *
  * Executes git clone with progress reporting and comprehensive error handling.
  * Supports shallow clones, specific branches, and progress callbacks.
- * 
+ *
  * @param url - Git repository URL to clone from
  * @param targetPath - Target directory path for cloned repository
  * @param options - Optional clone options
@@ -714,7 +700,7 @@ export async function validateWorkspace(
 export async function cloneRepository(
   url: string,
   targetPath: string,
-  options: CloneOptions = {}
+  options: CloneOptions = {},
 ): Promise<CloneOperation> {
   // T084: Create CloneOperation object with unique ID and PENDING status
   const operation: CloneOperation = {
@@ -724,7 +710,7 @@ export async function cloneRepository(
     status: CloneStatus.PENDING,
     startTime: new Date(),
   };
-  
+
   try {
     // T083: Implement pre-flight check: verify target path doesn't exist
     let targetExists = false;
@@ -735,7 +721,7 @@ export async function cloneRepository(
       // Target doesn't exist, which is what we want
       targetExists = false;
     }
-    
+
     if (targetExists && !options.force) {
       operation.status = CloneStatus.FAILED;
       operation.error = {
@@ -746,61 +732,54 @@ export async function cloneRepository(
       operation.duration = operation.endTime.getTime() - operation.startTime.getTime();
       return operation;
     }
-    
+
     // Clean up if force mode and target exists
     if (targetExists && options.force) {
       await rm(targetPath, { recursive: true, force: true });
     }
-    
+
     // T085: Execute git clone command using git utilities spawn
     operation.status = CloneStatus.IN_PROGRESS;
-    
+
     // Build git clone arguments
     const args = ["clone"];
-    
+
     // T091: Support CloneOptions: depth, branch, timeout
     if (options.depth) {
       args.push("--depth", options.depth.toString());
     }
-    
+
     if (options.branch) {
       args.push("--branch", options.branch);
     }
-    
+
     args.push("--progress"); // Enable progress output
     args.push(url);
     args.push(targetPath);
-    
+
     // T086, T087, T088: Implement progress parsing and callbacks
-    let lastProgress: CloneProgress = {
-      phase: ClonePhase.VALIDATING,
-      percentage: 0,
-      message: "Starting clone...",
-    };
-    
     const updateProgress = (progress: CloneProgress) => {
-      lastProgress = progress;
       operation.progress = progress;
       if (options.onProgress) {
         options.onProgress(progress);
       }
     };
-    
+
     updateProgress({
       phase: ClonePhase.CLONING,
       percentage: 0,
       message: "Cloning repository...",
     });
-    
+
     // Execute git clone
     try {
       const result = await git.exec(args, process.cwd());
-      
+
       // T086: Parse progress from stderr (git outputs progress to stderr)
       if (result.stderr) {
         parseCloneProgress(result.stderr, updateProgress);
       }
-      
+
       // T089: Handle clone success: verify .git directory, update status to COMPLETED
       let gitDirExists = false;
       try {
@@ -809,44 +788,39 @@ export async function cloneRepository(
       } catch {
         gitDirExists = false;
       }
-      
+
       if (!gitDirExists) {
         throw new Error("Clone completed but .git directory not found");
       }
-      
+
       operation.status = CloneStatus.COMPLETED;
       operation.progress = {
         phase: ClonePhase.COMPLETED,
         percentage: 100,
         message: "Clone completed successfully",
       };
-      
-    } catch (error: any) {
+    } catch (error: unknown) {
       // T090: Handle clone failure: categorize error, cleanup partial clone, update status to FAILED
       await handleCloneFailure(operation, error, targetPath);
     }
-    
-  } catch (error: any) {
+  } catch (error: unknown) {
     // T090: Handle unexpected errors
     await handleCloneFailure(operation, error, targetPath);
   }
-  
+
   // Calculate duration
   operation.endTime = new Date();
   operation.duration = operation.endTime.getTime() - operation.startTime.getTime();
-  
+
   return operation;
 }
 
 /**
  * Parse git clone progress output (T086-T087)
  */
-function parseCloneProgress(
-  output: string,
-  callback: (progress: CloneProgress) => void
-): void {
+function parseCloneProgress(output: string, callback: (progress: CloneProgress) => void): void {
   const lines = output.split("\n");
-  
+
   for (const line of lines) {
     // Parse "Receiving objects: XX% (X/Y)"
     const receivingMatch = line.match(/Receiving objects:\s+(\d+)%\s+\((\d+)\/(\d+)\)/);
@@ -860,7 +834,7 @@ function parseCloneProgress(
       });
       continue;
     }
-    
+
     // Parse "Resolving deltas: XX% (X/Y)"
     const resolvingMatch = line.match(/Resolving deltas:\s+(\d+)%\s+\((\d+)\/(\d+)\)/);
     if (resolvingMatch) {
@@ -881,38 +855,42 @@ function parseCloneProgress(
  */
 async function handleCloneFailure(
   operation: CloneOperation,
-  error: any,
-  targetPath: string
+  error: unknown,
+  targetPath: string,
 ): Promise<void> {
+  const candidate =
+    typeof error === "object" && error !== null ? (error as { message?: unknown }) : {};
+  const errorText = typeof candidate.message === "string" ? candidate.message : "Clone failed";
+
   operation.status = CloneStatus.FAILED;
-  
+
   // Categorize error
   let errorCode = CloneErrorCode.UNKNOWN;
-  let errorMessage = error.message || "Clone failed";
-  
-  if (error.message?.includes("timeout") || error.message?.includes("timed out")) {
+  let errorMessage = errorText;
+
+  if (errorText.includes("timeout") || errorText.includes("timed out")) {
     errorCode = CloneErrorCode.TIMEOUT;
     errorMessage = "Clone operation timed out";
-  } else if (error.message?.includes("Authentication") || error.message?.includes("Permission denied")) {
+  } else if (errorText.includes("Authentication") || errorText.includes("Permission denied")) {
     errorCode = CloneErrorCode.AUTH_FAILED;
     errorMessage = "Authentication failed";
-  } else if (error.message?.includes("not found") || error.message?.includes("repository not found")) {
+  } else if (errorText.includes("not found") || errorText.includes("repository not found")) {
     errorCode = CloneErrorCode.INVALID_URL;
     errorMessage = "Repository not found or URL is invalid";
-  } else if (error.message?.includes("network") || error.message?.includes("Could not resolve host")) {
+  } else if (errorText.includes("network") || errorText.includes("Could not resolve host")) {
     errorCode = CloneErrorCode.NETWORK_ERROR;
     errorMessage = "Network error during clone";
-  } else if (error.message?.includes("disk") || error.message?.includes("No space left")) {
+  } else if (errorText.includes("disk") || errorText.includes("No space left")) {
     errorCode = CloneErrorCode.DISK_FULL;
     errorMessage = "Insufficient disk space";
   }
-  
+
   operation.error = {
     code: errorCode,
     message: errorMessage,
     cause: error instanceof Error ? error : undefined,
   };
-  
+
   // Cleanup partial clone
   try {
     let targetExists = false;
@@ -922,11 +900,11 @@ async function handleCloneFailure(
     } catch {
       targetExists = false;
     }
-    
+
     if (targetExists) {
       await rm(targetPath, { recursive: true, force: true });
     }
-  } catch (cleanupError) {
+  } catch {
     // Ignore cleanup errors
   }
 }

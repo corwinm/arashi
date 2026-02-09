@@ -1,15 +1,13 @@
 /**
  * Unit tests for worktree orchestration
- * 
+ *
  * Feature: 001-worktree-orchestration
  * Tests cover coordinated worktree creation, conflict detection, filtering, and hooks
  */
 
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import {
   isValidBranchName,
-  type RepositoryFilter,
-  type WorktreeOperationOptions,
   resolveWorktreeStatuses,
 } from "../../../src/core/worktree.ts";
 import type { Repository } from "../../../src/core/repository.ts";
@@ -65,12 +63,12 @@ describe("Branch Name Validation", () => {
     expect(isValidBranchName("release/v1.0.0")).toBe(true);
     expect(isValidBranchName("feat/api-endpoints")).toBe(true);
   });
-  
+
   test("should reject branch names with spaces", () => {
     expect(isValidBranchName("feature 123")).toBe(false);
     expect(isValidBranchName("my branch")).toBe(false);
   });
-  
+
   test("should reject branch names with invalid characters", () => {
     expect(isValidBranchName("feature~123")).toBe(false);
     expect(isValidBranchName("feature^123")).toBe(false);
@@ -79,25 +77,25 @@ describe("Branch Name Validation", () => {
     expect(isValidBranchName("feature*123")).toBe(false);
     expect(isValidBranchName("feature[123]")).toBe(false);
   });
-  
+
   test("should reject branch names starting with - or /", () => {
     expect(isValidBranchName("-feature")).toBe(false);
     expect(isValidBranchName("/feature")).toBe(false);
   });
-  
+
   test("should reject branch names ending with .lock or /", () => {
     expect(isValidBranchName("feature.lock")).toBe(false);
     expect(isValidBranchName("feature/")).toBe(false);
   });
-  
+
   test("should reject branch names with ..", () => {
     expect(isValidBranchName("feature..123")).toBe(false);
   });
-  
+
   test("should reject branch names with @{", () => {
     expect(isValidBranchName("feature@{123}")).toBe(false);
   });
-  
+
   test("should reject empty or null branch names", () => {
     expect(isValidBranchName("")).toBe(false);
   });
@@ -111,23 +109,14 @@ describe("Create Coordinated Worktrees - Success Case", () => {
   test("should create worktrees across 5 repositories successfully", async () => {
     // Note: This is a unit test with real implementation but simple test repos
     // For true isolation, we'd mock git.exec, but for now we test with actual repos
-    const { createCoordinatedWorktrees } = await import("../../../src/core/worktree.ts");
-    
-    const branchName = "test-feature";
-    const testRepos = mockRepositories;
-    
-    // Mock git.exec to simulate successful operations
-    const mockGitExec = async (args: string[], cwd: string) => {
-      // Simulate successful git commands
-      return { stdout: "", stderr: "", exitCode: 0 };
-    };
-    
+    await import("../../../src/core/worktree.ts");
+
     // TODO: Once we have proper mocking, this test will verify:
     // 1. All 5 repositories get worktrees created
     // 2. Operation summary shows successCount = 5, failureCount = 0
     // 3. Each RepositoryResult has status='success' and worktreePath populated
     // 4. No rollback triggered (rolledBack = false)
-    
+
     // For now, we'll mark this as a placeholder that demonstrates the test structure
     expect(true).toBe(true);
   });
@@ -140,20 +129,14 @@ describe("Create Coordinated Worktrees - Success Case", () => {
 describe("Create Coordinated Worktrees - Different Default Branches", () => {
   test("should handle repositories with different default branches (main, master, develop)", async () => {
     // Note: This test will use actual createCoordinatedWorktrees but with mock git operations
-    const { createCoordinatedWorktrees } = await import("../../../src/core/worktree.ts");
-    
-    const testRepos = [
-      { name: "repo-1", path: "/test/repo-1", defaultBranch: "main", hasSetupScript: false },
-      { name: "repo-2", path: "/test/repo-2", defaultBranch: "master", hasSetupScript: false },
-      { name: "repo-3", path: "/test/repo-3", defaultBranch: "develop", hasSetupScript: false },
-    ];
-    
+    await import("../../../src/core/worktree.ts");
+
     // TODO: Once we have proper mocking, this test will verify:
     // 1. Branch created from 'main' in repo-1
     // 2. Branch created from 'master' in repo-2
     // 3. Branch created from 'develop' in repo-3
     // 4. All worktrees created successfully
-    
+
     // For now, placeholder to show test structure
     expect(true).toBe(true);
   });
@@ -173,17 +156,17 @@ describe("Create Coordinated Worktrees - Different Default Branches", () => {
 describe("Rollback on Failure", () => {
   test("should trigger rollback when repository processing fails", async () => {
     const { createCoordinatedWorktrees } = await import("../../../src/core/worktree.ts");
-    
+
     // Create test repos, but we'll force a failure
     const testRepos = [mockRepositories[0]];
-    
+
     // Use an invalid branch name to trigger failure
     const result = await createCoordinatedWorktrees(
       "invalid~branch", // Invalid character ~
       testRepos,
-      { showProgress: false, executeHooks: false }
+      { showProgress: false, executeHooks: false },
     );
-    
+
     // Verify rollback was triggered
     expect(result.rolledBack).toBe(true);
     expect(result.failureCount).toBe(1);
@@ -198,30 +181,30 @@ describe("Rollback on Failure", () => {
 
 describe("Branch Conflict Detection", () => {
   test("should detect no conflicts when branch doesn't exist", async () => {
-    const { checkBranchConflicts } = await import("../../../src/core/worktree.ts");
-    
+    await import("../../../src/core/worktree.ts");
+
     // TODO: Will need to mock git operations to avoid real git calls
     // For now, this is a placeholder showing test structure
     expect(true).toBe(true);
   });
-  
+
   test("should detect conflicts when branch exists in some repositories", async () => {
-    const { checkBranchConflicts } = await import("../../../src/core/worktree.ts");
-    
+    await import("../../../src/core/worktree.ts");
+
     // TODO: Mock git.exec to return different results for different repos
     expect(true).toBe(true);
   });
-  
+
   test("should handle ABORT conflict resolution strategy", async () => {
-    const { resolveConflicts, ConflictAbortedError } = await import("../../../src/core/worktree.ts");
-    
+    await import("../../../src/core/worktree.ts");
+
     // TODO: Test that ABORT strategy throws ConflictAbortedError
     expect(true).toBe(true);
   });
-  
+
   test("should handle REUSE_EXISTING conflict resolution strategy", async () => {
-    const { resolveConflicts } = await import("../../../src/core/worktree.ts");
-    
+    await import("../../../src/core/worktree.ts");
+
     // TODO: Test that REUSE_EXISTING strategy returns the strategy
     expect(true).toBe(true);
   });
@@ -234,50 +217,51 @@ describe("Branch Conflict Detection", () => {
 describe("Repository Filtering", () => {
   test("should return all repositories with mode='all'", async () => {
     const { applyRepositoryFilter } = await import("../../../src/core/worktree.ts");
-    
+
     const filter = {
-      mode: 'all' as const,
+      mode: "all" as const,
       explicitList: [],
       selectedRepositories: null,
     };
-    
+
     const result = await applyRepositoryFilter(filter, mockRepositories);
-    
+
     expect(result).toHaveLength(5);
     expect(result).toEqual(mockRepositories);
   });
-  
+
   test("should filter to explicit list with mode='explicit'", async () => {
     const { applyRepositoryFilter } = await import("../../../src/core/worktree.ts");
-    
+
     const filter = {
-      mode: 'explicit' as const,
-      explicitList: ['repo-1', 'repo-3', 'repo-5'],
+      mode: "explicit" as const,
+      explicitList: ["repo-1", "repo-3", "repo-5"],
       selectedRepositories: null,
     };
-    
+
     const result = await applyRepositoryFilter(filter, mockRepositories);
-    
+
     expect(result).toHaveLength(3);
-    expect(result[0].name).toBe('repo-1');
-    expect(result[1].name).toBe('repo-3');
-    expect(result[2].name).toBe('repo-5');
+    expect(result[0].name).toBe("repo-1");
+    expect(result[1].name).toBe("repo-3");
+    expect(result[2].name).toBe("repo-5");
   });
-  
+
   test("should throw error for unknown repository name", async () => {
-    const { applyRepositoryFilter, RepositoryValidationError } = await import("../../../src/core/worktree.ts");
-    
+    const { applyRepositoryFilter, RepositoryValidationError } =
+      await import("../../../src/core/worktree.ts");
+
     const filter = {
-      mode: 'explicit' as const,
-      explicitList: ['repo-1', 'nonexistent-repo'],
+      mode: "explicit" as const,
+      explicitList: ["repo-1", "nonexistent-repo"],
       selectedRepositories: null,
     };
-    
-    await expect(
-      applyRepositoryFilter(filter, mockRepositories)
-    ).rejects.toThrow(RepositoryValidationError);
+
+    await expect(applyRepositoryFilter(filter, mockRepositories)).rejects.toThrow(
+      RepositoryValidationError,
+    );
   });
-  
+
   // Note: Interactive mode testing is not included as it requires user interaction
   // and cannot be automated without complex prompt mocking. Interactive mode is
   // tested manually during development.

@@ -2,20 +2,20 @@
  * Core helpers for remove command
  */
 
-import { realpathSync } from 'fs';
-import chalk from 'chalk';
-import { basename, resolve as resolvePath } from 'path';
-import * as git from '../lib/git.ts';
-import { ArashiError } from '../lib/errors.ts';
-import { GitErrorCode } from '../types/git.ts';
+import { realpathSync } from "fs";
+import chalk from "chalk";
+import { resolve as resolvePath } from "path";
+import * as git from "../lib/git.ts";
+import { ArashiError } from "../lib/errors.ts";
+import { GitErrorCode } from "../types/git.ts";
 import type {
   WorktreeEntry,
   WorktreeGrouping,
   WorktreeInfo,
   RemovalSummary,
   RemovalOperation,
-} from '../types/remove.ts';
-import { buildWorktreeEntries, resolveWorktreeStatuses } from './worktree.ts';
+} from "../types/remove.ts";
+import { resolveWorktreeStatuses } from "./worktree.ts";
 
 export interface RepositoryTarget {
   name: string;
@@ -25,10 +25,10 @@ export interface RepositoryTarget {
 export function parseWorktreeList(
   output: string,
   repoName: string,
-  repoPath: string
+  repoPath: string,
 ): WorktreeInfo[] {
   const worktrees: WorktreeInfo[] = [];
-  const lines = output.trim().split('\n');
+  const lines = output.trim().split("\n");
   let current: Partial<WorktreeInfo> = {};
   let isBare = false;
   let canonicalRepoPath = repoPath;
@@ -54,39 +54,39 @@ export function parseWorktreeList(
     const isMain = canonicalWorktreePath === canonicalRepoPath;
     worktrees.push({
       path: current.path,
-      branch: current.branch || '',
+      branch: current.branch || "",
       repository: repoName,
       isMain,
     });
   };
 
   for (const line of lines) {
-    if (line === '') {
+    if (line === "") {
       pushCurrent();
       current = {};
       isBare = false;
       continue;
     }
 
-    if (line.startsWith('worktree ')) {
-      current.path = line.substring('worktree '.length);
+    if (line.startsWith("worktree ")) {
+      current.path = line.substring("worktree ".length);
       current.repository = repoName;
       continue;
     }
 
-    if (line === 'bare') {
+    if (line === "bare") {
       isBare = true;
       continue;
     }
 
-    if (line.startsWith('branch ')) {
-      const ref = line.substring('branch '.length);
-      current.branch = ref.replace('refs/heads/', '');
+    if (line.startsWith("branch ")) {
+      const ref = line.substring("branch ".length);
+      current.branch = ref.replace("refs/heads/", "");
       continue;
     }
 
-    if (line.startsWith('detached')) {
-      current.branch = '';
+    if (line.startsWith("detached")) {
+      current.branch = "";
       continue;
     }
   }
@@ -98,15 +98,15 @@ export function parseWorktreeList(
 
 export async function discoverWorktreesByBranch(
   branchName: string,
-  repositories: RepositoryTarget[]
+  repositories: RepositoryTarget[],
 ): Promise<WorktreeInfo[]> {
   const results: WorktreeInfo[] = [];
 
   for (const repo of repositories) {
     try {
-      const result = await git.exec(['worktree', 'list', '--porcelain'], repo.path);
+      const result = await git.exec(["worktree", "list", "--porcelain"], repo.path);
       const worktrees = parseWorktreeList(result.stdout, repo.name, repo.path);
-      results.push(...worktrees.filter(wt => wt.branch === branchName));
+      results.push(...worktrees.filter((wt) => wt.branch === branchName));
     } catch {
       continue;
     }
@@ -117,14 +117,14 @@ export async function discoverWorktreesByBranch(
 
 export async function discoverWorktreesByPath(
   worktreePath: string,
-  repositories: RepositoryTarget[]
+  repositories: RepositoryTarget[],
 ): Promise<WorktreeInfo[]> {
   const results: WorktreeInfo[] = [];
   const targetPath = normalizePath(worktreePath);
 
   for (const repo of repositories) {
     try {
-      const result = await git.exec(['worktree', 'list', '--porcelain'], repo.path);
+      const result = await git.exec(["worktree", "list", "--porcelain"], repo.path);
       const worktrees = parseWorktreeList(result.stdout, repo.name, repo.path);
       for (const worktree of worktrees) {
         const candidatePath = normalizePath(worktree.path);
@@ -141,13 +141,13 @@ export async function discoverWorktreesByPath(
 }
 
 export async function discoverAllWorktrees(
-  repositories: RepositoryTarget[]
+  repositories: RepositoryTarget[],
 ): Promise<WorktreeInfo[]> {
   const results: WorktreeInfo[] = [];
 
   for (const repo of repositories) {
     try {
-      const result = await git.exec(['worktree', 'list', '--porcelain'], repo.path);
+      const result = await git.exec(["worktree", "list", "--porcelain"], repo.path);
       results.push(...parseWorktreeList(result.stdout, repo.name, repo.path));
     } catch {
       continue;
@@ -166,7 +166,7 @@ function normalizePath(pathInput: string): string {
 }
 
 export function groupWorktreesByParent(entries: WorktreeEntry[]): WorktreeGrouping {
-  const groups: WorktreeGrouping['groups'] = [];
+  const groups: WorktreeGrouping["groups"] = [];
   const orphans: WorktreeEntry[] = [];
   const entryByPath = new Map<string, WorktreeEntry>();
   const groupByParent = new Map<string, { parent: WorktreeEntry; children: WorktreeEntry[] }>();
@@ -220,13 +220,13 @@ export function groupWorktreesByParent(entries: WorktreeEntry[]): WorktreeGroupi
 export async function refreshRemainingChildStatuses(
   removed: WorktreeEntry,
   remaining: WorktreeEntry[],
-  includeDirtyDetails: boolean
+  includeDirtyDetails: boolean,
 ): Promise<void> {
   if (removed.childrenPaths.length === 0) {
     return;
   }
 
-  const children = remaining.filter(entry => removed.childrenPaths.includes(entry.path));
+  const children = remaining.filter((entry) => removed.childrenPaths.includes(entry.path));
   if (children.length === 0) {
     return;
   }
@@ -237,19 +237,19 @@ export async function refreshRemainingChildStatuses(
 export async function removeWorktree(
   worktree: WorktreeInfo,
   repoPath: string,
-  force: boolean
+  force: boolean,
 ): Promise<void> {
-  const args = ['worktree', 'remove', worktree.path];
+  const args = ["worktree", "remove", worktree.path];
   if (force) {
-    args.push('--force');
+    args.push("--force");
   }
 
   try {
     await git.exec(args, repoPath);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.toLowerCase().includes('locked')) {
-      await git.exec([...args, '--force'], repoPath);
+    if (message.toLowerCase().includes("locked")) {
+      await git.exec([...args, "--force"], repoPath);
     } else {
       throw error;
     }
@@ -257,16 +257,16 @@ export async function removeWorktree(
 }
 
 export async function deleteBranch(repoPath: string, branchName: string): Promise<void> {
-  await git.exec(['branch', '-D', branchName], repoPath);
+  await git.exec(["branch", "-D", branchName], repoPath);
 }
 
 export async function detachWorktree(worktreePath: string): Promise<void> {
-  await git.exec(['checkout', '--detach'], worktreePath);
+  await git.exec(["checkout", "--detach"], worktreePath);
 }
 
 export async function branchExists(repoPath: string, branchName: string): Promise<boolean> {
   try {
-    await git.exec(['show-ref', '--verify', `refs/heads/${branchName}`], repoPath);
+    await git.exec(["show-ref", "--verify", `refs/heads/${branchName}`], repoPath);
     return true;
   } catch (error) {
     if (error instanceof ArashiError && error.code === GitErrorCode.NOT_FOUND) {
@@ -278,15 +278,18 @@ export async function branchExists(repoPath: string, branchName: string): Promis
 
 export async function getCurrentBranch(repoPath: string): Promise<string | null> {
   try {
-    const result = await git.exec(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath);
+    const result = await git.exec(["rev-parse", "--abbrev-ref", "HEAD"], repoPath);
     const branch = result.stdout.trim();
-    return branch === 'HEAD' ? null : branch;
+    return branch === "HEAD" ? null : branch;
   } catch {
     return null;
   }
 }
 
-export function createRemovalSummary(totalWorktrees: number, totalBranches: number): RemovalSummary {
+export function createRemovalSummary(
+  totalWorktrees: number,
+  totalBranches: number,
+): RemovalSummary {
   return {
     totalWorktrees,
     successfulWorktrees: 0,
@@ -300,13 +303,13 @@ export function createRemovalSummary(totalWorktrees: number, totalBranches: numb
 
 export function recordOperation(summary: RemovalSummary, operation: RemovalOperation): void {
   summary.operations.push(operation);
-  if (operation.type === 'worktree_remove' && operation.status === 'success') {
+  if (operation.type === "worktree_remove" && operation.status === "success") {
     summary.successfulWorktrees += 1;
   }
-  if (operation.type === 'branch_delete' && operation.status === 'success') {
+  if (operation.type === "branch_delete" && operation.status === "success") {
     summary.successfulBranches += 1;
   }
-  if (operation.status === 'failed' && operation.error) {
+  if (operation.status === "failed" && operation.error) {
     summary.errors.push(`${operation.repository}: ${operation.error}`);
   }
 }
@@ -316,7 +319,7 @@ export function formatRemovalSummaryHuman(
   extras?: {
     skippedMain?: WorktreeInfo[];
     missingBranches?: Record<string, string[]>;
-  }
+  },
 ): string {
   const lines: string[] = [];
   const hasErrors = summary.errors.length > 0;
@@ -324,31 +327,35 @@ export function formatRemovalSummaryHuman(
   if (hasErrors) {
     lines.push(chalk.red(`✗ Partial removal completed with ${summary.errors.length} errors`));
   } else {
-    lines.push(chalk.green(`✓ Successfully removed ${summary.successfulWorktrees} worktrees and deleted ${summary.successfulBranches} branches`));
+    lines.push(
+      chalk.green(
+        `✓ Successfully removed ${summary.successfulWorktrees} worktrees and deleted ${summary.successfulBranches} branches`,
+      ),
+    );
   }
 
   if (summary.successfulWorktrees > 0) {
-    lines.push('');
-    lines.push('Removed worktrees:');
+    lines.push("");
+    lines.push("Removed worktrees:");
     for (const op of summary.operations) {
-      if (op.type === 'worktree_remove' && op.status === 'success') {
+      if (op.type === "worktree_remove" && op.status === "success") {
         lines.push(`  • ${op.repository}: ${op.worktreePath}`);
       }
     }
   }
 
   if (summary.successfulBranches > 0) {
-    lines.push('');
-    lines.push('Deleted branches:');
+    lines.push("");
+    lines.push("Deleted branches:");
     for (const op of summary.operations) {
-      if (op.type === 'branch_delete' && op.status === 'success') {
+      if (op.type === "branch_delete" && op.status === "success") {
         lines.push(`  • ${op.repository}: ${op.branchName}`);
       }
     }
   }
 
   if (extras?.skippedMain && extras.skippedMain.length > 0) {
-    lines.push('');
+    lines.push("");
     for (const wt of extras.skippedMain) {
       lines.push(`Skipping main worktree: ${wt.path} (cannot be removed)`);
     }
@@ -358,24 +365,24 @@ export function formatRemovalSummaryHuman(
     const entries = Object.entries(extras.missingBranches);
     for (const [branch, repos] of entries) {
       if (repos.length > 0) {
-        lines.push('');
-        lines.push(`Note: Branch '${branch}' not found in: ${repos.join(', ')}`);
+        lines.push("");
+        lines.push(`Note: Branch '${branch}' not found in: ${repos.join(", ")}`);
       }
     }
   }
 
   if (hasErrors) {
-    lines.push('');
-    lines.push('Errors:');
+    lines.push("");
+    lines.push("Errors:");
     for (const error of summary.errors) {
       lines.push(`  • ${error}`);
     }
   }
 
-  lines.push('');
+  lines.push("");
   lines.push(`Total duration: ${(summary.duration / 1000).toFixed(2)}s`);
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export function formatRemovalSummaryJson(
@@ -383,9 +390,9 @@ export function formatRemovalSummaryJson(
   extras?: {
     skippedMain?: WorktreeInfo[];
     missingBranches?: Record<string, string[]>;
-  }
+  },
 ): string {
-  const payload: Record<string, any> = {
+  const payload: Record<string, unknown> = {
     success: summary.errors.length === 0,
     summary: {
       totalWorktrees: summary.totalWorktrees,
@@ -399,7 +406,7 @@ export function formatRemovalSummaryJson(
   };
 
   if (extras?.skippedMain && extras.skippedMain.length > 0) {
-    payload.skippedMain = extras.skippedMain.map(wt => ({
+    payload.skippedMain = extras.skippedMain.map((wt) => ({
       repository: wt.repository,
       path: wt.path,
     }));
