@@ -83,6 +83,21 @@ arashi remove -f "$(arashi list | fzf)"
 
 Note: `arashi remove` requires an interactive TTY. In non-interactive runs it exits with a clear error.
 
+## Hooks
+
+Arashi can run lifecycle hooks during `arashi create` to automate setup tasks.
+
+- Global hooks in `.arashi/hooks/`:
+  - `pre-create.sh`
+  - `post-create.sh`
+- Repo-specific hooks in `.arashi/hooks/`:
+  - `pre-create.<child-repo>.sh`
+  - `post-create.<child-repo>.sh`
+
+Repo-specific hooks run in the new child worktree context and receive main/parent repo paths via environment variables.
+
+See `docs/hooks.md` for details.
+
 ## Planned Commands
 
 - `arashi init` - Initialize arashi in current repository
