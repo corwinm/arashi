@@ -1,3 +1,16 @@
+## [1.3.0](https://github.com/corwinm/arashi/compare/v1.2.0...v1.3.0) (2026-02-09)
+
+### Features
+
+* add pull command ([#20](https://github.com/corwinm/arashi/issues/20)) ([a2b4df1](https://github.com/corwinm/arashi/commit/a2b4df16f63e5265229a64f747b3c60f4a338205))
+* **hooks:** repo-specific create hooks ([#22](https://github.com/corwinm/arashi/issues/22)) ([74d33dd](https://github.com/corwinm/arashi/commit/74d33dd17eb25d47744706245a9c79cac50d30d6))
+* **sync:** add branch alignment workflow ([#21](https://github.com/corwinm/arashi/issues/21)) ([c2c758b](https://github.com/corwinm/arashi/commit/c2c758b4339c3f9c29fc6dd9cb30451a8c77d8ae))
+
+### Bug Fixes
+
+* **create:** honor dry-run plan output ([#23](https://github.com/corwinm/arashi/issues/23)) ([c9a0a97](https://github.com/corwinm/arashi/commit/c9a0a9721d79f51f287a5062aae02b8cbe1d1cef))
+* **pull:** handle repos without upstream ([404a759](https://github.com/corwinm/arashi/commit/404a7591baa43d610bca93b04cda0af27e59dc1b))
+
 ## [1.2.0](https://github.com/corwinm/arashi/compare/v1.1.3...v1.2.0) (2026-02-08)
 
 ### Features
