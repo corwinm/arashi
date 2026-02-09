@@ -1,4 +1,9 @@
-import { confirm as inquirerConfirm, select as inquirerSelect, checkbox as inquirerCheckbox, input as inquirerInput } from "@inquirer/prompts";
+import {
+  confirm as inquirerConfirm,
+  select as inquirerSelect,
+  checkbox as inquirerCheckbox,
+  input as inquirerInput,
+} from "@inquirer/prompts";
 import readline from "readline";
 
 // ============================================================================
@@ -30,10 +35,19 @@ async function withPromptOutcome<T>(promptFn: () => Promise<T>): Promise<PromptO
   try {
     const value = await promptFn();
     return { status: "ok", value };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const promptError =
+      typeof error === "object" && error !== null
+        ? (error as { name?: string; message?: string })
+        : undefined;
+
     // Check if this is a Ctrl+C / cancellation error
-    if (error?.name === "ExitPromptError" || error?.name === "AbortPromptError" || error?.message?.includes("User force closed")) {
-      const reason = error?.name === "AbortPromptError" ? "abort" : "exit";
+    if (
+      promptError?.name === "ExitPromptError" ||
+      promptError?.name === "AbortPromptError" ||
+      promptError?.message?.includes("User force closed")
+    ) {
+      const reason = promptError?.name === "AbortPromptError" ? "abort" : "exit";
       return { status: "cancelled", reason };
     }
     // Re-throw other errors
@@ -41,13 +55,18 @@ async function withPromptOutcome<T>(promptFn: () => Promise<T>): Promise<PromptO
   }
 }
 
-function withVimNavigation<T>(promptFn: () => Promise<PromptOutcome<T>>): Promise<PromptOutcome<T>> {
+function withVimNavigation<T>(
+  promptFn: () => Promise<PromptOutcome<T>>,
+): Promise<PromptOutcome<T>> {
   if (!process.stdin.isTTY) {
     return promptFn();
   }
 
   readline.emitKeypressEvents(process.stdin);
-  const handler = (_str: string, key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean }) => {
+  const handler = (
+    _str: string,
+    key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean },
+  ) => {
     if (!key || key.ctrl || key.meta) {
       return;
     }
@@ -71,11 +90,11 @@ function withVimNavigation<T>(promptFn: () => Promise<PromptOutcome<T>>): Promis
 
 /**
  * Display yes/no prompt and return user's choice
- * 
+ *
  * @param message - Prompt message to display
  * @param defaultValue - Default value if user presses Enter (optional)
  * @returns User's boolean choice
- * 
+ *
  * @example
  * ```typescript
  * const shouldDelete = await confirm('Delete worktree?', false);
@@ -83,10 +102,13 @@ function withVimNavigation<T>(promptFn: () => Promise<PromptOutcome<T>>): Promis
  *   // perform deletion
  * }
  * ```
- * 
+ *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function confirm(message: string, defaultValue?: boolean): Promise<PromptOutcome<boolean>> {
+export async function confirm(
+  message: string,
+  defaultValue?: boolean,
+): Promise<PromptOutcome<boolean>> {
   return withPromptOutcome(async () => {
     return await inquirerConfirm({
       message,
@@ -101,12 +123,12 @@ export async function confirm(message: string, defaultValue?: boolean): Promise<
 
 /**
  * Display single-selection list and return selected value
- * 
+ *
  * @param message - Prompt message to display
  * @param choices - Array of choices with value, name, and optional description
  * @returns Selected value of type T
  * @throws Error if choices array is empty
- * 
+ *
  * @example
  * ```typescript
  * const branch = await select('Select branch:', [
@@ -114,7 +136,7 @@ export async function confirm(message: string, defaultValue?: boolean): Promise<
  *   { value: 'dev', name: 'dev', description: 'Development branch' }
  * ]);
  * ```
- * 
+ *
  * **Ctrl+C**: Exits process with code 2
  */
 export async function select<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T>> {
@@ -128,7 +150,7 @@ export async function select<T>(message: string, choices: Choice<T>[]): Promise<
         message,
         choices,
       });
-    })
+    }),
   );
 }
 
@@ -138,11 +160,11 @@ export async function select<T>(message: string, choices: Choice<T>[]): Promise<
 
 /**
  * Display multi-selection list (checkboxes) and return array of selected values
- * 
+ *
  * @param message - Prompt message to display
  * @param choices - Array of choices with value, name, and optional description
  * @returns Array of selected values of type T
- * 
+ *
  * @example
  * ```typescript
  * const features = await multiSelect('Select features:', [
@@ -152,17 +174,20 @@ export async function select<T>(message: string, choices: Choice<T>[]): Promise<
  * ]);
  * console.log(`Selected: ${features.join(', ')}`);
  * ```
- * 
+ *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function multiSelect<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T[]>> {
+export async function multiSelect<T>(
+  message: string,
+  choices: Choice<T>[],
+): Promise<PromptOutcome<T[]>> {
   return withVimNavigation(() =>
     withPromptOutcome(async () => {
       return await inquirerCheckbox({
         message,
         choices,
       });
-    })
+    }),
   );
 }
 
@@ -172,20 +197,23 @@ export async function multiSelect<T>(message: string, choices: Choice<T>[]): Pro
 
 /**
  * Display text input prompt and return entered string
- * 
+ *
  * @param message - Prompt message to display
  * @param defaultValue - Default value if user presses Enter (optional)
  * @returns User's input string
- * 
+ *
  * @example
  * ```typescript
  * const name = await input('Enter your name:', 'Anonymous');
  * console.log(`Hello, ${name}!`);
  * ```
- * 
+ *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function input(message: string, defaultValue?: string): Promise<PromptOutcome<string>> {
+export async function input(
+  message: string,
+  defaultValue?: string,
+): Promise<PromptOutcome<string>> {
   return withPromptOutcome(async () => {
     return await inquirerInput({
       message,

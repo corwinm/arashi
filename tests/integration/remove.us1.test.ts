@@ -2,29 +2,29 @@
  * Integration test: User Story 1 - remove single branch
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync } from 'fs';
-import { spawn } from 'bun';
-import { executeRemove } from '../../src/commands/remove.ts';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { existsSync } from "fs";
+import { spawn } from "bun";
+import { executeRemove } from "../../src/commands/remove.ts";
 import {
   createRemoveWorkspace,
   createNestedWorktrees,
   createWorktreesForBranch,
-} from '../helpers/remove-test-workspace.ts';
+} from "../helpers/remove-test-workspace.ts";
 
-describe('remove command - US1 single branch', () => {
+describe("remove command - US1 single branch", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
 
   beforeEach(async () => {
-    workspace = await createRemoveWorkspace(['repo-a', 'repo-b']);
+    workspace = await createRemoveWorkspace(["repo-a", "repo-b"]);
   });
 
   afterEach(async () => {
     await workspace.cleanup();
   });
 
-  test('removes worktrees and deletes branches across repositories', async () => {
-    const branchName = 'feature-us1';
+  test("removes worktrees and deletes branches across repositories", async () => {
+    const branchName = "feature-us1";
     const worktrees = await createWorktreesForBranch(workspace, branchName, true);
 
     const originalCwd = process.cwd();
@@ -41,24 +41,29 @@ describe('remove command - US1 single branch', () => {
       expect(existsSync(path)).toBe(false);
     }
 
-    const reposToCheck = [workspace.rootPath, ...workspace.repos.map(r => r.path)];
+    const reposToCheck = [workspace.rootPath, ...workspace.repos.map((r) => r.path)];
     for (const repoPath of reposToCheck) {
-      const proc = spawn(
-        ['git', 'rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`],
-        { cwd: repoPath, stdout: 'ignore', stderr: 'ignore' }
-      );
+      const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
+        cwd: repoPath,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
       const exitCode = await proc.exited;
       expect(exitCode).not.toBe(0);
     }
   });
 
-  test('groups mixed-branch children under their parent worktree', async () => {
-    const parentBranch = 'parent-main';
+  test("groups mixed-branch children under their parent worktree", async () => {
+    const parentBranch = "parent-main";
     const childBranches = {
-      'repo-a': 'child-a',
-      'repo-b': 'child-b',
+      "repo-a": "child-a",
+      "repo-b": "child-b",
     };
-    const { parentPath, childPaths } = await createNestedWorktrees(workspace, parentBranch, childBranches);
+    const { parentPath, childPaths } = await createNestedWorktrees(
+      workspace,
+      parentBranch,
+      childBranches,
+    );
 
     const originalCwd = process.cwd();
     process.chdir(workspace.rootPath);
@@ -66,24 +71,29 @@ describe('remove command - US1 single branch', () => {
     let observedChoices: Array<{ value: string; name: string }> = [];
 
     try {
-      const exitCode = await executeRemove(undefined, { force: false }, {
-        multiSelect: async (_message, choices) => {
-          observedChoices = choices.map(choice => ({ value: choice.value, name: choice.name }));
-          return { status: 'ok', value: [] };
+      const exitCode = await executeRemove(
+        undefined,
+        { force: false },
+        {
+          multiSelect: async (_message, choices) => {
+            observedChoices = choices.map((choice) => ({ value: choice.value, name: choice.name }));
+            return { status: "ok", value: [] };
+          },
+          confirm: async () => ({ status: "ok", value: true }),
         },
-        confirm: async () => ({ status: 'ok', value: true }),
-      });
+      );
       expect(exitCode).toBe(0);
     } finally {
       process.chdir(originalCwd);
     }
 
-    const childChoice = observedChoices.find(choice => choice.value === childPaths['repo-a']);
+    const childChoice = observedChoices.find((choice) => choice.value === childPaths["repo-a"]);
     expect(childChoice).toBeUndefined();
 
-    const parentChoice = observedChoices.find(choice => choice.value === parentPath)
-      ?? observedChoices.find(choice => choice.name.includes('repo-a=child-a'));
-    expect(parentChoice?.name).toContain('repo-a=child-a');
-    expect(parentChoice?.name).toContain('repo-b=child-b');
+    const parentChoice =
+      observedChoices.find((choice) => choice.value === parentPath) ??
+      observedChoices.find((choice) => choice.name.includes("repo-a=child-a"));
+    expect(parentChoice?.name).toContain("repo-a=child-a");
+    expect(parentChoice?.name).toContain("repo-b=child-b");
   });
 });

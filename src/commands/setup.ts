@@ -1,10 +1,19 @@
-import { Command } from 'commander';
-import * as logger from '../lib/logger.ts';
-import { findWorkspaceRoot, loadWorkspaceRepositories } from '../lib/config.ts';
-import { buildSummary, formatProgress, formatResultLine, formatSummary } from '../lib/setup-output.ts';
-import { discoverSetupTargets, isExecutableTarget, orderSetupTargets } from '../lib/setup-targets.ts';
-import { runSetupTarget } from '../lib/setup-runner.ts';
-import type { SetupExecutionResult } from '../lib/setup-types.ts';
+import { Command } from "commander";
+import * as logger from "../lib/logger.ts";
+import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import {
+  buildSummary,
+  formatProgress,
+  formatResultLine,
+  formatSummary,
+} from "../lib/setup-output.ts";
+import {
+  discoverSetupTargets,
+  isExecutableTarget,
+  orderSetupTargets,
+} from "../lib/setup-targets.ts";
+import { runSetupTarget } from "../lib/setup-runner.ts";
+import type { SetupExecutionResult } from "../lib/setup-types.ts";
 
 export interface SetupCommandOptions {
   only?: string[];
@@ -16,7 +25,7 @@ async function executeSetup(options: SetupCommandOptions): Promise<void> {
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
-    logger.error('Not in an arashi workspace');
+    logger.error("Not in an arashi workspace");
     logger.info('Run "arashi init" to initialize a workspace');
     process.exit(2);
   }
@@ -25,14 +34,14 @@ async function executeSetup(options: SetupCommandOptions): Promise<void> {
   try {
     repositoriesResult = await loadWorkspaceRepositories(workspaceRoot);
   } catch (error) {
-    logger.error('Failed to load workspace configuration');
+    logger.error("Failed to load workspace configuration");
     logger.error(error instanceof Error ? error.message : String(error));
     process.exit(2);
   }
 
   const discovery = await discoverSetupTargets(repositoriesResult.repositories, options.only);
   if (discovery.missing.length > 0) {
-    logger.error('Unknown repositories in --only filter:');
+    logger.error("Unknown repositories in --only filter:");
     for (const name of discovery.missing) {
       logger.info(`  - ${name}`);
     }
@@ -49,7 +58,7 @@ async function executeSetup(options: SetupCommandOptions): Promise<void> {
     if (!isExecutableTarget(target)) {
       const skippedResult: SetupExecutionResult = {
         repositoryName: target.name,
-        status: 'skipped',
+        status: "skipped",
         durationMs: 0,
         detail: target.skipReason,
       };
@@ -79,12 +88,16 @@ async function executeSetup(options: SetupCommandOptions): Promise<void> {
 }
 
 export function createCommand(): Command {
-  return new Command('setup')
-    .description('Run setup scripts across workspace repositories')
-    .option('--only <repo>', 'Only include a specific repository (repeatable)', (value, previous: string[] = []) => {
-      return previous.concat(value);
-    })
-    .option('-v, --verbose', 'Show full setup script output')
+  return new Command("setup")
+    .description("Run setup scripts across workspace repositories")
+    .option(
+      "--only <repo>",
+      "Only include a specific repository (repeatable)",
+      (value, previous: string[] = []) => {
+        return previous.concat(value);
+      },
+    )
+    .option("-v, --verbose", "Show full setup script output")
     .action(async (options: SetupCommandOptions) => {
       try {
         await executeSetup(options);

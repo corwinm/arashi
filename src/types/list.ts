@@ -1,8 +1,8 @@
 /**
  * List Command Type Definitions
- * 
+ *
  * Type definitions for the list command that displays worktrees and their status.
- * 
+ *
  * @module types/list
  */
 
@@ -84,13 +84,13 @@ export interface ListCommandOutput {
  * Custom error class for list command errors
  */
 export class ListCommandError extends Error {
-  public readonly context?: any;
-  
-  constructor(message: string, context?: any) {
+  public readonly context?: unknown;
+
+  constructor(message: string, context?: unknown) {
     super(message);
-    this.name = 'ListCommandError';
+    this.name = "ListCommandError";
     this.context = context;
-    
+
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, ListCommandError);
     }
@@ -102,11 +102,8 @@ export class ListCommandError extends Error {
  */
 export class NotInRepositoryError extends ListCommandError {
   constructor(path: string) {
-    super(
-      `Not a git repository: ${path}. Run from repository root.`,
-      { path }
-    );
-    this.name = 'NotInRepositoryError';
+    super(`Not a git repository: ${path}. Run from repository root.`, { path });
+    this.name = "NotInRepositoryError";
   }
 }
 
@@ -115,10 +112,7 @@ export class NotInRepositoryError extends ListCommandError {
  */
 export class ConfigurationMissingError extends ListCommandError {
   constructor(path: string) {
-    super(
-      `Configuration not found at ${path}. Run "arashi init" first.`,
-      { path }
-    );
-    this.name = 'ConfigurationMissingError';
+    super(`Configuration not found at ${path}. Run "arashi init" first.`, { path });
+    this.name = "ConfigurationMissingError";
   }
 }

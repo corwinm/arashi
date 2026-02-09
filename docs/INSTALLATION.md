@@ -3,6 +3,7 @@
 ## Overview
 
 Arashi uses a wrapper script approach to ensure compatibility with interactive tools like fzf. The distribution includes two files:
+
 - `arashi` - Shell wrapper script (the command users run)
 - `arashi.bin` - The compiled Bun executable
 
@@ -11,6 +12,7 @@ Arashi uses a wrapper script approach to ensure compatibility with interactive t
 Bun's compiled executables have a limitation where stdin (file descriptor 0) remains open even after calling `process.stdin.destroy()` or `fs.closeSync(0)`. This prevents tools like fzf from exclusively accessing `/dev/tty` for keyboard input.
 
 The wrapper solves this by closing stdin when piping `arashi list` output:
+
 ```bash
 if [ "$command" = "list" ] && [ ! -t 1 ]; then
   exec "$SCRIPT_DIR/arashi.bin" "$@" 0<&-
@@ -29,13 +31,12 @@ The npm package automatically handles the wrapper:
   "bin": {
     "arashi": "./bin/arashi"
   },
-  "files": [
-    "bin/"
-  ]
+  "files": ["bin/"]
 }
 ```
 
 When users run `npm install -g arashi`, npm:
+
 1. Installs both `bin/arashi` (wrapper) and `bin/arashi.bin` (binary)
 2. Creates a symlink in the global bin directory pointing to `bin/arashi`
 3. Everything works transparently
@@ -55,6 +56,7 @@ arashi-linux-x64.tar.gz
 ```
 
 Users extract and install both files:
+
 ```bash
 tar xzf arashi-macos-arm64.tar.gz
 cd arashi-macos-arm64
@@ -86,6 +88,7 @@ Use the packaging script to create release archives:
 ```
 
 This creates:
+
 - `releases/arashi-0.1.0-macos-arm64.tar.gz`
 - `releases/arashi-0.1.0-linux-x64.tar.gz`
 
@@ -108,6 +111,7 @@ arashi remove -f "$(arashi list | fzf)"  # ✓ Pick a worktree via fzf
 ## Windows Support
 
 Windows requires a different approach since `.bat` and `.ps1` files can't use `exec` or close stdin in the same way. Options:
+
 1. Use WSL (works with Linux binary)
 2. Create a PowerShell wrapper (requires research)
 3. Document the limitation

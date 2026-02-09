@@ -1,12 +1,12 @@
-import { Command } from 'commander';
-import { resolve } from 'path';
-import { findWorkspaceRoot, loadConfig, type Config } from '../lib/config.ts';
-import * as logger from '../lib/logger.ts';
-import { exec } from '../lib/git.ts';
-import { filterRepositories } from '../lib/config/filter-repos.ts';
-import { alignRepositoryBranch } from '../lib/git/sync-branch.ts';
-import { createRollbackTracker, recordCreatedBranch } from '../lib/git/sync-rollback.ts';
-import type { SyncResult, SyncSummary } from '../lib/git/sync-types.ts';
+import { Command } from "commander";
+import { resolve } from "path";
+import { findWorkspaceRoot, loadConfig, type Config } from "../lib/config.ts";
+import * as logger from "../lib/logger.ts";
+import { exec } from "../lib/git.ts";
+import { filterRepositories } from "../lib/config/filter-repos.ts";
+import { alignRepositoryBranch } from "../lib/git/sync-branch.ts";
+import { createRollbackTracker, recordCreatedBranch } from "../lib/git/sync-rollback.ts";
+import type { SyncResult, SyncSummary } from "../lib/git/sync-types.ts";
 
 interface SyncCommandOptions {
   only?: string;
@@ -14,10 +14,10 @@ interface SyncCommandOptions {
 }
 
 export function createCommand(): Command {
-  return new Command('sync')
-    .description('Align managed repositories to the parent branch')
-    .option('--only <repos>', 'Only sync specified repositories (comma-separated)')
-    .option('-v, --verbose', 'Show detailed output for each repository')
+  return new Command("sync")
+    .description("Align managed repositories to the parent branch")
+    .option("--only <repos>", "Only sync specified repositories (comma-separated)")
+    .option("-v, --verbose", "Show detailed output for each repository")
     .action(async (options: SyncCommandOptions) => {
       try {
         const summary = await executeSync(options);
@@ -38,11 +38,11 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
 
   const { repositories, missing } = filterRepositories(config.discovered_repos, options.only);
   if (missing.length > 0) {
-    throw new Error(`Repositories not found: ${missing.join(', ')}`);
+    throw new Error(`Repositories not found: ${missing.join(", ")}`);
   }
 
   if (repositories.length === 0) {
-    throw new Error('No managed repositories found to sync');
+    throw new Error("No managed repositories found to sync");
   }
 
   const timeoutMs = getSyncTimeoutMs(config);
@@ -66,7 +66,7 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
       });
     } catch (error) {
       outcome = {
-        status: 'failure' as const,
+        status: "failure" as const,
         createdBranch: false,
         previousBranch: null,
         currentBranch: null,
@@ -85,10 +85,12 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
       errorMessage: outcome.errorMessage,
     };
 
-    if (outcome.status === 'success') {
-      const createdSuffix = outcome.createdBranch ? ' (created)' : '';
-      spinner.succeed(`${repo.name}: synced to ${parentBranch}${createdSuffix} (${formatDuration(durationMs)})`);
-    } else if (outcome.status === 'timeout') {
+    if (outcome.status === "success") {
+      const createdSuffix = outcome.createdBranch ? " (created)" : "";
+      spinner.succeed(
+        `${repo.name}: synced to ${parentBranch}${createdSuffix} (${formatDuration(durationMs)})`,
+      );
+    } else if (outcome.status === "timeout") {
       spinner.fail(`${repo.name}: timed out (${formatDuration(durationMs)})`);
     } else {
       spinner.fail(`${repo.name}: failed (${formatDuration(durationMs)})`);
@@ -110,7 +112,7 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
     results.push(result);
   }
 
-  const successCount = results.filter(result => result.status === 'success').length;
+  const successCount = results.filter((result) => result.status === "success").length;
   const failureCount = results.length - successCount;
 
   printSummary({ successCount, failureCount, results });
@@ -123,10 +125,10 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
 }
 
 async function getParentBranch(workspaceRoot: string): Promise<string> {
-  const result = await exec(['rev-parse', '--abbrev-ref', 'HEAD'], workspaceRoot);
+  const result = await exec(["rev-parse", "--abbrev-ref", "HEAD"], workspaceRoot);
   const branch = result.stdout.trim();
-  if (!branch || branch === 'HEAD') {
-    throw new Error('Parent repository is in detached HEAD state');
+  if (!branch || branch === "HEAD") {
+    throw new Error("Parent repository is in detached HEAD state");
   }
   return branch;
 }
@@ -141,7 +143,11 @@ function getSyncTimeoutMs(config: Config): number {
     configWithSync.sync?.timeout_seconds ??
     configWithSync.timeoutSeconds;
 
-  if (typeof timeoutSeconds === 'number' && Number.isFinite(timeoutSeconds) && timeoutSeconds >= 0) {
+  if (
+    typeof timeoutSeconds === "number" &&
+    Number.isFinite(timeoutSeconds) &&
+    timeoutSeconds >= 0
+  ) {
     return Math.floor(timeoutSeconds * 1000);
   }
 
@@ -162,28 +168,32 @@ function printVerboseResult(result: SyncResult): void {
   ];
 
   if (result.createdBranch) {
-    detailParts.push('created=true');
+    detailParts.push("created=true");
   }
 
   if (result.errorMessage) {
     detailParts.push(`error=${result.errorMessage}`);
   }
 
-  logger.info(`  ${result.repositoryName}: ${detailParts.join(', ')}`);
+  logger.info(`  ${result.repositoryName}: ${detailParts.join(", ")}`);
 }
 
 function printSummary(summary: SyncSummary): void {
   if (summary.failureCount === 0) {
-    logger.success(`Sync complete: ${summary.successCount} succeeded, ${summary.failureCount} failed`);
+    logger.success(
+      `Sync complete: ${summary.successCount} succeeded, ${summary.failureCount} failed`,
+    );
     return;
   }
 
   logger.error(`Sync complete: ${summary.successCount} succeeded, ${summary.failureCount} failed`);
   for (const result of summary.results) {
-    if (result.status === 'success') {
+    if (result.status === "success") {
       continue;
     }
-    const errorMessage = result.errorMessage ? ` - ${result.errorMessage}` : '';
-    logger.info(`  ${result.repositoryName}: ${result.status} (${formatDuration(result.durationMs)})${errorMessage}`);
+    const errorMessage = result.errorMessage ? ` - ${result.errorMessage}` : "";
+    logger.info(
+      `  ${result.repositoryName}: ${result.status} (${formatDuration(result.durationMs)})${errorMessage}`,
+    );
   }
 }

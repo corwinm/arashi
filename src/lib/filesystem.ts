@@ -1,6 +1,6 @@
 import { mkdir, exists as bunExists, stat, copyFile as bunCopyFile, rm } from "node:fs/promises";
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve, isAbsolute } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { constants } from "node:fs";
 
 // ============================================================================
@@ -15,7 +15,7 @@ export class FilesystemError extends Error {
     public operation: string,
     public path: string,
     public code: string,
-    message: string
+    message: string,
   ) {
     super(message);
     this.name = "FilesystemError";
@@ -85,25 +85,29 @@ export class EncodingError extends FilesystemError {
 /**
  * Maps Node.js error codes to appropriate FilesystemError subclasses
  */
-function mapError(operation: string, path: string, error: any): FilesystemError {
-  const code = error.code || "UNKNOWN";
-  const message = error.message || "Unknown error";
+function mapError(operation: string, path: string, error: unknown): FilesystemError {
+  const nodeError =
+    typeof error === "object" && error !== null
+      ? (error as { code?: unknown; message?: unknown })
+      : {};
+  const code = typeof nodeError.code === "string" ? nodeError.code : "UNKNOWN";
+  const message = typeof nodeError.message === "string" ? nodeError.message : "Unknown error";
 
   switch (code) {
     case "EACCES":
     case "EPERM":
       return new PermissionError(operation, path, code, `Permission denied: ${message}`);
-    
+
     case "ENOENT":
       return new NotFoundError(operation, path, code, `Not found: ${message}`);
-    
+
     case "ENOSPC":
       return new DiskFullError(operation, path, code, `No space left on device: ${message}`);
-    
+
     case "EINVAL":
     case "ENAMETOOLONG":
       return new InvalidPathError(operation, path, code, `Invalid path: ${message}`);
-    
+
     default:
       return new FilesystemError(operation, path, code, message);
   }
@@ -115,7 +119,7 @@ function mapError(operation: string, path: string, error: any): FilesystemError 
 
 /**
  * Create a directory and all parent directories if they don't exist
- * 
+ *
  * @param path - Absolute or relative path to directory
  * @throws PermissionError - Insufficient permissions to create directory
  * @throws DiskFullError - No space left on device
@@ -124,7 +128,7 @@ function mapError(operation: string, path: string, error: any): FilesystemError 
 export async function ensureDir(path: string): Promise<void> {
   try {
     await mkdir(path, { recursive: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     throw mapError("ensureDir", path, error);
   }
 }
@@ -135,7 +139,7 @@ export async function ensureDir(path: string): Promise<void> {
 
 /**
  * Check if a file or directory exists
- * 
+ *
  * @param path - Absolute or relative path to check
  * @returns true if exists, false otherwise
  * @throws Never throws - returns false for permission errors
@@ -150,10 +154,10 @@ export async function fileExists(path: string): Promise<boolean> {
 
 /**
  * Check if a file has executable permissions
- * 
+ *
  * On Unix/macOS: Checks execute permission bit
  * On Windows: Checks file extension (.exe, .bat, .cmd, .com)
- * 
+ *
  * @param path - Absolute or relative path to file
  * @returns true if executable, false otherwise
  * @throws Never throws - returns false for errors
@@ -161,12 +165,12 @@ export async function fileExists(path: string): Promise<boolean> {
 export async function isExecutable(path: string): Promise<boolean> {
   try {
     // Check if file exists first
-    if (!await fileExists(path)) {
+    if (!(await fileExists(path))) {
       return false;
     }
 
     const stats = await stat(path);
-    
+
     // Return false for directories
     if (stats.isDirectory()) {
       return false;
@@ -176,7 +180,7 @@ export async function isExecutable(path: string): Promise<boolean> {
     if (process.platform === "win32") {
       // On Windows, check file extension
       const executableExtensions = [".exe", ".bat", ".cmd", ".com"];
-      return executableExtensions.some(ext => path.toLowerCase().endsWith(ext));
+      return executableExtensions.some((ext) => path.toLowerCase().endsWith(ext));
     } else {
       // On Unix/macOS, check execute permission bit
       // Check if any execute bit is set (owner, group, or other)
@@ -193,7 +197,7 @@ export async function isExecutable(path: string): Promise<boolean> {
 
 /**
  * Compute worktree path based on repository configuration
- * 
+ *
  * @param repoPath - Path to main repository
  * @param branch - Branch name for worktree
  * @param isBare - true if bare repository, false otherwise
@@ -205,7 +209,7 @@ export function getWorktreePath(
   repoPath: string,
   branch: string,
   isBare: boolean,
-  customPath?: string
+  customPath?: string,
 ): string {
   // Validate repoPath
   if (!repoPath || repoPath.trim() === "") {
@@ -213,7 +217,7 @@ export function getWorktreePath(
       "getWorktreePath",
       repoPath,
       "EINVAL",
-      "Repository path cannot be empty"
+      "Repository path cannot be empty",
     );
   }
 
@@ -241,7 +245,7 @@ export function getWorktreePath(
 
 /**
  * Read file contents as a UTF-8 string
- * 
+ *
  * @param path - File path to read
  * @returns File contents as UTF-8 string
  * @throws NotFoundError - File doesn't exist
@@ -252,9 +256,16 @@ export async function readTextFile(path: string): Promise<string> {
   try {
     const content = await readFile(path, "utf8");
     return content;
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const nodeError =
+      typeof error === "object" && error !== null
+        ? (error as { code?: unknown; message?: unknown })
+        : {};
     // Check for encoding errors
-    if (error.code === "ERR_INVALID_ARG_VALUE" || error.message?.includes("encoding")) {
+    if (
+      nodeError.code === "ERR_INVALID_ARG_VALUE" ||
+      (typeof nodeError.message === "string" && nodeError.message.includes("encoding"))
+    ) {
       throw new EncodingError("readTextFile", path, "ENCODING", "File is not valid UTF-8");
     }
     throw mapError("readTextFile", path, error);
@@ -263,10 +274,10 @@ export async function readTextFile(path: string): Promise<string> {
 
 /**
  * Write content to a file as UTF-8
- * 
+ *
  * Creates parent directories if needed.
  * Overwrites file if it exists.
- * 
+ *
  * @param path - File path to write
  * @param content - Content to write
  * @throws PermissionError - Insufficient write permissions
@@ -281,7 +292,7 @@ export async function writeTextFile(path: string, content: string): Promise<void
 
     // Write file
     await writeFile(path, content, "utf8");
-  } catch (error: any) {
+  } catch (error: unknown) {
     // If it's already a FilesystemError from ensureDir, rethrow
     if (error instanceof FilesystemError) {
       throw error;
@@ -292,7 +303,7 @@ export async function writeTextFile(path: string, content: string): Promise<void
 
 /**
  * Copy a file while preserving permissions
- * 
+ *
  * @param src - Source file path
  * @param dest - Destination file path
  * @throws NotFoundError - Source file doesn't exist
@@ -302,7 +313,7 @@ export async function writeTextFile(path: string, content: string): Promise<void
 export async function copyFile(src: string, dest: string): Promise<void> {
   try {
     // Check if source exists
-    if (!await fileExists(src)) {
+    if (!(await fileExists(src))) {
       throw new NotFoundError("copyFile", src, "ENOENT", `Source file not found: ${src}`);
     }
 
@@ -312,7 +323,7 @@ export async function copyFile(src: string, dest: string): Promise<void> {
 
     // Copy file with COPYFILE_FICLONE flag for copy-on-write when available
     await bunCopyFile(src, dest, constants.COPYFILE_FICLONE);
-  } catch (error: any) {
+  } catch (error: unknown) {
     // If it's already a FilesystemError, rethrow
     if (error instanceof FilesystemError) {
       throw error;
@@ -327,23 +338,23 @@ export async function copyFile(src: string, dest: string): Promise<void> {
 
 /**
  * Remove a directory and all its contents recursively
- * 
+ *
  * Succeeds silently if directory doesn't exist (idempotent).
- * 
+ *
  * @param path - Directory path to remove
  * @throws PermissionError - Insufficient permissions to remove
  */
 export async function removeDir(path: string): Promise<void> {
   try {
     // Check if directory exists first
-    if (!await fileExists(path)) {
+    if (!(await fileExists(path))) {
       // Idempotent: succeed if already doesn't exist
       return;
     }
 
     // Remove recursively
     await rm(path, { recursive: true, force: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     throw mapError("removeDir", path, error);
   }
 }

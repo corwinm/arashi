@@ -13,7 +13,7 @@ export interface DirtyStatus {
   stagedFiles: number;
 }
 
-export type WorktreeStatus = 'present' | 'prunable' | 'dirty';
+export type WorktreeStatus = "present" | "prunable" | "dirty";
 
 export interface WorktreeInfo {
   /** Absolute filesystem path to worktree */
@@ -55,7 +55,7 @@ export interface WorktreeGrouping {
 
 export interface RemovalOperation {
   /** Operation type */
-  type: 'worktree_remove' | 'branch_delete';
+  type: "worktree_remove" | "branch_delete";
   /** Repository name */
   repository: string;
   /** Target branch name */
@@ -63,7 +63,7 @@ export interface RemovalOperation {
   /** Worktree path for worktree removal */
   worktreePath?: string;
   /** Status of the operation */
-  status: 'pending' | 'success' | 'failed';
+  status: "pending" | "success" | "failed";
   /** Error message if failed */
   error?: string;
 }

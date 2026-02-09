@@ -31,7 +31,7 @@ function getPlatformInfo() {
     binaryName = `${PACKAGE_NAME}-windows-x64.exe`;
   } else {
     throw new Error(
-      `Unsupported platform: ${platform}-${arch}. Please build from source or file an issue at https://github.com/${GITHUB_REPO}/issues`
+      `Unsupported platform: ${platform}-${arch}. Please build from source or file an issue at https://github.com/${GITHUB_REPO}/issues`,
     );
   }
 
@@ -52,19 +52,13 @@ function downloadFile(url, dest) {
         response.statusCode === 307
       ) {
         file.close();
-        downloadFile(response.headers.location, dest)
-          .then(resolve)
-          .catch(reject);
+        downloadFile(response.headers.location, dest).then(resolve).catch(reject);
         return;
       }
 
       if (response.statusCode !== 200) {
         file.close();
-        reject(
-          new Error(
-            `Failed to download: ${response.statusCode} ${response.statusMessage}`
-          )
-        );
+        reject(new Error(`Failed to download: ${response.statusCode} ${response.statusMessage}`));
         return;
       }
 
@@ -139,7 +133,7 @@ async function install() {
   } catch (error) {
     console.error(`✗ Failed to install ${PACKAGE_NAME}:`, error.message);
     console.error(
-      `\nYou can manually download binaries from: https://github.com/${GITHUB_REPO}/releases`
+      `\nYou can manually download binaries from: https://github.com/${GITHUB_REPO}/releases`,
     );
     process.exit(1);
   }

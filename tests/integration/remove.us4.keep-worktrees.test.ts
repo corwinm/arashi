@@ -2,28 +2,28 @@
  * Integration test: User Story 4 - keep worktrees
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync } from 'fs';
-import { spawn } from 'bun';
-import { executeRemove } from '../../src/commands/remove.ts';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { existsSync } from "fs";
+import { spawn } from "bun";
+import { executeRemove } from "../../src/commands/remove.ts";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
-} from '../helpers/remove-test-workspace.ts';
+} from "../helpers/remove-test-workspace.ts";
 
-describe('remove command - US4 keep worktrees', () => {
+describe("remove command - US4 keep worktrees", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
 
   beforeEach(async () => {
-    workspace = await createRemoveWorkspace(['repo-a', 'repo-b']);
+    workspace = await createRemoveWorkspace(["repo-a", "repo-b"]);
   });
 
   afterEach(async () => {
     await workspace.cleanup();
   });
 
-  test('keeps worktree directories while deleting branches', async () => {
-    const branchName = 'feature-keep-wt';
+  test("keeps worktree directories while deleting branches", async () => {
+    const branchName = "feature-keep-wt";
     const worktrees = await createWorktreesForBranch(workspace, branchName, true);
 
     const originalCwd = process.cwd();
@@ -40,12 +40,13 @@ describe('remove command - US4 keep worktrees', () => {
       expect(existsSync(path)).toBe(true);
     }
 
-    const reposToCheck = [workspace.rootPath, ...workspace.repos.map(r => r.path)];
+    const reposToCheck = [workspace.rootPath, ...workspace.repos.map((r) => r.path)];
     for (const repoPath of reposToCheck) {
-      const proc = spawn(
-        ['git', 'rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`],
-        { cwd: repoPath, stdout: 'ignore', stderr: 'ignore' }
-      );
+      const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
+        cwd: repoPath,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
       const exitCode = await proc.exited;
       expect(exitCode).not.toBe(0);
     }

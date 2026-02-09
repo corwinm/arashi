@@ -1,4 +1,4 @@
-import { exec } from './git.ts';
+import { exec } from "./git.ts";
 
 export interface RemoteChangeStatus {
   repositoryId: string;
@@ -13,14 +13,17 @@ export interface RemoteChangeStatus {
 
 export async function checkRemoteChanges(
   repositoryId: string,
-  repoPath: string
+  repoPath: string,
 ): Promise<RemoteChangeStatus> {
   let upstream: string | null = null;
   let remote: string | null = null;
   let branch: string | null = null;
 
   try {
-    const upstreamResult = await exec(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], repoPath);
+    const upstreamResult = await exec(
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+      repoPath,
+    );
     upstream = upstreamResult.stdout.trim() || null;
     const parsed = parseRemoteTrackingRef(upstream);
     if (parsed) {
@@ -58,14 +61,17 @@ export async function checkRemoteChanges(
       ahead: 0,
       behind: 0,
       hasRemoteChanges: false,
-      error: 'Unable to determine remote tracking branch',
+      error: "Unable to determine remote tracking branch",
     };
   }
 
   try {
-    await exec(['fetch', '--prune', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`], repoPath);
+    await exec(
+      ["fetch", "--prune", remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
+      repoPath,
+    );
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Remote fetch failed';
+    const message = error instanceof Error ? error.message : "Remote fetch failed";
     return {
       repositoryId,
       upstream,
@@ -80,10 +86,13 @@ export async function checkRemoteChanges(
 
   try {
     const compareRef = `refs/remotes/${remote}/${branch}`;
-    const result = await exec(['rev-list', '--left-right', '--count', `HEAD...${compareRef}`], repoPath);
+    const result = await exec(
+      ["rev-list", "--left-right", "--count", `HEAD...${compareRef}`],
+      repoPath,
+    );
     const parts = result.stdout.trim().split(/\s+/);
-    const ahead = Number.parseInt(parts[0] || '0', 10);
-    const behind = Number.parseInt(parts[1] || '0', 10);
+    const ahead = Number.parseInt(parts[0] || "0", 10);
+    const behind = Number.parseInt(parts[1] || "0", 10);
 
     return {
       repositoryId,
@@ -95,7 +104,7 @@ export async function checkRemoteChanges(
       hasRemoteChanges: behind > 0,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Remote change detection failed';
+    const message = error instanceof Error ? error.message : "Remote change detection failed";
     return {
       repositoryId,
       upstream,
@@ -114,12 +123,12 @@ function parseRemoteTrackingRef(ref: string | null): { remote: string; branch: s
     return null;
   }
 
-  if (ref.startsWith('refs/heads/')) {
+  if (ref.startsWith("refs/heads/")) {
     return null;
   }
 
-  const normalized = ref.startsWith('refs/remotes/') ? ref.replace(/^refs\/remotes\//, '') : ref;
-  const slashIndex = normalized.indexOf('/');
+  const normalized = ref.startsWith("refs/remotes/") ? ref.replace(/^refs\/remotes\//, "") : ref;
+  const slashIndex = normalized.indexOf("/");
   if (slashIndex === -1) {
     return null;
   }
@@ -134,27 +143,26 @@ function parseRemoteTrackingRef(ref: string | null): { remote: string; branch: s
 }
 
 async function resolveRemoteAndBranch(
-  repoPath: string
-): Promise<{ ok: true; remote: string; branch: string } | { ok: false; error: string } > {
+  repoPath: string,
+): Promise<{ ok: true; remote: string; branch: string } | { ok: false; error: string }> {
   const currentBranch = await getCurrentBranch(repoPath);
   if (!currentBranch) {
-    return { ok: false, error: 'Detached HEAD: cannot determine branch for remote comparison' };
+    return { ok: false, error: "Detached HEAD: cannot determine branch for remote comparison" };
   }
 
   const configuredRemote = await getBranchRemote(repoPath, currentBranch);
-  let remote = configuredRemote && configuredRemote !== '.' ? configuredRemote : null;
+  let remote = configuredRemote && configuredRemote !== "." ? configuredRemote : null;
   if (!remote) {
     remote = await pickDefaultRemote(repoPath);
   }
 
   if (!remote) {
-    return { ok: false, error: 'No remotes configured for repository' };
+    return { ok: false, error: "No remotes configured for repository" };
   }
 
   const mergeRef = await getBranchMergeRef(repoPath, currentBranch);
-  const mergeBranch = mergeRef && mergeRef.startsWith('refs/heads/')
-    ? mergeRef.replace('refs/heads/', '')
-    : null;
+  const mergeBranch =
+    mergeRef && mergeRef.startsWith("refs/heads/") ? mergeRef.replace("refs/heads/", "") : null;
   const branch = mergeBranch || currentBranch;
 
   return { ok: true, remote, branch };
@@ -162,9 +170,9 @@ async function resolveRemoteAndBranch(
 
 async function getCurrentBranch(repoPath: string): Promise<string | null> {
   try {
-    const result = await exec(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath);
+    const result = await exec(["rev-parse", "--abbrev-ref", "HEAD"], repoPath);
     const branch = result.stdout.trim();
-    if (!branch || branch === 'HEAD') {
+    if (!branch || branch === "HEAD") {
       return null;
     }
     return branch;
@@ -175,7 +183,7 @@ async function getCurrentBranch(repoPath: string): Promise<string | null> {
 
 async function getBranchRemote(repoPath: string, branch: string): Promise<string | null> {
   try {
-    const result = await exec(['config', '--get', `branch.${branch}.remote`], repoPath);
+    const result = await exec(["config", "--get", `branch.${branch}.remote`], repoPath);
     return result.stdout.trim() || null;
   } catch {
     return null;
@@ -184,7 +192,7 @@ async function getBranchRemote(repoPath: string, branch: string): Promise<string
 
 async function getBranchMergeRef(repoPath: string, branch: string): Promise<string | null> {
   try {
-    const result = await exec(['config', '--get', `branch.${branch}.merge`], repoPath);
+    const result = await exec(["config", "--get", `branch.${branch}.merge`], repoPath);
     return result.stdout.trim() || null;
   } catch {
     return null;
@@ -193,14 +201,14 @@ async function getBranchMergeRef(repoPath: string, branch: string): Promise<stri
 
 async function pickDefaultRemote(repoPath: string): Promise<string | null> {
   try {
-    const result = await exec(['remote'], repoPath);
+    const result = await exec(["remote"], repoPath);
     const remotes = result.stdout
-      .split('\n')
-      .map(remote => remote.trim())
+      .split("\n")
+      .map((remote) => remote.trim())
       .filter(Boolean);
 
-    if (remotes.includes('origin')) {
-      return 'origin';
+    if (remotes.includes("origin")) {
+      return "origin";
     }
 
     if (remotes.length === 1) {

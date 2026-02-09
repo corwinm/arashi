@@ -29,6 +29,7 @@ The npm package includes everything you need for full fzf compatibility.
 Download and extract the latest release for your platform from [GitHub Releases](https://github.com/corwinm/arashi/releases):
 
 **macOS (Apple Silicon)**
+
 ```bash
 curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-macos-arm64.tar.gz -o arashi.tar.gz
 tar xzf arashi.tar.gz
@@ -37,6 +38,7 @@ sudo cp arashi arashi.bin /usr/local/bin/
 ```
 
 **Linux (x64)**
+
 ```bash
 curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-linux-x64.tar.gz -o arashi.tar.gz
 tar xzf arashi.tar.gz
@@ -45,11 +47,13 @@ sudo cp arashi arashi.bin /usr/local/bin/
 ```
 
 **Windows (x64)**
+
 - Windows support coming soon (wrapper script needs PowerShell equivalent)
 
 ## Vision
 
 Arashi will enable developers to:
+
 - Create coordinated worktrees across multiple repositories with a single command
 - Automatically manage branch synchronization across related repos
 - Simplify setup and teardown of development environments
@@ -167,12 +171,12 @@ arashi-tmux() {
   if [ -n "$worktree" ]; then
     # Create session name from last path component
     local session_name=$(basename "$worktree")
-    
+
     # Create session if it doesn't exist
     if ! tmux has-session -t "$session_name" 2>/dev/null; then
       tmux new-session -d -s "$session_name" -c "$worktree"
     fi
-    
+
     # Switch to or attach session
     if [ -n "$TMUX" ]; then
       tmux switch-client -t "$session_name"
@@ -188,6 +192,7 @@ bindkey -s '^g' 'arashi-tmux\n'  # Zsh
 ```
 
 **What this does:**
+
 1. Fuzzy-find a worktree with fzf
 2. Create a named tmux session for that worktree (if needed)
 3. Switch to the session, preserving your current context
@@ -213,17 +218,18 @@ bindkey -s '^g' 'sesh connect $(arashi list | fzf)\n'
 ```
 
 **Benefits of sesh:**
+
 - Smart session naming and path handling
 - Automatic tmux session creation
 - Works seamlessly with zoxide and other tools
 
 ### Comparison Table
 
-| Method | Setup Complexity | Features | Best For |
-|--------|-----------------|----------|----------|
-| **Basic fzf** | Low | Quick navigation | Simple cd workflows |
-| **tmux function** | Medium | Session management | Multi-project work |
-| **sesh** | Low-Medium | Unified session list | Power users with multiple sources |
+| Method            | Setup Complexity | Features             | Best For                          |
+| ----------------- | ---------------- | -------------------- | --------------------------------- |
+| **Basic fzf**     | Low              | Quick navigation     | Simple cd workflows               |
+| **tmux function** | Medium           | Session management   | Multi-project work                |
+| **sesh**          | Low-Medium       | Unified session list | Power users with multiple sources |
 
 ### Tips
 
@@ -275,17 +281,38 @@ bun run build:all
 # Run tests (coming soon)
 bun test
 
-# Type check
+# Lint and format checks
 bun run lint
+bun run format:check
+
+# Optional auto-fixes
+bun run lint:fix
+bun run format
+
+# Changed-file quality checks
+bun run quality:changed
+
+# Type check
+bun run typecheck
 ```
+
+### Code Quality Workflow
+
+- `bun run lint` runs Oxlint with repository rules and reports actionable diagnostics.
+- `bun run format:check` validates formatting without writing changes.
+- `bun run lint:fix` and `bun run format` apply automatic remediations when available.
+- `bun run quality:changed` runs lint and format checks only on changed files for faster local feedback.
+- CI enforces `typescript/no-explicit-any` as an error for repository linting.
 
 ### Contributing
 
 We welcome contributions! Please see our [Specifications Repository](https://github.com/corwinm/arashi-arashi) for:
+
 - [Design Document](https://github.com/corwinm/arashi-arashi/tree/main/setup/.specify/memory/design.md) - Feature roadmap and technical design
 - [Contributing Guide](https://github.com/corwinm/arashi-arashi/blob/main/setup/CONTRIBUTING.md) - Specs-first development workflow
 
 **Quick Summary:**
+
 1. Specs are created in the [arashi-arashi repository](https://github.com/corwinm/arashi-arashi) first
 2. Implementation happens in this repository
 3. Use conventional commits
@@ -294,6 +321,7 @@ We welcome contributions! Please see our [Specifications Repository](https://git
 
 **Commit Message Format:**
 We use [Conventional Commits](https://www.conventionalcommits.org/):
+
 ```
 feat: add interactive mode for repo selection
 fix: handle worktrees with uncommitted changes
@@ -303,6 +331,7 @@ docs: update installation instructions
 ## Architecture
 
 Arashi is built with:
+
 - **Runtime:** Bun (single-file executable)
 - **Language:** TypeScript
 - **CLI Framework:** Commander.js

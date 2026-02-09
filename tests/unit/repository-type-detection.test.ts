@@ -1,7 +1,7 @@
 /**
  * Unit Tests: Repository Type Detection
  * Feature: 001-nested-worktree-paths
- * 
+ *
  * Tests the detectRepositoryType() function for classifying repositories
  * as meta-repo, child, or standalone based on configuration and location.
  */
@@ -17,7 +17,7 @@ import type { ArashiConfig } from "../../src/types.ts";
 
 describe("detectRepositoryType", () => {
   const testDir = join(import.meta.dir, "temp-test-workspace");
-  
+
   beforeEach(async () => {
     await mkdir(testDir, { recursive: true });
   });
@@ -31,7 +31,7 @@ describe("detectRepositoryType", () => {
       // Setup: Create meta-repo with .arashi/config.json
       const metaRepoPath = join(testDir, "meta-repo");
       const arashiConfigPath = join(metaRepoPath, ".arashi", "config.json");
-      
+
       await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
       await writeFile(arashiConfigPath, JSON.stringify({ version: "1.0.0" }));
 
@@ -54,7 +54,7 @@ describe("detectRepositoryType", () => {
       // Setup: Create meta-repo with .arashi/config.json
       const metaRepoPath = join(testDir, "meta-repo");
       const arashiConfigPath = join(metaRepoPath, ".arashi", "config.json");
-      
+
       await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
       await writeFile(arashiConfigPath, JSON.stringify({ version: "1.0.0" }));
 

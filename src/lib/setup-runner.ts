@@ -1,5 +1,5 @@
-import { runWithTimeout } from './process/run-with-timeout.ts';
-import type { SetupExecutionResult, SetupTarget } from './setup-types.ts';
+import { runWithTimeout } from "./process/run-with-timeout.ts";
+import type { SetupExecutionResult, SetupTarget } from "./setup-types.ts";
 
 export interface SetupRunnerOptions {
   timeoutMs: number;
@@ -7,14 +7,14 @@ export interface SetupRunnerOptions {
 
 export async function runSetupTarget(
   target: SetupTarget,
-  options: SetupRunnerOptions
+  options: SetupRunnerOptions,
 ): Promise<SetupExecutionResult> {
   if (!target.setupScriptPath) {
     return {
       repositoryName: target.name,
-      status: 'skipped',
+      status: "skipped",
       durationMs: 0,
-      detail: target.skipReason ?? 'no setup script found',
+      detail: target.skipReason ?? "no setup script found",
     };
   }
 
@@ -24,12 +24,12 @@ export async function runSetupTarget(
     timeoutMs: options.timeoutMs,
   });
 
-  const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
+  const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
 
   if (result.timedOut) {
     return {
       repositoryName: target.name,
-      status: 'timed-out',
+      status: "timed-out",
       durationMs: result.durationMs,
       detail: `Timed out after ${options.timeoutMs}ms`,
       output,
@@ -39,7 +39,7 @@ export async function runSetupTarget(
   if (result.exitCode !== 0) {
     return {
       repositoryName: target.name,
-      status: 'failed',
+      status: "failed",
       durationMs: result.durationMs,
       detail: output || `Setup exited with code ${result.exitCode}`,
       output,
@@ -48,19 +48,19 @@ export async function runSetupTarget(
 
   return {
     repositoryName: target.name,
-    status: 'success',
+    status: "success",
     durationMs: result.durationMs,
     output,
   };
 }
 
 function buildScriptCommand(scriptPath: string): string[] {
-  if (process.platform === 'win32') {
-    if (scriptPath.endsWith('.ps1')) {
-      return ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-File', scriptPath];
+  if (process.platform === "win32") {
+    if (scriptPath.endsWith(".ps1")) {
+      return ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", scriptPath];
     }
-    return ['cmd.exe', '/c', scriptPath];
+    return ["cmd.exe", "/c", scriptPath];
   }
 
-  return ['sh', scriptPath];
+  return ["sh", scriptPath];
 }

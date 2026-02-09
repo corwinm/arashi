@@ -1,14 +1,14 @@
 /**
  * Configuration Management Module
- * 
+ *
  * Handles loading, validation, and persistence of Arashi configuration files.
  * Configuration is stored in `.arashi/config.json` at the repository root.
- * 
+ *
  * @module config
  */
 
-import { join, dirname, basename, resolve } from 'path';
-import { mkdir } from 'fs/promises';
+import { join, dirname, basename, resolve } from "path";
+import { mkdir } from "fs/promises";
 
 // ============================================================================
 // Data Types
@@ -37,7 +37,7 @@ export interface WorktreeInfo {
   /** ISO 8601 timestamp when worktree was created */
   created_at: string;
   /** Optional user-defined metadata */
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -75,6 +75,11 @@ export interface Config {
   discovered_repos: Record<string, RepoConfig>;
 }
 
+type ConfigErrorContext = {
+  errors: string[];
+  [key: string]: unknown;
+};
+
 /**
  * Resolved repository information from workspace configuration.
  */
@@ -99,18 +104,18 @@ export class ConfigError extends Error {
    * Original error that caused this error (if any)
    */
   public readonly cause?: Error;
-  
+
   /**
    * Additional context about the error
    */
-  public readonly context?: any;
-  
-  constructor(message: string, cause?: Error, context?: any) {
+  public readonly context: ConfigErrorContext;
+
+  constructor(message: string, cause?: Error, context: Record<string, unknown> = {}) {
     super(message);
-    this.name = 'ConfigError';
+    this.name = "ConfigError";
     this.cause = cause;
-    this.context = context;
-    
+    this.context = { errors: [], ...context };
+
     // Maintains proper stack trace for where error was thrown
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, ConfigError);
@@ -123,12 +128,10 @@ export class ConfigError extends Error {
  */
 export class ConfigNotFoundError extends ConfigError {
   constructor(path: string) {
-    super(
-      `Configuration file not found at ${path}. Run "arashi init" to create it.`,
-      undefined,
-      { path }
-    );
-    this.name = 'ConfigNotFoundError';
+    super(`Configuration file not found at ${path}. Run "arashi init" to create it.`, undefined, {
+      path,
+    });
+    this.name = "ConfigNotFoundError";
   }
 }
 
@@ -137,12 +140,8 @@ export class ConfigNotFoundError extends ConfigError {
  */
 export class ConfigParseError extends ConfigError {
   constructor(path: string, cause: Error) {
-    super(
-      `Failed to parse configuration file at ${path}: ${cause.message}`,
-      cause,
-      { path }
-    );
-    this.name = 'ConfigParseError';
+    super(`Failed to parse configuration file at ${path}: ${cause.message}`, cause, { path });
+    this.name = "ConfigParseError";
   }
 }
 
@@ -152,11 +151,11 @@ export class ConfigParseError extends ConfigError {
 export class ConfigValidationError extends ConfigError {
   constructor(errors: string[]) {
     super(
-      `Configuration validation failed:\n${errors.map(e => `  - ${e}`).join('\n')}`,
+      `Configuration validation failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`,
       undefined,
-      { errors }
+      { errors },
     );
-    this.name = 'ConfigValidationError';
+    this.name = "ConfigValidationError";
   }
 }
 
@@ -166,10 +165,10 @@ export class ConfigValidationError extends ConfigError {
 
 /**
  * Get the full path to the configuration file
- * 
+ *
  * @param repoPath - Path to the repository
  * @returns Absolute path to .arashi/config.json
- * 
+ *
  * @example
  * ```typescript
  * const configPath = getConfigPath('/path/to/repo');
@@ -177,15 +176,15 @@ export class ConfigValidationError extends ConfigError {
  * ```
  */
 export function getConfigPath(repoPath: string): string {
-  return join(repoPath, '.arashi', 'config.json');
+  return join(repoPath, ".arashi", "config.json");
 }
 
 /**
  * Check if configuration file exists
- * 
+ *
  * @param repoPath - Path to the repository
  * @returns True if config file exists, false otherwise
- * 
+ *
  * @example
  * ```typescript
  * if (!await configExists('/path/to/repo')) {
@@ -201,15 +200,15 @@ export async function configExists(repoPath: string): Promise<boolean> {
 
 /**
  * Find the workspace root by walking up the directory tree
- * 
+ *
  * Searches for .arashi/config.json starting from the given path and
  * walking up parent directories until found or reaching the filesystem root.
  * Similar to how git finds .git directory.
- * 
+ *
  * @param startPath - Path to start searching from (defaults to current directory)
  * @returns Absolute path to workspace root
  * @throws {ConfigNotFoundError} If no workspace found in any parent directory
- * 
+ *
  * @example
  * ```typescript
  * // From /workspace/repos/myrepo/src
@@ -218,46 +217,46 @@ export async function configExists(repoPath: string): Promise<boolean> {
  * ```
  */
 export async function findWorkspaceRoot(startPath: string = process.cwd()): Promise<string> {
-  const { dirname, resolve, parse } = await import('path');
-  
+  const { dirname, resolve, parse } = await import("path");
+
   let currentPath = resolve(startPath);
   const rootPath = parse(currentPath).root;
-  
+
   // Walk up the directory tree
   while (true) {
     // Check if .arashi/config.json exists in current directory
     if (await configExists(currentPath)) {
       return currentPath;
     }
-    
+
     // Check if we've reached the filesystem root
     if (currentPath === rootPath) {
       throw new ConfigNotFoundError(getConfigPath(startPath));
     }
-    
+
     // Move to parent directory
     const parentPath = dirname(currentPath);
-    
+
     // Additional safety check for infinite loops
     if (parentPath === currentPath) {
       throw new ConfigNotFoundError(getConfigPath(startPath));
     }
-    
+
     currentPath = parentPath;
   }
 }
 
 /**
  * Generate default configuration
- * 
+ *
  * Creates a minimal valid configuration with sensible defaults:
  * - version: "1.0.0"
  * - repos_dir: "./repos"
  * - auto_setup: true
  * - discovered_repos: {}
- * 
+ *
  * @returns Default configuration object
- * 
+ *
  * @example
  * ```typescript
  * const defaultConfig = generateDefaultConfig();
@@ -266,10 +265,10 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
  */
 export function generateDefaultConfig(): Config {
   return {
-    version: '1.0.0',
-    repos_dir: './repos',
+    version: "1.0.0",
+    repos_dir: "./repos",
     auto_setup: true,
-    discovered_repos: {}
+    discovered_repos: {},
   };
 }
 
@@ -279,20 +278,20 @@ export function generateDefaultConfig(): Config {
 
 /**
  * Validate configuration structure and required fields
- * 
+ *
  * Checks:
  * - All required fields present (version, repos_dir, auto_setup, discovered_repos)
  * - Field types are correct
  * - Nested structures valid (RepoConfig, WorktreeInfo, HookConfig)
- * 
+ *
  * Does NOT check:
  * - File system paths exist
  * - Git repository validity
  * - Hook script permissions
- * 
+ *
  * @param config - Configuration object to validate
  * @throws {ConfigValidationError} If validation fails with specific error details
- * 
+ *
  * @example
  * ```typescript
  * try {
@@ -304,35 +303,42 @@ export function generateDefaultConfig(): Config {
  * }
  * ```
  */
-export function validateConfig(config: any): asserts config is Config {
+export function validateConfig(config: unknown): asserts config is Config {
   const errors: string[] = [];
-  
+  const cfg = config as Record<string, unknown>;
+
   // Validate root level fields
-  if (typeof config !== 'object' || config === null) {
-    throw new ConfigValidationError(['Config must be an object']);
+  if (typeof config !== "object" || config === null) {
+    throw new ConfigValidationError(["Config must be an object"]);
   }
-  
-  if (typeof config.version !== 'string' || config.version === '') {
-    errors.push('version: must be a non-empty string');
+
+  if (typeof cfg.version !== "string" || cfg.version === "") {
+    errors.push("version: must be a non-empty string");
   }
-  
-  if (typeof config.repos_dir !== 'string' || config.repos_dir === '') {
-    errors.push('repos_dir: must be a non-empty string');
+
+  if (typeof cfg.repos_dir !== "string" || cfg.repos_dir === "") {
+    errors.push("repos_dir: must be a non-empty string");
   }
-  
-  if (typeof config.auto_setup !== 'boolean') {
-    errors.push('auto_setup: must be a boolean');
+
+  if (typeof cfg.auto_setup !== "boolean") {
+    errors.push("auto_setup: must be a boolean");
   }
-  
-  if (typeof config.discovered_repos !== 'object' || config.discovered_repos === null || Array.isArray(config.discovered_repos)) {
-    errors.push('discovered_repos: must be an object');
+
+  if (
+    typeof cfg.discovered_repos !== "object" ||
+    cfg.discovered_repos === null ||
+    Array.isArray(cfg.discovered_repos)
+  ) {
+    errors.push("discovered_repos: must be an object");
   } else {
     // Validate each repository configuration
-    for (const [repoName, repoConfig] of Object.entries(config.discovered_repos)) {
-      validateRepoConfig(repoName, repoConfig as any, errors);
+    for (const [repoName, repoConfig] of Object.entries(
+      cfg.discovered_repos as Record<string, unknown>,
+    )) {
+      validateRepoConfig(repoName, repoConfig, errors);
     }
   }
-  
+
   if (errors.length > 0) {
     throw new ConfigValidationError(errors);
   }
@@ -340,92 +346,94 @@ export function validateConfig(config: any): asserts config is Config {
 
 /**
  * Validate a single repository configuration
- * 
+ *
  * @param repoName - Name of the repository (for error messages)
  * @param repoConfig - Repository configuration to validate
  * @param errors - Array to accumulate validation errors
  */
-function validateRepoConfig(repoName: string, repoConfig: any, errors: string[]): void {
+function validateRepoConfig(repoName: string, repoConfig: unknown, errors: string[]): void {
   const prefix = `discovered_repos.${repoName}`;
-  
-  if (typeof repoConfig !== 'object' || repoConfig === null) {
+  const repo = repoConfig as Record<string, unknown>;
+
+  if (typeof repoConfig !== "object" || repoConfig === null) {
     errors.push(`${prefix}: must be an object`);
     return;
   }
-  
+
   // Required field: path
-  if (typeof repoConfig.path !== 'string' || repoConfig.path === '') {
+  if (typeof repo.path !== "string" || repo.path === "") {
     errors.push(`${prefix}.path: must be a non-empty string`);
   }
-  
+
   // Optional field: default_branch
-  if (repoConfig.default_branch !== undefined) {
-    if (typeof repoConfig.default_branch !== 'string' || repoConfig.default_branch === '') {
+  if (repo.default_branch !== undefined) {
+    if (typeof repo.default_branch !== "string" || repo.default_branch === "") {
       errors.push(`${prefix}.default_branch: must be a non-empty string if present`);
     }
   }
-  
+
   // Optional field: is_bare
-  if (repoConfig.is_bare !== undefined) {
-    if (typeof repoConfig.is_bare !== 'boolean') {
+  if (repo.is_bare !== undefined) {
+    if (typeof repo.is_bare !== "boolean") {
       errors.push(`${prefix}.is_bare: must be a boolean if present`);
     }
   }
-  
+
   // Optional field: worktrees
-  if (repoConfig.worktrees !== undefined) {
-    if (!Array.isArray(repoConfig.worktrees)) {
+  if (repo.worktrees !== undefined) {
+    if (!Array.isArray(repo.worktrees)) {
       errors.push(`${prefix}.worktrees: must be an array if present`);
     } else {
-      repoConfig.worktrees.forEach((worktree: any, index: number) => {
+      repo.worktrees.forEach((worktree, index: number) => {
         validateWorktreeInfo(`${prefix}.worktrees[${index}]`, worktree, errors);
       });
     }
   }
-  
+
   // Optional field: hooks
-  if (repoConfig.hooks !== undefined) {
-    validateHookConfig(`${prefix}.hooks`, repoConfig.hooks, errors);
+  if (repo.hooks !== undefined) {
+    validateHookConfig(`${prefix}.hooks`, repo.hooks, errors);
   }
 }
 
 /**
  * Validate a single worktree configuration
- * 
+ *
  * @param prefix - Path prefix for error messages
  * @param worktree - Worktree info to validate
  * @param errors - Array to accumulate validation errors
  */
-function validateWorktreeInfo(prefix: string, worktree: any, errors: string[]): void {
-  if (typeof worktree !== 'object' || worktree === null) {
+function validateWorktreeInfo(prefix: string, worktree: unknown, errors: string[]): void {
+  const wt = worktree as Record<string, unknown>;
+  if (typeof worktree !== "object" || worktree === null) {
     errors.push(`${prefix}: must be an object`);
     return;
   }
-  
+
   // Required field: branch
-  if (typeof worktree.branch !== 'string' || worktree.branch === '') {
+  if (typeof wt.branch !== "string" || wt.branch === "") {
     errors.push(`${prefix}.branch: must be a non-empty string`);
   }
-  
+
   // Required field: path
-  if (typeof worktree.path !== 'string' || worktree.path === '') {
+  if (typeof wt.path !== "string" || wt.path === "") {
     errors.push(`${prefix}.path: must be a non-empty string`);
   }
-  
+
   // Required field: created_at
-  if (typeof worktree.created_at !== 'string' || worktree.created_at === '') {
+  if (typeof wt.created_at !== "string" || wt.created_at === "") {
     errors.push(`${prefix}.created_at: must be a non-empty string`);
   } else {
     // Validate ISO 8601 format
-    const date = new Date(worktree.created_at);
+    const date = new Date(wt.created_at);
     if (isNaN(date.getTime())) {
       errors.push(`${prefix}.created_at: must be a valid ISO 8601 date string`);
     }
   }
-  
+
   // Optional field: metadata
-  if (worktree.metadata !== undefined) {
-    if (typeof worktree.metadata !== 'object' || worktree.metadata === null || Array.isArray(worktree.metadata)) {
+  if (wt.metadata !== undefined) {
+    if (typeof wt.metadata !== "object" || wt.metadata === null || Array.isArray(wt.metadata)) {
       errors.push(`${prefix}.metadata: must be an object if present`);
     }
   }
@@ -433,34 +441,35 @@ function validateWorktreeInfo(prefix: string, worktree: any, errors: string[]): 
 
 /**
  * Validate hook configuration
- * 
+ *
  * @param prefix - Path prefix for error messages
  * @param hooks - Hook config to validate
  * @param errors - Array to accumulate validation errors
  */
-function validateHookConfig(prefix: string, hooks: any, errors: string[]): void {
-  if (typeof hooks !== 'object' || hooks === null) {
+function validateHookConfig(prefix: string, hooks: unknown, errors: string[]): void {
+  const hookConfig = hooks as Record<string, unknown>;
+  if (typeof hooks !== "object" || hooks === null) {
     errors.push(`${prefix}: must be an object`);
     return;
   }
-  
+
   // Optional field: pre_create
-  if (hooks.pre_create !== undefined) {
-    if (typeof hooks.pre_create !== 'string' || hooks.pre_create === '') {
+  if (hookConfig.pre_create !== undefined) {
+    if (typeof hookConfig.pre_create !== "string" || hookConfig.pre_create === "") {
       errors.push(`${prefix}.pre_create: must be a non-empty string if present`);
     }
   }
-  
+
   // Optional field: post_create
-  if (hooks.post_create !== undefined) {
-    if (typeof hooks.post_create !== 'string' || hooks.post_create === '') {
+  if (hookConfig.post_create !== undefined) {
+    if (typeof hookConfig.post_create !== "string" || hookConfig.post_create === "") {
       errors.push(`${prefix}.post_create: must be a non-empty string if present`);
     }
   }
-  
+
   // Optional field: setup
-  if (hooks.setup !== undefined) {
-    if (typeof hooks.setup !== 'string' || hooks.setup === '') {
+  if (hookConfig.setup !== undefined) {
+    if (typeof hookConfig.setup !== "string" || hookConfig.setup === "") {
       errors.push(`${prefix}.setup: must be a non-empty string if present`);
     }
   }
@@ -472,13 +481,13 @@ function validateHookConfig(prefix: string, hooks: any, errors: string[]): void 
 
 /**
  * Load configuration from .arashi/config.json
- * 
+ *
  * @param repoPath - Path to the repository (config loaded from repoPath/.arashi/config.json)
  * @returns Parsed and validated configuration object
  * @throws {ConfigNotFoundError} If configuration file doesn't exist
  * @throws {ConfigParseError} If JSON parsing fails
  * @throws {ConfigValidationError} If validation fails
- * 
+ *
  * @example
  * ```typescript
  * const config = await loadConfig('/path/to/repo');
@@ -487,49 +496,47 @@ function validateHookConfig(prefix: string, hooks: any, errors: string[]): void 
  */
 export async function loadConfig(repoPath: string): Promise<Config> {
   const configPath = getConfigPath(repoPath);
-  
+
   // Check if file exists
-  if (!await configExists(repoPath)) {
+  if (!(await configExists(repoPath))) {
     throw new ConfigNotFoundError(configPath);
   }
-  
+
   // Read file
   let text: string;
   try {
     const file = Bun.file(configPath);
     text = await file.text();
   } catch (error) {
-    throw new ConfigError(
-      `Failed to read configuration file at ${configPath}`,
-      error as Error,
-      { path: configPath }
-    );
+    throw new ConfigError(`Failed to read configuration file at ${configPath}`, error as Error, {
+      path: configPath,
+    });
   }
-  
+
   // Parse JSON
-  let data: any;
+  let data: unknown;
   try {
     data = JSON.parse(text);
   } catch (error) {
     throw new ConfigParseError(configPath, error as Error);
   }
-  
+
   // Validate structure
   validateConfig(data);
-  
+
   return data;
 }
 
 /**
  * Save configuration to .arashi/config.json
- * 
+ *
  * Creates the .arashi directory if it doesn't exist.
  * Writes JSON with pretty formatting (2-space indentation).
- * 
+ *
  * @param repoPath - Path to the repository
  * @param config - Configuration object to save
  * @throws {ConfigError} If file system operations fail (permissions, disk full, etc.)
- * 
+ *
  * @example
  * ```typescript
  * const config = await loadConfig('/path/to/repo');
@@ -540,11 +547,11 @@ export async function loadConfig(repoPath: string): Promise<Config> {
 export async function saveConfig(repoPath: string, config: Config): Promise<void> {
   const configPath = getConfigPath(repoPath);
   const configDir = dirname(configPath);
-  
+
   try {
     // Ensure .arashi directory exists
     await mkdir(configDir, { recursive: true });
-    
+
     // Write pretty-printed JSON (2-space indentation)
     const json = JSON.stringify(config, null, 2);
     await Bun.write(configPath, json);
@@ -552,19 +559,19 @@ export async function saveConfig(repoPath: string, config: Config): Promise<void
     throw new ConfigError(
       `Failed to save configuration to ${configPath}: ${(error as Error).message}`,
       error as Error,
-      { path: configPath }
+      { path: configPath },
     );
   }
 }
 
 /**
  * Add a repository to the configuration
- * 
+ *
  * @param repoPath - Path to the repository containing the config
  * @param name - Unique name for the repository
  * @param repoConfig - Repository configuration
  * @throws {ConfigError} If repository name already exists
- * 
+ *
  * @example
  * ```typescript
  * await addRepo('/path/to/main-repo', 'my-app', {
@@ -575,34 +582,34 @@ export async function saveConfig(repoPath: string, config: Config): Promise<void
  * ```
  */
 export async function addRepo(
-  repoPath: string, 
-  name: string, 
-  repoConfig: RepoConfig
+  repoPath: string,
+  name: string,
+  repoConfig: RepoConfig,
 ): Promise<void> {
   const config = await loadConfig(repoPath);
-  
+
   // Check if repository name already exists
   if (config.discovered_repos[name] !== undefined) {
     throw new ConfigError(
       `Repository "${name}" already exists in configuration. Use a different name or remove the existing repository first.`,
       undefined,
-      { name, existingConfig: config.discovered_repos[name] }
+      { name, existingConfig: config.discovered_repos[name] },
     );
   }
-  
+
   // Add repository
   config.discovered_repos[name] = repoConfig;
-  
+
   // Save updated configuration
   await saveConfig(repoPath, config);
 }
 
 /**
  * Remove a repository from the configuration
- * 
+ *
  * @param repoPath - Path to the repository containing the config
  * @param name - Name of the repository to remove
- * 
+ *
  * @example
  * ```typescript
  * await removeRepo('/path/to/main-repo', 'my-app');
@@ -610,10 +617,10 @@ export async function addRepo(
  */
 export async function removeRepo(repoPath: string, name: string): Promise<void> {
   const config = await loadConfig(repoPath);
-  
+
   // Remove repository (idempotent - no error if doesn't exist)
   delete config.discovered_repos[name];
-  
+
   // Save updated configuration
   await saveConfig(repoPath, config);
 }
@@ -624,7 +631,7 @@ export async function removeRepo(repoPath: string, name: string): Promise<void> 
  * Includes the workspace root repository plus discovered repositories.
  */
 export async function loadWorkspaceRepositories(
-  workspaceRoot: string
+  workspaceRoot: string,
 ): Promise<{ config: Config; repositories: WorkspaceRepository[] }> {
   const config = await loadConfig(workspaceRoot);
   const repositories: WorkspaceRepository[] = [];

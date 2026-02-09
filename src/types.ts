@@ -3,7 +3,7 @@
 export interface ArashiConfig {
   version: string;
   repos_dir: string;
-  worktree_strategy: 'same_branch';
+  worktree_strategy: "same_branch";
   auto_setup: boolean;
   discovered_repos: {
     [repoName: string]: RepoConfig;
@@ -27,7 +27,7 @@ export interface WorktreeInfo {
     [repoName: string]: {
       path: string;
       branch: string;
-      status: 'clean' | 'dirty' | 'error';
+      status: "clean" | "dirty" | "error";
     };
   };
 }

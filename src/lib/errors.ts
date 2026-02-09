@@ -3,16 +3,16 @@
  * Preserves full diagnostic context from git commands
  */
 
-import type { GitErrorContext } from '../types/git.js';
-import { GitErrorCode } from '../types/git.js';
+import type { GitErrorContext } from "../types/git.js";
+import { GitErrorCode } from "../types/git.js";
 
 export class ArashiError extends Error {
   /** Error name (always 'ArashiError') */
-  readonly name = 'ArashiError' as const;
-  
+  readonly name = "ArashiError" as const;
+
   /** Diagnostic context from failed git operation */
   readonly context: GitErrorContext;
-  
+
   /** Structured error code for programmatic handling */
   readonly code: string;
 
@@ -20,7 +20,7 @@ export class ArashiError extends Error {
     super(message);
     this.context = context;
     this.code = this.parseGitErrorCode(context.stderr);
-    
+
     // Maintain proper stack trace for where error was thrown (V8 only)
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, ArashiError);
@@ -32,34 +32,37 @@ export class ArashiError extends Error {
    */
   private parseGitErrorCode(stderr: string): string {
     const lowerStderr = stderr.toLowerCase();
-    
+
     // Check for network errors first (before fatal check)
-    if (lowerStderr.includes('network') || lowerStderr.includes('connection') || 
-        lowerStderr.includes('could not resolve host')) {
+    if (
+      lowerStderr.includes("network") ||
+      lowerStderr.includes("connection") ||
+      lowerStderr.includes("could not resolve host")
+    ) {
       return GitErrorCode.NETWORK_ERROR;
     }
-    
+
     // Check for permission denied (before fatal check)
-    if (lowerStderr.includes('permission denied') || lowerStderr.includes('access denied')) {
+    if (lowerStderr.includes("permission denied") || lowerStderr.includes("access denied")) {
       return GitErrorCode.PERMISSION_DENIED;
     }
-    
+
     // Check for specific fatal error patterns
-    if (lowerStderr.includes('fatal:')) {
-      if (lowerStderr.includes('not a git repository')) {
+    if (lowerStderr.includes("fatal:")) {
+      if (lowerStderr.includes("not a git repository")) {
         return GitErrorCode.NOT_A_REPOSITORY;
       }
-      if (lowerStderr.includes('already exists')) {
+      if (lowerStderr.includes("already exists")) {
         return GitErrorCode.ALREADY_EXISTS;
       }
       return GitErrorCode.GIT_FATAL;
     }
-    
+
     // Check for not found errors
-    if (lowerStderr.includes('not found') || lowerStderr.includes('no such')) {
+    if (lowerStderr.includes("not found") || lowerStderr.includes("no such")) {
       return GitErrorCode.NOT_FOUND;
     }
-    
+
     // Generic git error
     return GitErrorCode.GIT_ERROR;
   }
@@ -77,9 +80,9 @@ export class ArashiError extends Error {
         stderr: this.context.stderr,
         exitCode: this.context.exitCode,
         args: this.context.args,
-        cwd: this.context.cwd
+        cwd: this.context.cwd,
       },
-      stack: this.stack
+      stack: this.stack,
     };
   }
 }
@@ -88,11 +91,11 @@ export class ArashiError extends Error {
  * Error codes for Add Command specific errors
  */
 export enum AddCommandErrorCode {
-  INVALID_URL = 'INVALID_URL',
-  DUPLICATE_NAME = 'DUPLICATE_NAME',
-  CLONE_FAILED = 'CLONE_FAILED',
-  BRANCH_DETECTION_FAILED = 'BRANCH_DETECTION_FAILED',
-  CONFIG_UPDATE_FAILED = 'CONFIG_UPDATE_FAILED',
+  INVALID_URL = "INVALID_URL",
+  DUPLICATE_NAME = "DUPLICATE_NAME",
+  CLONE_FAILED = "CLONE_FAILED",
+  BRANCH_DETECTION_FAILED = "BRANCH_DETECTION_FAILED",
+  CONFIG_UPDATE_FAILED = "CONFIG_UPDATE_FAILED",
 }
 
 /**
@@ -101,19 +104,19 @@ export enum AddCommandErrorCode {
  */
 export class AddCommandError extends Error {
   /** Error name (always 'AddCommandError') */
-  readonly name = 'AddCommandError' as const;
-  
+  readonly name = "AddCommandError" as const;
+
   /** Structured error code for programmatic handling */
   readonly code: AddCommandErrorCode;
-  
-  /** Additional context for debugging */
-  readonly context?: Record<string, any>;
 
-  constructor(message: string, code: AddCommandErrorCode, context?: Record<string, any>) {
+  /** Additional context for debugging */
+  readonly context?: Record<string, unknown>;
+
+  constructor(message: string, code: AddCommandErrorCode, context?: Record<string, unknown>) {
     super(message);
     this.code = code;
     this.context = context;
-    
+
     // Maintain proper stack trace for where error was thrown (V8 only)
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, AddCommandError);
@@ -129,7 +132,7 @@ export class AddCommandError extends Error {
       message: this.message,
       code: this.code,
       context: this.context,
-      stack: this.stack
+      stack: this.stack,
     };
   }
 }
@@ -138,13 +141,13 @@ export class AddCommandError extends Error {
  * Error codes for Remove Command specific errors
  */
 export enum RemoveCommandErrorCode {
-  NO_REPOSITORIES = 'NO_REPOSITORIES',
-  BRANCH_NOT_FOUND = 'BRANCH_NOT_FOUND',
-  WORKTREE_LOCKED = 'WORKTREE_LOCKED',
-  WORKTREE_IN_USE = 'WORKTREE_IN_USE',
-  CONFIG_ERROR = 'CONFIG_ERROR',
-  INVALID_OPTIONS = 'INVALID_OPTIONS',
-  NON_INTERACTIVE = 'NON_INTERACTIVE',
+  NO_REPOSITORIES = "NO_REPOSITORIES",
+  BRANCH_NOT_FOUND = "BRANCH_NOT_FOUND",
+  WORKTREE_LOCKED = "WORKTREE_LOCKED",
+  WORKTREE_IN_USE = "WORKTREE_IN_USE",
+  CONFIG_ERROR = "CONFIG_ERROR",
+  INVALID_OPTIONS = "INVALID_OPTIONS",
+  NON_INTERACTIVE = "NON_INTERACTIVE",
 }
 
 /**
@@ -152,15 +155,15 @@ export enum RemoveCommandErrorCode {
  */
 export class RemoveCommandError extends Error {
   /** Error name (always 'RemoveCommandError') */
-  readonly name = 'RemoveCommandError' as const;
+  readonly name = "RemoveCommandError" as const;
 
   /** Structured error code for programmatic handling */
   readonly code: RemoveCommandErrorCode;
 
   /** Additional context for debugging */
-  readonly context?: Record<string, any>;
+  readonly context?: Record<string, unknown>;
 
-  constructor(message: string, code: RemoveCommandErrorCode, context?: Record<string, any>) {
+  constructor(message: string, code: RemoveCommandErrorCode, context?: Record<string, unknown>) {
     super(message);
     this.code = code;
     this.context = context;

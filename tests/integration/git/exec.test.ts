@@ -1,6 +1,6 @@
 /**
  * Integration tests for exec() function
- * 
+ *
  * These tests verify exec() works correctly with real git commands
  * in various repository scenarios.
  */
@@ -18,7 +18,7 @@ describe("exec() - Integration Tests", () => {
   beforeEach(async () => {
     testRepo = new GitTestRepo();
     await testRepo.withInitialCommit();
-    
+
     // Detect the actual default branch name (main or master)
     const branchResult = await exec(["branch", "--show-current"], testRepo.path);
     defaultBranch = branchResult.stdout.trim() || "main";
@@ -43,7 +43,7 @@ describe("exec() - Integration Tests", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(ArashiError);
       const arashiError = error as ArashiError;
-      
+
       // Error code depends on whether directory exists or not
       const validCodes: string[] = [GitErrorCode.NOT_A_REPOSITORY, GitErrorCode.NOT_FOUND];
       expect(validCodes).toContain(arashiError.code);
@@ -79,7 +79,7 @@ describe("exec() - Integration Tests", () => {
   test("should execute git diff with unstaged changes", async () => {
     await createFile(testRepo.path, "modified.txt", "original content");
     commitChanges(testRepo.path, "Add modified file");
-    
+
     // Modify the file
     await createFile(testRepo.path, "modified.txt", "new content");
 
@@ -110,7 +110,7 @@ describe("exec() - Integration Tests", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(ArashiError);
       const arashiError = error as ArashiError;
-      
+
       expect(arashiError.code).toBe(GitErrorCode.ALREADY_EXISTS);
       expect(arashiError.context.stderr).toContain("already exists");
     }
@@ -123,7 +123,7 @@ describe("exec() - Integration Tests", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(ArashiError);
       const arashiError = error as ArashiError;
-      
+
       // The error code should be NOT_FOUND or GIT_ERROR depending on git version
       const validCodes: string[] = [GitErrorCode.NOT_FOUND, GitErrorCode.GIT_ERROR];
       expect(validCodes).toContain(arashiError.code);
@@ -180,7 +180,7 @@ describe("exec() - Integration Tests", () => {
           GitErrorCode.NOT_A_REPOSITORY,
           GitErrorCode.NOT_FOUND,
           GitErrorCode.PERMISSION_DENIED,
-          GitErrorCode.GIT_FATAL
+          GitErrorCode.GIT_FATAL,
         ];
         expect(validCodes).toContain(error.code);
       }
@@ -201,11 +201,7 @@ describe("exec() - Integration Tests", () => {
     await createFile(testRepo.path, "file.txt", "line1\nline2\nline3");
     commitChanges(testRepo.path, "Add file");
 
-    const result = await exec([
-      "log",
-      "--pretty=format:%H %s",
-      "--max-count=1"
-    ], testRepo.path);
+    const result = await exec(["log", "--pretty=format:%H %s", "--max-count=1"], testRepo.path);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Add file");
