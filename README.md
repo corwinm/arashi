@@ -101,14 +101,14 @@ Repo-specific hooks run in the new child worktree context and receive main/paren
 
 See `docs/hooks.md` for details.
 
-## Planned Commands
+## Commands
 
 - `arashi init` - Initialize arashi in current repository
 - `arashi add <git-url>` - Add a repository to the repos folder
 - `arashi create <branch>` - Create coordinated worktrees
 - `arashi list` - List all worktrees
 - `arashi remove <branch|path>` - Remove worktrees and branches
-- `arashi setup` - Run setup scripts
+- `arashi setup [--only <repo>] [--verbose]` - Run setup scripts across workspace repositories
 - `arashi status` - Show status of all repositories
 - `arashi sync` - Align repositories to the parent branch
 
