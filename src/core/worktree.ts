@@ -359,6 +359,53 @@ export class InsufficientPermissionsError extends Error {
   }
 }
 
+async function runHookIfPresent(options: {
+  hookName: string;
+  hookType: HookType;
+  hookRootPath: string;
+  repoContextPath: string;
+  operationData: Record<string, string>;
+  timeout: number;
+  repository: Repository;
+}): Promise<void> {
+  const hookPath = await hooks.findHook(options.hookName, options.hookRootPath);
+  if (!hookPath) {
+    return;
+  }
+
+  const validation = await hooks.validateHook(hookPath);
+  if (!validation.valid) {
+    throw new HookExecutionError(
+      `Hook validation failed for ${options.hookName}: ${validation.error}`,
+      options.hookType,
+      options.repository,
+      -1,
+      validation.error ?? "Hook validation failed"
+    );
+  }
+
+  const result = await hooks.executeHook({
+    hookName: options.hookName,
+    scriptPath: hookPath,
+    context: {
+      hookName: options.hookName,
+      repoPath: options.repoContextPath,
+      operationData: options.operationData,
+    },
+    timeout: options.timeout,
+  });
+
+  if (!result.success) {
+    throw new HookExecutionError(
+      `Hook execution failed for ${options.hookName}`,
+      options.hookType,
+      options.repository,
+      result.exitCode,
+      result.stderr
+    );
+  }
+}
+
 // ============================================================================
 // Repository Type Detection (001-nested-worktree-paths)
 // ============================================================================
@@ -772,6 +819,7 @@ export async function createCoordinatedWorktrees(
   const startTime = Date.now();
   const operationLog = new OperationLog();
   const results: RepositoryResult[] = [];
+  const mainRepoPath = resolve(".");
   
   // Set default options
   const opts: Required<WorktreeOperationOptions> = {
@@ -836,7 +884,24 @@ export async function createCoordinatedWorktrees(
       }
     }
     
-    // 4. Process each repository sequentially (T019-T023, T041)
+    // 4. Execute global pre-create hook (once)
+    if (opts.executeHooks) {
+      await runHookIfPresent({
+        hookName: hooks.GLOBAL_HOOKS.preCreate,
+        hookType: "pre-create",
+        hookRootPath: mainRepoPath,
+        repoContextPath: mainRepoPath,
+        operationData: hooks.buildHookOperationData({
+          branchName,
+          mainRepoPath,
+          parentRepoPath: mainRepoPath,
+        }),
+        timeout: opts.hookTimeout,
+        repository: repositories[0],
+      });
+    }
+
+    // 5. Process each repository sequentially (T019-T023, T041)
     for (const repo of repositories) {
       const repoResult = await processRepository(
         repo,
@@ -845,7 +910,8 @@ export async function createCoordinatedWorktrees(
         opts,
         config,
         conflictsToHandle,
-        resolvedStrategy
+        resolvedStrategy,
+        mainRepoPath
       );
       results.push(repoResult);
       
@@ -855,7 +921,24 @@ export async function createCoordinatedWorktrees(
       }
     }
     
-    // 5. Build successful operation summary (T024)
+    // 6. Execute global post-create hook (once)
+    if (opts.executeHooks) {
+      await runHookIfPresent({
+        hookName: hooks.GLOBAL_HOOKS.postCreate,
+        hookType: "post-create",
+        hookRootPath: mainRepoPath,
+        repoContextPath: mainRepoPath,
+        operationData: hooks.buildHookOperationData({
+          branchName,
+          mainRepoPath,
+          parentRepoPath: mainRepoPath,
+        }),
+        timeout: opts.hookTimeout,
+        repository: repositories[0],
+      });
+    }
+
+    // 7. Build successful operation summary (T024)
     return {
       totalRepositories: repositories.length,
       successCount: results.filter(r => r.status === 'success').length,
@@ -910,7 +993,8 @@ async function processRepository(
   options: Required<WorktreeOperationOptions>,
   config: ArashiConfig,
   conflicts: BranchConflict[] = [],
-  strategy: ConflictResolutionStrategy | null = null
+  strategy: ConflictResolutionStrategy | null = null,
+  mainRepoPath: string
 ): Promise<RepositoryResult> {
   const startTime = Date.now();
   
@@ -924,49 +1008,6 @@ async function processRepository(
   }
   
   try {
-    // Execute pre-create hook if enabled
-    if (options.executeHooks) {
-      if (spinner) {
-        spinner.text = `Running pre-create hook for ${repo.name}...`;
-      }
-      
-      const preCreateHook = await hooks.findHook("pre-create", repo.path);
-      if (preCreateHook) {
-        const validation = await hooks.validateHook(preCreateHook);
-        if (!validation.valid) {
-          if (spinner) {
-            spinner.warn(`Hook validation failed for ${repo.name}: ${validation.error}`);
-          }
-        } else {
-          const hookResult = await hooks.executeHook({
-            hookName: "pre-create",
-            scriptPath: preCreateHook,
-            context: {
-              hookName: "pre-create",
-              repoPath: repo.path,
-              operationData: {
-                BRANCH_NAME: branchName,
-                REPO_NAME: repo.name,
-              },
-            },
-            timeout: options.hookTimeout,
-          });
-          
-          if (!hookResult.success) {
-            if (spinner) {
-              spinner.fail(`Pre-create hook failed for ${repo.name}`);
-            }
-            throw new HookExecutionError(
-              `Pre-create hook failed for ${repo.name}`,
-              "pre-create",
-              repo,
-              hookResult.exitCode,
-              hookResult.stderr
-            );
-          }
-        }
-      }
-    }
     
     // T041: Check if we should reuse existing branch
     const shouldReuse = shouldReuseBranch(repo, branchName, conflicts, strategy || 'ABORT');
@@ -1044,49 +1085,44 @@ async function processRepository(
       },
     });
     
-    // Execute post-create hook if enabled
+    // Execute repo-specific hooks if enabled
     if (options.executeHooks) {
+      const parentRepoPath = pathResult.parentWorktreePath ?? mainRepoPath;
+      const repoOperationData = hooks.buildHookOperationData({
+        branchName,
+        repoName: repo.name,
+        worktreePath,
+        mainRepoPath,
+        parentRepoPath,
+      });
+
       if (spinner) {
-        spinner.text = `Running post-create hook for ${repo.name}...`;
+        spinner.text = `Running repo-specific pre-create hook for ${repo.name}...`;
       }
-      
-      const postCreateHook = await hooks.findHook("post-create", repo.path);
-      if (postCreateHook) {
-        const validation = await hooks.validateHook(postCreateHook);
-        if (!validation.valid) {
-          if (spinner) {
-            spinner.warn(`Hook validation failed for ${repo.name}: ${validation.error}`);
-          }
-        } else {
-          const hookResult = await hooks.executeHook({
-            hookName: "post-create",
-            scriptPath: postCreateHook,
-            context: {
-              hookName: "post-create",
-              repoPath: repo.path,
-              operationData: {
-                BRANCH_NAME: branchName,
-                REPO_NAME: repo.name,
-                WORKTREE_PATH: worktreePath,
-              },
-            },
-            timeout: options.hookTimeout,
-          });
-          
-          if (!hookResult.success) {
-            if (spinner) {
-              spinner.fail(`Post-create hook failed for ${repo.name}`);
-            }
-            throw new HookExecutionError(
-              `Post-create hook failed for ${repo.name}`,
-              "post-create",
-              repo,
-              hookResult.exitCode,
-              hookResult.stderr
-            );
-          }
-        }
+
+      await runHookIfPresent({
+        hookName: hooks.getRepoSpecificHookName("pre-create", repo.name),
+        hookType: "pre-create",
+        hookRootPath: mainRepoPath,
+        repoContextPath: worktreePath,
+        operationData: repoOperationData,
+        timeout: options.hookTimeout,
+        repository: repo,
+      });
+
+      if (spinner) {
+        spinner.text = `Running repo-specific post-create hook for ${repo.name}...`;
       }
+
+      await runHookIfPresent({
+        hookName: hooks.getRepoSpecificHookName("post-create", repo.name),
+        hookType: "post-create",
+        hookRootPath: mainRepoPath,
+        repoContextPath: worktreePath,
+        operationData: repoOperationData,
+        timeout: options.hookTimeout,
+        repository: repo,
+      });
     }
     
     // Success!

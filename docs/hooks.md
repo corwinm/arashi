@@ -1,0 +1,35 @@
+# Hooks
+
+Arashi supports lifecycle hooks to customize worktree creation workflows.
+
+## Hook Locations
+
+Place hook scripts under `.arashi/hooks/` in the main repository:
+
+- `pre-create.sh` runs once before any worktrees are created.
+- `post-create.sh` runs once after all worktrees and other hooks complete.
+- `pre-create.<child-repo>.sh` runs after the child worktree exists and before the repo-specific post-create hook.
+- `post-create.<child-repo>.sh` runs after the repo-specific pre-create hook.
+
+## Execution Order
+
+1. Global `pre-create.sh`
+2. Repo-specific `pre-create.<child-repo>.sh`
+3. Repo-specific `post-create.<child-repo>.sh`
+4. Global `post-create.sh`
+
+## Failure Behavior
+
+- If any hook fails, the create operation stops immediately and the global post-create hook does not run.
+
+## Context and Environment
+
+Repo-specific hooks run with the working directory set to the new child worktree and receive these environment variables:
+
+- `ARASHI_BRANCH_NAME`
+- `ARASHI_REPO_NAME`
+- `ARASHI_WORKTREE_PATH`
+- `ARASHI_MAIN_REPO_PATH`
+- `ARASHI_PARENT_REPO_PATH`
+
+Global hooks run in the main repo context.

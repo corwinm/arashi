@@ -54,6 +54,79 @@ export interface ValidationResult {
 	error?: string;
 }
 
+export const GLOBAL_HOOKS = {
+	preCreate: "pre-create",
+	postCreate: "post-create",
+} as const;
+
+export const REPO_SPECIFIC_LIFECYCLES = ["pre-create", "post-create"] as const;
+
+export type RepoSpecificLifecycle = (typeof REPO_SPECIFIC_LIFECYCLES)[number];
+
+export function getRepoSpecificHookName(
+	lifecycle: RepoSpecificLifecycle,
+	repoName: string
+): string {
+	return `${lifecycle}.${repoName}`;
+}
+
+export function parseRepoSpecificHookName(
+	hookName: string
+): { lifecycle: RepoSpecificLifecycle; repoName: string } | null {
+	for (const lifecycle of REPO_SPECIFIC_LIFECYCLES) {
+		const prefix = `${lifecycle}.`;
+		if (hookName.startsWith(prefix)) {
+			const repoName = hookName.slice(prefix.length);
+			if (repoName.length === 0) {
+				return null;
+			}
+			return { lifecycle, repoName };
+		}
+	}
+
+	return null;
+}
+
+export function buildHookOperationData(options: {
+	branchName?: string;
+	repoName?: string;
+	worktreePath?: string;
+	mainRepoPath?: string;
+	parentRepoPath?: string;
+}): Record<string, string> {
+	const data: Record<string, string> = {};
+
+	if (options.branchName) {
+		data.BRANCH_NAME = options.branchName;
+	}
+
+	if (options.repoName) {
+		data.REPO_NAME = options.repoName;
+	}
+
+	if (options.worktreePath) {
+		data.WORKTREE_PATH = options.worktreePath;
+	}
+
+	if (options.mainRepoPath) {
+		data.MAIN_REPO_PATH = options.mainRepoPath;
+	}
+
+	if (options.parentRepoPath) {
+		data.PARENT_REPO_PATH = options.parentRepoPath;
+	}
+
+	return data;
+}
+
+export function isHookSkipped(result: HookResult | null): boolean {
+	return result === null;
+}
+
+export function isHookFailure(result: HookResult | null): boolean {
+	return result !== null && !result.success;
+}
+
 // ============================================================================
 // Helper Functions (Internal)
 // ============================================================================
@@ -126,7 +199,7 @@ async function streamOutput(
 /**
  * Discovers a hook script for a given lifecycle point.
  *
- * @param hookName - Name of the lifecycle point (e.g., "pre-create")
+ * @param hookName - Name of the lifecycle point (e.g., "pre-create", "pre-create.<repo>")
  * @param repoPath - Absolute path to the repository
  * @returns Absolute path to hook script if found, null if not found
  */
