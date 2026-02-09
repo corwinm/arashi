@@ -110,6 +110,40 @@ export interface WorktreeOperationOptions {
   dryRun?: boolean;
 }
 
+// ==========================================================================
+// Dry-run Planning Types (T002)
+// ==========================================================================
+
+export type DryRunPlanStatus = 'actionable' | 'blocked';
+
+export interface PlannedWorktree {
+  repository: Repository;
+  repositoryName: string;
+  worktreePath: string | null;
+  branchName: string;
+  planStatus: DryRunPlanStatus;
+}
+
+export interface DryRunConflict {
+  repository: Repository;
+  repositoryName: string;
+  conflictType: 'branch_exists' | 'path_exists' | 'permission_issue' | 'invalid_configuration';
+  scope: string;
+  message: string;
+  blocking: boolean;
+}
+
+export interface DryRunOutcome {
+  overallStatus: DryRunPlanStatus;
+  plannedWorktrees: PlannedWorktree[];
+  conflicts: DryRunConflict[];
+  summaryCounts: {
+    plannedTotal: number;
+    conflictTotal: number;
+    blockingTotal: number;
+  };
+}
+
 // ============================================================================
 // Repository Filter (T007)
 // ============================================================================
@@ -227,6 +261,12 @@ export interface OperationSummary {
   
   /** Human-readable error summary if operation failed */
   errorSummary: string | null;
+
+  /** Dry-run planning details (present only for dry-run) */
+  dryRunOutcome?: DryRunOutcome;
+
+  /** Indicates dry-run mode */
+  isDryRun?: boolean;
 }
 
 // ============================================================================
@@ -796,6 +836,96 @@ import * as logger from "../lib/logger.ts";
 import * as hooks from "../lib/hooks.ts";
 import * as prompts from "../lib/prompts.ts";
 
+async function buildDryRunOutcome(
+  branchName: string,
+  repositories: Repository[],
+  conflictCheck: ConflictCheckResult,
+  options: Required<WorktreeOperationOptions>,
+  config: ArashiConfig
+): Promise<DryRunOutcome> {
+  const plannedWorktrees: PlannedWorktree[] = [];
+  const conflicts: DryRunConflict[] = [];
+  const conflictByRepo = new Map<string, BranchConflict>();
+
+  for (const conflict of conflictCheck.conflicts) {
+    conflictByRepo.set(conflict.repository.name, conflict);
+  }
+
+  for (const repo of repositories) {
+    let worktreePath: string | null = null;
+    let planStatus: DryRunPlanStatus = 'actionable';
+
+    try {
+      const pathResult = await calculateWorktreePath(repo, branchName, config);
+      worktreePath = pathResult.path;
+
+      if (existsSync(worktreePath)) {
+        conflicts.push({
+          repository: repo,
+          repositoryName: repo.name,
+          conflictType: 'path_exists',
+          scope: `${repo.name}:${worktreePath}`,
+          message: `Worktree path already exists: ${worktreePath}`,
+          blocking: true,
+        });
+        planStatus = 'blocked';
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      conflicts.push({
+        repository: repo,
+        repositoryName: repo.name,
+        conflictType: 'invalid_configuration',
+        scope: repo.name,
+        message: `Unable to calculate worktree path: ${message}`,
+        blocking: true,
+      });
+      planStatus = 'blocked';
+    }
+
+    const branchConflict = conflictByRepo.get(repo.name);
+    if (branchConflict) {
+      const location = branchConflict.existsLocally && branchConflict.existsRemotely
+        ? 'locally and remotely'
+        : branchConflict.existsLocally ? 'locally' : 'remotely';
+      const blocking = options.conflictResolution !== 'REUSE_EXISTING';
+      conflicts.push({
+        repository: repo,
+        repositoryName: repo.name,
+        conflictType: 'branch_exists',
+        scope: `${repo.name}:${branchConflict.branchName}`,
+        message: `Branch '${branchConflict.branchName}' already exists ${location}`,
+        blocking,
+      });
+      if (blocking) {
+        planStatus = 'blocked';
+      }
+    }
+
+    plannedWorktrees.push({
+      repository: repo,
+      repositoryName: repo.name,
+      worktreePath,
+      branchName,
+      planStatus,
+    });
+  }
+
+  const blockingTotal = conflicts.filter(conflict => conflict.blocking).length;
+  const overallStatus: DryRunPlanStatus = blockingTotal > 0 ? 'blocked' : 'actionable';
+
+  return {
+    overallStatus,
+    plannedWorktrees,
+    conflicts,
+    summaryCounts: {
+      plannedTotal: plannedWorktrees.length,
+      conflictTotal: conflicts.length,
+      blockingTotal,
+    },
+  };
+}
+
 /**
  * Create coordinated worktrees across multiple repositories (T018)
  * 
@@ -872,6 +1002,31 @@ export async function createCoordinatedWorktrees(
     const conflictCheck = await checkBranchConflicts(branchName, repositories);
     let resolvedStrategy: ConflictResolutionStrategy | null = null;
     let conflictsToHandle: BranchConflict[] = [];
+
+    if (opts.dryRun) {
+      const dryRunOutcome = await buildDryRunOutcome(
+        branchName,
+        repositories,
+        conflictCheck,
+        opts,
+        config
+      );
+
+      return {
+        totalRepositories: repositories.length,
+        successCount: 0,
+        failureCount: 0,
+        skippedCount: repositories.length,
+        repositoryResults: [],
+        rolledBack: false,
+        totalDuration: Date.now() - startTime,
+        errorSummary: dryRunOutcome.overallStatus === 'blocked'
+          ? 'Blocking conflicts detected during dry-run'
+          : null,
+        dryRunOutcome,
+        isDryRun: true,
+      };
+    }
     
     if (conflictCheck.hasConflicts) {
       // Attempt to resolve conflicts

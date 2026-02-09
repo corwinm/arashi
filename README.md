@@ -68,6 +68,9 @@ arashi add git@github.com:user/backend.git
 # Create a new feature worktree across all repos
 arashi create feature-new-api
 
+# Preview worktrees without creating them
+arashi create --dry-run feature-new-api
+
 # Check status across all repos
 arashi status
 

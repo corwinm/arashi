@@ -147,7 +147,8 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
     process.exit(0);
   }
   
-  logger.info(`Creating worktrees in ${selectedRepos.length} ${selectedRepos.length === 1 ? 'repository' : 'repositories'}...`);
+  const actionLabel = options.dryRun ? 'Planning' : 'Creating';
+  logger.info(`${actionLabel} worktrees in ${selectedRepos.length} ${selectedRepos.length === 1 ? 'repository' : 'repositories'}...`);
   
   // 5. Build options for worktree orchestration
   const worktreeOptions: WorktreeOperationOptions = {
@@ -167,33 +168,71 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
   
   // 7. Display results
   console.log('');
+  if (options.dryRun) {
+    if (!summary.dryRunOutcome) {
+      logger.error('Dry-run did not produce a plan');
+      process.exit(1);
+    }
+
+    const { plannedWorktrees, conflicts, overallStatus, summaryCounts } = summary.dryRunOutcome;
+
+    logger.info('Dry-run plan:');
+    for (const planned of plannedWorktrees) {
+      const pathLabel = planned.worktreePath ?? '(unresolved)';
+      const statusLabel = planned.planStatus === 'blocked' ? 'BLOCKED' : 'OK';
+      console.log(`  • ${planned.repositoryName}: ${planned.branchName} -> ${pathLabel} [${statusLabel}]`);
+    }
+
+    if (conflicts.length > 0) {
+      console.log('');
+      logger.warn('Conflicts:');
+      for (const conflict of conflicts) {
+        const blockingLabel = conflict.blocking ? 'blocking' : 'non-blocking';
+        console.log(`  • ${conflict.repositoryName}: ${conflict.message} (${blockingLabel})`);
+      }
+    }
+
+    console.log('');
+    const statusLabel = overallStatus === 'actionable' ? 'ACTIONABLE' : 'BLOCKED';
+    const summaryLabel = `${summaryCounts.plannedTotal} planned, ${summaryCounts.conflictTotal} conflicts`;
+    if (overallStatus === 'actionable') {
+      logger.success(`Plan status: ${statusLabel} (${summaryLabel})`);
+      logger.info(`Total duration: ${(summary.totalDuration / 1000).toFixed(2)}s`);
+      process.exit(0);
+    }
+
+    logger.error(`Plan status: ${statusLabel} (${summaryLabel})`);
+    logger.info(`Total duration: ${(summary.totalDuration / 1000).toFixed(2)}s`);
+    process.exit(1);
+  }
+
   if (summary.rolledBack) {
     logger.error('Operation failed and was rolled back');
     logger.error(summary.errorSummary || 'Unknown error');
     process.exit(1);
-  } else {
-    logger.success(`Successfully created worktrees in ${summary.successCount} repositories`);
-    
-    // Display worktree paths
-    console.log('');
-    logger.info('Worktree locations:');
-    for (const result of summary.repositoryResults) {
-      if (result.status === 'success' && result.worktreePath) {
-        console.log(`  • ${result.repository.name}: ${result.worktreePath}`);
-      }
-    }
-    
-    // Display warnings if any
-    const warnings = summary.repositoryResults.flatMap(r => r.warnings);
-    if (warnings.length > 0) {
-      console.log('');
-      logger.warn('Warnings:');
-      for (const warning of warnings) {
-        console.log(`  • ${warning}`);
-      }
-    }
-    
-    console.log('');
-    logger.info(`Total duration: ${(summary.totalDuration / 1000).toFixed(2)}s`);
   }
+
+  logger.success(`Successfully created worktrees in ${summary.successCount} repositories`);
+  
+  // Display worktree paths
+  console.log('');
+  logger.info('Worktree locations:');
+  for (const result of summary.repositoryResults) {
+    if (result.status === 'success' && result.worktreePath) {
+      console.log(`  • ${result.repository.name}: ${result.worktreePath}`);
+    }
+  }
+  
+  // Display warnings if any
+  const warnings = summary.repositoryResults.flatMap(r => r.warnings);
+  if (warnings.length > 0) {
+    console.log('');
+    logger.warn('Warnings:');
+    for (const warning of warnings) {
+      console.log(`  • ${warning}`);
+    }
+  }
+  
+  console.log('');
+  logger.info(`Total duration: ${(summary.totalDuration / 1000).toFixed(2)}s`);
 }
