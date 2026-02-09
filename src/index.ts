@@ -8,6 +8,7 @@ import { createCommand as createStatusCommand } from './commands/status.ts';
 import { createCommand as createRemoveCommand } from './commands/remove.ts';
 import { createCommand as createPullCommand } from './commands/pull.ts';
 import { createCommand as createSyncCommand } from './commands/sync.ts';
+import { createCommand as createSetupCommand } from './commands/setup.ts';
 import { closeSync } from 'fs';
 import pkg from '../package.json' with { type: 'json' };
 
@@ -55,5 +56,6 @@ program.addCommand(createStatusCommand());
 program.addCommand(createRemoveCommand());
 program.addCommand(createPullCommand());
 program.addCommand(createSyncCommand());
+program.addCommand(createSetupCommand());
 
 program.parse();
