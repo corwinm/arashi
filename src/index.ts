@@ -6,6 +6,7 @@ import { createCommand as createListCommand } from './commands/list.ts';
 import { createCommand as createAddCommand } from './commands/add.ts';
 import { createCommand as createStatusCommand } from './commands/status.ts';
 import { createCommand as createRemoveCommand } from './commands/remove.ts';
+import { createCommand as createPullCommand } from './commands/pull.ts';
 import { closeSync } from 'fs';
 import pkg from '../package.json' with { type: 'json' };
 
@@ -51,5 +52,6 @@ program.addCommand(createCommand());
 program.addCommand(createListCommand());
 program.addCommand(createStatusCommand());
 program.addCommand(createRemoveCommand());
+program.addCommand(createPullCommand());
 
 program.parse();
