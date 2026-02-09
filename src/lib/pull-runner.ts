@@ -4,6 +4,8 @@ import { isAbsolute, resolve } from 'path';
 export interface PullExecutionOptions {
   timeoutMs?: number;
   verbose?: boolean;
+  remote?: string;
+  branch?: string;
 }
 
 export interface PullExecutionResult {
@@ -20,7 +22,7 @@ export async function runPullWithRollback(
   const originalHead = await getHeadCommit(repoPath);
 
   const pullResult = await runGitCommand(
-    ['pull', '--no-rebase'],
+    buildPullArgs(options),
     repoPath,
     options.timeoutMs
   );
@@ -41,6 +43,14 @@ export async function runPullWithRollback(
       ? pullResult.error || 'Pull failed and was rolled back'
       : `${pullResult.error || 'Pull failed'} (rollback failed)`,
   };
+}
+
+function buildPullArgs(options: PullExecutionOptions): string[] {
+  if (options.remote && options.branch) {
+    return ['pull', '--no-rebase', options.remote, options.branch];
+  }
+
+  return ['pull', '--no-rebase'];
 }
 
 async function isWorkingTreeClean(repoPath: string): Promise<boolean> {

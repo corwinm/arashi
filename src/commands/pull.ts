@@ -88,7 +88,12 @@ async function executePull(options: PullCommandOptions): Promise<void> {
       continue;
     }
 
-    const pullResult = await runPullWithRollback(repo.path, { timeoutMs, verbose: options.verbose });
+    const pullResult = await runPullWithRollback(repo.path, {
+      timeoutMs,
+      verbose: options.verbose,
+      remote: remoteStatus.remote || undefined,
+      branch: remoteStatus.branch || undefined,
+    });
     const elapsedSeconds = (Date.now() - start) / 1000;
     const result: PullResult = {
       repositoryId: repo.name,
