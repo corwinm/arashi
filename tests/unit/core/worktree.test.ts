@@ -6,10 +6,7 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import {
-  isValidBranchName,
-  resolveWorktreeStatuses,
-} from "../../../src/core/worktree.ts";
+import { isValidBranchName, resolveWorktreeStatuses } from "../../../src/core/worktree.ts";
 import type { Repository } from "../../../src/core/repository.ts";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
 

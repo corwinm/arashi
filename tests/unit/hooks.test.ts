@@ -1,10 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import {
-  findHook,
-  validateHook,
-  executeHook,
-  runLifecycleHook,
-} from "../../src/lib/hooks";
+import { findHook, validateHook, executeHook, runLifecycleHook } from "../../src/lib/hooks";
 import {
   createTestRepo,
   cleanupTestRepo,

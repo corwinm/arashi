@@ -235,7 +235,7 @@ describe("validateWorktreeListItem()", () => {
   });
 
   test("throws for non-string branch when not null", () => {
-      const invalidItem = {
+    const invalidItem = {
       path: "/absolute/path",
       branch: 123 as unknown as string,
       commit: "abc1234",

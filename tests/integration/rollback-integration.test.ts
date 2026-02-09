@@ -288,7 +288,10 @@ describe("Rollback Integration Tests - User Story 3", () => {
         await fs.access(dirPath);
         throw new Error("Directory should not exist after rollback");
       } catch (error: unknown) {
-        if (error instanceof Error && error.message === "Directory should not exist after rollback") {
+        if (
+          error instanceof Error &&
+          error.message === "Directory should not exist after rollback"
+        ) {
           throw error;
         }
         // Expected - directory was removed
@@ -351,7 +354,10 @@ describe("Rollback Integration Tests - User Story 3", () => {
         await fs.access(dirPath2);
         throw new Error("Directory should not exist after rollback");
       } catch (error: unknown) {
-        if (error instanceof Error && error.message === "Directory should not exist after rollback") {
+        if (
+          error instanceof Error &&
+          error.message === "Directory should not exist after rollback"
+        ) {
           throw error;
         }
         // Expected - directory was removed

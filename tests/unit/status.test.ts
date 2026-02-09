@@ -5,10 +5,7 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import {
-  parseGitStatus,
-  parseBranchLine,
-} from "../../src/commands/status.ts";
+import { parseGitStatus, parseBranchLine } from "../../src/commands/status.ts";
 
 describe("parseGitStatus", () => {
   test("parses clean repository output", () => {
