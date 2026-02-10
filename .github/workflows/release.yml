@@ -2,7 +2,7 @@
 # Contract: specs/019-release-workflow/contracts/workflow-interface.md
 #
 # This workflow automates the complete release process using semantic-release:
-# - Parses conventional commits to determine semantic version bump  
+# - Parses conventional commits to determine semantic version bump
 # - Updates package.json and CHANGELOG.md
 # - Commits changes and creates git tag
 # - Builds multi-platform binaries with correct version (via @semantic-release/exec)
@@ -27,15 +27,15 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Run in dry-run mode (no actual release)'
+        description: "Run in dry-run mode (no actual release)"
         required: false
         type: boolean
         default: false
 
 permissions:
-  contents: write         # Create tags, commits, releases
-  pull-requests: write    # Comment on PRs (optional)
-  issues: write           # Comment on closed issues (optional)
+  contents: write # Create tags, commits, releases
+  pull-requests: write # Comment on PRs (optional)
+  issues: write # Comment on closed issues (optional)
 
 jobs:
   release:

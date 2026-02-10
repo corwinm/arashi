@@ -83,7 +83,7 @@ describe("US1: ensureDir - Safe Directory Operations", () => {
   test("creates directory and all parent directories", async () => {
     const dirPath = join(testDir, "parent", "child", "grandchild");
     await ensureDir(dirPath);
-    
+
     expect(existsSync(dirPath)).toBe(true);
     expect(existsSync(join(testDir, "parent"))).toBe(true);
     expect(existsSync(join(testDir, "parent", "child"))).toBe(true);
@@ -92,7 +92,7 @@ describe("US1: ensureDir - Safe Directory Operations", () => {
   test("succeeds if directory already exists (idempotent)", async () => {
     const dirPath = join(testDir, "existing");
     mkdirSync(dirPath);
-    
+
     // Should not throw
     await ensureDir(dirPath);
     expect(existsSync(dirPath)).toBe(true);
@@ -105,7 +105,7 @@ describe("US1: ensureDir - Safe Directory Operations", () => {
     chmodSync(parentDir, 0o444); // Read-only
 
     const dirPath = join(parentDir, "child");
-    
+
     try {
       await expect(ensureDir(dirPath)).rejects.toThrow(PermissionError);
     } finally {
@@ -136,7 +136,7 @@ describe("US2: fileExists and isExecutable - File Existence and Permission Check
   test("fileExists returns true for existing file", async () => {
     const filePath = join(testDir, "test.txt");
     writeFileSync(filePath, "content");
-    
+
     expect(await fileExists(filePath)).toBe(true);
   });
 
@@ -148,14 +148,14 @@ describe("US2: fileExists and isExecutable - File Existence and Permission Check
   test("fileExists returns true for directories", async () => {
     const dirPath = join(testDir, "subdir");
     mkdirSync(dirPath);
-    
+
     expect(await fileExists(dirPath)).toBe(true);
   });
 
   test("isExecutable returns true for executable file", async () => {
     const filePath = join(testDir, "executable.sh");
     writeFileSync(filePath, "#!/bin/bash\necho hello");
-    
+
     if (process.platform !== "win32") {
       chmodSync(filePath, 0o755); // Make executable
       expect(await isExecutable(filePath)).toBe(true);
@@ -170,18 +170,18 @@ describe("US2: fileExists and isExecutable - File Existence and Permission Check
   test("isExecutable returns false for non-executable file", async () => {
     const filePath = join(testDir, "not-executable.txt");
     writeFileSync(filePath, "content");
-    
+
     if (process.platform !== "win32") {
       chmodSync(filePath, 0o644); // Not executable
     }
-    
+
     expect(await isExecutable(filePath)).toBe(false);
   });
 
   test("isExecutable handles Windows file extensions", async () => {
     if (process.platform === "win32") {
       const extensions = [".exe", ".bat", ".cmd", ".com"];
-      
+
       for (const ext of extensions) {
         const filePath = join(testDir, `test${ext}`);
         writeFileSync(filePath, "content");
@@ -222,7 +222,7 @@ describe("US4: File I/O Operations - Read and Write Text Files", () => {
     const filePath = join(testDir, "read-test.txt");
     const content = "Hello, World! 🌍";
     writeFileSync(filePath, content, "utf8");
-    
+
     const result = await readTextFile(filePath);
     expect(result).toBe(content);
   });
@@ -235,9 +235,9 @@ describe("US4: File I/O Operations - Read and Write Text Files", () => {
   test("writeTextFile writes content as UTF-8", async () => {
     const filePath = join(testDir, "write-test.txt");
     const content = "Test content with emoji 🚀";
-    
+
     await writeTextFile(filePath, content);
-    
+
     const result = await readTextFile(filePath);
     expect(result).toBe(content);
   });
@@ -245,9 +245,9 @@ describe("US4: File I/O Operations - Read and Write Text Files", () => {
   test("writeTextFile creates parent directories", async () => {
     const filePath = join(testDir, "nested", "dirs", "file.txt");
     const content = "nested content";
-    
+
     await writeTextFile(filePath, content);
-    
+
     expect(existsSync(filePath)).toBe(true);
     const result = await readTextFile(filePath);
     expect(result).toBe(content);
@@ -256,9 +256,9 @@ describe("US4: File I/O Operations - Read and Write Text Files", () => {
   test("writeTextFile overwrites existing file", async () => {
     const filePath = join(testDir, "overwrite.txt");
     writeFileSync(filePath, "original");
-    
+
     await writeTextFile(filePath, "updated");
-    
+
     const result = await readTextFile(filePath);
     expect(result).toBe("updated");
   });
@@ -267,14 +267,14 @@ describe("US4: File I/O Operations - Read and Write Text Files", () => {
     const srcPath = join(testDir, "source.txt");
     const destPath = join(testDir, "destination.txt");
     const content = "copy test content";
-    
+
     writeFileSync(srcPath, content);
     if (process.platform !== "win32") {
       chmodSync(srcPath, 0o644);
     }
-    
+
     await copyFile(srcPath, destPath);
-    
+
     expect(existsSync(destPath)).toBe(true);
     const result = await readTextFile(destPath);
     expect(result).toBe(content);
@@ -283,7 +283,7 @@ describe("US4: File I/O Operations - Read and Write Text Files", () => {
   test("copyFile throws NotFoundError if source doesn't exist", async () => {
     const srcPath = join(testDir, "nonexistent.txt");
     const destPath = join(testDir, "destination.txt");
-    
+
     await expect(copyFile(srcPath, destPath)).rejects.toThrow(NotFoundError);
   });
 });
@@ -295,15 +295,15 @@ describe("US5: Directory Cleanup Operations", () => {
     writeFileSync(join(dirPath, "file1.txt"), "content1");
     mkdirSync(join(dirPath, "subdir"));
     writeFileSync(join(dirPath, "subdir", "file2.txt"), "content2");
-    
+
     await removeDir(dirPath);
-    
+
     expect(existsSync(dirPath)).toBe(false);
   });
 
   test("removeDir succeeds if directory doesn't exist (idempotent)", async () => {
     const dirPath = join(testDir, "nonexistent");
-    
+
     // Should not throw
     await removeDir(dirPath);
     expect(existsSync(dirPath)).toBe(false);
@@ -319,10 +319,10 @@ describe("US5: Directory Cleanup Operations", () => {
     mkdirSync(dirPath);
     const filePath = join(dirPath, "file.txt");
     writeFileSync(filePath, "content");
-    
+
     // Make directory read-only
     chmodSync(dirPath, 0o444);
-    
+
     try {
       await expect(removeDir(dirPath)).rejects.toThrow(PermissionError);
     } finally {

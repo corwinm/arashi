@@ -1,4 +1,4 @@
-export type SyncStatus = 'success' | 'failure' | 'timeout';
+export type SyncStatus = "success" | "failure" | "timeout";
 
 export interface SyncResult {
   repositoryName: string;

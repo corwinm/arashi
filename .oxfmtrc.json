@@ -1,0 +1,16 @@
+{
+  "lineWidth": 100,
+  "indentWidth": 2,
+  "semi": true,
+  "quoteStyle": "double",
+  "trailingCommas": "es5",
+  "ignorePatterns": [
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    "coverage/**",
+    "bin/**",
+    "repos/**",
+    "specs/**"
+  ]
+}

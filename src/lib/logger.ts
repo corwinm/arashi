@@ -37,7 +37,7 @@ function applyColor(text: string, colorFn: (text: string) => string): string {
 
 /**
  * Print informational message in default color
- * 
+ *
  * @param message - Message to print
  */
 export function info(message: string): void {
@@ -46,7 +46,7 @@ export function info(message: string): void {
 
 /**
  * Print success message in green with ✓ symbol
- * 
+ *
  * @param message - Success message to print
  */
 export function success(message: string): void {
@@ -57,7 +57,7 @@ export function success(message: string): void {
 
 /**
  * Print warning message in yellow with ⚠ symbol
- * 
+ *
  * @param message - Warning message to print
  */
 export function warn(message: string): void {
@@ -68,7 +68,7 @@ export function warn(message: string): void {
 
 /**
  * Print error message in red with ✗ symbol
- * 
+ *
  * @param message - Error message to print
  */
 export function error(message: string): void {
@@ -83,13 +83,13 @@ export function error(message: string): void {
 
 /**
  * Create and return ora spinner instance
- * 
+ *
  * Caller controls start/stop/succeed/fail.
  * Automatically respects NO_COLOR environment variable.
- * 
+ *
  * @param text - Initial spinner text
  * @returns Ora spinner instance
- * 
+ *
  * @example
  * ```typescript
  * const s = spinner('Loading...');
@@ -112,9 +112,9 @@ export function spinner(text: string): Ora {
 
 /**
  * Format and print tabular data with auto-sized columns
- * 
+ *
  * @param data - Array of records to display as table
- * 
+ *
  * @example
  * ```typescript
  * table([
@@ -129,16 +129,14 @@ export function table(data: Array<Record<string, string>>): void {
   }
 
   // Get all unique column names from all rows
-  const columns = Array.from(
-    new Set(data.flatMap(row => Object.keys(row)))
-  );
+  const columns = Array.from(new Set(data.flatMap((row) => Object.keys(row))));
 
   // Calculate maximum width for each column
   const columnWidths: Record<string, number> = {};
   for (const col of columns) {
     // Start with header width
     columnWidths[col] = col.length;
-    
+
     // Check all row values
     for (const row of data) {
       const value = row[col] || "";
@@ -147,24 +145,18 @@ export function table(data: Array<Record<string, string>>): void {
   }
 
   // Format and print header
-  const header = columns
-    .map(col => col.padEnd(columnWidths[col]))
-    .join("  ");
-  
+  const header = columns.map((col) => col.padEnd(columnWidths[col])).join("  ");
+
   const headerFormatted = applyColor(header, chalk.bold);
   console.log(headerFormatted);
 
   // Print separator
-  const separator = columns
-    .map(col => "-".repeat(columnWidths[col]))
-    .join("  ");
+  const separator = columns.map((col) => "-".repeat(columnWidths[col])).join("  ");
   console.log(separator);
 
   // Print rows
   for (const row of data) {
-    const rowStr = columns
-      .map(col => (row[col] || "").padEnd(columnWidths[col]))
-      .join("  ");
+    const rowStr = columns.map((col) => (row[col] || "").padEnd(columnWidths[col])).join("  ");
     console.log(rowStr);
   }
 }
@@ -175,11 +167,11 @@ export function table(data: Array<Record<string, string>>): void {
 
 /**
  * Print section header with visual emphasis (bold/underline)
- * 
+ *
  * @param title - Section title to print
  */
 export function section(title: string): void {
-  const formatted = applyColor(title, text => chalk.bold.underline(text));
+  const formatted = applyColor(title, (text) => chalk.bold.underline(text));
   console.log();
   console.log(formatted);
   console.log();

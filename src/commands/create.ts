@@ -1,19 +1,19 @@
 /**
  * CLI Command: Create Worktree
- * 
+ *
  * Creates coordinated worktrees across multiple repositories with a single command.
  * Supports repository filtering, conflict resolution, progress tracking, and automatic rollback.
  */
 
-import { Command } from 'commander';
-import * as config from '../lib/config.ts';
-import * as logger from '../lib/logger.ts';
-import { discoverRepositories } from '../core/repository.ts';
-import { fileExists } from '../lib/filesystem.ts';
-import * as git from '../lib/git.ts';
-import { join, resolve, basename } from 'path';
-import { 
-  createCoordinatedWorktrees, 
+import { Command } from "commander";
+import * as config from "../lib/config.ts";
+import * as logger from "../lib/logger.ts";
+import { discoverRepositories } from "../core/repository.ts";
+import { fileExists } from "../lib/filesystem.ts";
+import * as git from "../lib/git.ts";
+import { join, resolve, basename } from "path";
+import {
+  createCoordinatedWorktrees,
   applyRepositoryFilter,
   type RepositoryFilter,
   type WorktreeOperationOptions,
@@ -22,38 +22,41 @@ import {
   RepositoryValidationError,
   ConflictAbortedError,
   UserAbortedError,
-} from '../core/worktree.ts';
+} from "../core/worktree.ts";
 
 interface CreateCommandOptions {
   /** Only create worktrees in specified repositories (comma-separated) */
   only?: string;
-  
+
   /** Interactively select repositories */
   interactive?: boolean;
-  
+
   /** Pre-select conflict resolution strategy */
   conflict?: ConflictResolutionStrategy;
-  
+
   /** Disable hook execution */
   noHooks?: boolean;
-  
+
   /** Hide progress indicators */
   noProgress?: boolean;
-  
+
   /** Dry run - show what would be done without making changes */
   dryRun?: boolean;
 }
 
 export function createCommand(): Command {
-  return new Command('create')
-    .description('Create coordinated worktrees across multiple repositories')
-    .argument('<branch>', 'Branch name to create across repositories')
-    .option('--only <repos>', 'Only create in specified repositories (comma-separated)')
-    .option('-i, --interactive', 'Interactively select repositories')
-    .option('--conflict <strategy>', 'Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)')
-    .option('--no-hooks', 'Disable hook execution')
-    .option('--no-progress', 'Hide progress indicators')
-    .option('--dry-run', 'Show what would be done without making changes')
+  return new Command("create")
+    .description("Create coordinated worktrees across multiple repositories")
+    .argument("<branch>", "Branch name to create across repositories")
+    .option("--only <repos>", "Only create in specified repositories (comma-separated)")
+    .option("-i, --interactive", "Interactively select repositories")
+    .option(
+      "--conflict <strategy>",
+      "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
+    )
+    .option("--no-hooks", "Disable hook execution")
+    .option("--no-progress", "Hide progress indicators")
+    .option("--dry-run", "Show what would be done without making changes")
     .action(async (branchName: string, options: CreateCommandOptions) => {
       try {
         await executeCreate(branchName, options);
@@ -66,17 +69,17 @@ export function createCommand(): Command {
           logger.error(`Repository validation error: ${error.message}`);
           process.exit(1);
         } else if (error instanceof ConflictAbortedError) {
-          logger.warn('Operation aborted by user');
+          logger.warn("Operation aborted by user");
           process.exit(2);
         } else if (error instanceof UserAbortedError) {
-          logger.warn('Operation cancelled by user');
+          logger.warn("Operation cancelled by user");
           process.exit(2);
         } else if (error instanceof Error) {
           logger.error(`Unexpected error: ${error.message}`);
           console.error(error.stack);
           process.exit(1);
         } else {
-          logger.error('An unknown error occurred');
+          logger.error("An unknown error occurred");
           process.exit(1);
         }
       }
@@ -85,71 +88,72 @@ export function createCommand(): Command {
 
 async function executeCreate(branchName: string, options: CreateCommandOptions): Promise<void> {
   // 1. Load configuration
-  const arashiConfig = await config.loadConfig('.');
-  
+  const arashiConfig = await config.loadConfig(".");
+
   // 2. Discover repositories (child repos in repos_dir)
   // Convert repos_dir to absolute path since it may be relative (e.g., "./repos")
-  const currentDir = resolve('.');
+  const currentDir = resolve(".");
   const reposDirAbsolute = resolve(currentDir, arashiConfig.repos_dir);
   const discoveryResult = await discoverRepositories(reposDirAbsolute);
-  
+
   // 3. Include the meta-repo itself in the repository list
   // The meta-repo needs to have its worktree created first, then child repos are nested inside it
   const allRepositories = [...discoveryResult.repositories];
-  
+
   // Check if current directory is a git repository (meta-repo)
-  const gitDir = join(currentDir, '.git');
-  
+  const gitDir = join(currentDir, ".git");
+
   if (await fileExists(gitDir)) {
     // Meta-repo detected - add it at the beginning so it's processed first
-    
+
     // Detect default branch
-    let defaultBranch = 'main';
+    let defaultBranch = "main";
     try {
-      const result = await git.exec(
-        ['symbolic-ref', '--short', 'HEAD'],
-        currentDir
-      );
+      const result = await git.exec(["symbolic-ref", "--short", "HEAD"], currentDir);
       defaultBranch = result.stdout.trim();
     } catch {
       // Fallback to 'main' if detection fails
     }
-    
+
     const metaRepo = {
       name: basename(currentDir),
       path: currentDir,
       defaultBranch,
       hasSetupScript: false,
     };
-    
+
     allRepositories.unshift(metaRepo);
   }
-  
+
   if (allRepositories.length === 0) {
-    logger.error('No repositories found in configuration');
+    logger.error("No repositories found in configuration");
     logger.info('Run "arashi add <path>" to add repositories');
     process.exit(1);
   }
-  
-  logger.info(`Found ${allRepositories.length} ${allRepositories.length === 1 ? 'repository' : 'repositories'}`);
-  
+
+  logger.info(
+    `Found ${allRepositories.length} ${allRepositories.length === 1 ? "repository" : "repositories"}`,
+  );
+
   // 4. Apply repository filter
   const filter: RepositoryFilter = {
-    mode: options.interactive ? 'interactive' : options.only ? 'explicit' : 'all',
-    explicitList: options.only ? options.only.split(',').map(s => s.trim()) : [],
+    mode: options.interactive ? "interactive" : options.only ? "explicit" : "all",
+    explicitList: options.only ? options.only.split(",").map((s) => s.trim()) : [],
     selectedRepositories: null,
   };
-  
+
   const selectedRepos = await applyRepositoryFilter(filter, allRepositories);
-  
+
   if (selectedRepos.length === 0) {
-    logger.warn('No repositories selected for worktree creation');
+    logger.warn("No repositories selected for worktree creation");
     process.exit(0);
   }
-  
-  const actionLabel = options.dryRun ? 'Planning' : 'Creating';
-  logger.info(`${actionLabel} worktrees in ${selectedRepos.length} ${selectedRepos.length === 1 ? 'repository' : 'repositories'}...`);
-  
+
+  const actionLabel = options.dryRun ? "Planning" : "Creating";
+  logger.info(
+    `${actionLabel} worktrees in ${selectedRepos.length} ${selectedRepos.length === 1 ? "repository" : "repositories"}...`,
+  );
+
   // 5. Build options for worktree orchestration
   const worktreeOptions: WorktreeOperationOptions = {
     executeHooks: !options.noHooks,
@@ -158,44 +162,42 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
     conflictResolution: options.conflict || null,
     dryRun: options.dryRun || false,
   };
-  
+
   // 6. Execute coordinated worktree creation
-  const summary = await createCoordinatedWorktrees(
-    branchName,
-    selectedRepos,
-    worktreeOptions
-  );
-  
+  const summary = await createCoordinatedWorktrees(branchName, selectedRepos, worktreeOptions);
+
   // 7. Display results
-  console.log('');
+  console.log("");
   if (options.dryRun) {
     if (!summary.dryRunOutcome) {
-      logger.error('Dry-run did not produce a plan');
+      logger.error("Dry-run did not produce a plan");
       process.exit(1);
     }
 
     const { plannedWorktrees, conflicts, overallStatus, summaryCounts } = summary.dryRunOutcome;
 
-    logger.info('Dry-run plan:');
+    logger.info("Dry-run plan:");
     for (const planned of plannedWorktrees) {
-      const pathLabel = planned.worktreePath ?? '(unresolved)';
-      const statusLabel = planned.planStatus === 'blocked' ? 'BLOCKED' : 'OK';
-      console.log(`  • ${planned.repositoryName}: ${planned.branchName} -> ${pathLabel} [${statusLabel}]`);
+      const pathLabel = planned.worktreePath ?? "(unresolved)";
+      const statusLabel = planned.planStatus === "blocked" ? "BLOCKED" : "OK";
+      console.log(
+        `  • ${planned.repositoryName}: ${planned.branchName} -> ${pathLabel} [${statusLabel}]`,
+      );
     }
 
     if (conflicts.length > 0) {
-      console.log('');
-      logger.warn('Conflicts:');
+      console.log("");
+      logger.warn("Conflicts:");
       for (const conflict of conflicts) {
-        const blockingLabel = conflict.blocking ? 'blocking' : 'non-blocking';
+        const blockingLabel = conflict.blocking ? "blocking" : "non-blocking";
         console.log(`  • ${conflict.repositoryName}: ${conflict.message} (${blockingLabel})`);
       }
     }
 
-    console.log('');
-    const statusLabel = overallStatus === 'actionable' ? 'ACTIONABLE' : 'BLOCKED';
+    console.log("");
+    const statusLabel = overallStatus === "actionable" ? "ACTIONABLE" : "BLOCKED";
     const summaryLabel = `${summaryCounts.plannedTotal} planned, ${summaryCounts.conflictTotal} conflicts`;
-    if (overallStatus === 'actionable') {
+    if (overallStatus === "actionable") {
       logger.success(`Plan status: ${statusLabel} (${summaryLabel})`);
       logger.info(`Total duration: ${(summary.totalDuration / 1000).toFixed(2)}s`);
       process.exit(0);
@@ -207,32 +209,32 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
   }
 
   if (summary.rolledBack) {
-    logger.error('Operation failed and was rolled back');
-    logger.error(summary.errorSummary || 'Unknown error');
+    logger.error("Operation failed and was rolled back");
+    logger.error(summary.errorSummary || "Unknown error");
     process.exit(1);
   }
 
   logger.success(`Successfully created worktrees in ${summary.successCount} repositories`);
-  
+
   // Display worktree paths
-  console.log('');
-  logger.info('Worktree locations:');
+  console.log("");
+  logger.info("Worktree locations:");
   for (const result of summary.repositoryResults) {
-    if (result.status === 'success' && result.worktreePath) {
+    if (result.status === "success" && result.worktreePath) {
       console.log(`  • ${result.repository.name}: ${result.worktreePath}`);
     }
   }
-  
+
   // Display warnings if any
-  const warnings = summary.repositoryResults.flatMap(r => r.warnings);
+  const warnings = summary.repositoryResults.flatMap((r) => r.warnings);
   if (warnings.length > 0) {
-    console.log('');
-    logger.warn('Warnings:');
+    console.log("");
+    logger.warn("Warnings:");
     for (const warning of warnings) {
       console.log(`  • ${warning}`);
     }
   }
-  
-  console.log('');
+
+  console.log("");
   logger.info(`Total duration: ${(summary.totalDuration / 1000).toFixed(2)}s`);
 }

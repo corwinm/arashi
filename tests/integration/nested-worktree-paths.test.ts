@@ -1,7 +1,7 @@
 /**
  * Integration Tests: Nested Worktree Paths
  * Feature: 001-nested-worktree-paths
- * 
+ *
  * Integration tests verifying worktree path calculation works correctly
  * within the full worktree creation flow for all repository types.
  */
@@ -17,7 +17,7 @@ import type { Repository } from "../../src/core/repository.ts";
 
 describe("Nested Worktree Paths Integration", () => {
   const testDir = join(import.meta.dir, "../temp-integration-workspace");
-  
+
   beforeEach(async () => {
     await mkdir(testDir, { recursive: true });
   });
@@ -30,7 +30,7 @@ describe("Nested Worktree Paths Integration", () => {
     await spawn(["git", "init", "-b", "main"], { cwd: path }).exited;
     await spawn(["git", "config", "user.name", "Test User"], { cwd: path }).exited;
     await spawn(["git", "config", "user.email", "test@example.com"], { cwd: path }).exited;
-    
+
     // Create initial commit
     await writeFile(join(path, "README.md"), "# Test Repository");
     await spawn(["git", "add", "."], { cwd: path }).exited;
@@ -50,7 +50,7 @@ describe("Nested Worktree Paths Integration", () => {
           auto_setup: false,
           worktree_strategy: "same_branch",
           discovered_repos: {},
-        })
+        }),
       );
 
       await initGitRepo(metaRepoPath);
@@ -71,7 +71,7 @@ describe("Nested Worktree Paths Integration", () => {
       // Verify worktree was created as sibling
       expect(result.successCount).toBe(1);
       expect(result.failureCount).toBe(0);
-      
+
       const worktreePath = join(testDir, "parent-repo-feature");
       const worktreeExists = await Bun.file(join(worktreePath, "README.md")).exists();
       expect(worktreeExists).toBe(true);
@@ -93,7 +93,7 @@ describe("Nested Worktree Paths Integration", () => {
           auto_setup: false,
           worktree_strategy: "same_branch",
           discovered_repos: {},
-        })
+        }),
       );
 
       await initGitRepo(metaRepoPath);
@@ -112,7 +112,7 @@ describe("Nested Worktree Paths Integration", () => {
       });
 
       expect(result.successCount).toBe(1);
-      
+
       // Verify sibling creation with correct naming
       const worktreePath = join(testDir, "existing-repo-bugfix-123");
       const worktreeExists = await Bun.file(join(worktreePath, "README.md")).exists();

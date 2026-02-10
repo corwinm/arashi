@@ -1,7 +1,7 @@
 /**
  * Unit Tests: Worktree Path Calculation
  * Feature: 001-nested-worktree-paths
- * 
+ *
  * Tests the calculateWorktreePath() function for calculating correct
  * worktree destination paths based on repository type.
  */
@@ -12,7 +12,7 @@ import { join } from "path";
 import { spawn } from "child_process";
 
 // Import functions we're testing (will be implemented in T010, T020)
-import { calculateWorktreePath, calculateChildWorktreePath } from "../../src/core/worktree.ts";
+import { calculateWorktreePath } from "../../src/core/worktree.ts";
 import type { Repository } from "../../src/core/repository.ts";
 import type { ArashiConfig } from "../../src/types.ts";
 
@@ -26,7 +26,7 @@ async function exec(command: string, cwd: string): Promise<void> {
       shell: true,
       stdio: "ignore",
     });
-    
+
     child.on("exit", (code) => {
       if (code === 0) {
         resolve();
@@ -34,7 +34,7 @@ async function exec(command: string, cwd: string): Promise<void> {
         reject(new Error(`Command failed: ${command}`));
       }
     });
-    
+
     child.on("error", reject);
   });
 }
@@ -56,7 +56,7 @@ async function createGitRepo(path: string, bare = false): Promise<void> {
 
 describe("calculateWorktreePath", () => {
   const testDir = join(import.meta.dir, "temp-test-workspace");
-  
+
   beforeEach(async () => {
     await mkdir(testDir, { recursive: true });
   });
@@ -73,7 +73,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0" })
+        JSON.stringify({ version: "1.0.0" }),
       );
 
       const repo: Repository = {
@@ -107,7 +107,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0" })
+        JSON.stringify({ version: "1.0.0" }),
       );
 
       const repo: Repository = {
@@ -127,7 +127,7 @@ describe("calculateWorktreePath", () => {
 
       // Test various branch names
       const branchNames = ["bugfix-456", "feature/new-ui", "hotfix/critical"];
-      
+
       for (const branchName of branchNames) {
         const result = await calculateWorktreePath(repo, branchName, config);
         // Non-bare: repo-name-branch-name
@@ -145,7 +145,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(bareRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(bareRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0" })
+        JSON.stringify({ version: "1.0.0" }),
       );
 
       const repo: Repository = {
@@ -208,7 +208,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", repos_dir: "./repos" })
+        JSON.stringify({ version: "1.0.0", repos_dir: "./repos" }),
       );
 
       // Create child repo
@@ -246,7 +246,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(bareMetaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(bareMetaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", repos_dir: "./repos" })
+        JSON.stringify({ version: "1.0.0", repos_dir: "./repos" }),
       );
 
       // Create child repo inside bare parent
@@ -284,7 +284,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(bareMetaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(bareMetaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", repos_dir: "./repos" })
+        JSON.stringify({ version: "1.0.0", repos_dir: "./repos" }),
       );
 
       // Create multiple child repos
@@ -313,7 +313,7 @@ describe("calculateWorktreePath", () => {
       // All children should nest inside branch-name-only parent worktree
       for (const childRepo of childRepos) {
         const result = await calculateWorktreePath(childRepo, "dev", config);
-        
+
         expect(result.path).toBe(join(testDir, "dev", "repos", childRepo.name));
         expect(result.strategy).toBe("nested");
         expect(result.parentWorktreePath).toBe(join(testDir, "dev"));

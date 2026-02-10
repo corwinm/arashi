@@ -82,7 +82,7 @@ export interface RepositoryInfo {
   /** Absolute filesystem path to repository */
   path: string;
   /** Repository type */
-  type: 'normal' | 'bare';
+  type: "normal" | "bare";
   /** Default branch name (e.g., 'main', 'master') */
   defaultBranch: string | null;
 }
@@ -91,11 +91,11 @@ export interface RepositoryInfo {
  * Error codes for git operations
  */
 export enum GitErrorCode {
-  GIT_FATAL = 'GIT_FATAL',
-  NOT_A_REPOSITORY = 'NOT_A_REPOSITORY',
-  ALREADY_EXISTS = 'ALREADY_EXISTS',
-  NOT_FOUND = 'NOT_FOUND',
-  PERMISSION_DENIED = 'PERMISSION_DENIED',
-  NETWORK_ERROR = 'NETWORK_ERROR',
-  GIT_ERROR = 'GIT_ERROR'
+  GIT_FATAL = "GIT_FATAL",
+  NOT_A_REPOSITORY = "NOT_A_REPOSITORY",
+  ALREADY_EXISTS = "ALREADY_EXISTS",
+  NOT_FOUND = "NOT_FOUND",
+  PERMISSION_DENIED = "PERMISSION_DENIED",
+  NETWORK_ERROR = "NETWORK_ERROR",
+  GIT_ERROR = "GIT_ERROR",
 }

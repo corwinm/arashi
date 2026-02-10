@@ -1,4 +1,4 @@
-import { exec } from '../git.ts';
+import { exec } from "../git.ts";
 
 export interface CreatedBranchRecord {
   repositoryName: string;
@@ -10,7 +10,7 @@ export interface CreatedBranchRecord {
 export interface RollbackOperation {
   repositoryName: string;
   branchName: string;
-  status: 'success' | 'failure';
+  status: "success" | "failure";
   errorMessage?: string;
 }
 
@@ -28,42 +28,37 @@ export function createRollbackTracker(): RollbackTracker {
   return { createdBranches: [] };
 }
 
-export function recordCreatedBranch(
-  tracker: RollbackTracker,
-  record: CreatedBranchRecord
-): void {
+export function recordCreatedBranch(tracker: RollbackTracker, record: CreatedBranchRecord): void {
   tracker.createdBranches.push(record);
 }
 
-export async function rollbackCreatedBranches(
-  tracker: RollbackTracker
-): Promise<RollbackResult> {
+export async function rollbackCreatedBranches(tracker: RollbackTracker): Promise<RollbackResult> {
   const operations: RollbackOperation[] = [];
 
   for (const record of [...tracker.createdBranches].reverse()) {
     const operation: RollbackOperation = {
       repositoryName: record.repositoryName,
       branchName: record.branchName,
-      status: 'success',
+      status: "success",
     };
 
     try {
       if (record.previousBranch && record.previousBranch !== record.branchName) {
-        await exec(['checkout', record.previousBranch], record.repoPath);
+        await exec(["checkout", record.previousBranch], record.repoPath);
       } else {
-        await exec(['checkout', '--detach'], record.repoPath);
+        await exec(["checkout", "--detach"], record.repoPath);
       }
 
-      await exec(['branch', '-D', record.branchName], record.repoPath);
+      await exec(["branch", "-D", record.branchName], record.repoPath);
     } catch (error) {
-      operation.status = 'failure';
+      operation.status = "failure";
       operation.errorMessage = error instanceof Error ? error.message : String(error);
     }
 
     operations.push(operation);
   }
 
-  const successCount = operations.filter(op => op.status === 'success').length;
+  const successCount = operations.filter((op) => op.status === "success").length;
   const failureCount = operations.length - successCount;
 
   return {

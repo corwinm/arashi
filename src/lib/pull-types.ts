@@ -2,7 +2,7 @@
  * Types for pull command results and summaries.
  */
 
-export type PullStatus = 'updated' | 'skipped' | 'failed' | 'manual-update';
+export type PullStatus = "updated" | "skipped" | "failed" | "manual-update";
 
 export interface PullResult {
   repositoryId: string;
@@ -12,7 +12,7 @@ export interface PullResult {
   output?: string;
 }
 
-export type PullOverallStatus = 'success' | 'partial-failure' | 'failure';
+export type PullOverallStatus = "success" | "partial-failure" | "failure";
 
 export interface PullSummary {
   overallStatus: PullOverallStatus;

@@ -7,56 +7,56 @@ import { constants } from "fs";
 // ============================================================================
 
 export interface Hook {
-	name: string;
-	scriptPath: string;
-	lifecycle: LifecyclePoint;
+  name: string;
+  scriptPath: string;
+  lifecycle: LifecyclePoint;
 }
 
 export interface HookContext {
-	hookName: string;
-	repoPath: string;
-	operationData: Record<string, string>;
+  hookName: string;
+  repoPath: string;
+  operationData: Record<string, string>;
 }
 
 export interface LifecyclePoint {
-	name: string;
-	timing: "pre" | "post" | "during";
-	operation: string;
+  name: string;
+  timing: "pre" | "post" | "during";
+  operation: string;
 }
 
 export interface HookResult {
-	exitCode: number;
-	signalCode: string | null;
-	killed: boolean;
-	stdout: string;
-	stderr: string;
-	success: boolean;
-	timedOut: boolean;
-	duration: number;
+  exitCode: number;
+  signalCode: string | null;
+  killed: boolean;
+  stdout: string;
+  stderr: string;
+  success: boolean;
+  timedOut: boolean;
+  duration: number;
 }
 
 export interface HookConfig {
-	timeout: number;
-	enabled: boolean;
-	allowedHooks: string[] | null;
-	blockedHooks: string[];
+  timeout: number;
+  enabled: boolean;
+  allowedHooks: string[] | null;
+  blockedHooks: string[];
 }
 
 export interface HookExecutionOptions {
-	hookName: string;
-	scriptPath: string;
-	context: HookContext;
-	timeout?: number;
+  hookName: string;
+  scriptPath: string;
+  context: HookContext;
+  timeout?: number;
 }
 
 export interface ValidationResult {
-	valid: boolean;
-	error?: string;
+  valid: boolean;
+  error?: string;
 }
 
 export const GLOBAL_HOOKS = {
-	preCreate: "pre-create",
-	postCreate: "post-create",
+  preCreate: "pre-create",
+  postCreate: "post-create",
 } as const;
 
 export const REPO_SPECIFIC_LIFECYCLES = ["pre-create", "post-create"] as const;
@@ -64,67 +64,67 @@ export const REPO_SPECIFIC_LIFECYCLES = ["pre-create", "post-create"] as const;
 export type RepoSpecificLifecycle = (typeof REPO_SPECIFIC_LIFECYCLES)[number];
 
 export function getRepoSpecificHookName(
-	lifecycle: RepoSpecificLifecycle,
-	repoName: string
+  lifecycle: RepoSpecificLifecycle,
+  repoName: string,
 ): string {
-	return `${lifecycle}.${repoName}`;
+  return `${lifecycle}.${repoName}`;
 }
 
 export function parseRepoSpecificHookName(
-	hookName: string
+  hookName: string,
 ): { lifecycle: RepoSpecificLifecycle; repoName: string } | null {
-	for (const lifecycle of REPO_SPECIFIC_LIFECYCLES) {
-		const prefix = `${lifecycle}.`;
-		if (hookName.startsWith(prefix)) {
-			const repoName = hookName.slice(prefix.length);
-			if (repoName.length === 0) {
-				return null;
-			}
-			return { lifecycle, repoName };
-		}
-	}
+  for (const lifecycle of REPO_SPECIFIC_LIFECYCLES) {
+    const prefix = `${lifecycle}.`;
+    if (hookName.startsWith(prefix)) {
+      const repoName = hookName.slice(prefix.length);
+      if (repoName.length === 0) {
+        return null;
+      }
+      return { lifecycle, repoName };
+    }
+  }
 
-	return null;
+  return null;
 }
 
 export function buildHookOperationData(options: {
-	branchName?: string;
-	repoName?: string;
-	worktreePath?: string;
-	mainRepoPath?: string;
-	parentRepoPath?: string;
+  branchName?: string;
+  repoName?: string;
+  worktreePath?: string;
+  mainRepoPath?: string;
+  parentRepoPath?: string;
 }): Record<string, string> {
-	const data: Record<string, string> = {};
+  const data: Record<string, string> = {};
 
-	if (options.branchName) {
-		data.BRANCH_NAME = options.branchName;
-	}
+  if (options.branchName) {
+    data.BRANCH_NAME = options.branchName;
+  }
 
-	if (options.repoName) {
-		data.REPO_NAME = options.repoName;
-	}
+  if (options.repoName) {
+    data.REPO_NAME = options.repoName;
+  }
 
-	if (options.worktreePath) {
-		data.WORKTREE_PATH = options.worktreePath;
-	}
+  if (options.worktreePath) {
+    data.WORKTREE_PATH = options.worktreePath;
+  }
 
-	if (options.mainRepoPath) {
-		data.MAIN_REPO_PATH = options.mainRepoPath;
-	}
+  if (options.mainRepoPath) {
+    data.MAIN_REPO_PATH = options.mainRepoPath;
+  }
 
-	if (options.parentRepoPath) {
-		data.PARENT_REPO_PATH = options.parentRepoPath;
-	}
+  if (options.parentRepoPath) {
+    data.PARENT_REPO_PATH = options.parentRepoPath;
+  }
 
-	return data;
+  return data;
 }
 
 export function isHookSkipped(result: HookResult | null): boolean {
-	return result === null;
+  return result === null;
 }
 
 export function isHookFailure(result: HookResult | null): boolean {
-	return result !== null && !result.success;
+  return result !== null && !result.success;
 }
 
 // ============================================================================
@@ -135,61 +135,58 @@ export function isHookFailure(result: HookResult | null): boolean {
  * Returns platform-appropriate shell command for executing scripts.
  */
 function getShellCommand(scriptPath: string): string[] {
-	if (process.platform === "win32") {
-		return scriptPath.endsWith(".ps1")
-			? ["powershell.exe", "-File", scriptPath]
-			: ["cmd.exe", "/c", scriptPath];
-	}
-	// Execute script directly (it has shebang #!/bin/sh)
-	return [scriptPath];
+  if (process.platform === "win32") {
+    return scriptPath.endsWith(".ps1")
+      ? ["powershell.exe", "-File", scriptPath]
+      : ["cmd.exe", "/c", scriptPath];
+  }
+  // Execute script directly (it has shebang #!/bin/sh)
+  return [scriptPath];
 }
 
 /**
  * Constructs environment variables from hook context.
  */
 function buildEnvironment(context: HookContext): Record<string, string> {
-	const env: Record<string, string> = {
-		...process.env,
-		ARASHI_HOOK_NAME: context.hookName,
-		ARASHI_REPO_PATH: context.repoPath,
-	};
+  const env: Record<string, string> = {
+    ...process.env,
+    ARASHI_HOOK_NAME: context.hookName,
+    ARASHI_REPO_PATH: context.repoPath,
+  };
 
-	// Add operation-specific data with ARASHI_ prefix
-	for (const [key, value] of Object.entries(context.operationData)) {
-		env[`ARASHI_${key}`] = value;
-	}
+  // Add operation-specific data with ARASHI_ prefix
+  for (const [key, value] of Object.entries(context.operationData)) {
+    env[`ARASHI_${key}`] = value;
+  }
 
-	return env;
+  return env;
 }
 
 /**
  * Streams and prefixes output from a ReadableStream.
  */
-async function streamOutput(
-	stream: ReadableStream,
-	prefix: string
-): Promise<string> {
-	const decoder = new TextDecoder();
-	const lines: string[] = [];
-	let buffer = "";
+async function streamOutput(stream: ReadableStream, prefix: string): Promise<string> {
+  const decoder = new TextDecoder();
+  const lines: string[] = [];
+  let buffer = "";
 
-	for await (const chunk of stream) {
-		buffer += decoder.decode(chunk, { stream: true });
-		const parts = buffer.split("\n");
-		buffer = parts.pop() ?? "";
+  for await (const chunk of stream) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const parts = buffer.split("\n");
+    buffer = parts.pop() ?? "";
 
-		for (const line of parts) {
-			console.log(`${prefix} ${line}`);
-			lines.push(line);
-		}
-	}
+    for (const line of parts) {
+      console.log(`${prefix} ${line}`);
+      lines.push(line);
+    }
+  }
 
-	if (buffer) {
-		console.log(`${prefix} ${buffer}`);
-		lines.push(buffer);
-	}
+  if (buffer) {
+    console.log(`${prefix} ${buffer}`);
+    lines.push(buffer);
+  }
 
-	return lines.join("\n");
+  return lines.join("\n");
 }
 
 // ============================================================================
@@ -203,18 +200,15 @@ async function streamOutput(
  * @param repoPath - Absolute path to the repository
  * @returns Absolute path to hook script if found, null if not found
  */
-export async function findHook(
-	hookName: string,
-	repoPath: string
-): Promise<string | null> {
-	const hookPath = join(repoPath, ".arashi", "hooks", `${hookName}.sh`);
+export async function findHook(hookName: string, repoPath: string): Promise<string | null> {
+  const hookPath = join(repoPath, ".arashi", "hooks", `${hookName}.sh`);
 
-	try {
-		await access(hookPath, constants.F_OK);
-		return hookPath;
-	} catch {
-		return null; // Not found is not an error
-	}
+  try {
+    await access(hookPath, constants.F_OK);
+    return hookPath;
+  } catch {
+    return null; // Not found is not an error
+  }
 }
 
 /**
@@ -223,32 +217,30 @@ export async function findHook(
  * @param hookPath - Absolute path to the hook script
  * @returns Validation result with status and error message if invalid
  */
-export async function validateHook(
-	hookPath: string
-): Promise<ValidationResult> {
-	try {
-		const stats = await stat(hookPath);
+export async function validateHook(hookPath: string): Promise<ValidationResult> {
+  try {
+    const stats = await stat(hookPath);
 
-		if (!stats.isFile()) {
-			return { valid: false, error: `Hook is not a file: ${hookPath}` };
-		}
+    if (!stats.isFile()) {
+      return { valid: false, error: `Hook is not a file: ${hookPath}` };
+    }
 
-		// Check execute permissions on Unix
-		if (process.platform !== "win32") {
-			try {
-				await access(hookPath, constants.X_OK);
-			} catch {
-				return {
-					valid: false,
-					error: `Hook is not executable: ${hookPath}. Run: chmod +x ${hookPath}`,
-				};
-			}
-		}
+    // Check execute permissions on Unix
+    if (process.platform !== "win32") {
+      try {
+        await access(hookPath, constants.X_OK);
+      } catch {
+        return {
+          valid: false,
+          error: `Hook is not executable: ${hookPath}. Run: chmod +x ${hookPath}`,
+        };
+      }
+    }
 
-		return { valid: true };
-	} catch (error) {
-		return { valid: false, error: `Failed to validate hook: ${error}` };
-	}
+    return { valid: true };
+  } catch (error) {
+    return { valid: false, error: `Failed to validate hook: ${error}` };
+  }
 }
 
 /**
@@ -257,60 +249,58 @@ export async function validateHook(
  * @param options - Hook execution options
  * @returns Complete execution result including exit code and output
  */
-export async function executeHook(
-	options: HookExecutionOptions
-): Promise<HookResult> {
-	const startTime = Date.now();
-	const timeout = options.timeout ?? 300000;
+export async function executeHook(options: HookExecutionOptions): Promise<HookResult> {
+  const startTime = Date.now();
+  const timeout = options.timeout ?? 300000;
 
-	console.log(`🪝 Executing hook: ${options.hookName}`);
+  console.log(`🪝 Executing hook: ${options.hookName}`);
 
-	try {
-		const proc = Bun.spawn(getShellCommand(options.scriptPath), {
-			cwd: options.context.repoPath,
-			env: buildEnvironment(options.context),
-			stdout: "pipe",
-			stderr: "pipe",
-			timeout,
-			killSignal: "SIGTERM",
-		});
+  try {
+    const proc = Bun.spawn(getShellCommand(options.scriptPath), {
+      cwd: options.context.repoPath,
+      env: buildEnvironment(options.context),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout,
+      killSignal: "SIGTERM",
+    });
 
-		// Stream output in parallel
-		const [stdout, stderr] = await Promise.all([
-			streamOutput(proc.stdout, `[${options.hookName}:OUT]`),
-			streamOutput(proc.stderr, `[${options.hookName}:ERR]`),
-		]);
+    // Stream output in parallel
+    const [stdout, stderr] = await Promise.all([
+      streamOutput(proc.stdout, `[${options.hookName}:OUT]`),
+      streamOutput(proc.stderr, `[${options.hookName}:ERR]`),
+    ]);
 
-		await proc.exited;
+    await proc.exited;
 
-		const duration = Date.now() - startTime;
-		const exitCode = proc.exitCode ?? -1;
+    const duration = Date.now() - startTime;
+    const exitCode = proc.exitCode ?? -1;
 
-		return {
-			exitCode,
-			signalCode: proc.signalCode,
-			killed: proc.killed,
-			stdout,
-			stderr,
-			success: exitCode === 0,
-			timedOut: proc.killed && proc.signalCode === "SIGTERM",
-			duration,
-		};
-	} catch (error) {
-		const duration = Date.now() - startTime;
-		const errorMessage = error instanceof Error ? error.message : String(error);
-		
-		return {
-			exitCode: -1,
-			signalCode: null,
-			killed: false,
-			stdout: "",
-			stderr: `Failed to execute hook: ${errorMessage}`,
-			success: false,
-			timedOut: false,
-			duration,
-		};
-	}
+    return {
+      exitCode,
+      signalCode: proc.signalCode,
+      killed: proc.killed,
+      stdout,
+      stderr,
+      success: exitCode === 0,
+      timedOut: proc.killed && proc.signalCode === "SIGTERM",
+      duration,
+    };
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    return {
+      exitCode: -1,
+      signalCode: null,
+      killed: false,
+      stdout: "",
+      stderr: `Failed to execute hook: ${errorMessage}`,
+      success: false,
+      timedOut: false,
+      duration,
+    };
+  }
 }
 
 /**
@@ -323,56 +313,50 @@ export async function executeHook(
  * @returns Execution result if hook ran, null if skipped or not found
  */
 export async function runLifecycleHook(
-	lifecyclePoint: string,
-	repoPath: string,
-	operationData: Record<string, string>,
-	options?: { skipHooks?: boolean; timeout?: number }
+  lifecyclePoint: string,
+  repoPath: string,
+  operationData: Record<string, string>,
+  options?: { skipHooks?: boolean; timeout?: number },
 ): Promise<HookResult | null> {
-	// Check skip flag
-	if (options?.skipHooks) {
-		console.log(`⏭️  Skipping hooks (--no-hooks flag)`);
-		return null;
-	}
+  // Check skip flag
+  if (options?.skipHooks) {
+    console.log(`⏭️  Skipping hooks (--no-hooks flag)`);
+    return null;
+  }
 
-	// Discover hook
-	const hookPath = await findHook(lifecyclePoint, repoPath);
-	if (!hookPath) {
-		return null; // No hook found, not an error
-	}
+  // Discover hook
+  const hookPath = await findHook(lifecyclePoint, repoPath);
+  if (!hookPath) {
+    return null; // No hook found, not an error
+  }
 
-	// Validate hook
-	const validation = await validateHook(hookPath);
-	if (!validation.valid) {
-		console.error(`❌ Hook validation failed: ${validation.error}`);
-		return null;
-	}
+  // Validate hook
+  const validation = await validateHook(hookPath);
+  if (!validation.valid) {
+    console.error(`❌ Hook validation failed: ${validation.error}`);
+    return null;
+  }
 
-	// Execute hook
-	const result = await executeHook({
-		hookName: lifecyclePoint,
-		scriptPath: hookPath,
-		context: {
-			hookName: lifecyclePoint,
-			repoPath,
-			operationData,
-		},
-		timeout: options?.timeout,
-	});
+  // Execute hook
+  const result = await executeHook({
+    hookName: lifecyclePoint,
+    scriptPath: hookPath,
+    context: {
+      hookName: lifecyclePoint,
+      repoPath,
+      operationData,
+    },
+    timeout: options?.timeout,
+  });
 
-	// Log result
-	if (result.success) {
-		console.log(
-			`✅ Hook "${lifecyclePoint}" succeeded (${result.duration}ms)`
-		);
-	} else if (result.timedOut) {
-		console.warn(
-			`⏱️  Hook "${lifecyclePoint}" timed out after ${result.duration}ms`
-		);
-	} else {
-		console.warn(
-			`⚠️  Hook "${lifecyclePoint}" failed with exit code ${result.exitCode}`
-		);
-	}
+  // Log result
+  if (result.success) {
+    console.log(`✅ Hook "${lifecyclePoint}" succeeded (${result.duration}ms)`);
+  } else if (result.timedOut) {
+    console.warn(`⏱️  Hook "${lifecyclePoint}" timed out after ${result.duration}ms`);
+  } else {
+    console.warn(`⚠️  Hook "${lifecyclePoint}" failed with exit code ${result.exitCode}`);
+  }
 
-	return result;
+  return result;
 }

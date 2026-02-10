@@ -1,4 +1,9 @@
-import type { SetupExecutionResult, SetupOverallStatus, SetupRunSummary, SetupTarget } from './setup-types.ts';
+import type {
+  SetupExecutionResult,
+  SetupOverallStatus,
+  SetupRunSummary,
+  SetupTarget,
+} from "./setup-types.ts";
 
 export function formatProgress(repositoryName: string, index: number, total: number): string {
   return `[${index}/${total}] ${repositoryName}`;
@@ -6,25 +11,28 @@ export function formatProgress(repositoryName: string, index: number, total: num
 
 export function formatResultLine(result: SetupExecutionResult): string {
   const elapsed = formatElapsed(result.durationMs);
-  const detailSuffix = result.detail ? ` - ${result.detail}` : '';
+  const detailSuffix = result.detail ? ` - ${result.detail}` : "";
   return `${result.repositoryName}: ${result.status} (${elapsed})${detailSuffix}`;
 }
 
-export function buildSummary(targets: SetupTarget[], executions: SetupExecutionResult[]): SetupRunSummary {
-  const successCount = executions.filter(result => result.status === 'success').length;
-  const skippedCount = executions.filter(result => result.status === 'skipped').length;
-  const failedCount = executions.filter(result => result.status === 'failed').length;
-  const timedOutCount = executions.filter(result => result.status === 'timed-out').length;
+export function buildSummary(
+  targets: SetupTarget[],
+  executions: SetupExecutionResult[],
+): SetupRunSummary {
+  const successCount = executions.filter((result) => result.status === "success").length;
+  const skippedCount = executions.filter((result) => result.status === "skipped").length;
+  const failedCount = executions.filter((result) => result.status === "failed").length;
+  const timedOutCount = executions.filter((result) => result.status === "timed-out").length;
 
-  const selectedCount = targets.filter(target => target.selected).length;
-  const excludedCount = targets.filter(target => !target.selected).length;
+  const selectedCount = targets.filter((target) => target.selected).length;
+  const excludedCount = targets.filter((target) => !target.selected).length;
   const executedCount = successCount + failedCount + timedOutCount;
 
-  let overallStatus: SetupOverallStatus = 'success';
+  let overallStatus: SetupOverallStatus = "success";
   if (failedCount + timedOutCount > 0 && successCount > 0) {
-    overallStatus = 'partial-failure';
+    overallStatus = "partial-failure";
   } else if (failedCount + timedOutCount > 0 && successCount === 0) {
-    overallStatus = 'failure';
+    overallStatus = "failure";
   }
 
   return {
@@ -44,8 +52,8 @@ export function buildSummary(targets: SetupTarget[], executions: SetupExecutionR
 
 export function formatSummary(summary: SetupRunSummary, filteredRun: boolean): string {
   const lines = [
-    '',
-    'Summary:',
+    "",
+    "Summary:",
     `  total: ${summary.totalRepositoriesEvaluated}`,
     `  selected: ${summary.selectedCount}`,
     `  executed: ${summary.executedCount}`,
@@ -60,7 +68,7 @@ export function formatSummary(summary: SetupRunSummary, filteredRun: boolean): s
   }
 
   lines.push(`  overall: ${summary.overallStatus}`);
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 function formatElapsed(durationMs: number): string {

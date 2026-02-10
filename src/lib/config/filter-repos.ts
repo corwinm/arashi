@@ -1,4 +1,4 @@
-import type { RepoConfig } from '../config.ts';
+import type { RepoConfig } from "../config.ts";
 
 export interface FilteredRepository {
   name: string;
@@ -15,7 +15,7 @@ export function normalizeOnlyList(only?: string | string[]): string[] {
     return [];
   }
 
-  const raw = Array.isArray(only) ? only : only.split(',');
+  const raw = Array.isArray(only) ? only : only.split(",");
   const seen = new Set<string>();
   const result: string[] = [];
 
@@ -35,7 +35,7 @@ export function normalizeOnlyList(only?: string | string[]): string[] {
 
 export function filterRepositories(
   repos: Record<string, RepoConfig>,
-  only?: string | string[]
+  only?: string | string[],
 ): FilterReposResult {
   const onlyList = normalizeOnlyList(only);
 

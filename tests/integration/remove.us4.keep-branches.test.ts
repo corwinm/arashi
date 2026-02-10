@@ -2,28 +2,28 @@
  * Integration test: User Story 4 - keep branches
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync } from 'fs';
-import { spawn } from 'bun';
-import { executeRemove } from '../../src/commands/remove.ts';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { existsSync } from "fs";
+import { spawn } from "bun";
+import { executeRemove } from "../../src/commands/remove.ts";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
-} from '../helpers/remove-test-workspace.ts';
+} from "../helpers/remove-test-workspace.ts";
 
-describe('remove command - US4 keep branches', () => {
+describe("remove command - US4 keep branches", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
 
   beforeEach(async () => {
-    workspace = await createRemoveWorkspace(['repo-a']);
+    workspace = await createRemoveWorkspace(["repo-a"]);
   });
 
   afterEach(async () => {
     await workspace.cleanup();
   });
 
-  test('removes worktrees while keeping branches', async () => {
-    const branchName = 'feature-keep-branch';
+  test("removes worktrees while keeping branches", async () => {
+    const branchName = "feature-keep-branch";
     const worktrees = await createWorktreesForBranch(workspace, branchName, true);
 
     const originalCwd = process.cwd();
@@ -40,12 +40,13 @@ describe('remove command - US4 keep branches', () => {
       expect(existsSync(path)).toBe(false);
     }
 
-    const reposToCheck = [workspace.rootPath, ...workspace.repos.map(r => r.path)];
+    const reposToCheck = [workspace.rootPath, ...workspace.repos.map((r) => r.path)];
     for (const repoPath of reposToCheck) {
-      const proc = spawn(
-        ['git', 'rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`],
-        { cwd: repoPath, stdout: 'ignore', stderr: 'ignore' }
-      );
+      const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
+        cwd: repoPath,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
       const exitCode = await proc.exited;
       expect(exitCode).toBe(0);
     }

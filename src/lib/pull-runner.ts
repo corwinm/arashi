@@ -1,5 +1,5 @@
-import { exec } from './git.ts';
-import { isAbsolute, resolve } from 'path';
+import { exec } from "./git.ts";
+import { isAbsolute, resolve } from "path";
 
 export interface PullExecutionOptions {
   timeoutMs?: number;
@@ -9,53 +9,49 @@ export interface PullExecutionOptions {
 }
 
 export interface PullExecutionResult {
-  status: 'updated' | 'manual-update' | 'failed';
+  status: "updated" | "manual-update" | "failed";
   output: string;
   errorMessage?: string;
 }
 
 export async function runPullWithRollback(
   repoPath: string,
-  options: PullExecutionOptions = {}
+  options: PullExecutionOptions = {},
 ): Promise<PullExecutionResult> {
   const wasClean = await isWorkingTreeClean(repoPath);
   const originalHead = await getHeadCommit(repoPath);
 
-  const pullResult = await runGitCommand(
-    buildPullArgs(options),
-    repoPath,
-    options.timeoutMs
-  );
+  const pullResult = await runGitCommand(buildPullArgs(options), repoPath, options.timeoutMs);
 
   if (pullResult.exitCode === 0) {
     return {
-      status: 'updated',
+      status: "updated",
       output: pullResult.output,
     };
   }
 
   const rollbackSucceeded = await rollbackPull(repoPath, originalHead, wasClean);
-  const status = pullResult.timedOut ? 'failed' : 'manual-update';
+  const status = pullResult.timedOut ? "failed" : "manual-update";
   return {
     status,
     output: pullResult.output,
     errorMessage: rollbackSucceeded
-      ? pullResult.error || 'Pull failed and was rolled back'
-      : `${pullResult.error || 'Pull failed'} (rollback failed)`,
+      ? pullResult.error || "Pull failed and was rolled back"
+      : `${pullResult.error || "Pull failed"} (rollback failed)`,
   };
 }
 
 function buildPullArgs(options: PullExecutionOptions): string[] {
   if (options.remote && options.branch) {
-    return ['pull', '--no-rebase', options.remote, options.branch];
+    return ["pull", "--no-rebase", options.remote, options.branch];
   }
 
-  return ['pull', '--no-rebase'];
+  return ["pull", "--no-rebase"];
 }
 
 async function isWorkingTreeClean(repoPath: string): Promise<boolean> {
   try {
-    const result = await exec(['status', '--porcelain'], repoPath);
+    const result = await exec(["status", "--porcelain"], repoPath);
     return result.stdout.trim().length === 0;
   } catch {
     return false;
@@ -63,14 +59,14 @@ async function isWorkingTreeClean(repoPath: string): Promise<boolean> {
 }
 
 async function getHeadCommit(repoPath: string): Promise<string> {
-  const result = await exec(['rev-parse', 'HEAD'], repoPath);
+  const result = await exec(["rev-parse", "HEAD"], repoPath);
   return result.stdout.trim();
 }
 
 async function rollbackPull(
   repoPath: string,
   originalHead: string,
-  wasClean: boolean
+  wasClean: boolean,
 ): Promise<boolean> {
   const mergeAborted = await abortMergeIfNeeded(repoPath);
   if (mergeAborted) {
@@ -79,7 +75,7 @@ async function rollbackPull(
 
   if (wasClean) {
     try {
-      await exec(['reset', '--hard', originalHead], repoPath);
+      await exec(["reset", "--hard", originalHead], repoPath);
       return true;
     } catch {
       return false;
@@ -91,16 +87,18 @@ async function rollbackPull(
 
 async function abortMergeIfNeeded(repoPath: string): Promise<boolean> {
   try {
-    const mergeHeadPathResult = await exec(['rev-parse', '--git-path', 'MERGE_HEAD'], repoPath);
+    const mergeHeadPathResult = await exec(["rev-parse", "--git-path", "MERGE_HEAD"], repoPath);
     const mergeHeadPath = mergeHeadPathResult.stdout.trim();
     if (!mergeHeadPath) {
       return false;
     }
 
-    const resolvedPath = isAbsolute(mergeHeadPath) ? mergeHeadPath : resolve(repoPath, mergeHeadPath);
+    const resolvedPath = isAbsolute(mergeHeadPath)
+      ? mergeHeadPath
+      : resolve(repoPath, mergeHeadPath);
     const mergeHeadFile = Bun.file(resolvedPath);
     if (await mergeHeadFile.exists()) {
-      await exec(['merge', '--abort'], repoPath);
+      await exec(["merge", "--abort"], repoPath);
       return true;
     }
   } catch {
@@ -113,12 +111,12 @@ async function abortMergeIfNeeded(repoPath: string): Promise<boolean> {
 async function runGitCommand(
   args: string[],
   cwd: string,
-  timeoutMs?: number
+  timeoutMs?: number,
 ): Promise<{ exitCode: number; output: string; error?: string; timedOut?: boolean }> {
-  const proc = Bun.spawn(['git', ...args], {
+  const proc = Bun.spawn(["git", ...args], {
     cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
+    stdout: "pipe",
+    stderr: "pipe",
     env: process.env as Record<string, string>,
   });
 
@@ -140,14 +138,14 @@ async function runGitCommand(
     }, timeoutMs);
   });
 
-  const exitCode = await Promise.race([proc.exited, timeoutPromise]) as number;
+  const exitCode = (await Promise.race([proc.exited, timeoutPromise])) as number;
   if (timeoutId) {
     clearTimeout(timeoutId);
   }
 
   const stdout = await stdoutPromise;
   const stderr = await stderrPromise;
-  const output = [stdout, stderr].filter(Boolean).join('\n').trim();
+  const output = [stdout, stderr].filter(Boolean).join("\n").trim();
 
   if (exitCode !== 0) {
     if (exitCode === -1 && timeoutMs) {
@@ -161,7 +159,7 @@ async function runGitCommand(
     return {
       exitCode,
       output,
-      error: stderr.trim() || stdout.trim() || 'Git command failed',
+      error: stderr.trim() || stdout.trim() || "Git command failed",
     };
   }
 

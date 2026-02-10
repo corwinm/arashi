@@ -1,8 +1,8 @@
-import type { WorkspaceRepository } from './config.ts';
-import type { SetupScopeType, SetupTarget } from './setup-types.ts';
-import { join } from 'path';
+import type { WorkspaceRepository } from "./config.ts";
+import type { SetupScopeType, SetupTarget } from "./setup-types.ts";
+import { join } from "path";
 
-const DEFAULT_SETUP_PATTERNS = ['setup.sh', 'setup.bash', '.arashi/setup.sh'];
+const DEFAULT_SETUP_PATTERNS = ["setup.sh", "setup.bash", ".arashi/setup.sh"];
 
 export interface SetupTargetDiscoveryResult {
   targets: SetupTarget[];
@@ -11,10 +11,11 @@ export interface SetupTargetDiscoveryResult {
 
 export async function discoverSetupTargets(
   repositories: WorkspaceRepository[],
-  only: string[] | undefined
+  only: string[] | undefined,
 ): Promise<SetupTargetDiscoveryResult> {
   const normalizedOnly = normalizeOnly(only);
-  const missing = normalizedOnly.length === 0 ? [] : findMissingRepositories(repositories, normalizedOnly);
+  const missing =
+    normalizedOnly.length === 0 ? [] : findMissingRepositories(repositories, normalizedOnly);
 
   const targets: SetupTarget[] = [];
   for (let index = 0; index < repositories.length; index += 1) {
@@ -25,14 +26,14 @@ export async function discoverSetupTargets(
 
     let skipReason: string | undefined;
     if (!selected) {
-      skipReason = 'excluded by --only filter';
+      skipReason = "excluded by --only filter";
     } else if (!hasSetupTask) {
-      skipReason = 'no setup script found';
+      skipReason = "no setup script found";
     }
 
     targets.push({
       ...repository,
-      scopeType: index === 0 ? 'main' : 'sub',
+      scopeType: index === 0 ? "main" : "sub",
       selected,
       hasSetupTask,
       setupScriptPath,
@@ -44,8 +45,8 @@ export async function discoverSetupTargets(
 }
 
 export function orderSetupTargets(targets: SetupTarget[]): SetupTarget[] {
-  const mainTargets = targets.filter(target => target.scopeType === 'main');
-  const subTargets = targets.filter(target => target.scopeType === 'sub');
+  const mainTargets = targets.filter((target) => target.scopeType === "main");
+  const subTargets = targets.filter((target) => target.scopeType === "sub");
   return [...mainTargets, ...subTargets];
 }
 
@@ -54,12 +55,12 @@ function normalizeOnly(only: string[] | undefined): string[] {
     return [];
   }
 
-  return Array.from(new Set(only.map(name => name.trim()).filter(Boolean)));
+  return Array.from(new Set(only.map((name) => name.trim()).filter(Boolean)));
 }
 
 function findMissingRepositories(repositories: WorkspaceRepository[], only: string[]): string[] {
-  const repositoryNames = new Set(repositories.map(repository => repository.name));
-  return only.filter(name => !repositoryNames.has(name));
+  const repositoryNames = new Set(repositories.map((repository) => repository.name));
+  return only.filter((name) => !repositoryNames.has(name));
 }
 
 async function detectSetupScript(repositoryPath: string): Promise<string | undefined> {
@@ -79,5 +80,5 @@ export function isExecutableTarget(target: SetupTarget): boolean {
 }
 
 export function getScopeLabel(scope: SetupScopeType): string {
-  return scope === 'main' ? 'main' : 'sub';
+  return scope === "main" ? "main" : "sub";
 }

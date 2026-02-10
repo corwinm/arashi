@@ -32,7 +32,7 @@ describe("Types", () => {
       name: "Test",
       description: "Test description",
     };
-    
+
     expect(choice.value).toBe("test");
     expect(choice.name).toBe("Test");
     expect(choice.description).toBe("Test description");
@@ -43,17 +43,17 @@ describe("Types", () => {
       value: "string",
       name: "String Choice",
     };
-    
+
     const numberChoice: Choice<number> = {
       value: 42,
       name: "Number Choice",
     };
-    
+
     const objectChoice: Choice<{ id: number }> = {
       value: { id: 1 },
       name: "Object Choice",
     };
-    
+
     expect(stringChoice.value).toBe("string");
     expect(numberChoice.value).toBe(42);
     expect(objectChoice.value).toEqual({ id: 1 });
@@ -81,7 +81,7 @@ describe("US2: Single Selection Prompts", () => {
       { value: "a", name: "Option A" },
       { value: "b", name: "Option B" },
     ];
-    
+
     const result = promptApi.select("Choose:", choices);
     expect(result).toBeInstanceOf(Promise);
   });
@@ -95,7 +95,7 @@ describe("US2: Single Selection Prompts", () => {
       { value: "a", name: "Option A", description: "First option" },
       { value: "b", name: "Option B", description: "Second option" },
     ];
-    
+
     const result = promptApi.select("Choose:", choices);
     expect(result).toBeInstanceOf(Promise);
   });
@@ -105,7 +105,7 @@ describe("US2: Single Selection Prompts", () => {
       value: i,
       name: `Option ${i}`,
     }));
-    
+
     const result = promptApi.select("Choose:", choices);
     expect(result).toBeInstanceOf(Promise);
   });
@@ -121,7 +121,7 @@ describe("US3: Multi-Selection Prompts", () => {
       { value: "a", name: "Option A" },
       { value: "b", name: "Option B" },
     ];
-    
+
     const result = promptApi.multiSelect("Choose multiple:", choices);
     expect(result).toBeInstanceOf(Promise);
   });
@@ -151,15 +151,15 @@ describe("US4: Text Input Prompts", () => {
 describe("Performance", () => {
   test("select handles 1000+ choices efficiently", () => {
     const start = performance.now();
-    
+
     const choices: Choice<number>[] = Array.from({ length: 1000 }, (_, i) => ({
       value: i,
       name: `Option ${i}`,
     }));
-    
+
     // Just creating the promise should be fast
     const result = promptApi.select("Choose:", choices);
-    
+
     const duration = performance.now() - start;
     expect(duration).toBeLessThan(50); // Should be <50ms to create
     expect(result).toBeInstanceOf(Promise);
@@ -167,15 +167,15 @@ describe("Performance", () => {
 
   test("multiSelect handles many choices efficiently", () => {
     const start = performance.now();
-    
+
     const choices: Choice<number>[] = Array.from({ length: 500 }, (_, i) => ({
       value: i,
       name: `Choice ${i}`,
       description: `Description for choice ${i}`,
     }));
-    
+
     const result = promptApi.multiSelect("Select multiple:", choices);
-    
+
     const duration = performance.now() - start;
     expect(duration).toBeLessThan(50);
     expect(result).toBeInstanceOf(Promise);
@@ -188,7 +188,7 @@ describe("API Contract Validation", () => {
     const result1 = promptApi.confirm("Test?");
     const result2 = promptApi.confirm("Test?", true);
     const result3 = promptApi.confirm("Test?", false);
-    
+
     expect(result1).toBeInstanceOf(Promise);
     expect(result2).toBeInstanceOf(Promise);
     expect(result3).toBeInstanceOf(Promise);
@@ -198,7 +198,7 @@ describe("API Contract Validation", () => {
     // select<T>(message: string, choices: Choice<T>[]): Promise<T>
     const choices: Choice<string>[] = [{ value: "a", name: "A" }];
     const result = promptApi.select("Test?", choices);
-    
+
     expect(result).toBeInstanceOf(Promise);
   });
 
@@ -206,7 +206,7 @@ describe("API Contract Validation", () => {
     // multiSelect<T>(message: string, choices: Choice<T>[]): Promise<T[]>
     const choices: Choice<string>[] = [{ value: "a", name: "A" }];
     const result = promptApi.multiSelect("Test?", choices);
-    
+
     expect(result).toBeInstanceOf(Promise);
   });
 
@@ -214,7 +214,7 @@ describe("API Contract Validation", () => {
     // input(message: string, defaultValue?: string): Promise<string>
     const result1 = promptApi.input("Test?");
     const result2 = promptApi.input("Test?", "default");
-    
+
     expect(result1).toBeInstanceOf(Promise);
     expect(result2).toBeInstanceOf(Promise);
   });

@@ -1,10 +1,10 @@
-import type { WorkspaceRepository } from './config.ts';
+import type { WorkspaceRepository } from "./config.ts";
 
-export type SetupScopeType = 'main' | 'sub';
+export type SetupScopeType = "main" | "sub";
 
-export type SetupExecutionStatus = 'success' | 'skipped' | 'failed' | 'timed-out';
+export type SetupExecutionStatus = "success" | "skipped" | "failed" | "timed-out";
 
-export type SetupOverallStatus = 'success' | 'partial-failure' | 'failure';
+export type SetupOverallStatus = "success" | "partial-failure" | "failure";
 
 export interface SetupTarget extends WorkspaceRepository {
   scopeType: SetupScopeType;

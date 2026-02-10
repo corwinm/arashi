@@ -14,6 +14,8 @@ coverage/
 Thumbs.db
 bin/arashi.bin
 bin/arashi-*
+.oxlintcache
+.oxfmtcache
 
 # Test workspace directories (dynamically created during tests)
 tests/temp-integration-workspace/
