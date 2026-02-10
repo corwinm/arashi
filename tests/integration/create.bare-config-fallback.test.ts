@@ -22,7 +22,7 @@ describe("create config fallback in bare repository", () => {
     workspace = await createBareCreateWorkspace();
 
     const proc = Bun.spawn(
-      ["bun", "run", CLI_ENTRY, "create", "feature-config-fallback", "--no-hooks", "--no-progress"],
+      ["bun", CLI_ENTRY, "create", "feature-config-fallback", "--no-hooks", "--no-progress"],
       {
         cwd: workspace.bareRepoPath,
         stdout: "pipe",

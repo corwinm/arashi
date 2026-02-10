@@ -23,14 +23,11 @@ describe("create command parity between non-bare and bare invocation", () => {
     workspace = await createBareCreateWorkspace();
     const branch = "feature-non-bare-parity";
 
-    const command = Bun.spawn(
-      ["bun", "run", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"],
-      {
-        cwd: workspace.worktreePath,
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
+    const command = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"], {
+      cwd: workspace.worktreePath,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
     const exitCode = await command.exited;
     const stderr = await new Response(command.stderr).text();

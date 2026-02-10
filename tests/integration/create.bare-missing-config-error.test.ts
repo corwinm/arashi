@@ -21,7 +21,7 @@ describe("create missing config guidance from bare root", () => {
   test("returns actionable init guidance", async () => {
     workspace = await createBareCreateWorkspace({ includeConfig: false });
 
-    const proc = Bun.spawn(["bun", "run", CLI_ENTRY, "create", "feature-no-config"], {
+    const proc = Bun.spawn(["bun", CLI_ENTRY, "create", "feature-no-config"], {
       cwd: workspace.bareRepoPath,
       stdout: "pipe",
       stderr: "pipe",

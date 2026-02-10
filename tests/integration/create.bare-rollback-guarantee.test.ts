@@ -25,14 +25,11 @@ describe("create rollback guarantees in bare context", () => {
     const blockedPath = join(workspace.rootPath, branch);
     await Bun.write(blockedPath, "block worktree path");
 
-    const proc = Bun.spawn(
-      ["bun", "run", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"],
-      {
-        cwd: workspace.bareRepoPath,
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
+    const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"], {
+      cwd: workspace.bareRepoPath,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
     const exitCode = await proc.exited;
     expect(exitCode).toBe(1);

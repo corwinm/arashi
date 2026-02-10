@@ -23,7 +23,7 @@ describe("create conflict guidance from bare root", () => {
     const branch = "feature-conflict";
 
     const firstRun = Bun.spawn(
-      ["bun", "run", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"],
+      ["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"],
       {
         cwd: workspace.bareRepoPath,
         stdout: "pipe",
@@ -34,17 +34,7 @@ describe("create conflict guidance from bare root", () => {
     expect(firstExit).toBe(0);
 
     const secondRun = Bun.spawn(
-      [
-        "bun",
-        "run",
-        CLI_ENTRY,
-        "create",
-        branch,
-        "--no-hooks",
-        "--no-progress",
-        "--conflict",
-        "ABORT",
-      ],
+      ["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress", "--conflict", "ABORT"],
       {
         cwd: workspace.bareRepoPath,
         stdout: "pipe",
