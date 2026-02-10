@@ -245,7 +245,36 @@ export async function getDefaultBranch(repoPath: string): Promise<string> {
     }
   }
 
-  // Try method 3: Get first remote branch
+  // Try method 3: Check common local branch names (bare repos without remotes)
+  for (const branch of commonBranches) {
+    try {
+      await exec(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
+      return branch;
+    } catch {
+      // Branch doesn't exist, try next
+    }
+  }
+
+  // Try method 4: Get first local branch (bare repos without remotes)
+  try {
+    const result = await exec(
+      ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+      repoPath,
+    );
+    const branches = result.stdout
+      .trim()
+      .split("\n")
+      .map((b) => b.trim())
+      .filter((b) => b.length > 0);
+
+    if (branches.length > 0) {
+      return branches[0];
+    }
+  } catch {
+    // Fall through to next method
+  }
+
+  // Try method 5: Get first remote branch
   try {
     const result = await exec(["branch", "-r", "--list"], repoPath);
     const branches = result.stdout
