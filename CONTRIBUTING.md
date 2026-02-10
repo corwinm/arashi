@@ -2,19 +2,17 @@
 
 Thanks for contributing.
 
-## Workflow
+## Canonical Guide
 
-1. Open or reference the related spec in the specs repository.
-2. Create a feature branch in this repository.
-3. Implement changes with tests.
-4. Run local quality gates before pushing.
-5. Open a pull request with links to related specification artifacts.
+Please use the primary contribution workflow in the specs repository:
 
-Specs repository: [github.com/corwinm/arashi-arashi](https://github.com/corwinm/arashi-arashi)
+- [`arashi-arashi/CONTRIBUTING.md`](https://github.com/corwinm/arashi-arashi/blob/main/CONTRIBUTING.md)
 
-## Local Quality Gates
+That guide defines the Arashi CLI worktree flow, spec-kit process in OpenCode, and model preferences.
 
-Run these before opening or updating a PR:
+## Implementation Quality Gates
+
+For code changes in this repository, run:
 
 ```bash
 bun run lint
@@ -23,26 +21,8 @@ bun test
 bun run build
 ```
 
-For faster iteration during active edits:
+Optional fast path during active edits:
 
 ```bash
 bun run quality:changed
 ```
-
-## CI Quality Gate
-
-CI enforces the same baseline through:
-
-- `bun run lint:ci`
-- `bun run format:check`
-- `bun test`
-- platform build validation
-
-## Failure Remediation
-
-If checks fail:
-
-1. Run `bun run lint` for diagnostics.
-2. Apply automatic fixes with `bun run lint:fix` and `bun run format`.
-3. Re-run the full local quality gate.
-4. Commit and push the fixes.
