@@ -6,3 +6,6 @@ bin/
 repos/
 specs/
 tests/fixtures/invalid-json.json
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

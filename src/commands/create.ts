@@ -9,9 +9,8 @@ import { Command } from "commander";
 import * as config from "../lib/config.ts";
 import * as logger from "../lib/logger.ts";
 import { discoverRepositories } from "../core/repository.ts";
-import { fileExists } from "../lib/filesystem.ts";
 import * as git from "../lib/git.ts";
-import { join, resolve, basename } from "path";
+import { resolve, basename } from "path";
 import {
   createCoordinatedWorktrees,
   applyRepositoryFilter,
@@ -44,6 +43,54 @@ interface CreateCommandOptions {
   dryRun?: boolean;
 }
 
+export interface CreateInvocationContext {
+  invocationPath: string;
+  workspaceRoot: string;
+  executionPath: string;
+  repositoryType: "bare" | "non-bare";
+}
+
+export class CreateSetupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CreateSetupError";
+  }
+}
+
+export async function resolveCreateInvocationContext(
+  invocationPath: string = resolve("."),
+): Promise<CreateInvocationContext> {
+  const absoluteInvocationPath = resolve(invocationPath);
+  const bareProbe = await git.exec(["rev-parse", "--is-bare-repository"], absoluteInvocationPath);
+  const isBare = bareProbe.stdout.trim() === "true";
+
+  if (isBare) {
+    return {
+      invocationPath: absoluteInvocationPath,
+      workspaceRoot: absoluteInvocationPath,
+      executionPath: absoluteInvocationPath,
+      repositoryType: "bare",
+    };
+  }
+
+  const workspaceRoot = await config.findWorkspaceRoot(absoluteInvocationPath);
+  return {
+    invocationPath: absoluteInvocationPath,
+    workspaceRoot,
+    executionPath: workspaceRoot,
+    repositoryType: "non-bare",
+  };
+}
+
+async function isGitRepository(path: string): Promise<boolean> {
+  try {
+    await git.exec(["rev-parse", "--git-dir"], path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function createCommand(): Command {
   return new Command("create")
     .description("Create coordinated worktrees across multiple repositories")
@@ -68,8 +115,25 @@ export function createCommand(): Command {
         } else if (error instanceof RepositoryValidationError) {
           logger.error(`Repository validation error: ${error.message}`);
           process.exit(1);
+        } else if (error instanceof CreateSetupError) {
+          logger.error(error.message);
+          process.exit(1);
         } else if (error instanceof ConflictAbortedError) {
-          logger.warn("Operation aborted by user");
+          logger.warn("Create aborted due to branch/worktree conflicts.");
+          for (const conflict of error.conflicts) {
+            const scope =
+              conflict.existsLocally && conflict.existsRemotely
+                ? "local and remote"
+                : conflict.existsLocally
+                  ? "local"
+                  : "remote";
+            logger.info(
+              `Conflict: ${conflict.repository.name} already has branch "${conflict.branchName}" (${scope}).`,
+            );
+          }
+          logger.info(
+            "Next step: retry with --conflict REUSE_EXISTING or choose a different branch name.",
+          );
           process.exit(2);
         } else if (error instanceof UserAbortedError) {
           logger.warn("Operation cancelled by user");
@@ -86,13 +150,32 @@ export function createCommand(): Command {
     });
 }
 
-async function executeCreate(branchName: string, options: CreateCommandOptions): Promise<void> {
-  // 1. Load configuration
-  const arashiConfig = await config.loadConfig(".");
+export async function executeCreate(
+  branchName: string,
+  options: CreateCommandOptions,
+): Promise<void> {
+  // 1. Resolve invocation context and load configuration
+  const context = await resolveCreateInvocationContext();
+
+  let loadedConfig: config.LoadedConfig;
+  try {
+    loadedConfig = await config.loadConfigWithFallback(context.workspaceRoot, {
+      bareRepoPath: context.repositoryType === "bare" ? context.executionPath : undefined,
+    });
+  } catch (error) {
+    if (error instanceof config.ConfigNotFoundError) {
+      throw new CreateSetupError(
+        'Workspace configuration not found. Run "arashi init" from a checked-out worktree and retry.',
+      );
+    }
+    throw error;
+  }
+
+  const arashiConfig = loadedConfig.config;
 
   // 2. Discover repositories (child repos in repos_dir)
   // Convert repos_dir to absolute path since it may be relative (e.g., "./repos")
-  const currentDir = resolve(".");
+  const currentDir = context.executionPath;
   const reposDirAbsolute = resolve(currentDir, arashiConfig.repos_dir);
   const discoveryResult = await discoverRepositories(reposDirAbsolute);
 
@@ -101,9 +184,7 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
   const allRepositories = [...discoveryResult.repositories];
 
   // Check if current directory is a git repository (meta-repo)
-  const gitDir = join(currentDir, ".git");
-
-  if (await fileExists(gitDir)) {
+  if (await isGitRepository(currentDir)) {
     // Meta-repo detected - add it at the beginning so it's processed first
 
     // Detect default branch
@@ -129,6 +210,10 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
     logger.error("No repositories found in configuration");
     logger.info('Run "arashi add <path>" to add repositories');
     process.exit(1);
+  }
+
+  if (context.repositoryType === "bare" && loadedConfig.source === "repository-content") {
+    logger.info("Loaded workspace configuration from repository content");
   }
 
   logger.info(
@@ -209,6 +294,15 @@ async function executeCreate(branchName: string, options: CreateCommandOptions):
   }
 
   if (summary.rolledBack) {
+    const conflictError = summary.errorSummary?.toLowerCase().includes("branch conflict");
+    if (conflictError) {
+      logger.error("Create aborted due to branch/worktree conflicts.");
+      logger.info(
+        "Next step: retry with --conflict REUSE_EXISTING or choose a different branch name.",
+      );
+      process.exit(2);
+    }
+
     logger.error("Operation failed and was rolled back");
     logger.error(summary.errorSummary || "Unknown error");
     process.exit(1);

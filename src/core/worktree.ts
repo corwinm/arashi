@@ -1110,7 +1110,18 @@ export async function createCoordinatedWorktrees(
     };
   } catch (error) {
     // Automatic rollback on any error (T023)
-    await operationLog.rollback();
+    const rollbackResult = await operationLog.rollback();
+    const residualWorktrees = results
+      .filter((result) => result.worktreePath && existsSync(result.worktreePath))
+      .map((result) => `${result.repository.name}:${result.worktreePath}`);
+
+    let rollbackNote = "";
+    if (rollbackResult.failureCount > 0) {
+      rollbackNote = ` Rollback encountered ${rollbackResult.failureCount} cleanup failures.`;
+    }
+    if (residualWorktrees.length > 0) {
+      rollbackNote += ` Residual worktrees detected: ${residualWorktrees.join(", ")}.`;
+    }
 
     return {
       totalRepositories: repositories.length,
@@ -1120,9 +1131,41 @@ export async function createCoordinatedWorktrees(
       repositoryResults: results,
       rolledBack: true,
       totalDuration: Date.now() - startTime,
-      errorSummary: error instanceof Error ? error.message : String(error),
+      errorSummary: `${error instanceof Error ? error.message : String(error)}${rollbackNote}`,
     };
   }
+}
+
+async function refExists(repoPath: string, ref: string): Promise<boolean> {
+  try {
+    await git.exec(["show-ref", "--verify", ref], repoPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveBranchStartPoint(repoPath: string, defaultBranch: string): Promise<string> {
+  const normalizedBranch = defaultBranch.replace(/^origin\//, "");
+  const candidates = [`refs/heads/${normalizedBranch}`, `refs/remotes/origin/${normalizedBranch}`];
+
+  for (const candidate of candidates) {
+    if (await refExists(repoPath, candidate)) {
+      return candidate;
+    }
+  }
+
+  const localRefs = await git.exec(["for-each-ref", "--format=%(refname)", "refs/heads"], repoPath);
+  const firstLocalRef = localRefs.stdout
+    .split("\n")
+    .map((value) => value.trim())
+    .find((value) => value.length > 0);
+
+  if (firstLocalRef) {
+    return firstLocalRef;
+  }
+
+  return defaultBranch;
 }
 
 /**
@@ -1174,7 +1217,8 @@ async function processRepository(
       }
 
       try {
-        await git.exec(["branch", branchName, repo.defaultBranch], repo.path);
+        const startPoint = await resolveBranchStartPoint(repo.path, repo.defaultBranch);
+        await git.exec(["branch", branchName, startPoint], repo.path);
       } catch (error) {
         if (spinner) {
           spinner.fail(`Failed to create branch '${branchName}' in ${repo.name}`);

@@ -6,7 +6,12 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { exec, isBareRepo } from "../../../src/lib/git";
+import {
+  exec,
+  getDefaultBranch,
+  isBareRepo,
+  readTrackedFileFromDefaultBranch,
+} from "../../../src/lib/git";
 import { ArashiError } from "../../../src/lib/errors";
 import {
   GitTestRepo,
@@ -274,6 +279,86 @@ describe("isBareRepo()", () => {
       // Clean up worktree
       Bun.spawnSync(["git", "worktree", "remove", worktreePath, "--force"], { cwd: testRepo.path });
       removeTempDir(worktreePath);
+    }
+  });
+});
+
+describe("getDefaultBranch()", () => {
+  test("detects local default branch in bare repository without remotes", async () => {
+    const bareRepoPath = createTempDir();
+    const seedPath = createTempDir();
+
+    try {
+      initBareGitRepo(bareRepoPath);
+
+      Bun.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
+
+      await Bun.write(join(seedPath, "README.md"), "# test\n");
+      Bun.spawnSync(["git", "add", "README.md"], { cwd: seedPath });
+      Bun.spawnSync(["git", "commit", "-m", "seed"], { cwd: seedPath });
+      Bun.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
+      Bun.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
+
+      const branch = await getDefaultBranch(bareRepoPath);
+      expect(branch).toBe("main");
+    } finally {
+      removeTempDir(seedPath);
+      removeTempDir(bareRepoPath);
+    }
+  });
+});
+
+describe("readTrackedFileFromDefaultBranch()", () => {
+  test("reads tracked file contents from bare repository default branch", async () => {
+    const bareRepoPath = createTempDir();
+    const seedPath = createTempDir();
+
+    try {
+      initBareGitRepo(bareRepoPath);
+
+      Bun.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
+
+      await Bun.write(join(seedPath, "tracked.txt"), "tracked-value\n");
+      Bun.spawnSync(["git", "add", "tracked.txt"], { cwd: seedPath });
+      Bun.spawnSync(["git", "commit", "-m", "add tracked file"], { cwd: seedPath });
+      Bun.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
+      Bun.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
+
+      const content = await readTrackedFileFromDefaultBranch(bareRepoPath, "tracked.txt");
+      expect(content).toBe("tracked-value\n");
+    } finally {
+      removeTempDir(seedPath);
+      removeTempDir(bareRepoPath);
+    }
+  });
+
+  test("falls back when bare HEAD points to missing branch", async () => {
+    const bareRepoPath = createTempDir();
+    const seedPath = createTempDir();
+
+    try {
+      // Bare repo defaults HEAD to master on many CI systems.
+      initBareGitRepo(bareRepoPath);
+
+      Bun.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
+
+      await Bun.write(join(seedPath, "tracked.txt"), "from-main-only\n");
+      Bun.spawnSync(["git", "add", "tracked.txt"], { cwd: seedPath });
+      Bun.spawnSync(["git", "commit", "-m", "add tracked file"], { cwd: seedPath });
+      Bun.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
+      Bun.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
+
+      const content = await readTrackedFileFromDefaultBranch(bareRepoPath, "tracked.txt");
+      expect(content).toBe("from-main-only\n");
+    } finally {
+      removeTempDir(seedPath);
+      removeTempDir(bareRepoPath);
     }
   });
 });

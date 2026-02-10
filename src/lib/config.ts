@@ -9,6 +9,7 @@
 
 import { join, dirname, basename, resolve } from "path";
 import { mkdir } from "fs/promises";
+import { readTrackedFileFromDefaultBranch } from "./git.ts";
 
 // ============================================================================
 // Data Types
@@ -90,6 +91,14 @@ export interface WorkspaceRepository {
   path: string;
   /** Default branch from config, if present */
   defaultBranch?: string;
+}
+
+export type ConfigSourceType = "local-file" | "repository-content";
+
+export interface LoadedConfig {
+  config: Config;
+  source: ConfigSourceType;
+  configPath: string;
 }
 
 // ============================================================================
@@ -525,6 +534,65 @@ export async function loadConfig(repoPath: string): Promise<Config> {
   validateConfig(data);
 
   return data;
+}
+
+function parseAndValidateConfig(text: string, configPath: string): Config {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    throw new ConfigParseError(configPath, error as Error);
+  }
+
+  validateConfig(data);
+  return data;
+}
+
+/**
+ * Load configuration from local filesystem first, then optionally from tracked
+ * repository content in the default branch.
+ */
+export async function loadConfigWithFallback(
+  workspaceRoot: string,
+  options: {
+    bareRepoPath?: string;
+  } = {},
+): Promise<LoadedConfig> {
+  const localPath = getConfigPath(workspaceRoot);
+
+  try {
+    return {
+      config: await loadConfig(workspaceRoot),
+      source: "local-file",
+      configPath: localPath,
+    };
+  } catch (error) {
+    if (!(error instanceof ConfigNotFoundError) || !options.bareRepoPath) {
+      throw error;
+    }
+  }
+
+  const repoConfigPath = ".arashi/config.json";
+  const barePath = options.bareRepoPath;
+
+  if (!barePath) {
+    throw new ConfigNotFoundError(localPath);
+  }
+
+  try {
+    const text = await readTrackedFileFromDefaultBranch(barePath, repoConfigPath);
+    return {
+      config: parseAndValidateConfig(text, `${barePath}:${repoConfigPath}`),
+      source: "repository-content",
+      configPath: `${barePath}:${repoConfigPath}`,
+    };
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      throw error;
+    }
+
+    throw new ConfigNotFoundError(localPath);
+  }
 }
 
 /**
