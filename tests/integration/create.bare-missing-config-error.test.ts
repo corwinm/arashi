@@ -32,6 +32,6 @@ describe("create missing config guidance from bare root", () => {
     const exitCode = await proc.exited;
 
     expect(exitCode).toBe(1);
-    expect(`${stdout}\n${stderr}`).toContain("Run \"arashi init\"");
+    expect(`${stdout}\n${stderr}`).toContain('Run "arashi init"');
   });
 });

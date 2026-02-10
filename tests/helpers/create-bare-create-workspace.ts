@@ -19,7 +19,10 @@ export async function createBareCreateWorkspace(
 ): Promise<BareCreateWorkspace> {
   const includeConfig = options.includeConfig ?? true;
   const configReposDir = options.configReposDir ?? "./repos";
-  const rootPath = join(tmpdir(), `arashi-bare-create-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const rootPath = join(
+    tmpdir(),
+    `arashi-bare-create-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
 
   const bareRepoPath = join(rootPath, "main.git");
   const seedPath = join(rootPath, "seed");

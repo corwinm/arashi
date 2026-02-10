@@ -121,11 +121,12 @@ export function createCommand(): Command {
         } else if (error instanceof ConflictAbortedError) {
           logger.warn("Create aborted due to branch/worktree conflicts.");
           for (const conflict of error.conflicts) {
-            const scope = conflict.existsLocally && conflict.existsRemotely
-              ? "local and remote"
-              : conflict.existsLocally
-                ? "local"
-                : "remote";
+            const scope =
+              conflict.existsLocally && conflict.existsRemotely
+                ? "local and remote"
+                : conflict.existsLocally
+                  ? "local"
+                  : "remote";
             logger.info(
               `Conflict: ${conflict.repository.name} already has branch "${conflict.branchName}" (${scope}).`,
             );
@@ -164,7 +165,7 @@ export async function executeCreate(
   } catch (error) {
     if (error instanceof config.ConfigNotFoundError) {
       throw new CreateSetupError(
-        "Workspace configuration not found. Run \"arashi init\" from a checked-out worktree and retry.",
+        'Workspace configuration not found. Run "arashi init" from a checked-out worktree and retry.',
       );
     }
     throw error;
@@ -206,9 +207,9 @@ export async function executeCreate(
   }
 
   if (allRepositories.length === 0) {
-      logger.error("No repositories found in configuration");
-      logger.info('Run "arashi add <path>" to add repositories');
-      process.exit(1);
+    logger.error("No repositories found in configuration");
+    logger.info('Run "arashi add <path>" to add repositories');
+    process.exit(1);
   }
 
   if (context.repositoryType === "bare" && loadedConfig.source === "repository-content") {
