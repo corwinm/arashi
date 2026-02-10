@@ -1,19 +1,20 @@
 # Contributing to Arashi
 
-Thanks for contributing to Arashi.
+Thanks for contributing.
 
-## Quality Gate Expectations
+## Workflow
 
-All pull requests must pass the CI quality gate before merge. The gate includes:
+1. Open or reference the related spec in the specs repository.
+2. Create a feature branch in this repository.
+3. Implement changes with tests.
+4. Run local quality gates before pushing.
+5. Open a pull request with links to related specification artifacts.
 
-- `bun run lint:ci`
-- `bun run format:check`
+Specs repository: [github.com/corwinm/arashi-arashi](https://github.com/corwinm/arashi-arashi)
 
-CI also runs tests and build jobs after quality checks succeed.
+## Local Quality Gates
 
-## Local Pre-PR Workflow
-
-Run the same quality commands locally before opening or updating a pull request:
+Run these before opening or updating a PR:
 
 ```bash
 bun run lint
@@ -22,22 +23,26 @@ bun test
 bun run build
 ```
 
-For faster iteration during active changes, run:
+For faster iteration during active edits:
 
 ```bash
 bun run quality:changed
 ```
 
-CI enforces `typescript/no-explicit-any` as an error across repository lint checks.
+## CI Quality Gate
+
+CI enforces the same baseline through:
+
+- `bun run lint:ci`
+- `bun run format:check`
+- `bun test`
+- platform build validation
 
 ## Failure Remediation
 
-If CI fails on quality checks:
+If checks fail:
 
-1. Run `bun run lint` to view file-level diagnostics.
-2. Run `bun run lint:fix` to apply auto-fixes where possible.
-3. Run `bun run format` to apply formatting updates.
-4. Re-run `bun run lint` and `bun run format:check`.
-5. Commit fixes and push updates.
-
-If a lint failure is not auto-fixable, update the flagged code manually based on the reported rule and location.
+1. Run `bun run lint` for diagnostics.
+2. Apply automatic fixes with `bun run lint:fix` and `bun run format`.
+3. Re-run the full local quality gate.
+4. Commit and push the fixes.
