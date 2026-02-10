@@ -140,8 +140,8 @@ Arashi also ships a dedicated `skills.sh` integration package for guided install
 
 - Skill repository: [`repos/arashi-skills`](../arashi-skills/README.md)
 - Canonical skill manifest: [`repos/arashi-skills/skills/arashi/SKILL.md`](../arashi-skills/skills/arashi/SKILL.md)
-- First-run walkthrough: [`repos/arashi-skills/examples/install-first-run.md`](../arashi-skills/examples/install-first-run.md)
 - Workflow catalog: [`repos/arashi-skills/skills/arashi/references/workflows.md`](../arashi-skills/skills/arashi/references/workflows.md)
+- Session shortcuts: [`repos/arashi-skills/skills/arashi/references/session-shortcuts.md`](../arashi-skills/skills/arashi/references/session-shortcuts.md)
 
 ## Documentation
 
