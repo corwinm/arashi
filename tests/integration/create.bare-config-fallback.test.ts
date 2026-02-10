@@ -34,6 +34,10 @@ describe("create config fallback in bare repository", () => {
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
 
+    if (exitCode !== 0) {
+      throw new Error(`create failed (exit=${exitCode})\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+    }
+
     expect(exitCode).toBe(0);
     expect(`${stdout}\n${stderr}`).toContain(
       "Loaded workspace configuration from repository content",

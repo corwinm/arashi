@@ -30,7 +30,12 @@ describe("create command from bare root", () => {
     });
 
     const exitCode = await command.exited;
+    const stdout = await new Response(command.stdout).text();
     const stderr = await new Response(command.stderr).text();
+
+    if (exitCode !== 0) {
+      throw new Error(`create failed (exit=${exitCode})\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+    }
 
     expect(exitCode).toBe(0);
     expect(stderr).toContain("worktree created");

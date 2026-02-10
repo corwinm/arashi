@@ -30,7 +30,15 @@ describe("create conflict guidance from bare root", () => {
         stderr: "pipe",
       },
     );
+    const firstStdout = await new Response(firstRun.stdout).text();
+    const firstStderr = await new Response(firstRun.stderr).text();
     const firstExit = await firstRun.exited;
+
+    if (firstExit !== 0) {
+      throw new Error(
+        `first create failed (exit=${firstExit})\nstdout:\n${firstStdout}\nstderr:\n${firstStderr}`,
+      );
+    }
     expect(firstExit).toBe(0);
 
     const secondRun = Bun.spawn(
