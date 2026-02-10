@@ -1136,6 +1136,38 @@ export async function createCoordinatedWorktrees(
   }
 }
 
+async function refExists(repoPath: string, ref: string): Promise<boolean> {
+  try {
+    await git.exec(["show-ref", "--verify", ref], repoPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveBranchStartPoint(repoPath: string, defaultBranch: string): Promise<string> {
+  const normalizedBranch = defaultBranch.replace(/^origin\//, "");
+  const candidates = [`refs/heads/${normalizedBranch}`, `refs/remotes/origin/${normalizedBranch}`];
+
+  for (const candidate of candidates) {
+    if (await refExists(repoPath, candidate)) {
+      return candidate;
+    }
+  }
+
+  const localRefs = await git.exec(["for-each-ref", "--format=%(refname)", "refs/heads"], repoPath);
+  const firstLocalRef = localRefs.stdout
+    .split("\n")
+    .map((value) => value.trim())
+    .find((value) => value.length > 0);
+
+  if (firstLocalRef) {
+    return firstLocalRef;
+  }
+
+  return defaultBranch;
+}
+
 /**
  * Process a single repository - create branch and worktree (T019)
  *
@@ -1185,7 +1217,8 @@ async function processRepository(
       }
 
       try {
-        await git.exec(["branch", branchName, repo.defaultBranch], repo.path);
+        const startPoint = await resolveBranchStartPoint(repo.path, repo.defaultBranch);
+        await git.exec(["branch", branchName, startPoint], repo.path);
       } catch (error) {
         if (spinner) {
           spinner.fail(`Failed to create branch '${branchName}' in ${repo.name}`);
