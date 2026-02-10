@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { exec, isBareRepo } from "../../../src/lib/git";
+import { exec, isBareRepo, readTrackedFileFromDefaultBranch } from "../../../src/lib/git";
 import { ArashiError } from "../../../src/lib/errors";
 import {
   GitTestRepo,
@@ -274,6 +274,33 @@ describe("isBareRepo()", () => {
       // Clean up worktree
       Bun.spawnSync(["git", "worktree", "remove", worktreePath, "--force"], { cwd: testRepo.path });
       removeTempDir(worktreePath);
+    }
+  });
+});
+
+describe("readTrackedFileFromDefaultBranch()", () => {
+  test("reads tracked file contents from bare repository default branch", async () => {
+    const bareRepoPath = createTempDir();
+    const seedPath = createTempDir();
+
+    try {
+      initBareGitRepo(bareRepoPath);
+
+      Bun.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
+
+      await Bun.write(join(seedPath, "tracked.txt"), "tracked-value\n");
+      Bun.spawnSync(["git", "add", "tracked.txt"], { cwd: seedPath });
+      Bun.spawnSync(["git", "commit", "-m", "add tracked file"], { cwd: seedPath });
+      Bun.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
+      Bun.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
+
+      const content = await readTrackedFileFromDefaultBranch(bareRepoPath, "tracked.txt");
+      expect(content).toBe("tracked-value\n");
+    } finally {
+      removeTempDir(seedPath);
+      removeTempDir(bareRepoPath);
     }
   });
 });

@@ -90,6 +90,10 @@ arashi remove -f "$(arashi list | fzf)"
 
 Note: `arashi remove` requires an interactive TTY. In non-interactive runs it exits with a clear error.
 
+`arashi create` also works when invoked from a bare repository root. In bare mode, Arashi reads
+workspace configuration from tracked repository content when `.arashi/config.json` is not directly
+available in the local filesystem view.
+
 ## Hooks
 
 Arashi can run lifecycle hooks during `arashi create` to automate setup tasks.

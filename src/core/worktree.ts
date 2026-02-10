@@ -1110,7 +1110,18 @@ export async function createCoordinatedWorktrees(
     };
   } catch (error) {
     // Automatic rollback on any error (T023)
-    await operationLog.rollback();
+    const rollbackResult = await operationLog.rollback();
+    const residualWorktrees = results
+      .filter((result) => result.worktreePath && existsSync(result.worktreePath))
+      .map((result) => `${result.repository.name}:${result.worktreePath}`);
+
+    let rollbackNote = "";
+    if (rollbackResult.failureCount > 0) {
+      rollbackNote = ` Rollback encountered ${rollbackResult.failureCount} cleanup failures.`;
+    }
+    if (residualWorktrees.length > 0) {
+      rollbackNote += ` Residual worktrees detected: ${residualWorktrees.join(", ")}.`;
+    }
 
     return {
       totalRepositories: repositories.length,
@@ -1120,7 +1131,7 @@ export async function createCoordinatedWorktrees(
       repositoryResults: results,
       rolledBack: true,
       totalDuration: Date.now() - startTime,
-      errorSummary: error instanceof Error ? error.message : String(error),
+      errorSummary: `${error instanceof Error ? error.message : String(error)}${rollbackNote}`,
     };
   }
 }

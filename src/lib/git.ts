@@ -357,3 +357,54 @@ export async function getFullGitStatus(repoPath: string): Promise<GitStatusResul
     };
   }
 }
+
+async function resolveDefaultBranchForTrackedRead(repoPath: string): Promise<string> {
+  try {
+    const head = await exec(["symbolic-ref", "--short", "HEAD"], repoPath);
+    const branch = head.stdout.trim();
+    if (branch.length > 0) {
+      return branch;
+    }
+  } catch {
+    // Fall through to explicit branch checks
+  }
+
+  for (const branch of ["main", "master", "develop"]) {
+    try {
+      await exec(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
+      return branch;
+    } catch {
+      // Try next branch candidate
+    }
+  }
+
+  const refs = await exec(["for-each-ref", "--format=%(refname:short)", "refs/heads"], repoPath);
+  const first = refs.stdout
+    .split("\n")
+    .map((value) => value.trim())
+    .find((value) => value.length > 0);
+
+  if (!first) {
+    throw new ArashiError("Unable to resolve default branch for tracked file read", {
+      stdout: refs.stdout,
+      stderr: refs.stderr,
+      exitCode: refs.exitCode,
+      args: ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+      cwd: repoPath,
+    });
+  }
+
+  return first;
+}
+
+/**
+ * Read the content of a tracked file from the repository's default branch.
+ */
+export async function readTrackedFileFromDefaultBranch(
+  repoPath: string,
+  filePath: string,
+): Promise<string> {
+  const branch = await resolveDefaultBranchForTrackedRead(repoPath);
+  const result = await exec(["show", `${branch}:${filePath}`], repoPath);
+  return result.stdout;
+}
