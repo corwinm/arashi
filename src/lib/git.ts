@@ -363,7 +363,13 @@ async function resolveDefaultBranchForTrackedRead(repoPath: string): Promise<str
     const head = await exec(["symbolic-ref", "--short", "HEAD"], repoPath);
     const branch = head.stdout.trim();
     if (branch.length > 0) {
-      return branch;
+      try {
+        await exec(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
+        return branch;
+      } catch {
+        // HEAD may reference an unset branch in a bare repository.
+        // Continue to fallback branch detection.
+      }
     }
   } catch {
     // Fall through to explicit branch checks

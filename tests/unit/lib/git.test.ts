@@ -303,4 +303,30 @@ describe("readTrackedFileFromDefaultBranch()", () => {
       removeTempDir(bareRepoPath);
     }
   });
+
+  test("falls back when bare HEAD points to missing branch", async () => {
+    const bareRepoPath = createTempDir();
+    const seedPath = createTempDir();
+
+    try {
+      // Bare repo defaults HEAD to master on many CI systems.
+      initBareGitRepo(bareRepoPath);
+
+      Bun.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
+      Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
+
+      await Bun.write(join(seedPath, "tracked.txt"), "from-main-only\n");
+      Bun.spawnSync(["git", "add", "tracked.txt"], { cwd: seedPath });
+      Bun.spawnSync(["git", "commit", "-m", "add tracked file"], { cwd: seedPath });
+      Bun.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
+      Bun.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
+
+      const content = await readTrackedFileFromDefaultBranch(bareRepoPath, "tracked.txt");
+      expect(content).toBe("from-main-only\n");
+    } finally {
+      removeTempDir(seedPath);
+      removeTempDir(bareRepoPath);
+    }
+  });
 });
