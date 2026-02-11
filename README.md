@@ -1,9 +1,3 @@
-```text
-◢▲◣  ▓█▀█  ▓█▀▄  ▓█▀█  ▓█▀▀  ▓█░█  ▓█
-◥▲◤  ▓█▀█  ▓█▀▄  ▓█▀█  ▓▀▀█  ▓█▀█  ▓█
-     ▓▀░▀  ▓▀░▀  ▓▀░▀  ▀▀▀▀  ▓▀░▀  ▓▀
-```
-
 # Arashi
 
 [![npm version](https://img.shields.io/npm/v/arashi.svg)](https://www.npmjs.com/package/arashi)
