@@ -9,6 +9,8 @@ import { createCommand as createRemoveCommand } from "./commands/remove.ts";
 import { createCommand as createPullCommand } from "./commands/pull.ts";
 import { createCommand as createSyncCommand } from "./commands/sync.ts";
 import { createCommand as createSetupCommand } from "./commands/setup.ts";
+import { renderHelpBanner } from "./lib/logo.ts";
+import { detectTerminalContext } from "./lib/terminal-context.ts";
 import { closeSync } from "fs";
 import pkg from "../package.json" with { type: "json" };
 
@@ -46,6 +48,9 @@ program
   .name("arashi")
   .description("Git worktree manager for meta-repositories")
   .version(pkg.version);
+
+const terminalContext = detectTerminalContext(process.stdout);
+program.addHelpText("before", `\n${renderHelpBanner(terminalContext)}`);
 
 // Register commands
 program.addCommand(createInitCommand());

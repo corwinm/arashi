@@ -4,7 +4,9 @@
 [![CI](https://github.com/corwinm/arashi/actions/workflows/ci.yml/badge.svg)](https://github.com/corwinm/arashi/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/corwinm/arashi.svg)](https://github.com/corwinm/arashi/blob/main/LICENSE)
 
-Arashi is a Git worktree manager for meta-repositories. It helps keep related repositories aligned while you work on a feature branch across a workspace.
+Arashi is a Git worktree manager for meta-repositories.
+
+It keeps related repositories aligned while you work on a feature branch across a shared workspace.
 
 [Documentation](https://arashi.haphazard.dev)
 
