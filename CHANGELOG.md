@@ -1,3 +1,13 @@
+## [1.4.0](https://github.com/corwinm/arashi/compare/v1.3.0...v1.4.0) (2026-02-11)
+
+### Features
+
+- **setup:** add workspace setup orchestration command ([#24](https://github.com/corwinm/arashi/issues/24)) ([ddea8c4](https://github.com/corwinm/arashi/commit/ddea8c443bfa8779ce11139a5017ac4c089e262d))
+
+### Bug Fixes
+
+- support create command from bare repositories ([#26](https://github.com/corwinm/arashi/issues/26)) ([62c2e1d](https://github.com/corwinm/arashi/commit/62c2e1d85184cfe04a195f897585efdd5227b293))
+
 ## [1.3.0](https://github.com/corwinm/arashi/compare/v1.2.0...v1.3.0) (2026-02-09)
 
 ### Features
