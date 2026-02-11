@@ -1,10 +1,18 @@
+```text
+◢▲◣  ▓█▀█  ▓█▀▄  ▓█▀█  ▓█▀▀  ▓█░█  ▓█
+◥▲◤  ▓█▀█  ▓█▀▄  ▓█▀█  ▓▀▀█  ▓█▀█  ▓█
+     ▓▀░▀  ▓▀░▀  ▓▀░▀  ▀▀▀▀  ▓▀░▀  ▓▀
+```
+
 # Arashi
 
 [![npm version](https://img.shields.io/npm/v/arashi.svg)](https://www.npmjs.com/package/arashi)
 [![CI](https://github.com/corwinm/arashi/actions/workflows/ci.yml/badge.svg)](https://github.com/corwinm/arashi/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/corwinm/arashi.svg)](https://github.com/corwinm/arashi/blob/main/LICENSE)
 
-Arashi is a Git worktree manager for meta-repositories. It helps keep related repositories aligned while you work on a feature branch across a workspace.
+Arashi is a Git worktree manager for meta-repositories.
+
+It keeps related repositories aligned while you work on a feature branch across a shared workspace.
 
 [Documentation](https://arashi.haphazard.dev)
 
@@ -61,6 +69,14 @@ Arashi currently provides these commands:
 - `arashi pull`
 - `arashi sync`
 - `arashi setup [--only <repo>] [--verbose]`
+
+### Help banner behavior
+
+`arashi -h` shows a logo banner with context-aware fallbacks:
+
+- Full logo when output is interactive and at least 100 columns wide.
+- Compact logo when output is interactive and between 60 and 99 columns.
+- Plain `arashi` text when output is narrower than 60 columns or non-interactive.
 
 ## Quick Example
 
