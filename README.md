@@ -6,7 +6,7 @@
 
 Arashi is a Git worktree manager for meta-repositories. It helps keep related repositories aligned while you work on a feature branch across a workspace.
 
-[Documentation](https://arashi-docs.netlify.app)
+[Documentation](https://arashi.haphazard.dev)
 
 ## Installation
 

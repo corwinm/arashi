@@ -40,6 +40,17 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Validate README documentation link target
+        run: |
+          if grep -qF "arashi-docs.netlify.app" README.md; then
+            echo "Deprecated docs domain found in README.md"
+            exit 1
+          fi
+          if ! grep -qF "[Documentation](https://arashi.haphazard.dev)" README.md; then
+            echo "README.md must include [Documentation](https://arashi.haphazard.dev)"
+            exit 1
+          fi
+
       - name: Run lint gate
         id: lint
         run: bun run lint:ci
