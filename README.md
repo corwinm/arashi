@@ -70,14 +70,6 @@ Arashi currently provides these commands:
 - `arashi sync`
 - `arashi setup [--only <repo>] [--verbose]`
 
-### Help banner behavior
-
-`arashi -h` shows a logo banner with context-aware fallbacks:
-
-- Full logo when output is interactive and at least 100 columns wide.
-- Compact logo when output is interactive and between 60 and 99 columns.
-- Plain `arashi` text when output is narrower than 60 columns or non-interactive.
-
 ## Quick Example
 
 ```bash

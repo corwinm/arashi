@@ -4,9 +4,9 @@ This document defines the canonical Arashi logo family and placement rules for t
 
 ## Canonical Assets
 
-- Full text logo source: `repos/arashi/assets/logo/arashi-full.txt`
-- Compact mark logo source: `repos/arashi/assets/logo/arashi-compact.txt`
-- Vector mark source: `repos/arashi/assets/logo/arashi-mark.svg`
+- Full text logo source: `repos/arashi/src/lib/logo.ts` (`FULL_LOGO_TEXT`)
+- Compact mark logo source: `repos/arashi/src/lib/logo.ts` (`COMPACT_LOGO_TEXT`)
+- Vector mark source: `repos/arashi-docs/src/assets/arashi-logo.svg` and `repos/arashi-docs/public/favicon.svg`
 
 ## Variant Rules
 
