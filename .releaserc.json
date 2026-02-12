@@ -70,6 +70,18 @@
       {
         "assets": [
           {
+            "path": "bin/arashi",
+            "label": "arashi (POSIX wrapper script)"
+          },
+          {
+            "path": "bin/arashi.bat",
+            "label": "arashi.bat (Windows CMD wrapper)"
+          },
+          {
+            "path": "bin/arashi.ps1",
+            "label": "arashi.ps1 (Windows PowerShell wrapper)"
+          },
+          {
             "path": "bin/arashi-linux-x64",
             "label": "arashi-linux-x64 (Linux x64)"
           },

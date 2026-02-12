@@ -34,15 +34,15 @@ The curl installer (`scripts/install.sh`) is bound to GitHub Releases artifacts:
 - Platform mapping:
   - `darwin-arm64` -> `arashi-macos-arm64`
   - `linux-x64` -> `arashi-linux-x64`
-- Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies the target binary SHA-256 checksum before install.
+- Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies both the wrapper (`arashi`) and target platform binary SHA-256 checksums before install.
 - Default install placement is `~/.arashi/bin` unless overridden with `ARASHI_INSTALL_DIR` or `--install-dir`.
 - Installer updates the active shell config (`.zshrc`, `.bashrc`/`.bash_profile`, `.profile`, or fish config) to include the install directory on `PATH`.
-- Install placement uses a staged temp file and atomic move to `arashi`.
+- Install placement uses staged temp files and atomic moves to `arashi` (wrapper) and `arashi.bin` (platform binary).
 
 Checksum manifest expectations:
 
 - Release workflow must generate `bin/arashi-checksums.txt` from built artifacts.
-- The release must publish the checksum manifest alongside binaries.
+- The release must publish wrapper scripts, platform binaries, and the checksum manifest together.
 - If checksum validation fails, installer exits without replacing an existing binary.
 
 ## Curl troubleshooting and fallback guidance

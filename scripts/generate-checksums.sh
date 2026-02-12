@@ -7,6 +7,9 @@ BIN_DIR="$ROOT_DIR/bin"
 OUTPUT_FILE="${1:-$BIN_DIR/arashi-checksums.txt}"
 
 ASSETS=(
+  "arashi"
+  "arashi.bat"
+  "arashi.ps1"
   "arashi-macos-arm64"
   "arashi-linux-x64"
   "arashi-windows-x64.exe"

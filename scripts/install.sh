@@ -3,6 +3,8 @@
 set -euo pipefail
 
 PROJECT_NAME="arashi"
+BINARY_NAME="arashi.bin"
+WRAPPER_ASSET="arashi"
 REPOSITORY="corwinm/arashi"
 CHECKSUM_MANIFEST="arashi-checksums.txt"
 VERSION_INPUT="latest"
@@ -171,9 +173,11 @@ choose_install_dir() {
 
 print_post_install_notes() {
   local install_dir="$1"
-  local target_path="$2"
+  local wrapper_path="$2"
+  local binary_path="$3"
 
-  log "Installed $PROJECT_NAME to $target_path"
+  log "Installed $PROJECT_NAME wrapper to $wrapper_path"
+  log "Installed $PROJECT_NAME binary to $binary_path"
 
   case ":$PATH:" in
     *":$install_dir:"*)
@@ -328,38 +332,56 @@ main() {
   log "Preparing installation for $asset_name ($release_label)"
 
   local tmp_dir
-  local downloaded_asset
+  local downloaded_binary_asset
+  local downloaded_wrapper_asset
   local downloaded_manifest
   tmp_dir="$(mktemp -d)"
-  downloaded_asset="$tmp_dir/$asset_name"
+  downloaded_binary_asset="$tmp_dir/$asset_name"
+  downloaded_wrapper_asset="$tmp_dir/$WRAPPER_ASSET"
   downloaded_manifest="$tmp_dir/$CHECKSUM_MANIFEST"
   trap 'rm -rf "$tmp_dir"' EXIT
 
-  download_file "$release_base_url/$asset_name" "$downloaded_asset" "$asset_name"
+  download_file "$release_base_url/$asset_name" "$downloaded_binary_asset" "$asset_name"
+  download_file "$release_base_url/$WRAPPER_ASSET" "$downloaded_wrapper_asset" "$WRAPPER_ASSET"
   download_file "$release_base_url/$CHECKSUM_MANIFEST" "$downloaded_manifest" "$CHECKSUM_MANIFEST"
 
-  local expected_checksum
-  local actual_checksum
-  expected_checksum="$(expected_checksum_for_asset "$downloaded_manifest" "$asset_name")"
-  actual_checksum="$(sha256_file "$downloaded_asset")"
+  local expected_binary_checksum
+  local actual_binary_checksum
+  local expected_wrapper_checksum
+  local actual_wrapper_checksum
+  expected_binary_checksum="$(expected_checksum_for_asset "$downloaded_manifest" "$asset_name")"
+  actual_binary_checksum="$(sha256_file "$downloaded_binary_asset")"
 
-  [ "$expected_checksum" = "$actual_checksum" ] || fail "Checksum validation failed for $asset_name"
-  log "Checksum verified"
+  expected_wrapper_checksum="$(expected_checksum_for_asset "$downloaded_manifest" "$WRAPPER_ASSET")"
+  actual_wrapper_checksum="$(sha256_file "$downloaded_wrapper_asset")"
+
+  [ "$expected_binary_checksum" = "$actual_binary_checksum" ] || fail "Checksum validation failed for $asset_name"
+  [ "$expected_wrapper_checksum" = "$actual_wrapper_checksum" ] || fail "Checksum validation failed for $WRAPPER_ASSET"
+
+  log "Checksum verified for $asset_name and $WRAPPER_ASSET"
 
   local install_dir
-  local target_path
-  local staging_path
+  local target_wrapper_path
+  local target_binary_path
+  local staging_wrapper_path
+  local staging_binary_path
   install_dir="$(choose_install_dir)"
-  target_path="$install_dir/$PROJECT_NAME"
-  staging_path="$install_dir/.${PROJECT_NAME}.tmp.$$"
+  target_wrapper_path="$install_dir/$PROJECT_NAME"
+  target_binary_path="$install_dir/$BINARY_NAME"
+  staging_wrapper_path="$install_dir/.${PROJECT_NAME}.tmp.$$"
+  staging_binary_path="$install_dir/.${BINARY_NAME}.tmp.$$"
 
-  cp "$downloaded_asset" "$staging_path" || fail "Failed to stage binary in $install_dir"
-  chmod 755 "$staging_path" || fail "Failed to set executable permissions"
-  mv -f "$staging_path" "$target_path" || fail "Failed to place binary at $target_path"
+  cp "$downloaded_binary_asset" "$staging_binary_path" || fail "Failed to stage binary in $install_dir"
+  chmod 755 "$staging_binary_path" || fail "Failed to set executable permissions on binary"
+  mv -f "$staging_binary_path" "$target_binary_path" || fail "Failed to place binary at $target_binary_path"
+
+  cp "$downloaded_wrapper_asset" "$staging_wrapper_path" || fail "Failed to stage wrapper in $install_dir"
+  chmod 755 "$staging_wrapper_path" || fail "Failed to set executable permissions on wrapper"
+  mv -f "$staging_wrapper_path" "$target_wrapper_path" || fail "Failed to place wrapper at $target_wrapper_path"
 
   configure_shell_path "$install_dir"
 
-  print_post_install_notes "$install_dir" "$target_path"
+  print_post_install_notes "$install_dir" "$target_wrapper_path" "$target_binary_path"
 }
 
 main "$@"
