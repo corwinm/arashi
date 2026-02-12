@@ -62,7 +62,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "echo '🔨 Building binaries with version ${nextRelease.version}...' && bun run build:all && ls -lh bin/ && echo '✅ Binaries built successfully'"
+        "prepareCmd": "echo '🔨 Building binaries with version ${nextRelease.version}...' && bun run build:all && ./scripts/generate-checksums.sh && ls -lh bin/ && echo '✅ Binaries and checksums built successfully'"
       }
     ],
     [
@@ -80,6 +80,10 @@
           {
             "path": "bin/arashi-windows-x64.exe",
             "label": "arashi-windows-x64.exe (Windows x64)"
+          },
+          {
+            "path": "bin/arashi-checksums.txt",
+            "label": "arashi-checksums.txt (SHA-256 checksums)"
           }
         ]
       }

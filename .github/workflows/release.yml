@@ -6,7 +6,8 @@
 # - Updates package.json and CHANGELOG.md
 # - Commits changes and creates git tag
 # - Builds multi-platform binaries with correct version (via @semantic-release/exec)
-# - Creates GitHub release with binaries
+# - Generates SHA-256 checksum manifest for release artifacts
+# - Creates GitHub release with binaries and checksum manifest
 # - Publishes package to npm registry (if NPM_TOKEN configured)
 #
 # Trigger: Manual workflow dispatch from GitHub Actions UI
@@ -19,7 +20,7 @@
 #   4. npm: Update package.json version
 #   5. git: Commit changes and create tag
 #   6. exec: Build binaries with new version
-#   7. github: Create GitHub release with binaries
+#   7. github: Create GitHub release with binaries + checksums
 
 name: Release
 
@@ -74,6 +75,9 @@ jobs:
         run: |
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
             echo "🧪 Running in DRY-RUN mode - no release will be created"
+            echo "🔨 Validating binary + checksum build steps"
+            bun run build:all
+            ./scripts/generate-checksums.sh
             bunx semantic-release --dry-run
           else
             echo "🚀 Running semantic-release..."
@@ -91,7 +95,8 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Semantic release completed" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Multi-platform binaries built with correct version" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ GitHub release created with binaries" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ SHA-256 checksum manifest generated for release artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ GitHub release created with binaries and checksum manifest" >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.npm_token_check.outputs.npm_available }}" == "true" ] && [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
             echo "- ✅ Package published to npm" >> $GITHUB_STEP_SUMMARY
           else

@@ -7,6 +7,59 @@ Arashi uses a wrapper script approach to ensure compatibility with interactive t
 - `arashi` - Shell wrapper script (the command users run)
 - `arashi.bin` - The compiled Bun executable
 
+## Official install methods
+
+Use either of these official commands:
+
+```bash
+curl -fsSL https://arashi.haphazard.dev/install | bash
+```
+
+```bash
+npm install -g arashi
+```
+
+Verify either method with:
+
+```bash
+arashi --version
+```
+
+## Curl installer behavior and release binding
+
+The curl installer (`scripts/install.sh`) is bound to GitHub Releases artifacts:
+
+- Default behavior installs the latest stable release from `releases/latest/download`.
+- `ARASHI_VERSION=<version>` pins to `releases/download/v<version>` for reproducible installs.
+- Platform mapping:
+  - `darwin-arm64` -> `arashi-macos-arm64`
+  - `linux-x64` -> `arashi-linux-x64`
+- Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies the target binary SHA-256 checksum before install.
+- Default install placement is `~/.arashi/bin` unless overridden with `ARASHI_INSTALL_DIR` or `--install-dir`.
+- Installer updates the active shell config (`.zshrc`, `.bashrc`/`.bash_profile`, `.profile`, or fish config) to include the install directory on `PATH`.
+- Install placement uses a staged temp file and atomic move to `arashi`.
+
+Checksum manifest expectations:
+
+- Release workflow must generate `bin/arashi-checksums.txt` from built artifacts.
+- The release must publish the checksum manifest alongside binaries.
+- If checksum validation fails, installer exits without replacing an existing binary.
+
+## Curl troubleshooting and fallback guidance
+
+- Missing prerequisite (`curl`, `bash`, checksum tool): install missing dependency, then rerun installer.
+- Permission denied writing install location: rerun with `ARASHI_INSTALL_DIR="$HOME/.local/bin"` or another writable path.
+- Download/network errors: retry the command; if failures persist, use npm installation or manual releases.
+- Checksum mismatch: treat as a blocked install, retry once, then fall back to npm/manual and report the issue.
+- Unsupported platform: use npm (`npm install -g arashi`) when available, otherwise use manual release assets.
+
+## npm troubleshooting and fallback guidance
+
+- `npm: command not found`: install Node.js/npm, then retry. If unavailable, use the curl installer.
+- Permission errors with global npm installs: configure user-level npm prefix or use curl with `ARASHI_INSTALL_DIR="$HOME/.local/bin"`.
+- Postinstall download failure: retry install once, then use curl/manual release assets.
+- Verification fails after npm install: run `arashi --version`; if missing, reinstall or switch to curl/manual release flow.
+
 ## Why a Wrapper?
 
 Bun's compiled executables have a limitation where stdin (file descriptor 0) remains open even after calling `process.stdin.destroy()` or `fs.closeSync(0)`. This prevents tools like fzf from exclusively accessing `/dev/tty` for keyboard input.
