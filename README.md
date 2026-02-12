@@ -12,9 +12,47 @@ It keeps related repositories aligned while you work on a feature branch across 
 
 ## Installation
 
+### Option 1: Install with curl (official direct install)
+
+Prerequisites:
+
+- `curl`
+- `bash`
+- A SHA-256 tool (`shasum`, `sha256sum`, or `openssl`)
+
+```bash
+curl -fsSL https://arashi.haphazard.dev/install | bash
+```
+
+Install a specific release:
+
+```bash
+curl -fsSL https://arashi.haphazard.dev/install | ARASHI_VERSION=1.4.0 bash
+```
+
+Verify install:
+
+```bash
+arashi --version
+```
+
+By default, the installer places `arashi` in `~/.arashi/bin` and adds that path to your shell config.
+
+If curl installation fails, use npm installation below or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
+
+### Option 2: Install with npm
+
 ```bash
 npm install -g arashi
 ```
+
+Verify install:
+
+```bash
+arashi --version
+```
+
+If npm is unavailable or fails, use the curl installer command above or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
 
 ### Manual install from GitHub Releases
 
