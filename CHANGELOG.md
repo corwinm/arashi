@@ -1,3 +1,10 @@
+## [1.5.0](https://github.com/corwinm/arashi/compare/v1.4.0...v1.5.0) (2026-02-12)
+
+### Features
+
+- add curl installer with checksum-based release integrity ([#32](https://github.com/corwinm/arashi/issues/32)) ([94322f0](https://github.com/corwinm/arashi/commit/94322f06ce8063811c5cedfab35a438a7f71036e))
+- add unified logo assets and CLI help banner variants ([#31](https://github.com/corwinm/arashi/issues/31)) ([2c84553](https://github.com/corwinm/arashi/commit/2c845534dcd19460e66b0cadfd4f4718a23c802c))
+
 ## [1.4.0](https://github.com/corwinm/arashi/compare/v1.3.0...v1.4.0) (2026-02-11)
 
 ### Features
