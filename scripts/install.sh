@@ -9,13 +9,21 @@ REPOSITORY="corwinm/arashi"
 CHECKSUM_MANIFEST="arashi-checksums.txt"
 VERSION_INPUT="latest"
 INSTALL_DIR_OVERRIDE=""
+NO_MODIFY_PATH=false
+DEBUG_LOG=false
 
 log() {
   printf '==> %s\n' "$*"
 }
 
+log_debug() {
+  if [ "$DEBUG_LOG" = "true" ]; then
+    printf 'DEBUG: %s\n' "$*" >&2
+  fi
+}
+
 warn() {
-  printf 'warning: %s\n' "$*" >&2
+  printf '\033[0;91mWARNING: %s\n\033[0m' "$*" >&2
 }
 
 fail() {
@@ -68,6 +76,13 @@ parse_args() {
         [ "$#" -gt 0 ] || fail "Missing value for --install-dir"
         INSTALL_DIR_OVERRIDE="$1"
         ;;
+      --debug|-d)
+        DEBUG_LOG=true
+        set -x
+        ;;
+      --no-modify-path)
+        NO_MODIFY_PATH=true
+        ;;
       --help|-h)
         usage
         exit 0
@@ -115,8 +130,8 @@ download_file() {
   local url="$1"
   local destination="$2"
   local label="$3"
-  log "Downloading $label"
-  curl --fail --silent --show-error --location --retry 3 --retry-delay 1 --connect-timeout 15 --output "$destination" "$url" || fail "Unable to download $label from $url"
+  log_debug "Downloading $label"
+  curl -# --fail --show-error --location --retry 3 --retry-delay 1 --connect-timeout 15 --output "$destination" "$url" || fail "Unable to download $label from $url"
 }
 
 sha256_file() {
@@ -176,19 +191,39 @@ print_post_install_notes() {
   local wrapper_path="$2"
   local binary_path="$3"
 
-  log "Installed $PROJECT_NAME wrapper to $wrapper_path"
-  log "Installed $PROJECT_NAME binary to $binary_path"
+  log_debug "Installed $PROJECT_NAME wrapper to $wrapper_path"
+  log_debug "Installed $PROJECT_NAME binary to $binary_path"
 
-  case ":$PATH:" in
-    *":$install_dir:"*)
-      ;;
-    *)
-      warn "$install_dir is not on PATH. Add it to use 'arashi' directly"
-      warn "Example: export PATH=\"$install_dir:\$PATH\""
-      ;;
-  esac
+  if [ NO_MODIFY_PATH = "true" ]; then
+    case ":$PATH:" in
+      *":$install_dir:"*)
+        ;;
+      *)
+        warn "$install_dir is not on PATH. Add it to use 'arashi' directly"
+        warn "Example: export PATH=\"$install_dir:\$PATH\""
+        ;;
+    esac
+  fi
 
-  printf 'Run: arashi --version\n'
+  cat <<'EOF'
+
+◢▲◣  ▓█▀█  ▓█▀▄  ▓█▀█  ▓█▀▀  ▓█░█  ▓█
+◥▲◤  ▓█▀█  ▓█▀▄  ▓█▀█  ▓▀▀█  ▓█▀█  ▓█
+     ▓▀░▀  ▓▀░▀  ▓▀░▀  ▀▀▀▀  ▓▀░▀  ▓▀
+
+Arashi is a Git worktree manager that pairs perfectly with a 
+spec-driven development workflow in a multi-repository environment.
+
+Get started in a new project:
+  cd <project>                  # Open your meta-repository
+  arashi init                   # Initialize arashi
+  arashi add git@github.com:<your-org>/frontend.git # Add a sub-repository
+  arashi add git@github.com:<your-org>/backend.git  # Add another sub-repository
+  arashi create <feature-name>  # Create a new worktrees for your feature branch
+  cd ../<feature-name>          # Get working in your new worktrees
+
+For more information visit https://arashi.haphazard.dev
+EOF
 }
 
 detect_shell_name() {
@@ -226,9 +261,11 @@ rc_file_has_install_dir() {
   local install_dir="$2"
 
   if grep -F "$install_dir" "$rc_file" >/dev/null 2>&1; then
+    log_debug "Found $install_dir in $rc_file"
     return 0
   fi
   if [ "$install_dir" = "$HOME/.arashi/bin" ] && grep -F '$HOME/.arashi/bin' "$rc_file" >/dev/null 2>&1; then
+    log_debug "Found \$HOME/.arashi/bin in $rc_file, which matches $install_dir"
     return 0
   fi
   return 1
@@ -302,6 +339,7 @@ configure_shell_path() {
   }
 
   log "Added $install_dir to PATH in $rc_file"
+  echo ""
   warn "Open a new shell or run: export PATH=\"$install_dir:\$PATH\""
 }
 
@@ -329,17 +367,19 @@ main() {
   local asset_name
   asset_name="$(detect_platform_asset)"
 
-  log "Preparing installation for $asset_name ($release_label)"
+  log "Preparing installation for arashi ($release_label)"
+  log_debug "Installing $asset_name ($release_label)"
 
   local tmp_dir
   local downloaded_binary_asset
   local downloaded_wrapper_asset
   local downloaded_manifest
   tmp_dir="$(mktemp -d)"
+  log_debug "Created temporary directory at $tmp_dir"
   downloaded_binary_asset="$tmp_dir/$asset_name"
   downloaded_wrapper_asset="$tmp_dir/$WRAPPER_ASSET"
   downloaded_manifest="$tmp_dir/$CHECKSUM_MANIFEST"
-  trap 'rm -rf "$tmp_dir"' EXIT
+  trap "rm -rf '$tmp_dir'" EXIT
 
   download_file "$release_base_url/$asset_name" "$downloaded_binary_asset" "$asset_name"
   download_file "$release_base_url/$WRAPPER_ASSET" "$downloaded_wrapper_asset" "$WRAPPER_ASSET"
@@ -358,7 +398,7 @@ main() {
   [ "$expected_binary_checksum" = "$actual_binary_checksum" ] || fail "Checksum validation failed for $asset_name"
   [ "$expected_wrapper_checksum" = "$actual_wrapper_checksum" ] || fail "Checksum validation failed for $WRAPPER_ASSET"
 
-  log "Checksum verified for $asset_name and $WRAPPER_ASSET"
+  log_debug "Checksum verified for $asset_name and $WRAPPER_ASSET"
 
   local install_dir
   local target_wrapper_path
@@ -379,7 +419,13 @@ main() {
   chmod 755 "$staging_wrapper_path" || fail "Failed to set executable permissions on wrapper"
   mv -f "$staging_wrapper_path" "$target_wrapper_path" || fail "Failed to place wrapper at $target_wrapper_path"
 
-  configure_shell_path "$install_dir"
+  if [ NO_MODIFY_PATH = "true" ]; then
+    if [ DUBUG_LOG = "true" ]; then
+      log "Skipping PATH modification as --no-modify-path is set"
+    fi
+  else
+    configure_shell_path "$install_dir"
+  fi
 
   print_post_install_notes "$install_dir" "$target_wrapper_path" "$target_binary_path"
 }
