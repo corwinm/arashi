@@ -24,10 +24,11 @@
     "url": "git+https://github.com/corwinm/arashi.git"
   },
   "bin": {
-    "arashi": "./bin/arashi"
+    "arashi": "./bin/arashi.js"
   },
   "files": [
     "bin/arashi",
+    "bin/arashi.js",
     "bin/arashi.bat",
     "bin/arashi.ps1",
     "scripts/postinstall.js",
