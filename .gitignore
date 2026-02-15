@@ -12,7 +12,7 @@ coverage/
 *.tmp
 *.swp
 Thumbs.db
-bin/arashi.bin
+bin/arashi.bin*
 bin/arashi-*
 .oxlintcache
 .oxfmtcache

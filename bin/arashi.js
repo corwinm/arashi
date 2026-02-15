@@ -12,7 +12,7 @@ const wrapper = isWindows ? "arashi.bat" : "arashi";
 const wrapperPath = join(__dirname, wrapper);
 
 const child = isWindows
-  ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${wrapperPath}"`, ...argv], {
+  ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", wrapperPath, ...argv], {
       stdio: "inherit",
       windowsHide: false,
     })
