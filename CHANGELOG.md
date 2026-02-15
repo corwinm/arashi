@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/corwinm/arashi/compare/v1.5.0...v1.5.1) (2026-02-15)
+
+### Bug Fixes
+
+- Fix bugs in install script output ([#33](https://github.com/corwinm/arashi/issues/33)) ([4bef325](https://github.com/corwinm/arashi/commit/4bef32585eeb034cda36ec4fb7463d8b96018b53))
+- improve Windows CLI launch wrapper ([#34](https://github.com/corwinm/arashi/issues/34)) ([be21ccc](https://github.com/corwinm/arashi/commit/be21ccc83e12f5c3e6aea37eb629ded36d76156a))
+
 ## [1.5.0](https://github.com/corwinm/arashi/compare/v1.4.0...v1.5.0) (2026-02-12)
 
 ### Features
