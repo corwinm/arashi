@@ -1,5 +1,5 @@
 import { writeFileSync, chmodSync, mkdirSync, rmSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import type { HookContext } from "../../src/lib/hooks";
 
 /**
@@ -79,9 +79,21 @@ export function createHookInRepo(
   executable = true,
 ): string {
   const hookPath = join(repoPath, ".arashi", "hooks", `${hookName}.sh`);
+  mkdirSync(dirname(hookPath), { recursive: true });
   writeFileSync(hookPath, `#!/bin/sh\n${script}`);
   if (executable && process.platform !== "win32") {
     chmodSync(hookPath, 0o755);
   }
   return hookPath;
+}
+
+export function createRepoSpecificHookInRepo(
+  repoPath: string,
+  lifecycle: "pre-create" | "post-create",
+  repoName: string,
+  script: string,
+  executable = true,
+): string {
+  const hookName = `${lifecycle}.${repoName}`;
+  return createHookInRepo(repoPath, hookName, script, executable);
 }
