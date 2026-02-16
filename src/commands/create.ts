@@ -15,6 +15,7 @@ import {
   createCoordinatedWorktrees,
   applyRepositoryFilter,
   type RepositoryFilter,
+  type HookOutcomeRecord,
   type WorktreeOperationOptions,
   type ConflictResolutionStrategy,
   InvalidBranchNameError,
@@ -88,6 +89,31 @@ async function isGitRepository(path: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+function printHookResults(hookOutcomes: HookOutcomeRecord[]): void {
+  if (hookOutcomes.length === 0) {
+    return;
+  }
+
+  logger.info("Hook results:");
+  for (const outcome of hookOutcomes) {
+    const reason = outcome.reasonCode === "none" ? "" : ` (${outcome.reasonCode})`;
+    console.log(
+      `  - ${outcome.repositoryId}: ${outcome.hookName} -> ${outcome.hookStatus}${reason}`,
+    );
+  }
+}
+
+function printNextSteps(nextSteps: string[]): void {
+  if (nextSteps.length === 0) {
+    return;
+  }
+
+  logger.info("Next steps:");
+  for (const step of nextSteps) {
+    console.log(`  - ${step}`);
   }
 }
 
@@ -242,10 +268,13 @@ export async function executeCreate(
   // 5. Build options for worktree orchestration
   const worktreeOptions: WorktreeOperationOptions = {
     executeHooks: !options.noHooks,
+    hookTimeout: arashiConfig.hooks?.timeout,
     showProgress: !options.noProgress,
     interactive: options.interactive || false,
     conflictResolution: options.conflict || null,
     dryRun: options.dryRun || false,
+    workspaceRoot: context.workspaceRoot,
+    resolvedConfig: arashiConfig,
   };
 
   // 6. Execute coordinated worktree creation
@@ -294,6 +323,11 @@ export async function executeCreate(
   }
 
   if (summary.rolledBack) {
+    if (summary.hookOutcomes.length > 0) {
+      console.log("");
+      printHookResults(summary.hookOutcomes);
+    }
+
     const conflictError = summary.errorSummary?.toLowerCase().includes("branch conflict");
     if (conflictError) {
       logger.error("Create aborted due to branch/worktree conflicts.");
@@ -305,10 +339,19 @@ export async function executeCreate(
 
     logger.error("Operation failed and was rolled back");
     logger.error(summary.errorSummary || "Unknown error");
+    if (summary.nextSteps.length > 0) {
+      console.log("");
+      printNextSteps(summary.nextSteps);
+    }
     process.exit(1);
   }
 
   logger.success(`Successfully created worktrees in ${summary.successCount} repositories`);
+
+  if (summary.hookOutcomes.length > 0) {
+    console.log("");
+    printHookResults(summary.hookOutcomes);
+  }
 
   // Display worktree paths
   console.log("");

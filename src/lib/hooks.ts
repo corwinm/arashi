@@ -35,6 +35,23 @@ export interface HookResult {
   duration: number;
 }
 
+export type HookOutcomeStatus = "success" | "failure" | "skipped";
+
+export type HookOutcomeReasonCode =
+  | "none"
+  | "not_found"
+  | "disabled"
+  | "timeout"
+  | "exit_non_zero"
+  | "not_applicable";
+
+export interface HookOutcomeMapping {
+  hookStatus: HookOutcomeStatus;
+  reasonCode: HookOutcomeReasonCode;
+  message: string;
+  durationMs?: number;
+}
+
 export interface HookConfig {
   timeout: number;
   enabled: boolean;
@@ -125,6 +142,44 @@ export function isHookSkipped(result: HookResult | null): boolean {
 
 export function isHookFailure(result: HookResult | null): boolean {
   return result !== null && !result.success;
+}
+
+export function mapHookSkippedOutcome(
+  reasonCode: Exclude<HookOutcomeReasonCode, "none" | "timeout" | "exit_non_zero">,
+  message: string,
+): HookOutcomeMapping {
+  return {
+    hookStatus: "skipped",
+    reasonCode,
+    message,
+  };
+}
+
+export function mapHookExecutionResult(result: HookResult): HookOutcomeMapping {
+  if (result.success) {
+    return {
+      hookStatus: "success",
+      reasonCode: "none",
+      message: "Hook completed",
+      durationMs: result.duration,
+    };
+  }
+
+  if (result.timedOut) {
+    return {
+      hookStatus: "failure",
+      reasonCode: "timeout",
+      message: "Hook timed out after configured limit",
+      durationMs: result.duration,
+    };
+  }
+
+  return {
+    hookStatus: "failure",
+    reasonCode: "exit_non_zero",
+    message: `Hook exited with code ${result.exitCode}`,
+    durationMs: result.duration,
+  };
 }
 
 // ============================================================================

@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { join } from "path";
+import { basename, join } from "path";
 import {
   createBareCreateWorkspace,
   type BareCreateWorkspace,
 } from "../helpers/create-bare-create-workspace.ts";
+import { createRepoSpecificHookInRepo } from "../helpers/hooks.ts";
 
 let workspace: BareCreateWorkspace | null = null;
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
@@ -22,20 +23,30 @@ describe("create command parity between non-bare and bare invocation", () => {
   test("creates equivalent worktree path from non-bare invocation", async () => {
     workspace = await createBareCreateWorkspace();
     const branch = "feature-non-bare-parity";
+    const repoName = basename(workspace.worktreePath);
 
-    const command = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"], {
+    createRepoSpecificHookInRepo(
+      workspace.worktreePath,
+      "post-create",
+      repoName,
+      'echo "parity" > "${ARASHI_WORKTREE_PATH}/hook-parity.log"',
+    );
+
+    const command = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-progress"], {
       cwd: workspace.worktreePath,
       stdout: "pipe",
       stderr: "pipe",
     });
 
     const exitCode = await command.exited;
+    const stdout = await new Response(command.stdout).text();
     const stderr = await new Response(command.stderr).text();
 
     expect(exitCode).toBe(0);
-    expect(stderr).toContain("worktree created");
+    expect(`${stdout}\n${stderr}`).toContain("Hook results:");
 
     const expectedWorktreePath = join(workspace.rootPath, branch);
     expect(existsSync(expectedWorktreePath)).toBe(true);
+    expect(existsSync(join(expectedWorktreePath, "hook-parity.log"))).toBe(true);
   });
 });

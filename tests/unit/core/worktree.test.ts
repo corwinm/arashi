@@ -9,6 +9,11 @@ import { describe, test, expect } from "bun:test";
 import { isValidBranchName, resolveWorktreeStatuses } from "../../../src/core/worktree.ts";
 import type { Repository } from "../../../src/core/repository.ts";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
+import {
+  mapHookExecutionResult,
+  mapHookSkippedOutcome,
+  type HookResult,
+} from "../../../src/lib/hooks.ts";
 
 // ============================================================================
 // Test Fixtures
@@ -280,5 +285,72 @@ describe("Worktree Status Resolution", () => {
 
     expect(entry.status).toBe("prunable");
     expect(entry.isDirty).toBe(false);
+  });
+});
+
+describe("Hook outcome primitives", () => {
+  test("maps successful hook execution to success reason", () => {
+    const result: HookResult = {
+      exitCode: 0,
+      signalCode: null,
+      killed: false,
+      stdout: "ok",
+      stderr: "",
+      success: true,
+      timedOut: false,
+      duration: 22,
+    };
+
+    const mapped = mapHookExecutionResult(result);
+
+    expect(mapped.hookStatus).toBe("success");
+    expect(mapped.reasonCode).toBe("none");
+    expect(mapped.durationMs).toBe(22);
+  });
+
+  test("maps timed out hook execution to timeout failure", () => {
+    const result: HookResult = {
+      exitCode: -1,
+      signalCode: "SIGTERM",
+      killed: true,
+      stdout: "",
+      stderr: "timed out",
+      success: false,
+      timedOut: true,
+      duration: 1000,
+    };
+
+    const mapped = mapHookExecutionResult(result);
+
+    expect(mapped.hookStatus).toBe("failure");
+    expect(mapped.reasonCode).toBe("timeout");
+    expect(mapped.message).toContain("timed out");
+  });
+
+  test("maps non-zero exit hook execution to failure reason", () => {
+    const result: HookResult = {
+      exitCode: 19,
+      signalCode: null,
+      killed: false,
+      stdout: "",
+      stderr: "boom",
+      success: false,
+      timedOut: false,
+      duration: 17,
+    };
+
+    const mapped = mapHookExecutionResult(result);
+
+    expect(mapped.hookStatus).toBe("failure");
+    expect(mapped.reasonCode).toBe("exit_non_zero");
+    expect(mapped.message).toContain("19");
+  });
+
+  test("maps missing hook to explicit skipped status", () => {
+    const mapped = mapHookSkippedOutcome("not_found", "Hook script not found");
+
+    expect(mapped.hookStatus).toBe("skipped");
+    expect(mapped.reasonCode).toBe("not_found");
+    expect(mapped.message).toContain("not found");
   });
 });

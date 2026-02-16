@@ -108,6 +108,21 @@ export interface WorktreeOperationOptions {
 
   /** Whether to simulate operation without making changes (default: false) */
   dryRun?: boolean;
+
+  /** Canonical workspace root for hook lookup and execution context */
+  workspaceRoot?: string;
+
+  /** Pre-resolved workspace configuration from command layer */
+  resolvedConfig?: ArashiConfig;
+}
+
+interface NormalizedWorktreeOptions {
+  executeHooks: boolean;
+  hookTimeout: number;
+  interactive: boolean;
+  conflictResolution: ConflictResolutionStrategy | null;
+  showProgress: boolean;
+  dryRun: boolean;
 }
 
 // ==========================================================================
@@ -200,6 +215,15 @@ export interface ConflictCheckResult {
   nonConflictingRepositories: Repository[];
 }
 
+export interface HookOutcomeRecord {
+  repositoryId: string;
+  hookName: string;
+  hookStatus: hooks.HookOutcomeStatus;
+  reasonCode: hooks.HookOutcomeReasonCode;
+  message: string;
+  durationMs?: number;
+}
+
 // ============================================================================
 // Repository Result (T009)
 // ============================================================================
@@ -228,6 +252,9 @@ export interface RepositoryResult {
 
   /** Time taken to process this repository in milliseconds */
   duration: number;
+
+  /** Hook outcomes recorded while processing this repository */
+  hookOutcomes: HookOutcomeRecord[];
 }
 
 // ============================================================================
@@ -261,6 +288,12 @@ export interface OperationSummary {
 
   /** Human-readable error summary if operation failed */
   errorSummary: string | null;
+
+  /** Flattened hook outcomes across all processed repositories */
+  hookOutcomes: HookOutcomeRecord[];
+
+  /** Actionable next steps for failed outcomes */
+  nextSteps: string[];
 
   /** Dry-run planning details (present only for dry-run) */
   dryRunOutcome?: DryRunOutcome;
@@ -399,6 +432,26 @@ export class InsufficientPermissionsError extends Error {
   }
 }
 
+interface HookExecutionRunResult {
+  outcome: HookOutcomeRecord;
+  error: HookExecutionError | null;
+}
+
+function toHookOutcomeRecord(
+  repositoryId: string,
+  hookName: string,
+  mapping: hooks.HookOutcomeMapping,
+): HookOutcomeRecord {
+  return {
+    repositoryId,
+    hookName,
+    hookStatus: mapping.hookStatus,
+    reasonCode: mapping.reasonCode,
+    message: mapping.message,
+    durationMs: mapping.durationMs,
+  };
+}
+
 async function runHookIfPresent(options: {
   hookName: string;
   hookType: HookType;
@@ -407,21 +460,36 @@ async function runHookIfPresent(options: {
   operationData: Record<string, string>;
   timeout: number;
   repository: Repository;
-}): Promise<void> {
+}): Promise<HookExecutionRunResult> {
   const hookPath = await hooks.findHook(options.hookName, options.hookRootPath);
   if (!hookPath) {
-    return;
+    return {
+      outcome: toHookOutcomeRecord(
+        options.repository.name,
+        options.hookName,
+        hooks.mapHookSkippedOutcome("not_found", "Hook script not found"),
+      ),
+      error: null,
+    };
   }
 
   const validation = await hooks.validateHook(hookPath);
   if (!validation.valid) {
-    throw new HookExecutionError(
+    const error = new HookExecutionError(
       `Hook validation failed for ${options.hookName}: ${validation.error}`,
       options.hookType,
       options.repository,
       -1,
       validation.error ?? "Hook validation failed",
     );
+    return {
+      outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
+        hookStatus: "failure",
+        reasonCode: "exit_non_zero",
+        message: validation.error ?? "Hook validation failed",
+      }),
+      error,
+    };
   }
 
   const result = await hooks.executeHook({
@@ -435,15 +503,27 @@ async function runHookIfPresent(options: {
     timeout: options.timeout,
   });
 
-  if (!result.success) {
-    throw new HookExecutionError(
-      `Hook execution failed for ${options.hookName}`,
-      options.hookType,
-      options.repository,
-      result.exitCode,
-      result.stderr,
-    );
+  const mapping = hooks.mapHookExecutionResult(result);
+  if (mapping.hookStatus === "failure") {
+    return {
+      outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
+        ...mapping,
+        message: result.stderr.trim().length > 0 ? result.stderr.trim() : mapping.message,
+      }),
+      error: new HookExecutionError(
+        `Hook execution failed for ${options.hookName}`,
+        options.hookType,
+        options.repository,
+        result.exitCode,
+        result.stderr,
+      ),
+    };
   }
+
+  return {
+    outcome: toHookOutcomeRecord(options.repository.name, options.hookName, mapping),
+    error: null,
+  };
 }
 
 // ============================================================================
@@ -848,7 +928,7 @@ async function buildDryRunOutcome(
   branchName: string,
   repositories: Repository[],
   conflictCheck: ConflictCheckResult,
-  options: Required<WorktreeOperationOptions>,
+  options: NormalizedWorktreeOptions,
   config: ArashiConfig,
 ): Promise<DryRunOutcome> {
   const plannedWorktrees: PlannedWorktree[] = [];
@@ -937,6 +1017,41 @@ async function buildDryRunOutcome(
   };
 }
 
+function collectSortedHookOutcomes(results: RepositoryResult[]): HookOutcomeRecord[] {
+  return results
+    .flatMap((result) => result.hookOutcomes)
+    .sort((left, right) => {
+      const repositoryCompare = left.repositoryId.localeCompare(right.repositoryId);
+      if (repositoryCompare !== 0) {
+        return repositoryCompare;
+      }
+      return left.hookName.localeCompare(right.hookName);
+    });
+}
+
+function buildHookRecoveryGuidance(hookOutcomes: HookOutcomeRecord[]): string[] {
+  const guidance = new Set<string>();
+
+  for (const outcome of hookOutcomes) {
+    if (outcome.hookStatus !== "failure") {
+      continue;
+    }
+
+    if (outcome.reasonCode === "timeout") {
+      guidance.add(
+        `Hook timed out for ${outcome.repositoryId} (${outcome.hookName}); increase hook timeout or optimize the script, then rerun create.`,
+      );
+      continue;
+    }
+
+    guidance.add(
+      `Inspect hook output for ${outcome.repositoryId} (${outcome.hookName}) and rerun create after fixing the script.`,
+    );
+  }
+
+  return Array.from(guidance);
+}
+
 /**
  * Create coordinated worktrees across multiple repositories (T018)
  *
@@ -960,10 +1075,10 @@ export async function createCoordinatedWorktrees(
   const startTime = Date.now();
   const operationLog = new OperationLog();
   const results: RepositoryResult[] = [];
-  const mainRepoPath = resolve(".");
+  const mainRepoPath = resolve(options.workspaceRoot ?? ".");
 
   // Set default options
-  const opts: Required<WorktreeOperationOptions> = {
+  const opts: NormalizedWorktreeOptions = {
     executeHooks: options.executeHooks ?? true,
     hookTimeout: options.hookTimeout ?? 60000,
     interactive: options.interactive ?? false,
@@ -973,26 +1088,7 @@ export async function createCoordinatedWorktrees(
   };
 
   try {
-    // 1. Load Arashi configuration (T012)
-    // Try to load config, but provide default if not found (for standalone repos or tests)
-    let config: ArashiConfig;
-    try {
-      config = await loadConfig(".");
-    } catch (error) {
-      if (error instanceof ConfigNotFoundError) {
-        // No config found - use minimal default for standalone repos
-        config = {
-          version: "1.0.0",
-          repos_dir: "./repos",
-          auto_setup: false,
-          discovered_repos: {},
-        };
-      } else {
-        throw error; // Re-throw other config errors
-      }
-    }
-
-    // 2. Validate branch name (T018)
+    // 1. Validate branch name (T018)
     if (!isValidBranchName(branchName)) {
       throw new InvalidBranchNameError(
         `Invalid branch name: ${branchName}`,
@@ -1006,7 +1102,28 @@ export async function createCoordinatedWorktrees(
       throw new RepositoryValidationError("No repositories provided for worktree creation", "");
     }
 
-    // 3. T039: Pre-flight conflict check
+    // 3. Load canonical workspace configuration
+    let config: ArashiConfig;
+    if (options.resolvedConfig) {
+      config = options.resolvedConfig;
+    } else {
+      try {
+        config = await loadConfig(mainRepoPath);
+      } catch (error) {
+        if (!(error instanceof ConfigNotFoundError)) {
+          throw error;
+        }
+
+        config = {
+          version: "1.0.0",
+          repos_dir: "./repos",
+          auto_setup: false,
+          discovered_repos: {},
+        };
+      }
+    }
+
+    // 4. T039: Pre-flight conflict check
     const conflictCheck = await checkBranchConflicts(branchName, repositories);
     let resolvedStrategy: ConflictResolutionStrategy | null = null;
     let conflictsToHandle: BranchConflict[] = [];
@@ -1032,6 +1149,8 @@ export async function createCoordinatedWorktrees(
           dryRunOutcome.overallStatus === "blocked"
             ? "Blocking conflicts detected during dry-run"
             : null,
+        hookOutcomes: [],
+        nextSteps: [],
         dryRunOutcome,
         isDryRun: true,
       };
@@ -1043,9 +1162,9 @@ export async function createCoordinatedWorktrees(
       conflictsToHandle = conflictCheck.conflicts;
     }
 
-    // 4. Execute global pre-create hook (once)
+    // 5. Execute global pre-create hook (once)
     if (opts.executeHooks) {
-      await runHookIfPresent({
+      const preHookResult = await runHookIfPresent({
         hookName: hooks.GLOBAL_HOOKS.preCreate,
         hookType: "pre-create",
         hookRootPath: mainRepoPath,
@@ -1058,9 +1177,13 @@ export async function createCoordinatedWorktrees(
         timeout: opts.hookTimeout,
         repository: repositories[0],
       });
+
+      if (preHookResult.error) {
+        throw preHookResult.error;
+      }
     }
 
-    // 5. Process each repository sequentially (T019-T023, T041)
+    // 6. Process each repository sequentially (T019-T023, T041)
     for (const repo of repositories) {
       const repoResult = await processRepository(
         repo,
@@ -1076,13 +1199,13 @@ export async function createCoordinatedWorktrees(
 
       // If repository processing failed, trigger rollback
       if (repoResult.status === "failed") {
-        throw repoResult.error;
+        throw repoResult.error ?? new Error(`Repository processing failed for ${repo.name}`);
       }
     }
 
-    // 6. Execute global post-create hook (once)
+    // 7. Execute global post-create hook (once)
     if (opts.executeHooks) {
-      await runHookIfPresent({
+      const postHookResult = await runHookIfPresent({
         hookName: hooks.GLOBAL_HOOKS.postCreate,
         hookType: "post-create",
         hookRootPath: mainRepoPath,
@@ -1095,9 +1218,15 @@ export async function createCoordinatedWorktrees(
         timeout: opts.hookTimeout,
         repository: repositories[0],
       });
+
+      if (postHookResult.error) {
+        throw postHookResult.error;
+      }
     }
 
-    // 7. Build successful operation summary (T024)
+    const hookOutcomes = collectSortedHookOutcomes(results);
+
+    // 8. Build successful operation summary (T024)
     return {
       totalRepositories: repositories.length,
       successCount: results.filter((r) => r.status === "success").length,
@@ -1107,6 +1236,8 @@ export async function createCoordinatedWorktrees(
       rolledBack: false,
       totalDuration: Date.now() - startTime,
       errorSummary: null,
+      hookOutcomes,
+      nextSteps: buildHookRecoveryGuidance(hookOutcomes),
     };
   } catch (error) {
     // Automatic rollback on any error (T023)
@@ -1123,6 +1254,8 @@ export async function createCoordinatedWorktrees(
       rollbackNote += ` Residual worktrees detected: ${residualWorktrees.join(", ")}.`;
     }
 
+    const hookOutcomes = collectSortedHookOutcomes(results);
+
     return {
       totalRepositories: repositories.length,
       successCount: 0,
@@ -1132,6 +1265,8 @@ export async function createCoordinatedWorktrees(
       rolledBack: true,
       totalDuration: Date.now() - startTime,
       errorSummary: `${error instanceof Error ? error.message : String(error)}${rollbackNote}`,
+      hookOutcomes,
+      nextSteps: buildHookRecoveryGuidance(hookOutcomes),
     };
   }
 }
@@ -1191,13 +1326,14 @@ async function processRepository(
   repo: Repository,
   branchName: string,
   operationLog: OperationLog,
-  options: Required<WorktreeOperationOptions>,
+  options: NormalizedWorktreeOptions,
   config: ArashiConfig,
   conflicts: BranchConflict[] = [],
   strategy: ConflictResolutionStrategy | null = null,
   mainRepoPath: string,
 ): Promise<RepositoryResult> {
   const startTime = Date.now();
+  const hookOutcomes: HookOutcomeRecord[] = [];
 
   // Create spinner if progress is enabled
   const spinner = options.showProgress ? logger.spinner(`Processing ${repo.name}...`) : null;
@@ -1293,7 +1429,7 @@ async function processRepository(
         spinner.text = `Running repo-specific pre-create hook for ${repo.name}...`;
       }
 
-      await runHookIfPresent({
+      const preHookResult = await runHookIfPresent({
         hookName: hooks.getRepoSpecificHookName("pre-create", repo.name),
         hookType: "pre-create",
         hookRootPath: mainRepoPath,
@@ -1302,12 +1438,16 @@ async function processRepository(
         timeout: options.hookTimeout,
         repository: repo,
       });
+      hookOutcomes.push(preHookResult.outcome);
+      if (preHookResult.error) {
+        throw preHookResult.error;
+      }
 
       if (spinner) {
         spinner.text = `Running repo-specific post-create hook for ${repo.name}...`;
       }
 
-      await runHookIfPresent({
+      const postHookResult = await runHookIfPresent({
         hookName: hooks.getRepoSpecificHookName("post-create", repo.name),
         hookType: "post-create",
         hookRootPath: mainRepoPath,
@@ -1316,6 +1456,10 @@ async function processRepository(
         timeout: options.hookTimeout,
         repository: repo,
       });
+      hookOutcomes.push(postHookResult.outcome);
+      if (postHookResult.error) {
+        throw postHookResult.error;
+      }
     }
 
     // Success!
@@ -1332,6 +1476,7 @@ async function processRepository(
       error: null,
       warnings: shouldReuse ? [`Reused existing branch '${branchName}'`] : [],
       duration: Date.now() - startTime,
+      hookOutcomes,
     };
   } catch (error) {
     // T023: Return failure result (will trigger rollback in caller)
@@ -1343,6 +1488,7 @@ async function processRepository(
       error: error as Error,
       warnings: [],
       duration: Date.now() - startTime,
+      hookOutcomes,
     };
   }
 }
