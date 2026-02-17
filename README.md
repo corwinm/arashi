@@ -98,6 +98,7 @@ Arashi currently provides these commands:
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
+- `arashi switch [filter] [--repos|--all] [--sesh]`
 - `arashi pull`
 - `arashi sync`
 - `arashi setup [--only <repo>] [--verbose]`
@@ -110,6 +111,10 @@ arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
 arashi create feature-auth-refresh
 arashi status
+arashi switch feature-auth-refresh          # parent repo worktrees
+arashi switch --repos feature-auth-refresh  # child repo worktrees in current workspace
+arashi switch --all feature-auth-refresh    # all repos
+arashi switch --repos docs                  # repo-name matching in child repos
 ```
 
 ## Hooks
@@ -163,6 +168,10 @@ bind '"\C-s":"sesh connect \$(arashi list | fzf)\n"'
 bindkey -s '^s' 'sesh connect $(arashi list | fzf)\n'
 ```
 
+You can also use `arashi switch --sesh` directly inside tmux to open the selected worktree in a new tmux window.
+
+`arashi switch` also detects tmux, Kitty, Ghostty, WezTerm, and iTerm2 contexts and prefers terminal-native launch behavior when available.
+
 ### Fast remove selection
 
 ```bash
@@ -190,6 +199,7 @@ Arashi also ships a dedicated `skills.sh` integration package for guided install
 - Installation details: [`docs/INSTALLATION.md`](./docs/INSTALLATION.md)
 - Hook behavior: [`docs/hooks.md`](./docs/hooks.md)
 - Setup command details: [`docs/commands/setup.md`](./docs/commands/setup.md)
+- Switch command details: [`docs/commands/switch.md`](./docs/commands/switch.md)
 - Remove command details: [`docs/commands/remove.md`](./docs/commands/remove.md)
 - FZF integration: [`docs/FZF_COMPATIBILITY.md`](./docs/FZF_COMPATIBILITY.md)
 

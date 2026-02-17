@@ -9,6 +9,7 @@ import { createCommand as createRemoveCommand } from "./commands/remove.ts";
 import { createCommand as createPullCommand } from "./commands/pull.ts";
 import { createCommand as createSyncCommand } from "./commands/sync.ts";
 import { createCommand as createSetupCommand } from "./commands/setup.ts";
+import { createCommand as createSwitchCommand } from "./commands/switch.ts";
 import { renderHelpBanner } from "./lib/logo.ts";
 import { detectTerminalContext } from "./lib/terminal-context.ts";
 import { closeSync } from "fs";
@@ -62,5 +63,6 @@ program.addCommand(createRemoveCommand());
 program.addCommand(createPullCommand());
 program.addCommand(createSyncCommand());
 program.addCommand(createSetupCommand());
+program.addCommand(createSwitchCommand());
 
 program.parse();

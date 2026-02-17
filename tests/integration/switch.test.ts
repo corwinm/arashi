@@ -1,0 +1,590 @@
+import { describe, test, expect } from "bun:test";
+import { createCommand, executeSwitch } from "../../src/commands/switch.ts";
+import type { SwitchProcessRunner } from "../../src/lib/switch-launcher.ts";
+import type { SwitchCandidate } from "../../src/core/switch.ts";
+import type { WorkspaceRepository } from "../../src/lib/config.ts";
+
+const candidate: SwitchCandidate = {
+  branchName: "feature/switch-command",
+  worktreePath: "/workspace/feature-switch-command",
+  repoName: "workspace",
+};
+
+describe("switch command integration", () => {
+  test("registers switch command with --sesh option", () => {
+    const command = createCommand();
+    expect(command.name()).toBe("switch");
+    expect(command.options.some((option) => option.long === "--sesh")).toBe(true);
+    expect(command.options.some((option) => option.long === "--repos")).toBe(true);
+    expect(command.options.some((option) => option.long === "--all")).toBe(true);
+  });
+
+  test("defaults to parent repository targets", async () => {
+    const discoveredRepoSets: string[][] = [];
+    const repositories: WorkspaceRepository[] = [
+      { name: "workspace", path: "/workspace" },
+      { name: "repo-a", path: "/workspace/repos/repo-a" },
+      { name: "repo-b", path: "/workspace/repos/repo-b" },
+    ];
+
+    await executeSwitch(
+      undefined,
+      {},
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories }),
+        discoverSwitchCandidates: async (targets) => {
+          discoveredRepoSets.push(targets.map((target) => target.name));
+          return { candidates: [candidate], skippedCount: 0 };
+        },
+        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(discoveredRepoSets).toEqual([["workspace"]]);
+  });
+
+  test("uses child repositories only with --repos", async () => {
+    const discoveredRepoSets: string[][] = [];
+    const repositories: WorkspaceRepository[] = [
+      { name: "workspace", path: "/workspace" },
+      { name: "repo-a", path: "/workspace/repos/repo-a" },
+      { name: "repo-b", path: "/workspace/repos/repo-b" },
+    ];
+
+    await executeSwitch(
+      undefined,
+      { repos: true },
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories }),
+        discoverSwitchCandidates: async (targets) => {
+          discoveredRepoSets.push(targets.map((target) => target.name));
+          return { candidates: [candidate], skippedCount: 0 };
+        },
+        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(discoveredRepoSets).toEqual([["repo-a", "repo-b"]]);
+  });
+
+  test("limits --repos candidates to the current workspace path", async () => {
+    const result = await executeSwitch(
+      undefined,
+      { repos: true },
+      {
+        findWorkspaceRoot: async () => "/workspace/current",
+        loadWorkspaceRepositories: async () => ({
+          repositories: [
+            { name: "workspace", path: "/workspace/current" },
+            { name: "repo-a", path: "/workspace/current/repos/repo-a" },
+          ],
+        }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [
+            {
+              branchName: "feature/current",
+              repoName: "repo-a",
+              worktreePath: "/workspace/current/repos/repo-a",
+            },
+            {
+              branchName: "feature/other",
+              repoName: "repo-a",
+              worktreePath: "/workspace/other/repos/repo-a",
+            },
+          ],
+          skippedCount: 0,
+        }),
+        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.totalCandidates).toBe(1);
+    expect(result.selected.worktreePath).toBe("/workspace/current/repos/repo-a");
+  });
+
+  test("matches exact repo name first in --repos mode", async () => {
+    const result = await executeSwitch(
+      "docs",
+      { repos: true },
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({
+          repositories: [
+            { name: "workspace", path: "/workspace" },
+            { name: "docs", path: "/workspace/repos/docs" },
+            { name: "api", path: "/workspace/repos/api" },
+          ],
+        }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [
+            {
+              repoName: "docs",
+              branchName: "feature/site",
+              worktreePath: "/workspace/repos/docs",
+            },
+            {
+              repoName: "api",
+              branchName: "docs",
+              worktreePath: "/workspace/repos/api",
+            },
+          ],
+          skippedCount: 0,
+        }),
+        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.totalCandidates).toBe(2);
+    expect(result.matchedCandidates).toBe(1);
+    expect(result.selected.repoName).toBe("docs");
+  });
+
+  test("matches a unique partial repo name in --repos mode", async () => {
+    const result = await executeSwitch(
+      "doc",
+      { repos: true },
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({
+          repositories: [
+            { name: "workspace", path: "/workspace" },
+            { name: "docs-site", path: "/workspace/repos/docs-site" },
+            { name: "api", path: "/workspace/repos/api" },
+          ],
+        }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [
+            {
+              repoName: "docs-site",
+              branchName: "feature/docs",
+              worktreePath: "/workspace/repos/docs-site",
+            },
+            {
+              repoName: "api",
+              branchName: "feature/api",
+              worktreePath: "/workspace/repos/api",
+            },
+          ],
+          skippedCount: 0,
+        }),
+        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.matchedCandidates).toBe(1);
+    expect(result.selected.repoName).toBe("docs-site");
+  });
+
+  test("shows available repos when --repos filter has no matches", async () => {
+    await expect(
+      executeSwitch(
+        "docs",
+        { repos: true },
+        {
+          findWorkspaceRoot: async () => "/workspace",
+          loadWorkspaceRepositories: async () => ({
+            repositories: [
+              { name: "workspace", path: "/workspace" },
+              { name: "api", path: "/workspace/repos/api" },
+              { name: "web", path: "/workspace/repos/web" },
+            ],
+          }),
+          discoverSwitchCandidates: async () => ({
+            candidates: [
+              {
+                repoName: "api",
+                branchName: "feature/api",
+                worktreePath: "/workspace/repos/api",
+              },
+              {
+                repoName: "web",
+                branchName: "feature/web",
+                worktreePath: "/workspace/repos/web",
+              },
+            ],
+            skippedCount: 0,
+          }),
+          launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      ),
+    ).rejects.toMatchObject({
+      message: "No child repository matched `docs`. Available repositories: api, web",
+    });
+  });
+
+  test("uses parent and child repositories with --all", async () => {
+    const discoveredRepoSets: string[][] = [];
+    const repositories: WorkspaceRepository[] = [
+      { name: "workspace", path: "/workspace" },
+      { name: "repo-a", path: "/workspace/repos/repo-a" },
+      { name: "repo-b", path: "/workspace/repos/repo-b" },
+    ];
+
+    await executeSwitch(
+      undefined,
+      { all: true },
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories }),
+        discoverSwitchCandidates: async (targets) => {
+          discoveredRepoSets.push(targets.map((target) => target.name));
+          return { candidates: [candidate], skippedCount: 0 };
+        },
+        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(discoveredRepoSets).toEqual([["workspace", "repo-a", "repo-b"]]);
+  });
+
+  test("includes child repo worktrees for each parent workspace in --all mode", async () => {
+    const selectedCandidates: SwitchCandidate[][] = [];
+
+    await executeSwitch(
+      undefined,
+      { all: true },
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({
+          repositories: [
+            { name: "workspace", path: "/workspace" },
+            { name: "docs", path: "/workspace/repos/docs" },
+          ],
+        }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [
+            {
+              repoName: "workspace",
+              branchName: "main",
+              worktreePath: "/workspace",
+            },
+            {
+              repoName: "workspace",
+              branchName: "feature/a",
+              worktreePath: "/workspace-feature-a",
+            },
+          ],
+          skippedCount: 0,
+        }),
+        augmentAllScopeCandidates: async (candidates) => {
+          return [
+            ...candidates,
+            {
+              repoName: "docs",
+              branchName: "main",
+              worktreePath: "/workspace/repos/docs",
+            },
+            {
+              repoName: "docs",
+              branchName: "feature/a",
+              worktreePath: "/workspace-feature-a/repos/docs",
+            },
+          ];
+        },
+        selectSwitchCandidate: async (candidates) => {
+          selectedCandidates.push(candidates);
+          return candidates[3];
+        },
+        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+      },
+    );
+
+    expect(selectedCandidates).toHaveLength(1);
+    expect(selectedCandidates[0].map((candidate) => candidate.worktreePath)).toEqual([
+      "/workspace",
+      "/workspace-feature-a",
+      "/workspace/repos/docs",
+      "/workspace-feature-a/repos/docs",
+    ]);
+  });
+
+  test("invokes tmux+sesh runner path when --sesh is requested", async () => {
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "which" && command[1] === "sesh") {
+        return { exitCode: 0, stdout: "/usr/local/bin/sesh\n", stderr: "" };
+      }
+
+      if (command[0] === "tmux") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      { sesh: true },
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        env: { TMUX: "/tmp/tmux-1000/default" },
+        platform: "darwin",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("sesh");
+    expect(invocations).toHaveLength(2);
+    expect(invocations[0]).toEqual(["which", "sesh"]);
+    expect(invocations[1][0]).toBe("tmux");
+  });
+
+  test("invokes VS Code runner path in VS Code terminals", async () => {
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "which" && command[1] === "code") {
+        return { exitCode: 0, stdout: "/usr/local/bin/code\n", stderr: "" };
+      }
+
+      if (command[0] === "code") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        env: { TERM_PROGRAM: "vscode" },
+        platform: "darwin",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("vscode");
+    expect(invocations[0]).toEqual(["which", "code"]);
+    expect(invocations[1]).toEqual(["code", "--new-window", "/workspace/feature-switch-command"]);
+  });
+
+  test("falls back to platform launcher when VS Code CLI is unavailable", async () => {
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "which" && command[1] === "code") {
+        return { exitCode: 1, stdout: "", stderr: "not found" };
+      }
+
+      if (command[0] === "open") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        env: { TERM_PROGRAM: "vscode" },
+        platform: "darwin",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("fallback");
+    expect(invocations[1]).toEqual(["open", "-a", "Terminal", "/workspace/feature-switch-command"]);
+  });
+
+  test("invokes tmux new-window automatically when inside tmux", async () => {
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "tmux") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        env: { TMUX: "/tmp/tmux-1000/default", TERM_PROGRAM: "vscode" },
+        platform: "darwin",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("tmux");
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]).toEqual([
+      "tmux",
+      "new-window",
+      "-c",
+      "/workspace/feature-switch-command",
+    ]);
+  });
+
+  test("invokes kitty tab launch path when running in kitty", async () => {
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "kitty") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        env: { TERM: "xterm-kitty", KITTY_PID: "100" },
+        platform: "linux",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("fallback");
+    expect(invocations[0]).toEqual([
+      "kitty",
+      "@",
+      "launch",
+      "--type=tab",
+      "--cwd",
+      "/workspace/feature-switch-command",
+    ]);
+  });
+
+  test("invokes wezterm launch path when running in WezTerm", async () => {
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "wezterm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        env: { TERM_PROGRAM: "WezTerm" },
+        platform: "linux",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("fallback");
+    expect(invocations[0]).toEqual([
+      "wezterm",
+      "cli",
+      "spawn",
+      "--cwd",
+      "/workspace/feature-switch-command",
+    ]);
+  });
+
+  test("invokes iTerm launch path when running in iTerm2", async () => {
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "open") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        env: { TERM_PROGRAM: "iTerm.app" },
+        platform: "darwin",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("fallback");
+    expect(invocations[0]).toEqual(["open", "-a", "iTerm", "/workspace/feature-switch-command"]);
+  });
+});
