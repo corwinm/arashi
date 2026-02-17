@@ -1,3 +1,14 @@
+## [1.6.0](https://github.com/corwinm/arashi/compare/v1.5.1...v1.6.0) (2026-02-17)
+
+### Features
+
+- add switch command for faster worktree navigation ([#36](https://github.com/corwinm/arashi/issues/36)) ([f410bb5](https://github.com/corwinm/arashi/commit/f410bb5b7e0e34b4116243560f77d84d9b341dc9))
+
+### Bug Fixes
+
+- Ensure binary is available if postinstall is blocked or fails ([8194a80](https://github.com/corwinm/arashi/commit/8194a80445a950e45a3d8f1db1d638bed55fa796))
+- run create hooks from canonical workspace context ([#35](https://github.com/corwinm/arashi/issues/35)) ([2975e8d](https://github.com/corwinm/arashi/commit/2975e8dacc8b62c64d25587fac919e80a26ae598))
+
 ## [1.5.1](https://github.com/corwinm/arashi/compare/v1.5.0...v1.5.1) (2026-02-15)
 
 ### Bug Fixes
