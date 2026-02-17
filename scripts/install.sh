@@ -11,6 +11,7 @@ VERSION_INPUT="latest"
 INSTALL_DIR_OVERRIDE=""
 NO_MODIFY_PATH=false
 DEBUG_LOG=false
+PROGRESS_UI=false
 
 log() {
   printf '==> %s\n' "$*"
@@ -126,12 +127,193 @@ detect_platform_asset() {
   esac
 }
 
+spinner_frame() {
+  local frame_index="$1"
+  case "$frame_index" in
+    0) printf '|'
+      ;;
+    1) printf '/'
+      ;;
+    2) printf '-'
+      ;;
+    *) printf '\\'
+      ;;
+  esac
+}
+
+file_size_bytes() {
+  local file_path="$1"
+  if [ -f "$file_path" ]; then
+    wc -c < "$file_path" | tr -d '[:space:]'
+    return
+  fi
+  printf '0'
+}
+
+progress_bar_width() {
+  local cols=80
+  local width
+
+  if command -v tput >/dev/null 2>&1 && [ -n "${TERM:-}" ] && [ "${TERM}" != "dumb" ]; then
+    cols="$(tput cols 2>/dev/null || printf '80')"
+  fi
+
+  # "Loading " + bar + spacing + percentage
+  local fixed_width=22
+  width="$((cols - fixed_width))"
+  if [ "$width" -lt 10 ]; then
+    width=10
+  fi
+  if [ "$width" -gt 40 ]; then
+    width=40
+  fi
+
+  printf '%s' "$width"
+}
+
+init_progress_ui() {
+  if [ "$DEBUG_LOG" = "true" ]; then
+    return
+  fi
+  if [ ! -t 1 ] || [ ! -t 2 ]; then
+    return
+  fi
+
+  if [ -w /dev/tty ]; then
+    exec 4>/dev/tty || return
+  else
+    exec 4>&2 || return
+  fi
+
+  printf '\n' >&4
+  printf '\033[?25l' >&4
+  PROGRESS_UI=true
+}
+
+cleanup_progress_ui() {
+  if [ "$PROGRESS_UI" = "true" ]; then
+    printf '\033[?25h' >&4
+    exec 4>&- 2>/dev/null || true
+    PROGRESS_UI=false
+  fi
+}
+
+render_progress_line() {
+  printf '\r\033[2K%s' "$1" >&4
+}
+
+render_progress_done_line() {
+  printf '\r\033[2K%s\n\n' "$1" >&4
+}
+
+progress_bar() {
+  local current="$1"
+  local total="$2"
+  local width="$3"
+  local filled=0
+  local empty
+  local percent=0
+  local block_fill='■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■'
+  local block_empty='････････････････････････････････････'
+
+  if [ "$total" -gt 0 ] 2>/dev/null; then
+    if [ "$current" -gt "$total" ]; then
+      current="$total"
+    fi
+    filled="$((current * width / total))"
+    percent="$((current * 100 / total))"
+  fi
+
+  if [ "$filled" -gt "$width" ]; then
+    filled="$width"
+  fi
+  empty="$((width - filled))"
+
+  printf '[%s%s] %3d%%' "${block_fill:0:filled}" "${block_empty:0:empty}" "$percent"
+}
+
+asset_content_length() {
+  local url="$1"
+  local content_length
+
+  content_length="$(
+    curl --silent --show-error --location --head --retry 3 --retry-delay 1 --connect-timeout 15 "$url" 2>/dev/null |
+      awk 'BEGIN{IGNORECASE=1} /^content-length:/ {value=$2} END {gsub("\\r", "", value); if (value ~ /^[0-9]+$/) print value; else print 0}'
+  )"
+
+  case "$content_length" in
+    ''|*[!0-9]*)
+      printf '0'
+      ;;
+    *)
+      printf '%s' "$content_length"
+      ;;
+  esac
+}
+
 download_file() {
   local url="$1"
   local destination="$2"
   local label="$3"
-  log_debug "Downloading $label"
-  curl -# --fail --show-error --location --retry 3 --retry-delay 1 --connect-timeout 15 --output "$destination" "$url" || fail "Unable to download $label from $url"
+  local finish_line="${4:-true}"
+
+  log_debug "Downloading $label from $url"
+
+  if [ "$PROGRESS_UI" = "true" ]; then
+
+    local spinner_index=0
+    local spinner
+    local current_bytes
+    local total_bytes
+    local bar
+    local bar_width
+    local line
+    local curl_pid
+
+    bar_width="$(progress_bar_width)"
+    total_bytes="$(asset_content_length "$url")"
+
+    curl --silent --fail --show-error --location --retry 3 --retry-delay 1 --connect-timeout 15 --output "$destination" "$url" &
+    curl_pid="$!"
+
+    while kill -0 "$curl_pid" >/dev/null 2>&1; do
+      if [ "$total_bytes" -gt 0 ] 2>/dev/null; then
+        current_bytes="$(file_size_bytes "$destination")"
+        bar="$(progress_bar "$current_bytes" "$total_bytes" "$bar_width")"
+        line="Loading $bar"
+        render_progress_line "$line"
+      else
+        spinner="$(spinner_frame "$spinner_index")"
+        line="Loading $spinner"
+        render_progress_line "$line"
+      fi
+
+      spinner_index="$(((spinner_index + 1) % 4))"
+      sleep 0.1
+    done
+
+    if wait "$curl_pid"; then
+      if [ "$total_bytes" -gt 0 ] 2>/dev/null; then
+        bar="$(progress_bar "$total_bytes" "$total_bytes" "$bar_width")"
+        line="Loading $bar"
+      else
+        line="Loading done"
+      fi
+
+      if [ "$finish_line" = "true" ]; then
+        render_progress_done_line "$line"
+      else
+        render_progress_line "$line"
+      fi
+      return
+    fi
+
+    render_progress_done_line "Loading failed"
+    fail "Unable to download $label from $url"
+  fi
+
+  log "Downloading $label"
+  curl --silent --fail --show-error --location --retry 3 --retry-delay 1 --connect-timeout 15 --output "$destination" "$url" || fail "Unable to download $label from $url"
 }
 
 sha256_file() {
@@ -220,7 +402,7 @@ Get started in a new project:
   arashi add git@github.com:<your-org>/frontend.git # Add a sub-repository
   arashi add git@github.com:<your-org>/backend.git  # Add another sub-repository
   arashi create <feature-name>  # Create a new worktrees for your feature branch
-  cd ../<feature-name>          # Get working in your new worktrees
+  arashi switch <feature-name>  # Switch to your new feature worktrees
 
 For more information visit https://arashi.haphazard.dev
 EOF
@@ -379,11 +561,13 @@ main() {
   downloaded_binary_asset="$tmp_dir/$asset_name"
   downloaded_wrapper_asset="$tmp_dir/$WRAPPER_ASSET"
   downloaded_manifest="$tmp_dir/$CHECKSUM_MANIFEST"
-  trap "rm -rf '$tmp_dir'" EXIT
+  trap "cleanup_progress_ui; rm -rf '$tmp_dir'" EXIT
 
-  download_file "$release_base_url/$asset_name" "$downloaded_binary_asset" "$asset_name"
-  download_file "$release_base_url/$WRAPPER_ASSET" "$downloaded_wrapper_asset" "$WRAPPER_ASSET"
-  download_file "$release_base_url/$CHECKSUM_MANIFEST" "$downloaded_manifest" "$CHECKSUM_MANIFEST"
+  init_progress_ui
+
+  download_file "$release_base_url/$asset_name" "$downloaded_binary_asset" "$asset_name" false
+  download_file "$release_base_url/$WRAPPER_ASSET" "$downloaded_wrapper_asset" "$WRAPPER_ASSET" false
+  download_file "$release_base_url/$CHECKSUM_MANIFEST" "$downloaded_manifest" "$CHECKSUM_MANIFEST" true
 
   local expected_binary_checksum
   local actual_binary_checksum
