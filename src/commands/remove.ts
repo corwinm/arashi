@@ -41,6 +41,7 @@ import {
   type RepositoryTarget,
 } from "../core/remove.ts";
 import { buildWorktreeEntries, resolveWorktreeStatuses } from "../core/worktree.ts";
+import * as hooks from "../lib/hooks.ts";
 
 interface CliOptions {
   checkDirty?: boolean;
@@ -282,6 +283,40 @@ export async function executeRemove(
 
   const summary = createRemovalSummary(totalWorktrees, totalBranches);
 
+  const targetRepositories = new Set<string>();
+  for (const worktree of worktreesToRemove) {
+    targetRepositories.add(worktree.repository);
+  }
+  for (const repoNames of Object.values(branchPresence)) {
+    for (const repoName of repoNames) {
+      targetRepositories.add(repoName);
+    }
+  }
+
+  const removeHookOperationData = hooks.buildRemoveHookOperationData({
+    branchNames: targetBranches,
+    worktreePaths: worktreesToRemove.map((worktree) => worktree.path),
+    repositoryNames: Array.from(targetRepositories),
+    mainRepoPath: workspaceRoot,
+  });
+
+  const preRemoveOutcome = await runRemoveLifecycleHook({
+    hookName: hooks.GLOBAL_HOOKS.preRemove,
+    workspaceRoot,
+    operationData: removeHookOperationData,
+    timeoutMs: config.hooks?.timeout,
+  });
+  if (preRemoveOutcome.hookStatus === "failure") {
+    summary.errors.push(formatHookFailure(hooks.GLOBAL_HOOKS.preRemove, preRemoveOutcome));
+    summary.duration = Date.now() - startTime;
+    if (options.json) {
+      console.log(formatRemovalSummaryJson(summary, { skippedMain, missingBranches }));
+    } else {
+      console.log(formatRemovalSummaryHuman(summary, { skippedMain, missingBranches }));
+    }
+    return 1;
+  }
+
   if (options.keepWorktrees && worktreesToRemove.length > 0) {
     for (const worktree of worktreesToRemove) {
       try {
@@ -366,6 +401,16 @@ export async function executeRemove(
         }
       }
     }
+  }
+
+  const postRemoveOutcome = await runRemoveLifecycleHook({
+    hookName: hooks.GLOBAL_HOOKS.postRemove,
+    workspaceRoot,
+    operationData: removeHookOperationData,
+    timeoutMs: config.hooks?.timeout,
+  });
+  if (postRemoveOutcome.hookStatus === "failure") {
+    summary.errors.push(formatHookFailure(hooks.GLOBAL_HOOKS.postRemove, postRemoveOutcome));
   }
 
   summary.duration = Date.now() - startTime;
@@ -699,4 +744,61 @@ function formatBranchDeletionError(error: unknown): string {
   }
 
   return message;
+}
+
+async function runRemoveLifecycleHook(options: {
+  hookName: string;
+  workspaceRoot: string;
+  operationData: Record<string, string>;
+  timeoutMs?: number;
+}): Promise<hooks.HookOutcomeMapping> {
+  const spinner = logger.spinner(`Running ${options.hookName} hook...`).start();
+
+  const hookPath = await hooks.findHook(options.hookName, options.workspaceRoot);
+  if (!hookPath) {
+    const skipped = hooks.mapHookSkippedOutcome("not_found", "Hook script not found");
+    spinner.stop();
+    logger.info(`Skipping ${options.hookName} hook: ${skipped.message}`);
+    return skipped;
+  }
+
+  const validation = await hooks.validateHook(hookPath);
+  if (!validation.valid) {
+    const mapping: hooks.HookOutcomeMapping = {
+      hookStatus: "failure",
+      reasonCode: "exit_non_zero",
+      message: validation.error ?? "Hook validation failed",
+    };
+    spinner.fail(`${options.hookName} hook failed`);
+    logger.error(mapping.message);
+    return mapping;
+  }
+
+  const result = await hooks.executeHook({
+    hookName: options.hookName,
+    scriptPath: hookPath,
+    context: {
+      hookName: options.hookName,
+      repoPath: options.workspaceRoot,
+      operationData: options.operationData,
+    },
+    timeout: options.timeoutMs,
+  });
+  const mapping = hooks.mapHookExecutionResult(result);
+
+  if (mapping.hookStatus === "success") {
+    spinner.succeed(`${options.hookName} hook completed`);
+    return mapping;
+  }
+
+  spinner.fail(`${options.hookName} hook failed`);
+  const stderr = result.stderr.trim();
+  return {
+    ...mapping,
+    message: stderr.length > 0 ? stderr : mapping.message,
+  };
+}
+
+function formatHookFailure(hookName: string, outcome: hooks.HookOutcomeMapping): string {
+  return `${hookName} hook failed: ${outcome.message}`;
 }

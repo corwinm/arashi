@@ -118,6 +118,8 @@ describe("init command - success cases", () => {
     // Verify hook templates created
     expect(await filesystem.fileExists(join(hooksDir, "pre-create.sh.example"))).toBe(true);
     expect(await filesystem.fileExists(join(hooksDir, "post-create.sh.example"))).toBe(true);
+    expect(await filesystem.fileExists(join(hooksDir, "pre-remove.sh.example"))).toBe(true);
+    expect(await filesystem.fileExists(join(hooksDir, "post-remove.sh.example"))).toBe(true);
     expect(await filesystem.fileExists(join(hooksDir, "setup.sh.example"))).toBe(true);
 
     // Verify repos directory created
@@ -663,6 +665,8 @@ describe("init command - dry-run mode", () => {
     expect(result.stdout).toContain("[DRY RUN] WRITE_FILE:");
     expect(result.stdout).toContain("pre-create.sh.example");
     expect(result.stdout).toContain("post-create.sh.example");
+    expect(result.stdout).toContain("pre-remove.sh.example");
+    expect(result.stdout).toContain("post-remove.sh.example");
     expect(result.stdout).toContain("setup.sh.example");
   });
 
@@ -715,7 +719,7 @@ describe("init command - verbose mode", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[VERBOSE]");
-    expect(result.stdout).toContain("Writing 3 hook templates");
+    expect(result.stdout).toContain("Writing 5 hook templates");
     expect(result.stdout).toContain("✓ Hook templates written");
   });
 

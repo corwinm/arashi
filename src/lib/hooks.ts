@@ -74,6 +74,8 @@ export interface ValidationResult {
 export const GLOBAL_HOOKS = {
   preCreate: "pre-create",
   postCreate: "post-create",
+  preRemove: "pre-remove",
+  postRemove: "post-remove",
 } as const;
 
 export const REPO_SPECIFIC_LIFECYCLES = ["pre-create", "post-create"] as const;
@@ -134,6 +136,44 @@ export function buildHookOperationData(options: {
   }
 
   return data;
+}
+
+export interface RemoveHookOperationDataOptions {
+  branchNames: string[];
+  worktreePaths: string[];
+  repositoryNames: string[];
+  mainRepoPath: string;
+}
+
+export function buildRemoveHookOperationData(
+  options: RemoveHookOperationDataOptions,
+): Record<string, string> {
+  const uniqueBranches = Array.from(
+    new Set(options.branchNames.filter((value) => value.length > 0)),
+  );
+  const uniqueWorktreePaths = Array.from(
+    new Set(options.worktreePaths.filter((value) => value.length > 0)),
+  );
+  const uniqueRepositories = Array.from(
+    new Set(options.repositoryNames.filter((value) => value.length > 0)),
+  );
+
+  const operationData = buildHookOperationData({
+    branchName: uniqueBranches[0],
+    repoName: uniqueRepositories[0],
+    worktreePath: uniqueWorktreePaths[0],
+    mainRepoPath: options.mainRepoPath,
+  });
+
+  operationData.OPERATION = "remove";
+  operationData.REMOVE_TARGET_BRANCHES = uniqueBranches.join(",");
+  operationData.REMOVE_TARGET_WORKTREES = uniqueWorktreePaths.join(",");
+  operationData.REMOVE_TARGET_REPOSITORIES = uniqueRepositories.join(",");
+  operationData.REMOVE_TOTAL_BRANCHES = String(uniqueBranches.length);
+  operationData.REMOVE_TOTAL_WORKTREES = String(uniqueWorktreePaths.length);
+  operationData.REMOVE_TOTAL_REPOSITORIES = String(uniqueRepositories.length);
+
+  return operationData;
 }
 
 export function isHookSkipped(result: HookResult | null): boolean {

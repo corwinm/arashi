@@ -1,5 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { findHook, validateHook, executeHook, runLifecycleHook } from "../../src/lib/hooks";
+import {
+  GLOBAL_HOOKS,
+  buildRemoveHookOperationData,
+  executeHook,
+  findHook,
+  runLifecycleHook,
+  validateHook,
+} from "../../src/lib/hooks";
 import {
   createTestRepo,
   cleanupTestRepo,
@@ -54,6 +61,34 @@ describe("findHook", () => {
 
     expect(hookPath).toBeTruthy();
     expect(hookPath).toContain("test-hook.sh");
+  });
+});
+
+describe("remove lifecycle helpers", () => {
+  test("exposes remove lifecycle names", () => {
+    expect(GLOBAL_HOOKS.preRemove).toBe("pre-remove");
+    expect(GLOBAL_HOOKS.postRemove).toBe("post-remove");
+  });
+
+  test("buildRemoveHookOperationData includes aggregate remove metadata", () => {
+    const operationData = buildRemoveHookOperationData({
+      branchNames: ["feature-a", "feature-a", "feature-b"],
+      worktreePaths: ["/tmp/wt-a", "/tmp/wt-a", "/tmp/wt-b"],
+      repositoryNames: ["repo-a", "repo-a", "repo-b"],
+      mainRepoPath: "/tmp/workspace",
+    });
+
+    expect(operationData.OPERATION).toBe("remove");
+    expect(operationData.BRANCH_NAME).toBe("feature-a");
+    expect(operationData.WORKTREE_PATH).toBe("/tmp/wt-a");
+    expect(operationData.REPO_NAME).toBe("repo-a");
+    expect(operationData.MAIN_REPO_PATH).toBe("/tmp/workspace");
+    expect(operationData.REMOVE_TARGET_BRANCHES).toBe("feature-a,feature-b");
+    expect(operationData.REMOVE_TARGET_WORKTREES).toBe("/tmp/wt-a,/tmp/wt-b");
+    expect(operationData.REMOVE_TARGET_REPOSITORIES).toBe("repo-a,repo-b");
+    expect(operationData.REMOVE_TOTAL_BRANCHES).toBe("2");
+    expect(operationData.REMOVE_TOTAL_WORKTREES).toBe("2");
+    expect(operationData.REMOVE_TOTAL_REPOSITORIES).toBe("2");
   });
 });
 
