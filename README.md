@@ -119,14 +119,18 @@ arashi switch --repos docs                  # repo-name matching in child repos
 
 ## Hooks
 
-Arashi can run lifecycle hooks during `arashi create` to automate setup steps.
+Arashi can run lifecycle hooks during `arashi create` and `arashi remove`.
 
 - Global hooks in `.arashi/hooks/`:
   - `pre-create.sh`
   - `post-create.sh`
+  - `pre-remove.sh`
+  - `post-remove.sh`
 - Repository-specific hooks:
   - `pre-create.<repo>.sh`
   - `post-create.<repo>.sh`
+
+`pre-remove.sh` is useful for teardown before deletion (for example, stopping tmux sessions), and `post-remove.sh` can run final cleanup after remove operations complete.
 
 See [`docs/hooks.md`](./docs/hooks.md) for hook behavior, environment variables, and examples.
 

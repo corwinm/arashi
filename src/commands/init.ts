@@ -270,6 +270,66 @@ exit 0
 `,
   },
   {
+    filename: "pre-remove.sh.example",
+    content: `#!/usr/bin/env bash
+# Pre-Remove Hook Example
+#
+# This hook runs BEFORE remove operations start.
+# Use it to stop related services/sessions or validate removal preconditions.
+#
+# Environment variables:
+#   ARASHI_HOOK_NAME                 - Hook name (\`pre-remove\`)
+#   ARASHI_MAIN_REPO_PATH            - Workspace root path
+#   ARASHI_BRANCH_NAME               - Primary target branch (if available)
+#   ARASHI_WORKTREE_PATH             - Primary target worktree path (if available)
+#   ARASHI_REMOVE_TARGET_BRANCHES    - Comma-separated target branches
+#   ARASHI_REMOVE_TARGET_WORKTREES   - Comma-separated target worktree paths
+#   ARASHI_REMOVE_TARGET_REPOSITORIES - Comma-separated target repositories
+#
+# Exit codes:
+#   0 - Success, continue removal
+#   Non-zero - Abort remove command before destructive operations
+
+set -e
+
+echo "Pre-remove hook: preparing to remove worktrees"
+
+# Example: stop a tmux session tied to branch name
+if [ -n "$ARASHI_BRANCH_NAME" ]; then
+  tmux has-session -t "$ARASHI_BRANCH_NAME" 2>/dev/null && tmux kill-session -t "$ARASHI_BRANCH_NAME" || true
+fi
+
+exit 0
+`,
+  },
+  {
+    filename: "post-remove.sh.example",
+    content: `#!/usr/bin/env bash
+# Post-Remove Hook Example
+#
+# This hook runs AFTER remove operations are attempted.
+# Use it to finalize cleanup or trigger follow-up automation.
+#
+# Environment variables:
+#   ARASHI_HOOK_NAME                 - Hook name (\`post-remove\`)
+#   ARASHI_MAIN_REPO_PATH            - Workspace root path
+#   ARASHI_BRANCH_NAME               - Primary target branch (if available)
+#   ARASHI_WORKTREE_PATH             - Primary target worktree path (if available)
+#   ARASHI_REMOVE_TARGET_BRANCHES    - Comma-separated target branches
+#   ARASHI_REMOVE_TARGET_WORKTREES   - Comma-separated target worktree paths
+#   ARASHI_REMOVE_TARGET_REPOSITORIES - Comma-separated target repositories
+#
+# Exit codes:
+#   0 - Success
+#   Non-zero - Mark remove command as failed
+
+set -e
+
+echo "Post-remove hook: cleanup complete for $ARASHI_REMOVE_TARGET_BRANCHES"
+exit 0
+`,
+  },
+  {
     filename: "setup.sh.example",
     content: `#!/usr/bin/env bash
 # Setup Hook Example
