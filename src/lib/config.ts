@@ -9,7 +9,7 @@
 
 import { join, dirname, basename, resolve } from "path";
 import { mkdir } from "fs/promises";
-import { readTrackedFileFromDefaultBranch } from "./git.ts";
+import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
 
 // ============================================================================
 // Data Types
@@ -47,6 +47,8 @@ export interface WorktreeInfo {
 export interface RepoConfig {
   /** Path to the repository (relative or absolute) */
   path: string;
+  /** Canonical git URL for cloning the repository */
+  git_url?: string;
   /** Name of the default branch (auto-detected if omitted) */
   default_branch?: string;
   /** Whether the repository is bare (auto-detected if omitted) */
@@ -89,6 +91,8 @@ export interface WorkspaceRepository {
   name: string;
   /** Absolute path to repository root */
   path: string;
+  /** Canonical git URL from configuration, if available */
+  gitUrl?: string;
   /** Default branch from config, if present */
   defaultBranch?: string;
 }
@@ -381,6 +385,13 @@ function validateRepoConfig(repoName: string, repoConfig: unknown, errors: strin
     }
   }
 
+  // Optional field: git_url
+  if (repo.git_url !== undefined) {
+    if (typeof repo.git_url !== "string" || repo.git_url.trim() === "") {
+      errors.push(`${prefix}.git_url: must be a non-empty string if present`);
+    }
+  }
+
   // Optional field: is_bare
   if (repo.is_bare !== undefined) {
     if (typeof repo.is_bare !== "boolean") {
@@ -659,7 +670,7 @@ export async function addRepo(
   // Check if repository name already exists
   if (config.discovered_repos[name] !== undefined) {
     throw new ConfigError(
-      `Repository "${name}" already exists in configuration. Use a different name or remove the existing repository first.`,
+      `Repository "${name}" already exists in configuration. Use "arashi clone" to materialize missing local repositories.`,
       undefined,
       { name, existingConfig: config.discovered_repos[name] },
     );
@@ -714,9 +725,61 @@ export async function loadWorkspaceRepositories(
     repositories.push({
       name,
       path: resolve(workspaceRoot, repoConfig.path),
+      gitUrl: repoConfig.git_url,
       defaultBranch: repoConfig.default_branch,
     });
   }
 
   return { config, repositories };
+}
+
+export interface GitUrlRepairResult {
+  updated: boolean;
+  repaired: string[];
+  unresolved: string[];
+}
+
+/**
+ * Attempt to fill missing repository git URLs from local clone remotes.
+ *
+ * This provides backward-compatible repair behavior for existing workspaces
+ * where `discovered_repos` entries were created before `git_url` tracking.
+ */
+export async function repairRepositoryGitUrls(
+  workspaceRoot: string,
+  config: Config,
+): Promise<GitUrlRepairResult> {
+  const repaired: string[] = [];
+  const unresolved: string[] = [];
+
+  for (const [name, repoConfig] of Object.entries(config.discovered_repos)) {
+    if (repoConfig.git_url && repoConfig.git_url.trim().length > 0) {
+      continue;
+    }
+
+    const repoPath = resolve(workspaceRoot, repoConfig.path);
+    const gitUrl = await resolveOriginRemoteUrl(repoPath);
+    if (gitUrl) {
+      repoConfig.git_url = gitUrl;
+      repaired.push(name);
+    } else {
+      unresolved.push(name);
+    }
+  }
+
+  return {
+    updated: repaired.length > 0,
+    repaired,
+    unresolved,
+  };
+}
+
+async function resolveOriginRemoteUrl(repoPath: string): Promise<string | null> {
+  try {
+    const result = await exec(["remote", "get-url", "origin"], repoPath);
+    const remoteUrl = result.stdout.trim();
+    return remoteUrl.length > 0 ? remoteUrl : null;
+  } catch {
+    return null;
+  }
 }

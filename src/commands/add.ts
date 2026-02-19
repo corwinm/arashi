@@ -14,6 +14,8 @@ import { spinner, success, error as logError, info } from "../lib/logger.ts";
 import { clone, getDefaultBranch } from "../lib/git.ts";
 import { loadConfig, saveConfig, getConfigPath, configExists } from "../lib/config.ts";
 import { AddCommandError, AddCommandErrorCode } from "../lib/errors.ts";
+import { confirm as promptConfirm } from "../lib/prompts.ts";
+import { executeClone } from "./clone.ts";
 import type { RepoConfig } from "../lib/config.ts";
 
 // ============================================================================
@@ -408,6 +410,7 @@ async function executeAdd(
     try {
       const repoConfig: RepoConfig = {
         path: join(".", config.repos_dir, repositoryName),
+        git_url: urlInfo.url,
         default_branch: defaultBranch,
         is_bare: false,
         worktrees: [],
@@ -497,10 +500,8 @@ function displayError(error: AddCommandError): void {
     console.log("  - SCP:   user@host:repo.git");
   } else if (error.code === AddCommandErrorCode.DUPLICATE_NAME) {
     console.log("Solutions:");
-    console.log(
-      `  1. Use a different name: arashi add ${error.context?.gitUrl} --name ${error.context?.name}-2`,
-    );
-    console.log(`  2. Remove existing repo: arashi remove ${error.context?.name}`);
+    console.log("  1. Clone the configured repository if it is missing locally: arashi clone");
+    console.log("  2. Inspect current workspace status: arashi status");
   } else if (error.code === AddCommandErrorCode.CLONE_FAILED) {
     console.log("Common causes:");
     console.log("  - Network connectivity issues");
@@ -574,6 +575,25 @@ export function createCommand(): Command {
             );
           } else {
             displayError(error);
+
+            if (
+              error.code === AddCommandErrorCode.DUPLICATE_NAME &&
+              process.stdin.isTTY &&
+              process.stdout.isTTY
+            ) {
+              const fallback = await promptConfirm(
+                "Repository is already configured. Run `arashi clone` now?",
+                true,
+              );
+
+              if (fallback.status === "ok" && fallback.value) {
+                const cloneResult = await executeClone({}, { workspaceRoot: process.cwd() });
+                if (cloneResult.status === "cancelled") {
+                  process.exit(0);
+                }
+                process.exit(cloneResult.failed.length > 0 ? 1 : 0);
+              }
+            }
           }
           process.exit(2);
         } else {

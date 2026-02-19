@@ -7,6 +7,7 @@
  */
 
 import { Command } from "commander";
+import { stat } from "fs/promises";
 import { resolve } from "path";
 import { loadConfig, findWorkspaceRoot, type Config } from "../lib/config.js";
 import { getGitStatus, getFullGitStatus } from "../lib/git.js";
@@ -189,6 +190,23 @@ export async function checkRepoStatus(
   path: string,
   verbose: boolean = false,
 ): Promise<RepoStatus> {
+  const repoExists = await pathExists(path);
+  if (!repoExists) {
+    return {
+      name,
+      path,
+      branch: {
+        localBranch: "",
+        remoteBranch: null,
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+      },
+      files: [],
+      error: `Repository is missing at ${path}. Run \`arashi clone\` to clone missing repositories.`,
+    };
+  }
+
   try {
     // Get git status
     const result = await getGitStatus(path);
@@ -243,6 +261,15 @@ export async function checkRepoStatus(
       files: [],
       error: err instanceof Error ? err.message : "Unknown error",
     };
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -467,7 +494,11 @@ export function formatShortLine(status: RepoStatus): string {
   // Add status
   if (status.error) {
     const colorFn = getStatusColor(false, true);
-    line += colorFn("✗ error");
+    if (status.error.includes("arashi clone")) {
+      line += colorFn("✗ missing (run arashi clone)");
+    } else {
+      line += colorFn("✗ error");
+    }
   } else if (status.files.length === 0) {
     const colorFn = getStatusColor(true, false);
     line += colorFn("✓ clean");

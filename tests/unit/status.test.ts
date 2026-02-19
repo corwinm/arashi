@@ -5,7 +5,12 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { parseGitStatus, parseBranchLine } from "../../src/commands/status.ts";
+import {
+  parseGitStatus,
+  parseBranchLine,
+  checkRepoStatus,
+  formatShortLine,
+} from "../../src/commands/status.ts";
 
 describe("parseGitStatus", () => {
   test("parses clean repository output", () => {
@@ -129,5 +134,35 @@ describe("parseBranchLine", () => {
 
     expect(branch.isDetached).toBe(true);
     expect(branch.localBranch).toBe("");
+  });
+});
+
+describe("checkRepoStatus", () => {
+  test("returns clone guidance when repository path is missing", async () => {
+    const status = await checkRepoStatus("missing-repo", "/path/that/does/not/exist");
+
+    expect(status.error).toContain("arashi clone");
+    expect(status.files).toHaveLength(0);
+  });
+});
+
+describe("formatShortLine", () => {
+  test("includes clone guidance for missing repositories", () => {
+    const line = formatShortLine({
+      name: "repo-a",
+      path: "/tmp/repo-a",
+      branch: {
+        localBranch: "",
+        remoteBranch: null,
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+      },
+      files: [],
+      error:
+        "Repository is missing at /tmp/repo-a. Run `arashi clone` to clone missing repositories.",
+    });
+
+    expect(line).toContain("arashi clone");
   });
 });

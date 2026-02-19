@@ -223,6 +223,39 @@ describe("validateConfig - RepoConfig validation", () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
+  test("accepts repository git_url when present", () => {
+    const config = {
+      version: "1.0.0",
+      repos_dir: "./repos",
+      auto_setup: true,
+      discovered_repos: {
+        "my-repo": {
+          path: "./repos/my-repo",
+          git_url: "git@github.com:team/my-repo.git",
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).not.toThrow();
+  });
+
+  test("catches invalid git_url type", () => {
+    const config = {
+      version: "1.0.0",
+      repos_dir: "./repos",
+      auto_setup: true,
+      discovered_repos: {
+        "my-repo": {
+          path: "./repos/my-repo",
+          git_url: 123,
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
+    expect(() => validateConfig(config)).toThrow("git_url");
+  });
+
   test("catches missing path field in repository", () => {
     const config = {
       version: "1.0.0",
