@@ -110,7 +110,6 @@ Arashi currently provides these commands:
 arashi init
 arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
-arashi clone --all
 arashi create feature-auth-refresh
 arashi status
 arashi switch feature-auth-refresh          # parent repo worktrees
