@@ -1,3 +1,14 @@
+## [1.7.0](https://github.com/corwinm/arashi/compare/v1.6.0...v1.7.0) (2026-02-19)
+
+### Features
+
+- add clone command and missing-repo recovery ([#38](https://github.com/corwinm/arashi/issues/38)) ([bcf2fa7](https://github.com/corwinm/arashi/commit/bcf2fa7a14a51450c4f095e8d1fe2df03ab71a0a))
+- add pre/post remove lifecycle hooks ([#37](https://github.com/corwinm/arashi/issues/37)) ([56d5962](https://github.com/corwinm/arashi/commit/56d5962022892407f4ef8235ff4a68d1ebd0bf7d))
+
+### Bug Fixes
+
+- streamline installer loading animation ([226715b](https://github.com/corwinm/arashi/commit/226715bb71a2876733ac07dc25d73bab31f148d9))
+
 ## [1.6.0](https://github.com/corwinm/arashi/compare/v1.5.1...v1.6.0) (2026-02-17)
 
 ### Features
