@@ -13,6 +13,7 @@ import {
   getConfigPath,
   addRepo,
   removeRepo,
+  repairRepositoryGitUrls,
   ConfigNotFoundError,
   ConfigParseError,
   ConfigValidationError,
@@ -22,6 +23,19 @@ import {
 import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+
+async function runGit(args: string[], cwd: string): Promise<void> {
+  const proc = Bun.spawn(["git", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
+  }
+}
 
 describe("configExists", () => {
   let testDir: string;
@@ -479,6 +493,27 @@ describe("round-trip tests", () => {
     expect(config.discovered_repos["test"]).toBeDefined();
   });
 
+  test("persists repository git_url fields across save/load", async () => {
+    const config: Config = {
+      version: "1.0.0",
+      repos_dir: "./repos",
+      auto_setup: true,
+      discovered_repos: {
+        "repo-with-url": {
+          path: "./repos/repo-with-url",
+          git_url: "git@github.com:team/repo-with-url.git",
+        },
+      },
+    };
+
+    await saveConfig(testDir, config);
+    const loaded = await loadConfig(testDir);
+
+    expect(loaded.discovered_repos["repo-with-url"]?.git_url).toBe(
+      "git@github.com:team/repo-with-url.git",
+    );
+  });
+
   test("preserves JSON formatting across save-load cycles", async () => {
     const config = generateDefaultConfig();
     await saveConfig(testDir, config);
@@ -564,5 +599,44 @@ describe("end-to-end workflow", () => {
     config = await loadConfig(testDir);
     expect(config.repos_dir).toBe("/custom/path");
     expect(config.auto_setup).toBe(false);
+  });
+});
+
+describe("repairRepositoryGitUrls", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "arashi-test-"));
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("repairs missing git_url from local origin remote", async () => {
+    const repoPath = join(testDir, "repos", "child-repo");
+    await mkdir(repoPath, { recursive: true });
+
+    await runGit(["init"], repoPath);
+    await runGit(["remote", "add", "origin", "git@github.com:team/child-repo.git"], repoPath);
+
+    const config: Config = {
+      version: "1.0.0",
+      repos_dir: "./repos",
+      auto_setup: true,
+      discovered_repos: {
+        "child-repo": {
+          path: "./repos/child-repo",
+        },
+      },
+    };
+
+    const result = await repairRepositoryGitUrls(testDir, config);
+
+    expect(result.updated).toBe(true);
+    expect(result.repaired).toEqual(["child-repo"]);
+    expect(config.discovered_repos["child-repo"].git_url).toBe(
+      "git@github.com:team/child-repo.git",
+    );
   });
 });

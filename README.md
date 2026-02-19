@@ -94,6 +94,7 @@ Arashi currently provides these commands:
 
 - `arashi init`
 - `arashi add <git-url>`
+- `arashi clone [--all]`
 - `arashi create <branch>`
 - `arashi list`
 - `arashi status`
@@ -109,6 +110,7 @@ Arashi currently provides these commands:
 arashi init
 arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
+arashi clone --all
 arashi create feature-auth-refresh
 arashi status
 arashi switch feature-auth-refresh          # parent repo worktrees
@@ -201,6 +203,7 @@ Arashi also ships a dedicated `skills.sh` integration package for guided install
 ## Documentation
 
 - Installation details: [`docs/INSTALLATION.md`](./docs/INSTALLATION.md)
+- Clone command details: [`docs/commands/clone.md`](./docs/commands/clone.md)
 - Hook behavior: [`docs/hooks.md`](./docs/hooks.md)
 - Setup command details: [`docs/commands/setup.md`](./docs/commands/setup.md)
 - Switch command details: [`docs/commands/switch.md`](./docs/commands/switch.md)
