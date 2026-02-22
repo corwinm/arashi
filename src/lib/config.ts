@@ -79,7 +79,7 @@ export interface Config {
   repos: Record<string, RepoConfig>;
 }
 
-export const DEFAULT_CONFIG_SCHEMA_URL = "https://arashi.haphazard.dev/config.json";
+export const DEFAULT_CONFIG_SCHEMA_URL = "https://unpkg.com/arashi/schema/config.schema.json";
 
 type ConfigErrorContext = {
   errors: string[];
@@ -264,7 +264,7 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
  * Generate default configuration
  *
  * Creates a minimal valid configuration with sensible defaults:
- * - $schema: "https://arashi.haphazard.dev/config.json"
+ * - $schema: "https://unpkg.com/arashi/schema/config.schema.json"
  * - version: "1.0.0"
  * - reposDir: "./repos"
  * - autoSetup: true

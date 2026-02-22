@@ -194,14 +194,14 @@ alias arashi-delete='arashi remove -f'
 
 Arashi publishes a JSON Schema for `.arashi/config.json` so editors can validate and autocomplete your config.
 
-- Stable URL: `https://arashi.haphazard.dev/config.json`
+- Stable URL: `https://unpkg.com/arashi/schema/config.schema.json`
 - Version-pinned URL: `https://unpkg.com/arashi@1.7.0/schema/config.schema.json`
 
 Example config header:
 
 ```json
 {
-  "$schema": "https://arashi.haphazard.dev/config.json",
+  "$schema": "https://unpkg.com/arashi/schema/config.schema.json",
   "version": "1.0.0",
   "reposDir": "./repos",
   "autoSetup": true,
