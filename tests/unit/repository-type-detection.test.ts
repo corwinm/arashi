@@ -67,10 +67,9 @@ describe("detectRepositoryType", () => {
 
       const config: ArashiConfig = {
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
+        reposDir: "./repos",
         worktree_strategy: "same_branch",
-        discovered_repos: {},
+        repos: {},
       };
 
       const result = await detectRepositoryType(repo, config);

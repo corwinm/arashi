@@ -128,7 +128,7 @@ export async function executeSwitch(
   if (scope === "all") {
     scopedCandidates = await augmentAllCandidates(scopedCandidates, {
       workspaceRoot,
-      reposDir: workspace.config?.repos_dir ?? "./repos",
+      reposDir: workspace.config?.reposDir ?? "./repos",
       repositories: workspace.repositories,
     });
   }

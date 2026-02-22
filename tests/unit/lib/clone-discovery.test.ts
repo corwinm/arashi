@@ -26,11 +26,10 @@ describe("clone-discovery", () => {
 
     const config: Config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {
-        "repo-a": { path: "./repos/repo-a", git_url: "git@github.com:team/repo-a.git" },
-        "repo-b": { path: "./repos/repo-b", git_url: "git@github.com:team/repo-b.git" },
+      reposDir: "./repos",
+      repos: {
+        "repo-a": { path: "./repos/repo-a", gitUrl: "git@github.com:team/repo-a.git" },
+        "repo-b": { path: "./repos/repo-b", gitUrl: "git@github.com:team/repo-b.git" },
       },
     };
 
@@ -40,16 +39,15 @@ describe("clone-discovery", () => {
     expect(result.configuredMissing.map((repo) => repo.name)).toEqual(["repo-b"]);
   });
 
-  test("detects unmanaged local repositories under repos_dir", async () => {
+  test("detects unmanaged local repositories under reposDir", async () => {
     const unmanagedPath = join(workspaceRoot, "repos", "extra-repo");
     await mkdir(unmanagedPath, { recursive: true });
     await writeFile(join(unmanagedPath, ".git"), "gitdir: ./.git/worktrees/main\n");
 
     const config: Config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {},
+      reposDir: "./repos",
+      repos: {},
     };
 
     const result = await discoverCloneRepositories(workspaceRoot, config);

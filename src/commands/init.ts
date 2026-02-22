@@ -28,9 +28,6 @@ interface InitOptions {
   /** Skip automatic repository discovery */
   noDiscover?: boolean;
 
-  /** Enable or disable automatic setup hook execution */
-  autoSetup?: boolean;
-
   /** Dry run - show what would be done without making changes */
   dryRun?: boolean;
 
@@ -334,7 +331,7 @@ exit 0
     content: `#!/usr/bin/env bash
 # Setup Hook Example
 #
-# This hook runs during repository initialization (if auto_setup is enabled).
+# This hook runs during repository initialization.
 # Use it to perform one-time setup tasks for newly discovered repositories.
 #
 # Environment variables:
@@ -689,8 +686,6 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
             }
             discoveredRepos[repo.name] = {
               path: repo.path,
-              default_branch: repo.defaultBranch,
-              worktrees: [],
             };
           }
         } catch (error) {
@@ -708,10 +703,10 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
 
     // 10. Generate and write config
     const arashiConfig: config.Config = {
+      $schema: config.DEFAULT_CONFIG_SCHEMA_URL,
       version: "1.0.0",
-      repos_dir: reposDir,
-      auto_setup: options.autoSetup !== undefined ? options.autoSetup : true,
-      discovered_repos: discoveredRepos,
+      reposDir: reposDir,
+      repos: discoveredRepos,
     };
 
     const configPath = config.getConfigPath(cwd);
@@ -887,18 +882,14 @@ export function createCommand(): Command {
     .option("--repos-dir <path>", "Custom location for managed repositories", "./repos")
     .option("--force", "Overwrite existing configuration if present")
     .option("--no-discover", "Skip automatic repository discovery")
-    .option("--auto-setup", "Enable automatic setup hook execution (default: true)")
-    .option("--no-auto-setup", "Disable automatic setup hook execution")
     .option("--dry-run", "Show what would be done without making changes")
     .option("--verbose", "Show detailed information during initialization")
-    .action(async (options: InitOptions & { discover?: boolean; autoSetup?: boolean }) => {
+    .action(async (options: InitOptions & { discover?: boolean }) => {
       // Commander converts --no-discover to discover: false
-      // Commander converts --no-auto-setup to autoSetup: false
       const normalizedOptions: InitOptions = {
         reposDir: options.reposDir,
         force: options.force,
         noDiscover: options.discover === false, // --no-discover sets discover: false
-        autoSetup: options.autoSetup !== false, // --no-auto-setup sets autoSetup: false
         dryRun: options.dryRun,
         verbose: options.verbose,
       };

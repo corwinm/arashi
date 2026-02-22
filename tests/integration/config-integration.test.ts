@@ -17,6 +17,7 @@ import {
   ConfigNotFoundError,
   ConfigParseError,
   ConfigValidationError,
+  UnsupportedConfigVersionError,
   ConfigError,
   type Config,
 } from "../../src/lib/config";
@@ -91,7 +92,7 @@ describe("saveConfig", () => {
 
     // Check for 2-space indentation
     expect(content).toContain('  "version"');
-    expect(content).toContain('  "repos_dir"');
+    expect(content).toContain('  "reposDir"');
     expect(content).not.toContain('    "version"'); // Not 4 spaces
 
     // Verify it's valid JSON
@@ -114,48 +115,38 @@ describe("saveConfig", () => {
     await saveConfig(testDir, config1);
 
     const config2 = generateDefaultConfig();
-    config2.auto_setup = false;
+    config2.reposDir = "./custom-repos";
     await saveConfig(testDir, config2);
 
     const loaded = await loadConfig(testDir);
-    expect(loaded.auto_setup).toBe(false);
+    expect(loaded.reposDir).toBe("./custom-repos");
   });
 
-  test("preserves complex nested structures", async () => {
-    const config: Config = {
+  test("drops deprecated repository metadata while preserving canonical fields", async () => {
+    const config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {
+      reposDir: "./repos",
+      repos: {
         "test-repo": {
           path: "./repos/test-repo",
-          default_branch: "main",
-          is_bare: false,
+          defaultBranch: "main",
+          isBare: false,
           worktrees: [
             {
               branch: "feature-123",
               path: "./repos/test-repo.worktrees/feature-123",
-              created_at: "2026-02-03T10:30:00Z",
-              metadata: {
-                jira: "PROJ-123",
-                owner: "alice",
-              },
+              createdAt: "2026-02-03T10:30:00Z",
             },
           ],
-          hooks: {
-            post_create: "./.arashi/hooks/post-create.sh",
-          },
         },
       },
     };
 
-    await saveConfig(testDir, config);
+    await saveConfig(testDir, config as unknown as Config);
     const loaded = await loadConfig(testDir);
 
-    expect(loaded).toEqual(config);
-    expect(loaded.discovered_repos["test-repo"].worktrees?.[0].metadata).toEqual({
-      jira: "PROJ-123",
-      owner: "alice",
+    expect(loaded.repos["test-repo"]).toEqual({
+      path: "./repos/test-repo",
     });
   });
 });
@@ -177,6 +168,44 @@ describe("loadConfig", () => {
 
     const loaded = await loadConfig(testDir);
     expect(loaded).toEqual(config);
+  });
+
+  test("migrates version alias to canonical version and persists", async () => {
+    const configPath = getConfigPath(testDir);
+    await mkdir(join(testDir, ".arashi"), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          version: "1",
+          reposDir: "./repos",
+          repos: {},
+        },
+        null,
+        2,
+      ),
+    );
+
+    const loaded = await loadConfig(testDir);
+    expect(loaded.version).toBe("1.0.0");
+
+    const persisted = JSON.parse(await Bun.file(configPath).text()) as { version: string };
+    expect(persisted.version).toBe("1.0.0");
+  });
+
+  test("throws unsupported version error for future config versions", async () => {
+    const configPath = getConfigPath(testDir);
+    await mkdir(join(testDir, ".arashi"), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        version: "2.0.0",
+        reposDir: "./repos",
+        repos: {},
+      }),
+    );
+
+    await expect(loadConfig(testDir)).rejects.toThrow(UnsupportedConfigVersionError);
   });
 
   test("throws ConfigNotFoundError when file does not exist", async () => {
@@ -226,9 +255,8 @@ describe("loadConfig", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        repos_dir: "./repos",
-        auto_setup: true,
-        discovered_repos: {},
+        reposDir: "./repos",
+        repos: {},
         // Missing version
       }),
     );
@@ -243,9 +271,8 @@ describe("loadConfig", () => {
       configPath,
       JSON.stringify({
         version: "", // Invalid
-        auto_setup: "true", // Wrong type
-        discovered_repos: {},
-        // Missing repos_dir
+        repos: {},
+        // Missing reposDir
       }),
     );
 
@@ -260,22 +287,19 @@ describe("loadConfig", () => {
     }
   });
 
-  test("loads configuration with extra fields (forward compatibility)", async () => {
+  test("rejects configuration with unknown root fields", async () => {
     const configPath = getConfigPath(testDir);
     await mkdir(join(testDir, ".arashi"), { recursive: true });
     const configWithExtras = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {},
+      reposDir: "./repos",
+      repos: {},
       future_feature: "some value",
       custom_data: { team: "backend" },
     };
     await writeFile(configPath, JSON.stringify(configWithExtras, null, 2));
 
-    const loaded = await loadConfig(testDir);
-    expect(loaded.version).toBe("1.0.0");
-    expect((loaded as { future_feature?: unknown }).future_feature).toBe("some value");
+    await expect(loadConfig(testDir)).rejects.toThrow(ConfigValidationError);
   });
 });
 
@@ -295,13 +319,12 @@ describe("addRepo", () => {
   test("adds repository to configuration", async () => {
     await addRepo(testDir, "my-app", {
       path: "./repos/my-app",
-      default_branch: "main",
     });
 
     const config = await loadConfig(testDir);
-    expect(config.discovered_repos["my-app"]).toBeDefined();
-    expect(config.discovered_repos["my-app"].path).toBe("./repos/my-app");
-    expect(config.discovered_repos["my-app"].default_branch).toBe("main");
+    expect(config.repos["my-app"]).toBeDefined();
+    expect(config.repos["my-app"].path).toBe("./repos/my-app");
+    expect(config.repos["my-app"].gitUrl).toBeUndefined();
   });
 
   test("adds repository with minimal fields", async () => {
@@ -310,25 +333,21 @@ describe("addRepo", () => {
     });
 
     const config = await loadConfig(testDir);
-    expect(config.discovered_repos["simple-repo"]).toBeDefined();
-    expect(config.discovered_repos["simple-repo"].path).toBe("./repos/simple");
-    expect(config.discovered_repos["simple-repo"].default_branch).toBeUndefined();
+    expect(config.repos["simple-repo"]).toBeDefined();
+    expect(config.repos["simple-repo"].path).toBe("./repos/simple");
+    expect(config.repos["simple-repo"].gitUrl).toBeUndefined();
   });
 
   test("adds repository with complete configuration", async () => {
     await addRepo(testDir, "full-repo", {
       path: "./repos/full",
-      default_branch: "develop",
-      is_bare: true,
-      hooks: {
-        post_create: "./hooks/post.sh",
-      },
+      gitUrl: "git@github.com:team/full.git",
     });
 
     const config = await loadConfig(testDir);
-    const repo = config.discovered_repos["full-repo"];
-    expect(repo.is_bare).toBe(true);
-    expect(repo.hooks?.post_create).toBe("./hooks/post.sh");
+    const repo = config.repos["full-repo"];
+    expect(repo.path).toBe("./repos/full");
+    expect(repo.gitUrl).toBe("git@github.com:team/full.git");
   });
 
   test("throws error when repository name already exists", async () => {
@@ -360,10 +379,10 @@ describe("addRepo", () => {
     await addRepo(testDir, "repo3", { path: "./repos/repo3" });
 
     const config = await loadConfig(testDir);
-    expect(Object.keys(config.discovered_repos)).toHaveLength(3);
-    expect(config.discovered_repos["repo1"]).toBeDefined();
-    expect(config.discovered_repos["repo2"]).toBeDefined();
-    expect(config.discovered_repos["repo3"]).toBeDefined();
+    expect(Object.keys(config.repos)).toHaveLength(3);
+    expect(config.repos["repo1"]).toBeDefined();
+    expect(config.repos["repo2"]).toBeDefined();
+    expect(config.repos["repo3"]).toBeDefined();
   });
 
   test("preserves existing repositories when adding new one", async () => {
@@ -371,8 +390,8 @@ describe("addRepo", () => {
     await addRepo(testDir, "second", { path: "./repos/second" });
 
     const config = await loadConfig(testDir);
-    expect(config.discovered_repos["first"]).toBeDefined();
-    expect(config.discovered_repos["second"]).toBeDefined();
+    expect(config.repos["first"]).toBeDefined();
+    expect(config.repos["second"]).toBeDefined();
   });
 });
 
@@ -394,7 +413,7 @@ describe("removeRepo", () => {
     await removeRepo(testDir, "to-remove");
 
     const config = await loadConfig(testDir);
-    expect(config.discovered_repos["to-remove"]).toBeUndefined();
+    expect(config.repos["to-remove"]).toBeUndefined();
   });
 
   test("succeeds silently when repository does not exist (idempotent)", async () => {
@@ -402,7 +421,7 @@ describe("removeRepo", () => {
     await removeRepo(testDir, "non-existent");
 
     const config = await loadConfig(testDir);
-    expect(config.discovered_repos["non-existent"]).toBeUndefined();
+    expect(config.repos["non-existent"]).toBeUndefined();
   });
 
   test("preserves other repositories when removing one", async () => {
@@ -413,9 +432,9 @@ describe("removeRepo", () => {
     await removeRepo(testDir, "remove");
 
     const config = await loadConfig(testDir);
-    expect(config.discovered_repos["keep1"]).toBeDefined();
-    expect(config.discovered_repos["keep2"]).toBeDefined();
-    expect(config.discovered_repos["remove"]).toBeUndefined();
+    expect(config.repos["keep1"]).toBeDefined();
+    expect(config.repos["keep2"]).toBeDefined();
+    expect(config.repos["remove"]).toBeUndefined();
   });
 
   test("can remove and re-add repository", async () => {
@@ -424,7 +443,7 @@ describe("removeRepo", () => {
     await addRepo(testDir, "repo", { path: "./repos/path2" });
 
     const config = await loadConfig(testDir);
-    expect(config.discovered_repos["repo"].path).toBe("./repos/path2");
+    expect(config.repos["repo"].path).toBe("./repos/path2");
   });
 });
 
@@ -442,31 +461,14 @@ describe("round-trip tests", () => {
   test("save and load preserves all data", async () => {
     const original: Config = {
       version: "1.0.0",
-      repos_dir: "/absolute/path/to/repos",
-      auto_setup: false,
-      discovered_repos: {
+      reposDir: "/absolute/path/to/repos",
+      repos: {
         repo1: {
           path: "./repos/repo1",
-          default_branch: "develop",
-          is_bare: true,
+          gitUrl: "git@github.com:team/repo1.git",
         },
         repo2: {
           path: "./repos/repo2",
-          worktrees: [
-            {
-              branch: "feature-auth",
-              path: "./worktrees/feature-auth",
-              created_at: "2026-02-03T15:45:30Z",
-              metadata: {
-                ticket: "JIRA-456",
-                priority: "high",
-              },
-            },
-          ],
-          hooks: {
-            pre_create: "./hooks/pre.sh",
-            post_create: "./hooks/post.sh",
-          },
         },
       },
     };
@@ -474,7 +476,7 @@ describe("round-trip tests", () => {
     await saveConfig(testDir, original);
     const loaded = await loadConfig(testDir);
 
-    expect(loaded).toEqual(original);
+    expect(loaded).toMatchObject(original);
   });
 
   test("multiple save-load cycles preserve data", async () => {
@@ -482,26 +484,25 @@ describe("round-trip tests", () => {
     await saveConfig(testDir, config);
 
     config = await loadConfig(testDir);
-    config.auto_setup = false;
+    config.reposDir = "./repos-custom";
     await saveConfig(testDir, config);
 
     config = await loadConfig(testDir);
     await addRepo(testDir, "test", { path: "./test" });
 
     config = await loadConfig(testDir);
-    expect(config.auto_setup).toBe(false);
-    expect(config.discovered_repos["test"]).toBeDefined();
+    expect(config.reposDir).toBe("./repos-custom");
+    expect(config.repos["test"]).toBeDefined();
   });
 
-  test("persists repository git_url fields across save/load", async () => {
+  test("persists repository gitUrl fields across save/load", async () => {
     const config: Config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {
+      reposDir: "./repos",
+      repos: {
         "repo-with-url": {
           path: "./repos/repo-with-url",
-          git_url: "git@github.com:team/repo-with-url.git",
+          gitUrl: "git@github.com:team/repo-with-url.git",
         },
       },
     };
@@ -509,9 +510,7 @@ describe("round-trip tests", () => {
     await saveConfig(testDir, config);
     const loaded = await loadConfig(testDir);
 
-    expect(loaded.discovered_repos["repo-with-url"]?.git_url).toBe(
-      "git@github.com:team/repo-with-url.git",
-    );
+    expect(loaded.repos["repo-with-url"]?.gitUrl).toBe("git@github.com:team/repo-with-url.git");
   });
 
   test("preserves JSON formatting across save-load cycles", async () => {
@@ -554,7 +553,7 @@ describe("end-to-end workflow", () => {
     // Load and verify
     const loaded = await loadConfig(testDir);
     expect(loaded.version).toBe("1.0.0");
-    expect(loaded.repos_dir).toBe("./repos");
+    expect(loaded.reposDir).toBe("./repos");
   });
 
   test("complete repository management workflow", async () => {
@@ -564,25 +563,23 @@ describe("end-to-end workflow", () => {
     // Add repositories
     await addRepo(testDir, "frontend", {
       path: "./repos/frontend",
-      default_branch: "main",
     });
 
     await addRepo(testDir, "backend", {
       path: "./repos/backend",
-      default_branch: "develop",
     });
 
     // Verify both exist
     let config = await loadConfig(testDir);
-    expect(Object.keys(config.discovered_repos)).toHaveLength(2);
+    expect(Object.keys(config.repos)).toHaveLength(2);
 
     // Remove one
     await removeRepo(testDir, "frontend");
 
     // Verify only one remains
     config = await loadConfig(testDir);
-    expect(Object.keys(config.discovered_repos)).toHaveLength(1);
-    expect(config.discovered_repos["backend"]).toBeDefined();
+    expect(Object.keys(config.repos)).toHaveLength(1);
+    expect(config.repos["backend"]).toBeDefined();
   });
 
   test("modify configuration settings workflow", async () => {
@@ -591,14 +588,12 @@ describe("end-to-end workflow", () => {
 
     // Load and modify
     let config = await loadConfig(testDir);
-    config.repos_dir = "/custom/path";
-    config.auto_setup = false;
+    config.reposDir = "/custom/path";
     await saveConfig(testDir, config);
 
     // Verify changes persisted
     config = await loadConfig(testDir);
-    expect(config.repos_dir).toBe("/custom/path");
-    expect(config.auto_setup).toBe(false);
+    expect(config.reposDir).toBe("/custom/path");
   });
 });
 
@@ -613,7 +608,7 @@ describe("repairRepositoryGitUrls", () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  test("repairs missing git_url from local origin remote", async () => {
+  test("repairs missing gitUrl from local origin remote", async () => {
     const repoPath = join(testDir, "repos", "child-repo");
     await mkdir(repoPath, { recursive: true });
 
@@ -622,9 +617,8 @@ describe("repairRepositoryGitUrls", () => {
 
     const config: Config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {
+      reposDir: "./repos",
+      repos: {
         "child-repo": {
           path: "./repos/child-repo",
         },
@@ -635,8 +629,6 @@ describe("repairRepositoryGitUrls", () => {
 
     expect(result.updated).toBe(true);
     expect(result.repaired).toEqual(["child-repo"]);
-    expect(config.discovered_repos["child-repo"].git_url).toBe(
-      "git@github.com:team/child-repo.git",
-    );
+    expect(config.repos["child-repo"].gitUrl).toBe("git@github.com:team/child-repo.git");
   });
 });

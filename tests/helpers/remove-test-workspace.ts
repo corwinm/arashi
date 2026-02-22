@@ -37,15 +37,14 @@ export async function createRemoveWorkspace(
 
   const config = {
     version: "1.0.0",
-    repos_dir: "./repos",
-    auto_setup: true,
-    discovered_repos: Object.fromEntries(
+    reposDir: "./repos",
+    repos: Object.fromEntries(
       repos.map((repo) => [
         repo.name,
         {
           path: `./repos/${repo.name}`,
-          default_branch: "main",
-          is_bare: false,
+          defaultBranch: "main",
+          isBare: false,
           worktrees: [],
         },
       ]),

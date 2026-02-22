@@ -54,9 +54,8 @@ async function createTempGitRepo(): Promise<string> {
   await mkdir(join(testDir, ".arashi"), { recursive: true });
   const testConfig = {
     version: "1.0.0",
-    repos_dir: "./repos",
-    auto_setup: true,
-    discovered_repos: {},
+    reposDir: "./repos",
+    repos: {},
     hooks: {
       timeout: 300,
     },
@@ -712,9 +711,8 @@ describe("list command - edge cases", () => {
     await mkdir(join(wtPath, ".arashi"), { recursive: true });
     const testConfig = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {},
+      reposDir: "./repos",
+      repos: {},
       hooks: { timeout: 300 },
       discovery: { max_depth: 3 },
     };

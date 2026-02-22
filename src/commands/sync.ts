@@ -36,7 +36,7 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
   const config = await loadConfig(workspaceRoot);
   const parentBranch = await getParentBranch(workspaceRoot);
 
-  const { repositories, missing } = filterRepositories(config.discovered_repos, options.only);
+  const { repositories, missing } = filterRepositories(config.repos, options.only);
   if (missing.length > 0) {
     throw new Error(`Repositories not found: ${missing.join(", ")}`);
   }

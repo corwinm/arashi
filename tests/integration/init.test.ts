@@ -107,9 +107,8 @@ describe("init command - success cases", () => {
     // Verify config content
     const loadedConfig = await config.loadConfig(testDir);
     expect(loadedConfig.version).toBe("1.0.0");
-    expect(loadedConfig.repos_dir).toBe("./repos");
-    expect(loadedConfig.auto_setup).toBe(true);
-    expect(loadedConfig.discovered_repos).toEqual({});
+    expect(loadedConfig.reposDir).toBe("./repos");
+    expect(loadedConfig.repos).toEqual({});
 
     // Verify hooks directory created
     const hooksDir = join(testDir, ".arashi", "hooks");
@@ -142,7 +141,7 @@ describe("init command - success cases", () => {
 
     // Verify config uses custom path
     const loadedConfig = await config.loadConfig(testDir);
-    expect(loadedConfig.repos_dir).toBe("./custom-repos");
+    expect(loadedConfig.reposDir).toBe("./custom-repos");
 
     // Verify .gitignore updated with custom path
     const gitignoreContent = await filesystem.readTextFile(join(testDir, ".gitignore"));
@@ -161,17 +160,7 @@ describe("init command - success cases", () => {
 
     // Verify no repositories discovered in config
     const loadedConfig = await config.loadConfig(testDir);
-    expect(Object.keys(loadedConfig.discovered_repos)).toHaveLength(0);
-  });
-
-  test("init with --no-auto-setup disables auto setup", async () => {
-    const result = await runInitCommand(testDir, ["--no-auto-setup"]);
-
-    expect(result.exitCode).toBe(0);
-
-    // Verify auto_setup is false
-    const loadedConfig = await config.loadConfig(testDir);
-    expect(loadedConfig.auto_setup).toBe(false);
+    expect(Object.keys(loadedConfig.repos)).toHaveLength(0);
   });
 
   test("init with --force overwrites existing configuration", async () => {
@@ -180,7 +169,7 @@ describe("init command - success cases", () => {
 
     // Modify config
     let loadedConfig = await config.loadConfig(testDir);
-    loadedConfig.auto_setup = false;
+    loadedConfig.reposDir = "./custom-repos";
     await config.saveConfig(testDir, loadedConfig);
 
     // Reinitialize with --force
@@ -192,7 +181,7 @@ describe("init command - success cases", () => {
 
     // Verify config reset to defaults
     loadedConfig = await config.loadConfig(testDir);
-    expect(loadedConfig.auto_setup).toBe(true);
+    expect(loadedConfig.reposDir).toBe("./repos");
 
     // Verify backup created
     const backupFiles = await Array.fromAsync(
@@ -392,9 +381,9 @@ describe("init command - repository discovery", () => {
 
     // Verify discovered repos in config
     const loadedConfig = await config.loadConfig(testDir);
-    expect(Object.keys(loadedConfig.discovered_repos)).toHaveLength(2);
-    expect(loadedConfig.discovered_repos["repo1"]).toBeDefined();
-    expect(loadedConfig.discovered_repos["repo2"]).toBeDefined();
+    expect(Object.keys(loadedConfig.repos)).toHaveLength(2);
+    expect(loadedConfig.repos["repo1"]).toBeDefined();
+    expect(loadedConfig.repos["repo2"]).toBeDefined();
   });
 
   test("handles empty repos directory", async () => {
@@ -407,7 +396,7 @@ describe("init command - repository discovery", () => {
     expect(result.stdout).toContain("Discovered 0 repositories");
 
     const loadedConfig = await config.loadConfig(testDir);
-    expect(Object.keys(loadedConfig.discovered_repos)).toHaveLength(0);
+    expect(Object.keys(loadedConfig.repos)).toHaveLength(0);
   });
 });
 
@@ -483,7 +472,7 @@ describe("init command - edge cases", () => {
 
     // Verify config stores absolute path
     const loadedConfig = await config.loadConfig(testDir);
-    expect(loadedConfig.repos_dir).toBe(absolutePath);
+    expect(loadedConfig.reposDir).toBe(absolutePath);
 
     await cleanup(testDir);
   });
@@ -589,8 +578,7 @@ describe("init command - dry-run mode", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Configuration preview:");
     expect(result.stdout).toContain('"version": "1.0.0"');
-    expect(result.stdout).toContain('"repos_dir": "./repos"');
-    expect(result.stdout).toContain('"auto_setup": true');
+    expect(result.stdout).toContain('"reposDir": "./repos"');
   });
 
   test("--dry-run works with --repos-dir option", async () => {
@@ -598,18 +586,10 @@ describe("init command - dry-run mode", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[DRY RUN]");
-    expect(result.stdout).toContain('"repos_dir": "./custom"');
+    expect(result.stdout).toContain('"reposDir": "./custom"');
 
     // Verify custom directory NOT created
     expect(await filesystem.fileExists(join(testDir, "custom"))).toBe(false);
-  });
-
-  test("--dry-run works with --no-auto-setup option", async () => {
-    const result = await runInitCommand(testDir, ["--dry-run", "--no-auto-setup"]);
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("[DRY RUN]");
-    expect(result.stdout).toContain('"auto_setup": false');
   });
 
   test("--dry-run works with --no-discover option", async () => {
@@ -807,14 +787,12 @@ describe("init command - dry-run and verbose together", () => {
       "--verbose",
       "--repos-dir",
       "./custom",
-      "--no-auto-setup",
     ]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[DRY RUN]");
     expect(result.stdout).toContain("[VERBOSE]");
-    expect(result.stdout).toContain('"repos_dir": "./custom"');
-    expect(result.stdout).toContain('"auto_setup": false');
+    expect(result.stdout).toContain('"reposDir": "./custom"');
 
     // Verify nothing created (except the custom directory we created for the test)
     expect(await filesystem.fileExists(join(testDir, ".arashi"))).toBe(false);

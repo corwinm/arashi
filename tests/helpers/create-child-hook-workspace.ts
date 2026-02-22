@@ -40,10 +40,8 @@ export async function createChildHookWorkspace(
 
   await initGitRepo(workspacePath, "main");
 
-  const discoveredRepos: Record<
-    string,
-    { path: string; default_branch: string; is_bare: boolean }
-  > = {};
+  const discoveredRepos: Record<string, { path: string; defaultBranch: string; isBare: boolean }> =
+    {};
   const childRepoPaths: Record<string, string> = {};
 
   for (const repoName of childRepoNames) {
@@ -57,8 +55,8 @@ export async function createChildHookWorkspace(
     childRepoPaths[repoName] = repoPath;
     discoveredRepos[repoName] = {
       path: `./repos/${repoName}`,
-      default_branch: "main",
-      is_bare: false,
+      defaultBranch: "main",
+      isBare: false,
     };
   }
 
@@ -68,12 +66,11 @@ export async function createChildHookWorkspace(
     JSON.stringify(
       {
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
+        reposDir: "./repos",
         hooks: {
           timeout: options.hookTimeoutMs ?? 1000,
         },
-        discovered_repos: discoveredRepos,
+        repos: discoveredRepos,
       },
       null,
       2,

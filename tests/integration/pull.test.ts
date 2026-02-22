@@ -78,13 +78,12 @@ async function createWorkspaceWithRepo(
   await mkdir(configDir, { recursive: true });
   const config: Record<string, unknown> = {
     version: "1.0.0",
-    repos_dir: "./repos",
-    auto_setup: true,
-    discovered_repos: {
+    reposDir: "./repos",
+    repos: {
       "repo-a": {
         path: "./repos/repo-a",
-        default_branch: "main",
-        is_bare: false,
+        defaultBranch: "main",
+        isBare: false,
         worktrees: [],
       },
     },

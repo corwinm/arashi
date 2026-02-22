@@ -22,12 +22,11 @@ describe("clone command", () => {
 
     const config: Config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {
+      reposDir: "./repos",
+      repos: {
         "repo-a": {
           path: "./repos/repo-a",
-          git_url: "git@github.com:team/repo-a.git",
+          gitUrl: "git@github.com:team/repo-a.git",
         },
       },
     };
@@ -49,16 +48,15 @@ describe("clone command", () => {
   test("supports interactive selection of missing repositories", async () => {
     const config: Config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {
+      reposDir: "./repos",
+      repos: {
         "repo-a": {
           path: "./repos/repo-a",
-          git_url: "git@github.com:team/repo-a.git",
+          gitUrl: "git@github.com:team/repo-a.git",
         },
         "repo-b": {
           path: "./repos/repo-b",
-          git_url: "git@github.com:team/repo-b.git",
+          gitUrl: "git@github.com:team/repo-b.git",
         },
       },
     };
@@ -90,16 +88,15 @@ describe("clone command", () => {
   test("clones all missing repositories with --all", async () => {
     const config: Config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {
+      reposDir: "./repos",
+      repos: {
         "repo-a": {
           path: "./repos/repo-a",
-          git_url: "https://github.com/team/repo-a.git",
+          gitUrl: "https://github.com/team/repo-a.git",
         },
         "repo-b": {
           path: "./repos/repo-b",
-          git_url: "https://github.com/team/repo-b.git",
+          gitUrl: "https://github.com/team/repo-b.git",
         },
       },
     };
@@ -127,16 +124,15 @@ describe("clone command", () => {
   test("continues cloning after partial failures", async () => {
     const config: Config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {
+      reposDir: "./repos",
+      repos: {
         "repo-a": {
           path: "./repos/repo-a",
-          git_url: "git@github.com:team/repo-a.git",
+          gitUrl: "git@github.com:team/repo-a.git",
         },
         "repo-b": {
           path: "./repos/repo-b",
-          git_url: "git@github.com:team/repo-b.git",
+          gitUrl: "git@github.com:team/repo-b.git",
         },
       },
     };

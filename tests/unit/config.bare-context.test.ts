@@ -23,7 +23,7 @@ describe("config resolution in bare contexts", () => {
     const loaded = await loadConfigWithFallback(workspace.worktreePath);
 
     expect(loaded.source).toBe("local-file");
-    expect(loaded.config.repos_dir).toBe("./repos");
+    expect(loaded.config.reposDir).toBe("./repos");
   });
 
   test("falls back to repository content for bare invocation", async () => {
@@ -34,7 +34,7 @@ describe("config resolution in bare contexts", () => {
     });
 
     expect(loaded.source).toBe("repository-content");
-    expect(loaded.config.repos_dir).toBe("./repos");
+    expect(loaded.config.reposDir).toBe("./repos");
   });
 
   test("throws clear error when config does not exist", async () => {

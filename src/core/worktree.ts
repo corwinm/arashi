@@ -558,13 +558,15 @@ export async function detectRepositoryType(
   }
 
   // Check if this is a child repository
-  // A child repo must be directly inside a repos_dir/ folder, and that repos_dir
+  // A child repo must be directly inside a reposDir/ folder, and that reposDir
   // must be inside a meta-repo (has .arashi/config.json)
   if (config) {
-    const reposDir = basename(config.repos_dir);
+    const reposDir = basename(
+      config.reposDir ?? (config as { repos_dir?: string }).repos_dir ?? "./repos",
+    );
     const pathParts = repo.path.split(sep);
 
-    // Check if the immediate parent directory is the repos_dir
+    // Check if the immediate parent directory is the reposDir
     const parentDir = pathParts[pathParts.length - 2];
     if (parentDir === reposDir) {
       // Check if grandparent has .arashi/config.json (is a meta-repo)
@@ -1116,9 +1118,8 @@ export async function createCoordinatedWorktrees(
 
         config = {
           version: "1.0.0",
-          repos_dir: "./repos",
-          auto_setup: false,
-          discovered_repos: {},
+          reposDir: "./repos",
+          repos: {},
         };
       }
     }
