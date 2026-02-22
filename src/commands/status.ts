@@ -294,8 +294,8 @@ export async function checkAllRepos(
     { name: "Main Repository", path: workspaceRoot },
   ];
 
-  // Add all discovered repos (resolve relative paths to absolute)
-  for (const [name, repoConfig] of Object.entries(config.discovered_repos)) {
+  // Add all configured repos (resolve relative paths to absolute)
+  for (const [name, repoConfig] of Object.entries(config.repos)) {
     const absolutePath = resolve(workspaceRoot, repoConfig.path);
     reposToCheck.push({ name, path: absolutePath });
   }

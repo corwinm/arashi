@@ -105,9 +105,9 @@ export async function executeRemove(
       { error: error instanceof Error ? error.message : String(error) },
     );
   }
-  const reposDirName = basename(config.repos_dir);
-  const childRepoNames = new Set(Object.keys(config.discovered_repos));
-  const repositories = buildRepositoryTargets(workspaceRoot, config.discovered_repos);
+  const reposDirName = basename(config.reposDir);
+  const childRepoNames = new Set(Object.keys(config.repos));
+  const repositories = buildRepositoryTargets(workspaceRoot, config.repos);
 
   if (repositories.length === 0) {
     throw new RemoveCommandError(
@@ -118,7 +118,7 @@ export async function executeRemove(
 
   const prompt = promptHandlers || { confirm: promptConfirm, multiSelect: promptMultiSelect };
   const allowNonInteractive = Boolean(promptHandlers);
-  const defaultBranches = await getDefaultBranchMap(workspaceRoot, config.discovered_repos);
+  const defaultBranches = await getDefaultBranchMap(workspaceRoot, config.repos);
   const usedPathMode = { value: false };
   const pathWorktrees: WorktreeEntry[] = [];
   let targetBranches: string[] = [];
@@ -542,19 +542,15 @@ function expandSelectedWorktrees(
 
 async function getDefaultBranchMap(
   workspaceRoot: string,
-  repos: Record<string, { path: string; default_branch?: string }>,
+  repos: Record<string, { path: string }>,
 ): Promise<Record<string, string | null>> {
   const map: Record<string, string | null> = {};
   const mainName = basename(workspaceRoot);
   map[mainName] = await resolveDefaultBranch(workspaceRoot);
 
   for (const [name, repo] of Object.entries(repos)) {
-    if (repo.default_branch) {
-      map[name] = repo.default_branch;
-    } else {
-      const repoPath = resolve(workspaceRoot, repo.path);
-      map[name] = await resolveDefaultBranch(repoPath);
-    }
+    const repoPath = resolve(workspaceRoot, repo.path);
+    map[name] = await resolveDefaultBranch(repoPath);
   }
 
   return map;

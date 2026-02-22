@@ -40,6 +40,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Validate generated config schema
+        run: bun run schema:check
+
       - name: Validate README documentation link target
         run: |
           if grep -qF "arashi-docs.netlify.app" README.md; then

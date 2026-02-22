@@ -85,10 +85,10 @@ describe("calculateWorktreePath", () => {
 
       const config: ArashiConfig = {
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
+        reposDir: "./repos",
+        autoSetup: true,
         worktree_strategy: "same_branch",
-        discovered_repos: {},
+        repos: {},
       };
 
       const result = await calculateWorktreePath(repo, "feature-123", config);
@@ -119,10 +119,10 @@ describe("calculateWorktreePath", () => {
 
       const config: ArashiConfig = {
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
+        reposDir: "./repos",
+        autoSetup: true,
         worktree_strategy: "same_branch",
-        discovered_repos: {},
+        repos: {},
       };
 
       // Test various branch names
@@ -157,10 +157,10 @@ describe("calculateWorktreePath", () => {
 
       const config: ArashiConfig = {
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
+        reposDir: "./repos",
+        autoSetup: true,
         worktree_strategy: "same_branch",
-        discovered_repos: {},
+        repos: {},
       };
 
       const result = await calculateWorktreePath(repo, "feature-123", config);
@@ -185,10 +185,10 @@ describe("calculateWorktreePath", () => {
 
       const config: ArashiConfig = {
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
+        reposDir: "./repos",
+        autoSetup: true,
         worktree_strategy: "same_branch",
-        discovered_repos: {},
+        repos: {},
       };
 
       const result = await calculateWorktreePath(repo, "bugfix-789", config);
@@ -208,7 +208,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", repos_dir: "./repos" }),
+        JSON.stringify({ version: "1.0.0", reposDir: "./repos" }),
       );
 
       // Create child repo
@@ -224,10 +224,10 @@ describe("calculateWorktreePath", () => {
 
       const config: ArashiConfig = {
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
+        reposDir: "./repos",
+        autoSetup: true,
         worktree_strategy: "same_branch",
-        discovered_repos: {},
+        repos: {},
       };
 
       const result = await calculateWorktreePath(childRepo, "feature-123", config);
@@ -246,7 +246,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(bareMetaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(bareMetaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", repos_dir: "./repos" }),
+        JSON.stringify({ version: "1.0.0", reposDir: "./repos" }),
       );
 
       // Create child repo inside bare parent
@@ -262,10 +262,10 @@ describe("calculateWorktreePath", () => {
 
       const config: ArashiConfig = {
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
+        reposDir: "./repos",
+        autoSetup: true,
         worktree_strategy: "same_branch",
-        discovered_repos: {},
+        repos: {},
       };
 
       const result = await calculateWorktreePath(childRepo, "feature-123", config);
@@ -284,7 +284,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(bareMetaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(bareMetaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", repos_dir: "./repos" }),
+        JSON.stringify({ version: "1.0.0", reposDir: "./repos" }),
       );
 
       // Create multiple child repos
@@ -304,10 +304,10 @@ describe("calculateWorktreePath", () => {
 
       const config: ArashiConfig = {
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
+        reposDir: "./repos",
+        autoSetup: true,
         worktree_strategy: "same_branch",
-        discovered_repos: {},
+        repos: {},
       };
 
       // All children should nest inside branch-name-only parent worktree

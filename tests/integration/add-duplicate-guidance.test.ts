@@ -13,12 +13,12 @@ describe("add command duplicate guidance", () => {
 
     const config = {
       version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {
+      reposDir: "./repos",
+      autoSetup: true,
+      repos: {
         "arashi-docs": {
           path: "./repos/arashi-docs",
-          git_url: "git@github.com:corwinm/arashi-docs.git",
+          gitUrl: "git@github.com:corwinm/arashi-docs.git",
         },
       },
     };

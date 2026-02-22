@@ -334,7 +334,7 @@ exit 0
     content: `#!/usr/bin/env bash
 # Setup Hook Example
 #
-# This hook runs during repository initialization (if auto_setup is enabled).
+# This hook runs during repository initialization (if autoSetup is enabled).
 # Use it to perform one-time setup tasks for newly discovered repositories.
 #
 # Environment variables:
@@ -689,8 +689,6 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
             }
             discoveredRepos[repo.name] = {
               path: repo.path,
-              default_branch: repo.defaultBranch,
-              worktrees: [],
             };
           }
         } catch (error) {
@@ -708,10 +706,11 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
 
     // 10. Generate and write config
     const arashiConfig: config.Config = {
+      $schema: config.DEFAULT_CONFIG_SCHEMA_URL,
       version: "1.0.0",
-      repos_dir: reposDir,
-      auto_setup: options.autoSetup !== undefined ? options.autoSetup : true,
-      discovered_repos: discoveredRepos,
+      reposDir: reposDir,
+      autoSetup: options.autoSetup !== undefined ? options.autoSetup : true,
+      repos: discoveredRepos,
     };
 
     const configPath = config.getConfigPath(cwd);

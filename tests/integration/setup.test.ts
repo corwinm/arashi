@@ -45,28 +45,28 @@ async function createWorkspace(
 
   const config: {
     version: string;
-    repos_dir: string;
-    auto_setup: boolean;
+    reposDir: string;
+    autoSetup: boolean;
     hooks?: { timeout: number };
-    discovered_repos: Record<
+    repos: Record<
       string,
-      { path: string; default_branch: string; is_bare: boolean; worktrees: never[] }
+      { path: string; defaultBranch: string; isBare: boolean; worktrees: never[] }
     >;
   } = {
     version: "1.0.0",
-    repos_dir: "./repos",
-    auto_setup: true,
-    discovered_repos: {
+    reposDir: "./repos",
+    autoSetup: true,
+    repos: {
       "repo-a": {
         path: "./repos/repo-a",
-        default_branch: "main",
-        is_bare: false,
+        defaultBranch: "main",
+        isBare: false,
         worktrees: [],
       },
       "repo-b": {
         path: "./repos/repo-b",
-        default_branch: "main",
-        is_bare: false,
+        defaultBranch: "main",
+        isBare: false,
         worktrees: [],
       },
     },

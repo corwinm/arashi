@@ -3,11 +3,12 @@ import { join } from "path";
 import {
   findWorkspaceRoot,
   loadConfig,
+  normalizeConfig,
   saveConfig,
   type Config,
   repairRepositoryGitUrls,
 } from "../lib/config.ts";
-import { clone as cloneRepository, exec, getDefaultBranch } from "../lib/git.ts";
+import { clone as cloneRepository, exec } from "../lib/git.ts";
 import { removeDir } from "../lib/filesystem.ts";
 import {
   applyCloneProtocol,
@@ -44,7 +45,6 @@ interface CloneCommandDependencies {
   repairRepositoryGitUrls?: typeof repairRepositoryGitUrls;
   discoverCloneRepositories?: typeof discoverCloneRepositories;
   cloneRepository?: typeof cloneRepository;
-  getDefaultBranch?: typeof getDefaultBranch;
   removeDir?: typeof removeDir;
   promptConfirm?: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
   promptInput?: (message: string, defaultValue?: string) => Promise<PromptOutcome<string>>;
@@ -85,7 +85,6 @@ export async function executeClone(
   const repairGitUrls = deps.repairRepositoryGitUrls ?? repairRepositoryGitUrls;
   const discoverRepositories = deps.discoverCloneRepositories ?? discoverCloneRepositories;
   const runClone = deps.cloneRepository ?? cloneRepository;
-  const readDefaultBranch = deps.getDefaultBranch ?? getDefaultBranch;
   const deleteDirectory = deps.removeDir ?? removeDir;
   const confirm = deps.promptConfirm ?? promptConfirm;
   const askInput = deps.promptInput ?? promptInput;
@@ -97,7 +96,7 @@ export async function executeClone(
   );
 
   const workspaceRoot = deps.workspaceRoot ?? (await resolveWorkspaceRoot());
-  const config = await readConfig(workspaceRoot);
+  const config = normalizeConfig(await readConfig(workspaceRoot));
 
   const repairResult = await repairGitUrls(workspaceRoot, config);
   let configUpdated = repairResult.updated;
@@ -122,7 +121,6 @@ export async function executeClone(
     confirm,
     askInput,
     askSelect,
-    readDefaultBranch,
     deleteDirectory,
   });
 
@@ -153,10 +151,10 @@ export async function executeClone(
 
   const missingWithUrls = discovery.configuredMissing.filter(
     (repository) =>
-      typeof repository.config.git_url === "string" && repository.config.git_url.length > 0,
+      typeof repository.config.gitUrl === "string" && repository.config.gitUrl.length > 0,
   );
   const missingWithoutUrls = discovery.configuredMissing.filter(
-    (repository) => !repository.config.git_url,
+    (repository) => !repository.config.gitUrl,
   );
 
   if (interactive && missingWithoutUrls.length > 0) {
@@ -178,18 +176,18 @@ export async function executeClone(
         continue;
       }
 
-      repository.config.git_url = value;
+      repository.config.gitUrl = value;
       missingWithUrls.push(repository);
       configUpdated = true;
     }
   }
 
   const unresolvedMissingWithoutUrls = missingWithoutUrls
-    .filter((repository) => !repository.config.git_url)
+    .filter((repository) => !repository.config.gitUrl)
     .map((repository) => repository.name);
   if (unresolvedMissingWithoutUrls.length > 0) {
     logger.warn(
-      `Skipping repositories without configured git_url: ${unresolvedMissingWithoutUrls.join(", ")}`,
+      `Skipping repositories without configured gitUrl: ${unresolvedMissingWithoutUrls.join(", ")}`,
     );
   }
 
@@ -199,7 +197,7 @@ export async function executeClone(
 
   const preferredProtocol = await resolveProtocolPreference({
     interactive,
-    urls: Object.values(config.discovered_repos).map((repo) => repo.git_url),
+    urls: Object.values(config.repos).map((repo) => repo.gitUrl),
     askSelect,
   });
 
@@ -252,11 +250,11 @@ export async function executeClone(
     .filter((name) => !selectedRepositories.some((repository) => repository.name === name));
 
   for (const repository of selectedRepositories) {
-    const rawGitUrl = repository.config.git_url;
+    const rawGitUrl = repository.config.gitUrl;
     if (!rawGitUrl) {
       failed.push({
         name: repository.name,
-        reason: "Missing git_url in configuration",
+        reason: "Missing gitUrl in configuration",
       });
       continue;
     }
@@ -271,18 +269,9 @@ export async function executeClone(
       cloneSpinner.succeed(`Cloned ${repository.name}`);
       cloned.push(repository.name);
 
-      if (repository.config.git_url !== cloneUrl) {
-        repository.config.git_url = cloneUrl;
+      if (repository.config.gitUrl !== cloneUrl) {
+        repository.config.gitUrl = cloneUrl;
         configUpdated = true;
-      }
-
-      if (!repository.config.default_branch) {
-        try {
-          repository.config.default_branch = await readDefaultBranch(repository.path);
-          configUpdated = true;
-        } catch {
-          // Best effort: keep clone success even if default branch detection fails
-        }
       }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -357,7 +346,6 @@ async function reconcileUnmanagedRepositories(options: {
   confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
   askInput: (message: string, defaultValue?: string) => Promise<PromptOutcome<string>>;
   askSelect: <T>(message: string, choices: Choice<T>[]) => Promise<PromptOutcome<T>>;
-  readDefaultBranch: (repoPath: string) => Promise<string>;
   deleteDirectory: (path: string) => Promise<void>;
 }): Promise<{ cancelled: boolean; updatedConfig: boolean }> {
   if (options.unmanagedRepositories.length === 0) {
@@ -438,24 +426,12 @@ async function reconcileUnmanagedRepositories(options: {
       gitUrl = value;
     }
 
-    let defaultBranch: string | undefined;
-    try {
-      defaultBranch = await options.readDefaultBranch(unmanagedRepository.path);
-    } catch {
-      defaultBranch = undefined;
-    }
-
-    const repoConfig: Config["discovered_repos"][string] = {
-      path: join(".", options.config.repos_dir, unmanagedRepository.name),
-      git_url: gitUrl,
-      is_bare: false,
-      worktrees: [],
+    const repoConfig: Config["repos"][string] = {
+      path: join(".", options.config.reposDir, unmanagedRepository.name),
+      gitUrl,
     };
-    if (defaultBranch) {
-      repoConfig.default_branch = defaultBranch;
-    }
 
-    options.config.discovered_repos[unmanagedRepository.name] = repoConfig;
+    options.config.repos[unmanagedRepository.name] = repoConfig;
     updatedConfig = true;
     logger.info(`Added ${unmanagedRepository.name} to configuration.`);
   }

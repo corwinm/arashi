@@ -44,9 +44,9 @@ export async function createBareCreateWorkspace(
       JSON.stringify(
         {
           version: "1.0.0",
-          repos_dir: configReposDir,
-          auto_setup: true,
-          discovered_repos: {},
+          reposDir: configReposDir,
+          autoSetup: true,
+          repos: {},
         },
         null,
         2,

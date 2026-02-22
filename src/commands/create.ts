@@ -199,10 +199,10 @@ export async function executeCreate(
 
   const arashiConfig = loadedConfig.config;
 
-  // 2. Discover repositories (child repos in repos_dir)
-  // Convert repos_dir to absolute path since it may be relative (e.g., "./repos")
+  // 2. Discover repositories (child repos in reposDir)
+  // Convert reposDir to absolute path since it may be relative (e.g., "./repos")
   const currentDir = context.executionPath;
-  const reposDirAbsolute = resolve(currentDir, arashiConfig.repos_dir);
+  const reposDirAbsolute = resolve(currentDir, arashiConfig.reposDir);
   const discoveryResult = await discoverRepositories(reposDirAbsolute);
 
   // 3. Include the meta-repo itself in the repository list

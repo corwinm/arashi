@@ -34,7 +34,7 @@ export async function discoverCloneRepositories(
   const configuredMissing: ConfiguredRepositoryState[] = [];
 
   const configuredNames = new Set<string>();
-  for (const [name, repoConfig] of Object.entries(config.discovered_repos)) {
+  for (const [name, repoConfig] of Object.entries(config.repos)) {
     configuredNames.add(name);
     const repoPath = resolve(workspaceRoot, repoConfig.path);
     const repoExists = await pathExists(repoPath);
@@ -53,7 +53,7 @@ export async function discoverCloneRepositories(
   }
 
   const unmanagedLocal: UnmanagedRepositoryState[] = [];
-  const reposRoot = resolve(workspaceRoot, config.repos_dir);
+  const reposRoot = resolve(workspaceRoot, config.reposDir);
   const reposRootExists = await pathExists(reposRoot);
   if (reposRootExists) {
     const entries = await readdir(reposRoot, { withFileTypes: true });

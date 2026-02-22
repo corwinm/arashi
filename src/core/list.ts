@@ -26,7 +26,7 @@ import chalk from "chalk";
 // ============================================================================
 
 /**
- * Find parent repository if current directory is a child repo within repos_dir
+ * Find parent repository if current directory is a child repo within reposDir
  *
  * When running arashi list from within a child repository (e.g., repos/my-app),
  * this function searches upward to find the parent worktree that contains the
@@ -35,7 +35,7 @@ import chalk from "chalk";
  *
  * **Detection Logic:**
  * 1. Walk up directory tree looking for .arashi/config.json
- * 2. If found, check if current directory is within that config's repos_dir
+ * 2. If found, check if current directory is within that config's reposDir
  * 3. If yes, return the parent repo path (containing .arashi)
  * 4. If no, return null (we're in the main/parent repo)
  *
@@ -68,19 +68,19 @@ async function findParentRepo(currentPath: string): Promise<string | null> {
       // Check if config exists
       await access(configPath, constants.R_OK);
 
-      // Found a config - load it to check repos_dir
+      // Found a config - load it to check reposDir
       try {
         const cfg = await config.loadConfig(searchPath);
-        const reposDirAbs = resolve(searchPath, cfg.repos_dir);
+        const reposDirAbs = resolve(searchPath, cfg.reposDir);
 
-        // Check if current path is within repos_dir
+        // Check if current path is within reposDir
         const rel = relative(reposDirAbs, currentPath);
         if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
-          // We're inside repos_dir of this config - this is the parent repo
+          // We're inside reposDir of this config - this is the parent repo
           return searchPath;
         }
 
-        // We found a config but we're not in its repos_dir
+        // We found a config but we're not in its reposDir
         // This means we're already at the parent level
         return null;
       } catch {
@@ -117,7 +117,7 @@ async function findParentRepo(currentPath: string): Promise<string | null> {
  * - Configuration is optional (warns if `.arashi/config.json` is missing)
  * - Shows progress spinner in verbose mode (suppressed in JSON mode)
  * - Gracefully handles errors with clear messages
- * - If run from within repos_dir, automatically switches to parent repo
+ * - If run from within reposDir, automatically switches to parent repo
  *
  * @param options - Command options controlling output format and behavior
  * @param options.verbose - If true, discovers nested sub-repositories (slower)
@@ -189,7 +189,7 @@ export async function listCommand(options?: ListCommandOptions): Promise<void> {
     throw new NotInRepositoryError(cwd);
   }
 
-  // Try to find parent repo if we're in a child repo within repos_dir
+  // Try to find parent repo if we're in a child repo within reposDir
   const parentRepo = await findParentRepo(cwd);
   if (parentRepo) {
     // We're in a child repo - use parent repo for listing worktrees

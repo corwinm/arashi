@@ -20,9 +20,9 @@ import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
  */
 export interface HookConfig {
   /** Path to script executed before worktree creation */
-  pre_create?: string;
+  preCreate?: string;
   /** Path to script executed after worktree creation */
-  post_create?: string;
+  postCreate?: string;
   /** Path to script executed during repository setup */
   setup?: string;
 }
@@ -36,7 +36,7 @@ export interface WorktreeInfo {
   /** Filesystem path to the worktree */
   path: string;
   /** ISO 8601 timestamp when worktree was created */
-  created_at: string;
+  createdAt: string;
   /** Optional user-defined metadata */
   metadata?: Record<string, unknown>;
 }
@@ -48,13 +48,7 @@ export interface RepoConfig {
   /** Path to the repository (relative or absolute) */
   path: string;
   /** Canonical git URL for cloning the repository */
-  git_url?: string;
-  /** Name of the default branch (auto-detected if omitted) */
-  default_branch?: string;
-  /** Whether the repository is bare (auto-detected if omitted) */
-  is_bare?: boolean;
-  /** List of active worktrees for this repository */
-  worktrees?: WorktreeInfo[];
+  gitUrl?: string;
   /** Custom hook configuration for this repository */
   hooks?: HookConfig;
 }
@@ -63,20 +57,29 @@ export interface RepoConfig {
  * Root configuration object for Arashi
  */
 export interface Config {
+  /** JSON Schema URL for editor validation/autocomplete */
+  $schema?: string;
   /** Configuration schema version for migrations */
   version: string;
   /** Directory where repositories are located */
-  repos_dir: string;
+  reposDir: string;
   /** Whether to automatically run setup hooks */
-  auto_setup: boolean;
+  autoSetup: boolean;
   /** Optional workspace-level hooks settings */
   hooks?: {
     /** Timeout in milliseconds for long-running operations */
     timeout?: number;
   };
+  /** Optional sync command settings */
+  sync?: {
+    /** Sync timeout in seconds */
+    timeoutSeconds?: number;
+  };
   /** Map of repository names to their configurations */
-  discovered_repos: Record<string, RepoConfig>;
+  repos: Record<string, RepoConfig>;
 }
+
+export const DEFAULT_CONFIG_SCHEMA_URL = "https://arashi.haphazard.dev/config.json";
 
 type ConfigErrorContext = {
   errors: string[];
@@ -93,8 +96,6 @@ export interface WorkspaceRepository {
   path: string;
   /** Canonical git URL from configuration, if available */
   gitUrl?: string;
-  /** Default branch from config, if present */
-  defaultBranch?: string;
 }
 
 export type ConfigSourceType = "local-file" | "repository-content";
@@ -263,10 +264,11 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
  * Generate default configuration
  *
  * Creates a minimal valid configuration with sensible defaults:
+ * - $schema: "https://arashi.haphazard.dev/config.json"
  * - version: "1.0.0"
- * - repos_dir: "./repos"
- * - auto_setup: true
- * - discovered_repos: {}
+ * - reposDir: "./repos"
+ * - autoSetup: true
+ * - repos: {}
  *
  * @returns Default configuration object
  *
@@ -278,10 +280,11 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
  */
 export function generateDefaultConfig(): Config {
   return {
+    $schema: DEFAULT_CONFIG_SCHEMA_URL,
     version: "1.0.0",
-    repos_dir: "./repos",
-    auto_setup: true,
-    discovered_repos: {},
+    reposDir: "./repos",
+    autoSetup: true,
+    repos: {},
   };
 }
 
@@ -289,11 +292,340 @@ export function generateDefaultConfig(): Config {
 // Validation Functions
 // ============================================================================
 
+const ROOT_ALLOWED_KEYS = new Set([
+  "$schema",
+  "version",
+  "reposDir",
+  "repos_dir",
+  "autoSetup",
+  "auto_setup",
+  "repos",
+  "discoveredRepos",
+  "discovered_repos",
+  "hooks",
+  "sync",
+]);
+
+const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout"]);
+const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
+
+const REPO_ALLOWED_KEYS = new Set([
+  "path",
+  "gitUrl",
+  "git_url",
+  "hooks",
+  "defaultBranch",
+  "default_branch",
+  "isBare",
+  "is_bare",
+  "worktrees",
+]);
+
+const REPO_HOOK_ALLOWED_KEYS = new Set([
+  "preCreate",
+  "pre_create",
+  "postCreate",
+  "post_create",
+  "setup",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getFirstDefined<T>(...values: Array<T | undefined>): T | undefined {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function validateNoUnknownKeys(
+  value: Record<string, unknown>,
+  allowedKeys: Set<string>,
+  prefix: string,
+  errors: string[],
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      const label = prefix ? `${prefix}.${key}` : key;
+      errors.push(`${label}: unknown property`);
+    }
+  }
+}
+
+function normalizeRepoHooks(
+  value: unknown,
+  prefix: string,
+  errors: string[],
+): HookConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    errors.push(`${prefix}: must be an object if present`);
+    return undefined;
+  }
+
+  validateNoUnknownKeys(value, REPO_HOOK_ALLOWED_KEYS, prefix, errors);
+
+  const preCreate = getFirstDefined(
+    value.preCreate as string | undefined,
+    value.pre_create as string | undefined,
+  );
+  const postCreate = getFirstDefined(
+    value.postCreate as string | undefined,
+    value.post_create as string | undefined,
+  );
+  const setup = value.setup as string | undefined;
+
+  const normalized: HookConfig = {};
+
+  if (preCreate !== undefined) {
+    if (typeof preCreate !== "string" || preCreate.trim() === "") {
+      errors.push(`${prefix}.preCreate: must be a non-empty string if present`);
+    } else {
+      normalized.preCreate = preCreate;
+    }
+  }
+
+  if (postCreate !== undefined) {
+    if (typeof postCreate !== "string" || postCreate.trim() === "") {
+      errors.push(`${prefix}.postCreate: must be a non-empty string if present`);
+    } else {
+      normalized.postCreate = postCreate;
+    }
+  }
+
+  if (setup !== undefined) {
+    if (typeof setup !== "string" || setup.trim() === "") {
+      errors.push(`${prefix}.setup: must be a non-empty string if present`);
+    } else {
+      normalized.setup = setup;
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeRepoConfig(
+  repoName: string,
+  value: unknown,
+  errors: string[],
+): RepoConfig | null {
+  const prefix = `repos.${repoName}`;
+
+  if (!isRecord(value)) {
+    errors.push(`${prefix}: must be an object`);
+    return null;
+  }
+
+  validateNoUnknownKeys(value, REPO_ALLOWED_KEYS, prefix, errors);
+
+  const path = value.path;
+  const gitUrl = getFirstDefined(
+    value.gitUrl as string | undefined,
+    value.git_url as string | undefined,
+  );
+  const hooks = normalizeRepoHooks(value.hooks, `${prefix}.hooks`, errors);
+
+  if (typeof path !== "string" || path.trim() === "") {
+    errors.push(`${prefix}.path: must be a non-empty string`);
+    return null;
+  }
+
+  const normalized: RepoConfig = { path };
+
+  if (gitUrl !== undefined) {
+    if (typeof gitUrl !== "string" || gitUrl.trim() === "") {
+      errors.push(`${prefix}.gitUrl: must be a non-empty string if present`);
+    } else {
+      normalized.gitUrl = gitUrl;
+    }
+  }
+
+  if (hooks) {
+    normalized.hooks = hooks;
+  }
+
+  return normalized;
+}
+
+function normalizeWorkspaceHooks(
+  value: unknown,
+  prefix: string,
+  errors: string[],
+): Config["hooks"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    errors.push(`${prefix}: must be an object if present`);
+    return undefined;
+  }
+
+  validateNoUnknownKeys(value, ROOT_HOOKS_ALLOWED_KEYS, prefix, errors);
+
+  const timeout = value.timeout;
+  if (timeout === undefined) {
+    return undefined;
+  }
+
+  if (typeof timeout !== "number" || !Number.isFinite(timeout) || timeout <= 0) {
+    errors.push(`${prefix}.timeout: must be a positive number if present`);
+    return undefined;
+  }
+
+  return { timeout };
+}
+
+function normalizeSyncConfig(
+  value: unknown,
+  prefix: string,
+  errors: string[],
+): Config["sync"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    errors.push(`${prefix}: must be an object if present`);
+    return undefined;
+  }
+
+  validateNoUnknownKeys(value, ROOT_SYNC_ALLOWED_KEYS, prefix, errors);
+
+  const timeoutSeconds = getFirstDefined(
+    value.timeoutSeconds as number | undefined,
+    value.timeout_seconds as number | undefined,
+  );
+
+  if (timeoutSeconds === undefined) {
+    return undefined;
+  }
+
+  if (
+    typeof timeoutSeconds !== "number" ||
+    !Number.isFinite(timeoutSeconds) ||
+    timeoutSeconds < 0
+  ) {
+    errors.push(`${prefix}.timeoutSeconds: must be a non-negative number if present`);
+    return undefined;
+  }
+
+  return {
+    timeoutSeconds,
+  };
+}
+
+/**
+ * Normalize legacy/snake_case config keys to canonical camelCase format.
+ *
+ * Accepted legacy aliases:
+ * - repos_dir -> reposDir
+ * - auto_setup -> autoSetup
+ * - discovered_repos / discoveredRepos -> repos
+ * - git_url -> gitUrl
+ * - pre_create/post_create -> preCreate/postCreate
+ *
+ * Legacy repository metadata keys (`defaultBranch`, `isBare`, `worktrees`) are
+ * accepted for backward compatibility but intentionally dropped from the
+ * normalized result.
+ */
+export function normalizeConfig(config: unknown): Config {
+  const errors: string[] = [];
+
+  if (!isRecord(config)) {
+    throw new ConfigValidationError(["Config must be an object"]);
+  }
+
+  validateNoUnknownKeys(config, ROOT_ALLOWED_KEYS, "", errors);
+
+  const schema = config.$schema;
+  const version = config.version;
+  const reposDir = getFirstDefined(
+    config.reposDir as string | undefined,
+    config.repos_dir as string | undefined,
+  );
+  const autoSetup = getFirstDefined(
+    config.autoSetup as boolean | undefined,
+    config.auto_setup as boolean | undefined,
+  );
+  const reposRaw = getFirstDefined(
+    config.repos as Record<string, unknown> | undefined,
+    config.discoveredRepos as Record<string, unknown> | undefined,
+    config.discovered_repos as Record<string, unknown> | undefined,
+  );
+  const hooks = normalizeWorkspaceHooks(config.hooks, "hooks", errors);
+  const sync = normalizeSyncConfig(config.sync, "sync", errors);
+
+  if (schema !== undefined && (typeof schema !== "string" || schema.trim() === "")) {
+    errors.push("$schema: must be a non-empty string if present");
+  }
+
+  if (typeof version !== "string" || version.trim() === "") {
+    errors.push("version: must be a non-empty string");
+  }
+
+  if (typeof reposDir !== "string" || reposDir.trim() === "") {
+    errors.push("reposDir: must be a non-empty string");
+  }
+
+  if (typeof autoSetup !== "boolean") {
+    errors.push("autoSetup: must be a boolean");
+  }
+
+  const normalizedRepos: Record<string, RepoConfig> = {};
+  if (!isRecord(reposRaw)) {
+    errors.push("repos: must be an object");
+  } else {
+    for (const [repoName, repoConfig] of Object.entries(reposRaw)) {
+      const normalized = normalizeRepoConfig(repoName, repoConfig, errors);
+      if (normalized) {
+        normalizedRepos[repoName] = normalized;
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new ConfigValidationError(errors);
+  }
+
+  const normalizedVersion = version as string;
+  const normalizedReposDir = reposDir as string;
+  const normalizedAutoSetup = autoSetup as boolean;
+
+  const normalizedConfig: Config = {
+    version: normalizedVersion,
+    reposDir: normalizedReposDir,
+    autoSetup: normalizedAutoSetup,
+    repos: normalizedRepos,
+  };
+
+  if (typeof schema === "string") {
+    normalizedConfig.$schema = schema;
+  }
+
+  if (hooks) {
+    normalizedConfig.hooks = hooks;
+  }
+
+  if (sync) {
+    normalizedConfig.sync = sync;
+  }
+
+  return normalizedConfig;
+}
+
 /**
  * Validate configuration structure and required fields
  *
  * Checks:
- * - All required fields present (version, repos_dir, auto_setup, discovered_repos)
+ * - All required fields present (version, reposDir, autoSetup, repos)
  * - Field types are correct
  * - Nested structures valid (RepoConfig, WorktreeInfo, HookConfig)
  *
@@ -317,182 +649,7 @@ export function generateDefaultConfig(): Config {
  * ```
  */
 export function validateConfig(config: unknown): asserts config is Config {
-  const errors: string[] = [];
-  const cfg = config as Record<string, unknown>;
-
-  // Validate root level fields
-  if (typeof config !== "object" || config === null) {
-    throw new ConfigValidationError(["Config must be an object"]);
-  }
-
-  if (typeof cfg.version !== "string" || cfg.version === "") {
-    errors.push("version: must be a non-empty string");
-  }
-
-  if (typeof cfg.repos_dir !== "string" || cfg.repos_dir === "") {
-    errors.push("repos_dir: must be a non-empty string");
-  }
-
-  if (typeof cfg.auto_setup !== "boolean") {
-    errors.push("auto_setup: must be a boolean");
-  }
-
-  if (
-    typeof cfg.discovered_repos !== "object" ||
-    cfg.discovered_repos === null ||
-    Array.isArray(cfg.discovered_repos)
-  ) {
-    errors.push("discovered_repos: must be an object");
-  } else {
-    // Validate each repository configuration
-    for (const [repoName, repoConfig] of Object.entries(
-      cfg.discovered_repos as Record<string, unknown>,
-    )) {
-      validateRepoConfig(repoName, repoConfig, errors);
-    }
-  }
-
-  if (errors.length > 0) {
-    throw new ConfigValidationError(errors);
-  }
-}
-
-/**
- * Validate a single repository configuration
- *
- * @param repoName - Name of the repository (for error messages)
- * @param repoConfig - Repository configuration to validate
- * @param errors - Array to accumulate validation errors
- */
-function validateRepoConfig(repoName: string, repoConfig: unknown, errors: string[]): void {
-  const prefix = `discovered_repos.${repoName}`;
-  const repo = repoConfig as Record<string, unknown>;
-
-  if (typeof repoConfig !== "object" || repoConfig === null) {
-    errors.push(`${prefix}: must be an object`);
-    return;
-  }
-
-  // Required field: path
-  if (typeof repo.path !== "string" || repo.path === "") {
-    errors.push(`${prefix}.path: must be a non-empty string`);
-  }
-
-  // Optional field: default_branch
-  if (repo.default_branch !== undefined) {
-    if (typeof repo.default_branch !== "string" || repo.default_branch === "") {
-      errors.push(`${prefix}.default_branch: must be a non-empty string if present`);
-    }
-  }
-
-  // Optional field: git_url
-  if (repo.git_url !== undefined) {
-    if (typeof repo.git_url !== "string" || repo.git_url.trim() === "") {
-      errors.push(`${prefix}.git_url: must be a non-empty string if present`);
-    }
-  }
-
-  // Optional field: is_bare
-  if (repo.is_bare !== undefined) {
-    if (typeof repo.is_bare !== "boolean") {
-      errors.push(`${prefix}.is_bare: must be a boolean if present`);
-    }
-  }
-
-  // Optional field: worktrees
-  if (repo.worktrees !== undefined) {
-    if (!Array.isArray(repo.worktrees)) {
-      errors.push(`${prefix}.worktrees: must be an array if present`);
-    } else {
-      repo.worktrees.forEach((worktree, index: number) => {
-        validateWorktreeInfo(`${prefix}.worktrees[${index}]`, worktree, errors);
-      });
-    }
-  }
-
-  // Optional field: hooks
-  if (repo.hooks !== undefined) {
-    validateHookConfig(`${prefix}.hooks`, repo.hooks, errors);
-  }
-}
-
-/**
- * Validate a single worktree configuration
- *
- * @param prefix - Path prefix for error messages
- * @param worktree - Worktree info to validate
- * @param errors - Array to accumulate validation errors
- */
-function validateWorktreeInfo(prefix: string, worktree: unknown, errors: string[]): void {
-  const wt = worktree as Record<string, unknown>;
-  if (typeof worktree !== "object" || worktree === null) {
-    errors.push(`${prefix}: must be an object`);
-    return;
-  }
-
-  // Required field: branch
-  if (typeof wt.branch !== "string" || wt.branch === "") {
-    errors.push(`${prefix}.branch: must be a non-empty string`);
-  }
-
-  // Required field: path
-  if (typeof wt.path !== "string" || wt.path === "") {
-    errors.push(`${prefix}.path: must be a non-empty string`);
-  }
-
-  // Required field: created_at
-  if (typeof wt.created_at !== "string" || wt.created_at === "") {
-    errors.push(`${prefix}.created_at: must be a non-empty string`);
-  } else {
-    // Validate ISO 8601 format
-    const date = new Date(wt.created_at);
-    if (isNaN(date.getTime())) {
-      errors.push(`${prefix}.created_at: must be a valid ISO 8601 date string`);
-    }
-  }
-
-  // Optional field: metadata
-  if (wt.metadata !== undefined) {
-    if (typeof wt.metadata !== "object" || wt.metadata === null || Array.isArray(wt.metadata)) {
-      errors.push(`${prefix}.metadata: must be an object if present`);
-    }
-  }
-}
-
-/**
- * Validate hook configuration
- *
- * @param prefix - Path prefix for error messages
- * @param hooks - Hook config to validate
- * @param errors - Array to accumulate validation errors
- */
-function validateHookConfig(prefix: string, hooks: unknown, errors: string[]): void {
-  const hookConfig = hooks as Record<string, unknown>;
-  if (typeof hooks !== "object" || hooks === null) {
-    errors.push(`${prefix}: must be an object`);
-    return;
-  }
-
-  // Optional field: pre_create
-  if (hookConfig.pre_create !== undefined) {
-    if (typeof hookConfig.pre_create !== "string" || hookConfig.pre_create === "") {
-      errors.push(`${prefix}.pre_create: must be a non-empty string if present`);
-    }
-  }
-
-  // Optional field: post_create
-  if (hookConfig.post_create !== undefined) {
-    if (typeof hookConfig.post_create !== "string" || hookConfig.post_create === "") {
-      errors.push(`${prefix}.post_create: must be a non-empty string if present`);
-    }
-  }
-
-  // Optional field: setup
-  if (hookConfig.setup !== undefined) {
-    if (typeof hookConfig.setup !== "string" || hookConfig.setup === "") {
-      errors.push(`${prefix}.setup: must be a non-empty string if present`);
-    }
-  }
+  normalizeConfig(config);
 }
 
 // ============================================================================
@@ -511,7 +668,7 @@ function validateHookConfig(prefix: string, hooks: unknown, errors: string[]): v
  * @example
  * ```typescript
  * const config = await loadConfig('/path/to/repo');
- * console.log(config.repos_dir); // "./repos"
+ * console.log(config.reposDir); // "./repos"
  * ```
  */
 export async function loadConfig(repoPath: string): Promise<Config> {
@@ -542,9 +699,7 @@ export async function loadConfig(repoPath: string): Promise<Config> {
   }
 
   // Validate structure
-  validateConfig(data);
-
-  return data;
+  return normalizeConfig(data);
 }
 
 function parseAndValidateConfig(text: string, configPath: string): Config {
@@ -555,8 +710,7 @@ function parseAndValidateConfig(text: string, configPath: string): Config {
     throw new ConfigParseError(configPath, error as Error);
   }
 
-  validateConfig(data);
-  return data;
+  return normalizeConfig(data);
 }
 
 /**
@@ -606,6 +760,64 @@ export async function loadConfigWithFallback(
   }
 }
 
+function normalizePersistedRepoConfig(repoConfig: RepoConfig): RepoConfig {
+  const normalized: RepoConfig = {
+    path: repoConfig.path,
+  };
+
+  if (repoConfig.gitUrl && repoConfig.gitUrl.trim().length > 0) {
+    normalized.gitUrl = repoConfig.gitUrl;
+  }
+
+  if (repoConfig.hooks) {
+    const hooks: HookConfig = {};
+
+    if (repoConfig.hooks.preCreate && repoConfig.hooks.preCreate.trim().length > 0) {
+      hooks.preCreate = repoConfig.hooks.preCreate;
+    }
+
+    if (repoConfig.hooks.postCreate && repoConfig.hooks.postCreate.trim().length > 0) {
+      hooks.postCreate = repoConfig.hooks.postCreate;
+    }
+
+    if (repoConfig.hooks.setup && repoConfig.hooks.setup.trim().length > 0) {
+      hooks.setup = repoConfig.hooks.setup;
+    }
+
+    if (Object.keys(hooks).length > 0) {
+      normalized.hooks = hooks;
+    }
+  }
+
+  return normalized;
+}
+
+function normalizePersistedConfig(config: Config): Config {
+  const repos: Record<string, RepoConfig> = {};
+
+  for (const [name, repoConfig] of Object.entries(config.repos)) {
+    repos[name] = normalizePersistedRepoConfig(repoConfig);
+  }
+
+  const persisted: Config = {
+    $schema: config.$schema ?? DEFAULT_CONFIG_SCHEMA_URL,
+    version: config.version,
+    reposDir: config.reposDir,
+    autoSetup: config.autoSetup,
+    repos,
+  };
+
+  if (config.hooks) {
+    persisted.hooks = config.hooks;
+  }
+
+  if (config.sync) {
+    persisted.sync = config.sync;
+  }
+
+  return persisted;
+}
+
 /**
  * Save configuration to .arashi/config.json
  *
@@ -619,7 +831,7 @@ export async function loadConfigWithFallback(
  * @example
  * ```typescript
  * const config = await loadConfig('/path/to/repo');
- * config.auto_setup = false;
+ * config.autoSetup = false;
  * await saveConfig('/path/to/repo', config);
  * ```
  */
@@ -628,11 +840,14 @@ export async function saveConfig(repoPath: string, config: Config): Promise<void
   const configDir = dirname(configPath);
 
   try {
+    const normalized = normalizeConfig(config);
+    const persistedConfig = normalizePersistedConfig(normalized);
+
     // Ensure .arashi directory exists
     await mkdir(configDir, { recursive: true });
 
     // Write pretty-printed JSON (2-space indentation)
-    const json = JSON.stringify(config, null, 2);
+    const json = JSON.stringify(persistedConfig, null, 2);
     await Bun.write(configPath, json);
   } catch (error) {
     throw new ConfigError(
@@ -655,8 +870,7 @@ export async function saveConfig(repoPath: string, config: Config): Promise<void
  * ```typescript
  * await addRepo('/path/to/main-repo', 'my-app', {
  *   path: './repos/my-app',
- *   default_branch: 'main',
- *   is_bare: false
+ *   gitUrl: 'git@github.com:team/my-app.git'
  * });
  * ```
  */
@@ -668,16 +882,16 @@ export async function addRepo(
   const config = await loadConfig(repoPath);
 
   // Check if repository name already exists
-  if (config.discovered_repos[name] !== undefined) {
+  if (config.repos[name] !== undefined) {
     throw new ConfigError(
       `Repository "${name}" already exists in configuration. Use "arashi clone" to materialize missing local repositories.`,
       undefined,
-      { name, existingConfig: config.discovered_repos[name] },
+      { name, existingConfig: config.repos[name] },
     );
   }
 
   // Add repository
-  config.discovered_repos[name] = repoConfig;
+  config.repos[name] = repoConfig;
 
   // Save updated configuration
   await saveConfig(repoPath, config);
@@ -698,7 +912,7 @@ export async function removeRepo(repoPath: string, name: string): Promise<void> 
   const config = await loadConfig(repoPath);
 
   // Remove repository (idempotent - no error if doesn't exist)
-  delete config.discovered_repos[name];
+  delete config.repos[name];
 
   // Save updated configuration
   await saveConfig(repoPath, config);
@@ -721,12 +935,11 @@ export async function loadWorkspaceRepositories(
     path: resolve(workspaceRoot),
   });
 
-  for (const [name, repoConfig] of Object.entries(config.discovered_repos)) {
+  for (const [name, repoConfig] of Object.entries(config.repos)) {
     repositories.push({
       name,
       path: resolve(workspaceRoot, repoConfig.path),
-      gitUrl: repoConfig.git_url,
-      defaultBranch: repoConfig.default_branch,
+      gitUrl: repoConfig.gitUrl,
     });
   }
 
@@ -743,7 +956,7 @@ export interface GitUrlRepairResult {
  * Attempt to fill missing repository git URLs from local clone remotes.
  *
  * This provides backward-compatible repair behavior for existing workspaces
- * where `discovered_repos` entries were created before `git_url` tracking.
+ * where `repos` entries were created before `gitUrl` tracking.
  */
 export async function repairRepositoryGitUrls(
   workspaceRoot: string,
@@ -752,15 +965,15 @@ export async function repairRepositoryGitUrls(
   const repaired: string[] = [];
   const unresolved: string[] = [];
 
-  for (const [name, repoConfig] of Object.entries(config.discovered_repos)) {
-    if (repoConfig.git_url && repoConfig.git_url.trim().length > 0) {
+  for (const [name, repoConfig] of Object.entries(config.repos)) {
+    if (repoConfig.gitUrl && repoConfig.gitUrl.trim().length > 0) {
       continue;
     }
 
     const repoPath = resolve(workspaceRoot, repoConfig.path);
     const gitUrl = await resolveOriginRemoteUrl(repoPath);
     if (gitUrl) {
-      repoConfig.git_url = gitUrl;
+      repoConfig.gitUrl = gitUrl;
       repaired.push(name);
     } else {
       unresolved.push(name);

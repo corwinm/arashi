@@ -9,7 +9,7 @@ import {
 import { executeSync } from "../../src/commands/sync.ts";
 
 type SyncConfig = {
-  discovered_repos: Record<string, { path: string } & Record<string, unknown>>;
+  repos: Record<string, { path: string } & Record<string, unknown>>;
   sync?: {
     timeoutSeconds?: number;
   };
@@ -152,10 +152,10 @@ describe("sync command - integration", () => {
     await updateConfig(workspace.rootPath, (config) => {
       return {
         ...config,
-        discovered_repos: {
-          ...config.discovered_repos,
+        repos: {
+          ...config.repos,
           "repo-b": {
-            ...config.discovered_repos["repo-b"],
+            ...config.repos["repo-b"],
             path: "./repos/missing-repo",
           },
         },

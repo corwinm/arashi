@@ -1,0 +1,98 @@
+{
+  "$ref": "#/definitions/Config",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Config": {
+      "additionalProperties": false,
+      "description": "Root configuration object for Arashi",
+      "properties": {
+        "$schema": {
+          "description": "JSON Schema URL for editor validation/autocomplete",
+          "type": "string"
+        },
+        "autoSetup": {
+          "description": "Whether to automatically run setup hooks",
+          "type": "boolean"
+        },
+        "hooks": {
+          "additionalProperties": false,
+          "description": "Optional workspace-level hooks settings",
+          "properties": {
+            "timeout": {
+              "description": "Timeout in milliseconds for long-running operations",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "repos": {
+          "additionalProperties": {
+            "$ref": "#/definitions/RepoConfig"
+          },
+          "description": "Map of repository names to their configurations",
+          "type": "object"
+        },
+        "reposDir": {
+          "description": "Directory where repositories are located",
+          "type": "string"
+        },
+        "sync": {
+          "additionalProperties": false,
+          "description": "Optional sync command settings",
+          "properties": {
+            "timeoutSeconds": {
+              "description": "Sync timeout in seconds",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "version": {
+          "description": "Configuration schema version for migrations",
+          "type": "string"
+        }
+      },
+      "required": ["version", "reposDir", "autoSetup", "repos"],
+      "type": "object"
+    },
+    "HookConfig": {
+      "additionalProperties": false,
+      "description": "Hook configuration for lifecycle events",
+      "properties": {
+        "postCreate": {
+          "description": "Path to script executed after worktree creation",
+          "type": "string"
+        },
+        "preCreate": {
+          "description": "Path to script executed before worktree creation",
+          "type": "string"
+        },
+        "setup": {
+          "description": "Path to script executed during repository setup",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RepoConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for a single repository",
+      "properties": {
+        "gitUrl": {
+          "description": "Canonical git URL for cloning the repository",
+          "type": "string"
+        },
+        "hooks": {
+          "$ref": "#/definitions/HookConfig",
+          "description": "Custom hook configuration for this repository"
+        },
+        "path": {
+          "description": "Path to the repository (relative or absolute)",
+          "type": "string"
+        }
+      },
+      "required": ["path"],
+      "type": "object"
+    }
+  }
+}

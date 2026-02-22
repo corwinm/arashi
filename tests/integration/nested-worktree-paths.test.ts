@@ -46,10 +46,10 @@ describe("Nested Worktree Paths Integration", () => {
         join(metaRepoPath, ".arashi", "config.json"),
         JSON.stringify({
           version: "1.0.0",
-          repos_dir: "./repos",
-          auto_setup: false,
+          reposDir: "./repos",
+          autoSetup: false,
           worktree_strategy: "same_branch",
-          discovered_repos: {},
+          repos: {},
         }),
       );
 
@@ -89,10 +89,10 @@ describe("Nested Worktree Paths Integration", () => {
         join(metaRepoPath, ".arashi", "config.json"),
         JSON.stringify({
           version: "1.0.0",
-          repos_dir: "./repos",
-          auto_setup: false,
+          reposDir: "./repos",
+          autoSetup: false,
           worktree_strategy: "same_branch",
-          discovered_repos: {},
+          repos: {},
         }),
       );
 

@@ -350,20 +350,20 @@ async function executeAdd(
 
     // Step 4: Check for duplicate name
     const config = await loadConfig(workspaceRoot);
-    if (config.discovered_repos[repositoryName]) {
+    if (config.repos[repositoryName]) {
       throw new AddCommandError(
-        `Repository name "${repositoryName}" already exists at ${config.discovered_repos[repositoryName].path}`,
+        `Repository name "${repositoryName}" already exists at ${config.repos[repositoryName].path}`,
         AddCommandErrorCode.DUPLICATE_NAME,
         {
           name: repositoryName,
-          existingPath: config.discovered_repos[repositoryName].path,
+          existingPath: config.repos[repositoryName].path,
           gitUrl,
         },
       );
     }
 
     // Step 5: Prepare clone destination
-    const reposDir = join(workspaceRoot, config.repos_dir);
+    const reposDir = join(workspaceRoot, config.reposDir);
     const clonePath = join(reposDir, repositoryName);
 
     // Step 6: Clone repository
@@ -409,20 +409,17 @@ async function executeAdd(
     const s5 = spinner("Updating configuration...").start();
     try {
       const repoConfig: RepoConfig = {
-        path: join(".", config.repos_dir, repositoryName),
-        git_url: urlInfo.url,
-        default_branch: defaultBranch,
-        is_bare: false,
-        worktrees: [],
+        path: join(".", config.reposDir, repositoryName),
+        gitUrl: urlInfo.url,
       };
 
       if (setupScript) {
         repoConfig.hooks = {
-          setup: join(".", config.repos_dir, repositoryName, basename(setupScript)),
+          setup: join(".", config.reposDir, repositoryName, basename(setupScript)),
         };
       }
 
-      config.discovered_repos[repositoryName] = repoConfig;
+      config.repos[repositoryName] = repoConfig;
       await saveConfig(workspaceRoot, config);
       s5.succeed("Configuration updated");
     } catch (error) {

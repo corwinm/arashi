@@ -2,27 +2,27 @@
 
 export interface ArashiConfig {
   version: string;
-  repos_dir: string;
+  reposDir: string;
   worktree_strategy: "same_branch";
-  auto_setup: boolean;
-  discovered_repos: {
+  autoSetup: boolean;
+  repos: {
     [repoName: string]: RepoConfig;
   };
 }
 
 export interface RepoConfig {
   path: string;
-  default_branch: string;
+  defaultBranch: string;
   remote: string;
   has_setup_script: boolean;
-  git_url?: string;
+  gitUrl?: string;
 }
 
 export interface WorktreeInfo {
   branch: string;
   path: string;
   head: string;
-  is_bare: boolean;
+  isBare: boolean;
   repos: {
     [repoName: string]: {
       path: string;

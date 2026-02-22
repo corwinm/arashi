@@ -190,6 +190,25 @@ If you prefer the term `delete`, create a shell alias:
 alias arashi-delete='arashi remove -f'
 ```
 
+## Configuration Schema
+
+Arashi publishes a JSON Schema for `.arashi/config.json` so editors can validate and autocomplete your config.
+
+- Stable URL: `https://arashi.haphazard.dev/config.json`
+- Version-pinned URL: `https://unpkg.com/arashi@1.7.0/schema/config.schema.json`
+
+Example config header:
+
+```json
+{
+  "$schema": "https://arashi.haphazard.dev/config.json",
+  "version": "1.0.0",
+  "reposDir": "./repos",
+  "autoSetup": true,
+  "repos": {}
+}
+```
+
 ## skills.sh Integration
 
 Arashi also ships a dedicated `skills.sh` integration package for guided installation, workflow examples, and troubleshooting.
@@ -202,6 +221,7 @@ Arashi also ships a dedicated `skills.sh` integration package for guided install
 ## Documentation
 
 - Installation details: [`docs/INSTALLATION.md`](./docs/INSTALLATION.md)
+- Configuration details: [`docs/configuration.md`](./docs/configuration.md)
 - Clone command details: [`docs/commands/clone.md`](./docs/commands/clone.md)
 - Hook behavior: [`docs/hooks.md`](./docs/hooks.md)
 - Setup command details: [`docs/commands/setup.md`](./docs/commands/setup.md)
