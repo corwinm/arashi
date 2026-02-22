@@ -16,18 +16,6 @@ import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
 // ============================================================================
 
 /**
- * Hook configuration for lifecycle events
- */
-export interface HookConfig {
-  /** Path to script executed before worktree creation */
-  preCreate?: string;
-  /** Path to script executed after worktree creation */
-  postCreate?: string;
-  /** Path to script executed during repository setup */
-  setup?: string;
-}
-
-/**
  * Information about a single git worktree
  */
 export interface WorktreeInfo {
@@ -49,9 +37,10 @@ export interface RepoConfig {
   path: string;
   /** Canonical git URL for cloning the repository */
   gitUrl?: string;
-  /** Custom hook configuration for this repository */
-  hooks?: HookConfig;
 }
+
+export const CURRENT_CONFIG_VERSION = "1.0.0" as const;
+export type ConfigVersion = typeof CURRENT_CONFIG_VERSION;
 
 /**
  * Root configuration object for Arashi
@@ -60,11 +49,9 @@ export interface Config {
   /** JSON Schema URL for editor validation/autocomplete */
   $schema?: string;
   /** Configuration schema version for migrations */
-  version: string;
+  version: ConfigVersion;
   /** Directory where repositories are located */
   reposDir: string;
-  /** Whether to automatically run setup hooks */
-  autoSetup: boolean;
   /** Optional workspace-level hooks settings */
   hooks?: {
     /** Timeout in milliseconds for long-running operations */
@@ -173,6 +160,20 @@ export class ConfigValidationError extends ConfigError {
   }
 }
 
+/**
+ * Error thrown when configuration version is not supported by this CLI release.
+ */
+export class UnsupportedConfigVersionError extends ConfigError {
+  constructor(version: string, supportedVersion: ConfigVersion) {
+    super(
+      `Unsupported configuration version "${version}". This version of arashi supports "${supportedVersion}".`,
+      undefined,
+      { version, supportedVersion },
+    );
+    this.name = "UnsupportedConfigVersionError";
+  }
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -265,9 +266,8 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
  *
  * Creates a minimal valid configuration with sensible defaults:
  * - $schema: "https://unpkg.com/arashi/schema/config.schema.json"
- * - version: "1.0.0"
+ * - version: CURRENT_CONFIG_VERSION
  * - reposDir: "./repos"
- * - autoSetup: true
  * - repos: {}
  *
  * @returns Default configuration object
@@ -281,9 +281,8 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
 export function generateDefaultConfig(): Config {
   return {
     $schema: DEFAULT_CONFIG_SCHEMA_URL,
-    version: "1.0.0",
+    version: CURRENT_CONFIG_VERSION,
     reposDir: "./repos",
-    autoSetup: true,
     repos: {},
   };
 }
@@ -297,8 +296,6 @@ const ROOT_ALLOWED_KEYS = new Set([
   "version",
   "reposDir",
   "repos_dir",
-  "autoSetup",
-  "auto_setup",
   "repos",
   "discoveredRepos",
   "discovered_repos",
@@ -308,25 +305,17 @@ const ROOT_ALLOWED_KEYS = new Set([
 
 const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout"]);
 const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
+const VERSION_ALIASES = new Map<string, ConfigVersion>([["1", CURRENT_CONFIG_VERSION]]);
 
 const REPO_ALLOWED_KEYS = new Set([
   "path",
   "gitUrl",
   "git_url",
-  "hooks",
   "defaultBranch",
   "default_branch",
   "isBare",
   "is_bare",
   "worktrees",
-]);
-
-const REPO_HOOK_ALLOWED_KEYS = new Set([
-  "preCreate",
-  "pre_create",
-  "postCreate",
-  "post_create",
-  "setup",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -356,59 +345,35 @@ function validateNoUnknownKeys(
   }
 }
 
-function normalizeRepoHooks(
-  value: unknown,
-  prefix: string,
+function resolveConfigVersion(
+  rawVersion: unknown,
   errors: string[],
-): HookConfig | undefined {
-  if (value === undefined) {
-    return undefined;
+): {
+  version: ConfigVersion;
+  migratedFromVersion?: string;
+} {
+  if (typeof rawVersion !== "string" || rawVersion.trim() === "") {
+    errors.push("version: must be a non-empty string");
+    return { version: CURRENT_CONFIG_VERSION };
   }
 
-  if (!isRecord(value)) {
-    errors.push(`${prefix}: must be an object if present`);
-    return undefined;
+  const version = rawVersion.trim();
+  const canonicalVersion = VERSION_ALIASES.get(version) ?? version;
+
+  if (canonicalVersion !== CURRENT_CONFIG_VERSION) {
+    throw new UnsupportedConfigVersionError(version, CURRENT_CONFIG_VERSION);
   }
 
-  validateNoUnknownKeys(value, REPO_HOOK_ALLOWED_KEYS, prefix, errors);
-
-  const preCreate = getFirstDefined(
-    value.preCreate as string | undefined,
-    value.pre_create as string | undefined,
-  );
-  const postCreate = getFirstDefined(
-    value.postCreate as string | undefined,
-    value.post_create as string | undefined,
-  );
-  const setup = value.setup as string | undefined;
-
-  const normalized: HookConfig = {};
-
-  if (preCreate !== undefined) {
-    if (typeof preCreate !== "string" || preCreate.trim() === "") {
-      errors.push(`${prefix}.preCreate: must be a non-empty string if present`);
-    } else {
-      normalized.preCreate = preCreate;
-    }
+  if (canonicalVersion !== version) {
+    return {
+      version: canonicalVersion,
+      migratedFromVersion: version,
+    };
   }
 
-  if (postCreate !== undefined) {
-    if (typeof postCreate !== "string" || postCreate.trim() === "") {
-      errors.push(`${prefix}.postCreate: must be a non-empty string if present`);
-    } else {
-      normalized.postCreate = postCreate;
-    }
-  }
-
-  if (setup !== undefined) {
-    if (typeof setup !== "string" || setup.trim() === "") {
-      errors.push(`${prefix}.setup: must be a non-empty string if present`);
-    } else {
-      normalized.setup = setup;
-    }
-  }
-
-  return Object.keys(normalized).length > 0 ? normalized : undefined;
+  return {
+    version: CURRENT_CONFIG_VERSION,
+  };
 }
 
 function normalizeRepoConfig(
@@ -430,7 +395,6 @@ function normalizeRepoConfig(
     value.gitUrl as string | undefined,
     value.git_url as string | undefined,
   );
-  const hooks = normalizeRepoHooks(value.hooks, `${prefix}.hooks`, errors);
 
   if (typeof path !== "string" || path.trim() === "") {
     errors.push(`${prefix}.path: must be a non-empty string`);
@@ -445,10 +409,6 @@ function normalizeRepoConfig(
     } else {
       normalized.gitUrl = gitUrl;
     }
-  }
-
-  if (hooks) {
-    normalized.hooks = hooks;
   }
 
   return normalized;
@@ -527,16 +487,17 @@ function normalizeSyncConfig(
  *
  * Accepted legacy aliases:
  * - repos_dir -> reposDir
- * - auto_setup -> autoSetup
  * - discovered_repos / discoveredRepos -> repos
  * - git_url -> gitUrl
- * - pre_create/post_create -> preCreate/postCreate
  *
  * Legacy repository metadata keys (`defaultBranch`, `isBare`, `worktrees`) are
  * accepted for backward compatibility but intentionally dropped from the
  * normalized result.
  */
-export function normalizeConfig(config: unknown): Config {
+function normalizeConfigInternal(config: unknown): {
+  config: Config;
+  migratedFromVersion?: string;
+} {
   const errors: string[] = [];
 
   if (!isRecord(config)) {
@@ -546,14 +507,10 @@ export function normalizeConfig(config: unknown): Config {
   validateNoUnknownKeys(config, ROOT_ALLOWED_KEYS, "", errors);
 
   const schema = config.$schema;
-  const version = config.version;
+  const versionInfo = resolveConfigVersion(config.version, errors);
   const reposDir = getFirstDefined(
     config.reposDir as string | undefined,
     config.repos_dir as string | undefined,
-  );
-  const autoSetup = getFirstDefined(
-    config.autoSetup as boolean | undefined,
-    config.auto_setup as boolean | undefined,
   );
   const reposRaw = getFirstDefined(
     config.repos as Record<string, unknown> | undefined,
@@ -567,16 +524,8 @@ export function normalizeConfig(config: unknown): Config {
     errors.push("$schema: must be a non-empty string if present");
   }
 
-  if (typeof version !== "string" || version.trim() === "") {
-    errors.push("version: must be a non-empty string");
-  }
-
   if (typeof reposDir !== "string" || reposDir.trim() === "") {
     errors.push("reposDir: must be a non-empty string");
-  }
-
-  if (typeof autoSetup !== "boolean") {
-    errors.push("autoSetup: must be a boolean");
   }
 
   const normalizedRepos: Record<string, RepoConfig> = {};
@@ -595,14 +544,12 @@ export function normalizeConfig(config: unknown): Config {
     throw new ConfigValidationError(errors);
   }
 
-  const normalizedVersion = version as string;
+  const normalizedVersion = versionInfo.version;
   const normalizedReposDir = reposDir as string;
-  const normalizedAutoSetup = autoSetup as boolean;
 
   const normalizedConfig: Config = {
     version: normalizedVersion,
     reposDir: normalizedReposDir,
-    autoSetup: normalizedAutoSetup,
     repos: normalizedRepos,
   };
 
@@ -618,16 +565,23 @@ export function normalizeConfig(config: unknown): Config {
     normalizedConfig.sync = sync;
   }
 
-  return normalizedConfig;
+  return {
+    config: normalizedConfig,
+    migratedFromVersion: versionInfo.migratedFromVersion,
+  };
+}
+
+export function normalizeConfig(config: unknown): Config {
+  return normalizeConfigInternal(config).config;
 }
 
 /**
  * Validate configuration structure and required fields
  *
  * Checks:
- * - All required fields present (version, reposDir, autoSetup, repos)
+ * - All required fields present (version, reposDir, repos)
  * - Field types are correct
- * - Nested structures valid (RepoConfig, WorktreeInfo, HookConfig)
+ * - Nested structures valid (RepoConfig and workspace-level hooks/sync objects)
  *
  * Does NOT check:
  * - File system paths exist
@@ -698,8 +652,13 @@ export async function loadConfig(repoPath: string): Promise<Config> {
     throw new ConfigParseError(configPath, error as Error);
   }
 
-  // Validate structure
-  return normalizeConfig(data);
+  const normalized = normalizeConfigInternal(data);
+
+  if (normalized.migratedFromVersion) {
+    await saveConfig(repoPath, normalized.config);
+  }
+
+  return normalized.config;
 }
 
 function parseAndValidateConfig(text: string, configPath: string): Config {
@@ -710,7 +669,7 @@ function parseAndValidateConfig(text: string, configPath: string): Config {
     throw new ConfigParseError(configPath, error as Error);
   }
 
-  return normalizeConfig(data);
+  return normalizeConfigInternal(data).config;
 }
 
 /**
@@ -769,26 +728,6 @@ function normalizePersistedRepoConfig(repoConfig: RepoConfig): RepoConfig {
     normalized.gitUrl = repoConfig.gitUrl;
   }
 
-  if (repoConfig.hooks) {
-    const hooks: HookConfig = {};
-
-    if (repoConfig.hooks.preCreate && repoConfig.hooks.preCreate.trim().length > 0) {
-      hooks.preCreate = repoConfig.hooks.preCreate;
-    }
-
-    if (repoConfig.hooks.postCreate && repoConfig.hooks.postCreate.trim().length > 0) {
-      hooks.postCreate = repoConfig.hooks.postCreate;
-    }
-
-    if (repoConfig.hooks.setup && repoConfig.hooks.setup.trim().length > 0) {
-      hooks.setup = repoConfig.hooks.setup;
-    }
-
-    if (Object.keys(hooks).length > 0) {
-      normalized.hooks = hooks;
-    }
-  }
-
   return normalized;
 }
 
@@ -803,7 +742,6 @@ function normalizePersistedConfig(config: Config): Config {
     $schema: config.$schema ?? DEFAULT_CONFIG_SCHEMA_URL,
     version: config.version,
     reposDir: config.reposDir,
-    autoSetup: config.autoSetup,
     repos,
   };
 
@@ -831,7 +769,7 @@ function normalizePersistedConfig(config: Config): Config {
  * @example
  * ```typescript
  * const config = await loadConfig('/path/to/repo');
- * config.autoSetup = false;
+ * config.reposDir = "./repos";
  * await saveConfig('/path/to/repo', config);
  * ```
  */

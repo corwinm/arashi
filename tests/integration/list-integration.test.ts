@@ -55,7 +55,6 @@ async function createTempGitRepo(): Promise<string> {
   const testConfig = {
     version: "1.0.0",
     reposDir: "./repos",
-    autoSetup: true,
     repos: {},
     hooks: {
       timeout: 300,
@@ -713,7 +712,6 @@ describe("list command - edge cases", () => {
     const testConfig = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {},
       hooks: { timeout: 300 },
       discovery: { max_depth: 3 },

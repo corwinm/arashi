@@ -4,7 +4,6 @@ export interface ArashiConfig {
   version: string;
   reposDir: string;
   worktree_strategy: "same_branch";
-  autoSetup: boolean;
   repos: {
     [repoName: string]: RepoConfig;
   };

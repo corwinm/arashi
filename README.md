@@ -204,7 +204,6 @@ Example config header:
   "$schema": "https://unpkg.com/arashi/schema/config.schema.json",
   "version": "1.0.0",
   "reposDir": "./repos",
-  "autoSetup": true,
   "repos": {}
 }
 ```

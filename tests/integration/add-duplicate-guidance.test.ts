@@ -14,7 +14,6 @@ describe("add command duplicate guidance", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "arashi-docs": {
           path: "./repos/arashi-docs",

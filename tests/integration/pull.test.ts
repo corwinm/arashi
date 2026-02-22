@@ -79,7 +79,6 @@ async function createWorkspaceWithRepo(
   const config: Record<string, unknown> = {
     version: "1.0.0",
     reposDir: "./repos",
-    autoSetup: true,
     repos: {
       "repo-a": {
         path: "./repos/repo-a",

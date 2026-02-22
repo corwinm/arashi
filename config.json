@@ -10,10 +10,6 @@
           "description": "JSON Schema URL for editor validation/autocomplete",
           "type": "string"
         },
-        "autoSetup": {
-          "description": "Whether to automatically run setup hooks",
-          "type": "boolean"
-        },
         "hooks": {
           "additionalProperties": false,
           "description": "Optional workspace-level hooks settings",
@@ -48,31 +44,16 @@
           "type": "object"
         },
         "version": {
-          "description": "Configuration schema version for migrations",
-          "type": "string"
+          "$ref": "#/definitions/ConfigVersion",
+          "description": "Configuration schema version for migrations"
         }
       },
-      "required": ["version", "reposDir", "autoSetup", "repos"],
+      "required": ["version", "reposDir", "repos"],
       "type": "object"
     },
-    "HookConfig": {
-      "additionalProperties": false,
-      "description": "Hook configuration for lifecycle events",
-      "properties": {
-        "postCreate": {
-          "description": "Path to script executed after worktree creation",
-          "type": "string"
-        },
-        "preCreate": {
-          "description": "Path to script executed before worktree creation",
-          "type": "string"
-        },
-        "setup": {
-          "description": "Path to script executed during repository setup",
-          "type": "string"
-        }
-      },
-      "type": "object"
+    "ConfigVersion": {
+      "const": "1.0.0",
+      "type": "string"
     },
     "RepoConfig": {
       "additionalProperties": false,
@@ -81,10 +62,6 @@
         "gitUrl": {
           "description": "Canonical git URL for cloning the repository",
           "type": "string"
-        },
-        "hooks": {
-          "$ref": "#/definitions/HookConfig",
-          "description": "Custom hook configuration for this repository"
         },
         "path": {
           "description": "Path to the repository (relative or absolute)",

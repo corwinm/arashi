@@ -413,12 +413,6 @@ async function executeAdd(
         gitUrl: urlInfo.url,
       };
 
-      if (setupScript) {
-        repoConfig.hooks = {
-          setup: join(".", config.reposDir, repositoryName, basename(setupScript)),
-        };
-      }
-
       config.repos[repositoryName] = repoConfig;
       await saveConfig(workspaceRoot, config);
       s5.succeed("Configuration updated");

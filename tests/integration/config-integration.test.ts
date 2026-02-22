@@ -17,6 +17,7 @@ import {
   ConfigNotFoundError,
   ConfigParseError,
   ConfigValidationError,
+  UnsupportedConfigVersionError,
   ConfigError,
   type Config,
 } from "../../src/lib/config";
@@ -114,18 +115,17 @@ describe("saveConfig", () => {
     await saveConfig(testDir, config1);
 
     const config2 = generateDefaultConfig();
-    config2.autoSetup = false;
+    config2.reposDir = "./custom-repos";
     await saveConfig(testDir, config2);
 
     const loaded = await loadConfig(testDir);
-    expect(loaded.autoSetup).toBe(false);
+    expect(loaded.reposDir).toBe("./custom-repos");
   });
 
   test("drops deprecated repository metadata while preserving canonical fields", async () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "test-repo": {
           path: "./repos/test-repo",
@@ -138,9 +138,6 @@ describe("saveConfig", () => {
               createdAt: "2026-02-03T10:30:00Z",
             },
           ],
-          hooks: {
-            postCreate: "./.arashi/hooks/post-create.sh",
-          },
         },
       },
     };
@@ -150,9 +147,6 @@ describe("saveConfig", () => {
 
     expect(loaded.repos["test-repo"]).toEqual({
       path: "./repos/test-repo",
-      hooks: {
-        postCreate: "./.arashi/hooks/post-create.sh",
-      },
     });
   });
 });
@@ -174,6 +168,44 @@ describe("loadConfig", () => {
 
     const loaded = await loadConfig(testDir);
     expect(loaded).toEqual(config);
+  });
+
+  test("migrates version alias to canonical version and persists", async () => {
+    const configPath = getConfigPath(testDir);
+    await mkdir(join(testDir, ".arashi"), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          version: "1",
+          reposDir: "./repos",
+          repos: {},
+        },
+        null,
+        2,
+      ),
+    );
+
+    const loaded = await loadConfig(testDir);
+    expect(loaded.version).toBe("1.0.0");
+
+    const persisted = JSON.parse(await Bun.file(configPath).text()) as { version: string };
+    expect(persisted.version).toBe("1.0.0");
+  });
+
+  test("throws unsupported version error for future config versions", async () => {
+    const configPath = getConfigPath(testDir);
+    await mkdir(join(testDir, ".arashi"), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        version: "2.0.0",
+        reposDir: "./repos",
+        repos: {},
+      }),
+    );
+
+    await expect(loadConfig(testDir)).rejects.toThrow(UnsupportedConfigVersionError);
   });
 
   test("throws ConfigNotFoundError when file does not exist", async () => {
@@ -224,7 +256,6 @@ describe("loadConfig", () => {
       configPath,
       JSON.stringify({
         reposDir: "./repos",
-        autoSetup: true,
         repos: {},
         // Missing version
       }),
@@ -240,7 +271,6 @@ describe("loadConfig", () => {
       configPath,
       JSON.stringify({
         version: "", // Invalid
-        autoSetup: "true", // Wrong type
         repos: {},
         // Missing reposDir
       }),
@@ -263,7 +293,6 @@ describe("loadConfig", () => {
     const configWithExtras = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {},
       future_feature: "some value",
       custom_data: { team: "backend" },
@@ -306,21 +335,19 @@ describe("addRepo", () => {
     const config = await loadConfig(testDir);
     expect(config.repos["simple-repo"]).toBeDefined();
     expect(config.repos["simple-repo"].path).toBe("./repos/simple");
-    expect(config.repos["simple-repo"].defaultBranch).toBeUndefined();
+    expect(config.repos["simple-repo"].gitUrl).toBeUndefined();
   });
 
   test("adds repository with complete configuration", async () => {
     await addRepo(testDir, "full-repo", {
       path: "./repos/full",
-      hooks: {
-        postCreate: "./hooks/post.sh",
-      },
+      gitUrl: "git@github.com:team/full.git",
     });
 
     const config = await loadConfig(testDir);
     const repo = config.repos["full-repo"];
     expect(repo.path).toBe("./repos/full");
-    expect(repo.hooks?.postCreate).toBe("./hooks/post.sh");
+    expect(repo.gitUrl).toBe("git@github.com:team/full.git");
   });
 
   test("throws error when repository name already exists", async () => {
@@ -435,7 +462,6 @@ describe("round-trip tests", () => {
     const original: Config = {
       version: "1.0.0",
       reposDir: "/absolute/path/to/repos",
-      autoSetup: false,
       repos: {
         repo1: {
           path: "./repos/repo1",
@@ -443,10 +469,6 @@ describe("round-trip tests", () => {
         },
         repo2: {
           path: "./repos/repo2",
-          hooks: {
-            preCreate: "./hooks/pre.sh",
-            postCreate: "./hooks/post.sh",
-          },
         },
       },
     };
@@ -462,14 +484,14 @@ describe("round-trip tests", () => {
     await saveConfig(testDir, config);
 
     config = await loadConfig(testDir);
-    config.autoSetup = false;
+    config.reposDir = "./repos-custom";
     await saveConfig(testDir, config);
 
     config = await loadConfig(testDir);
     await addRepo(testDir, "test", { path: "./test" });
 
     config = await loadConfig(testDir);
-    expect(config.autoSetup).toBe(false);
+    expect(config.reposDir).toBe("./repos-custom");
     expect(config.repos["test"]).toBeDefined();
   });
 
@@ -477,7 +499,6 @@ describe("round-trip tests", () => {
     const config: Config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "repo-with-url": {
           path: "./repos/repo-with-url",
@@ -568,13 +589,11 @@ describe("end-to-end workflow", () => {
     // Load and modify
     let config = await loadConfig(testDir);
     config.reposDir = "/custom/path";
-    config.autoSetup = false;
     await saveConfig(testDir, config);
 
     // Verify changes persisted
     config = await loadConfig(testDir);
     expect(config.reposDir).toBe("/custom/path");
-    expect(config.autoSetup).toBe(false);
   });
 });
 
@@ -599,7 +618,6 @@ describe("repairRepositoryGitUrls", () => {
     const config: Config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "child-repo": {
           path: "./repos/child-repo",

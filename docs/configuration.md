@@ -9,7 +9,6 @@ To enable JSON validation and editor autocomplete, include a `$schema` property:
   "$schema": "https://unpkg.com/arashi/schema/config.schema.json",
   "version": "1.0.0",
   "reposDir": "./repos",
-  "autoSetup": true,
   "repos": {}
 }
 ```
@@ -26,9 +25,7 @@ Use the stable URL for normal workflows, and the version-pinned URL when you wan
 Newly written config files use camelCase keys:
 
 - `reposDir`
-- `autoSetup`
 - `repos`
 - `gitUrl`
-- `preCreate` / `postCreate`
 
 Legacy snake_case keys are still accepted when loading existing workspaces, and Arashi rewrites them to canonical camelCase when the config is saved.

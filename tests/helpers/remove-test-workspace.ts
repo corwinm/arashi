@@ -38,7 +38,6 @@ export async function createRemoveWorkspace(
   const config = {
     version: "1.0.0",
     reposDir: "./repos",
-    autoSetup: true,
     repos: Object.fromEntries(
       repos.map((repo) => [
         repo.name,

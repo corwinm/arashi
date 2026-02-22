@@ -68,7 +68,6 @@ describe("detectRepositoryType", () => {
       const config: ArashiConfig = {
         version: "1.0.0",
         reposDir: "./repos",
-        autoSetup: true,
         worktree_strategy: "same_branch",
         repos: {},
       };

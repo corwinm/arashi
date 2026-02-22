@@ -67,7 +67,6 @@ export async function createChildHookWorkspace(
       {
         version: "1.0.0",
         reposDir: "./repos",
-        autoSetup: true,
         hooks: {
           timeout: options.hookTimeoutMs ?? 1000,
         },

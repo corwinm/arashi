@@ -11,6 +11,7 @@ import {
   normalizeConfig,
   validateConfig,
   ConfigValidationError,
+  UnsupportedConfigVersionError,
   type Config,
 } from "../../src/lib/config";
 import { join } from "path";
@@ -42,7 +43,6 @@ describe("generateDefaultConfig", () => {
 
     expect(config.version).toBe("1.0.0");
     expect(config.reposDir).toBe("./repos");
-    expect(config.autoSetup).toBe(true);
     expect(config.repos).toEqual({});
   });
 
@@ -60,7 +60,6 @@ describe("validateConfig - root level", () => {
     const validConfig: Config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "example-repo": {
           path: "./repos/example-repo",
@@ -77,7 +76,6 @@ describe("validateConfig - root level", () => {
     const minimalConfig = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {},
     };
 
@@ -98,7 +96,6 @@ describe("validateConfig - root level", () => {
   test("catches missing version field", () => {
     const config = {
       reposDir: "./repos",
-      autoSetup: true,
       repos: {},
     };
 
@@ -109,7 +106,6 @@ describe("validateConfig - root level", () => {
   test("catches missing reposDir field", () => {
     const config = {
       version: "1.0.0",
-      autoSetup: true,
       repos: {},
     };
 
@@ -117,22 +113,10 @@ describe("validateConfig - root level", () => {
     expect(() => validateConfig(config)).toThrow("reposDir");
   });
 
-  test("catches missing autoSetup field", () => {
-    const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
-      repos: {},
-    };
-
-    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
-    expect(() => validateConfig(config)).toThrow("autoSetup");
-  });
-
   test("catches missing repos field", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
     };
 
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
@@ -143,7 +127,6 @@ describe("validateConfig - root level", () => {
     const config = {
       version: 1.0, // Should be string
       reposDir: "./repos",
-      autoSetup: "true", // Should be boolean
       repos: [], // Should be object
     };
 
@@ -154,7 +137,6 @@ describe("validateConfig - root level", () => {
       expect(error).toBeInstanceOf(ConfigValidationError);
       const err = error as ConfigValidationError;
       expect(err.context.errors).toContain("version: must be a non-empty string");
-      expect(err.context.errors).toContain("autoSetup: must be a boolean");
       expect(err.context.errors).toContain("repos: must be an object");
     }
   });
@@ -163,7 +145,6 @@ describe("validateConfig - root level", () => {
     const config = {
       version: "", // Empty string not allowed
       reposDir: "",
-      autoSetup: true,
       repos: {},
     };
 
@@ -177,11 +158,31 @@ describe("validateConfig - root level", () => {
     }
   });
 
+  test("rejects unsupported config version", () => {
+    const config = {
+      version: "2.0.0",
+      reposDir: "./repos",
+      repos: {},
+    };
+
+    expect(() => validateConfig(config)).toThrow(UnsupportedConfigVersionError);
+    expect(() => validateConfig(config)).toThrow("Unsupported configuration version");
+  });
+
+  test("normalizes supported version alias", () => {
+    const normalized = normalizeConfig({
+      version: "1",
+      reposDir: "./repos",
+      repos: {},
+    });
+
+    expect(normalized.version).toBe("1.0.0");
+  });
+
   test("rejects unknown root fields", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {},
       future_feature: "some value",
       custom_metadata: { team: "backend" },
@@ -197,7 +198,6 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -214,7 +214,6 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -229,7 +228,6 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -245,7 +243,6 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -262,7 +259,6 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "my-repo": {
           defaultBranch: "main",
@@ -279,7 +275,6 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -297,7 +292,6 @@ describe("validateConfig - RepoConfig validation", () => {
     const normalized = normalizeConfig({
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -317,7 +311,6 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -331,90 +324,11 @@ describe("validateConfig - RepoConfig validation", () => {
   });
 });
 
-describe("validateConfig - HookConfig validation", () => {
-  test("accepts valid hook configuration", () => {
-    const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
-      autoSetup: true,
-      repos: {
-        "my-repo": {
-          path: "./repos/my-repo",
-          hooks: {
-            preCreate: "./.arashi/hooks/pre-create.sh",
-            postCreate: "./.arashi/hooks/post-create.sh",
-            setup: "./.arashi/hooks/setup.sh",
-          },
-        },
-      },
-    };
-
-    expect(() => validateConfig(config)).not.toThrow();
-  });
-
-  test("accepts partial hook configuration", () => {
-    const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
-      autoSetup: true,
-      repos: {
-        "my-repo": {
-          path: "./repos/my-repo",
-          hooks: {
-            postCreate: "./.arashi/hooks/post-create.sh",
-          },
-        },
-      },
-    };
-
-    expect(() => validateConfig(config)).not.toThrow();
-  });
-
-  test("catches invalid preCreate type", () => {
-    const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
-      autoSetup: true,
-      repos: {
-        "my-repo": {
-          path: "./repos/my-repo",
-          hooks: {
-            preCreate: 123,
-          },
-        },
-      },
-    };
-
-    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
-    expect(() => validateConfig(config)).toThrow("preCreate");
-  });
-
-  test("catches empty hook paths", () => {
-    const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
-      autoSetup: true,
-      repos: {
-        "my-repo": {
-          path: "./repos/my-repo",
-          hooks: {
-            postCreate: "",
-          },
-        },
-      },
-    };
-
-    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
-    expect(() => validateConfig(config)).toThrow("postCreate");
-  });
-});
-
 describe("validateConfig - error messages", () => {
   test("provides multiple errors in single validation", () => {
     const config = {
       version: "", // Invalid
       reposDir: "./repos",
-      autoSetup: "not-a-boolean", // Invalid
       repos: {
         "bad-repo": {
           // Missing path
@@ -437,7 +351,6 @@ describe("validateConfig - error messages", () => {
     const config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {},
     };
     delete (config as { version?: string }).version;

@@ -47,7 +47,6 @@ describe("Nested Worktree Paths Integration", () => {
         JSON.stringify({
           version: "1.0.0",
           reposDir: "./repos",
-          autoSetup: false,
           worktree_strategy: "same_branch",
           repos: {},
         }),
@@ -90,7 +89,6 @@ describe("Nested Worktree Paths Integration", () => {
         JSON.stringify({
           version: "1.0.0",
           reposDir: "./repos",
-          autoSetup: false,
           worktree_strategy: "same_branch",
           repos: {},
         }),

@@ -45,7 +45,6 @@ export async function createBareCreateWorkspace(
         {
           version: "1.0.0",
           reposDir: configReposDir,
-          autoSetup: true,
           repos: {},
         },
         null,

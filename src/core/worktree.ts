@@ -1119,7 +1119,6 @@ export async function createCoordinatedWorktrees(
         config = {
           version: "1.0.0",
           reposDir: "./repos",
-          autoSetup: false,
           repos: {},
         };
       }

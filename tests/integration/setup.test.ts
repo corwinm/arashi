@@ -46,7 +46,6 @@ async function createWorkspace(
   const config: {
     version: string;
     reposDir: string;
-    autoSetup: boolean;
     hooks?: { timeout: number };
     repos: Record<
       string,
@@ -55,7 +54,6 @@ async function createWorkspace(
   } = {
     version: "1.0.0",
     reposDir: "./repos",
-    autoSetup: true,
     repos: {
       "repo-a": {
         path: "./repos/repo-a",

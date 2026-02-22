@@ -27,7 +27,6 @@ describe("clone-discovery", () => {
     const config: Config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "repo-a": { path: "./repos/repo-a", gitUrl: "git@github.com:team/repo-a.git" },
         "repo-b": { path: "./repos/repo-b", gitUrl: "git@github.com:team/repo-b.git" },
@@ -48,7 +47,6 @@ describe("clone-discovery", () => {
     const config: Config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {},
     };
 

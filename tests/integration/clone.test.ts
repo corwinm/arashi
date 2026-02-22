@@ -23,7 +23,6 @@ describe("clone command", () => {
     const config: Config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "repo-a": {
           path: "./repos/repo-a",
@@ -50,7 +49,6 @@ describe("clone command", () => {
     const config: Config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "repo-a": {
           path: "./repos/repo-a",
@@ -91,7 +89,6 @@ describe("clone command", () => {
     const config: Config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "repo-a": {
           path: "./repos/repo-a",
@@ -128,7 +125,6 @@ describe("clone command", () => {
     const config: Config = {
       version: "1.0.0",
       reposDir: "./repos",
-      autoSetup: true,
       repos: {
         "repo-a": {
           path: "./repos/repo-a",
