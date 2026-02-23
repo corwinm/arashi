@@ -13,6 +13,13 @@ import * as logger from "../lib/logger.ts";
 import * as filesystem from "../lib/filesystem.ts";
 import { exec as gitExec } from "../lib/git.ts";
 import { discoverRepositories } from "../core/repository.ts";
+import {
+  DEFAULT_WORKTREES_DIR,
+  DEFAULT_WORKTREES_GITIGNORE_ENTRY,
+  isDefaultWorktreesDir,
+  normalizeWorktreesDir,
+  WorktreeLocationValidationError,
+} from "../lib/worktree-location.ts";
 
 // ============================================================================
 // Data Types
@@ -21,6 +28,9 @@ import { discoverRepositories } from "../core/repository.ts";
 interface InitOptions {
   /** Custom location for managed repositories */
   reposDir?: string;
+
+  /** Base location for managed worktrees (workspace-relative) */
+  worktreesDir?: string;
 
   /** Overwrite existing configuration if present */
   force?: boolean;
@@ -393,16 +403,27 @@ async function writeHookTemplates(hooksDir: string): Promise<void> {
 /**
  * Update .gitignore to exclude repos directory (idempotent)
  */
-async function updateGitignore(cwd: string, reposDir: string): Promise<void> {
-  const gitignorePath = join(cwd, ".gitignore");
-
-  // Normalize repos dir for gitignore pattern
-  // Remove leading ./ if present
-  let pattern = reposDir.replace(/^\.\//, "");
-
-  // Ensure trailing slash for directory
+function normalizeGitignorePattern(directoryPath: string): string {
+  let pattern = directoryPath.replace(/^\.\//, "");
   if (!pattern.endsWith("/")) {
     pattern += "/";
+  }
+  return pattern;
+}
+
+function hasGitignorePattern(content: string, pattern: string): boolean {
+  const alternate = pattern.endsWith("/") ? pattern.slice(0, -1) : pattern;
+  return content
+    .split("\n")
+    .map((line) => line.trim())
+    .some((line) => line === pattern || line === alternate);
+}
+
+async function updateGitignore(cwd: string, reposDir: string, worktreesDir: string): Promise<void> {
+  const gitignorePath = join(cwd, ".gitignore");
+  const patterns = [normalizeGitignorePattern(reposDir)];
+  if (isDefaultWorktreesDir(worktreesDir)) {
+    patterns.push(DEFAULT_WORKTREES_GITIGNORE_ENTRY);
   }
 
   let content = "";
@@ -412,16 +433,11 @@ async function updateGitignore(cwd: string, reposDir: string): Promise<void> {
   if (await filesystem.fileExists(gitignorePath)) {
     originalContent = await filesystem.readTextFile(gitignorePath);
     content = originalContent;
+  }
 
-    // Check if pattern already exists (idempotent)
-    const lines = content.split("\n");
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed === pattern || trimmed === pattern.slice(0, -1)) {
-        // Pattern already exists, no need to add
-        return;
-      }
-    }
+  const missingPatterns = patterns.filter((pattern) => !hasGitignorePattern(content, pattern));
+  if (missingPatterns.length === 0) {
+    return;
   }
 
   // Ensure content ends with newline before appending
@@ -429,8 +445,11 @@ async function updateGitignore(cwd: string, reposDir: string): Promise<void> {
     content += "\n";
   }
 
-  // Append pattern with comment
-  content += `\n# Arashi managed repositories\n${pattern}\n`;
+  // Append patterns with comment
+  content += "\n# Arashi managed repositories\n";
+  for (const pattern of missingPatterns) {
+    content += `${pattern}\n`;
+  }
 
   // Write updated .gitignore
   await filesystem.writeTextFile(gitignorePath, content);
@@ -526,7 +545,7 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
       logVerbose("No existing configuration found", options);
     }
 
-    // 4. Validate and resolve repos directory path
+    // 4. Validate and resolve repos directory/worktree paths
     const reposDir = options.reposDir || "./repos";
     logVerbose(`Validating repos directory path: ${reposDir}`, options);
 
@@ -540,6 +559,31 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
 
     const absoluteReposPath = resolve(cwd, reposDir);
     logVerbose(`Resolved repos directory: ${absoluteReposPath}`, options);
+
+    const rawWorktreesDir = options.worktreesDir;
+    if (rawWorktreesDir !== undefined && !isValidPath(rawWorktreesDir)) {
+      return {
+        success: false,
+        error: `Invalid worktrees directory path: ${rawWorktreesDir}`,
+        exitCode: ExitCode.INVALID_PATH,
+      };
+    }
+
+    let worktreesDir = DEFAULT_WORKTREES_DIR;
+    try {
+      worktreesDir = normalizeWorktreesDir(rawWorktreesDir ?? DEFAULT_WORKTREES_DIR);
+    } catch (error) {
+      if (error instanceof WorktreeLocationValidationError) {
+        return {
+          success: false,
+          error: `Invalid worktrees directory path: ${rawWorktreesDir ?? DEFAULT_WORKTREES_DIR} (${error.message})`,
+          exitCode: ExitCode.INVALID_PATH,
+        };
+      }
+
+      throw error;
+    }
+    logVerbose(`Resolved worktrees directory: ${resolve(cwd, worktreesDir)}`, options);
 
     // 5. Create .arashi directory
     const arashiDir = join(cwd, ".arashi");
@@ -706,6 +750,7 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
       $schema: config.DEFAULT_CONFIG_SCHEMA_URL,
       version: "1.0.0",
       reposDir: reposDir,
+      worktreesDir,
       repos: discoveredRepos,
     };
 
@@ -752,12 +797,16 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
 
     // 11. Update .gitignore
     const gitignorePath = join(cwd, ".gitignore");
+    const managedPatterns = [normalizeGitignorePattern(reposDir)];
+    if (isDefaultWorktreesDir(worktreesDir)) {
+      managedPatterns.push(DEFAULT_WORKTREES_GITIGNORE_ENTRY);
+    }
     if (options.dryRun) {
-      logDryRun("UPDATE_FILE", `${gitignorePath} (add: ${reposDir}/)`);
+      logDryRun("UPDATE_FILE", `${gitignorePath} (add: ${managedPatterns.join(", ")})`);
     } else {
       logVerbose("Updating .gitignore...", options);
       try {
-        await updateGitignore(cwd, reposDir);
+        await updateGitignore(cwd, reposDir, worktreesDir);
         logVerbose("✓ .gitignore updated", options);
       } catch (error) {
         await executeRollback();
@@ -821,7 +870,10 @@ function displaySuccess(result: InitResult, options: InitOptions): void {
   }
 
   const reposDir = options.reposDir || "./repos";
-  console.log(`\nUpdated .gitignore to exclude: ${reposDir}`);
+  console.log(`\nUpdated .gitignore to exclude: ${normalizeGitignorePattern(reposDir)}`);
+  if (isDefaultWorktreesDir(options.worktreesDir ?? DEFAULT_WORKTREES_DIR)) {
+    console.log(`  • ${DEFAULT_WORKTREES_GITIGNORE_ENTRY}`);
+  }
 
   console.log("\nNext steps:");
   if (result.discoveredCount && result.discoveredCount > 0) {
@@ -880,6 +932,11 @@ export function createCommand(): Command {
   return new Command("init")
     .description("Initialize Arashi workspace in the current git repository")
     .option("--repos-dir <path>", "Custom location for managed repositories", "./repos")
+    .option(
+      "--worktrees-dir <path>",
+      "Custom base location for managed worktrees",
+      DEFAULT_WORKTREES_DIR,
+    )
     .option("--force", "Overwrite existing configuration if present")
     .option("--no-discover", "Skip automatic repository discovery")
     .option("--dry-run", "Show what would be done without making changes")
@@ -888,6 +945,7 @@ export function createCommand(): Command {
       // Commander converts --no-discover to discover: false
       const normalizedOptions: InitOptions = {
         reposDir: options.reposDir,
+        worktreesDir: options.worktreesDir,
         force: options.force,
         noDiscover: options.discover === false, // --no-discover sets discover: false
         dryRun: options.dryRun,

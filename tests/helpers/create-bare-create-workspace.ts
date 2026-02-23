@@ -12,6 +12,7 @@ export interface BareCreateWorkspace {
 export interface BareCreateWorkspaceOptions {
   includeConfig?: boolean;
   configReposDir?: string;
+  configWorktreesDir?: string;
 }
 
 export async function createBareCreateWorkspace(
@@ -19,6 +20,7 @@ export async function createBareCreateWorkspace(
 ): Promise<BareCreateWorkspace> {
   const includeConfig = options.includeConfig ?? true;
   const configReposDir = options.configReposDir ?? "./repos";
+  const configWorktreesDir = options.configWorktreesDir ?? ".arashi/worktrees";
   const rootPath = join(
     tmpdir(),
     `arashi-bare-create-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -45,6 +47,7 @@ export async function createBareCreateWorkspace(
         {
           version: "1.0.0",
           reposDir: configReposDir,
+          worktreesDir: configWorktreesDir,
           repos: {},
         },
         null,
