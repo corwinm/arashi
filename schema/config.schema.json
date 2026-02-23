@@ -2,6 +2,18 @@
   "$ref": "#/definitions/Config",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
+    "CommandDefaultsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "$ref": "#/definitions/CreateCommandDefaults"
+        },
+        "switch": {
+          "$ref": "#/definitions/SwitchCommandDefaults"
+        }
+      },
+      "type": "object"
+    },
     "Config": {
       "additionalProperties": false,
       "description": "Root configuration object for Arashi",
@@ -9,6 +21,10 @@
         "$schema": {
           "description": "JSON Schema URL for editor validation/autocomplete",
           "type": "string"
+        },
+        "defaults": {
+          "$ref": "#/definitions/CommandDefaultsConfig",
+          "description": "Optional command-scoped defaults for create and switch"
         },
         "hooks": {
           "additionalProperties": false,
@@ -59,6 +75,28 @@
       "const": "1.0.0",
       "type": "string"
     },
+    "CreateCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "launch": {
+          "description": "Default to launching a terminal/editor context after create",
+          "type": "boolean"
+        },
+        "launchMode": {
+          "$ref": "#/definitions/LaunchMode",
+          "description": "Preferred launch mode for create-triggered launch"
+        },
+        "switch": {
+          "description": "Default to switching to the new worktree after create",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "LaunchMode": {
+      "enum": ["auto", "sesh"],
+      "type": "string"
+    },
     "RepoConfig": {
       "additionalProperties": false,
       "description": "Configuration for a single repository",
@@ -73,6 +111,16 @@
         }
       },
       "required": ["path"],
+      "type": "object"
+    },
+    "SwitchCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "launchMode": {
+          "$ref": "#/definitions/LaunchMode",
+          "description": "Preferred launch mode when running switch"
+        }
+      },
       "type": "object"
     }
   }

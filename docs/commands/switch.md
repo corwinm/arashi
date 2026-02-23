@@ -11,6 +11,7 @@ arashi switch [filter] [options]
 ## Options
 
 - `--sesh` Use `sesh` in tmux mode (requires active tmux session)
+- `--no-default-launch` Ignore configured switch launch-mode defaults for one invocation
 - `--repos` Search child repositories in the current workspace only
 - `--all` Search parent + child repositories
 
@@ -34,6 +35,9 @@ arashi switch feature-auth
 
 # Use sesh/tmux switching mode
 arashi switch feature-auth --sesh
+
+# Ignore configured launch-mode defaults for one run
+arashi switch --no-default-launch
 ```
 
 ## Notes
@@ -48,3 +52,4 @@ arashi switch feature-auth --sesh
 - If `--repos` has no repository matches, Arashi prints available child repositories.
 - Inside tmux, Arashi opens a new tmux window automatically.
 - In Kitty, Ghostty, WezTerm, and iTerm2 terminals, Arashi attempts terminal-native launch commands before generic fallback behavior.
+- Configure a default switch launch mode in `.arashi/config.json` under `defaults.switch.launchMode`.

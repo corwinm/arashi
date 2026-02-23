@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { basename, resolve, sep } from "path";
-import type { Config, WorkspaceRepository } from "../lib/config.ts";
+import type { Config, LaunchMode, WorkspaceRepository } from "../lib/config.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import * as logger from "../lib/logger.ts";
 import * as git from "../lib/git.ts";
@@ -21,11 +21,13 @@ import {
   SwitchCommandErrorCode,
   type SwitchLaunchMode,
 } from "../types/switch.ts";
+import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 
 export interface SwitchCommandOptions {
   sesh?: boolean;
   repos?: boolean;
   all?: boolean;
+  defaultLaunch?: boolean;
 }
 
 type SwitchRepositoryScope = "parent" | "repos" | "all";
@@ -79,6 +81,7 @@ export function createCommand(): Command {
     .description("Open a terminal context for an existing worktree")
     .argument("[filter]", "Filter targets by branch name or worktree path")
     .option("--sesh", "Use sesh in tmux mode")
+    .option("--no-default-launch", "Ignore configured default launch mode for this invocation")
     .option("--repos", "Use child repositories only")
     .option("--all", "Use both parent and child repositories")
     .addHelpText(
@@ -87,6 +90,7 @@ export function createCommand(): Command {
 Examples:
   $ arashi switch
   $ arashi switch --repos
+  $ arashi switch --no-default-launch
   $ arashi switch --all feature-auth
   $ arashi switch feature-auth
   $ arashi switch repo-a --sesh
@@ -174,10 +178,18 @@ export async function executeSwitch(
     workspaceRepoName: scope === "all" ? basename(resolve(workspaceRoot)) : undefined,
   });
 
+  const resolvedLaunchMode = resolveDefaultWithPrecedence<LaunchMode>({
+    explicitValue: "sesh",
+    hasExplicitValue: options.sesh === true,
+    optOut: options.defaultLaunch === false,
+    configValue: workspace.config?.defaults?.switch?.launchMode,
+    builtInValue: "auto",
+  });
+
   const launchResult = await launchCandidate(
     selected,
     {
-      sesh: options.sesh,
+      sesh: resolvedLaunchMode.value === "sesh",
     },
     {
       env: deps.env ?? process.env,

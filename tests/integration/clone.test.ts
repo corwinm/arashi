@@ -70,7 +70,10 @@ describe("clone command", () => {
         saveConfig: async () => {},
         stdinIsTTY: true,
         stdoutIsTTY: true,
-        promptMultiSelect: async () => ({ status: "ok", value: ["repo-b"] }),
+        promptMultiSelect: async <T>() => ({
+          status: "ok",
+          value: ["repo-b"] as unknown as T[],
+        }),
         cloneRepository: async (gitUrl, destinationPath) => {
           cloned.push(gitUrl);
           await mkdir(destinationPath, { recursive: true });

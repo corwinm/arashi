@@ -69,8 +69,31 @@ export interface Config {
     /** Sync timeout in seconds */
     timeoutSeconds?: number;
   };
+  /** Optional command-scoped defaults for create and switch */
+  defaults?: CommandDefaultsConfig;
   /** Map of repository names to their configurations */
   repos: Record<string, RepoConfig>;
+}
+
+export type LaunchMode = "auto" | "sesh";
+
+export interface CreateCommandDefaults {
+  /** Default to switching to the new worktree after create */
+  switch?: boolean;
+  /** Default to launching a terminal/editor context after create */
+  launch?: boolean;
+  /** Preferred launch mode for create-triggered launch */
+  launchMode?: LaunchMode;
+}
+
+export interface SwitchCommandDefaults {
+  /** Preferred launch mode when running switch */
+  launchMode?: LaunchMode;
+}
+
+export interface CommandDefaultsConfig {
+  create?: CreateCommandDefaults;
+  switch?: SwitchCommandDefaults;
 }
 
 export const DEFAULT_CONFIG_SCHEMA_URL = "https://unpkg.com/arashi/schema/config.schema.json";
@@ -311,6 +334,7 @@ const ROOT_ALLOWED_KEYS = new Set([
   "discovered_repos",
   "hooks",
   "sync",
+  "defaults",
 ]);
 
 const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout"]);
@@ -492,6 +516,85 @@ function normalizeSyncConfig(
   };
 }
 
+function normalizeLaunchMode(value: unknown): LaunchMode | undefined {
+  if (value === "auto" || value === "sesh") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function normalizeCreateCommandDefaults(value: unknown): CreateCommandDefaults | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const normalized: CreateCommandDefaults = {};
+
+  if (typeof value.switch === "boolean") {
+    normalized.switch = value.switch;
+  }
+
+  if (typeof value.launch === "boolean") {
+    normalized.launch = value.launch;
+  }
+
+  const launchMode = normalizeLaunchMode(
+    getFirstDefined(value.launchMode as unknown, value.launch_mode as unknown),
+  );
+  if (launchMode !== undefined) {
+    normalized.launchMode = launchMode;
+    if (normalized.launch === undefined) {
+      normalized.launch = true;
+    }
+  }
+
+  if (normalized.launch === false) {
+    delete normalized.launchMode;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeSwitchCommandDefaults(value: unknown): SwitchCommandDefaults | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const launchMode = normalizeLaunchMode(
+    getFirstDefined(value.launchMode as unknown, value.launch_mode as unknown),
+  );
+
+  if (launchMode === undefined) {
+    return undefined;
+  }
+
+  return {
+    launchMode,
+  };
+}
+
+function normalizeCommandDefaults(value: unknown): CommandDefaultsConfig | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const createDefaults = normalizeCreateCommandDefaults(value.create);
+  const switchDefaults = normalizeSwitchCommandDefaults(value.switch);
+
+  const normalized: CommandDefaultsConfig = {};
+
+  if (createDefaults) {
+    normalized.create = createDefaults;
+  }
+
+  if (switchDefaults) {
+    normalized.switch = switchDefaults;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
 function normalizeWorktreesDirConfig(value: unknown, errors: string[]): string {
   if (value === undefined) {
     return DEFAULT_WORKTREES_DIR;
@@ -556,6 +659,7 @@ function normalizeConfigInternal(config: unknown): {
   const worktreesDir = normalizeWorktreesDirConfig(worktreesDirRaw, errors);
   const hooks = normalizeWorkspaceHooks(config.hooks, "hooks", errors);
   const sync = normalizeSyncConfig(config.sync, "sync", errors);
+  const defaults = normalizeCommandDefaults(config.defaults);
 
   if (schema !== undefined && (typeof schema !== "string" || schema.trim() === "")) {
     errors.push("$schema: must be a non-empty string if present");
@@ -601,6 +705,10 @@ function normalizeConfigInternal(config: unknown): {
 
   if (sync) {
     normalizedConfig.sync = sync;
+  }
+
+  if (defaults) {
+    normalizedConfig.defaults = defaults;
   }
 
   return {
@@ -790,6 +898,10 @@ function normalizePersistedConfig(config: Config): Config {
 
   if (config.sync) {
     persisted.sync = config.sync;
+  }
+
+  if (config.defaults) {
+    persisted.defaults = config.defaults;
   }
 
   return persisted;

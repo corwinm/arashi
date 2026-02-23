@@ -13,7 +13,7 @@ import { join } from "path";
 // Import the function we're testing (will be implemented in T009)
 import { detectRepositoryType } from "../../src/core/worktree.ts";
 import type { Repository } from "../../src/core/repository.ts";
-import type { ArashiConfig } from "../../src/types.ts";
+import type { Config as ArashiConfig } from "../../src/lib/config.ts";
 
 describe("detectRepositoryType", () => {
   const testDir = join(import.meta.dir, "temp-test-workspace");
@@ -68,7 +68,6 @@ describe("detectRepositoryType", () => {
       const config: ArashiConfig = {
         version: "1.0.0",
         reposDir: "./repos",
-        worktree_strategy: "same_branch",
         repos: {},
       };
 

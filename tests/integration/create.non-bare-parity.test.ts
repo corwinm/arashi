@@ -46,7 +46,11 @@ describe("create command parity between non-bare and bare invocation", () => {
     expect(`${stdout}\n${stderr}`).toContain("Hook results:");
 
     const combinedOutput = `${stdout}\n${stderr}`;
-    const match = combinedOutput.match(/worktree created at\s+(.+)/);
+    const escapedRepoName = repoName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match =
+      combinedOutput.match(
+        new RegExp(`Worktree locations:[\\s\\S]*?${escapedRepoName}:\\s+([^\\n]+)`),
+      ) || combinedOutput.match(/worktree created at\s+(.+)/);
     expect(match).not.toBeNull();
 
     const expectedWorktreePath = match?.[1]?.trim() ?? "";
