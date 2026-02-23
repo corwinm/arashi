@@ -22,7 +22,7 @@ describe("create rollback guarantees in bare context", () => {
     workspace = await createBareCreateWorkspace();
     const branch = "feature-bare-rollback";
 
-    const blockedPath = join(workspace.rootPath, branch);
+    const blockedPath = join(workspace.bareRepoPath, ".arashi", "worktrees", branch);
     await Bun.write(blockedPath, "block worktree path");
 
     const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"], {

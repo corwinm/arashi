@@ -71,11 +71,10 @@ describe("Nested Worktree Paths Integration", () => {
       expect(result.successCount).toBe(1);
       expect(result.failureCount).toBe(0);
 
-      const worktreePath = join(testDir, "parent-repo-feature");
+      const worktreePath = join(metaRepoPath, ".arashi", "worktrees", "parent-repo-feature");
       const worktreeExists = await Bun.file(join(worktreePath, "README.md")).exists();
       expect(worktreeExists).toBe(true);
 
-      // Verify directory structure: parent-repo/ and parent-repo-feature/ at same level
       const parentExists = await Bun.file(join(metaRepoPath, "README.md")).exists();
       expect(parentExists).toBe(true);
     });
@@ -111,8 +110,7 @@ describe("Nested Worktree Paths Integration", () => {
 
       expect(result.successCount).toBe(1);
 
-      // Verify sibling creation with correct naming
-      const worktreePath = join(testDir, "existing-repo-bugfix-123");
+      const worktreePath = join(metaRepoPath, ".arashi", "worktrees", "existing-repo-bugfix-123");
       const worktreeExists = await Bun.file(join(worktreePath, "README.md")).exists();
       expect(worktreeExists).toBe(true);
     });

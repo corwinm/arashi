@@ -62,6 +62,10 @@
         "version": {
           "$ref": "#/definitions/ConfigVersion",
           "description": "Configuration schema version for migrations"
+        },
+        "worktreesDir": {
+          "description": "Base directory where worktrees are created (workspace-relative)",
+          "type": "string"
         }
       },
       "required": ["version", "reposDir", "repos"],

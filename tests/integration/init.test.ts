@@ -129,6 +129,7 @@ describe("init command - success cases", () => {
     expect(await filesystem.fileExists(gitignorePath)).toBe(true);
     const gitignoreContent = await filesystem.readTextFile(gitignorePath);
     expect(gitignoreContent).toContain("repos/");
+    expect(gitignoreContent).toContain(".arashi/worktrees/");
   });
 
   test("init with custom repos directory", async () => {
@@ -146,6 +147,21 @@ describe("init command - success cases", () => {
     // Verify .gitignore updated with custom path
     const gitignoreContent = await filesystem.readTextFile(join(testDir, ".gitignore"));
     expect(gitignoreContent).toContain("custom-repos/");
+    expect(gitignoreContent).toContain(".arashi/worktrees/");
+  });
+
+  test("init with custom worktrees directory does not auto-ignore custom path", async () => {
+    const result = await runInitCommand(testDir, ["--worktrees-dir", "../workspace-worktrees"]);
+
+    expect(result.exitCode).toBe(0);
+
+    const loadedConfig = await config.loadConfig(testDir);
+    expect(loadedConfig.worktreesDir).toBe("../workspace-worktrees");
+
+    const gitignoreContent = await filesystem.readTextFile(join(testDir, ".gitignore"));
+    expect(gitignoreContent).toContain("repos/");
+    expect(gitignoreContent).not.toContain("../workspace-worktrees/");
+    expect(gitignoreContent).not.toContain(".arashi/worktrees/");
   });
 
   test("init with --no-discover skips repository discovery", async () => {
@@ -196,6 +212,7 @@ describe("init command - success cases", () => {
 
     const gitignoreContent1 = await filesystem.readTextFile(join(testDir, ".gitignore"));
     const reposLineCount1 = (gitignoreContent1.match(/repos\//g) || []).length;
+    const worktreesLineCount1 = (gitignoreContent1.match(/\.arashi\/worktrees\//g) || []).length;
 
     // Delete config to allow re-init
     await rm(join(testDir, ".arashi"), { recursive: true });
@@ -205,9 +222,11 @@ describe("init command - success cases", () => {
 
     const gitignoreContent2 = await filesystem.readTextFile(join(testDir, ".gitignore"));
     const reposLineCount2 = (gitignoreContent2.match(/repos\//g) || []).length;
+    const worktreesLineCount2 = (gitignoreContent2.match(/\.arashi\/worktrees\//g) || []).length;
 
     // Verify repos/ pattern appears same number of times
     expect(reposLineCount2).toBe(reposLineCount1);
+    expect(worktreesLineCount2).toBe(worktreesLineCount1);
   });
 
   test("hook templates are not overwritten if they exist", async () => {
@@ -420,6 +439,7 @@ describe("init command - edge cases", () => {
     expect(await filesystem.fileExists(gitignorePath)).toBe(true);
     const content = await filesystem.readTextFile(gitignorePath);
     expect(content).toContain("repos/");
+    expect(content).toContain(".arashi/worktrees/");
 
     await cleanup(testDir);
   });
@@ -438,6 +458,7 @@ describe("init command - edge cases", () => {
     const content = await filesystem.readTextFile(join(testDir, ".gitignore"));
     expect(content).toContain("node_modules/\n");
     expect(content).toContain("repos/");
+    expect(content).toContain(".arashi/worktrees/");
 
     await cleanup(testDir);
   });

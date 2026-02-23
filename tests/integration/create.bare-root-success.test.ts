@@ -39,7 +39,7 @@ describe("create command from bare root", () => {
 
     expect(exitCode).toBe(0);
 
-    const expectedWorktreePath = join(workspace.rootPath, branch);
+    const expectedWorktreePath = join(workspace.bareRepoPath, ".arashi", "worktrees", branch);
     expect(existsSync(expectedWorktreePath)).toBe(true);
   });
 });

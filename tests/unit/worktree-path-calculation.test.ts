@@ -91,8 +91,10 @@ describe("calculateWorktreePath", () => {
 
       const result = await calculateWorktreePath(repo, "feature-123", config);
 
-      // Non-bare repo should use: repo-name-branch-name
-      expect(result.path).toBe(join(testDir, "my-project-feature-123"));
+      // Non-bare repo defaults to workspace/.arashi/worktrees/<repo>-<branch>
+      expect(result.path).toBe(
+        join(metaRepoPath, ".arashi", "worktrees", "my-project-feature-123"),
+      );
       expect(result.repositoryType).toBe("meta-repo");
       expect(result.strategy).toBe("sibling");
       expect(result.parentWorktreePath).toBeUndefined();
@@ -126,8 +128,9 @@ describe("calculateWorktreePath", () => {
 
       for (const branchName of branchNames) {
         const result = await calculateWorktreePath(repo, branchName, config);
-        // Non-bare: repo-name-branch-name
-        expect(result.path).toBe(join(testDir, `project-${branchName}`));
+        expect(result.path).toBe(
+          join(metaRepoPath, ".arashi", "worktrees", `project-${branchName}`),
+        );
         expect(result.strategy).toBe("sibling");
       }
     });
@@ -159,8 +162,8 @@ describe("calculateWorktreePath", () => {
 
       const result = await calculateWorktreePath(repo, "feature-123", config);
 
-      // Bare repo should use: branch-name only
-      expect(result.path).toBe(join(testDir, "feature-123"));
+      // Bare repo defaults to <repo>/.arashi/worktrees/<branch>
+      expect(result.path).toBe(join(bareRepoPath, ".arashi", "worktrees", "feature-123"));
       expect(result.repositoryType).toBe("meta-repo");
       expect(result.strategy).toBe("sibling");
     });
@@ -185,8 +188,7 @@ describe("calculateWorktreePath", () => {
 
       const result = await calculateWorktreePath(repo, "bugfix-789", config);
 
-      // Bare repo should use: branch-name only
-      expect(result.path).toBe(join(testDir, "bugfix-789"));
+      expect(result.path).toBe(join(bareRepoPath, ".arashi", "worktrees", "bugfix-789"));
       expect(result.repositoryType).toBe("standalone");
       expect(result.strategy).toBe("sibling");
     });
@@ -222,11 +224,21 @@ describe("calculateWorktreePath", () => {
 
       const result = await calculateWorktreePath(childRepo, "feature-123", config);
 
-      // Non-bare parent: parent-repo-feature-123/repos/child-repo
-      expect(result.path).toBe(join(testDir, "parent-repo-feature-123", "repos", "child-repo"));
+      expect(result.path).toBe(
+        join(
+          metaRepoPath,
+          ".arashi",
+          "worktrees",
+          "parent-repo-feature-123",
+          "repos",
+          "child-repo",
+        ),
+      );
       expect(result.repositoryType).toBe("child");
       expect(result.strategy).toBe("nested");
-      expect(result.parentWorktreePath).toBe(join(testDir, "parent-repo-feature-123"));
+      expect(result.parentWorktreePath).toBe(
+        join(metaRepoPath, ".arashi", "worktrees", "parent-repo-feature-123"),
+      );
     });
 
     test("should nest child repo with branch name only when parent is bare", async () => {
@@ -258,11 +270,15 @@ describe("calculateWorktreePath", () => {
 
       const result = await calculateWorktreePath(childRepo, "feature-123", config);
 
-      // Bare parent: feature-123/repos/child-repo (branch name only!)
-      expect(result.path).toBe(join(testDir, "feature-123", "repos", "child-repo"));
+      // Bare parent: <repo>/.arashi/worktrees/<branch>/repos/child-repo
+      expect(result.path).toBe(
+        join(bareMetaRepoPath, ".arashi", "worktrees", "feature-123", "repos", "child-repo"),
+      );
       expect(result.repositoryType).toBe("child");
       expect(result.strategy).toBe("nested");
-      expect(result.parentWorktreePath).toBe(join(testDir, "feature-123"));
+      expect(result.parentWorktreePath).toBe(
+        join(bareMetaRepoPath, ".arashi", "worktrees", "feature-123"),
+      );
     });
 
     test("should handle multiple child repos of bare parent consistently", async () => {
@@ -300,10 +316,73 @@ describe("calculateWorktreePath", () => {
       for (const childRepo of childRepos) {
         const result = await calculateWorktreePath(childRepo, "dev", config);
 
-        expect(result.path).toBe(join(testDir, "dev", "repos", childRepo.name));
+        expect(result.path).toBe(
+          join(bareMetaRepoPath, ".arashi", "worktrees", "dev", "repos", childRepo.name),
+        );
         expect(result.strategy).toBe("nested");
-        expect(result.parentWorktreePath).toBe(join(testDir, "dev"));
+        expect(result.parentWorktreePath).toBe(
+          join(bareMetaRepoPath, ".arashi", "worktrees", "dev"),
+        );
       }
+    });
+  });
+
+  describe("configured worktreesDir variants", () => {
+    test("resolves equivalent configured values to identical paths", async () => {
+      const metaRepoPath = join(testDir, "variant-repo");
+      await createGitRepo(metaRepoPath, false);
+      await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
+      await writeFile(
+        join(metaRepoPath, ".arashi", "config.json"),
+        JSON.stringify({ version: "1.0.0", reposDir: "./repos" }),
+      );
+
+      const repo: Repository = {
+        name: "variant-repo",
+        path: metaRepoPath,
+        defaultBranch: "main",
+        hasSetupScript: false,
+      };
+
+      const withDot = await calculateWorktreePath(repo, "feature-variants", {
+        version: "1.0.0",
+        reposDir: "./repos",
+        worktree_strategy: "same_branch",
+        worktreesDir: ".",
+        repos: {},
+      });
+
+      const withDotSlash = await calculateWorktreePath(repo, "feature-variants", {
+        version: "1.0.0",
+        reposDir: "./repos",
+        worktree_strategy: "same_branch",
+        worktreesDir: "./",
+        repos: {},
+      });
+
+      const managedNoSlash = await calculateWorktreePath(repo, "feature-variants", {
+        version: "1.0.0",
+        reposDir: "./repos",
+        worktree_strategy: "same_branch",
+        worktreesDir: ".arashi/worktrees",
+        repos: {},
+      });
+
+      const managedWithSlash = await calculateWorktreePath(repo, "feature-variants", {
+        version: "1.0.0",
+        reposDir: "./repos",
+        worktree_strategy: "same_branch",
+        worktreesDir: ".arashi/worktrees/",
+        repos: {},
+      });
+
+      expect(withDot.path).toBe(withDotSlash.path);
+      expect(withDot.path).toBe(join(metaRepoPath, "variant-repo-feature-variants"));
+
+      expect(managedNoSlash.path).toBe(managedWithSlash.path);
+      expect(managedNoSlash.path).toBe(
+        join(metaRepoPath, ".arashi", "worktrees", "variant-repo-feature-variants"),
+      );
     });
   });
 });

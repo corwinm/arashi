@@ -14,6 +14,7 @@ import {
   UnsupportedConfigVersionError,
 } from "../../src/lib/config";
 import { join } from "path";
+import { DEFAULT_WORKTREES_DIR } from "../../src/lib/worktree-location";
 
 describe("getConfigPath", () => {
   test("constructs correct path with repo path", () => {
@@ -42,6 +43,7 @@ describe("generateDefaultConfig", () => {
 
     expect(config.version).toBe("1.0.0");
     expect(config.reposDir).toBe("./repos");
+    expect(config.worktreesDir).toBe(DEFAULT_WORKTREES_DIR);
     expect(config.repos).toEqual({});
   });
 
@@ -233,6 +235,46 @@ describe("validateConfig - root level", () => {
     });
 
     expect(normalized.version).toBe("1.0.0");
+  });
+
+  test("applies default worktreesDir when omitted", () => {
+    const normalized = normalizeConfig({
+      version: "1.0.0",
+      reposDir: "./repos",
+      repos: {},
+    });
+
+    expect(normalized.worktreesDir).toBe(DEFAULT_WORKTREES_DIR);
+  });
+
+  test("normalizes supported worktreesDir path variants", () => {
+    const dotVariant = normalizeConfig({
+      version: "1.0.0",
+      reposDir: "./repos",
+      worktreesDir: "./",
+      repos: {},
+    });
+    expect(dotVariant.worktreesDir).toBe(".");
+
+    const managedVariant = normalizeConfig({
+      version: "1.0.0",
+      reposDir: "./repos",
+      worktreesDir: ".arashi/worktrees/",
+      repos: {},
+    });
+    expect(managedVariant.worktreesDir).toBe(DEFAULT_WORKTREES_DIR);
+  });
+
+  test("rejects absolute worktreesDir paths", () => {
+    const config = {
+      version: "1.0.0",
+      reposDir: "./repos",
+      worktreesDir: "/tmp/worktrees",
+      repos: {},
+    };
+
+    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
+    expect(() => validateConfig(config)).toThrow("worktreesDir");
   });
 
   test("rejects unknown root fields", () => {
