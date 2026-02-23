@@ -46,16 +46,21 @@ arashi remove feature-login --json
 
 ## Remove Lifecycle Hooks
 
-Global remove hooks can be defined under `.arashi/hooks/`:
+Remove hooks can be defined at three scopes:
 
-- `pre-remove.sh`
-- `post-remove.sh`
+- Repository scope: `repos/<repo>/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
+- Workspace-root scope: `.arashi/hooks/pre-remove.sh` and `post-remove.sh`
+- Global scope:
+  - repository-targeted: `~/.arashi/hooks/<repo>/pre-remove.sh` and `post-remove.sh`
+  - shared: `~/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
 
 Behavior:
 
+- For each targeted repository, hooks run in order: repository -> workspace-root -> global targeted -> global shared.
 - `pre-remove.sh` runs after confirmation and before destructive operations.
-- if `pre-remove.sh` fails, remove operations are aborted.
+- If any discovered `pre-remove` hook fails, remove operations are aborted.
 - `post-remove.sh` runs after remove operations are attempted, including partial-failure runs.
-- if `post-remove.sh` fails, the command reports the hook error and exits non-zero.
+- If any discovered `post-remove` hook fails, the command reports hook errors and exits non-zero.
+- Hook scope metadata is available via `ARASHI_HOOK_SCOPE` and `ARASHI_HOOK_SOURCE_PATH`.
 
 Common use cases include session teardown (for example tmux cleanup), external cache cleanup, and follow-up notifications.

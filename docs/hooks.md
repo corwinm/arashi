@@ -4,16 +4,28 @@ Arashi supports lifecycle hooks to customize create and remove workflows.
 
 ## Hook Locations
 
-Place hook scripts under `.arashi/hooks/` in the main repository:
+### `arashi create`
+
+Create hooks are discovered from the workspace root `.arashi/hooks/` directory:
 
 - `pre-create.sh` runs once before any worktrees are created.
-- `post-create.sh` runs once after all create hooks complete.
-- `pre-remove.sh` runs once before remove operations begin.
-- `post-remove.sh` runs once after remove operations are attempted.
-- `pre-create.<child-repo>.sh` runs after the child worktree exists and before the repo-specific post-create hook.
-- `post-create.<child-repo>.sh` runs after the repo-specific pre-create hook.
+- `post-create.sh` runs once after create processing completes.
+- `pre-create.<child-repo>.sh` runs for a specific child repository.
+- `post-create.<child-repo>.sh` runs for a specific child repository.
 
-When `arashi create` or `arashi remove` is invoked from a managed child repository (or any nested path inside it), hook lookup still resolves from the canonical workspace root.
+### `arashi remove`
+
+Remove hooks are discovered per target repository from scoped locations:
+
+1. Repository scope: `<workspace>/repos/<repo>/.arashi/hooks/<lifecycle>.sh`
+2. Workspace-root scope: `<workspace>/.arashi/hooks/<lifecycle>.sh`
+3. Global scope (repository-targeted): `~/.arashi/hooks/<repo>/<lifecycle>.sh`
+4. Global scope (shared): `~/.arashi/hooks/<lifecycle>.sh`
+
+Supported remove lifecycles:
+
+- `pre-remove.sh`
+- `post-remove.sh`
 
 ## Execution Order
 
@@ -26,32 +38,37 @@ When `arashi create` or `arashi remove` is invoked from a managed child reposito
 
 ### `arashi remove`
 
-1. Confirmation (unless `--force`)
-2. Global `pre-remove.sh`
-3. Worktree removals and branch deletions
-4. Global `post-remove.sh`
+For each targeted repository, hooks run in this order:
 
-Remove hooks are global-only in this release (no repo-specific remove hook variants).
+1. Repository scope
+2. Workspace-root scope
+3. Global repository-targeted scope
+4. Global shared scope
+
+Lifecycle timing:
+
+1. Confirmation (unless `--force`)
+2. All discovered `pre-remove` hooks in scope order
+3. Worktree removals and branch deletions
+4. All discovered `post-remove` hooks in scope order
 
 ## Failure Behavior
 
-- If any create hook fails, the create operation stops and the global post-create hook does not run.
-- If `pre-remove.sh` fails, remove operations are aborted before destructive actions.
-- `post-remove.sh` still runs after partial remove failures to allow cleanup/finalization.
-- If `post-remove.sh` fails, `arashi remove` exits non-zero.
+- If any create hook fails, create stops and `post-create.sh` does not run.
+- If any discovered `pre-remove` hook fails or times out, remove operations are aborted before destructive actions.
+- `post-remove` hooks run after remove attempts complete, including partial-failure runs.
+- If any discovered `post-remove` hook fails or times out, `arashi remove` exits non-zero.
 - Missing hooks are reported as `skipped (not_found)`.
 
 ## Context and Environment
 
 Hooks run with `ARASHI_*` environment variables.
 
-Create hooks commonly use:
+Common variables:
 
-- `ARASHI_BRANCH_NAME`
-- `ARASHI_REPO_NAME`
-- `ARASHI_WORKTREE_PATH`
+- `ARASHI_HOOK_NAME`
+- `ARASHI_REPO_PATH`
 - `ARASHI_MAIN_REPO_PATH`
-- `ARASHI_PARENT_REPO_PATH`
 
 Remove hooks additionally receive aggregate targets:
 
@@ -63,4 +80,15 @@ Remove hooks additionally receive aggregate targets:
 - `ARASHI_REMOVE_TOTAL_WORKTREES`
 - `ARASHI_REMOVE_TOTAL_REPOSITORIES`
 
-Global hooks run in the main repo context. Repo-specific create hooks run with the working directory set to the new child worktree.
+Scoped remove hooks also receive:
+
+- `ARASHI_HOOK_SCOPE` (`repository`, `workspace`, `global-repository`, `global-shared`)
+- `ARASHI_HOOK_SOURCE_PATH`
+- `ARASHI_HOOK_TARGET_REPOSITORY`
+- `ARASHI_HOOK_TARGET_REPO_PATH`
+
+Working directory rules for remove hooks:
+
+- Repository scope hooks run in the child repository path.
+- Workspace-root scope hooks run in the workspace root path.
+- Global hooks run in the target repository path.

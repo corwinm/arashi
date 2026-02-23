@@ -133,6 +133,12 @@ Arashi can run lifecycle hooks during `arashi create` and `arashi remove`.
 - Repository-specific hooks:
   - `pre-create.<repo>.sh`
   - `post-create.<repo>.sh`
+- Scoped remove hooks:
+  - repository scope: `repos/<repo>/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
+  - global shared: `~/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
+  - global targeted: `~/.arashi/hooks/<repo>/pre-remove.sh` and `post-remove.sh`
+
+For `arashi remove`, hook execution order is: repository scope -> workspace-root scope -> global targeted scope -> global shared scope.
 
 `pre-remove.sh` is useful for teardown before deletion (for example, stopping tmux sessions), and `post-remove.sh` can run final cleanup after remove operations complete.
 

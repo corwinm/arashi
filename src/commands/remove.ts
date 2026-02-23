@@ -292,19 +292,26 @@ export async function executeRemove(
       targetRepositories.add(repoName);
     }
   }
+  const targetRepositoryNames = Array.from(targetRepositories).sort((a, b) => a.localeCompare(b));
+  const removeHookTargets = targetRepositoryNames.map((repoName) => ({
+    name: repoName,
+    path: getRepoPath(repositories, repoName),
+  }));
 
   const removeHookOperationData = hooks.buildRemoveHookOperationData({
     branchNames: targetBranches,
     worktreePaths: worktreesToRemove.map((worktree) => worktree.path),
-    repositoryNames: Array.from(targetRepositories),
+    repositoryNames: targetRepositoryNames,
     mainRepoPath: workspaceRoot,
   });
 
   const preRemoveOutcome = await runRemoveLifecycleHook({
     hookName: hooks.GLOBAL_HOOKS.preRemove,
     workspaceRoot,
+    targetRepositories: removeHookTargets,
     operationData: removeHookOperationData,
     timeoutMs: config.hooks?.timeout,
+    stopOnFailure: true,
   });
   if (preRemoveOutcome.hookStatus === "failure") {
     summary.errors.push(formatHookFailure(hooks.GLOBAL_HOOKS.preRemove, preRemoveOutcome));
@@ -406,8 +413,10 @@ export async function executeRemove(
   const postRemoveOutcome = await runRemoveLifecycleHook({
     hookName: hooks.GLOBAL_HOOKS.postRemove,
     workspaceRoot,
+    targetRepositories: removeHookTargets,
     operationData: removeHookOperationData,
     timeoutMs: config.hooks?.timeout,
+    stopOnFailure: false,
   });
   if (postRemoveOutcome.hookStatus === "failure") {
     summary.errors.push(formatHookFailure(hooks.GLOBAL_HOOKS.postRemove, postRemoveOutcome));
@@ -745,53 +754,90 @@ function formatBranchDeletionError(error: unknown): string {
 async function runRemoveLifecycleHook(options: {
   hookName: string;
   workspaceRoot: string;
+  targetRepositories: hooks.HookTargetRepository[];
   operationData: Record<string, string>;
   timeoutMs?: number;
+  stopOnFailure: boolean;
 }): Promise<hooks.HookOutcomeMapping> {
-  const spinner = logger.spinner(`Running ${options.hookName} hook...`).start();
+  const spinner = logger.spinner(`Running ${options.hookName} hooks...`).start();
+  const resolvedHooks = await hooks.resolveScopedLifecycleHooks({
+    hookName: options.hookName,
+    workspaceRoot: options.workspaceRoot,
+    targetRepositories: options.targetRepositories,
+  });
 
-  const hookPath = await hooks.findHook(options.hookName, options.workspaceRoot);
-  if (!hookPath) {
+  if (resolvedHooks.length === 0) {
     const skipped = hooks.mapHookSkippedOutcome("not_found", "Hook script not found");
     spinner.stop();
-    logger.info(`Skipping ${options.hookName} hook: ${skipped.message}`);
+    logger.info(`Skipping ${options.hookName} hooks: ${skipped.message}`);
     return skipped;
   }
 
-  const validation = await hooks.validateHook(hookPath);
-  if (!validation.valid) {
-    const mapping: hooks.HookOutcomeMapping = {
-      hookStatus: "failure",
-      reasonCode: "exit_non_zero",
-      message: validation.error ?? "Hook validation failed",
+  const failures: string[] = [];
+  let failureReason: hooks.HookOutcomeReasonCode = "exit_non_zero";
+  let executedCount = 0;
+
+  for (const resolvedHook of resolvedHooks) {
+    spinner.text = `Running ${options.hookName} (${resolvedHook.scope}:${resolvedHook.targetRepositoryName})...`;
+
+    const validation = await hooks.validateHook(resolvedHook.scriptPath);
+    if (!validation.valid) {
+      failures.push(
+        `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${validation.error ?? "Hook validation failed"}`,
+      );
+      if (options.stopOnFailure) {
+        break;
+      }
+      continue;
+    }
+
+    const result = await hooks.executeHook({
+      hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
+      scriptPath: resolvedHook.scriptPath,
+      context: {
+        hookName: options.hookName,
+        repoPath: resolvedHook.executionPath,
+        hookScope: resolvedHook.scope,
+        sourceScriptPath: resolvedHook.sourceScriptPath,
+        targetRepoName: resolvedHook.targetRepositoryName,
+        targetRepoPath: resolvedHook.targetRepositoryPath,
+        operationData: {
+          ...options.operationData,
+          REPO_NAME: resolvedHook.targetRepositoryName,
+          REPO_PATH: resolvedHook.targetRepositoryPath,
+        },
+      },
+      timeout: options.timeoutMs,
+    });
+    executedCount += 1;
+
+    const mapping = hooks.mapHookExecutionResult(result);
+    if (mapping.hookStatus === "failure") {
+      failureReason = mapping.reasonCode;
+      const stderr = result.stderr.trim();
+      failures.push(
+        `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${stderr.length > 0 ? stderr : mapping.message}`,
+      );
+      if (options.stopOnFailure) {
+        break;
+      }
+    }
+  }
+
+  if (failures.length === 0) {
+    spinner.succeed(`${options.hookName} hooks completed (${executedCount})`);
+    return {
+      hookStatus: "success",
+      reasonCode: "none",
+      message: `Executed ${executedCount} hook script${executedCount === 1 ? "" : "s"}`,
     };
-    spinner.fail(`${options.hookName} hook failed`);
-    logger.error(mapping.message);
-    return mapping;
   }
 
-  const result = await hooks.executeHook({
-    hookName: options.hookName,
-    scriptPath: hookPath,
-    context: {
-      hookName: options.hookName,
-      repoPath: options.workspaceRoot,
-      operationData: options.operationData,
-    },
-    timeout: options.timeoutMs,
-  });
-  const mapping = hooks.mapHookExecutionResult(result);
-
-  if (mapping.hookStatus === "success") {
-    spinner.succeed(`${options.hookName} hook completed`);
-    return mapping;
-  }
-
-  spinner.fail(`${options.hookName} hook failed`);
-  const stderr = result.stderr.trim();
+  spinner.fail(`${options.hookName} hooks failed`);
   return {
-    ...mapping,
-    message: stderr.length > 0 ? stderr : mapping.message,
+    hookStatus: "failure",
+    reasonCode: failureReason === "timeout" ? "timeout" : "exit_non_zero",
+    message: failures.join("; "),
   };
 }
 
