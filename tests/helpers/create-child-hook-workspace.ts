@@ -1,6 +1,6 @@
 import { mkdir, rm } from "fs/promises";
 import { tmpdir } from "os";
-import { basename, join } from "path";
+import { basename, join, resolve } from "path";
 
 export interface ChildHookWorkspace {
   rootPath: string;
@@ -20,12 +20,14 @@ export interface ChildHookWorkspace {
 export interface ChildHookWorkspaceOptions {
   childRepoNames?: string[];
   hookTimeoutMs?: number;
+  worktreesDir?: string;
 }
 
 export async function createChildHookWorkspace(
   options: ChildHookWorkspaceOptions = {},
 ): Promise<ChildHookWorkspace> {
   const childRepoNames = options.childRepoNames ?? ["alpha", "beta"];
+  const worktreesDir = options.worktreesDir ?? ".arashi/worktrees";
   const rootPath = join(
     tmpdir(),
     `arashi-child-hooks-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -67,6 +69,7 @@ export async function createChildHookWorkspace(
       {
         version: "1.0.0",
         reposDir: "./repos",
+        worktreesDir,
         hooks: {
           timeout: options.hookTimeoutMs ?? 1000,
         },
@@ -81,6 +84,7 @@ export async function createChildHookWorkspace(
   await execGit(["commit", "-m", "Initialize workspace"], workspacePath);
 
   const workspaceName = basename(workspacePath);
+  const worktreesRootPath = resolve(workspacePath, worktreesDir);
   const childInvocationPath = childRepoPaths[childRepoNames[0]];
   const nestedChildInvocationPath = join(childInvocationPath, "nested", "inside");
   await mkdir(nestedChildInvocationPath, { recursive: true });
@@ -95,9 +99,10 @@ export async function createChildHookWorkspace(
     childRepoPaths,
     childInvocationPath,
     nestedChildInvocationPath,
-    getMainWorktreePath: (branchName: string) => join(rootPath, `${workspaceName}-${branchName}`),
+    getMainWorktreePath: (branchName: string) =>
+      join(worktreesRootPath, `${workspaceName}-${branchName}`),
     getChildWorktreePath: (repoName: string, branchName: string) =>
-      join(rootPath, `${workspaceName}-${branchName}`, "repos", repoName),
+      join(worktreesRootPath, `${workspaceName}-${branchName}`, "repos", repoName),
     cleanup: async () => {
       await rm(rootPath, { recursive: true, force: true });
     },

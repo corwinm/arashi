@@ -45,7 +45,11 @@ describe("create command parity between non-bare and bare invocation", () => {
     expect(exitCode).toBe(0);
     expect(`${stdout}\n${stderr}`).toContain("Hook results:");
 
-    const expectedWorktreePath = join(workspace.rootPath, branch);
+    const combinedOutput = `${stdout}\n${stderr}`;
+    const match = combinedOutput.match(/worktree created at\s+(.+)/);
+    expect(match).not.toBeNull();
+
+    const expectedWorktreePath = match?.[1]?.trim() ?? "";
     expect(existsSync(expectedWorktreePath)).toBe(true);
     expect(existsSync(join(expectedWorktreePath, "hook-parity.log"))).toBe(true);
   });

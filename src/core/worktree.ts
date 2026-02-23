@@ -17,6 +17,7 @@ import { existsSync } from "fs";
 import type { Config as ArashiConfig } from "../lib/config.ts";
 import { loadConfig, ConfigNotFoundError } from "../lib/config.ts";
 import { isBareRepo } from "../lib/git.ts";
+import { resolveWorktreesBasePath } from "../lib/worktree-location.ts";
 import type { DirtyStatus, WorktreeEntry, WorktreeInfo } from "../types/remove.ts";
 
 // ============================================================================
@@ -641,6 +642,9 @@ export async function calculateWorktreePath(
 }> {
   // Detect repository type (or use provided type)
   const typeInfo = knownType ?? (await detectRepositoryType(repo, config));
+  const workspaceRoot =
+    typeInfo.type === "child" ? join(repo.path, "..", "..") : resolve(repo.path);
+  const worktreeBasePath = resolveWorktreesBasePath(workspaceRoot, config.worktreesDir);
 
   // Apply appropriate path calculation strategy
   if (typeInfo.type === "child") {
@@ -650,7 +654,7 @@ export async function calculateWorktreePath(
     }
 
     // Determine parent repository path (navigate up from child: ../../../)
-    const parentRepoPath = join(repo.path, "..", "..");
+    const parentRepoPath = workspaceRoot;
 
     // Check if parent is bare to determine worktree naming
     const parentIsBare = await isBareRepo(parentRepoPath);
@@ -659,9 +663,8 @@ export async function calculateWorktreePath(
     // Non-bare parent: Combine parent name + branch
     const parentWorktreeName = parentIsBare ? branchName : `${typeInfo.parentName}-${branchName}`;
 
-    const worktreePath = calculateChildWorktreePath(repo, parentWorktreeName, typeInfo.reposDir);
-
-    const parentWorktreePath = join(repo.path, "..", "..", "..", parentWorktreeName);
+    const parentWorktreePath = join(worktreeBasePath, parentWorktreeName);
+    const worktreePath = join(parentWorktreePath, typeInfo.reposDir, repo.name);
 
     return {
       path: worktreePath,
@@ -677,7 +680,7 @@ export async function calculateWorktreePath(
     // Bare repos: Use branch name only (e.g., 'feature-branch/')
     // Non-bare repos: Combine folder name + branch (e.g., 'my-repo-feature-branch/')
     const worktreeName = isBare ? branchName : `${repo.name}-${branchName}`;
-    const worktreePath = join(repo.path, "..", worktreeName);
+    const worktreePath = join(worktreeBasePath, worktreeName);
 
     return {
       path: worktreePath,

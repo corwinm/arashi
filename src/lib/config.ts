@@ -10,6 +10,11 @@
 import { join, dirname, basename, resolve } from "path";
 import { mkdir } from "fs/promises";
 import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
+import {
+  DEFAULT_WORKTREES_DIR,
+  normalizeWorktreesDir,
+  WorktreeLocationValidationError,
+} from "./worktree-location.ts";
 
 // ============================================================================
 // Data Types
@@ -52,6 +57,8 @@ export interface Config {
   version: ConfigVersion;
   /** Directory where repositories are located */
   reposDir: string;
+  /** Base directory where worktrees are created (workspace-relative) */
+  worktreesDir?: string;
   /** Optional workspace-level hooks settings */
   hooks?: {
     /** Timeout in milliseconds for long-running operations */
@@ -283,6 +290,7 @@ export function generateDefaultConfig(): Config {
     $schema: DEFAULT_CONFIG_SCHEMA_URL,
     version: CURRENT_CONFIG_VERSION,
     reposDir: "./repos",
+    worktreesDir: DEFAULT_WORKTREES_DIR,
     repos: {},
   };
 }
@@ -296,6 +304,8 @@ const ROOT_ALLOWED_KEYS = new Set([
   "version",
   "reposDir",
   "repos_dir",
+  "worktreesDir",
+  "worktrees_dir",
   "repos",
   "discoveredRepos",
   "discovered_repos",
@@ -482,6 +492,28 @@ function normalizeSyncConfig(
   };
 }
 
+function normalizeWorktreesDirConfig(value: unknown, errors: string[]): string {
+  if (value === undefined) {
+    return DEFAULT_WORKTREES_DIR;
+  }
+
+  if (typeof value !== "string") {
+    errors.push("worktreesDir: must be a string if present");
+    return DEFAULT_WORKTREES_DIR;
+  }
+
+  try {
+    return normalizeWorktreesDir(value);
+  } catch (error) {
+    if (error instanceof WorktreeLocationValidationError) {
+      errors.push(`worktreesDir: ${error.message}`);
+      return DEFAULT_WORKTREES_DIR;
+    }
+
+    throw error;
+  }
+}
+
 /**
  * Normalize legacy/snake_case config keys to canonical camelCase format.
  *
@@ -512,11 +544,16 @@ function normalizeConfigInternal(config: unknown): {
     config.reposDir as string | undefined,
     config.repos_dir as string | undefined,
   );
+  const worktreesDirRaw = getFirstDefined(
+    config.worktreesDir as string | undefined,
+    config.worktrees_dir as string | undefined,
+  );
   const reposRaw = getFirstDefined(
     config.repos as Record<string, unknown> | undefined,
     config.discoveredRepos as Record<string, unknown> | undefined,
     config.discovered_repos as Record<string, unknown> | undefined,
   );
+  const worktreesDir = normalizeWorktreesDirConfig(worktreesDirRaw, errors);
   const hooks = normalizeWorkspaceHooks(config.hooks, "hooks", errors);
   const sync = normalizeSyncConfig(config.sync, "sync", errors);
 
@@ -550,6 +587,7 @@ function normalizeConfigInternal(config: unknown): {
   const normalizedConfig: Config = {
     version: normalizedVersion,
     reposDir: normalizedReposDir,
+    worktreesDir,
     repos: normalizedRepos,
   };
 
@@ -742,6 +780,7 @@ function normalizePersistedConfig(config: Config): Config {
     $schema: config.$schema ?? DEFAULT_CONFIG_SCHEMA_URL,
     version: config.version,
     reposDir: config.reposDir,
+    worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
     repos,
   };
 

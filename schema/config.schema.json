@@ -32,6 +32,10 @@
           "description": "Directory where repositories are located",
           "type": "string"
         },
+        "worktreesDir": {
+          "description": "Base directory where worktrees are created (workspace-relative)",
+          "type": "string"
+        },
         "sync": {
           "additionalProperties": false,
           "description": "Optional sync command settings",
