@@ -4,6 +4,7 @@ import {
   buildRemoveHookOperationData,
   executeHook,
   findHook,
+  resolveScopedLifecycleHooks,
   runLifecycleHook,
   validateHook,
 } from "../../src/lib/hooks";
@@ -14,7 +15,8 @@ import {
   createTestContext,
   createMockHook,
 } from "../helpers/hooks";
-import { rmSync } from "fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 
 // ============================================================================
 // findHook() Tests
@@ -89,6 +91,84 @@ describe("remove lifecycle helpers", () => {
     expect(operationData.REMOVE_TOTAL_BRANCHES).toBe("2");
     expect(operationData.REMOVE_TOTAL_WORKTREES).toBe("2");
     expect(operationData.REMOVE_TOTAL_REPOSITORIES).toBe("2");
+  });
+});
+
+describe("resolveScopedLifecycleHooks", () => {
+  let workspaceRoot: string;
+  let homeRoot: string;
+  let originalHome: string | undefined;
+
+  beforeEach(() => {
+    workspaceRoot = createTestRepo();
+    homeRoot = createTestRepo();
+    originalHome = process.env.HOME;
+    process.env.HOME = homeRoot;
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    cleanupTestRepo(workspaceRoot);
+    cleanupTestRepo(homeRoot);
+  });
+
+  test("resolves hooks in repository, workspace, and global order", async () => {
+    const targetRepo = join(workspaceRoot, "repos", "repo-a");
+    mkdirSync(targetRepo, { recursive: true });
+
+    const repositoryHookPath = createHookInRepo(targetRepo, "pre-remove", "echo repository");
+    const workspaceHookPath = createHookInRepo(workspaceRoot, "pre-remove", "echo workspace");
+    const globalSharedHookPath = createHookInRepo(homeRoot, "pre-remove", "echo global-shared");
+
+    const globalRepositoryHookPath = join(homeRoot, ".arashi", "hooks", "repo-a", "pre-remove.sh");
+    mkdirSync(dirname(globalRepositoryHookPath), { recursive: true });
+    writeFileSync(globalRepositoryHookPath, "#!/bin/sh\necho global-repository\n");
+    if (process.platform !== "win32") {
+      chmodSync(globalRepositoryHookPath, 0o755);
+    }
+
+    const resolved = await resolveScopedLifecycleHooks({
+      hookName: "pre-remove",
+      workspaceRoot,
+      targetRepositories: [{ name: "repo-a", path: targetRepo }],
+    });
+
+    expect(resolved).toHaveLength(4);
+    expect(resolved.map((hook) => hook.scope)).toEqual([
+      "repository",
+      "workspace",
+      "global-repository",
+      "global-shared",
+    ]);
+    expect(resolved.map((hook) => hook.scriptPath)).toEqual([
+      repositoryHookPath,
+      workspaceHookPath,
+      globalRepositoryHookPath,
+      globalSharedHookPath,
+    ]);
+    expect(resolved.map((hook) => hook.executionPath)).toEqual([
+      targetRepo,
+      workspaceRoot,
+      targetRepo,
+      targetRepo,
+    ]);
+  });
+
+  test("returns empty list when scoped hooks are missing", async () => {
+    const targetRepo = join(workspaceRoot, "repos", "repo-a");
+    mkdirSync(targetRepo, { recursive: true });
+
+    const resolved = await resolveScopedLifecycleHooks({
+      hookName: "pre-remove",
+      workspaceRoot,
+      targetRepositories: [{ name: "repo-a", path: targetRepo }],
+    });
+
+    expect(resolved).toEqual([]);
   });
 });
 
@@ -236,6 +316,38 @@ describe("executeHook", () => {
     expect(result.stdout).toContain("Hook: test-hook");
     expect(result.stdout).toContain(`Repo: ${testRepo}`);
     expect(result.stdout).toContain("Branch: main");
+
+    rmSync(hookPath);
+    cleanupTestRepo(testRepo);
+  });
+
+  test("passes scope metadata environment variables", async () => {
+    const testRepo = createTestRepo();
+    const hookPath = createMockHook(`
+      echo "Scope: $ARASHI_HOOK_SCOPE"
+      echo "Source: $ARASHI_HOOK_SOURCE_PATH"
+      echo "TargetRepo: $ARASHI_HOOK_TARGET_REPOSITORY"
+      echo "TargetRepoPath: $ARASHI_HOOK_TARGET_REPO_PATH"
+    `);
+
+    const result = await executeHook({
+      hookName: "test-hook",
+      scriptPath: hookPath,
+      context: {
+        hookName: "test-hook",
+        repoPath: testRepo,
+        hookScope: "global-shared",
+        sourceScriptPath: "/tmp/source-hook.sh",
+        targetRepoName: "repo-a",
+        targetRepoPath: "/tmp/repo-a",
+        operationData: {},
+      },
+    });
+
+    expect(result.stdout).toContain("Scope: global-shared");
+    expect(result.stdout).toContain("Source: /tmp/source-hook.sh");
+    expect(result.stdout).toContain("TargetRepo: repo-a");
+    expect(result.stdout).toContain("TargetRepoPath: /tmp/repo-a");
 
     rmSync(hookPath);
     cleanupTestRepo(testRepo);

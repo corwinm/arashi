@@ -1,6 +1,7 @@
 import { access, stat } from "fs/promises";
 import { join } from "path";
 import { constants } from "fs";
+import { homedir } from "os";
 
 // ============================================================================
 // Type Definitions
@@ -16,6 +17,10 @@ export interface HookContext {
   hookName: string;
   repoPath: string;
   operationData: Record<string, string>;
+  hookScope?: HookScope;
+  sourceScriptPath?: string;
+  targetRepoName?: string;
+  targetRepoPath?: string;
 }
 
 export interface LifecyclePoint {
@@ -33,6 +38,23 @@ export interface HookResult {
   success: boolean;
   timedOut: boolean;
   duration: number;
+}
+
+export type HookScope = "repository" | "workspace" | "global-repository" | "global-shared";
+
+export interface HookTargetRepository {
+  name: string;
+  path: string;
+}
+
+export interface ResolvedLifecycleHook {
+  hookName: string;
+  scope: HookScope;
+  scriptPath: string;
+  sourceScriptPath: string;
+  executionPath: string;
+  targetRepositoryName: string;
+  targetRepositoryPath: string;
 }
 
 export type HookOutcomeStatus = "success" | "failure" | "skipped";
@@ -249,6 +271,22 @@ function buildEnvironment(context: HookContext): Record<string, string> {
     ARASHI_REPO_PATH: context.repoPath,
   };
 
+  if (context.hookScope) {
+    env.ARASHI_HOOK_SCOPE = context.hookScope;
+  }
+
+  if (context.sourceScriptPath) {
+    env.ARASHI_HOOK_SOURCE_PATH = context.sourceScriptPath;
+  }
+
+  if (context.targetRepoName) {
+    env.ARASHI_HOOK_TARGET_REPOSITORY = context.targetRepoName;
+  }
+
+  if (context.targetRepoPath) {
+    env.ARASHI_HOOK_TARGET_REPO_PATH = context.targetRepoPath;
+  }
+
   // Add operation-specific data with ARASHI_ prefix
   for (const [key, value] of Object.entries(context.operationData)) {
     env[`ARASHI_${key}`] = value;
@@ -304,6 +342,87 @@ export async function findHook(hookName: string, repoPath: string): Promise<stri
   } catch {
     return null; // Not found is not an error
   }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveScopedLifecycleHooks(options: {
+  hookName: string;
+  workspaceRoot: string;
+  targetRepositories: HookTargetRepository[];
+}): Promise<ResolvedLifecycleHook[]> {
+  const resolved: ResolvedLifecycleHook[] = [];
+  const userHome = process.env.HOME ?? homedir();
+  const globalHooksDir = join(userHome, ".arashi", "hooks");
+
+  for (const target of options.targetRepositories) {
+    const repositoryHookPath = join(target.path, ".arashi", "hooks", `${options.hookName}.sh`);
+    const workspaceHookPath = join(
+      options.workspaceRoot,
+      ".arashi",
+      "hooks",
+      `${options.hookName}.sh`,
+    );
+    const globalRepositoryHookPath = join(globalHooksDir, target.name, `${options.hookName}.sh`);
+    const globalSharedHookPath = join(globalHooksDir, `${options.hookName}.sh`);
+
+    if (target.path !== options.workspaceRoot && (await pathExists(repositoryHookPath))) {
+      resolved.push({
+        hookName: options.hookName,
+        scope: "repository",
+        scriptPath: repositoryHookPath,
+        sourceScriptPath: repositoryHookPath,
+        executionPath: target.path,
+        targetRepositoryName: target.name,
+        targetRepositoryPath: target.path,
+      });
+    }
+
+    if (await pathExists(workspaceHookPath)) {
+      resolved.push({
+        hookName: options.hookName,
+        scope: "workspace",
+        scriptPath: workspaceHookPath,
+        sourceScriptPath: workspaceHookPath,
+        executionPath: options.workspaceRoot,
+        targetRepositoryName: target.name,
+        targetRepositoryPath: target.path,
+      });
+    }
+
+    if (await pathExists(globalRepositoryHookPath)) {
+      resolved.push({
+        hookName: options.hookName,
+        scope: "global-repository",
+        scriptPath: globalRepositoryHookPath,
+        sourceScriptPath: globalRepositoryHookPath,
+        executionPath: target.path,
+        targetRepositoryName: target.name,
+        targetRepositoryPath: target.path,
+      });
+    }
+
+    if (await pathExists(globalSharedHookPath)) {
+      resolved.push({
+        hookName: options.hookName,
+        scope: "global-shared",
+        scriptPath: globalSharedHookPath,
+        sourceScriptPath: globalSharedHookPath,
+        executionPath: target.path,
+        targetRepositoryName: target.name,
+        targetRepositoryPath: target.path,
+      });
+    }
+  }
+
+  return resolved;
 }
 
 /**
