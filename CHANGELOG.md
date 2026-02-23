@@ -1,3 +1,12 @@
+## [1.8.0](https://github.com/corwinm/arashi/compare/v1.7.0...v1.8.0) (2026-02-23)
+
+### Features
+
+- add configurable create and switch defaults ([#41](https://github.com/corwinm/arashi/issues/41)) ([d65dfa4](https://github.com/corwinm/arashi/commit/d65dfa48a3cef851561ec439013d3507809eff24))
+- add configurable worktree base location support ([#40](https://github.com/corwinm/arashi/issues/40)) ([a491d31](https://github.com/corwinm/arashi/commit/a491d31f5ce8e06d37fda485a54a14d36d9b38e7))
+- add JSON Schema for Arashi config ([#39](https://github.com/corwinm/arashi/issues/39)) ([ca4dbae](https://github.com/corwinm/arashi/commit/ca4dbaee4e5a89f9d043305364d339a6bb59c112))
+- **hooks:** expand remove hook scope and ordering ([#42](https://github.com/corwinm/arashi/issues/42)) ([74c710c](https://github.com/corwinm/arashi/commit/74c710c3b3e1f91e35084ae4f6f6c23338d4eb79))
+
 ## [1.7.0](https://github.com/corwinm/arashi/compare/v1.6.0...v1.7.0) (2026-02-19)
 
 ### Features
