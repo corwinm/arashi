@@ -15,6 +15,7 @@ describe("switch command integration", () => {
     const command = createCommand();
     expect(command.name()).toBe("switch");
     expect(command.options.some((option) => option.long === "--sesh")).toBe(true);
+    expect(command.options.some((option) => option.long === "--no-default-launch")).toBe(true);
     expect(command.options.some((option) => option.long === "--repos")).toBe(true);
     expect(command.options.some((option) => option.long === "--all")).toBe(true);
   });
@@ -354,6 +355,80 @@ describe("switch command integration", () => {
     expect(invocations).toHaveLength(2);
     expect(invocations[0]).toEqual(["which", "sesh"]);
     expect(invocations[1][0]).toBe("tmux");
+  });
+
+  test("applies configured switch launch mode defaults", async () => {
+    const launchOptions: Array<{ sesh?: boolean }> = [];
+
+    await executeSwitch(
+      undefined,
+      {},
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({
+          repositories: [],
+          config: {
+            version: "1.0.0",
+            reposDir: "./repos",
+            repos: {},
+            defaults: {
+              switch: {
+                launchMode: "sesh",
+              },
+            },
+          },
+        }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        launchSwitchTarget: async (_candidate, options) => {
+          launchOptions.push(options);
+          return { mode: "sesh", command: ["tmux"] };
+        },
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(launchOptions).toEqual([{ sesh: true }]);
+  });
+
+  test("allows opt-out from configured switch launch mode", async () => {
+    const launchOptions: Array<{ sesh?: boolean }> = [];
+
+    await executeSwitch(
+      undefined,
+      { defaultLaunch: false },
+      {
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({
+          repositories: [],
+          config: {
+            version: "1.0.0",
+            reposDir: "./repos",
+            repos: {},
+            defaults: {
+              switch: {
+                launchMode: "sesh",
+              },
+            },
+          },
+        }),
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        launchSwitchTarget: async (_candidate, options) => {
+          launchOptions.push(options);
+          return { mode: "fallback", command: ["open"] };
+        },
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(launchOptions).toEqual([{ sesh: false }]);
   });
 
   test("invokes VS Code runner path in VS Code terminals", async () => {

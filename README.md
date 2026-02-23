@@ -99,7 +99,7 @@ Arashi currently provides these commands:
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
-- `arashi switch [filter] [--repos|--all] [--sesh]`
+- `arashi switch [filter] [--repos|--all] [--sesh] [--no-default-launch]`
 - `arashi pull`
 - `arashi sync`
 - `arashi setup [--only <repo>] [--verbose]`
@@ -111,11 +111,14 @@ arashi init
 arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
 arashi create feature-auth-refresh
+arashi create feature-auth-refresh --launch
+arashi create feature-auth-refresh --no-launch
 arashi status
 arashi switch feature-auth-refresh          # parent repo worktrees
 arashi switch --repos feature-auth-refresh  # child repo worktrees in current workspace
 arashi switch --all feature-auth-refresh    # all repos
 arashi switch --repos docs                  # repo-name matching in child repos
+arashi switch --no-default-launch           # bypass configured launch mode defaults once
 ```
 
 ## Hooks
@@ -204,9 +207,21 @@ Example config header:
   "$schema": "https://unpkg.com/arashi/schema/config.schema.json",
   "version": "1.0.0",
   "reposDir": "./repos",
+  "defaults": {
+    "create": {
+      "switch": true,
+      "launch": true,
+      "launchMode": "sesh"
+    },
+    "switch": {
+      "launchMode": "sesh"
+    }
+  },
   "repos": {}
 }
 ```
+
+Defaults precedence for create/switch behavior: explicit CLI flag > opt-out flag > config default > built-in default.
 
 ## skills.sh Integration
 

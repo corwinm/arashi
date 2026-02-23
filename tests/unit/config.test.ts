@@ -12,7 +12,6 @@ import {
   validateConfig,
   ConfigValidationError,
   UnsupportedConfigVersionError,
-  type Config,
 } from "../../src/lib/config";
 import { join } from "path";
 
@@ -57,7 +56,7 @@ describe("generateDefaultConfig", () => {
 
 describe("validateConfig - root level", () => {
   test("accepts valid complete configuration", () => {
-    const validConfig: Config = {
+    const validConfig = {
       version: "1.0.0",
       reposDir: "./repos",
       repos: {
@@ -80,6 +79,63 @@ describe("validateConfig - root level", () => {
     };
 
     expect(() => validateConfig(minimalConfig)).not.toThrow();
+  });
+
+  test("accepts command-scoped defaults configuration", () => {
+    const configWithDefaults = {
+      version: "1.0.0",
+      reposDir: "./repos",
+      defaults: {
+        create: {
+          switch: true,
+          launch: true,
+          launchMode: "sesh",
+        },
+        switch: {
+          launchMode: "sesh",
+        },
+      },
+      repos: {},
+    };
+
+    expect(() => validateConfig(configWithDefaults)).not.toThrow();
+  });
+
+  test("normalizes snake_case launch mode aliases", () => {
+    const normalized = normalizeConfig({
+      version: "1.0.0",
+      reposDir: "./repos",
+      defaults: {
+        create: {
+          switch: true,
+          launch_mode: "sesh",
+        },
+        switch: {
+          launch_mode: "auto",
+        },
+      },
+      repos: {},
+    });
+
+    expect(normalized.defaults?.create?.launchMode).toBe("sesh");
+    expect(normalized.defaults?.create?.launch).toBe(true);
+    expect(normalized.defaults?.switch?.launchMode).toBe("auto");
+  });
+
+  test("ignores malformed defaults and preserves baseline behavior", () => {
+    const normalized = normalizeConfig({
+      version: "1.0.0",
+      reposDir: "./repos",
+      defaults: {
+        create: "invalid",
+        switch: {
+          launchMode: "unknown",
+        },
+      },
+      repos: {},
+    });
+
+    expect(normalized.defaults).toBeUndefined();
   });
 
   test("throws on null config", () => {

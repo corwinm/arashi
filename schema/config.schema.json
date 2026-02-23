@@ -21,6 +21,10 @@
           },
           "type": "object"
         },
+        "defaults": {
+          "$ref": "#/definitions/CommandDefaults",
+          "description": "Optional command-scoped defaults for create and switch"
+        },
         "repos": {
           "additionalProperties": {
             "$ref": "#/definitions/RepoConfig"
@@ -54,6 +58,53 @@
     "ConfigVersion": {
       "const": "1.0.0",
       "type": "string"
+    },
+    "LaunchMode": {
+      "enum": ["auto", "sesh"],
+      "type": "string"
+    },
+    "CreateCommandDefaults": {
+      "additionalProperties": false,
+      "description": "Default create command behavior",
+      "properties": {
+        "launch": {
+          "description": "Default to launching a terminal/editor context after create",
+          "type": "boolean"
+        },
+        "launchMode": {
+          "$ref": "#/definitions/LaunchMode",
+          "description": "Preferred launch mode when create triggers launch"
+        },
+        "switch": {
+          "description": "Default to switching to the newly created parent worktree",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SwitchCommandDefaults": {
+      "additionalProperties": false,
+      "description": "Default switch command behavior",
+      "properties": {
+        "launchMode": {
+          "$ref": "#/definitions/LaunchMode",
+          "description": "Preferred launch mode for switch"
+        }
+      },
+      "type": "object"
+    },
+    "CommandDefaults": {
+      "additionalProperties": false,
+      "description": "Command-scoped defaults",
+      "properties": {
+        "create": {
+          "$ref": "#/definitions/CreateCommandDefaults"
+        },
+        "switch": {
+          "$ref": "#/definitions/SwitchCommandDefaults"
+        }
+      },
+      "type": "object"
     },
     "RepoConfig": {
       "additionalProperties": false,

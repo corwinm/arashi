@@ -14,7 +14,7 @@ import { spawn } from "child_process";
 // Import functions we're testing (will be implemented in T010, T020)
 import { calculateWorktreePath } from "../../src/core/worktree.ts";
 import type { Repository } from "../../src/core/repository.ts";
-import type { ArashiConfig } from "../../src/types.ts";
+import type { Config as ArashiConfig } from "../../src/lib/config.ts";
 
 /**
  * Helper to execute git commands
@@ -86,7 +86,6 @@ describe("calculateWorktreePath", () => {
       const config: ArashiConfig = {
         version: "1.0.0",
         reposDir: "./repos",
-        worktree_strategy: "same_branch",
         repos: {},
       };
 
@@ -119,7 +118,6 @@ describe("calculateWorktreePath", () => {
       const config: ArashiConfig = {
         version: "1.0.0",
         reposDir: "./repos",
-        worktree_strategy: "same_branch",
         repos: {},
       };
 
@@ -156,7 +154,6 @@ describe("calculateWorktreePath", () => {
       const config: ArashiConfig = {
         version: "1.0.0",
         reposDir: "./repos",
-        worktree_strategy: "same_branch",
         repos: {},
       };
 
@@ -183,7 +180,6 @@ describe("calculateWorktreePath", () => {
       const config: ArashiConfig = {
         version: "1.0.0",
         reposDir: "./repos",
-        worktree_strategy: "same_branch",
         repos: {},
       };
 
@@ -221,7 +217,6 @@ describe("calculateWorktreePath", () => {
       const config: ArashiConfig = {
         version: "1.0.0",
         reposDir: "./repos",
-        worktree_strategy: "same_branch",
         repos: {},
       };
 
@@ -258,7 +253,6 @@ describe("calculateWorktreePath", () => {
       const config: ArashiConfig = {
         version: "1.0.0",
         reposDir: "./repos",
-        worktree_strategy: "same_branch",
         repos: {},
       };
 
@@ -299,7 +293,6 @@ describe("calculateWorktreePath", () => {
       const config: ArashiConfig = {
         version: "1.0.0",
         reposDir: "./repos",
-        worktree_strategy: "same_branch",
         repos: {},
       };
 
