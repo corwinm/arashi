@@ -16,7 +16,6 @@ import { discoverRepositories } from "../core/repository.ts";
 import {
   DEFAULT_WORKTREES_DIR,
   DEFAULT_WORKTREES_GITIGNORE_ENTRY,
-  isDefaultWorktreesDir,
   normalizeWorktreesDir,
   WorktreeLocationValidationError,
 } from "../lib/worktree-location.ts";
@@ -401,7 +400,7 @@ async function writeHookTemplates(hooksDir: string): Promise<void> {
 // ============================================================================
 
 /**
- * Update .gitignore to exclude repos directory (idempotent)
+ * Update .gitignore to exclude managed directories (idempotent)
  */
 function normalizeGitignorePattern(directoryPath: string): string {
   let pattern = directoryPath.replace(/^\.\//, "");
@@ -419,12 +418,37 @@ function hasGitignorePattern(content: string, pattern: string): boolean {
     .some((line) => line === pattern || line === alternate);
 }
 
+function getManagedWorktreesGitignorePattern(worktreesDir: string): string | null {
+  const normalizedWorktreesDir = normalizeWorktreesDir(worktreesDir);
+
+  if (
+    normalizedWorktreesDir === "." ||
+    normalizedWorktreesDir === ".." ||
+    normalizedWorktreesDir.startsWith("../")
+  ) {
+    return null;
+  }
+
+  if (normalizedWorktreesDir === DEFAULT_WORKTREES_DIR) {
+    return DEFAULT_WORKTREES_GITIGNORE_ENTRY;
+  }
+
+  return normalizeGitignorePattern(normalizedWorktreesDir);
+}
+
+function getManagedGitignorePatterns(reposDir: string, worktreesDir: string): string[] {
+  const patterns = [normalizeGitignorePattern(reposDir)];
+  const worktreesPattern = getManagedWorktreesGitignorePattern(worktreesDir);
+  if (worktreesPattern) {
+    patterns.push(worktreesPattern);
+  }
+
+  return patterns;
+}
+
 async function updateGitignore(cwd: string, reposDir: string, worktreesDir: string): Promise<void> {
   const gitignorePath = join(cwd, ".gitignore");
-  const patterns = [normalizeGitignorePattern(reposDir)];
-  if (isDefaultWorktreesDir(worktreesDir)) {
-    patterns.push(DEFAULT_WORKTREES_GITIGNORE_ENTRY);
-  }
+  const patterns = getManagedGitignorePatterns(reposDir, worktreesDir);
 
   let content = "";
   let originalContent: string | null = null;
@@ -797,10 +821,7 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
 
     // 11. Update .gitignore
     const gitignorePath = join(cwd, ".gitignore");
-    const managedPatterns = [normalizeGitignorePattern(reposDir)];
-    if (isDefaultWorktreesDir(worktreesDir)) {
-      managedPatterns.push(DEFAULT_WORKTREES_GITIGNORE_ENTRY);
-    }
+    const managedPatterns = getManagedGitignorePatterns(reposDir, worktreesDir);
     if (options.dryRun) {
       logDryRun("UPDATE_FILE", `${gitignorePath} (add: ${managedPatterns.join(", ")})`);
     } else {
@@ -870,9 +891,11 @@ function displaySuccess(result: InitResult, options: InitOptions): void {
   }
 
   const reposDir = options.reposDir || "./repos";
-  console.log(`\nUpdated .gitignore to exclude: ${normalizeGitignorePattern(reposDir)}`);
-  if (isDefaultWorktreesDir(options.worktreesDir ?? DEFAULT_WORKTREES_DIR)) {
-    console.log(`  • ${DEFAULT_WORKTREES_GITIGNORE_ENTRY}`);
+  const worktreesDir = options.worktreesDir || DEFAULT_WORKTREES_DIR;
+  const managedPatterns = getManagedGitignorePatterns(reposDir, worktreesDir);
+  console.log(`\nUpdated .gitignore to exclude: ${managedPatterns[0]}`);
+  for (const pattern of managedPatterns.slice(1)) {
+    console.log(`  • ${pattern}`);
   }
 
   console.log("\nNext steps:");
