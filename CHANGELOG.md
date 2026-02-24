@@ -1,3 +1,9 @@
+## [1.8.1](https://github.com/corwinm/arashi/compare/v1.8.0...v1.8.1) (2026-02-24)
+
+### Bug Fixes
+
+- **init:** stop auto-adding default worktrees ignore ([#43](https://github.com/corwinm/arashi/issues/43)) ([2acb282](https://github.com/corwinm/arashi/commit/2acb28282ba68392b600c31a61075ebc54232643))
+
 ## [1.8.0](https://github.com/corwinm/arashi/compare/v1.7.0...v1.8.0) (2026-02-23)
 
 ### Features
