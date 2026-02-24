@@ -15,8 +15,6 @@ import { exec as gitExec } from "../lib/git.ts";
 import { discoverRepositories } from "../core/repository.ts";
 import {
   DEFAULT_WORKTREES_DIR,
-  DEFAULT_WORKTREES_GITIGNORE_ENTRY,
-  isDefaultWorktreesDir,
   normalizeWorktreesDir,
   WorktreeLocationValidationError,
 } from "../lib/worktree-location.ts";
@@ -419,12 +417,9 @@ function hasGitignorePattern(content: string, pattern: string): boolean {
     .some((line) => line === pattern || line === alternate);
 }
 
-async function updateGitignore(cwd: string, reposDir: string, worktreesDir: string): Promise<void> {
+async function updateGitignore(cwd: string, reposDir: string): Promise<void> {
   const gitignorePath = join(cwd, ".gitignore");
   const patterns = [normalizeGitignorePattern(reposDir)];
-  if (isDefaultWorktreesDir(worktreesDir)) {
-    patterns.push(DEFAULT_WORKTREES_GITIGNORE_ENTRY);
-  }
 
   let content = "";
   let originalContent: string | null = null;
@@ -798,15 +793,12 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     // 11. Update .gitignore
     const gitignorePath = join(cwd, ".gitignore");
     const managedPatterns = [normalizeGitignorePattern(reposDir)];
-    if (isDefaultWorktreesDir(worktreesDir)) {
-      managedPatterns.push(DEFAULT_WORKTREES_GITIGNORE_ENTRY);
-    }
     if (options.dryRun) {
       logDryRun("UPDATE_FILE", `${gitignorePath} (add: ${managedPatterns.join(", ")})`);
     } else {
       logVerbose("Updating .gitignore...", options);
       try {
-        await updateGitignore(cwd, reposDir, worktreesDir);
+        await updateGitignore(cwd, reposDir);
         logVerbose("✓ .gitignore updated", options);
       } catch (error) {
         await executeRollback();
@@ -871,9 +863,6 @@ function displaySuccess(result: InitResult, options: InitOptions): void {
 
   const reposDir = options.reposDir || "./repos";
   console.log(`\nUpdated .gitignore to exclude: ${normalizeGitignorePattern(reposDir)}`);
-  if (isDefaultWorktreesDir(options.worktreesDir ?? DEFAULT_WORKTREES_DIR)) {
-    console.log(`  • ${DEFAULT_WORKTREES_GITIGNORE_ENTRY}`);
-  }
 
   console.log("\nNext steps:");
   if (result.discoveredCount && result.discoveredCount > 0) {
