@@ -1,3 +1,9 @@
+## [1.8.2](https://github.com/corwinm/arashi/compare/v1.8.1...v1.8.2) (2026-02-24)
+
+### Bug Fixes
+
+- **init:** restore managed worktree gitignore updates ([#45](https://github.com/corwinm/arashi/issues/45)) ([3fd71a9](https://github.com/corwinm/arashi/commit/3fd71a94d5ee6786ead3a8b9cbac828bc0d507a7))
+
 ## [1.8.1](https://github.com/corwinm/arashi/compare/v1.8.0...v1.8.1) (2026-02-24)
 
 ### Bug Fixes
