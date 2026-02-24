@@ -129,7 +129,7 @@ describe("init command - success cases", () => {
     expect(await filesystem.fileExists(gitignorePath)).toBe(true);
     const gitignoreContent = await filesystem.readTextFile(gitignorePath);
     expect(gitignoreContent).toContain("repos/");
-    expect(gitignoreContent).not.toContain(".arashi/worktrees/");
+    expect(gitignoreContent).toContain(".arashi/worktrees/");
   });
 
   test("init with custom repos directory", async () => {
@@ -147,10 +147,25 @@ describe("init command - success cases", () => {
     // Verify .gitignore updated with custom path
     const gitignoreContent = await filesystem.readTextFile(join(testDir, ".gitignore"));
     expect(gitignoreContent).toContain("custom-repos/");
-    expect(gitignoreContent).not.toContain(".arashi/worktrees/");
+    expect(gitignoreContent).toContain(".arashi/worktrees/");
   });
 
-  test("init with custom worktrees directory does not auto-ignore custom path", async () => {
+  test("init with custom managed subdirectory adds normalized worktrees ignore entry", async () => {
+    const result = await runInitCommand(testDir, ["--worktrees-dir", "./workspace-worktrees/"]);
+
+    expect(result.exitCode).toBe(0);
+
+    const loadedConfig = await config.loadConfig(testDir);
+    expect(loadedConfig.worktreesDir).toBe("workspace-worktrees");
+
+    const gitignoreContent = await filesystem.readTextFile(join(testDir, ".gitignore"));
+    expect(gitignoreContent).toContain("repos/");
+    expect(gitignoreContent).toContain("workspace-worktrees/");
+    expect(gitignoreContent).not.toContain(".arashi/worktrees/");
+    expect(result.stdout).toContain("workspace-worktrees/");
+  });
+
+  test("init with parent worktrees directory does not auto-ignore unsafe path", async () => {
     const result = await runInitCommand(testDir, ["--worktrees-dir", "../workspace-worktrees"]);
 
     expect(result.exitCode).toBe(0);
@@ -161,6 +176,22 @@ describe("init command - success cases", () => {
     const gitignoreContent = await filesystem.readTextFile(join(testDir, ".gitignore"));
     expect(gitignoreContent).toContain("repos/");
     expect(gitignoreContent).not.toContain("../workspace-worktrees/");
+    expect(gitignoreContent).not.toContain(".arashi/worktrees/");
+  });
+
+  test("init with dot worktrees directory does not auto-ignore workspace root", async () => {
+    const result = await runInitCommand(testDir, ["--worktrees-dir", "."]);
+
+    expect(result.exitCode).toBe(0);
+
+    const loadedConfig = await config.loadConfig(testDir);
+    expect(loadedConfig.worktreesDir).toBe(".");
+
+    const gitignoreContent = await filesystem.readTextFile(join(testDir, ".gitignore"));
+    const gitignoreLines = gitignoreContent.split("\n").map((line) => line.trim());
+    expect(gitignoreContent).toContain("repos/");
+    expect(gitignoreLines).not.toContain(".");
+    expect(gitignoreLines).not.toContain("./");
     expect(gitignoreContent).not.toContain(".arashi/worktrees/");
   });
 
@@ -212,7 +243,8 @@ describe("init command - success cases", () => {
 
     const gitignoreContent1 = await filesystem.readTextFile(join(testDir, ".gitignore"));
     const reposLineCount1 = (gitignoreContent1.match(/repos\//g) || []).length;
-    expect(gitignoreContent1).not.toContain(".arashi/worktrees/");
+    const worktreesLineCount1 = (gitignoreContent1.match(/\.arashi\/worktrees\//g) || []).length;
+    expect(gitignoreContent1).toContain(".arashi/worktrees/");
 
     // Delete config to allow re-init
     await rm(join(testDir, ".arashi"), { recursive: true });
@@ -222,10 +254,33 @@ describe("init command - success cases", () => {
 
     const gitignoreContent2 = await filesystem.readTextFile(join(testDir, ".gitignore"));
     const reposLineCount2 = (gitignoreContent2.match(/repos\//g) || []).length;
-    expect(gitignoreContent2).not.toContain(".arashi/worktrees/");
+    const worktreesLineCount2 = (gitignoreContent2.match(/\.arashi\/worktrees\//g) || []).length;
+    expect(gitignoreContent2).toContain(".arashi/worktrees/");
 
     // Verify repos/ pattern appears same number of times
     expect(reposLineCount2).toBe(reposLineCount1);
+    expect(worktreesLineCount2).toBe(worktreesLineCount1);
+  });
+
+  test(".gitignore update is idempotent with configured worktrees directory", async () => {
+    await runInitCommand(testDir, ["--worktrees-dir", "workspace-worktrees"]);
+
+    const gitignoreContent1 = await filesystem.readTextFile(join(testDir, ".gitignore"));
+    const reposLineCount1 = (gitignoreContent1.match(/repos\//g) || []).length;
+    const customWorktreesLineCount1 = (gitignoreContent1.match(/workspace-worktrees\//g) || [])
+      .length;
+
+    await rm(join(testDir, ".arashi"), { recursive: true });
+
+    await runInitCommand(testDir, ["--worktrees-dir", "./workspace-worktrees/"]);
+
+    const gitignoreContent2 = await filesystem.readTextFile(join(testDir, ".gitignore"));
+    const reposLineCount2 = (gitignoreContent2.match(/repos\//g) || []).length;
+    const customWorktreesLineCount2 = (gitignoreContent2.match(/workspace-worktrees\//g) || [])
+      .length;
+
+    expect(reposLineCount2).toBe(reposLineCount1);
+    expect(customWorktreesLineCount2).toBe(customWorktreesLineCount1);
   });
 
   test("hook templates are not overwritten if they exist", async () => {
@@ -438,7 +493,7 @@ describe("init command - edge cases", () => {
     expect(await filesystem.fileExists(gitignorePath)).toBe(true);
     const content = await filesystem.readTextFile(gitignorePath);
     expect(content).toContain("repos/");
-    expect(content).not.toContain(".arashi/worktrees/");
+    expect(content).toContain(".arashi/worktrees/");
 
     await cleanup(testDir);
   });
@@ -457,7 +512,7 @@ describe("init command - edge cases", () => {
     const content = await filesystem.readTextFile(join(testDir, ".gitignore"));
     expect(content).toContain("node_modules/\n");
     expect(content).toContain("repos/");
-    expect(content).not.toContain(".arashi/worktrees/");
+    expect(content).toContain(".arashi/worktrees/");
 
     await cleanup(testDir);
   });
@@ -626,6 +681,33 @@ describe("init command - dry-run mode", () => {
 
     // Verify custom directory NOT created
     expect(await filesystem.fileExists(join(testDir, "custom"))).toBe(false);
+  });
+
+  test("--dry-run with custom worktrees directory previews managed ignore entry", async () => {
+    const result = await runInitCommand(testDir, [
+      "--dry-run",
+      "--worktrees-dir",
+      "./workspace-worktrees/",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("[DRY RUN] UPDATE_FILE:");
+    expect(result.stdout).toContain("workspace-worktrees/");
+    expect(result.stdout).not.toContain(".arashi/worktrees/");
+  });
+
+  test("--dry-run with unsafe parent worktrees directory skips worktree ignore preview", async () => {
+    const result = await runInitCommand(testDir, [
+      "--dry-run",
+      "--worktrees-dir",
+      "../workspace-worktrees",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("[DRY RUN] UPDATE_FILE:");
+    expect(result.stdout).toContain("add: repos/");
+    expect(result.stdout).not.toContain("../workspace-worktrees/");
+    expect(result.stdout).not.toContain(".arashi/worktrees/");
   });
 
   test("--dry-run works with --no-discover option", async () => {
