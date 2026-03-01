@@ -104,15 +104,60 @@ Arashi currently provides these commands:
 - `arashi sync`
 - `arashi setup [--only <repo>] [--verbose]`
 
-## Quick Example
+## Value Example: Parallel Frontend + Backend Work
+
+Use Arashi when one feature spans multiple repositories and you do not want context-switch overhead.
+
+Scenario: you are building `feature/cart-ui` across `frontend` and `backend`.
+
+```text
+workspace/
+|- repos/
+|  |- frontend/
+|  `- backend/
+`- .arashi/
+   |- config.json
+   `- worktrees/
+      |- frontend-feature-cart-ui/
+      `- backend-feature-cart-ui/
+```
 
 ```bash
+# Step 1: register both repos
 arashi init
 arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
-arashi create feature-auth-refresh
-arashi create feature-auth-refresh --launch
-arashi create feature-auth-refresh --no-launch
+
+# Step 2: create one branch across both repos
+arashi create feature/cart-ui
+
+# Step 3: switch where you need to work next
+arashi switch
+# choose frontend/feature/cart-ui while backend tests keep running
+```
+
+Static walkthrough frames (README-safe):
+
+```text
+Frame 1  [ADD]
+frontend repo + backend repo are registered in .arashi/config.json
+
+Frame 2  [CREATE]
+feature/cart-ui worktrees are created for both repos in .arashi/worktrees
+
+Frame 3  [SWITCH]
+you jump to frontend/feature/cart-ui while backend/feature/cart-ui stays active
+```
+
+### Message Parity Checklist
+
+- Headline: Arashi coordinates multiple repos with parallel worktrees.
+- Flow: `add` -> `create` -> `switch`.
+- Outcome: switch tasks while another worktree remains active.
+
+### Additional Switch Examples
+
+```bash
 arashi status
 arashi switch feature-auth-refresh          # parent repo worktrees
 arashi switch --repos feature-auth-refresh  # child repo worktrees in current workspace
