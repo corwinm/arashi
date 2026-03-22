@@ -8,17 +8,37 @@
 
 import { Command } from "commander";
 import { join, resolve } from "path";
-import * as config from "../lib/config.ts";
-import * as logger from "../lib/logger.ts";
-import * as filesystem from "../lib/filesystem.ts";
 import { exec as gitExec } from "../lib/git.ts";
 import { discoverRepositories } from "../core/repository.ts";
+import {
+  DEFAULT_CONFIG_SCHEMA_URL,
+  configExists,
+  getConfigPath,
+  saveConfig,
+} from "../lib/config.ts";
+import type { Config, RepoConfig } from "../lib/config.ts";
+import {
+  DiskFullError,
+  PermissionError,
+  copyFile,
+  ensureDir,
+  fileExists,
+  readTextFile,
+  removeDir,
+  writeTextFile,
+} from "../lib/filesystem.ts";
+import { info, error as logError, success, warn } from "../lib/logger.ts";
 import {
   DEFAULT_WORKTREES_DIR,
   DEFAULT_WORKTREES_GITIGNORE_ENTRY,
   WorktreeLocationValidationError,
   normalizeWorktreesDir,
 } from "../lib/worktree-location.ts";
+
+const ZERO = 0;
+const JSON_INDENT = 2;
+const PATH_MAX_LENGTH = 4096;
+const EXISTING_CONFIG_WARNING = "\n⚠ Warning: Existing configuration will be backed up";
 
 // ============================================================================
 // Data Types
@@ -116,31 +136,30 @@ const operations: Operation[] = [];
 /**
  * Add an operation to the rollback stack
  */
-function addOperation(operation: Operation): void {
+const addOperation = (operation: Operation): void => {
   operations.push(operation);
-}
+};
 
 /**
  * Execute rollback of all tracked operations in LIFO order
  */
-async function executeRollback(): Promise<void> {
-  logger.info("\nRolling back changes...");
+const executeRollback = async (): Promise<void> => {
+  info("\nRolling back changes...");
 
-  // Reverse order (LIFO)
-  const reversedOps = [...operations].toReversed();
+  const reversedOps = [...operations];
+  reversedOps.reverse();
 
   for (const op of reversedOps) {
     try {
       await op.rollback();
-      logger.info(`  • Rolled back: ${op.path}`);
+      info(`  • Rolled back: ${op.path}`);
     } catch (error) {
-      logger.warn(`  • Failed to rollback: ${op.path} - ${(error as Error).message}`);
+      warn(`  • Failed to rollback: ${op.path} - ${(error as Error).message}`);
     }
   }
 
-  // Clear operations
-  operations.length = 0;
-}
+  operations.length = ZERO;
+};
 
 // ============================================================================
 // Validation Helpers
@@ -149,36 +168,33 @@ async function executeRollback(): Promise<void> {
 /**
  * Check if current directory is a git repository
  */
-async function isGitRepository(cwd: string): Promise<boolean> {
+const isGitRepository = async (cwd: string): Promise<boolean> => {
   try {
     await gitExec(["rev-parse", "--git-dir"], cwd);
     return true;
   } catch {
     return false;
   }
-}
+};
 
 /**
  * Validate path format
  */
-function isValidPath(path: string): boolean {
-  // Empty or only whitespace
+const isValidPath = (path: string): boolean => {
   if (!path || path.trim() === "") {
     return false;
   }
 
-  // Null byte
   if (path.includes("\0")) {
     return false;
   }
 
-  // Path too long (common filesystem limit)
-  if (path.length > 4096) {
+  if (path.length > PATH_MAX_LENGTH) {
     return false;
   }
 
   return true;
-}
+};
 
 // ============================================================================
 // Verbose Logging & Dry-Run Helpers
@@ -187,18 +203,18 @@ function isValidPath(path: string): boolean {
 /**
  * Log verbose message if verbose mode enabled
  */
-function logVerbose(message: string, options: InitOptions): void {
+const logVerbose = (message: string, options: InitOptions): void => {
   if (options.verbose) {
-    logger.info(`[VERBOSE] ${message}`);
+    info(`[VERBOSE] ${message}`);
   }
-}
+};
 
 /**
  * Log dry-run action
  */
-function logDryRun(action: string, details: string): void {
+const logDryRun = (action: string, details: string): void => {
   console.log(`[DRY RUN] ${action}: ${details}`);
-}
+};
 
 // ============================================================================
 // Hook Templates
@@ -369,31 +385,29 @@ exit 0
 /**
  * Write hook template files to hooks directory
  */
-async function writeHookTemplates(hooksDir: string): Promise<void> {
+const writeHookTemplates = async (hooksDir: string): Promise<void> => {
   for (const template of HOOK_TEMPLATES) {
     const templatePath = join(hooksDir, template.filename);
 
-    // Skip if template already exists (idempotent)
-    if (await filesystem.fileExists(templatePath)) {
+    if (await fileExists(templatePath)) {
       continue;
     }
 
-    await filesystem.writeTextFile(templatePath, template.content);
+    await writeTextFile(templatePath, template.content);
 
-    // Track for rollback
     addOperation({
       path: templatePath,
       rollback: async () => {
         const file = Bun.file(templatePath);
         if (await file.exists()) {
           await Bun.write(templatePath, "");
-          await filesystem.removeDir(templatePath);
+          await removeDir(templatePath);
         }
       },
       type: "WRITE_FILE",
     });
   }
-}
+};
 
 // ============================================================================
 // Gitignore Helper
@@ -402,23 +416,23 @@ async function writeHookTemplates(hooksDir: string): Promise<void> {
 /**
  * Update .gitignore to exclude managed directories (idempotent)
  */
-function normalizeGitignorePattern(directoryPath: string): string {
+const normalizeGitignorePattern = (directoryPath: string): string => {
   let pattern = directoryPath.replace(/^\.\//, "");
   if (!pattern.endsWith("/")) {
     pattern += "/";
   }
   return pattern;
-}
+};
 
-function hasGitignorePattern(content: string, pattern: string): boolean {
+const hasGitignorePattern = (content: string, pattern: string): boolean => {
   const alternate = pattern.endsWith("/") ? pattern.slice(0, -1) : pattern;
   return content
     .split("\n")
     .map((line) => line.trim())
     .some((line) => line === pattern || line === alternate);
-}
+};
 
-function getManagedWorktreesGitignorePattern(worktreesDir: string): string | null {
+const getManagedWorktreesGitignorePattern = (worktreesDir: string): string | undefined => {
   const normalizedWorktreesDir = normalizeWorktreesDir(worktreesDir);
 
   if (
@@ -426,7 +440,7 @@ function getManagedWorktreesGitignorePattern(worktreesDir: string): string | nul
     normalizedWorktreesDir === ".." ||
     normalizedWorktreesDir.startsWith("../")
   ) {
-    return null;
+    return undefined;
   }
 
   if (normalizedWorktreesDir === DEFAULT_WORKTREES_DIR) {
@@ -434,9 +448,9 @@ function getManagedWorktreesGitignorePattern(worktreesDir: string): string | nul
   }
 
   return normalizeGitignorePattern(normalizedWorktreesDir);
-}
+};
 
-function getManagedGitignorePatterns(reposDir: string, worktreesDir: string): string[] {
+const getManagedGitignorePatterns = (reposDir: string, worktreesDir: string): string[] => {
   const patterns = [normalizeGitignorePattern(reposDir)];
   const worktreesPattern = getManagedWorktreesGitignorePattern(worktreesDir);
   if (worktreesPattern) {
@@ -444,18 +458,21 @@ function getManagedGitignorePatterns(reposDir: string, worktreesDir: string): st
   }
 
   return patterns;
-}
+};
 
-async function updateGitignore(cwd: string, reposDir: string, worktreesDir: string): Promise<void> {
+const updateGitignore = async (
+  cwd: string,
+  reposDir: string,
+  worktreesDir: string,
+): Promise<void> => {
   const gitignorePath = join(cwd, ".gitignore");
   const patterns = getManagedGitignorePatterns(reposDir, worktreesDir);
 
   let content = "";
-  let originalContent: string | null = null;
+  let originalContent: string | undefined;
 
-  // Read existing .gitignore if it exists
-  if (await filesystem.fileExists(gitignorePath)) {
-    originalContent = await filesystem.readTextFile(gitignorePath);
+  if (await fileExists(gitignorePath)) {
+    originalContent = await readTextFile(gitignorePath);
     content = originalContent;
   }
 
@@ -464,27 +481,23 @@ async function updateGitignore(cwd: string, reposDir: string, worktreesDir: stri
     return;
   }
 
-  // Ensure content ends with newline before appending
   if (content && !content.endsWith("\n")) {
     content += "\n";
   }
 
-  // Append patterns with comment
   content += "\n# Arashi managed repositories\n";
   for (const pattern of missingPatterns) {
     content += `${pattern}\n`;
   }
 
-  // Write updated .gitignore
-  await filesystem.writeTextFile(gitignorePath, content);
+  await writeTextFile(gitignorePath, content);
 
-  // Track for rollback
-  if (originalContent !== null) {
+  if (originalContent !== undefined) {
     addOperation({
       originalContent,
       path: gitignorePath,
       rollback: async () => {
-        await filesystem.writeTextFile(gitignorePath, originalContent);
+        await writeTextFile(gitignorePath, originalContent);
       },
       type: "MODIFY_FILE",
     });
@@ -495,13 +508,13 @@ async function updateGitignore(cwd: string, reposDir: string, worktreesDir: stri
         const file = Bun.file(gitignorePath);
         if (await file.exists()) {
           await Bun.write(gitignorePath, "");
-          await filesystem.removeDir(gitignorePath);
+          await removeDir(gitignorePath);
         }
       },
       type: "WRITE_FILE",
     });
   }
-}
+};
 
 // ============================================================================
 // Main Command Logic
@@ -510,7 +523,7 @@ async function updateGitignore(cwd: string, reposDir: string, worktreesDir: stri
 /**
  * Execute init command
  */
-async function executeInit(options: InitOptions): Promise<InitResult> {
+const executeInit = async (options: InitOptions): Promise<InitResult> => {
   const startTime = Date.now();
   const cwd = process.cwd();
 
@@ -534,8 +547,8 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
 
     // 2. Check if already initialized (without --force)
     logVerbose("Checking for existing Arashi configuration...", options);
-    if (!options.force && (await config.configExists(cwd))) {
-      const existingConfigPath = config.getConfigPath(cwd);
+    if (!options.force && (await configExists(cwd))) {
+      const existingConfigPath = getConfigPath(cwd);
       return {
         error: `Arashi configuration already exists at: ${existingConfigPath}`,
         exitCode: ExitCode.CONFIG_EXISTS,
@@ -544,8 +557,8 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     }
 
     // 3. Backup existing config if --force is used
-    if (options.force && (await config.configExists(cwd))) {
-      const existingConfigPath = config.getConfigPath(cwd);
+    if (options.force && (await configExists(cwd))) {
+      const existingConfigPath = getConfigPath(cwd);
       const timestamp = new Date()
         .toISOString()
         .replaceAll(/[:.]/g, "-")
@@ -557,12 +570,12 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
       if (options.dryRun) {
         logDryRun("BACKUP", `${existingConfigPath} → ${backupPath}`);
       } else {
-        logger.warn("\n⚠ Warning: Existing configuration will be backed up");
-        logger.info(`Backing up: ${existingConfigPath} → ${backupPath}\n`);
+        warn(EXISTING_CONFIG_WARNING);
+        info(`Backing up: ${existingConfigPath} → ${backupPath}\n`);
         logVerbose("Reading existing configuration...", options);
-        await filesystem.readTextFile(existingConfigPath);
+        await readTextFile(existingConfigPath);
         logVerbose("Copying configuration to backup...", options);
-        await filesystem.copyFile(existingConfigPath, backupPath);
+        await copyFile(existingConfigPath, backupPath);
         logVerbose("✓ Backup created successfully", options);
       }
     } else {
@@ -617,17 +630,17 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     } else {
       logVerbose(`Creating .arashi directory: ${arashiDir}`, options);
       try {
-        await filesystem.ensureDir(arashiDir);
+        await ensureDir(arashiDir);
         addOperation({
           path: arashiDir,
           rollback: async () => {
-            await filesystem.removeDir(arashiDir);
+            await removeDir(arashiDir);
           },
           type: "CREATE_DIR",
         });
         logVerbose("✓ .arashi directory created", options);
       } catch (error) {
-        if (error instanceof filesystem.PermissionError) {
+        if (error instanceof PermissionError) {
           return {
             error: `Permission denied creating directory: ${arashiDir}`,
             exitCode: ExitCode.PERMISSION_DENIED,
@@ -646,18 +659,18 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     } else {
       logVerbose(`Creating hooks directory: ${hooksDir}`, options);
       try {
-        await filesystem.ensureDir(hooksDir);
+        await ensureDir(hooksDir);
         addOperation({
           path: hooksDir,
           rollback: async () => {
-            await filesystem.removeDir(hooksDir);
+            await removeDir(hooksDir);
           },
           type: "CREATE_DIR",
         });
         logVerbose("✓ Hooks directory created", options);
       } catch (error) {
         await executeRollback();
-        if (error instanceof filesystem.PermissionError) {
+        if (error instanceof PermissionError) {
           return {
             error: `Permission denied creating hooks directory: ${hooksDir}`,
             exitCode: ExitCode.PERMISSION_DENIED,
@@ -681,16 +694,11 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
         logVerbose("✓ Hook templates written", options);
       } catch (error) {
         await executeRollback();
-        if (
-          error instanceof filesystem.PermissionError ||
-          error instanceof filesystem.DiskFullError
-        ) {
+        if (error instanceof PermissionError || error instanceof DiskFullError) {
           return {
             error: `Failed to write hook templates: ${(error as Error).message}`,
             exitCode:
-              error instanceof filesystem.DiskFullError
-                ? ExitCode.DISK_FULL
-                : ExitCode.PERMISSION_DENIED,
+              error instanceof DiskFullError ? ExitCode.DISK_FULL : ExitCode.PERMISSION_DENIED,
             success: false,
           };
         }
@@ -704,24 +712,24 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     } else {
       logVerbose(`Creating repos directory: ${absoluteReposPath}`, options);
       try {
-        await filesystem.ensureDir(absoluteReposPath);
+        await ensureDir(absoluteReposPath);
         addOperation({
           path: absoluteReposPath,
           rollback: async () => {
-            await filesystem.removeDir(absoluteReposPath);
+            await removeDir(absoluteReposPath);
           },
           type: "CREATE_DIR",
         });
         logVerbose("✓ Repos directory created", options);
       } catch (error) {
         await executeRollback();
-        if (error instanceof filesystem.PermissionError) {
+        if (error instanceof PermissionError) {
           return {
             error: `Permission denied creating repos directory: ${absoluteReposPath}`,
             exitCode: ExitCode.PERMISSION_DENIED,
             success: false,
           };
-        } else if (error instanceof filesystem.DiskFullError) {
+        } else if (error instanceof DiskFullError) {
           return {
             error: `Insufficient disk space creating repos directory: ${absoluteReposPath}`,
             exitCode: ExitCode.DISK_FULL,
@@ -734,7 +742,7 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
 
     // 9. Discover repositories (unless --no-discover)
     let discoveredCount = 0;
-    const discoveredRepos: Record<string, config.RepoConfig> = {};
+    const discoveredRepos: Record<string, RepoConfig> = {};
 
     if (!options.noDiscover) {
       if (options.dryRun) {
@@ -770,23 +778,23 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     }
 
     // 10. Generate and write config
-    const arashiConfig: config.Config = {
-      $schema: config.DEFAULT_CONFIG_SCHEMA_URL,
+    const arashiConfig: Config = {
+      $schema: DEFAULT_CONFIG_SCHEMA_URL,
       repos: discoveredRepos,
       reposDir: reposDir,
       version: "1.0.0",
       worktreesDir,
     };
 
-    const configPath = config.getConfigPath(cwd);
+    const configPath = getConfigPath(cwd);
     if (options.dryRun) {
       logDryRun("WRITE_FILE", `${configPath}`);
       console.log("\nConfiguration preview:");
-      console.log(JSON.stringify(arashiConfig, null, 2));
+      console.log(JSON.stringify(arashiConfig, null, JSON_INDENT));
     } else {
       logVerbose("Writing configuration file...", options);
       try {
-        await config.saveConfig(cwd, arashiConfig);
+        await saveConfig(cwd, arashiConfig);
 
         addOperation({
           path: configPath,
@@ -794,7 +802,7 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
             const file = Bun.file(configPath);
             if (await file.exists()) {
               await Bun.write(configPath, "");
-              await filesystem.removeDir(configPath);
+              await removeDir(configPath);
             }
           },
           type: "WRITE_FILE",
@@ -802,16 +810,11 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
         logVerbose("✓ Configuration written", options);
       } catch (error) {
         await executeRollback();
-        if (
-          error instanceof filesystem.PermissionError ||
-          error instanceof filesystem.DiskFullError
-        ) {
+        if (error instanceof PermissionError || error instanceof DiskFullError) {
           return {
             error: `Failed to write configuration: ${(error as Error).message}`,
             exitCode:
-              error instanceof filesystem.DiskFullError
-                ? ExitCode.DISK_FULL
-                : ExitCode.CONFIG_WRITE_FAILED,
+              error instanceof DiskFullError ? ExitCode.DISK_FULL : ExitCode.CONFIG_WRITE_FAILED,
             success: false,
           };
         }
@@ -831,7 +834,7 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
         logVerbose("✓ .gitignore updated", options);
       } catch (error) {
         await executeRollback();
-        if (error instanceof filesystem.PermissionError) {
+        if (error instanceof PermissionError) {
           return {
             error: `Failed to update .gitignore: ${(error as Error).message}`,
             exitCode: ExitCode.PERMISSION_DENIED,
@@ -871,13 +874,13 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
       success: false,
     };
   }
-}
+};
 
 /**
  * Display success message with details
  */
-function displaySuccess(result: InitResult, options: InitOptions): void {
-  logger.success("Initialized Arashi workspace");
+const displaySuccess = (result: InitResult, options: InitOptions): void => {
+  success("Initialized Arashi workspace");
 
   console.log("\nCreated:");
   console.log(`  • Configuration: ${result.configPath}`);
@@ -906,13 +909,13 @@ function displaySuccess(result: InitResult, options: InitOptions): void {
   }
   console.log("  • View configuration: cat .arashi/config.json");
   console.log("  • Customize hooks: cp .arashi/hooks/*.example .arashi/hooks/<name>.sh");
-}
+};
 
 /**
  * Display error message with guidance
  */
-function displayError(result: InitResult): void {
-  logger.error(result.error || "Unknown error");
+const displayError = (result: InitResult): void => {
+  logError(result.error || "Unknown error");
 
   switch (result.exitCode) {
     case ExitCode.NOT_GIT_REPOSITORY: {
@@ -952,7 +955,7 @@ function displayError(result: InitResult): void {
       break;
     }
   }
-}
+};
 
 // ============================================================================
 // Command Definition

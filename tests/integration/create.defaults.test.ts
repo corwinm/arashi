@@ -10,9 +10,9 @@ const branchName = "feature/defaults";
 function createLoadedConfig(configOverrides: Partial<Config> = {}): LoadedConfig {
   return {
     config: {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
       ...configOverrides,
     },
     configPath: "/workspace/.arashi/config.json",
@@ -28,6 +28,10 @@ function createSummary(worktreePath: string = `${workspaceRoot}/${branchName}`):
     nextSteps: [],
     repositoryResults: [
       {
+        branchName,
+        duration: 10,
+        error: null,
+        hookOutcomes: [],
         repository: {
           name: "workspace",
           path: workspaceRoot,
@@ -35,12 +39,8 @@ function createSummary(worktreePath: string = `${workspaceRoot}/${branchName}`):
           hasSetupScript: false,
         },
         status: "success",
-        worktreePath,
-        branchName,
-        error: null,
         warnings: [],
-        duration: 10,
-        hookOutcomes: [],
+        worktreePath,
       },
     ],
     rolledBack: false,
@@ -56,20 +56,20 @@ function baseDeps(overrides: Partial<CreateCommandDependencies> = {}): CreateCom
     applyRepositoryFilter: async (_filter, repositories) => repositories,
     createCoordinatedWorktrees: async () => createSummary(),
     discoverRepositories: async () => ({
+      duration: 1,
+      errors: [],
       repositories: [],
-      workspacePath: `${workspaceRoot}/repos`,
       scanDepth: 0,
       scannedDirectories: 0,
-      errors: [],
-      duration: 1,
+      workspacePath: `${workspaceRoot}/repos`,
     }),
     isGitRepository: async () => true,
     loadConfigWithFallback: async () => createLoadedConfig(),
     resolveCreateInvocationContext: async () => ({
-      invocationPath: workspaceRoot,
-      workspaceRoot,
       executionPath: workspaceRoot,
+      invocationPath: workspaceRoot,
       repositoryType: "non-bare",
+      workspaceRoot,
     }),
     resolveCurrentBranch: async () => "main",
     ...overrides,
@@ -86,15 +86,15 @@ describe("create defaults integration", () => {
       baseDeps({
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { mode: "sesh", command: ["tmux"] };
+          return { command: ["tmux"], mode: "sesh" };
         },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
             defaults: {
               create: {
-                switch: true,
                 launch: true,
                 launchMode: "sesh",
+                switch: true,
               },
             },
           }),
@@ -113,15 +113,15 @@ describe("create defaults integration", () => {
       baseDeps({
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { mode: "sesh", command: ["tmux"] };
+          return { command: ["tmux"], mode: "sesh" };
         },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
             defaults: {
               create: {
-                switch: true,
                 launch: true,
                 launchMode: "sesh",
+                switch: true,
               },
             },
           }),

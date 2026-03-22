@@ -40,9 +40,9 @@ export async function createRemoveWorkspace(
       repos.map((repo) => [
         repo.name,
         {
-          path: `./repos/${repo.name}`,
           defaultBranch: "main",
           isBare: false,
+          path: `./repos/${repo.name}`,
           worktrees: [],
         },
       ]),

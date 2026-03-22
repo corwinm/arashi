@@ -66,27 +66,27 @@ const describeConflictLocation = (existsLocally: boolean, existsRemotely: boolea
 /**
  * Filtering modes for repository selection
  */
-type RepositoryFilterMode = "all" | "explicit" | "interactive";
+export type RepositoryFilterMode = "all" | "explicit" | "interactive";
 
 /**
  * Strategies for resolving branch name conflicts
  */
-type ConflictResolutionStrategy = "ABORT" | "REUSE_EXISTING" | "CREATE_ALTERNATE";
+export type ConflictResolutionStrategy = "ABORT" | "REUSE_EXISTING" | "CREATE_ALTERNATE";
 
 /**
  * Hook types supported by the system
  */
-type HookType = "pre-create" | "post-create";
+export type HookType = "pre-create" | "post-create";
 
 /**
  * Result status for individual repository operations
  */
-type RepositoryResultStatus = "success" | "failed" | "skipped";
+export type RepositoryResultStatus = "success" | "failed" | "skipped";
 
 /**
  * Operation states during execution
  */
-type OperationState =
+export type OperationState =
   | "INITIALIZING"
   | "VALIDATING"
   | "FILTERING"
@@ -100,7 +100,7 @@ type OperationState =
  * Classification of repository based on location and configuration
  * Feature: 001-nested-worktree-paths
  */
-type RepositoryType =
+export type RepositoryType =
   | "meta-repo" // Repository with .arashi/config.json
   | "child" // Repository inside a meta-repo's repos/ folder
   | "standalone"; // Independent repository (not meta-repo or child)
@@ -109,7 +109,7 @@ type RepositoryType =
  * Result of repository type detection
  * Feature: 001-nested-worktree-paths
  */
-interface RepositoryTypeInfo {
+export interface RepositoryTypeInfo {
   /** Detected or forced repository type */
   type: RepositoryType;
 
@@ -130,7 +130,7 @@ interface RepositoryTypeInfo {
 /**
  * Options for worktree creation operation
  */
-interface WorktreeOperationOptions {
+export interface WorktreeOperationOptions {
   /** Whether to execute pre-create and post-create hooks (default: true) */
   executeHooks?: boolean;
 
@@ -169,9 +169,9 @@ interface NormalizedWorktreeOptions {
 // Dry-run Planning Types (T002)
 // ==========================================================================
 
-type DryRunPlanStatus = "actionable" | "blocked";
+export type DryRunPlanStatus = "actionable" | "blocked";
 
-interface PlannedWorktree {
+export interface PlannedWorktree {
   repository: Repository;
   repositoryName: string;
   worktreePath: string | null;
@@ -179,7 +179,7 @@ interface PlannedWorktree {
   planStatus: DryRunPlanStatus;
 }
 
-interface DryRunConflict {
+export interface DryRunConflict {
   repository: Repository;
   repositoryName: string;
   conflictType: "branch_exists" | "path_exists" | "permission_issue" | "invalid_configuration";
@@ -188,7 +188,7 @@ interface DryRunConflict {
   blocking: boolean;
 }
 
-interface DryRunOutcome {
+export interface DryRunOutcome {
   overallStatus: DryRunPlanStatus;
   plannedWorktrees: PlannedWorktree[];
   conflicts: DryRunConflict[];
@@ -206,7 +206,7 @@ interface DryRunOutcome {
 /**
  * Repository filter criteria
  */
-interface RepositoryFilter {
+export interface RepositoryFilter {
   /** Filtering mode */
   mode: RepositoryFilterMode;
 
@@ -224,7 +224,7 @@ interface RepositoryFilter {
 /**
  * Detected branch name conflict
  */
-interface BranchConflict {
+export interface BranchConflict {
   /** Repository with the conflict */
   repository: Repository;
 
@@ -244,7 +244,7 @@ interface BranchConflict {
 /**
  * Result of conflict detection pre-flight check
  */
-interface ConflictCheckResult {
+export interface ConflictCheckResult {
   /** Whether any conflicts were detected */
   hasConflicts: boolean;
 
@@ -255,7 +255,7 @@ interface ConflictCheckResult {
   nonConflictingRepositories: Repository[];
 }
 
-interface HookOutcomeRecord {
+export interface HookOutcomeRecord {
   repositoryId: string;
   hookName: string;
   hookStatus: HookOutcomeStatus;
@@ -271,7 +271,7 @@ interface HookOutcomeRecord {
 /**
  * Result of worktree creation for a single repository
  */
-interface RepositoryResult {
+export interface RepositoryResult {
   /** Repository processed */
   repository: Repository;
 
@@ -304,7 +304,7 @@ interface RepositoryResult {
 /**
  * Summary of completed worktree creation operation
  */
-interface OperationSummary {
+export interface OperationSummary {
   /** Total number of repositories attempted */
   totalRepositories: number;
 
@@ -349,7 +349,7 @@ interface OperationSummary {
 /**
  * Context for hook script execution
  */
-interface HookExecutionContext {
+export interface HookExecutionContext {
   /** Type of hook being executed */
   hookType: HookType;
 
@@ -379,7 +379,7 @@ interface HookExecutionContext {
 /**
  * Error thrown when repository validation fails
  */
-class RepositoryValidationError extends Error {
+export class RepositoryValidationError extends Error {
   constructor(
     message: string,
     public readonly repositoryName: string,
@@ -393,7 +393,7 @@ class RepositoryValidationError extends Error {
 /**
  * Error thrown when git operation fails
  */
-class GitOperationError extends Error {
+export class GitOperationError extends Error {
   constructor(
     message: string,
     public readonly operation: string,
@@ -408,7 +408,7 @@ class GitOperationError extends Error {
 /**
  * Error thrown when hook execution fails
  */
-class HookExecutionError extends Error {
+export class HookExecutionError extends Error {
   constructor(
     message: string,
     public readonly hookType: HookType,
@@ -424,7 +424,7 @@ class HookExecutionError extends Error {
 /**
  * Error thrown when user aborts due to conflicts
  */
-class ConflictAbortedError extends Error {
+export class ConflictAbortedError extends Error {
   constructor(
     message: string,
     public readonly conflicts: BranchConflict[],
@@ -437,7 +437,7 @@ class ConflictAbortedError extends Error {
 /**
  * Error thrown when user cancels an interactive prompt
  */
-class UserAbortedError extends Error {
+export class UserAbortedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "UserAbortedError";
@@ -447,7 +447,7 @@ class UserAbortedError extends Error {
 /**
  * Error thrown when branch name is invalid
  */
-class InvalidBranchNameError extends Error {
+export class InvalidBranchNameError extends Error {
   constructor(
     message: string,
     public readonly branchName: string,
@@ -461,7 +461,7 @@ class InvalidBranchNameError extends Error {
 /**
  * Error thrown when insufficient permissions
  */
-class InsufficientPermissionsError extends Error {
+export class InsufficientPermissionsError extends Error {
   constructor(
     message: string,
     public readonly path: string,
@@ -524,8 +524,8 @@ const runHookIfPresent = async (options: {
       error,
       outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
         hookStatus: "failure",
-        reasonCode: "exit_non_zero",
         message: validation.error ?? "Hook validation failed",
+        reasonCode: "exit_non_zero",
       }),
     };
   }
@@ -533,8 +533,8 @@ const runHookIfPresent = async (options: {
   const result = await executeHook({
     context: {
       hookName: options.hookName,
-      repoPath: options.repoContextPath,
       operationData: options.operationData,
+      repoPath: options.repoContextPath,
     },
     hookName: options.hookName,
     scriptPath: hookPath,
@@ -576,7 +576,7 @@ const runHookIfPresent = async (options: {
  * @param config - Arashi configuration (null if not in meta-repo context)
  * @returns Repository type information with classification reason
  */
-const detectRepositoryType = async (
+export const detectRepositoryType = async (
   repo: Repository,
   config: ArashiConfig | null,
 ): Promise<RepositoryTypeInfo> => {
@@ -646,7 +646,7 @@ const detectRepositoryType = async (
  * @param reposDir - Name of repos directory (e.g., "repos")
  * @returns Absolute path to nested worktree
  */
-const calculateChildWorktreePath = (
+export const calculateChildWorktreePath = (
   repo: Repository,
   parentWorktreeName: string,
   reposDir: string,
@@ -662,7 +662,7 @@ const calculateChildWorktreePath = (
  * @param knownType - Optional pre-computed repository type (optimization)
  * @returns Worktree path result with metadata
  */
-const calculateWorktreePath = async (
+export const calculateWorktreePath = async (
   repo: Repository,
   branchName: string,
   config: ArashiConfig,
@@ -760,7 +760,7 @@ const resolveParentPathForChild = (
   return NULL_PATH;
 };
 
-const attachWorktreeRelationships = (
+export const attachWorktreeRelationships = (
   entries: WorktreeEntry[],
   options: {
     reposDirName: string;
@@ -796,7 +796,7 @@ const attachWorktreeRelationships = (
   }
 };
 
-const getWorktreeDirtyStatus = async (worktreePath: string): Promise<DirtyStatus> => {
+export const getWorktreeDirtyStatus = async (worktreePath: string): Promise<DirtyStatus> => {
   try {
     const result = await exec(["status", "--porcelain"], worktreePath);
     const lines = result.stdout
@@ -840,7 +840,7 @@ const getWorktreeDirtyStatus = async (worktreePath: string): Promise<DirtyStatus
   }
 };
 
-const resolveWorktreeStatuses = async (
+export const resolveWorktreeStatuses = async (
   entries: WorktreeEntry[],
   includeDirtyDetails: boolean,
 ): Promise<void> => {
@@ -872,7 +872,7 @@ const resolveWorktreeStatuses = async (
   );
 };
 
-const buildWorktreeEntries = async (
+export const buildWorktreeEntries = async (
   worktrees: WorktreeInfo[],
   options: {
     reposDirName: string;
@@ -914,7 +914,7 @@ const buildWorktreeEntries = async (
  * @param branchName - Branch name to validate
  * @returns true if valid, false otherwise
  */
-const isValidBranchName = (branchName: string): boolean => {
+export const isValidBranchName = (branchName: string): boolean => {
   if (!branchName || branchName.length === ZERO) {
     return false;
   }
@@ -1049,9 +1049,9 @@ const buildDryRunOutcome = async (
     overallStatus,
     plannedWorktrees,
     summaryCounts: {
-      plannedTotal: plannedWorktrees.length,
-      conflictTotal: conflicts.length,
       blockingTotal,
+      conflictTotal: conflicts.length,
+      plannedTotal: plannedWorktrees.length,
     },
   };
 };
@@ -1104,7 +1104,7 @@ const buildHookRecoveryGuidance = (hookOutcomes: HookOutcomeRecord[]): string[] 
  * @throws InvalidBranchNameError if branch name is invalid
  * @throws GitOperationError if git operations fail (triggers rollback)
  */
-const createCoordinatedWorktrees = async (
+export const createCoordinatedWorktrees = async (
   branchName: string,
   repositories: Repository[],
   options: WorktreeOperationOptions = {},
@@ -1419,8 +1419,8 @@ const processRepository = async (
       // T022: Log branch creation for rollback
       operationLog.add({
         data: {
-          repositoryPath: repo.path,
           branchName,
+          repositoryPath: repo.path,
         },
         timestamp: Date.now(),
         type: "branch_created",
@@ -1455,9 +1455,9 @@ const processRepository = async (
     // T022: Log worktree creation for rollback
     operationLog.add({
       data: {
+        branchName,
         repositoryPath: repo.path,
         worktreePath,
-        branchName,
       },
       timestamp: Date.now(),
       type: "worktree_created",
@@ -1561,7 +1561,7 @@ const processRepository = async (
  * @param repositories - Repositories to check
  * @returns Promise resolving to conflict check result
  */
-const checkBranchConflicts = async (
+export const checkBranchConflicts = async (
   branchName: string,
   repositories: Repository[],
 ): Promise<ConflictCheckResult> => {
@@ -1588,10 +1588,10 @@ const checkBranchConflicts = async (
       if (existsLocally || existsRemotely) {
         return {
           conflict: {
-            repository: repo,
             branchName,
             existsLocally,
             existsRemotely,
+            repository: repo,
             resolution: NULL_CONFLICT_STRATEGY,
           } as BranchConflict,
           hasConflict: true,
@@ -1637,7 +1637,7 @@ const checkBranchConflicts = async (
  * @returns Promise resolving to chosen conflict resolution strategy
  * @throws ConflictAbortedError if user chooses to abort
  */
-const resolveConflicts = async (
+export const resolveConflicts = async (
   conflicts: BranchConflict[],
   options: WorktreeOperationOptions = {},
 ): Promise<ConflictResolutionStrategy> => {
@@ -1740,7 +1740,7 @@ const shouldReuseBranch = (
  * @returns Promise resolving to filtered repository list
  * @throws RepositoryValidationError if explicit names don't match any repositories
  */
-const applyRepositoryFilter = async (
+export const applyRepositoryFilter = async (
   filter: RepositoryFilter,
   allRepositories: Repository[],
 ): Promise<Repository[]> => {
@@ -1773,9 +1773,9 @@ const applyRepositoryFilter = async (
     case "interactive": {
       // T050: Interactive mode - prompt user to select repositories
       const choices = allRepositories.map((repo) => ({
-        value: repo,
-        name: repo.name,
         description: repo.path,
+        name: repo.name,
+        value: repo,
       }));
 
       const selectedRepos = await multiSelect<Repository>(
@@ -1799,48 +1799,4 @@ const applyRepositoryFilter = async (
       throw new Error(`Unknown filter mode: ${String((filter as { mode?: unknown }).mode)}`);
     }
   }
-};
-
-export {
-  ConflictAbortedError,
-  GitOperationError,
-  HookExecutionError,
-  InsufficientPermissionsError,
-  InvalidBranchNameError,
-  RepositoryValidationError,
-  UserAbortedError,
-  applyRepositoryFilter,
-  attachWorktreeRelationships,
-  buildWorktreeEntries,
-  calculateChildWorktreePath,
-  calculateWorktreePath,
-  checkBranchConflicts,
-  createCoordinatedWorktrees,
-  detectRepositoryType,
-  getWorktreeDirtyStatus,
-  isValidBranchName,
-  resolveConflicts,
-  resolveWorktreeStatuses,
-};
-
-export type {
-  BranchConflict,
-  ConflictCheckResult,
-  ConflictResolutionStrategy,
-  DryRunConflict,
-  DryRunOutcome,
-  DryRunPlanStatus,
-  HookExecutionContext,
-  HookOutcomeRecord,
-  HookType,
-  OperationState,
-  OperationSummary,
-  PlannedWorktree,
-  RepositoryFilter,
-  RepositoryFilterMode,
-  RepositoryResult,
-  RepositoryResultStatus,
-  RepositoryType,
-  RepositoryTypeInfo,
-  WorktreeOperationOptions,
 };

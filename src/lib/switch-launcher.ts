@@ -270,7 +270,7 @@ function buildSeshTmuxCommand(worktreePath: string): string[] {
 }
 
 function shellQuote(value: string): string {
-  return `'${value.replaceAll(/'/g, `'\\''`)}'`;
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 async function launchWithFallback(

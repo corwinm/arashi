@@ -11,11 +11,11 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import type {
-  WorktreeCreatedEntry,
   BranchCreatedEntry,
   DirectoryCreatedEntry,
+  WorktreeCreatedEntry,
 } from "../../../src/core/rollback";
-import { OperationLog, InvalidLogEntryError } from "../../../src/core/rollback";
+import { InvalidLogEntryError, OperationLog } from "../../../src/core/rollback";
 
 describe("OperationLog - User Story 2: Operation Logging", () => {
   let log: OperationLog;
@@ -32,9 +32,9 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
     test("should add valid worktree_created entry", () => {
       const entry: WorktreeCreatedEntry = {
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
         timestamp: Date.now(),
         type: "worktree_created",
@@ -47,8 +47,8 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
     test("should add valid branch_created entry", () => {
       const entry: BranchCreatedEntry = {
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "feature-branch",
+          repositoryPath: "/path/to/repo",
         },
         timestamp: Date.now(),
         type: "branch_created",
@@ -74,9 +74,9 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
     test("should add multiple entries", () => {
       const entry1: WorktreeCreatedEntry = {
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
         timestamp: Date.now(),
         type: "worktree_created",
@@ -84,8 +84,8 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
       const entry2: BranchCreatedEntry = {
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "another-branch",
+          repositoryPath: "/path/to/repo",
         },
         timestamp: Date.now(),
         type: "branch_created",
@@ -124,9 +124,9 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
     test("should throw InvalidLogEntryError for missing timestamp", () => {
       const invalidEntry = {
         data: {
+          branchName: "branch",
           repositoryPath: "/path",
           worktreePath: "/worktree",
-          branchName: "branch",
         },
         type: "worktree_created",
       } as unknown as WorktreeCreatedEntry;
@@ -137,9 +137,9 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
     test("should throw InvalidLogEntryError for invalid timestamp", () => {
       const invalidEntry = {
         data: {
+          branchName: "branch",
           repositoryPath: "/path",
           worktreePath: "/worktree",
-          branchName: "branch",
         },
         timestamp: -100,
         type: "worktree_created",
@@ -196,9 +196,9 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
       // We can't use actual rollback() because the stub functions throw errors
       const entry: WorktreeCreatedEntry = {
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
         timestamp: Date.now(),
         type: "worktree_created",
@@ -236,9 +236,9 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
     test("should return correct count after adding entries", () => {
       const entry1: WorktreeCreatedEntry = {
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
         timestamp: Date.now(),
         type: "worktree_created",
@@ -246,8 +246,8 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
       const entry2: BranchCreatedEntry = {
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "another-branch",
+          repositoryPath: "/path/to/repo",
         },
         timestamp: Date.now(),
         type: "branch_created",
@@ -284,9 +284,9 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
       const entry1: WorktreeCreatedEntry = {
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
         timestamp: timestamp1,
         type: "worktree_created",
@@ -294,8 +294,8 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
       const entry2: BranchCreatedEntry = {
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "another-branch",
+          repositoryPath: "/path/to/repo",
         },
         timestamp: timestamp2,
         type: "branch_created",
@@ -323,9 +323,9 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
       // Add entries with out-of-order timestamps
       const entry1: WorktreeCreatedEntry = {
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
         timestamp: 3000,
         type: "worktree_created",
@@ -333,8 +333,8 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
       const entry2: BranchCreatedEntry = {
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "another-branch",
+          repositoryPath: "/path/to/repo",
         },
         timestamp: 1000,
         type: "branch_created",
@@ -579,9 +579,9 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
     test("should handle different operation types in same log", async () => {
       const worktreeEntry: WorktreeCreatedEntry = {
         data: {
+          branchName: "feature",
           repositoryPath: "/repo",
           worktreePath: "/worktree",
-          branchName: "feature",
         },
         timestamp: Date.now(),
         type: "worktree_created",
@@ -589,8 +589,8 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
 
       const branchEntry: BranchCreatedEntry = {
         data: {
-          repositoryPath: "/repo",
           branchName: "feature",
+          repositoryPath: "/repo",
         },
         timestamp: Date.now() + 100,
         type: "branch_created",
@@ -619,9 +619,9 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
       // Add 3 entries - all will fail but rollback should process all of them
       const entry1: WorktreeCreatedEntry = {
         data: {
+          branchName: "test1",
           repositoryPath: "/nonexistent",
           worktreePath: "/worktree1",
-          branchName: "test1",
         },
         timestamp: Date.now(),
         type: "worktree_created",
@@ -635,9 +635,9 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
 
       const entry3: WorktreeCreatedEntry = {
         data: {
+          branchName: "test2",
           repositoryPath: "/nonexistent",
           worktreePath: "/worktree2",
-          branchName: "test2",
         },
         timestamp: Date.now() + 200,
         type: "worktree_created",

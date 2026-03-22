@@ -176,10 +176,10 @@ describe("validateWorktreeListItem()", () => {
       path: "/absolute/path/to/worktree",
       subRepositories: [
         {
-          relativePath: "repos/sub-repo",
           branch: "main",
           commit: "xyz9876",
           hasChanges: false,
+          relativePath: "repos/sub-repo",
         },
       ],
     };
@@ -273,20 +273,20 @@ describe("validateListCommandOutput()", () => {
       totalCount: 2,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
         },
         {
-          path: "/repo/feature",
           branch: "feature",
           commit: "def5678",
-          locked: false,
           hasChanges: true,
           isMain: false,
+          locked: false,
+          path: "/repo/feature",
         },
       ],
     };
@@ -314,12 +314,12 @@ describe("validateListCommandOutput()", () => {
       totalCount: 5,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
         },
       ],
     };
@@ -335,20 +335,20 @@ describe("validateListCommandOutput()", () => {
       totalCount: 2,
       worktrees: [
         {
-          path: "/repo/feature1",
           branch: "feature1",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: false,
+          locked: false,
+          path: "/repo/feature1",
         },
         {
-          path: "/repo/feature2",
           branch: "feature2",
           commit: "def5678",
-          locked: false,
           hasChanges: false,
           isMain: false,
+          locked: false,
+          path: "/repo/feature2",
         },
       ],
     };
@@ -364,20 +364,20 @@ describe("validateListCommandOutput()", () => {
       totalCount: 2,
       worktrees: [
         {
-          path: "/repo/main1",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main1",
         },
         {
-          path: "/repo/main2",
           branch: "main",
           commit: "def5678",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main2",
         },
       ],
     };
@@ -393,12 +393,12 @@ describe("validateListCommandOutput()", () => {
       totalCount: 1,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
         },
       ],
     };
@@ -416,12 +416,12 @@ describe("formatAsJson()", () => {
       totalCount: 1,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
         },
       ],
     };
@@ -438,12 +438,12 @@ describe("formatAsJson()", () => {
       totalCount: 1,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
         },
       ],
     };
@@ -466,12 +466,12 @@ describe("formatAsJson()", () => {
       totalCount: 1,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
           subRepositories: [
             {
               relativePath: "repos/sub",
@@ -500,12 +500,12 @@ describe("formatAsTable()", () => {
       totalCount: 1,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
         },
       ],
     };
@@ -523,20 +523,20 @@ describe("formatAsTable()", () => {
       totalCount: 2,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
         },
         {
-          path: "/repo/feature",
           branch: "feature",
           commit: "def5678",
-          locked: false,
           hasChanges: true,
           isMain: false,
+          locked: false,
+          path: "/repo/feature",
         },
       ],
     };
@@ -558,12 +558,12 @@ describe("formatAsTable()", () => {
       totalCount: 2,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
           subRepositories: [
             {
               relativePath: "repos/sub",
@@ -574,12 +574,12 @@ describe("formatAsTable()", () => {
           ],
         },
         {
-          path: "/repo/feature",
           branch: "feature",
           commit: "def5678",
-          locked: false,
           hasChanges: true,
           isMain: false,
+          locked: false,
+          path: "/repo/feature",
         },
       ],
     };
@@ -601,21 +601,21 @@ describe("formatAsTable()", () => {
       totalCount: 2,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
         },
         {
-          path: "/repo/locked",
           branch: "feature",
           commit: "def5678",
-          locked: true,
-          lockReason: "Critical work in progress",
           hasChanges: false,
           isMain: false,
+          lockReason: "Critical work in progress",
+          locked: true,
+          path: "/repo/locked",
         },
       ],
     };
@@ -631,20 +631,20 @@ describe("formatAsTable()", () => {
       totalCount: 2,
       worktrees: [
         {
-          path: "/repo/main",
           branch: "main",
           commit: "abc1234",
-          locked: false,
           hasChanges: false,
           isMain: true,
+          locked: false,
+          path: "/repo/main",
         },
         {
-          path: "/repo/detached",
           branch: null,
           commit: "def5678",
-          locked: false,
           hasChanges: false,
           isMain: false,
+          locked: false,
+          path: "/repo/detached",
         },
       ],
     };

@@ -66,7 +66,7 @@ export async function createBareCreateWorkspace(
   return {
     bareRepoPath,
     cleanup: async () => {
-      await rm(rootPath, { recursive: true, force: true });
+      await rm(rootPath, { force: true, recursive: true });
     },
     rootPath,
     worktreePath,

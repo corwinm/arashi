@@ -28,7 +28,7 @@ const COMMON_BRANCHES = ["main", "master", "develop", "trunk"];
 /**
  * Error codes for repository operations
  */
-enum ErrorCode {
+export enum ErrorCode {
   PERMISSION_DENIED = "PERMISSION_DENIED",
   NOT_A_DIRECTORY = "NOT_A_DIRECTORY",
   INVALID_GIT_REPO = "INVALID_GIT_REPO",
@@ -43,7 +43,7 @@ enum ErrorCode {
 /**
  * Represents a git repository with its metadata and location (T007)
  */
-interface Repository {
+export interface Repository {
   /** Repository name (derived from directory name) */
   name: string;
   /** Absolute filesystem path to repository root */
@@ -61,7 +61,7 @@ interface Repository {
 /**
  * Options for repository discovery (T008)
  */
-interface DiscoveryOptions {
+export interface DiscoveryOptions {
   /** Maximum depth to scan (default: 3) */
   maxDepth?: number;
   /** Whether to follow symbolic links (default: false) */
@@ -75,7 +75,7 @@ interface DiscoveryOptions {
 /**
  * Non-fatal error encountered during repository discovery (T009)
  */
-interface DiscoveryError {
+export interface DiscoveryError {
   /** Path where error occurred */
   path: string;
   /** Error description */
@@ -89,7 +89,7 @@ interface DiscoveryError {
 /**
  * Result of scanning a workspace directory for repositories (T010)
  */
-interface RepositoryDiscoveryResult {
+export interface RepositoryDiscoveryResult {
   /** Discovered repositories */
   repositories: Repository[];
   /** Path that was scanned */
@@ -107,7 +107,7 @@ interface RepositoryDiscoveryResult {
 /**
  * Configuration for expected repositories (T056)
  */
-interface WorkspaceConfiguration {
+export interface WorkspaceConfiguration {
   /** Base workspace path */
   workspacePath: string;
   /** Expected repositories */
@@ -117,7 +117,7 @@ interface WorkspaceConfiguration {
 /**
  * Expected repository configuration (T057)
  */
-interface RepositoryConfig {
+export interface RepositoryConfig {
   /** Repository name */
   name: string;
   /** Expected path relative to workspace (optional) */
@@ -129,7 +129,7 @@ interface RepositoryConfig {
 /**
  * Result of workspace validation (T058)
  */
-interface ValidationResult {
+export interface ValidationResult {
   /** Whether workspace is valid (no missing repos, no errors) */
   isValid: boolean;
   /** Repositories present in both config and workspace */
@@ -145,7 +145,7 @@ interface ValidationResult {
 /**
  * Options for workspace validation (T059)
  */
-interface ValidationOptions {
+export interface ValidationOptions {
   /** Whether to treat extra repos as errors (default: false) */
   strictMode?: boolean;
   /** Discovery options to use when scanning */
@@ -155,7 +155,7 @@ interface ValidationOptions {
 /**
  * Status of a clone operation (T071)
  */
-enum CloneStatus {
+export enum CloneStatus {
   PENDING = "PENDING",
   IN_PROGRESS = "IN_PROGRESS",
   COMPLETED = "COMPLETED",
@@ -165,7 +165,7 @@ enum CloneStatus {
 /**
  * Phase of clone operation (T073)
  */
-enum ClonePhase {
+export enum ClonePhase {
   VALIDATING = "VALIDATING",
   CLONING = "CLONING",
   RECEIVING = "RECEIVING",
@@ -176,7 +176,7 @@ enum ClonePhase {
 /**
  * Error codes for clone operations (T075)
  */
-enum CloneErrorCode {
+export enum CloneErrorCode {
   TARGET_EXISTS = "TARGET_EXISTS",
   INVALID_URL = "INVALID_URL",
   NETWORK_ERROR = "NETWORK_ERROR",
@@ -189,7 +189,7 @@ enum CloneErrorCode {
 /**
  * Clone progress information (T072)
  */
-interface CloneProgress {
+export interface CloneProgress {
   /** Current phase of the clone operation */
   phase: ClonePhase;
   /** Percentage complete (0-100) */
@@ -211,7 +211,7 @@ interface CloneProgress {
 /**
  * Clone error information (T074)
  */
-interface CloneError {
+export interface CloneError {
   /** Error code */
   code: CloneErrorCode;
   /** Error message */
@@ -223,7 +223,7 @@ interface CloneError {
 /**
  * Clone operation result (T070)
  */
-interface CloneOperation {
+export interface CloneOperation {
   /** Unique identifier for this operation */
   id: string;
   /** Source Git URL */
@@ -247,7 +247,7 @@ interface CloneOperation {
 /**
  * Options for cloning repositories (T076)
  */
-interface CloneOptions {
+export interface CloneOptions {
   /** Specific branch to clone (default: default branch) */
   branch?: string;
   /** Shallow clone depth (default: full clone) */
@@ -267,7 +267,7 @@ interface CloneOptions {
 /**
  * Base error class for repository operations
  */
-class RepositoryError extends Error {
+export class RepositoryError extends Error {
   constructor(
     message: string,
     public readonly repository: string,
@@ -286,7 +286,7 @@ class RepositoryError extends Error {
 /**
  * Error thrown when repository is not found
  */
-class RepositoryNotFoundError extends RepositoryError {
+export class RepositoryNotFoundError extends RepositoryError {
   constructor(repository: string, cause?: Error) {
     super(`Repository not found: ${repository}`, repository, cause);
     this.name = "RepositoryNotFoundError";
@@ -296,7 +296,7 @@ class RepositoryNotFoundError extends RepositoryError {
 /**
  * Error thrown when repository is invalid or corrupt
  */
-class RepositoryInvalidError extends RepositoryError {
+export class RepositoryInvalidError extends RepositoryError {
   constructor(repository: string, cause?: Error) {
     super(`Invalid repository: ${repository}`, repository, cause);
     this.name = "RepositoryInvalidError";
@@ -306,7 +306,7 @@ class RepositoryInvalidError extends RepositoryError {
 /**
  * Error thrown when repository clone fails
  */
-class RepositoryCloneError extends RepositoryError {
+export class RepositoryCloneError extends RepositoryError {
   constructor(repository: string, message: string, cause?: Error) {
     super(`Clone failed for ${repository}: ${message}`, repository, cause);
     this.name = "RepositoryCloneError";
@@ -316,7 +316,7 @@ class RepositoryCloneError extends RepositoryError {
 /**
  * Error thrown when repository metadata gathering fails
  */
-class RepositoryMetadataError extends RepositoryError {
+export class RepositoryMetadataError extends RepositoryError {
   constructor(repository: string, cause?: Error) {
     super(`Failed to gather metadata for ${repository}`, repository, cause);
     this.name = "RepositoryMetadataError";
@@ -333,7 +333,7 @@ class RepositoryMetadataError extends RepositoryError {
  * Recursively scans the workspace directory up to the specified depth,
  * identifying valid git repositories and gathering basic information.
  */
-const discoverRepositories = async (
+export const discoverRepositories = async (
   workspacePath: string,
   options: DiscoveryOptions = {},
 ): Promise<RepositoryDiscoveryResult> => {
@@ -473,7 +473,7 @@ const classifyError = (path: string, error: unknown): DiscoveryError => {
     message = "Symbolic link loop detected";
   } else {
     if (typeof candidate.message === "string") {
-      message = candidate.message;
+      ({ message } = candidate);
     }
   }
 
@@ -504,7 +504,7 @@ const classifyError = (path: string, error: unknown): DiscoveryError => {
  * @returns Default branch name (e.g., "main", "master", "develop")
  * @throws {RepositoryInvalidError} If default branch cannot be determined
  */
-const detectDefaultBranch = async (repositoryPath: string): Promise<string> => {
+export const detectDefaultBranch = async (repositoryPath: string): Promise<string> => {
   try {
     const result = await execGit(["symbolic-ref", "refs/remotes/origin/HEAD"], repositoryPath);
 
@@ -540,7 +540,7 @@ const detectDefaultBranch = async (repositoryPath: string): Promise<string> => {
 /**
  * Result of setup script detection
  */
-interface SetupScriptResult {
+export interface SetupScriptResult {
   /** Whether a setup script was found */
   hasSetupScript: boolean;
   /** Absolute path to the setup script if found */
@@ -562,7 +562,7 @@ const DEFAULT_SETUP_PATTERNS = ["setup.sh", "setup.bash", ".arashi/setup.sh"];
  * @param patterns - Optional custom script patterns to look for
  * @returns Object with hasSetupScript flag and setupScriptPath if found
  */
-const detectSetupScript = async (
+export const detectSetupScript = async (
   repositoryPath: string,
   patterns: string[] = DEFAULT_SETUP_PATTERNS,
 ): Promise<SetupScriptResult> => {
@@ -602,7 +602,7 @@ const detectSetupScript = async (
  * @param options - Optional validation options
  * @returns Validation result with categorized repositories
  */
-const validateWorkspace = async (
+export const validateWorkspace = async (
   config: WorkspaceConfiguration,
   options: ValidationOptions = {},
 ): Promise<ValidationResult> => {
@@ -666,7 +666,7 @@ const validateWorkspace = async (
  * @param options - Optional clone options
  * @returns CloneOperation with status and progress information
  */
-const cloneRepository = async (
+export const cloneRepository = async (
   url: string,
   targetPath: string,
   options: CloneOptions = {},
@@ -865,36 +865,6 @@ const handleCloneFailure = async (
       await rm(targetPath, { force: true, recursive: true });
     }
   } catch {}
-};
-
-export {
-  CloneError,
-  CloneErrorCode,
-  CloneOperation,
-  CloneOptions,
-  ClonePhase,
-  CloneProgress,
-  CloneStatus,
-  DiscoveryError,
-  DiscoveryOptions,
-  ErrorCode,
-  Repository,
-  RepositoryCloneError,
-  RepositoryConfig,
-  RepositoryDiscoveryResult,
-  RepositoryError,
-  RepositoryInvalidError,
-  RepositoryMetadataError,
-  RepositoryNotFoundError,
-  SetupScriptResult,
-  ValidationOptions,
-  ValidationResult,
-  WorkspaceConfiguration,
-  cloneRepository,
-  detectDefaultBranch,
-  detectSetupScript,
-  discoverRepositories,
-  validateWorkspace,
 };
 
 // User Story 6: Metadata Gathering (Phase 9) - To be implemented

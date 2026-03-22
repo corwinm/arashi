@@ -11,18 +11,18 @@ import { join } from "path";
 import { spawn } from "child_process";
 import { stat } from "fs/promises";
 import {
+  CloneErrorCode,
+  CloneStatus,
+  cloneRepository,
   discoverRepositories,
   validateWorkspace,
-  cloneRepository,
-  CloneStatus,
-  CloneErrorCode,
 } from "../../../src/core/repository.js";
 import type {
-  RepositoryDiscoveryResult,
-  WorkspaceConfiguration,
-  ValidationResult,
   CloneOperation,
   CloneProgress,
+  RepositoryDiscoveryResult,
+  ValidationResult,
+  WorkspaceConfiguration,
 } from "../../../src/core/repository.js";
 
 // Test workspace directory
@@ -481,9 +481,9 @@ describe("User Story 5: validateWorkspace()", () => {
       repositories: [
         { name: "repo-1" },
         { name: "repo-2" },
-        { name: "repo-3" }, // missing
-        { name: "repo-4" }, // missing
-        { name: "repo-5" }, // missing
+        { name: "repo-3" }, // Missing
+        { name: "repo-4" }, // Missing
+        { name: "repo-5" }, // Missing
       ],
       workspacePath,
     };

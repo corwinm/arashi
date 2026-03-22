@@ -54,15 +54,15 @@ async function createWorkspace(
   } = {
     repos: {
       "repo-a": {
-        path: "./repos/repo-a",
         defaultBranch: "main",
         isBare: false,
+        path: "./repos/repo-a",
         worktrees: [],
       },
       "repo-b": {
-        path: "./repos/repo-b",
         defaultBranch: "main",
         isBare: false,
+        path: "./repos/repo-b",
         worktrees: [],
       },
     },

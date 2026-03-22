@@ -180,7 +180,7 @@ const findParentRepo = async (currentPath: string): Promise<string | null> => {
  * await listCommand({ verbose: true, json: true, maxDepth: 5 });
  * ```
  */
-const listCommand = async (options?: ListCommandOptions): Promise<void> => {
+export const listCommand = async (options?: ListCommandOptions): Promise<void> => {
   const opts: ListCommandOptions = {
     json: options?.json || false,
     maxDepth: options?.maxDepth || DEFAULT_MAX_DEPTH,
@@ -268,7 +268,7 @@ const listCommand = async (options?: ListCommandOptions): Promise<void> => {
  * console.log(sha); // "abc1234"
  * ```
  */
-const getShortCommitSha = async (repoPath: string): Promise<string> => {
+export const getShortCommitSha = async (repoPath: string): Promise<string> => {
   try {
     const result = await exec(["rev-parse", `--short=${SHORT_SHA_LENGTH}`, "HEAD"], repoPath);
     return result.stdout.trim();
@@ -303,7 +303,7 @@ const getShortCommitSha = async (repoPath: string): Promise<string> => {
  * }
  * ```
  */
-const hasUncommittedChanges = async (worktreePath: string): Promise<boolean> => {
+export const hasUncommittedChanges = async (worktreePath: string): Promise<boolean> => {
   try {
     const result = await exec(["status", "--porcelain"], worktreePath);
     // If there's any output, there are changes
@@ -349,7 +349,7 @@ const hasUncommittedChanges = async (worktreePath: string): Promise<boolean> => 
  * validateWorktreeListItem(item); // Succeeds
  * ```
  */
-const validateWorktreeListItem = (item: unknown): asserts item is WorktreeListItem => {
+export const validateWorktreeListItem = (item: unknown): asserts item is WorktreeListItem => {
   if (typeof item !== "object" || item === null) {
     throw new ListCommandError("worktree item must be an object");
   }
@@ -445,7 +445,7 @@ const validateWorktreeListItem = (item: unknown): asserts item is WorktreeListIt
  * validateListCommandOutput(output); // Succeeds or throws
  * ```
  */
-const validateListCommandOutput = (output: unknown): asserts output is ListCommandOutput => {
+export const validateListCommandOutput = (output: unknown): asserts output is ListCommandOutput => {
   if (typeof output !== "object" || output === null) {
     throw new ListCommandError("output must be an object");
   }
@@ -515,7 +515,7 @@ const validateListCommandOutput = (output: unknown): asserts output is ListComma
  * });
  * ```
  */
-const gatherWorktreeData = async (repoPath: string): Promise<WorktreeListItem[]> => {
+export const gatherWorktreeData = async (repoPath: string): Promise<WorktreeListItem[]> => {
   try {
     // Get worktree list in porcelain format
     const result = await exec(["worktree", "list", "--porcelain"], repoPath);
@@ -652,7 +652,7 @@ const gatherWorktreeData = async (repoPath: string): Promise<WorktreeListItem[]>
  * });
  * ```
  */
-const discoverSubRepositories = async (
+export const discoverSubRepositories = async (
   worktreePath: string,
   maxDepth: number = DEFAULT_MAX_DEPTH,
 ): Promise<SubRepositoryInfo[]> => {
@@ -717,7 +717,7 @@ const discoverSubRepositories = async (
  * console.log(status); // "✗ modified" (in red)
  * ```
  */
-const formatStatus = (wt: WorktreeListItem): string => {
+export const formatStatus = (wt: WorktreeListItem): string => {
   if (wt.locked) {
     return chalk.gray("🔒 locked");
   }
@@ -750,9 +750,8 @@ const formatStatus = (wt: WorktreeListItem): string => {
  * // /repo/bugfix
  * ```
  */
-const formatAsSimpleList = (output: ListCommandOutput): string => {
-  return output.worktrees.map((wt) => wt.path).join("\n");
-};
+export const formatAsSimpleList = (output: ListCommandOutput): string =>
+  output.worktrees.map((wt) => wt.path).join("\n");
 
 /**
  * Format worktree data as a human-readable table with colors
@@ -801,7 +800,7 @@ const formatAsSimpleList = (output: ListCommandOutput): string => {
  * // /repo/feature-long-branch-name   feature  ✗ modified
  * ```
  */
-const formatAsTable = (output: ListCommandOutput, verbose: boolean): string => {
+export const formatAsTable = (output: ListCommandOutput, verbose: boolean): string => {
   const lines: string[] = [];
 
   // Header
@@ -921,9 +920,8 @@ const formatAsTable = (output: ListCommandOutput, verbose: boolean): string => {
  * // Can be piped: arashi list --json | jq '.[] | select(.hasChanges)'
  * ```
  */
-const formatAsJson = (output: ListCommandOutput): string => {
-  return JSON.stringify(output.worktrees, null, JSON_INDENT);
-};
+export const formatAsJson = (output: ListCommandOutput): string =>
+  JSON.stringify(output.worktrees, null, JSON_INDENT);
 
 /**
  * Build complete list output structure by gathering all worktree data
@@ -955,7 +953,7 @@ const formatAsJson = (output: ListCommandOutput): string => {
  * console.log(`Found ${output.totalCount} worktrees`);
  * ```
  */
-const buildListOutput = async (
+export const buildListOutput = async (
   repoPath: string,
   options: ListCommandOptions,
 ): Promise<ListCommandOutput> => {
@@ -1022,7 +1020,7 @@ const buildListOutput = async (
  * const allRepos = await findGitRepositories('/path/to/worktree', 3, false);
  * ```
  */
-const findGitRepositories = async (
+export const findGitRepositories = async (
   rootPath: string,
   maxDepth: number,
   excludeRoot?: boolean,
@@ -1082,20 +1080,4 @@ const findGitRepositories = async (
 
   await scan(rootPath, 0);
   return gitRepos;
-};
-
-export {
-  buildListOutput,
-  discoverSubRepositories,
-  findGitRepositories,
-  formatAsJson,
-  formatAsSimpleList,
-  formatAsTable,
-  formatStatus,
-  gatherWorktreeData,
-  getShortCommitSha,
-  hasUncommittedChanges,
-  listCommand,
-  validateListCommandOutput,
-  validateWorktreeListItem,
 };

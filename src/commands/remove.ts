@@ -12,16 +12,16 @@ import {
   branchExists,
   createRemovalSummary,
   deleteBranch,
+  detachWorktree,
   discoverAllWorktrees,
   discoverWorktreesByBranch,
   discoverWorktreesByPath,
-  detachWorktree,
   formatRemovalSummaryHuman,
   formatRemovalSummaryJson,
   getCurrentBranch,
   groupWorktreesByParent,
-  removeWorktree,
   refreshRemainingChildStatuses,
+  removeWorktree,
 } from "../core/remove.ts";
 import type { RepositoryTarget } from "../core/remove.ts";
 import { buildWorktreeEntries, resolveWorktreeStatuses } from "../core/worktree.ts";
@@ -43,7 +43,7 @@ import type {
   HookOutcomeReasonCode,
   HookTargetRepository,
 } from "../lib/hooks.ts";
-import { error as logError, info, spinner, warn } from "../lib/logger.ts";
+import { info, error as logError, spinner, warn } from "../lib/logger.ts";
 import { confirm as promptConfirm, multiSelect as promptMultiSelect } from "../lib/prompts.ts";
 import type { Choice, PromptOutcome } from "../lib/prompts.ts";
 import type {
@@ -66,7 +66,7 @@ interface CliOptions {
   json?: boolean;
 }
 
-const createCommand = (): Command => {
+export function createCommand(): Command {
   return new Command("remove")
     .description("Remove worktrees and delete branches")
     .argument("[target]", "Branch name or worktree path to remove (optional - prompts if omitted)")
@@ -84,16 +84,16 @@ const createCommand = (): Command => {
         handleError(error, options || {});
       }
     });
-};
+}
 
-const executeRemove = async (
+export async function executeRemove(
   branchArg: string | undefined,
   options: RemoveCommandOptions,
   promptHandlers?: {
     confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
     multiSelect: (message: string, choices: Choice<string>[]) => Promise<PromptOutcome<string[]>>;
   },
-): Promise<number> => {
+): Promise<number> {
   const startTime = Date.now();
 
   if (options.keepBranches && options.keepWorktrees) {
@@ -115,7 +115,7 @@ const executeRemove = async (
   } catch (error) {
     let message = String(error);
     if (error instanceof Error) {
-      message = error.message;
+      ({ message } = error);
     }
 
     throw new RemoveCommandError(
@@ -356,7 +356,7 @@ const executeRemove = async (
       } catch (error) {
         let message = String(error);
         if (error instanceof Error) {
-          message = error.message;
+          ({ message } = error);
         }
         summary.errors.push(`${worktree.repository}: Failed to detach worktree (${message})`);
       }
@@ -463,7 +463,7 @@ const executeRemove = async (
   }
 
   return ZERO;
-};
+}
 
 const buildRepositoryTargets = (
   workspaceRoot: string,
@@ -713,7 +713,7 @@ const getWorkspaceRoot = async (): Promise<string> => {
   } catch (error) {
     let message = String(error);
     if (error instanceof Error) {
-      message = error.message;
+      ({ message } = error);
     }
 
     throw new RemoveCommandError(
@@ -732,8 +732,8 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
           {
             error: {
               code: error.code,
-              message: error.message,
               context: error.context,
+              message: error.message,
             },
             success: false,
           },
@@ -764,7 +764,7 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
 
   let message = "Unknown error";
   if (error instanceof Error) {
-    message = error.message;
+    ({ message } = error);
   }
 
   if (options.json) {
@@ -823,7 +823,7 @@ const resolveInputPath = (input: string): string => {
 const formatWorktreeRemovalError = (error: unknown): string => {
   let message = String(error);
   if (error instanceof Error) {
-    message = error.message;
+    ({ message } = error);
   }
 
   const lower = message.toLowerCase();
@@ -842,7 +842,7 @@ const formatWorktreeRemovalError = (error: unknown): string => {
 const formatBranchDeletionError = (error: unknown): string => {
   let message = String(error);
   if (error instanceof Error) {
-    message = error.message;
+    ({ message } = error);
   }
 
   const lower = message.toLowerCase();
@@ -897,16 +897,16 @@ const runRemoveLifecycleHook = async (options: {
     const result = await executeHook({
       context: {
         hookName: options.hookName,
-        repoPath: resolvedHook.executionPath,
         hookScope: resolvedHook.scope,
-        sourceScriptPath: resolvedHook.sourceScriptPath,
-        targetRepoName: resolvedHook.targetRepositoryName,
-        targetRepoPath: resolvedHook.targetRepositoryPath,
         operationData: {
           ...options.operationData,
           REPO_NAME: resolvedHook.targetRepositoryName,
           REPO_PATH: resolvedHook.targetRepositoryPath,
         },
+        repoPath: resolvedHook.executionPath,
+        sourceScriptPath: resolvedHook.sourceScriptPath,
+        targetRepoName: resolvedHook.targetRepositoryName,
+        targetRepoPath: resolvedHook.targetRepositoryPath,
       },
       hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
       scriptPath: resolvedHook.scriptPath,
@@ -961,5 +961,3 @@ const runRemoveLifecycleHook = async (options: {
 
 const formatHookFailure = (hookName: string, outcome: HookOutcomeMapping): string =>
   `${hookName} hook failed: ${outcome.message}`;
-
-export { createCommand, executeRemove };

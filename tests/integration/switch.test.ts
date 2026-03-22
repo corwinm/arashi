@@ -37,7 +37,7 @@ describe("switch command integration", () => {
           return { candidates: [candidate], skippedCount: 0 };
         },
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
         loadWorkspaceRepositories: async () => ({ repositories }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
@@ -64,7 +64,7 @@ describe("switch command integration", () => {
           return { candidates: [candidate], skippedCount: 0 };
         },
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
         loadWorkspaceRepositories: async () => ({ repositories }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
@@ -95,7 +95,7 @@ describe("switch command integration", () => {
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => "/workspace/current",
-        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
         loadWorkspaceRepositories: async () => ({
           repositories: [
             { name: "workspace", path: "/workspace/current" },
@@ -119,20 +119,20 @@ describe("switch command integration", () => {
         discoverSwitchCandidates: async () => ({
           candidates: [
             {
-              repoName: "docs",
               branchName: "feature/site",
+              repoName: "docs",
               worktreePath: "/workspace/repos/docs",
             },
             {
-              repoName: "api",
               branchName: "docs",
+              repoName: "api",
               worktreePath: "/workspace/repos/api",
             },
           ],
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
         loadWorkspaceRepositories: async () => ({
           repositories: [
             { name: "workspace", path: "/workspace" },
@@ -158,20 +158,20 @@ describe("switch command integration", () => {
         discoverSwitchCandidates: async () => ({
           candidates: [
             {
-              repoName: "docs-site",
               branchName: "feature/docs",
+              repoName: "docs-site",
               worktreePath: "/workspace/repos/docs-site",
             },
             {
-              repoName: "api",
               branchName: "feature/api",
+              repoName: "api",
               worktreePath: "/workspace/repos/api",
             },
           ],
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
         loadWorkspaceRepositories: async () => ({
           repositories: [
             { name: "workspace", path: "/workspace" },
@@ -197,20 +197,20 @@ describe("switch command integration", () => {
           discoverSwitchCandidates: async () => ({
             candidates: [
               {
-                repoName: "api",
                 branchName: "feature/api",
+                repoName: "api",
                 worktreePath: "/workspace/repos/api",
               },
               {
-                repoName: "web",
                 branchName: "feature/web",
+                repoName: "web",
                 worktreePath: "/workspace/repos/web",
               },
             ],
             skippedCount: 0,
           }),
           findWorkspaceRoot: async () => "/workspace",
-          launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+          launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
           loadWorkspaceRepositories: async () => ({
             repositories: [
               { name: "workspace", path: "/workspace" },
@@ -244,7 +244,7 @@ describe("switch command integration", () => {
           return { candidates: [candidate], skippedCount: 0 };
         },
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
         loadWorkspaceRepositories: async () => ({ repositories }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
@@ -261,38 +261,36 @@ describe("switch command integration", () => {
       undefined,
       { all: true },
       {
-        augmentAllScopeCandidates: async (candidates) => {
-          return [
-            ...candidates,
-            {
-              repoName: "docs",
-              branchName: "main",
-              worktreePath: "/workspace/repos/docs",
-            },
-            {
-              repoName: "docs",
-              branchName: "feature/a",
-              worktreePath: "/workspace-feature-a/repos/docs",
-            },
-          ];
-        },
+        augmentAllScopeCandidates: async (candidates) => [
+          ...candidates,
+          {
+            repoName: "docs",
+            branchName: "main",
+            worktreePath: "/workspace/repos/docs",
+          },
+          {
+            repoName: "docs",
+            branchName: "feature/a",
+            worktreePath: "/workspace-feature-a/repos/docs",
+          },
+        ],
         discoverSwitchCandidates: async () => ({
           candidates: [
             {
-              repoName: "workspace",
               branchName: "main",
+              repoName: "workspace",
               worktreePath: "/workspace",
             },
             {
-              repoName: "workspace",
               branchName: "feature/a",
+              repoName: "workspace",
               worktreePath: "/workspace-feature-a",
             },
           ],
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
         loadWorkspaceRepositories: async () => ({
           repositories: [
             { name: "workspace", path: "/workspace" },
@@ -371,10 +369,9 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async (_candidate, options) => {
           launchOptions.push(options);
-          return { mode: "sesh", command: ["tmux"] };
+          return { command: ["tmux"], mode: "sesh" };
         },
         loadWorkspaceRepositories: async () => ({
-          repositories: [],
           config: {
             version: "1.0.0",
             reposDir: "./repos",
@@ -385,6 +382,7 @@ describe("switch command integration", () => {
               },
             },
           },
+          repositories: [],
         }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
@@ -408,10 +406,9 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async (_candidate, options) => {
           launchOptions.push(options);
-          return { mode: "fallback", command: ["open"] };
+          return { command: ["open"], mode: "fallback" };
         },
         loadWorkspaceRepositories: async () => ({
-          repositories: [],
           config: {
             version: "1.0.0",
             reposDir: "./repos",
@@ -422,6 +419,7 @@ describe("switch command integration", () => {
               },
             },
           },
+          repositories: [],
         }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
@@ -528,7 +526,7 @@ describe("switch command integration", () => {
           candidates: [candidate],
           skippedCount: 0,
         }),
-        env: { TMUX: "/tmp/tmux-1000/default", TERM_PROGRAM: "vscode" },
+        env: { TERM_PROGRAM: "vscode", TMUX: "/tmp/tmux-1000/default" },
         findWorkspaceRoot: async () => "/workspace",
         loadWorkspaceRepositories: async () => ({ repositories: [] }),
         platform: "darwin",
@@ -568,7 +566,7 @@ describe("switch command integration", () => {
           candidates: [candidate],
           skippedCount: 0,
         }),
-        env: { TERM: "xterm-kitty", KITTY_PID: "100" },
+        env: { KITTY_PID: "100", TERM: "xterm-kitty" },
         findWorkspaceRoot: async () => "/workspace",
         loadWorkspaceRepositories: async () => ({ repositories: [] }),
         platform: "linux",

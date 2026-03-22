@@ -9,7 +9,20 @@
     "restriction": "off"
   },
   "rules": {
-    "typescript/no-explicit-any": "error"
+    "typescript/no-explicit-any": "error",
+    "import/no-named-export": "off",
+    "import/exports-last": "off",
+    "import/group-exports": "off",
+    "import/no-nodejs-modules": "off",
+    "import/max-dependencies": "off",
+    "unicorn/no-null": "off",
+    "no-magic-numbers": "off",
+    "no-inline-comments": "off",
+    "id-length": "off",
+    "func-style": "off",
+    "no-ternary": "off",
+    "max-statements": "off",
+    "max-lines-per-function": "off"
   },
   "ignorePatterns": [
     "node_modules/**",
@@ -19,5 +32,15 @@
     "bin/**",
     "repos/**",
     "specs/**"
+  ],
+  "overrides": [
+    {
+      "files": ["tests/**/*.ts"],
+      "rules": {
+        "require-await": "off",
+        "init-declarations": "off",
+        "max-lines": "off"
+      }
+    }
   ]
 }

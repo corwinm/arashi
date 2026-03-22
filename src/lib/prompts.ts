@@ -23,12 +23,12 @@ export type PromptOutcome<T> =
   | { status: "ok"; value: T }
   | { status: "cancelled"; reason: "exit" | "abort" };
 
-type PromptKey = {
+interface PromptKey {
   name?: string;
   ctrl?: boolean;
   meta?: boolean;
   shift?: boolean;
-};
+}
 
 // ============================================================================
 // Prompt Outcome Wrapper
@@ -118,8 +118,8 @@ export async function confirm(
   return withPromptOutcome(
     async () =>
       await inquirerConfirm({
-        message,
         default: defaultValue,
+        message,
       }),
   );
 }
@@ -155,8 +155,8 @@ export async function select<T>(message: string, choices: Choice<T>[]): Promise<
     withPromptOutcome(
       async () =>
         await inquirerSelect({
-          message,
           choices,
+          message,
         }),
     ),
   );
@@ -193,8 +193,8 @@ export async function multiSelect<T>(
     withPromptOutcome(
       async () =>
         await inquirerCheckbox({
-          message,
           choices,
+          message,
         }),
     ),
   );
@@ -226,8 +226,8 @@ export async function input(
   return withPromptOutcome(
     async () =>
       await inquirerInput({
-        message,
         default: defaultValue,
+        message,
       }),
   );
 }

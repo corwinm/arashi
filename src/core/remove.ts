@@ -22,12 +22,16 @@ const ONE = 1;
 const JSON_INDENT = 2;
 const DETACHED_HEAD = "HEAD";
 
-interface RepositoryTarget {
+export interface RepositoryTarget {
   name: string;
   path: string;
 }
 
-const parseWorktreeList = (output: string, repoName: string, repoPath: string): WorktreeInfo[] => {
+export const parseWorktreeList = (
+  output: string,
+  repoName: string,
+  repoPath: string,
+): WorktreeInfo[] => {
   const worktrees: WorktreeInfo[] = [];
   const lines = output.trim().split("\n");
   let current: Partial<WorktreeInfo> = {};
@@ -84,7 +88,7 @@ const parseWorktreeList = (output: string, repoName: string, repoPath: string): 
   return worktrees;
 };
 
-const discoverWorktreesByBranch = async (
+export const discoverWorktreesByBranch = async (
   branchName: string,
   repositories: RepositoryTarget[],
 ): Promise<WorktreeInfo[]> => {
@@ -101,7 +105,7 @@ const discoverWorktreesByBranch = async (
   return results;
 };
 
-const discoverWorktreesByPath = async (
+export const discoverWorktreesByPath = async (
   worktreePath: string,
   repositories: RepositoryTarget[],
 ): Promise<WorktreeInfo[]> => {
@@ -124,7 +128,9 @@ const discoverWorktreesByPath = async (
   return results;
 };
 
-const discoverAllWorktrees = async (repositories: RepositoryTarget[]): Promise<WorktreeInfo[]> => {
+export const discoverAllWorktrees = async (
+  repositories: RepositoryTarget[],
+): Promise<WorktreeInfo[]> => {
   const results: WorktreeInfo[] = [];
 
   for (const repo of repositories) {
@@ -145,7 +151,7 @@ const normalizePath = (pathInput: string): string => {
   }
 };
 
-const groupWorktreesByParent = (entries: WorktreeEntry[]): WorktreeGrouping => {
+export const groupWorktreesByParent = (entries: WorktreeEntry[]): WorktreeGrouping => {
   const groups: WorktreeGrouping["groups"] = [];
   const orphans: WorktreeEntry[] = [];
   const entryByPath = new Map<string, WorktreeEntry>();
@@ -190,7 +196,7 @@ const groupWorktreesByParent = (entries: WorktreeEntry[]): WorktreeGrouping => {
   return { groups, orphans };
 };
 
-const refreshRemainingChildStatuses = async (
+export const refreshRemainingChildStatuses = async (
   removed: WorktreeEntry,
   remaining: WorktreeEntry[],
   includeDirtyDetails: boolean,
@@ -207,7 +213,7 @@ const refreshRemainingChildStatuses = async (
   await resolveWorktreeStatuses(children, includeDirtyDetails);
 };
 
-const removeWorktree = async (
+export const removeWorktree = async (
   worktree: WorktreeInfo,
   repoPath: string,
   force: boolean,
@@ -229,15 +235,15 @@ const removeWorktree = async (
   }
 };
 
-const deleteBranch = async (repoPath: string, branchName: string): Promise<void> => {
+export const deleteBranch = async (repoPath: string, branchName: string): Promise<void> => {
   await exec(["branch", "-D", branchName], repoPath);
 };
 
-const detachWorktree = async (worktreePath: string): Promise<void> => {
+export const detachWorktree = async (worktreePath: string): Promise<void> => {
   await exec(["checkout", "--detach"], worktreePath);
 };
 
-const branchExists = async (repoPath: string, branchName: string): Promise<boolean> => {
+export const branchExists = async (repoPath: string, branchName: string): Promise<boolean> => {
   try {
     await exec(["show-ref", "--verify", `refs/heads/${branchName}`], repoPath);
     return true;
@@ -249,7 +255,7 @@ const branchExists = async (repoPath: string, branchName: string): Promise<boole
   }
 };
 
-const getCurrentBranch = async (repoPath: string): Promise<string | null> => {
+export const getCurrentBranch = async (repoPath: string): Promise<string | null> => {
   try {
     const result = await exec(["rev-parse", "--abbrev-ref", DETACHED_HEAD], repoPath);
     const branch = result.stdout.trim();
@@ -263,19 +269,20 @@ const getCurrentBranch = async (repoPath: string): Promise<string | null> => {
   }
 };
 
-const createRemovalSummary = (totalWorktrees: number, totalBranches: number): RemovalSummary => {
-  return {
-    duration: ZERO,
-    errors: [],
-    operations: [],
-    successfulBranches: ZERO,
-    successfulWorktrees: ZERO,
-    totalBranches,
-    totalWorktrees,
-  };
-};
+export const createRemovalSummary = (
+  totalWorktrees: number,
+  totalBranches: number,
+): RemovalSummary => ({
+  duration: ZERO,
+  errors: [],
+  operations: [],
+  successfulBranches: ZERO,
+  successfulWorktrees: ZERO,
+  totalBranches,
+  totalWorktrees,
+});
 
-const recordOperation = (summary: RemovalSummary, operation: RemovalOperation): void => {
+export const recordOperation = (summary: RemovalSummary, operation: RemovalOperation): void => {
   summary.operations.push(operation);
   if (operation.type === "worktree_remove" && operation.status === "success") {
     summary.successfulWorktrees += ONE;
@@ -288,7 +295,7 @@ const recordOperation = (summary: RemovalSummary, operation: RemovalOperation): 
   }
 };
 
-const formatRemovalSummaryHuman = (
+export const formatRemovalSummaryHuman = (
   summary: RemovalSummary,
   extras?: {
     skippedMain?: WorktreeInfo[];
@@ -359,7 +366,7 @@ const formatRemovalSummaryHuman = (
   return lines.join("\n");
 };
 
-const formatRemovalSummaryJson = (
+export const formatRemovalSummaryJson = (
   summary: RemovalSummary,
   extras?: {
     skippedMain?: WorktreeInfo[];
@@ -371,11 +378,11 @@ const formatRemovalSummaryJson = (
     operations: summary.operations,
     success: summary.errors.length === ZERO,
     summary: {
-      totalWorktrees: summary.totalWorktrees,
+      duration: summary.duration,
+      successfulBranches: summary.successfulBranches,
       successfulWorktrees: summary.successfulWorktrees,
       totalBranches: summary.totalBranches,
-      successfulBranches: summary.successfulBranches,
-      duration: summary.duration,
+      totalWorktrees: summary.totalWorktrees,
     },
   };
 
@@ -392,23 +399,3 @@ const formatRemovalSummaryJson = (
 
   return JSON.stringify(payload, null, JSON_INDENT);
 };
-
-export {
-  branchExists,
-  createRemovalSummary,
-  deleteBranch,
-  detachWorktree,
-  discoverAllWorktrees,
-  discoverWorktreesByBranch,
-  discoverWorktreesByPath,
-  formatRemovalSummaryHuman,
-  formatRemovalSummaryJson,
-  getCurrentBranch,
-  groupWorktreesByParent,
-  parseWorktreeList,
-  recordOperation,
-  refreshRemainingChildStatuses,
-  removeWorktree,
-};
-
-export type { RepositoryTarget };

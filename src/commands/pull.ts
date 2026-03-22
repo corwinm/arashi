@@ -6,10 +6,10 @@
  */
 
 import { Command } from "commander";
-import * as logger from "../lib/logger.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { filterRepositories } from "../lib/repo-filter.ts";
 import { checkRemoteChanges } from "../lib/git-remote.ts";
+import { info, error as logError } from "../lib/logger.ts";
 import { runPullWithRollback } from "../lib/pull-runner.ts";
 import {
   buildSummary,
@@ -19,6 +19,13 @@ import {
 } from "../lib/pull-output.ts";
 import type { PullResult } from "../lib/pull-types.ts";
 
+const ZERO = 0;
+const ONE = 1;
+const SUCCESS_EXIT_CODE = 0;
+const ERROR_EXIT_CODE = 1;
+const USAGE_EXIT_CODE = 2;
+const MILLISECONDS_PER_SECOND = 1000;
+
 export interface PullCommandOptions {
   /** Only include specified repositories (repeatable flag) */
   only?: string[];
@@ -26,70 +33,76 @@ export interface PullCommandOptions {
   verbose?: boolean;
 }
 
-async function executePull(options: PullCommandOptions): Promise<void> {
+const executePull = async (options: PullCommandOptions): Promise<void> => {
   let workspaceRoot: string;
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
-    logger.error("Not in an arashi workspace");
-    logger.info('Run "arashi init" to initialize a workspace');
-    process.exit(2);
+    logError("Not in an arashi workspace");
+    info('Run "arashi init" to initialize a workspace');
+    process.exit(USAGE_EXIT_CODE);
   }
 
   let repositoriesResult;
   try {
     repositoriesResult = await loadWorkspaceRepositories(workspaceRoot);
   } catch (error) {
-    logger.error("Failed to load workspace configuration");
-    logger.error(error instanceof Error ? error.message : String(error));
-    process.exit(2);
+    logError("Failed to load workspace configuration");
+    logError(error instanceof Error ? error.message : String(error));
+    process.exit(USAGE_EXIT_CODE);
   }
 
   const filterResult = filterRepositories(repositoriesResult.repositories, options.only);
-  if (filterResult.missing.length > 0) {
-    logger.error("Unknown repositories in --only filter:");
+  if (filterResult.missing.length > ZERO) {
+    logError("Unknown repositories in --only filter:");
     for (const name of filterResult.missing) {
-      logger.info(`  • ${name}`);
+      info(`  • ${name}`);
     }
-    process.exit(2);
+    process.exit(USAGE_EXIT_CODE);
   }
 
   const repositories = filterResult.selected;
-  if (repositories.length === 0) {
-    logger.info("No repositories selected for pull");
-    process.exit(0);
+  if (repositories.length === ZERO) {
+    info("No repositories selected for pull");
+    process.exit(SUCCESS_EXIT_CODE);
   }
 
   const results: PullResult[] = [];
   const total = repositories.length;
   const timeoutMs = repositoriesResult.config.hooks?.timeout;
 
-  for (let index = 0; index < repositories.length; index += 1) {
+  for (let index = ZERO; index < repositories.length; index += ONE) {
     const repo = repositories[index];
-    logger.info(formatProgress(repo.name, index + 1, total));
+    info(formatProgress(repo.name, index + ONE, total));
 
     const start = Date.now();
     const remoteStatus = await checkRemoteChanges(repo.name, repo.path);
     if (remoteStatus.error) {
-      const elapsedSeconds = (Date.now() - start) / 1000;
+      const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
       results.push({
         elapsedSeconds,
         errorMessage: `Remote check failed: ${remoteStatus.error}`,
         repositoryId: repo.name,
         status: "failed",
       });
-      logger.info(formatResultLine(results.at(-1)));
+      const lastResult = results.at(-ONE);
+      if (lastResult) {
+        info(formatResultLine(lastResult));
+      }
       continue;
     }
 
     if (!remoteStatus.hasRemoteChanges) {
-      const elapsedSeconds = (Date.now() - start) / 1000;
+      const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
       results.push({
         elapsedSeconds,
         repositoryId: repo.name,
         status: "skipped",
       });
-      logger.info(formatResultLine(results.at(-1)));
+      const lastResult = results.at(-ONE);
+      if (lastResult) {
+        info(formatResultLine(lastResult));
+      }
       continue;
     }
 
@@ -99,7 +112,7 @@ async function executePull(options: PullCommandOptions): Promise<void> {
       timeoutMs,
       verbose: options.verbose,
     });
-    const elapsedSeconds = (Date.now() - start) / 1000;
+    const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
     const result: PullResult = {
       elapsedSeconds,
       errorMessage: pullResult.errorMessage,
@@ -113,15 +126,21 @@ async function executePull(options: PullCommandOptions): Promise<void> {
       console.log(pullResult.output);
     }
 
-    logger.info(formatResultLine(result));
+    info(formatResultLine(result));
   }
 
   const summary = buildSummary(results);
   console.log(formatSummary(summary));
 
-  const hasFailures = results.some((r) => r.status === "failed" || r.status === "manual-update");
-  process.exit(hasFailures ? 1 : 0);
-}
+  const hasFailures = results.some(
+    (result) => result.status === "failed" || result.status === "manual-update",
+  );
+  if (hasFailures) {
+    process.exit(ERROR_EXIT_CODE);
+  }
+
+  process.exit(SUCCESS_EXIT_CODE);
+};
 
 export function createCommand(): Command {
   return new Command("pull")
@@ -141,7 +160,7 @@ export function createCommand(): Command {
         } else {
           console.error("Unknown error");
         }
-        process.exit(1);
+        process.exit(ERROR_EXIT_CODE);
       }
     });
 }

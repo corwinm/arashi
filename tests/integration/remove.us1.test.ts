@@ -77,7 +77,7 @@ describe("remove command - US1 single branch", () => {
         {
           confirm: async () => ({ status: "ok", value: true }),
           multiSelect: async (_message, choices) => {
-            observedChoices = choices.map((choice) => ({ value: choice.value, name: choice.name }));
+            observedChoices = choices.map((choice) => ({ name: choice.name, value: choice.value }));
             return { status: "ok", value: [] };
           },
         },

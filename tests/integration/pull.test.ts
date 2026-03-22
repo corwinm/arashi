@@ -79,9 +79,9 @@ async function createWorkspaceWithRepo(
   const config: Record<string, unknown> = {
     repos: {
       "repo-a": {
-        path: "./repos/repo-a",
         defaultBranch: "main",
         isBare: false,
+        path: "./repos/repo-a",
         worktrees: [],
       },
     },

@@ -189,7 +189,7 @@ export async function isExecutable(path: string): Promise<boolean> {
     }
     // On Unix/macOS, check execute permission bit
     // Check if any execute bit is set (owner, group, or other)
-    return !!(stats.mode & (constants.S_IXUSR | constants.S_IXGRP | constants.S_IXOTH));
+    return Boolean(stats.mode & (constants.S_IXUSR | constants.S_IXGRP | constants.S_IXOTH));
   } catch {
     return false;
   }

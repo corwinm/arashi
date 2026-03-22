@@ -23,8 +23,8 @@ describe("clone command", () => {
     const config: Config = {
       repos: {
         "repo-a": {
-          path: "./repos/repo-a",
           gitUrl: "git@github.com:team/repo-a.git",
+          path: "./repos/repo-a",
         },
       },
       reposDir: "./repos",
@@ -49,12 +49,12 @@ describe("clone command", () => {
     const config: Config = {
       repos: {
         "repo-a": {
-          path: "./repos/repo-a",
           gitUrl: "git@github.com:team/repo-a.git",
+          path: "./repos/repo-a",
         },
         "repo-b": {
-          path: "./repos/repo-b",
           gitUrl: "git@github.com:team/repo-b.git",
+          path: "./repos/repo-b",
         },
       },
       reposDir: "./repos",
@@ -69,7 +69,7 @@ describe("clone command", () => {
           cloned.push(gitUrl);
           await mkdir(destinationPath, { recursive: true });
           await writeFile(join(destinationPath, ".git"), "gitdir: ./.git/worktrees/main\n");
-          return { stdout: "", stderr: "", exitCode: 0 };
+          return { exitCode: 0, stderr: "", stdout: "" };
         },
         loadConfig: async () => config,
         promptMultiSelect: async <T>() => ({
@@ -92,12 +92,12 @@ describe("clone command", () => {
     const config: Config = {
       repos: {
         "repo-a": {
-          path: "./repos/repo-a",
           gitUrl: "https://github.com/team/repo-a.git",
+          path: "./repos/repo-a",
         },
         "repo-b": {
-          path: "./repos/repo-b",
           gitUrl: "https://github.com/team/repo-b.git",
+          path: "./repos/repo-b",
         },
       },
       reposDir: "./repos",
@@ -112,7 +112,7 @@ describe("clone command", () => {
           clonedDestinations.push(destinationPath);
           await mkdir(destinationPath, { recursive: true });
           await writeFile(join(destinationPath, ".git"), "gitdir: ./.git/worktrees/main\n");
-          return { stdout: "", stderr: "", exitCode: 0 };
+          return { exitCode: 0, stderr: "", stdout: "" };
         },
         loadConfig: async () => config,
         saveConfig: async () => {},
@@ -128,12 +128,12 @@ describe("clone command", () => {
     const config: Config = {
       repos: {
         "repo-a": {
-          path: "./repos/repo-a",
           gitUrl: "git@github.com:team/repo-a.git",
+          path: "./repos/repo-a",
         },
         "repo-b": {
-          path: "./repos/repo-b",
           gitUrl: "git@github.com:team/repo-b.git",
+          path: "./repos/repo-b",
         },
       },
       reposDir: "./repos",
@@ -150,7 +150,7 @@ describe("clone command", () => {
 
           await mkdir(destinationPath, { recursive: true });
           await writeFile(join(destinationPath, ".git"), "gitdir: ./.git/worktrees/main\n");
-          return { stdout: "", stderr: "", exitCode: 0 };
+          return { exitCode: 0, stderr: "", stdout: "" };
         },
         loadConfig: async () => config,
         saveConfig: async () => {},

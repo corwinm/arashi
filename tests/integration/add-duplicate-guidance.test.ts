@@ -14,8 +14,8 @@ describe("add command duplicate guidance", () => {
     const config = {
       repos: {
         "arashi-docs": {
-          path: "./repos/arashi-docs",
           gitUrl: "git@github.com:corwinm/arashi-docs.git",
+          path: "./repos/arashi-docs",
         },
       },
       reposDir: "./repos",

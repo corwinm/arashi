@@ -3,7 +3,7 @@ import { basename, resolve, sep } from "path";
 import type { Config, LaunchMode, WorkspaceRepository } from "../lib/config.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { exec } from "../lib/git.ts";
-import { error as logError, info, success } from "../lib/logger.ts";
+import { info, error as logError, success } from "../lib/logger.ts";
 import {
   discoverSwitchCandidates,
   filterSwitchCandidates,
@@ -26,7 +26,7 @@ const SESH_LAUNCH_MODE: LaunchMode = "sesh";
 const DETACHED_HEAD = "HEAD";
 const KEY_SEPARATOR = "\u0000";
 
-interface SwitchCommandOptions {
+export interface SwitchCommandOptions {
   sesh?: boolean;
   repos?: boolean;
   all?: boolean;
@@ -35,7 +35,7 @@ interface SwitchCommandOptions {
 
 type SwitchRepositoryScope = "parent" | "repos" | "all";
 
-interface SwitchCommandDependencies {
+export interface SwitchCommandDependencies {
   findWorkspaceRoot?: () => Promise<string>;
   loadWorkspaceRepositories?: (
     workspaceRoot: string,
@@ -71,7 +71,7 @@ interface SwitchCommandDependencies {
   runProcess?: SwitchProcessRunner;
 }
 
-interface SwitchExecutionResult {
+export interface SwitchExecutionResult {
   selected: SwitchCandidate;
   launchMode: SwitchLaunchMode;
   totalCandidates: number;
@@ -79,7 +79,7 @@ interface SwitchExecutionResult {
   skippedCandidates: number;
 }
 
-const createCommand = (): Command => {
+export function createCommand(): Command {
   return new Command("switch")
     .description("Open a terminal context for an existing worktree")
     .argument("[filter]", "Filter targets by branch name or worktree path")
@@ -107,13 +107,13 @@ Examples:
         handleSwitchError(error);
       }
     });
-};
+}
 
-const executeSwitch = async (
+export async function executeSwitch(
   filter: string | undefined,
   options: SwitchCommandOptions,
   deps: SwitchCommandDependencies = {},
-): Promise<SwitchExecutionResult> => {
+): Promise<SwitchExecutionResult> {
   const resolveWorkspaceRoot = deps.findWorkspaceRoot ?? findWorkspaceRoot;
   const resolveWorkspaceRepositories = deps.loadWorkspaceRepositories ?? loadWorkspaceRepositories;
   const discoverCandidates = deps.discoverSwitchCandidates ?? discoverSwitchCandidates;
@@ -213,7 +213,7 @@ const executeSwitch = async (
     skippedCandidates: discovery.skippedCount,
     totalCandidates: scopedCandidates.length,
   };
-};
+}
 
 const handleSwitchError = (error: unknown): never => {
   if (error instanceof SwitchCommandError) {
@@ -454,7 +454,3 @@ const buildRepoNoMatchMessage = (
 
   return `No child repository matched \`${filter}\`. Available repositories: ${availableReposText}`;
 };
-
-export { createCommand, executeSwitch };
-
-export type { SwitchCommandDependencies, SwitchCommandOptions, SwitchExecutionResult };

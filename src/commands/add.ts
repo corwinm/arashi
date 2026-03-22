@@ -39,7 +39,7 @@ const getLastPathSegment = (pathParts: string[]): string => {
 /**
  * Git URL information parsed from a repository URL
  */
-interface GitUrlInfo {
+export interface GitUrlInfo {
   /** Original URL string */
   url: string;
   /** Detected protocol */
@@ -57,7 +57,7 @@ interface GitUrlInfo {
 /**
  * Command-line options for the add command
  */
-interface AddCommandOptions {
+export interface AddCommandOptions {
   /** Custom repository name (overrides auto-derived name) */
   name?: string;
   /** Whether to create setup.sh template if no setup script found */
@@ -71,7 +71,7 @@ interface AddCommandOptions {
 /**
  * Result of add operation
  */
-interface AddCommandResult {
+export interface AddCommandResult {
   /** Name of the added repository */
   repositoryName: string;
   /** Absolute filesystem path where repository was cloned */
@@ -125,14 +125,14 @@ const GIT_URL_PATTERNS = {
  * isValidGitUrl('https://github.com/user/repo.git') // true
  * isValidGitUrl('invalid-url') // false
  */
-const isValidGitUrl = (url: string): boolean => {
+export function isValidGitUrl(url: string): boolean {
   if (!url || typeof url !== "string" || url.trim() === "") {
     return false;
   }
 
   const trimmedUrl = url.trim();
   return Object.values(GIT_URL_PATTERNS).some((pattern) => pattern.test(trimmedUrl));
-};
+}
 
 /**
  * Derive repository name from a Git URL
@@ -148,7 +148,7 @@ const isValidGitUrl = (url: string): boolean => {
  * deriveRepoName('https://github.com/user/my-repo.git') // 'my-repo'
  * deriveRepoName('git@github.com:user/project') // 'project'
  */
-const deriveRepoName = (gitUrl: string): string => {
+export function deriveRepoName(gitUrl: string): string {
   // Remove trailing slashes and .git suffix
   const url = gitUrl
     .trim()
@@ -157,7 +157,7 @@ const deriveRepoName = (gitUrl: string): string => {
 
   // Extract last path segment
   const parts = url.split(/[/:]/);
-  const name = parts[parts.length - 1];
+  const name = parts.at(-1);
 
   // Validate name contains safe characters
   if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
@@ -165,7 +165,7 @@ const deriveRepoName = (gitUrl: string): string => {
   }
 
   return name;
-};
+}
 
 /**
  * Parse a Git URL and extract structured information
@@ -178,7 +178,7 @@ const deriveRepoName = (gitUrl: string): string => {
  * const info = parseGitUrl('https://github.com/facebook/react.git');
  * // { protocol: 'https', host: 'github.com', owner: 'facebook', repository: 'react', ... }
  */
-const parseGitUrl = (gitUrl: string): GitUrlInfo => {
+export function parseGitUrl(gitUrl: string): GitUrlInfo {
   if (!isValidGitUrl(gitUrl)) {
     throw new AddCommandError(
       `The URL "${gitUrl}" is not a valid Git repository URL`,
@@ -263,7 +263,7 @@ const parseGitUrl = (gitUrl: string): GitUrlInfo => {
     repository,
     url: trimmedUrl,
   };
-};
+}
 
 // ============================================================================
 // Setup Script Detection
@@ -299,7 +299,7 @@ const SETUP_SCRIPT_NAMES = [
  *   console.log(`Found setup script: ${setupScript}`);
  * }
  */
-const detectSetupScript = async (repoPath: string): Promise<string | null> => {
+export async function detectSetupScript(repoPath: string): Promise<string | null> {
   for (const scriptName of SETUP_SCRIPT_NAMES) {
     const scriptPath = join(repoPath, scriptName);
     const file = Bun.file(scriptPath);
@@ -320,7 +320,7 @@ const detectSetupScript = async (repoPath: string): Promise<string | null> => {
   }
 
   return null;
-};
+}
 
 // ============================================================================
 // Add Command Implementation
@@ -520,7 +520,7 @@ const displayError = (error: AddCommandError): void => {
  *
  * @returns Commander Command object
  */
-const createCommand = (): Command => {
+export function createCommand(): Command {
   const cmd = new Command("add");
 
   cmd
@@ -540,10 +540,10 @@ const createCommand = (): Command => {
             JSON.stringify(
               {
                 repository: {
+                  defaultBranch: result.defaultBranch,
+                  gitUrl: result.gitUrl,
                   name: result.repositoryName,
                   path: result.clonePath.replace(workspaceRoot, "."),
-                  gitUrl: result.gitUrl,
-                  defaultBranch: result.defaultBranch,
                   setupScript: result.setupScript
                     ? result.setupScript.replace(workspaceRoot, ".")
                     : null,
@@ -568,8 +568,8 @@ const createCommand = (): Command => {
                 {
                   error: {
                     code: error.code,
-                    message: error.message,
                     details: error.context,
+                    message: error.message,
                   },
                   success: false,
                 },
@@ -623,8 +623,4 @@ const createCommand = (): Command => {
     });
 
   return cmd;
-};
-
-export { createCommand, detectSetupScript, deriveRepoName, isValidGitUrl, parseGitUrl };
-
-export type { AddCommandOptions, AddCommandResult, GitUrlInfo };
+}

@@ -74,11 +74,11 @@ export class ArashiError extends Error {
     return {
       code: this.code,
       context: {
-        stdout: this.context.stdout,
-        stderr: this.context.stderr,
-        exitCode: this.context.exitCode,
         args: this.context.args,
         cwd: this.context.cwd,
+        exitCode: this.context.exitCode,
+        stderr: this.context.stderr,
+        stdout: this.context.stdout,
       },
       message: this.message,
       name: this.name,

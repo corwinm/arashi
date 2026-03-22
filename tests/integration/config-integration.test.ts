@@ -6,19 +6,19 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  loadConfig,
-  saveConfig,
-  configExists,
-  generateDefaultConfig,
-  getConfigPath,
-  addRepo,
-  removeRepo,
-  repairRepositoryGitUrls,
+  ConfigError,
   ConfigNotFoundError,
   ConfigParseError,
   ConfigValidationError,
   UnsupportedConfigVersionError,
-  ConfigError,
+  addRepo,
+  configExists,
+  generateDefaultConfig,
+  getConfigPath,
+  loadConfig,
+  removeRepo,
+  repairRepositoryGitUrls,
+  saveConfig,
 } from "../../src/lib/config";
 import type { Config } from "../../src/lib/config";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
@@ -126,9 +126,9 @@ describe("saveConfig", () => {
     const config = {
       repos: {
         "test-repo": {
-          path: "./repos/test-repo",
           defaultBranch: "main",
           isBare: false,
+          path: "./repos/test-repo",
           worktrees: [
             {
               branch: "feature-123",
@@ -462,8 +462,8 @@ describe("round-trip tests", () => {
     const original: Config = {
       repos: {
         repo1: {
-          path: "./repos/repo1",
           gitUrl: "git@github.com:team/repo1.git",
+          path: "./repos/repo1",
         },
         repo2: {
           path: "./repos/repo2",
@@ -499,8 +499,8 @@ describe("round-trip tests", () => {
     const config: Config = {
       repos: {
         "repo-with-url": {
-          path: "./repos/repo-with-url",
           gitUrl: "git@github.com:team/repo-with-url.git",
+          path: "./repos/repo-with-url",
         },
       },
       reposDir: "./repos",

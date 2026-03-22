@@ -26,8 +26,8 @@ describe("clone-discovery", () => {
 
     const config: Config = {
       repos: {
-        "repo-a": { path: "./repos/repo-a", gitUrl: "git@github.com:team/repo-a.git" },
-        "repo-b": { path: "./repos/repo-b", gitUrl: "git@github.com:team/repo-b.git" },
+        "repo-a": { gitUrl: "git@github.com:team/repo-a.git", path: "./repos/repo-a" },
+        "repo-b": { gitUrl: "git@github.com:team/repo-b.git", path: "./repos/repo-b" },
       },
       reposDir: "./repos",
       version: "1.0.0",

@@ -61,9 +61,9 @@ describe("validateConfig - root level", () => {
     const validConfig = {
       repos: {
         "example-repo": {
-          path: "./repos/example-repo",
           defaultBranch: "main",
           isBare: false,
+          path: "./repos/example-repo",
         },
       },
       reposDir: "./repos",
@@ -87,9 +87,9 @@ describe("validateConfig - root level", () => {
     const configWithDefaults = {
       defaults: {
         create: {
-          switch: true,
           launch: true,
           launchMode: "sesh",
+          switch: true,
         },
         switch: {
           launchMode: "sesh",
@@ -107,8 +107,8 @@ describe("validateConfig - root level", () => {
     const normalized = normalizeConfig({
       defaults: {
         create: {
-          switch: true,
           launch_mode: "sesh",
+          switch: true,
         },
         switch: {
           launch_mode: "auto",
@@ -296,9 +296,9 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       repos: {
         "my-repo": {
-          path: "./repos/my-repo",
           defaultBranch: "main",
           isBare: false,
+          path: "./repos/my-repo",
         },
       },
       reposDir: "./repos",
@@ -326,8 +326,8 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       repos: {
         "my-repo": {
-          path: "./repos/my-repo",
           gitUrl: "git@github.com:team/my-repo.git",
+          path: "./repos/my-repo",
         },
       },
       reposDir: "./repos",
@@ -341,8 +341,8 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       repos: {
         "my-repo": {
-          path: "./repos/my-repo",
           gitUrl: 123,
+          path: "./repos/my-repo",
         },
       },
       reposDir: "./repos",
@@ -373,9 +373,9 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       repos: {
         "my-repo": {
-          path: "./repos/my-repo",
           defaultBranch: "main",
           isBare: false,
+          path: "./repos/my-repo",
           worktrees: [],
         },
       },
@@ -390,9 +390,9 @@ describe("validateConfig - RepoConfig validation", () => {
     const normalized = normalizeConfig({
       repos: {
         "my-repo": {
-          path: "./repos/my-repo",
           defaultBranch: "main",
           isBare: false,
+          path: "./repos/my-repo",
           worktrees: [],
         },
       },
@@ -409,8 +409,8 @@ describe("validateConfig - RepoConfig validation", () => {
     const config = {
       repos: {
         "my-repo": {
-          path: "./repos/my-repo",
           customField: true,
+          path: "./repos/my-repo",
         },
       },
       reposDir: "./repos",

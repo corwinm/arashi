@@ -150,11 +150,11 @@ describe("formatShortLine", () => {
   test("includes clone guidance for missing repositories", () => {
     const line = formatShortLine({
       branch: {
-        localBranch: "",
-        remoteBranch: null,
         ahead: 0,
         behind: 0,
         isDetached: false,
+        localBranch: "",
+        remoteBranch: null,
       },
       error:
         "Repository is missing at /tmp/repo-a. Run `arashi clone` to clone missing repositories.",

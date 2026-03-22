@@ -10,9 +10,9 @@ import { Command } from "commander";
 import { listCommand } from "../core/list.ts";
 import * as logger from "../lib/logger.ts";
 import {
-  NotInRepositoryError,
   ConfigurationMissingError,
   ListCommandError,
+  NotInRepositoryError,
 } from "../types/list.ts";
 import type { ListCommandOptions } from "../types/list.ts";
 

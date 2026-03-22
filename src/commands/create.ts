@@ -8,11 +8,11 @@
 import { Command } from "commander";
 import { basename, resolve } from "path";
 import {
-  applyRepositoryFilter,
   ConflictAbortedError,
   InvalidBranchNameError,
   RepositoryValidationError,
   UserAbortedError,
+  applyRepositoryFilter,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
 import type {
@@ -26,14 +26,8 @@ import type {
 import { discoverRepositories } from "../core/repository.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
-import {
-  ConfigNotFoundError,
-  findWorkspaceRoot,
-  loadConfigWithFallback,
-  type Config,
-  type LaunchMode,
-  type LoadedConfig,
-} from "../lib/config.ts";
+import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
+import type { Config, LaunchMode, LoadedConfig } from "../lib/config.ts";
 import { exec } from "../lib/git.ts";
 import { error, info, success, warn } from "../lib/logger.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
@@ -60,9 +54,8 @@ const describeConflictScope = (existsLocally: boolean, existsRemotely: boolean):
   return "remote";
 };
 
-const formatDurationSeconds = (durationMs: number): string => {
-  return `${(durationMs / MILLISECONDS_PER_SECOND).toFixed(TWO)}s`;
-};
+const formatDurationSeconds = (durationMs: number): string =>
+  `${(durationMs / MILLISECONDS_PER_SECOND).toFixed(TWO)}s`;
 
 interface CreateCommandOptions {
   /** Only create worktrees in specified repositories (comma-separated) */
@@ -95,13 +88,13 @@ interface CreateCommandOptions {
   dryRun?: boolean;
 }
 
-interface ResolvedCreateDefaults {
+export interface ResolvedCreateDefaults {
   shouldSwitch: boolean;
   shouldLaunch: boolean;
   launchMode: LaunchMode;
 }
 
-interface CreateCommandDependencies {
+export interface CreateCommandDependencies {
   resolveCreateInvocationContext?: (invocationPath?: string) => Promise<CreateInvocationContext>;
   loadConfigWithFallback?: typeof loadConfigWithFallback;
   discoverRepositories?: typeof discoverRepositories;
@@ -123,23 +116,23 @@ interface CreateCommandDependencies {
   runProcess?: SwitchProcessRunner;
 }
 
-interface CreateInvocationContext {
+export interface CreateInvocationContext {
   invocationPath: string;
   workspaceRoot: string;
   executionPath: string;
   repositoryType: "bare" | "non-bare";
 }
 
-class CreateSetupError extends Error {
+export class CreateSetupError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CreateSetupError";
   }
 }
 
-const resolveCreateInvocationContext = async (
+export async function resolveCreateInvocationContext(
   invocationPath: string = resolve("."),
-): Promise<CreateInvocationContext> => {
+): Promise<CreateInvocationContext> {
   const absoluteInvocationPath = resolve(invocationPath);
   const bareProbe = await exec(["rev-parse", "--is-bare-repository"], absoluteInvocationPath);
   const isBare = bareProbe.stdout.trim() === "true";
@@ -160,7 +153,7 @@ const resolveCreateInvocationContext = async (
     repositoryType: "non-bare",
     workspaceRoot,
   };
-};
+}
 
 const isGitRepository = async (path: string): Promise<boolean> => {
   try {
@@ -219,10 +212,10 @@ const resolveEnabledFlag = (options: { positive?: boolean; negative?: boolean })
   return true;
 };
 
-const resolveCreateDefaults = (
+export function resolveCreateDefaults(
   options: CreateCommandOptions,
   workspaceConfig: Config,
-): ResolvedCreateDefaults => {
+): ResolvedCreateDefaults {
   const createDefaults = workspaceConfig.defaults?.create;
 
   const switchResolution = resolveDefaultWithPrecedence<boolean>({
@@ -257,7 +250,7 @@ const resolveCreateDefaults = (
     shouldLaunch,
     shouldSwitch,
   };
-};
+}
 
 const selectPrimaryCreateResult = (
   repositoryResults: RepositoryResult[],
@@ -323,7 +316,7 @@ const applyPostCreateDefaults = async (
   );
 };
 
-const createCommand = (): Command => {
+export function createCommand(): Command {
   return new Command("create")
     .description("Create coordinated worktrees across multiple repositories")
     .argument("<branch>", "Branch name to create across repositories")
@@ -391,13 +384,13 @@ Examples:
         }
       }
     });
-};
+}
 
-const executeCreate = async (
+export async function executeCreate(
   branchName: string,
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
-): Promise<void> => {
+): Promise<void> {
   const resolveInvocationContext =
     deps.resolveCreateInvocationContext ?? resolveCreateInvocationContext;
   const loadWorkspaceConfig = deps.loadConfigWithFallback ?? loadConfigWithFallback;
@@ -619,14 +612,4 @@ const executeCreate = async (
 
   console.log("");
   info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
-};
-
-export {
-  CreateSetupError,
-  createCommand,
-  executeCreate,
-  resolveCreateDefaults,
-  resolveCreateInvocationContext,
-};
-
-export type { CreateCommandDependencies, CreateInvocationContext, ResolvedCreateDefaults };
+}

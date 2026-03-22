@@ -306,8 +306,8 @@ describe("executeHook", () => {
     const result = await executeHook({
       context: {
         hookName: "test-hook",
-        repoPath: testRepo,
         operationData: { BRANCH: "main" },
+        repoPath: testRepo,
       },
       hookName: "test-hook",
       scriptPath: hookPath,
@@ -333,12 +333,12 @@ describe("executeHook", () => {
     const result = await executeHook({
       context: {
         hookName: "test-hook",
-        repoPath: testRepo,
         hookScope: "global-shared",
+        operationData: {},
+        repoPath: testRepo,
         sourceScriptPath: "/tmp/source-hook.sh",
         targetRepoName: "repo-a",
         targetRepoPath: "/tmp/repo-a",
-        operationData: {},
       },
       hookName: "test-hook",
       scriptPath: hookPath,

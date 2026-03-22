@@ -4,8 +4,8 @@ import {
   findWorkspaceRoot,
   loadConfig,
   normalizeConfig,
-  saveConfig,
   repairRepositoryGitUrls,
+  saveConfig,
 } from "../lib/config.ts";
 import type { Config } from "../lib/config.ts";
 import { clone as cloneRepository, exec } from "../lib/git.ts";
@@ -23,7 +23,14 @@ import {
   select as promptSelect,
 } from "../lib/prompts.ts";
 import type { Choice, PromptOutcome } from "../lib/prompts.ts";
-import * as logger from "../lib/logger.ts";
+import { info, error as logError, spinner, success, warn } from "../lib/logger.ts";
+
+const ZERO = 0;
+const SUCCESS_EXIT_CODE = 0;
+const ERROR_EXIT_CODE = 1;
+const CANCELLED_STATUS = "cancelled" as const;
+const SUCCESS_STATUS = "success" as const;
+const PARTIAL_FAILURE_STATUS = "partial-failure" as const;
 
 export interface CloneCommandOptions {
   all?: boolean;
@@ -61,15 +68,20 @@ export function createCommand(): Command {
       try {
         const result = await executeClone(options);
 
-        if (result.status === "cancelled") {
-          logger.info("Clone operation cancelled.");
-          process.exit(0);
+        if (result.status === CANCELLED_STATUS) {
+          info("Clone operation cancelled.");
+          process.exit(SUCCESS_EXIT_CODE);
         }
 
-        process.exit(result.failed.length > 0 ? 1 : 0);
+        let exitCode = SUCCESS_EXIT_CODE;
+        if (result.failed.length > ZERO) {
+          exitCode = ERROR_EXIT_CODE;
+        }
+
+        process.exit(exitCode);
       } catch (error) {
-        logger.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
+        logError(error instanceof Error ? error.message : String(error));
+        process.exit(ERROR_EXIT_CODE);
       }
     });
 }
@@ -101,9 +113,7 @@ export async function executeClone(
   let configUpdated = repairResult.updated;
 
   if (repairResult.repaired.length > 0) {
-    logger.info(
-      `Recovered missing git URLs from local remotes: ${repairResult.repaired.join(", ")}`,
-    );
+    info(`Recovered missing git URLs from local remotes: ${repairResult.repaired.join(", ")}`);
   }
 
   if (repairResult.updated) {
@@ -128,7 +138,7 @@ export async function executeClone(
       cloned: [],
       failed: [],
       skipped: [],
-      status: "cancelled",
+      status: CANCELLED_STATUS,
     };
   }
 
@@ -139,12 +149,12 @@ export async function executeClone(
   }
 
   if (discovery.configuredMissing.length === 0) {
-    logger.success("All configured repositories are already present. Nothing to clone.");
+    success("All configured repositories are already present. Nothing to clone.");
     return {
       cloned: [],
       failed: [],
       skipped: [],
-      status: "success",
+      status: SUCCESS_STATUS,
     };
   }
 
@@ -166,7 +176,7 @@ export async function executeClone(
           cloned: [],
           failed: [],
           skipped: [],
-          status: "cancelled",
+          status: CANCELLED_STATUS,
         };
       }
 
@@ -185,7 +195,7 @@ export async function executeClone(
     .filter((repository) => !repository.config.gitUrl)
     .map((repository) => repository.name);
   if (unresolvedMissingWithoutUrls.length > 0) {
-    logger.warn(
+    warn(
       `Skipping repositories without configured gitUrl: ${unresolvedMissingWithoutUrls.join(", ")}`,
     );
   }
@@ -222,7 +232,7 @@ export async function executeClone(
         cloned: [],
         failed: [],
         skipped: [],
-        status: "cancelled",
+        status: CANCELLED_STATUS,
       };
     }
 
@@ -232,12 +242,12 @@ export async function executeClone(
     );
 
     if (selectedRepositories.length === 0) {
-      logger.info("No repositories selected for cloning.");
+      info("No repositories selected for cloning.");
       return {
         cloned: [],
         failed: [],
         skipped: missingWithUrls.map((repository) => repository.name),
-        status: "success",
+        status: SUCCESS_STATUS,
       };
     }
   }
@@ -258,10 +268,12 @@ export async function executeClone(
       continue;
     }
 
-    const cloneUrl = preferredProtocol
-      ? applyCloneProtocol(rawGitUrl, preferredProtocol)
-      : rawGitUrl;
-    const cloneSpinner = logger.spinner(`Cloning ${repository.name}...`).start();
+    let cloneUrl = rawGitUrl;
+    if (preferredProtocol) {
+      cloneUrl = applyCloneProtocol(rawGitUrl, preferredProtocol);
+    }
+
+    const cloneSpinner = spinner(`Cloning ${repository.name}...`).start();
 
     try {
       await runClone(cloneUrl, repository.path);
@@ -287,34 +299,39 @@ export async function executeClone(
   }
 
   if (failed.length > 0) {
-    logger.warn(`Clone completed with failures (${failed.length}).`);
+    warn(`Clone completed with failures (${failed.length}).`);
     for (const failure of failed) {
-      logger.info(`  - ${failure.name}: ${failure.reason}`);
+      info(`  - ${failure.name}: ${failure.reason}`);
     }
   } else {
-    logger.success(`Clone completed for ${cloned.length} repositories.`);
+    success(`Clone completed for ${cloned.length} repositories.`);
+  }
+
+  let status: CloneExecutionResult["status"] = SUCCESS_STATUS;
+  if (failed.length > ZERO) {
+    status = PARTIAL_FAILURE_STATUS;
   }
 
   return {
     cloned,
     failed,
     skipped,
-    status: failed.length > 0 ? "partial-failure" : "success",
+    status,
   };
 }
 
-async function resolveProtocolPreference(options: {
+const resolveProtocolPreference = async (options: {
   interactive: boolean;
   urls: (string | undefined)[];
   askSelect: <T>(message: string, choices: Choice<T>[]) => Promise<PromptOutcome<T>>;
-}): Promise<CloneProtocol | null> {
+}): Promise<CloneProtocol | undefined> => {
   const inferred = inferCloneProtocolPreference(options.urls);
   if (inferred.protocol) {
     return inferred.protocol;
   }
 
   if (!options.interactive) {
-    return null;
+    return undefined;
   }
 
   const choice = await options.askSelect("Choose clone protocol for this run:", [
@@ -331,13 +348,13 @@ async function resolveProtocolPreference(options: {
   ]);
 
   if (choice.status === "cancelled") {
-    return null;
+    return undefined;
   }
 
   return choice.value;
-}
+};
 
-async function reconcileUnmanagedRepositories(options: {
+const reconcileUnmanagedRepositories = async (options: {
   interactive: boolean;
   workspaceRoot: string;
   config: Config;
@@ -346,13 +363,13 @@ async function reconcileUnmanagedRepositories(options: {
   askInput: (message: string, defaultValue?: string) => Promise<PromptOutcome<string>>;
   askSelect: <T>(message: string, choices: Choice<T>[]) => Promise<PromptOutcome<T>>;
   deleteDirectory: (path: string) => Promise<void>;
-}): Promise<{ cancelled: boolean; updatedConfig: boolean }> {
-  if (options.unmanagedRepositories.length === 0) {
+}): Promise<{ cancelled: boolean; updatedConfig: boolean }> => {
+  if (options.unmanagedRepositories.length === ZERO) {
     return { cancelled: false, updatedConfig: false };
   }
 
   if (!options.interactive) {
-    logger.info(
+    info(
       `Ignoring ${options.unmanagedRepositories.length} unmanaged local repositories (interactive reconciliation required).`,
     );
     return { cancelled: false, updatedConfig: false };
@@ -403,7 +420,7 @@ async function reconcileUnmanagedRepositories(options: {
       }
 
       await options.deleteDirectory(unmanagedRepository.path);
-      logger.info(`Deleted ${unmanagedRepository.name}`);
+      info(`Deleted ${unmanagedRepository.name}`);
       continue;
     }
 
@@ -417,8 +434,8 @@ async function reconcileUnmanagedRepositories(options: {
       }
 
       const value = enteredUrl.value.trim();
-      if (value.length === 0) {
-        logger.warn(`Skipped adding ${unmanagedRepository.name}: no git URL provided.`);
+      if (value.length === ZERO) {
+        warn(`Skipped adding ${unmanagedRepository.name}: no git URL provided.`);
         continue;
       }
 
@@ -432,18 +449,22 @@ async function reconcileUnmanagedRepositories(options: {
 
     options.config.repos[unmanagedRepository.name] = repoConfig;
     updatedConfig = true;
-    logger.info(`Added ${unmanagedRepository.name} to configuration.`);
+    info(`Added ${unmanagedRepository.name} to configuration.`);
   }
 
   return { cancelled: false, updatedConfig };
-}
+};
 
-async function readOriginRemoteUrl(repoPath: string): Promise<string | null> {
+const readOriginRemoteUrl = async (repoPath: string): Promise<string | undefined> => {
   try {
     const result = await exec(["remote", "get-url", "origin"], repoPath);
     const remoteUrl = result.stdout.trim();
-    return remoteUrl.length > 0 ? remoteUrl : null;
+    if (remoteUrl.length > ZERO) {
+      return remoteUrl;
+    }
+
+    return undefined;
   } catch {
-    return null;
+    return undefined;
   }
-}
+};

@@ -11,13 +11,13 @@ const DEFAULT_HOOK_TIMEOUT = 300_000;
 // Type Definitions
 // ============================================================================
 
-interface Hook {
+export interface Hook {
   name: string;
   scriptPath: string;
   lifecycle: LifecyclePoint;
 }
 
-interface HookContext {
+export interface HookContext {
   hookName: string;
   repoPath: string;
   operationData: Record<string, string>;
@@ -27,13 +27,13 @@ interface HookContext {
   targetRepoPath?: string;
 }
 
-interface LifecyclePoint {
+export interface LifecyclePoint {
   name: string;
   timing: "pre" | "post" | "during";
   operation: string;
 }
 
-interface HookResult {
+export interface HookResult {
   exitCode: number;
   signalCode: string | null;
   killed: boolean;
@@ -44,14 +44,14 @@ interface HookResult {
   duration: number;
 }
 
-type HookScope = "repository" | "workspace" | "global-repository" | "global-shared";
+export type HookScope = "repository" | "workspace" | "global-repository" | "global-shared";
 
-interface HookTargetRepository {
+export interface HookTargetRepository {
   name: string;
   path: string;
 }
 
-interface ResolvedLifecycleHook {
+export interface ResolvedLifecycleHook {
   hookName: string;
   scope: HookScope;
   scriptPath: string;
@@ -61,9 +61,9 @@ interface ResolvedLifecycleHook {
   targetRepositoryPath: string;
 }
 
-type HookOutcomeStatus = "success" | "failure" | "skipped";
+export type HookOutcomeStatus = "success" | "failure" | "skipped";
 
-type HookOutcomeReasonCode =
+export type HookOutcomeReasonCode =
   | "none"
   | "not_found"
   | "disabled"
@@ -71,48 +71,49 @@ type HookOutcomeReasonCode =
   | "exit_non_zero"
   | "not_applicable";
 
-interface HookOutcomeMapping {
+export interface HookOutcomeMapping {
   hookStatus: HookOutcomeStatus;
   reasonCode: HookOutcomeReasonCode;
   message: string;
   durationMs?: number;
 }
 
-interface HookConfig {
+export interface HookConfig {
   timeout: number;
   enabled: boolean;
   allowedHooks: string[] | null;
   blockedHooks: string[];
 }
 
-interface HookExecutionOptions {
+export interface HookExecutionOptions {
   hookName: string;
   scriptPath: string;
   context: HookContext;
   timeout?: number;
 }
 
-interface ValidationResult {
+export interface ValidationResult {
   valid: boolean;
   error?: string;
 }
 
-const GLOBAL_HOOKS = {
+export const GLOBAL_HOOKS = {
   postCreate: "post-create",
   postRemove: "post-remove",
   preCreate: "pre-create",
   preRemove: "pre-remove",
 } as const;
 
-const REPO_SPECIFIC_LIFECYCLES = ["pre-create", "post-create"] as const;
+export const REPO_SPECIFIC_LIFECYCLES = ["pre-create", "post-create"] as const;
 
-type RepoSpecificLifecycle = (typeof REPO_SPECIFIC_LIFECYCLES)[number];
+export type RepoSpecificLifecycle = (typeof REPO_SPECIFIC_LIFECYCLES)[number];
 
-const getRepoSpecificHookName = (lifecycle: RepoSpecificLifecycle, repoName: string): string => {
-  return `${lifecycle}.${repoName}`;
-};
+export const getRepoSpecificHookName = (
+  lifecycle: RepoSpecificLifecycle,
+  repoName: string,
+): string => `${lifecycle}.${repoName}`;
 
-const parseRepoSpecificHookName = (
+export const parseRepoSpecificHookName = (
   hookName: string,
 ): { lifecycle: RepoSpecificLifecycle; repoName: string } | null => {
   for (const lifecycle of REPO_SPECIFIC_LIFECYCLES) {
@@ -129,7 +130,7 @@ const parseRepoSpecificHookName = (
   return null;
 };
 
-const buildHookOperationData = (options: {
+export const buildHookOperationData = (options: {
   branchName?: string;
   repoName?: string;
   worktreePath?: string;
@@ -161,14 +162,14 @@ const buildHookOperationData = (options: {
   return data;
 };
 
-interface RemoveHookOperationDataOptions {
+export interface RemoveHookOperationDataOptions {
   branchNames: string[];
   worktreePaths: string[];
   repositoryNames: string[];
   mainRepoPath: string;
 }
 
-const buildRemoveHookOperationData = (
+export const buildRemoveHookOperationData = (
   options: RemoveHookOperationDataOptions,
 ): Record<string, string> => {
   const uniqueBranches = [...new Set(options.branchNames.filter((value) => value.length > ZERO))];
@@ -197,26 +198,21 @@ const buildRemoveHookOperationData = (
   return operationData;
 };
 
-const isHookSkipped = (result: HookResult | null): boolean => {
-  return result === null;
-};
+export const isHookSkipped = (result: HookResult | null): boolean => result === null;
 
-const isHookFailure = (result: HookResult | null): boolean => {
-  return result !== null && !result.success;
-};
+export const isHookFailure = (result: HookResult | null): boolean =>
+  result !== null && !result.success;
 
-const mapHookSkippedOutcome = (
+export const mapHookSkippedOutcome = (
   reasonCode: Exclude<HookOutcomeReasonCode, "none" | "timeout" | "exit_non_zero">,
   message: string,
-): HookOutcomeMapping => {
-  return {
-    hookStatus: "skipped",
-    message,
-    reasonCode,
-  };
-};
+): HookOutcomeMapping => ({
+  hookStatus: "skipped",
+  message,
+  reasonCode,
+});
 
-const mapHookExecutionResult = (result: HookResult): HookOutcomeMapping => {
+export const mapHookExecutionResult = (result: HookResult): HookOutcomeMapping => {
   if (result.success) {
     return {
       durationMs: result.duration,
@@ -334,7 +330,7 @@ const streamOutput = async (stream: ReadableStream, prefix: string): Promise<str
  * @param repoPath - Absolute path to the repository
  * @returns Absolute path to hook script if found, null if not found
  */
-const findHook = async (hookName: string, repoPath: string): Promise<string | null> => {
+export const findHook = async (hookName: string, repoPath: string): Promise<string | null> => {
   const hookPath = join(repoPath, ".arashi", "hooks", `${hookName}.sh`);
 
   try {
@@ -354,7 +350,7 @@ const pathExists = async (path: string): Promise<boolean> => {
   }
 };
 
-const resolveScopedLifecycleHooks = async (options: {
+export const resolveScopedLifecycleHooks = async (options: {
   hookName: string;
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
@@ -432,7 +428,7 @@ const resolveScopedLifecycleHooks = async (options: {
  * @param hookPath - Absolute path to the hook script
  * @returns Validation result with status and error message if invalid
  */
-const validateHook = async (hookPath: string): Promise<ValidationResult> => {
+export const validateHook = async (hookPath: string): Promise<ValidationResult> => {
   try {
     const stats = await stat(hookPath);
 
@@ -464,7 +460,7 @@ const validateHook = async (hookPath: string): Promise<ValidationResult> => {
  * @param options - Hook execution options
  * @returns Complete execution result including exit code and output
  */
-const executeHook = async (options: HookExecutionOptions): Promise<HookResult> => {
+export const executeHook = async (options: HookExecutionOptions): Promise<HookResult> => {
   const startTime = Date.now();
   const timeout = options.timeout ?? DEFAULT_HOOK_TIMEOUT;
 
@@ -526,7 +522,7 @@ const executeHook = async (options: HookExecutionOptions): Promise<HookResult> =
  * @param options - Optional settings (skipHooks, timeout)
  * @returns Execution result if hook ran, null if skipped or not found
  */
-const runLifecycleHook = async (
+export const runLifecycleHook = async (
   lifecyclePoint: string,
   repoPath: string,
   operationData: Record<string, string>,
@@ -551,8 +547,8 @@ const runLifecycleHook = async (
   const result = await executeHook({
     context: {
       hookName: lifecyclePoint,
-      repoPath,
       operationData,
+      repoPath,
     },
     hookName: lifecyclePoint,
     scriptPath: hookPath,
@@ -568,37 +564,4 @@ const runLifecycleHook = async (
   }
 
   return result;
-};
-
-export {
-  GLOBAL_HOOKS,
-  Hook,
-  HookConfig,
-  HookContext,
-  HookExecutionOptions,
-  HookOutcomeMapping,
-  HookOutcomeReasonCode,
-  HookOutcomeStatus,
-  HookResult,
-  HookScope,
-  HookTargetRepository,
-  LifecyclePoint,
-  REPO_SPECIFIC_LIFECYCLES,
-  RemoveHookOperationDataOptions,
-  RepoSpecificLifecycle,
-  ResolvedLifecycleHook,
-  ValidationResult,
-  buildHookOperationData,
-  buildRemoveHookOperationData,
-  executeHook,
-  findHook,
-  getRepoSpecificHookName,
-  isHookFailure,
-  isHookSkipped,
-  mapHookExecutionResult,
-  mapHookSkippedOutcome,
-  parseRepoSpecificHookName,
-  resolveScopedLifecycleHooks,
-  runLifecycleHook,
-  validateHook,
 };

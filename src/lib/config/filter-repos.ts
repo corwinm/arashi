@@ -43,8 +43,8 @@ export function filterRepositories(
     return {
       missing: [],
       repositories: Object.entries(repos).map(([name, config]) => ({
-        name,
         config,
+        name,
       })),
     };
   }

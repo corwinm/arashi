@@ -26,7 +26,7 @@ const TWO = 2;
 /**
  * Information about a single git worktree
  */
-interface WorktreeInfo {
+export interface WorktreeInfo {
   /** Branch name for this worktree */
   branch: string;
   /** Filesystem path to the worktree */
@@ -40,20 +40,20 @@ interface WorktreeInfo {
 /**
  * Configuration for a single repository
  */
-interface RepoConfig {
+export interface RepoConfig {
   /** Path to the repository (relative or absolute) */
   path: string;
   /** Canonical git URL for cloning the repository */
   gitUrl?: string;
 }
 
-const CURRENT_CONFIG_VERSION = "1.0.0" as const;
-type ConfigVersion = typeof CURRENT_CONFIG_VERSION;
+export const CURRENT_CONFIG_VERSION = "1.0.0" as const;
+export type ConfigVersion = typeof CURRENT_CONFIG_VERSION;
 
 /**
  * Root configuration object for Arashi
  */
-interface Config {
+export interface Config {
   /** JSON Schema URL for editor validation/autocomplete */
   $schema?: string;
   /** Configuration schema version for migrations */
@@ -78,9 +78,9 @@ interface Config {
   repos: Record<string, RepoConfig>;
 }
 
-type LaunchMode = "auto" | "sesh";
+export type LaunchMode = "auto" | "sesh";
 
-interface CreateCommandDefaults {
+export interface CreateCommandDefaults {
   /** Default to switching to the new worktree after create */
   switch?: boolean;
   /** Default to launching a terminal/editor context after create */
@@ -89,17 +89,17 @@ interface CreateCommandDefaults {
   launchMode?: LaunchMode;
 }
 
-interface SwitchCommandDefaults {
+export interface SwitchCommandDefaults {
   /** Preferred launch mode when running switch */
   launchMode?: LaunchMode;
 }
 
-interface CommandDefaultsConfig {
+export interface CommandDefaultsConfig {
   create?: CreateCommandDefaults;
   switch?: SwitchCommandDefaults;
 }
 
-const DEFAULT_CONFIG_SCHEMA_URL = "https://unpkg.com/arashi/schema/config.schema.json";
+export const DEFAULT_CONFIG_SCHEMA_URL = "https://unpkg.com/arashi/schema/config.schema.json";
 
 interface ConfigErrorContext {
   errors: string[];
@@ -109,7 +109,7 @@ interface ConfigErrorContext {
 /**
  * Resolved repository information from workspace configuration.
  */
-interface WorkspaceRepository {
+export interface WorkspaceRepository {
   /** Repository identifier from config or workspace name */
   name: string;
   /** Absolute path to repository root */
@@ -118,9 +118,9 @@ interface WorkspaceRepository {
   gitUrl?: string;
 }
 
-type ConfigSourceType = "local-file" | "repository-content";
+export type ConfigSourceType = "local-file" | "repository-content";
 
-interface LoadedConfig {
+export interface LoadedConfig {
   config: Config;
   source: ConfigSourceType;
   configPath: string;
@@ -133,7 +133,7 @@ interface LoadedConfig {
 /**
  * Base error class for configuration-related errors
  */
-class ConfigError extends Error {
+export class ConfigError extends Error {
   /**
    * Original error that caused this error (if any)
    */
@@ -160,7 +160,7 @@ class ConfigError extends Error {
 /**
  * Error thrown when configuration file is not found
  */
-class ConfigNotFoundError extends ConfigError {
+export class ConfigNotFoundError extends ConfigError {
   constructor(path: string) {
     super(`Configuration file not found at ${path}. Run "arashi init" to create it.`, undefined, {
       path,
@@ -172,7 +172,7 @@ class ConfigNotFoundError extends ConfigError {
 /**
  * Error thrown when configuration file contains invalid JSON
  */
-class ConfigParseError extends ConfigError {
+export class ConfigParseError extends ConfigError {
   constructor(path: string, cause: Error) {
     super(`Failed to parse configuration file at ${path}: ${cause.message}`, cause, { path });
     this.name = "ConfigParseError";
@@ -182,7 +182,7 @@ class ConfigParseError extends ConfigError {
 /**
  * Error thrown when configuration fails validation
  */
-class ConfigValidationError extends ConfigError {
+export class ConfigValidationError extends ConfigError {
   constructor(errors: string[]) {
     super(
       `Configuration validation failed:\n${errors.map((errorMessage) => `  - ${errorMessage}`).join("\n")}`,
@@ -196,7 +196,7 @@ class ConfigValidationError extends ConfigError {
 /**
  * Error thrown when configuration version is not supported by this CLI release.
  */
-class UnsupportedConfigVersionError extends ConfigError {
+export class UnsupportedConfigVersionError extends ConfigError {
   constructor(version: string, supportedVersion: ConfigVersion) {
     super(
       `Unsupported configuration version "${version}". This version of arashi supports "${supportedVersion}".`,
@@ -223,7 +223,7 @@ class UnsupportedConfigVersionError extends ConfigError {
  * // Returns: /path/to/repo/.arashi/config.json
  * ```
  */
-const getConfigPath = (repoPath: string): string => join(repoPath, ".arashi", "config.json");
+export const getConfigPath = (repoPath: string): string => join(repoPath, ".arashi", "config.json");
 
 /**
  * Check if configuration file exists
@@ -238,7 +238,7 @@ const getConfigPath = (repoPath: string): string => join(repoPath, ".arashi", "c
  * }
  * ```
  */
-const configExists = async (repoPath: string): Promise<boolean> => {
+export const configExists = async (repoPath: string): Promise<boolean> => {
   const configPath = getConfigPath(repoPath);
   const file = Bun.file(configPath);
   return await file.exists();
@@ -262,7 +262,7 @@ const configExists = async (repoPath: string): Promise<boolean> => {
  * // Returns: /workspace
  * ```
  */
-const findWorkspaceRoot = async (startPath: string = process.cwd()): Promise<string> => {
+export const findWorkspaceRoot = async (startPath: string = process.cwd()): Promise<string> => {
   const { dirname, resolve, parse } = await import("path");
 
   let currentPath = resolve(startPath);
@@ -309,15 +309,13 @@ const findWorkspaceRoot = async (startPath: string = process.cwd()): Promise<str
  * await saveConfig('/path/to/repo', defaultConfig);
  * ```
  */
-const generateDefaultConfig = (): Config => {
-  return {
-    $schema: DEFAULT_CONFIG_SCHEMA_URL,
-    repos: {},
-    reposDir: "./repos",
-    version: CURRENT_CONFIG_VERSION,
-    worktreesDir: DEFAULT_WORKTREES_DIR,
-  };
-};
+export const generateDefaultConfig = (): Config => ({
+  $schema: DEFAULT_CONFIG_SCHEMA_URL,
+  repos: {},
+  reposDir: "./repos",
+  version: CURRENT_CONFIG_VERSION,
+  worktreesDir: DEFAULT_WORKTREES_DIR,
+});
 
 // ============================================================================
 // Validation Functions
@@ -732,9 +730,7 @@ const normalizeConfigInternal = (
   };
 };
 
-const normalizeConfig = (config: unknown): Config => {
-  return normalizeConfigInternal(config).config;
-};
+export const normalizeConfig = (config: unknown): Config => normalizeConfigInternal(config).config;
 
 /**
  * Validate configuration structure and required fields
@@ -763,7 +759,7 @@ const normalizeConfig = (config: unknown): Config => {
  * }
  * ```
  */
-const validateConfig = (config: unknown): asserts config is Config => {
+export const validateConfig = (config: unknown): asserts config is Config => {
   normalizeConfig(config);
 };
 
@@ -786,7 +782,7 @@ const validateConfig = (config: unknown): asserts config is Config => {
  * console.log(config.reposDir); // "./repos"
  * ```
  */
-const loadConfig = async (repoPath: string): Promise<Config> => {
+export const loadConfig = async (repoPath: string): Promise<Config> => {
   const configPath = getConfigPath(repoPath);
 
   // Check if file exists
@@ -838,7 +834,7 @@ const parseAndValidateConfig = (text: string, configPath: string): Config => {
  * Load configuration from local filesystem first, then optionally from tracked
  * repository content in the default branch.
  */
-const loadConfigWithFallback = async (
+export const loadConfigWithFallback = async (
   workspaceRoot: string,
   options: {
     bareRepoPath?: string;
@@ -940,7 +936,7 @@ const normalizePersistedConfig = (config: Config): Config => {
  * await saveConfig('/path/to/repo', config);
  * ```
  */
-const saveConfig = async (repoPath: string, config: Config): Promise<void> => {
+export const saveConfig = async (repoPath: string, config: Config): Promise<void> => {
   const configPath = getConfigPath(repoPath);
   const configDir = dirname(configPath);
 
@@ -979,7 +975,11 @@ const saveConfig = async (repoPath: string, config: Config): Promise<void> => {
  * });
  * ```
  */
-const addRepo = async (repoPath: string, name: string, repoConfig: RepoConfig): Promise<void> => {
+export const addRepo = async (
+  repoPath: string,
+  name: string,
+  repoConfig: RepoConfig,
+): Promise<void> => {
   const config = await loadConfig(repoPath);
 
   // Check if repository name already exists
@@ -1009,7 +1009,7 @@ const addRepo = async (repoPath: string, name: string, repoConfig: RepoConfig): 
  * await removeRepo('/path/to/main-repo', 'my-app');
  * ```
  */
-const removeRepo = async (repoPath: string, name: string): Promise<void> => {
+export const removeRepo = async (repoPath: string, name: string): Promise<void> => {
   const config = await loadConfig(repoPath);
 
   // Remove repository (idempotent - no error if doesn't exist)
@@ -1024,7 +1024,7 @@ const removeRepo = async (repoPath: string, name: string): Promise<void> => {
  *
  * Includes the workspace root repository plus discovered repositories.
  */
-const loadWorkspaceRepositories = async (
+export const loadWorkspaceRepositories = async (
   workspaceRoot: string,
 ): Promise<{ config: Config; repositories: WorkspaceRepository[] }> => {
   const config = await loadConfig(workspaceRoot);
@@ -1047,7 +1047,7 @@ const loadWorkspaceRepositories = async (
   return { config, repositories };
 };
 
-interface GitUrlRepairResult {
+export interface GitUrlRepairResult {
   updated: boolean;
   repaired: string[];
   unresolved: string[];
@@ -1059,7 +1059,7 @@ interface GitUrlRepairResult {
  * This provides backward-compatible repair behavior for existing workspaces
  * where `repos` entries were created before `gitUrl` tracking.
  */
-const repairRepositoryGitUrls = async (
+export const repairRepositoryGitUrls = async (
   workspaceRoot: string,
   config: Config,
 ): Promise<GitUrlRepairResult> => {
@@ -1103,39 +1103,4 @@ const resolveOriginRemoteUrl = async (repoPath: string): Promise<string | undefi
   } catch {
     return undefined;
   }
-};
-
-export {
-  CURRENT_CONFIG_VERSION,
-  DEFAULT_CONFIG_SCHEMA_URL,
-  Config,
-  ConfigError,
-  ConfigNotFoundError,
-  ConfigParseError,
-  ConfigSourceType,
-  ConfigValidationError,
-  ConfigVersion,
-  CommandDefaultsConfig,
-  CreateCommandDefaults,
-  GitUrlRepairResult,
-  LaunchMode,
-  LoadedConfig,
-  RepoConfig,
-  SwitchCommandDefaults,
-  UnsupportedConfigVersionError,
-  WorkspaceRepository,
-  WorktreeInfo,
-  addRepo,
-  configExists,
-  findWorkspaceRoot,
-  generateDefaultConfig,
-  getConfigPath,
-  loadConfig,
-  loadConfigWithFallback,
-  loadWorkspaceRepositories,
-  normalizeConfig,
-  removeRepo,
-  repairRepositoryGitUrls,
-  saveConfig,
-  validateConfig,
 };

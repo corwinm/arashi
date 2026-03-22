@@ -11,14 +11,14 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { exec as gitExec } from "../../src/lib/git";
 import type {
-  WorktreeCreatedEntry,
   BranchCreatedEntry,
   DirectoryCreatedEntry,
+  WorktreeCreatedEntry,
 } from "../../src/core/rollback";
 import {
-  rollbackWorktreeCreated,
   rollbackBranchCreated,
   rollbackDirectoryCreated,
+  rollbackWorktreeCreated,
 } from "../../src/core/rollback";
 
 describe("Rollback Integration Tests - User Story 3", () => {
@@ -72,9 +72,9 @@ describe("Rollback Integration Tests - User Story 3", () => {
       // Create rollback entry
       const entry: WorktreeCreatedEntry = {
         data: {
+          branchName: branchName,
           repositoryPath: repoPath,
           worktreePath: worktreePath,
-          branchName: branchName,
         },
         timestamp: Date.now(),
         type: "worktree_created",
@@ -94,9 +94,9 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       const entry: WorktreeCreatedEntry = {
         data: {
+          branchName: branchName,
           repositoryPath: repoPath,
           worktreePath: worktreePath,
-          branchName: branchName,
         },
         timestamp: Date.now(),
         type: "worktree_created",
@@ -126,8 +126,8 @@ describe("Rollback Integration Tests - User Story 3", () => {
       // Create rollback entry
       const entry: BranchCreatedEntry = {
         data: {
-          repositoryPath: repoPath,
           branchName: branchName,
+          repositoryPath: repoPath,
         },
         timestamp: Date.now(),
         type: "branch_created",
@@ -146,8 +146,8 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       const entry: BranchCreatedEntry = {
         data: {
-          repositoryPath: repoPath,
           branchName: branchName,
+          repositoryPath: repoPath,
         },
         timestamp: Date.now(),
         type: "branch_created",
@@ -240,13 +240,13 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Log all operations in order
       log.add({
-        data: { repositoryPath: repoPath, branchName },
+        data: { branchName, repositoryPath: repoPath },
         timestamp: Date.now(),
         type: "branch_created",
       });
 
       log.add({
-        data: { repositoryPath: repoPath, worktreePath, branchName },
+        data: { branchName, repositoryPath: repoPath, worktreePath },
         timestamp: Date.now() + 100,
         type: "worktree_created",
       });
@@ -317,16 +317,16 @@ describe("Rollback Integration Tests - User Story 3", () => {
       // Log: fake worktree (will fail), real branch, real directory
       log.add({
         data: {
+          branchName: "fake-branch",
           repositoryPath: repoPath,
           worktreePath: "/nonexistent/worktree",
-          branchName: "fake-branch",
         },
         timestamp: Date.now(),
         type: "worktree_created",
       });
 
       log.add({
-        data: { repositoryPath: repoPath, branchName },
+        data: { branchName, repositoryPath: repoPath },
         timestamp: Date.now() + 100,
         type: "branch_created",
       });

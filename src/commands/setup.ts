@@ -1,6 +1,6 @@
 import { Command } from "commander";
-import * as logger from "../lib/logger.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import { info, error as logError } from "../lib/logger.ts";
 import {
   buildSummary,
   formatProgress,
@@ -15,60 +15,67 @@ import {
 import { runSetupTarget } from "../lib/setup-runner.ts";
 import type { SetupExecutionResult } from "../lib/setup-types.ts";
 
+const ZERO = 0;
+const ONE = 1;
+const SUCCESS_EXIT_CODE = 0;
+const ERROR_EXIT_CODE = 1;
+const USAGE_EXIT_CODE = 2;
+const DEFAULT_TIMEOUT_MS = 300_000;
+
 export interface SetupCommandOptions {
   only?: string[];
   verbose?: boolean;
 }
 
-async function executeSetup(options: SetupCommandOptions): Promise<void> {
+const executeSetup = async (options: SetupCommandOptions): Promise<void> => {
   let workspaceRoot: string;
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
-    logger.error("Not in an arashi workspace");
-    logger.info('Run "arashi init" to initialize a workspace');
-    process.exit(2);
+    logError("Not in an arashi workspace");
+    info('Run "arashi init" to initialize a workspace');
+    process.exit(USAGE_EXIT_CODE);
   }
 
   let repositoriesResult;
   try {
     repositoriesResult = await loadWorkspaceRepositories(workspaceRoot);
   } catch (error) {
-    logger.error("Failed to load workspace configuration");
-    logger.error(error instanceof Error ? error.message : String(error));
-    process.exit(2);
+    logError("Failed to load workspace configuration");
+    logError(error instanceof Error ? error.message : String(error));
+    process.exit(USAGE_EXIT_CODE);
   }
 
   const discovery = await discoverSetupTargets(repositoriesResult.repositories, options.only);
-  if (discovery.missing.length > 0) {
-    logger.error("Unknown repositories in --only filter:");
+  if (discovery.missing.length > ZERO) {
+    logError("Unknown repositories in --only filter:");
     for (const name of discovery.missing) {
-      logger.info(`  - ${name}`);
+      info(`  - ${name}`);
     }
-    process.exit(2);
+    process.exit(USAGE_EXIT_CODE);
   }
 
   const orderedTargets = orderSetupTargets(discovery.targets);
   const executableTargets = orderedTargets.filter(isExecutableTarget);
-  const timeoutMs = repositoriesResult.config.hooks?.timeout ?? 300_000;
+  const timeoutMs = repositoriesResult.config.hooks?.timeout ?? DEFAULT_TIMEOUT_MS;
 
   const executions: SetupExecutionResult[] = [];
-  let executionIndex = 0;
+  let executionIndex = ZERO;
   for (const target of orderedTargets) {
     if (!isExecutableTarget(target)) {
       const skippedResult: SetupExecutionResult = {
         detail: target.skipReason,
-        durationMs: 0,
+        durationMs: ZERO,
         repositoryName: target.name,
         status: "skipped",
       };
       executions.push(skippedResult);
-      logger.info(formatResultLine(skippedResult));
+      info(formatResultLine(skippedResult));
       continue;
     }
 
-    executionIndex += 1;
-    logger.info(formatProgress(target.name, executionIndex, executableTargets.length));
+    executionIndex += ONE;
+    info(formatProgress(target.name, executionIndex, executableTargets.length));
     const result = await runSetupTarget(target, { timeoutMs });
     executions.push(result);
 
@@ -76,16 +83,20 @@ async function executeSetup(options: SetupCommandOptions): Promise<void> {
       console.log(result.output);
     }
 
-    logger.info(formatResultLine(result));
+    info(formatResultLine(result));
   }
 
-  const filteredRun = Boolean(options.only && options.only.length > 0);
+  const filteredRun = Boolean(options.only && options.only.length > ZERO);
   const summary = buildSummary(orderedTargets, executions);
   console.log(formatSummary(summary, filteredRun));
 
-  const hasFailures = summary.failedCount > 0 || summary.timedOutCount > 0;
-  process.exit(hasFailures ? 1 : 0);
-}
+  const hasFailures = summary.failedCount > ZERO || summary.timedOutCount > ZERO;
+  if (hasFailures) {
+    process.exit(ERROR_EXIT_CODE);
+  }
+
+  process.exit(SUCCESS_EXIT_CODE);
+};
 
 export function createCommand(): Command {
   return new Command("setup")
@@ -100,8 +111,8 @@ export function createCommand(): Command {
       try {
         await executeSetup(options);
       } catch (error) {
-        logger.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
+        logError(error instanceof Error ? error.message : String(error));
+        process.exit(ERROR_EXIT_CODE);
       }
     });
 }
