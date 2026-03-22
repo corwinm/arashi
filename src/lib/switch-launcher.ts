@@ -1,9 +1,6 @@
 import type { SwitchCandidate } from "../core/switch.ts";
-import {
-  SwitchCommandError,
-  SwitchCommandErrorCode,
-  type SwitchLaunchMode,
-} from "../types/switch.ts";
+import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
+import type { SwitchLaunchMode } from "../types/switch.ts";
 
 export interface SwitchProcessResult {
   exitCode: number;
@@ -80,8 +77,8 @@ export async function launchSwitchTarget(
     }
 
     return {
-      mode: "sesh",
       command: seshCommand,
+      mode: "sesh",
     };
   }
 
@@ -101,8 +98,8 @@ export async function launchSwitchTarget(
     }
 
     return {
-      mode: "tmux",
       command: tmuxCommand,
+      mode: "tmux",
     };
   }
 
@@ -129,8 +126,8 @@ export async function launchSwitchTarget(
       }
 
       return {
-        mode: "vscode",
         command: codeCommand,
+        mode: "vscode",
       };
     }
   }
@@ -233,8 +230,8 @@ export async function runSwitchProcess(
     const proc = Bun.spawn(command, {
       cwd: options.cwd,
       env: normalizeEnv(options.env),
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -244,14 +241,14 @@ export async function runSwitchProcess(
 
     return {
       exitCode,
-      stdout,
       stderr,
+      stdout,
     };
   } catch (error) {
     return {
       exitCode: -1,
-      stdout: "",
       stderr: error instanceof Error ? error.message : String(error),
+      stdout: "",
     };
   }
 }
@@ -273,7 +270,7 @@ function buildSeshTmuxCommand(worktreePath: string): string[] {
 }
 
 function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  return `'${value.replaceAll(/'/g, `'\\''`)}'`;
 }
 
 async function launchWithFallback(
@@ -295,8 +292,8 @@ async function launchWithFallback(
 
     if (result.exitCode === 0) {
       return {
-        mode: "fallback",
         command,
+        mode: "fallback",
       };
     }
 
@@ -310,8 +307,8 @@ async function launchWithFallback(
     )}`,
     SwitchCommandErrorCode.LAUNCH_FAILED,
     {
-      path: candidate.worktreePath,
       attempts,
+      path: candidate.worktreePath,
     },
   );
 }
@@ -338,8 +335,8 @@ async function launchWithDetectedTerminalApp(
 
     if (result.exitCode === 0) {
       return {
-        mode: "fallback",
         command,
+        mode: "fallback",
       };
     }
   }
@@ -396,8 +393,8 @@ function throwLaunchFailure(worktreePath: string, command: string[], reason: str
     )}\`: ${reason.trim() || "unknown failure"}`,
     SwitchCommandErrorCode.LAUNCH_FAILED,
     {
-      path: worktreePath,
       command,
+      path: worktreePath,
       reason,
     },
   );

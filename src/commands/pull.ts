@@ -73,39 +73,39 @@ async function executePull(options: PullCommandOptions): Promise<void> {
     if (remoteStatus.error) {
       const elapsedSeconds = (Date.now() - start) / 1000;
       results.push({
-        repositoryId: repo.name,
-        status: "failed",
         elapsedSeconds,
         errorMessage: `Remote check failed: ${remoteStatus.error}`,
+        repositoryId: repo.name,
+        status: "failed",
       });
-      logger.info(formatResultLine(results[results.length - 1]));
+      logger.info(formatResultLine(results.at(-1)));
       continue;
     }
 
     if (!remoteStatus.hasRemoteChanges) {
       const elapsedSeconds = (Date.now() - start) / 1000;
       results.push({
+        elapsedSeconds,
         repositoryId: repo.name,
         status: "skipped",
-        elapsedSeconds,
       });
-      logger.info(formatResultLine(results[results.length - 1]));
+      logger.info(formatResultLine(results.at(-1)));
       continue;
     }
 
     const pullResult = await runPullWithRollback(repo.path, {
+      branch: remoteStatus.branch || undefined,
+      remote: remoteStatus.remote || undefined,
       timeoutMs,
       verbose: options.verbose,
-      remote: remoteStatus.remote || undefined,
-      branch: remoteStatus.branch || undefined,
     });
     const elapsedSeconds = (Date.now() - start) / 1000;
     const result: PullResult = {
-      repositoryId: repo.name,
-      status: pullResult.status,
       elapsedSeconds,
       errorMessage: pullResult.errorMessage,
       output: pullResult.output,
+      repositoryId: repo.name,
+      status: pullResult.status,
     };
     results.push(result);
 
@@ -129,9 +129,7 @@ export function createCommand(): Command {
     .option(
       "--only <repo>",
       "Only include a specific repository (repeatable)",
-      (value, previous: string[] = []) => {
-        return previous.concat(value);
-      },
+      (value, previous: string[] = []) => previous.concat(value),
     )
     .option("-v, --verbose", "Show verbose git output")
     .action(async (options: PullCommandOptions) => {

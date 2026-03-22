@@ -13,8 +13,8 @@ import {
   NotInRepositoryError,
   ConfigurationMissingError,
   ListCommandError,
-  type ListCommandOptions,
 } from "../types/list.ts";
+import type { ListCommandOptions } from "../types/list.ts";
 
 interface CliOptions {
   /** Show detailed sub-repository information */
@@ -77,10 +77,10 @@ Examples:
 
 async function executeList(options: CliOptions): Promise<void> {
   const listOptions: ListCommandOptions = {
-    verbose: options.verbose || false,
     json: options.json || false,
-    table: options.table || false,
     maxDepth: parseInt(options.maxDepth || "3", 10),
+    table: options.table || false,
+    verbose: options.verbose || false,
   };
 
   await listCommand(listOptions);

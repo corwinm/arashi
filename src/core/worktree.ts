@@ -12,10 +12,10 @@
  */
 
 import type { Repository } from "./repository.ts";
-import { basename, sep, join, parse, resolve } from "path";
+import { basename, join, parse, resolve, sep } from "path";
 import { existsSync } from "fs";
 import type { Config as ArashiConfig } from "../lib/config.ts";
-import { loadConfig, ConfigNotFoundError } from "../lib/config.ts";
+import { ConfigNotFoundError, loadConfig } from "../lib/config.ts";
 import { isBareRepo } from "../lib/git.ts";
 import { resolveWorktreesBasePath } from "../lib/worktree-location.ts";
 import type { DirtyStatus, WorktreeEntry, WorktreeInfo } from "../types/remove.ts";
@@ -444,12 +444,12 @@ function toHookOutcomeRecord(
   mapping: hooks.HookOutcomeMapping,
 ): HookOutcomeRecord {
   return {
-    repositoryId,
+    durationMs: mapping.durationMs,
     hookName,
     hookStatus: mapping.hookStatus,
-    reasonCode: mapping.reasonCode,
     message: mapping.message,
-    durationMs: mapping.durationMs,
+    reasonCode: mapping.reasonCode,
+    repositoryId,
   };
 }
 
@@ -465,12 +465,12 @@ async function runHookIfPresent(options: {
   const hookPath = await hooks.findHook(options.hookName, options.hookRootPath);
   if (!hookPath) {
     return {
+      error: null,
       outcome: toHookOutcomeRecord(
         options.repository.name,
         options.hookName,
         hooks.mapHookSkippedOutcome("not_found", "Hook script not found"),
       ),
-      error: null,
     };
   }
 
@@ -484,33 +484,29 @@ async function runHookIfPresent(options: {
       validation.error ?? "Hook validation failed",
     );
     return {
+      error,
       outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
         hookStatus: "failure",
         reasonCode: "exit_non_zero",
         message: validation.error ?? "Hook validation failed",
       }),
-      error,
     };
   }
 
   const result = await hooks.executeHook({
-    hookName: options.hookName,
-    scriptPath: hookPath,
     context: {
       hookName: options.hookName,
       repoPath: options.repoContextPath,
       operationData: options.operationData,
     },
+    hookName: options.hookName,
+    scriptPath: hookPath,
     timeout: options.timeout,
   });
 
   const mapping = hooks.mapHookExecutionResult(result);
   if (mapping.hookStatus === "failure") {
     return {
-      outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
-        ...mapping,
-        message: result.stderr.trim().length > 0 ? result.stderr.trim() : mapping.message,
-      }),
       error: new HookExecutionError(
         `Hook execution failed for ${options.hookName}`,
         options.hookType,
@@ -518,12 +514,16 @@ async function runHookIfPresent(options: {
         result.exitCode,
         result.stderr,
       ),
+      outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
+        ...mapping,
+        message: result.stderr.trim().length > 0 ? result.stderr.trim() : mapping.message,
+      }),
     };
   }
 
   return {
-    outcome: toHookOutcomeRecord(options.repository.name, options.hookName, mapping),
     error: null,
+    outcome: toHookOutcomeRecord(options.repository.name, options.hookName, mapping),
   };
 }
 
@@ -550,8 +550,8 @@ export async function detectRepositoryType(
     const exists = await configFile.exists();
     if (exists) {
       return {
-        type: "meta-repo",
         reason: "Contains .arashi/config.json",
+        type: "meta-repo",
       };
     }
   } catch {
@@ -560,7 +560,7 @@ export async function detectRepositoryType(
 
   // Check if this is a child repository
   // A child repo must be directly inside a reposDir/ folder, and that reposDir
-  // must be inside a meta-repo (has .arashi/config.json)
+  // Must be inside a meta-repo (has .arashi/config.json)
   if (config) {
     const reposDir = basename(
       config.reposDir ?? (config as { repos_dir?: string }).repos_dir ?? "./repos",
@@ -568,7 +568,7 @@ export async function detectRepositoryType(
     const pathParts = repo.path.split(sep);
 
     // Check if the immediate parent directory is the reposDir
-    const parentDir = pathParts[pathParts.length - 2];
+    const parentDir = pathParts.at(-2);
     if (parentDir === reposDir) {
       // Check if grandparent has .arashi/config.json (is a meta-repo)
       const grandparentPath = join(repo.path, "..", "..");
@@ -579,12 +579,12 @@ export async function detectRepositoryType(
         const metaExists = await metaConfigFile.exists();
 
         if (metaExists) {
-          const parentName = pathParts[pathParts.length - 3];
+          const parentName = pathParts.at(-3);
           return {
-            type: "child",
             parentName,
-            reposDir,
             reason: `Located in ${reposDir}/ folder of parent repository '${parentName}'`,
+            reposDir,
+            type: "child",
           };
         }
       } catch {
@@ -595,8 +595,8 @@ export async function detectRepositoryType(
 
   // Default → standalone
   return {
-    type: "standalone",
     reason: "Not a meta-repo and not in repos/ folder",
+    type: "standalone",
   };
 }
 
@@ -667,27 +667,26 @@ export async function calculateWorktreePath(
     const worktreePath = join(parentWorktreePath, typeInfo.reposDir, repo.name);
 
     return {
+      parentWorktreePath,
       path: worktreePath,
       repositoryType: "child",
       strategy: "nested",
-      parentWorktreePath,
-    };
-  } else {
-    // Sibling strategy for meta-repo and standalone
-    // Check if repository is bare to determine naming convention
-    const isBare = await isBareRepo(repo.path);
-
-    // Bare repos: Use branch name only (e.g., 'feature-branch/')
-    // Non-bare repos: Combine folder name + branch (e.g., 'my-repo-feature-branch/')
-    const worktreeName = isBare ? branchName : `${repo.name}-${branchName}`;
-    const worktreePath = join(worktreeBasePath, worktreeName);
-
-    return {
-      path: worktreePath,
-      repositoryType: typeInfo.type,
-      strategy: "sibling",
     };
   }
+  // Sibling strategy for meta-repo and standalone
+  // Check if repository is bare to determine naming convention
+  const isBare = await isBareRepo(repo.path);
+
+  // Bare repos: Use branch name only (e.g., 'feature-branch/')
+  // Non-bare repos: Combine folder name + branch (e.g., 'my-repo-feature-branch/')
+  const worktreeName = isBare ? branchName : `${repo.name}-${branchName}`;
+  const worktreePath = join(worktreeBasePath, worktreeName);
+
+  return {
+    path: worktreePath,
+    repositoryType: typeInfo.type,
+    strategy: "sibling",
+  };
 }
 
 // ============================================================================
@@ -792,15 +791,15 @@ export async function getWorktreeDirtyStatus(worktreePath: string): Promise<Dirt
     return {
       isDirty: lines.length > 0,
       modifiedFiles,
-      untrackedFiles,
       stagedFiles,
+      untrackedFiles,
     };
   } catch {
     return {
       isDirty: true,
       modifiedFiles: 0,
-      untrackedFiles: 0,
       stagedFiles: 0,
+      untrackedFiles: 0,
     };
   }
 }
@@ -843,14 +842,14 @@ export async function buildWorktreeEntries(
 ): Promise<WorktreeEntry[]> {
   const entries: WorktreeEntry[] = worktrees.map((worktree) => ({
     ...worktree,
-    status: "present",
-    parentPath: null,
     childrenPaths: [],
+    parentPath: null,
+    status: "present",
   }));
 
   attachWorktreeRelationships(entries, {
-    reposDirName: options.reposDirName,
     childRepoNames: options.childRepoNames,
+    reposDirName: options.reposDirName,
   });
   await resolveWorktreeStatuses(entries, options.includeDirtyDetails);
 
@@ -954,24 +953,24 @@ async function buildDryRunOutcome(
 
       if (existsSync(worktreePath)) {
         conflicts.push({
+          blocking: true,
+          conflictType: "path_exists",
+          message: `Worktree path already exists: ${worktreePath}`,
           repository: repo,
           repositoryName: repo.name,
-          conflictType: "path_exists",
           scope: `${repo.name}:${worktreePath}`,
-          message: `Worktree path already exists: ${worktreePath}`,
-          blocking: true,
         });
         planStatus = "blocked";
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       conflicts.push({
+        blocking: true,
+        conflictType: "invalid_configuration",
+        message: `Unable to calculate worktree path: ${message}`,
         repository: repo,
         repositoryName: repo.name,
-        conflictType: "invalid_configuration",
         scope: repo.name,
-        message: `Unable to calculate worktree path: ${message}`,
-        blocking: true,
       });
       planStatus = "blocked";
     }
@@ -986,12 +985,12 @@ async function buildDryRunOutcome(
             : "remotely";
       const blocking = options.conflictResolution !== "REUSE_EXISTING";
       conflicts.push({
+        blocking,
+        conflictType: "branch_exists",
+        message: `Branch '${branchConflict.branchName}' already exists ${location}`,
         repository: repo,
         repositoryName: repo.name,
-        conflictType: "branch_exists",
         scope: `${repo.name}:${branchConflict.branchName}`,
-        message: `Branch '${branchConflict.branchName}' already exists ${location}`,
-        blocking,
       });
       if (blocking) {
         planStatus = "blocked";
@@ -999,11 +998,11 @@ async function buildDryRunOutcome(
     }
 
     plannedWorktrees.push({
+      branchName,
+      planStatus,
       repository: repo,
       repositoryName: repo.name,
       worktreePath,
-      branchName,
-      planStatus,
     });
   }
 
@@ -1011,9 +1010,9 @@ async function buildDryRunOutcome(
   const overallStatus: DryRunPlanStatus = blockingTotal > 0 ? "blocked" : "actionable";
 
   return {
+    conflicts,
     overallStatus,
     plannedWorktrees,
-    conflicts,
     summaryCounts: {
       plannedTotal: plannedWorktrees.length,
       conflictTotal: conflicts.length,
@@ -1025,7 +1024,7 @@ async function buildDryRunOutcome(
 function collectSortedHookOutcomes(results: RepositoryResult[]): HookOutcomeRecord[] {
   return results
     .flatMap((result) => result.hookOutcomes)
-    .sort((left, right) => {
+    .toSorted((left, right) => {
       const repositoryCompare = left.repositoryId.localeCompare(right.repositoryId);
       if (repositoryCompare !== 0) {
         return repositoryCompare;
@@ -1054,7 +1053,7 @@ function buildHookRecoveryGuidance(hookOutcomes: HookOutcomeRecord[]): string[] 
     );
   }
 
-  return Array.from(guidance);
+  return [...guidance];
 }
 
 /**
@@ -1084,12 +1083,12 @@ export async function createCoordinatedWorktrees(
 
   // Set default options
   const opts: NormalizedWorktreeOptions = {
+    conflictResolution: options.conflictResolution ?? null,
+    dryRun: options.dryRun ?? false,
     executeHooks: options.executeHooks ?? true,
     hookTimeout: options.hookTimeout ?? 60000,
     interactive: options.interactive ?? false,
-    conflictResolution: options.conflictResolution ?? null,
     showProgress: options.showProgress ?? true,
-    dryRun: options.dryRun ?? false,
   };
 
   try {
@@ -1120,9 +1119,9 @@ export async function createCoordinatedWorktrees(
         }
 
         config = {
-          version: "1.0.0",
-          reposDir: "./repos",
           repos: {},
+          reposDir: "./repos",
+          version: "1.0.0",
         };
       }
     }
@@ -1142,21 +1141,21 @@ export async function createCoordinatedWorktrees(
       );
 
       return {
-        totalRepositories: repositories.length,
-        successCount: 0,
-        failureCount: 0,
-        skippedCount: repositories.length,
-        repositoryResults: [],
-        rolledBack: false,
-        totalDuration: Date.now() - startTime,
+        dryRunOutcome,
         errorSummary:
           dryRunOutcome.overallStatus === "blocked"
             ? "Blocking conflicts detected during dry-run"
             : null,
+        failureCount: 0,
         hookOutcomes: [],
-        nextSteps: [],
-        dryRunOutcome,
         isDryRun: true,
+        nextSteps: [],
+        repositoryResults: [],
+        rolledBack: false,
+        skippedCount: repositories.length,
+        successCount: 0,
+        totalDuration: Date.now() - startTime,
+        totalRepositories: repositories.length,
       };
     }
 
@@ -1170,16 +1169,16 @@ export async function createCoordinatedWorktrees(
     if (opts.executeHooks) {
       const preHookResult = await runHookIfPresent({
         hookName: hooks.GLOBAL_HOOKS.preCreate,
-        hookType: "pre-create",
         hookRootPath: mainRepoPath,
-        repoContextPath: mainRepoPath,
+        hookType: "pre-create",
         operationData: hooks.buildHookOperationData({
           branchName,
           mainRepoPath,
           parentRepoPath: mainRepoPath,
         }),
-        timeout: opts.hookTimeout,
+        repoContextPath: mainRepoPath,
         repository: repositories[0],
+        timeout: opts.hookTimeout,
       });
 
       if (preHookResult.error) {
@@ -1211,16 +1210,16 @@ export async function createCoordinatedWorktrees(
     if (opts.executeHooks) {
       const postHookResult = await runHookIfPresent({
         hookName: hooks.GLOBAL_HOOKS.postCreate,
-        hookType: "post-create",
         hookRootPath: mainRepoPath,
-        repoContextPath: mainRepoPath,
+        hookType: "post-create",
         operationData: hooks.buildHookOperationData({
           branchName,
           mainRepoPath,
           parentRepoPath: mainRepoPath,
         }),
-        timeout: opts.hookTimeout,
+        repoContextPath: mainRepoPath,
         repository: repositories[0],
+        timeout: opts.hookTimeout,
       });
 
       if (postHookResult.error) {
@@ -1232,16 +1231,16 @@ export async function createCoordinatedWorktrees(
 
     // 8. Build successful operation summary (T024)
     return {
-      totalRepositories: repositories.length,
-      successCount: results.filter((r) => r.status === "success").length,
-      failureCount: 0,
-      skippedCount: 0,
-      repositoryResults: results,
-      rolledBack: false,
-      totalDuration: Date.now() - startTime,
       errorSummary: null,
+      failureCount: 0,
       hookOutcomes,
       nextSteps: buildHookRecoveryGuidance(hookOutcomes),
+      repositoryResults: results,
+      rolledBack: false,
+      skippedCount: 0,
+      successCount: results.filter((r) => r.status === "success").length,
+      totalDuration: Date.now() - startTime,
+      totalRepositories: repositories.length,
     };
   } catch (error) {
     // Automatic rollback on any error (T023)
@@ -1261,16 +1260,16 @@ export async function createCoordinatedWorktrees(
     const hookOutcomes = collectSortedHookOutcomes(results);
 
     return {
-      totalRepositories: repositories.length,
-      successCount: 0,
-      failureCount: 1,
-      skippedCount: 0,
-      repositoryResults: results,
-      rolledBack: true,
-      totalDuration: Date.now() - startTime,
       errorSummary: `${error instanceof Error ? error.message : String(error)}${rollbackNote}`,
+      failureCount: 1,
       hookOutcomes,
       nextSteps: buildHookRecoveryGuidance(hookOutcomes),
+      repositoryResults: results,
+      rolledBack: true,
+      skippedCount: 0,
+      successCount: 0,
+      totalDuration: Date.now() - startTime,
+      totalRepositories: repositories.length,
     };
   }
 }
@@ -1373,12 +1372,12 @@ async function processRepository(
 
       // T022: Log branch creation for rollback
       operationLog.add({
-        type: "branch_created",
-        timestamp: Date.now(),
         data: {
           repositoryPath: repo.path,
           branchName,
         },
+        timestamp: Date.now(),
+        type: "branch_created",
       });
     } else {
       if (spinner) {
@@ -1409,13 +1408,13 @@ async function processRepository(
 
     // T022: Log worktree creation for rollback
     operationLog.add({
-      type: "worktree_created",
-      timestamp: Date.now(),
       data: {
         repositoryPath: repo.path,
         worktreePath,
         branchName,
       },
+      timestamp: Date.now(),
+      type: "worktree_created",
     });
 
     // Execute repo-specific hooks if enabled
@@ -1423,10 +1422,10 @@ async function processRepository(
       const parentRepoPath = pathResult.parentWorktreePath ?? mainRepoPath;
       const repoOperationData = hooks.buildHookOperationData({
         branchName,
-        repoName: repo.name,
-        worktreePath,
         mainRepoPath,
         parentRepoPath,
+        repoName: repo.name,
+        worktreePath,
       });
 
       if (spinner) {
@@ -1435,12 +1434,12 @@ async function processRepository(
 
       const preHookResult = await runHookIfPresent({
         hookName: hooks.getRepoSpecificHookName("pre-create", repo.name),
-        hookType: "pre-create",
         hookRootPath: mainRepoPath,
-        repoContextPath: worktreePath,
+        hookType: "pre-create",
         operationData: repoOperationData,
-        timeout: options.hookTimeout,
+        repoContextPath: worktreePath,
         repository: repo,
+        timeout: options.hookTimeout,
       });
       hookOutcomes.push(preHookResult.outcome);
       if (preHookResult.error) {
@@ -1453,12 +1452,12 @@ async function processRepository(
 
       const postHookResult = await runHookIfPresent({
         hookName: hooks.getRepoSpecificHookName("post-create", repo.name),
-        hookType: "post-create",
         hookRootPath: mainRepoPath,
-        repoContextPath: worktreePath,
+        hookType: "post-create",
         operationData: repoOperationData,
-        timeout: options.hookTimeout,
+        repoContextPath: worktreePath,
         repository: repo,
+        timeout: options.hookTimeout,
       });
       hookOutcomes.push(postHookResult.outcome);
       if (postHookResult.error) {
@@ -1473,26 +1472,26 @@ async function processRepository(
 
     // T024: Return success result
     return {
+      branchName,
+      duration: Date.now() - startTime,
+      error: null,
+      hookOutcomes,
       repository: repo,
       status: "success",
-      worktreePath,
-      branchName,
-      error: null,
       warnings: shouldReuse ? [`Reused existing branch '${branchName}'`] : [],
-      duration: Date.now() - startTime,
-      hookOutcomes,
+      worktreePath,
     };
   } catch (error) {
     // T023: Return failure result (will trigger rollback in caller)
     return {
+      branchName,
+      duration: Date.now() - startTime,
+      error: error as Error,
+      hookOutcomes,
       repository: repo,
       status: "failed",
-      worktreePath: null,
-      branchName,
-      error: error as Error,
       warnings: [],
-      duration: Date.now() - startTime,
-      hookOutcomes,
+      worktreePath: null,
     };
   }
 }
@@ -1540,7 +1539,6 @@ export async function checkBranchConflicts(
 
       if (existsLocally || existsRemotely) {
         return {
-          hasConflict: true,
           conflict: {
             repository: repo,
             branchName,
@@ -1548,10 +1546,10 @@ export async function checkBranchConflicts(
             existsRemotely,
             resolution: null,
           } as BranchConflict,
+          hasConflict: true,
         };
-      } else {
-        return { hasConflict: false, repo };
       }
+      return { hasConflict: false, repo };
     } catch {
       // If we can't check, assume no conflict and let later operations handle errors
       return { hasConflict: false, repo };
@@ -1574,8 +1572,8 @@ export async function checkBranchConflicts(
   }
 
   return {
-    hasConflicts: conflicts.length > 0,
     conflicts,
+    hasConflicts: conflicts.length > 0,
     nonConflictingRepositories: nonConflicting,
   };
 }
@@ -1626,20 +1624,20 @@ export async function resolveConflicts(
   // T037: Interactive conflict resolution with prompt
   const choices: prompts.Choice<ConflictResolutionStrategy>[] = [
     {
-      value: "REUSE_EXISTING",
-      name: "Reuse existing branches",
       description: "Create worktrees using the existing branches without creating new ones",
+      name: "Reuse existing branches",
+      value: "REUSE_EXISTING",
     },
     {
-      value: "ABORT",
-      name: "Abort operation",
       description: "Cancel the operation and do not create any worktrees",
+      name: "Abort operation",
+      value: "ABORT",
     },
     // Future: CREATE_ALTERNATE not yet implemented
     // {
-    //   value: 'CREATE_ALTERNATE',
-    //   name: 'Create alternate branch names',
-    //   description: 'Create new branches with alternate names (e.g., feature-1, feature-2)',
+    //   Value: 'CREATE_ALTERNATE',
+    //   Name: 'Create alternate branch names',
+    //   Description: 'Create new branches with alternate names (e.g., feature-1, feature-2)',
     // },
   ];
 
@@ -1704,11 +1702,12 @@ export async function applyRepositoryFilter(
   allRepositories: Repository[],
 ): Promise<Repository[]> {
   switch (filter.mode) {
-    case "all":
+    case "all": {
       // T048: Return all repositories
       return allRepositories;
+    }
 
-    case "explicit":
+    case "explicit": {
       // T049: Validate names and return matching repositories
       const selected: Repository[] = [];
 
@@ -1726,8 +1725,9 @@ export async function applyRepositoryFilter(
       }
 
       return selected;
+    }
 
-    case "interactive":
+    case "interactive": {
       // T050: Interactive mode - prompt user to select repositories
       const choices = allRepositories.map((repo) => ({
         value: repo,
@@ -1750,8 +1750,10 @@ export async function applyRepositoryFilter(
       }
 
       return selectedRepos.value;
+    }
 
-    default:
+    default: {
       throw new Error(`Unknown filter mode: ${String((filter as { mode?: unknown }).mode)}`);
+    }
   }
 }

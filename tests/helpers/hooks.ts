@@ -1,4 +1,4 @@
-import { writeFileSync, chmodSync, mkdirSync, rmSync } from "fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import type { HookContext } from "../../src/lib/hooks";
 
@@ -32,8 +32,8 @@ export function createTestContext(overrides?: Partial<HookContext>): HookContext
 
   return {
     hookName: "test-hook",
-    repoPath: testRepoPath,
     operationData: {},
+    repoPath: testRepoPath,
     ...overrides,
   };
 }
@@ -57,7 +57,7 @@ export function createTestRepo(): string {
  */
 export function cleanupTestRepo(path: string): void {
   try {
-    rmSync(path, { recursive: true, force: true });
+    rmSync(path, { force: true, recursive: true });
   } catch {
     // Ignore cleanup errors
   }

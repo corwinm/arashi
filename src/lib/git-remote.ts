@@ -27,8 +27,8 @@ export async function checkRemoteChanges(
     upstream = upstreamResult.stdout.trim() || null;
     const parsed = parseRemoteTrackingRef(upstream);
     if (parsed) {
-      remote = parsed.remote;
-      branch = parsed.branch;
+      ({ remote } = parsed);
+      ({ branch } = parsed);
     }
   } catch {
     // No upstream configured; fall back to branch/remote resolution below.
@@ -38,30 +38,30 @@ export async function checkRemoteChanges(
     const fallback = await resolveRemoteAndBranch(repoPath);
     if (!fallback.ok) {
       return {
-        repositoryId,
-        upstream,
-        remote: null,
-        branch: null,
         ahead: 0,
         behind: 0,
-        hasRemoteChanges: false,
+        branch: null,
         error: fallback.error,
+        hasRemoteChanges: false,
+        remote: null,
+        repositoryId,
+        upstream,
       };
     }
-    remote = fallback.remote;
-    branch = fallback.branch;
+    ({ remote } = fallback);
+    ({ branch } = fallback);
   }
 
   if (!remote || !branch) {
     return {
-      repositoryId,
-      upstream,
-      remote: null,
-      branch: null,
       ahead: 0,
       behind: 0,
-      hasRemoteChanges: false,
+      branch: null,
       error: "Unable to determine remote tracking branch",
+      hasRemoteChanges: false,
+      remote: null,
+      repositoryId,
+      upstream,
     };
   }
 
@@ -73,14 +73,14 @@ export async function checkRemoteChanges(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Remote fetch failed";
     return {
-      repositoryId,
-      upstream,
-      remote,
-      branch,
       ahead: 0,
       behind: 0,
-      hasRemoteChanges: false,
+      branch,
       error: message,
+      hasRemoteChanges: false,
+      remote,
+      repositoryId,
+      upstream,
     };
   }
 
@@ -95,25 +95,25 @@ export async function checkRemoteChanges(
     const behind = Number.parseInt(parts[1] || "0", 10);
 
     return {
-      repositoryId,
-      upstream,
-      remote,
-      branch,
       ahead,
       behind,
+      branch,
       hasRemoteChanges: behind > 0,
+      remote,
+      repositoryId,
+      upstream,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Remote change detection failed";
     return {
-      repositoryId,
-      upstream,
-      remote,
-      branch,
       ahead: 0,
       behind: 0,
-      hasRemoteChanges: false,
+      branch,
       error: message,
+      hasRemoteChanges: false,
+      remote,
+      repositoryId,
+      upstream,
     };
   }
 }
@@ -139,7 +139,7 @@ function parseRemoteTrackingRef(ref: string | null): { remote: string; branch: s
     return null;
   }
 
-  return { remote, branch };
+  return { branch, remote };
 }
 
 async function resolveRemoteAndBranch(
@@ -147,7 +147,7 @@ async function resolveRemoteAndBranch(
 ): Promise<{ ok: true; remote: string; branch: string } | { ok: false; error: string }> {
   const currentBranch = await getCurrentBranch(repoPath);
   if (!currentBranch) {
-    return { ok: false, error: "Detached HEAD: cannot determine branch for remote comparison" };
+    return { error: "Detached HEAD: cannot determine branch for remote comparison", ok: false };
   }
 
   const configuredRemote = await getBranchRemote(repoPath, currentBranch);
@@ -157,7 +157,7 @@ async function resolveRemoteAndBranch(
   }
 
   if (!remote) {
-    return { ok: false, error: "No remotes configured for repository" };
+    return { error: "No remotes configured for repository", ok: false };
   }
 
   const mergeRef = await getBranchMergeRef(repoPath, currentBranch);
@@ -165,7 +165,7 @@ async function resolveRemoteAndBranch(
     mergeRef && mergeRef.startsWith("refs/heads/") ? mergeRef.replace("refs/heads/", "") : null;
   const branch = mergeBranch || currentBranch;
 
-  return { ok: true, remote, branch };
+  return { branch, ok: true, remote };
 }
 
 async function getCurrentBranch(repoPath: string): Promise<string | null> {

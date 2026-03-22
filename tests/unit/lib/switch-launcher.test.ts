@@ -1,17 +1,20 @@
-import { describe, test, expect } from "bun:test";
-import {
-  detectTerminalApp,
-  launchSwitchTarget,
-  type SwitchProcessRunner,
-} from "../../../src/lib/switch-launcher.ts";
+import { describe, expect, test } from "bun:test";
+import { detectTerminalApp, launchSwitchTarget } from "../../../src/lib/switch-launcher.ts";
+import type { SwitchProcessRunner } from "../../../src/lib/switch-launcher.ts";
 import type { SwitchCandidate } from "../../../src/core/switch.ts";
 import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
 
 const candidate: SwitchCandidate = {
   branchName: "feature/auth",
-  worktreePath: "/workspace/feature-auth",
   repoName: "workspace",
+  worktreePath: "/workspace/feature-auth",
 };
+
+const failingRunProcess: SwitchProcessRunner = async () => ({
+  exitCode: 1,
+  stderr: "launch failed",
+  stdout: "",
+});
 
 describe("launchSwitchTarget", () => {
   test("prioritizes --sesh in tmux over VS Code handling", async () => {
@@ -20,21 +23,21 @@ describe("launchSwitchTarget", () => {
       commands.push(command);
 
       if (command[0] === "which" && command[1] === "sesh") {
-        return { exitCode: 0, stdout: "/usr/local/bin/sesh\n", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/sesh\n" };
       }
 
       if (command[0] === "tmux") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected" };
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
     };
 
     const result = await launchSwitchTarget(
       candidate,
       { sesh: true },
       {
-        env: { TMUX: "/tmp/tmux-1000/default", TERM_PROGRAM: "vscode" },
+        env: { TERM_PROGRAM: "vscode", TMUX: "/tmp/tmux-1000/default" },
         platform: "darwin",
         runProcess,
       },
@@ -60,14 +63,14 @@ describe("launchSwitchTarget", () => {
       commands.push(command);
 
       if (command[0] === "which" && command[1] === "code") {
-        return { exitCode: 0, stdout: "/usr/local/bin/code\n", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/code\n" };
       }
 
       if (command[0] === "code") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected" };
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
     };
 
     const result = await launchSwitchTarget(
@@ -91,14 +94,14 @@ describe("launchSwitchTarget", () => {
       commands.push(command);
 
       if (command[0] === "which" && command[1] === "code") {
-        return { exitCode: 1, stdout: "", stderr: "not found" };
+        return { exitCode: 1, stderr: "not found", stdout: "" };
       }
 
       if (command[0] === "open") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected" };
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
     };
 
     const result = await launchSwitchTarget(
@@ -121,17 +124,17 @@ describe("launchSwitchTarget", () => {
       commands.push(command);
 
       if (command[0] === "tmux") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected" };
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
     };
 
     const result = await launchSwitchTarget(
       candidate,
       {},
       {
-        env: { TMUX: "/tmp/tmux-1000/default", TERM_PROGRAM: "vscode" },
+        env: { TERM_PROGRAM: "vscode", TMUX: "/tmp/tmux-1000/default" },
         platform: "darwin",
         runProcess,
       },
@@ -148,17 +151,17 @@ describe("launchSwitchTarget", () => {
       commands.push(command);
 
       if (command[0] === "kitty" && command[2] === "launch") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected" };
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
     };
 
     const result = await launchSwitchTarget(
       candidate,
       {},
       {
-        env: { TERM: "xterm-kitty", KITTY_PID: "123" },
+        env: { KITTY_PID: "123", TERM: "xterm-kitty" },
         platform: "linux",
         runProcess,
       },
@@ -181,10 +184,10 @@ describe("launchSwitchTarget", () => {
       commands.push(command);
 
       if (command[0] === "ghostty") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected" };
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
     };
 
     const result = await launchSwitchTarget(
@@ -207,10 +210,10 @@ describe("launchSwitchTarget", () => {
       commands.push(command);
 
       if (command[0] === "wezterm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected" };
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
     };
 
     const result = await launchSwitchTarget(
@@ -233,10 +236,10 @@ describe("launchSwitchTarget", () => {
       commands.push(command);
 
       if (command[0] === "open" && command[3] === "/workspace/feature-auth") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected" };
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
     };
 
     const result = await launchSwitchTarget(
@@ -254,12 +257,12 @@ describe("launchSwitchTarget", () => {
   });
 
   test("throws launch failure when all fallback commands fail", async () => {
-    const runProcess: SwitchProcessRunner = async () => {
-      return { exitCode: 1, stdout: "", stderr: "launch failed" };
-    };
-
     await expect(
-      launchSwitchTarget(candidate, {}, { env: {}, platform: "linux", runProcess }),
+      launchSwitchTarget(
+        candidate,
+        {},
+        { env: {}, platform: "linux", runProcess: failingRunProcess },
+      ),
     ).rejects.toMatchObject({
       code: SwitchCommandErrorCode.LAUNCH_FAILED,
     });

@@ -4,12 +4,12 @@
  * Tests for git status parsing, branch tracking parsing, and output formatting.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  parseGitStatus,
-  parseBranchLine,
   checkRepoStatus,
   formatShortLine,
+  parseBranchLine,
+  parseGitStatus,
 } from "../../src/commands/status.ts";
 
 describe("parseGitStatus", () => {
@@ -63,11 +63,11 @@ A  added.ts
     const result = parseGitStatus(output);
 
     expect(result.files).toHaveLength(5);
-    expect(result.files[0].stagingStatus).toBe("M"); // staged modified
-    expect(result.files[1].workingStatus).toBe("M"); // unstaged modified
-    expect(result.files[2].stagingStatus).toBe("A"); // added
-    expect(result.files[3].workingStatus).toBe("D"); // deleted
-    expect(result.files[4].workingStatus).toBe("?"); // untracked
+    expect(result.files[0].stagingStatus).toBe("M"); // Staged modified
+    expect(result.files[1].workingStatus).toBe("M"); // Unstaged modified
+    expect(result.files[2].stagingStatus).toBe("A"); // Added
+    expect(result.files[3].workingStatus).toBe("D"); // Deleted
+    expect(result.files[4].workingStatus).toBe("?"); // Untracked
   });
 });
 
@@ -149,8 +149,6 @@ describe("checkRepoStatus", () => {
 describe("formatShortLine", () => {
   test("includes clone guidance for missing repositories", () => {
     const line = formatShortLine({
-      name: "repo-a",
-      path: "/tmp/repo-a",
       branch: {
         localBranch: "",
         remoteBranch: null,
@@ -158,9 +156,11 @@ describe("formatShortLine", () => {
         behind: 0,
         isDetached: false,
       },
-      files: [],
       error:
         "Repository is missing at /tmp/repo-a. Run `arashi clone` to clone missing repositories.",
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
     });
 
     expect(line).toContain("arashi clone");

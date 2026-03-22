@@ -5,25 +5,24 @@ import {
   loadConfig,
   normalizeConfig,
   saveConfig,
-  type Config,
   repairRepositoryGitUrls,
 } from "../lib/config.ts";
+import type { Config } from "../lib/config.ts";
 import { clone as cloneRepository, exec } from "../lib/git.ts";
 import { removeDir } from "../lib/filesystem.ts";
 import {
   applyCloneProtocol,
   discoverCloneRepositories,
   inferCloneProtocolPreference,
-  type CloneProtocol,
 } from "../lib/clone-discovery.ts";
+import type { CloneProtocol } from "../lib/clone-discovery.ts";
 import {
   confirm as promptConfirm,
   input as promptInput,
   multiSelect as promptMultiSelect,
   select as promptSelect,
-  type Choice,
-  type PromptOutcome,
 } from "../lib/prompts.ts";
+import type { Choice, PromptOutcome } from "../lib/prompts.ts";
 import * as logger from "../lib/logger.ts";
 
 export interface CloneCommandOptions {
@@ -33,7 +32,7 @@ export interface CloneCommandOptions {
 export interface CloneExecutionResult {
   status: "success" | "partial-failure" | "cancelled";
   cloned: string[];
-  failed: Array<{ name: string; reason: string }>;
+  failed: { name: string; reason: string }[];
   skipped: string[];
 }
 
@@ -114,22 +113,22 @@ export async function executeClone(
   let discovery = await discoverRepositories(workspaceRoot, config);
 
   const reconcileResult = await reconcileUnmanagedRepositories({
-    interactive,
-    workspaceRoot,
-    config,
-    unmanagedRepositories: discovery.unmanagedLocal,
-    confirm,
     askInput,
     askSelect,
+    config,
+    confirm,
     deleteDirectory,
+    interactive,
+    unmanagedRepositories: discovery.unmanagedLocal,
+    workspaceRoot,
   });
 
   if (reconcileResult.cancelled) {
     return {
-      status: "cancelled",
       cloned: [],
       failed: [],
       skipped: [],
+      status: "cancelled",
     };
   }
 
@@ -142,10 +141,10 @@ export async function executeClone(
   if (discovery.configuredMissing.length === 0) {
     logger.success("All configured repositories are already present. Nothing to clone.");
     return {
-      status: "success",
       cloned: [],
       failed: [],
       skipped: [],
+      status: "success",
     };
   }
 
@@ -164,10 +163,10 @@ export async function executeClone(
       );
       if (enteredUrl.status === "cancelled") {
         return {
-          status: "cancelled",
           cloned: [],
           failed: [],
           skipped: [],
+          status: "cancelled",
         };
       }
 
@@ -196,9 +195,9 @@ export async function executeClone(
   }
 
   const preferredProtocol = await resolveProtocolPreference({
+    askSelect,
     interactive,
     urls: Object.values(config.repos).map((repo) => repo.gitUrl),
-    askSelect,
   });
 
   let selectedRepositories = missingWithUrls;
@@ -208,9 +207,9 @@ export async function executeClone(
     }
 
     const selectionChoices: Choice<string>[] = missingWithUrls.map((repository) => ({
-      value: repository.name,
-      name: repository.name,
       description: repository.path,
+      name: repository.name,
+      value: repository.name,
     }));
 
     const selection = await askMultiSelect(
@@ -220,10 +219,10 @@ export async function executeClone(
 
     if (selection.status === "cancelled") {
       return {
-        status: "cancelled",
         cloned: [],
         failed: [],
         skipped: [],
+        status: "cancelled",
       };
     }
 
@@ -235,16 +234,16 @@ export async function executeClone(
     if (selectedRepositories.length === 0) {
       logger.info("No repositories selected for cloning.");
       return {
-        status: "success",
         cloned: [],
         failed: [],
         skipped: missingWithUrls.map((repository) => repository.name),
+        status: "success",
       };
     }
   }
 
   const cloned: string[] = [];
-  const failed: Array<{ name: string; reason: string }> = [];
+  const failed: { name: string; reason: string }[] = [];
   const skipped = missingWithUrls
     .map((repository) => repository.name)
     .filter((name) => !selectedRepositories.some((repository) => repository.name === name));
@@ -297,16 +296,16 @@ export async function executeClone(
   }
 
   return {
-    status: failed.length > 0 ? "partial-failure" : "success",
     cloned,
     failed,
     skipped,
+    status: failed.length > 0 ? "partial-failure" : "success",
   };
 }
 
 async function resolveProtocolPreference(options: {
   interactive: boolean;
-  urls: Array<string | undefined>;
+  urls: (string | undefined)[];
   askSelect: <T>(message: string, choices: Choice<T>[]) => Promise<PromptOutcome<T>>;
 }): Promise<CloneProtocol | null> {
   const inferred = inferCloneProtocolPreference(options.urls);
@@ -320,14 +319,14 @@ async function resolveProtocolPreference(options: {
 
   const choice = await options.askSelect("Choose clone protocol for this run:", [
     {
-      value: "ssh" as CloneProtocol,
-      name: "SSH",
       description: "git@host:owner/repo.git",
+      name: "SSH",
+      value: "ssh" as CloneProtocol,
     },
     {
-      value: "https" as CloneProtocol,
-      name: "HTTPS",
       description: "https://host/owner/repo.git",
+      name: "HTTPS",
+      value: "https" as CloneProtocol,
     },
   ]);
 
@@ -342,7 +341,7 @@ async function reconcileUnmanagedRepositories(options: {
   interactive: boolean;
   workspaceRoot: string;
   config: Config;
-  unmanagedRepositories: Array<{ name: string; path: string }>;
+  unmanagedRepositories: { name: string; path: string }[];
   confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
   askInput: (message: string, defaultValue?: string) => Promise<PromptOutcome<string>>;
   askSelect: <T>(message: string, choices: Choice<T>[]) => Promise<PromptOutcome<T>>;
@@ -366,19 +365,19 @@ async function reconcileUnmanagedRepositories(options: {
       `Unmanaged repository '${unmanagedRepository.name}' found.`,
       [
         {
-          value: "add" as const,
-          name: "Add to config",
           description: "Track this existing local repository",
+          name: "Add to config",
+          value: "add" as const,
         },
         {
-          value: "delete" as const,
-          name: "Delete local clone",
           description: "Remove the local repository directory",
+          name: "Delete local clone",
+          value: "delete" as const,
         },
         {
-          value: "ignore" as const,
-          name: "Do nothing",
           description: "Leave repository unmanaged",
+          name: "Do nothing",
+          value: "ignore" as const,
         },
       ],
     );
@@ -427,8 +426,8 @@ async function reconcileUnmanagedRepositories(options: {
     }
 
     const repoConfig: Config["repos"][string] = {
-      path: join(".", options.config.reposDir, unmanagedRepository.name),
       gitUrl,
+      path: join(".", options.config.reposDir, unmanagedRepository.name),
     };
 
     options.config.repos[unmanagedRepository.name] = repoConfig;

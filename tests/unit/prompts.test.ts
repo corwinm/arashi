@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeAll } from "bun:test";
+import { beforeAll, describe, expect, mock, test } from "bun:test";
 import type { Choice } from "../../src/lib/prompts";
 
 // Mock @inquirer/prompts
@@ -13,10 +13,10 @@ const mockCheckbox = mock((options?: { choices?: unknown[] }) => {
 const mockInput = mock(() => Promise.resolve("test input"));
 
 mock.module("@inquirer/prompts", () => ({
-  confirm: mockConfirm,
-  select: mockSelect,
   checkbox: mockCheckbox,
+  confirm: mockConfirm,
   input: mockInput,
+  select: mockSelect,
 }));
 
 let promptApi: typeof import("../../src/lib/prompts");
@@ -28,9 +28,9 @@ beforeAll(async () => {
 describe("Types", () => {
   test("Choice type is correctly defined", () => {
     const choice: Choice<string> = {
-      value: "test",
-      name: "Test",
       description: "Test description",
+      name: "Test",
+      value: "test",
     };
 
     expect(choice.value).toBe("test");
@@ -40,18 +40,18 @@ describe("Types", () => {
 
   test("Choice type works with different value types", () => {
     const stringChoice: Choice<string> = {
-      value: "string",
       name: "String Choice",
+      value: "string",
     };
 
     const numberChoice: Choice<number> = {
-      value: 42,
       name: "Number Choice",
+      value: 42,
     };
 
     const objectChoice: Choice<{ id: number }> = {
-      value: { id: 1 },
       name: "Object Choice",
+      value: { id: 1 },
     };
 
     expect(stringChoice.value).toBe("string");
@@ -78,8 +78,8 @@ describe("US2: Single Selection Prompts", () => {
 
   test("select returns a Promise", () => {
     const choices: Choice<string>[] = [
-      { value: "a", name: "Option A" },
-      { value: "b", name: "Option B" },
+      { name: "Option A", value: "a" },
+      { name: "Option B", value: "b" },
     ];
 
     const result = promptApi.select("Choose:", choices);
@@ -92,8 +92,8 @@ describe("US2: Single Selection Prompts", () => {
 
   test("select accepts choices with descriptions", () => {
     const choices: Choice<string>[] = [
-      { value: "a", name: "Option A", description: "First option" },
-      { value: "b", name: "Option B", description: "Second option" },
+      { description: "First option", name: "Option A", value: "a" },
+      { description: "Second option", name: "Option B", value: "b" },
     ];
 
     const result = promptApi.select("Choose:", choices);
@@ -102,8 +102,8 @@ describe("US2: Single Selection Prompts", () => {
 
   test("select handles 1000+ choices", () => {
     const choices: Choice<number>[] = Array.from({ length: 1000 }, (_, i) => ({
-      value: i,
       name: `Option ${i}`,
+      value: i,
     }));
 
     const result = promptApi.select("Choose:", choices);
@@ -118,8 +118,8 @@ describe("US3: Multi-Selection Prompts", () => {
 
   test("multiSelect returns a Promise", () => {
     const choices: Choice<string>[] = [
-      { value: "a", name: "Option A" },
-      { value: "b", name: "Option B" },
+      { name: "Option A", value: "a" },
+      { name: "Option B", value: "b" },
     ];
 
     const result = promptApi.multiSelect("Choose multiple:", choices);
@@ -153,8 +153,8 @@ describe("Performance", () => {
     const start = performance.now();
 
     const choices: Choice<number>[] = Array.from({ length: 1000 }, (_, i) => ({
-      value: i,
       name: `Option ${i}`,
+      value: i,
     }));
 
     // Just creating the promise should be fast
@@ -169,9 +169,9 @@ describe("Performance", () => {
     const start = performance.now();
 
     const choices: Choice<number>[] = Array.from({ length: 500 }, (_, i) => ({
-      value: i,
-      name: `Choice ${i}`,
       description: `Description for choice ${i}`,
+      name: `Choice ${i}`,
+      value: i,
     }));
 
     const result = promptApi.multiSelect("Select multiple:", choices);
@@ -184,7 +184,7 @@ describe("Performance", () => {
 
 describe("API Contract Validation", () => {
   test("confirm matches contract signature", () => {
-    // confirm(message: string, defaultValue?: boolean): Promise<boolean>
+    // Confirm(message: string, defaultValue?: boolean): Promise<boolean>
     const result1 = promptApi.confirm("Test?");
     const result2 = promptApi.confirm("Test?", true);
     const result3 = promptApi.confirm("Test?", false);
@@ -195,23 +195,23 @@ describe("API Contract Validation", () => {
   });
 
   test("select matches contract signature", () => {
-    // select<T>(message: string, choices: Choice<T>[]): Promise<T>
-    const choices: Choice<string>[] = [{ value: "a", name: "A" }];
+    // Select<T>(message: string, choices: Choice<T>[]): Promise<T>
+    const choices: Choice<string>[] = [{ name: "A", value: "a" }];
     const result = promptApi.select("Test?", choices);
 
     expect(result).toBeInstanceOf(Promise);
   });
 
   test("multiSelect matches contract signature", () => {
-    // multiSelect<T>(message: string, choices: Choice<T>[]): Promise<T[]>
-    const choices: Choice<string>[] = [{ value: "a", name: "A" }];
+    // MultiSelect<T>(message: string, choices: Choice<T>[]): Promise<T[]>
+    const choices: Choice<string>[] = [{ name: "A", value: "a" }];
     const result = promptApi.multiSelect("Test?", choices);
 
     expect(result).toBeInstanceOf(Promise);
   });
 
   test("input matches contract signature", () => {
-    // input(message: string, defaultValue?: string): Promise<string>
+    // Input(message: string, defaultValue?: string): Promise<string>
     const result1 = promptApi.input("Test?");
     const result2 = promptApi.input("Test?", "default");
 

@@ -7,13 +7,12 @@
  * @module core/list
  */
 
-import {
-  type ListCommandOptions,
-  type ListCommandOutput,
-  type WorktreeListItem,
-  type SubRepositoryInfo,
-  ListCommandError,
-  NotInRepositoryError,
+import { ListCommandError, NotInRepositoryError } from "../types/list.ts";
+import type {
+  ListCommandOptions,
+  ListCommandOutput,
+  WorktreeListItem,
+  SubRepositoryInfo,
 } from "../types/list.ts";
 import * as git from "../lib/git.ts";
 import * as config from "../lib/config.ts";
@@ -173,10 +172,10 @@ async function findParentRepo(currentPath: string): Promise<string | null> {
  */
 export async function listCommand(options?: ListCommandOptions): Promise<void> {
   const opts: ListCommandOptions = {
-    verbose: options?.verbose || false,
     json: options?.json || false,
-    table: options?.table || false,
     maxDepth: options?.maxDepth || 3,
+    table: options?.table || false,
+    verbose: options?.verbose || false,
   };
 
   // Validate we're in a repository
@@ -266,7 +265,7 @@ export async function getShortCommitSha(repoPath: string): Promise<string> {
     const result = await git.exec(["rev-parse", "--short=7", "HEAD"], repoPath);
     return result.stdout.trim();
   } catch (error) {
-    throw new ListCommandError(`Failed to get commit SHA for ${repoPath}`, { repoPath, error });
+    throw new ListCommandError(`Failed to get commit SHA for ${repoPath}`, { error, repoPath });
   }
 }
 
@@ -303,8 +302,8 @@ export async function hasUncommittedChanges(worktreePath: string): Promise<boole
     return result.stdout.trim().length > 0;
   } catch (error) {
     throw new ListCommandError(`Failed to check status for ${worktreePath}`, {
-      worktreePath,
       error,
+      worktreePath,
     });
   }
 }
@@ -545,13 +544,13 @@ export async function gatherWorktreeData(repoPath: string): Promise<WorktreeList
           }
 
           worktrees.push({
-            path: currentWorktree.path,
             branch: currentWorktree.branch || null,
             commit: currentWorktree.commit || "0000000",
-            locked: currentWorktree.locked || false,
-            lockReason: currentWorktree.lockReason,
             hasChanges,
             isMain,
+            lockReason: currentWorktree.lockReason,
+            locked: currentWorktree.locked || false,
+            path: currentWorktree.path,
           } as WorktreeListItem);
         }
         currentWorktree = {};
@@ -561,14 +560,14 @@ export async function gatherWorktreeData(repoPath: string): Promise<WorktreeList
 
       // Parse fields
       if (line.startsWith("worktree ")) {
-        currentWorktree.path = line.substring("worktree ".length);
+        currentWorktree.path = line.slice("worktree ".length);
       } else if (line === "bare") {
         // Skip bare worktrees
         isBare = true;
       } else if (line.startsWith("HEAD ")) {
-        currentWorktree.commit = line.substring("HEAD ".length).substring(0, 7);
+        currentWorktree.commit = line.slice("HEAD ".length).slice(0, 7);
       } else if (line.startsWith("branch ")) {
-        const branchRef = line.substring("branch ".length);
+        const branchRef = line.slice("branch ".length);
         // Extract branch name from refs/heads/branch-name
         currentWorktree.branch = branchRef.replace("refs/heads/", "");
       } else if (line.startsWith("detached")) {
@@ -595,21 +594,21 @@ export async function gatherWorktreeData(repoPath: string): Promise<WorktreeList
       }
 
       worktrees.push({
-        path: currentWorktree.path,
         branch: currentWorktree.branch || null,
         commit: currentWorktree.commit || "0000000",
-        locked: currentWorktree.locked || false,
-        lockReason: currentWorktree.lockReason,
         hasChanges,
         isMain,
+        lockReason: currentWorktree.lockReason,
+        locked: currentWorktree.locked || false,
+        path: currentWorktree.path,
       } as WorktreeListItem);
     }
 
     return worktrees;
   } catch (error) {
     throw new ListCommandError(`Failed to gather worktree data for ${repoPath}`, {
-      repoPath,
       error,
+      repoPath,
     });
   }
 }
@@ -675,10 +674,10 @@ export async function discoverSubRepositories(
       const relativePath = relative(worktreePath, repoPath);
 
       subRepos.push({
-        relativePath,
         branch,
         commit,
         hasChanges,
+        relativePath,
       });
     } catch {
       // Skip repositories that we can't read
@@ -836,11 +835,11 @@ export function formatAsTable(output: ListCommandOutput, verbose: boolean): stri
     // Table format - calculate column widths from actual data (no truncation)
 
     // Find the longest path and branch name
-    const maxPathLen = Math.max(...output.worktrees.map((wt) => wt.path.length), 4); // min 4 for "PATH"
+    const maxPathLen = Math.max(...output.worktrees.map((wt) => wt.path.length), 4); // Min 4 for "PATH"
     const maxBranchLen = Math.max(
       ...output.worktrees.map((wt) => (wt.branch || "detached").length),
       6,
-    ); // min 6 for "BRANCH"
+    ); // Min 6 for "BRANCH"
 
     // Use actual widths (no truncation)
     const pathWidth = maxPathLen;
@@ -966,9 +965,9 @@ export async function buildListOutput(
   }
 
   return {
-    worktrees,
-    totalCount: worktrees.length,
     repositoryPath: repoPath,
+    totalCount: worktrees.length,
+    worktrees,
   };
 }
 
@@ -1020,13 +1019,17 @@ export async function findGitRepositories(
   const { join } = await import("path");
 
   async function scan(currentPath: string, depth: number): Promise<void> {
-    if (depth > maxDepth) return;
+    if (depth > maxDepth) {
+      return;
+    }
 
     try {
       const entries = await readdir(currentPath, { withFileTypes: true });
 
       for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
+        if (!entry.isDirectory()) {
+          continue;
+        }
 
         const fullPath = join(currentPath, entry.name);
 

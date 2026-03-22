@@ -37,16 +37,16 @@ export interface TestRepositoryConfig {
 export async function createTestWorkspace(config?: TestRepositoryConfig[]): Promise<TestWorkspace> {
   // Create unique temp directory
   const timestamp = Date.now();
-  const randomId = Math.random().toString(36).substring(7);
+  const randomId = Math.random().toString(36).slice(7);
   const rootPath = join(tmpdir(), `arashi-worktree-test-${timestamp}-${randomId}`);
 
   await mkdir(rootPath, { recursive: true });
 
   // Default configuration: 3 repositories with different default branches
   const repoConfigs = config || [
-    { name: "repo-a", defaultBranch: "main" },
-    { name: "repo-b", defaultBranch: "master" },
-    { name: "repo-c", defaultBranch: "develop" },
+    { defaultBranch: "main", name: "repo-a" },
+    { defaultBranch: "master", name: "repo-b" },
+    { defaultBranch: "develop", name: "repo-c" },
   ];
 
   const repositories: Repository[] = [];
@@ -80,16 +80,16 @@ export async function createTestWorkspace(config?: TestRepositoryConfig[]): Prom
     }
 
     repositories.push({
-      name: repoConfig.name,
-      path: repoPath,
       defaultBranch: branch,
       hasSetupScript: repoConfig.hasSetupScript || false,
+      name: repoConfig.name,
+      path: repoPath,
     });
   }
 
   const cleanup = async () => {
     try {
-      await rm(rootPath, { recursive: true, force: true });
+      await rm(rootPath, { force: true, recursive: true });
     } catch (error) {
       // Ignore cleanup errors in tests
       console.warn(`Failed to cleanup test workspace: ${error}`);
@@ -97,9 +97,9 @@ export async function createTestWorkspace(config?: TestRepositoryConfig[]): Prom
   };
 
   return {
-    rootPath,
-    repositories,
     cleanup,
+    repositories,
+    rootPath,
   };
 }
 
@@ -109,8 +109,8 @@ export async function createTestWorkspace(config?: TestRepositoryConfig[]): Prom
 async function execGit(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
 
   const exitCode = await proc.exited;
@@ -127,11 +127,11 @@ async function execGit(args: string[], cwd: string): Promise<void> {
  */
 export async function createStandardWorkspace(): Promise<TestWorkspace> {
   return createTestWorkspace([
-    { name: "repo-1", defaultBranch: "main" },
-    { name: "repo-2", defaultBranch: "main" },
-    { name: "repo-3", defaultBranch: "master" },
-    { name: "repo-4", defaultBranch: "develop" },
-    { name: "repo-5", defaultBranch: "main", hasSetupScript: true },
+    { defaultBranch: "main", name: "repo-1" },
+    { defaultBranch: "main", name: "repo-2" },
+    { defaultBranch: "master", name: "repo-3" },
+    { defaultBranch: "develop", name: "repo-4" },
+    { defaultBranch: "main", hasSetupScript: true, name: "repo-5" },
   ]);
 }
 
@@ -141,10 +141,10 @@ export async function createStandardWorkspace(): Promise<TestWorkspace> {
  */
 export async function createConflictWorkspace(existingBranchName: string): Promise<TestWorkspace> {
   return createTestWorkspace([
-    { name: "repo-1", defaultBranch: "main" },
-    { name: "repo-2", defaultBranch: "main", createExistingBranch: existingBranchName },
-    { name: "repo-3", defaultBranch: "master" },
-    { name: "repo-4", defaultBranch: "develop", createExistingBranch: existingBranchName },
-    { name: "repo-5", defaultBranch: "main" },
+    { defaultBranch: "main", name: "repo-1" },
+    { createExistingBranch: existingBranchName, defaultBranch: "main", name: "repo-2" },
+    { defaultBranch: "master", name: "repo-3" },
+    { createExistingBranch: existingBranchName, defaultBranch: "develop", name: "repo-4" },
+    { defaultBranch: "main", name: "repo-5" },
   ]);
 }

@@ -5,15 +5,12 @@
  * Tests cover coordinated worktree creation, conflict detection, filtering, and hooks
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { isValidBranchName, resolveWorktreeStatuses } from "../../../src/core/worktree.ts";
 import type { Repository } from "../../../src/core/repository.ts";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
-import {
-  mapHookExecutionResult,
-  mapHookSkippedOutcome,
-  type HookResult,
-} from "../../../src/lib/hooks.ts";
+import { mapHookExecutionResult, mapHookSkippedOutcome } from "../../../src/lib/hooks.ts";
+import type { HookResult } from "../../../src/lib/hooks.ts";
 
 // ============================================================================
 // Test Fixtures
@@ -21,34 +18,34 @@ import {
 
 const mockRepositories: Repository[] = [
   {
+    defaultBranch: "main",
+    hasSetupScript: false,
     name: "repo-1",
     path: "/test/repos/repo-1",
-    defaultBranch: "main",
-    hasSetupScript: false,
   },
   {
-    name: "repo-2",
-    path: "/test/repos/repo-2",
     defaultBranch: "master",
     hasSetupScript: false,
+    name: "repo-2",
+    path: "/test/repos/repo-2",
   },
   {
-    name: "repo-3",
-    path: "/test/repos/repo-3",
     defaultBranch: "develop",
     hasSetupScript: true,
+    name: "repo-3",
+    path: "/test/repos/repo-3",
   },
   {
+    defaultBranch: "main",
+    hasSetupScript: false,
     name: "repo-4",
     path: "/test/repos/repo-4",
-    defaultBranch: "main",
-    hasSetupScript: false,
   },
   {
-    name: "repo-5",
-    path: "/test/repos/repo-5",
     defaultBranch: "main",
     hasSetupScript: false,
+    name: "repo-5",
+    path: "/test/repos/repo-5",
   },
 ];
 
@@ -166,7 +163,7 @@ describe("Rollback on Failure", () => {
     const result = await createCoordinatedWorktrees(
       "invalid~branch", // Invalid character ~
       testRepos,
-      { showProgress: false, executeHooks: false },
+      { executeHooks: false, showProgress: false },
     );
 
     // Verify rollback was triggered
@@ -221,8 +218,8 @@ describe("Repository Filtering", () => {
     const { applyRepositoryFilter } = await import("../../../src/core/worktree.ts");
 
     const filter = {
-      mode: "all" as const,
       explicitList: [],
+      mode: "all" as const,
       selectedRepositories: null,
     };
 
@@ -236,8 +233,8 @@ describe("Repository Filtering", () => {
     const { applyRepositoryFilter } = await import("../../../src/core/worktree.ts");
 
     const filter = {
-      mode: "explicit" as const,
       explicitList: ["repo-1", "repo-3", "repo-5"],
+      mode: "explicit" as const,
       selectedRepositories: null,
     };
 
@@ -254,8 +251,8 @@ describe("Repository Filtering", () => {
       await import("../../../src/core/worktree.ts");
 
     const filter = {
-      mode: "explicit" as const,
       explicitList: ["repo-1", "nonexistent-repo"],
+      mode: "explicit" as const,
       selectedRepositories: null,
     };
 
@@ -265,20 +262,20 @@ describe("Repository Filtering", () => {
   });
 
   // Note: Interactive mode testing is not included as it requires user interaction
-  // and cannot be automated without complex prompt mocking. Interactive mode is
-  // tested manually during development.
+  // And cannot be automated without complex prompt mocking. Interactive mode is
+  // Tested manually during development.
 });
 
 describe("Worktree Status Resolution", () => {
   test("marks missing worktree directories as prunable", async () => {
     const entry: WorktreeEntry = {
-      path: `/tmp/arashi-missing-${Date.now()}`,
       branch: "feature-missing",
-      repository: "repo-a",
-      isMain: false,
-      status: "present",
-      parentPath: null,
       childrenPaths: [],
+      isMain: false,
+      parentPath: null,
+      path: `/tmp/arashi-missing-${Date.now()}`,
+      repository: "repo-a",
+      status: "present",
     };
 
     await resolveWorktreeStatuses([entry], true);
@@ -291,14 +288,14 @@ describe("Worktree Status Resolution", () => {
 describe("Hook outcome primitives", () => {
   test("maps successful hook execution to success reason", () => {
     const result: HookResult = {
+      duration: 22,
       exitCode: 0,
-      signalCode: null,
       killed: false,
-      stdout: "ok",
+      signalCode: null,
       stderr: "",
+      stdout: "ok",
       success: true,
       timedOut: false,
-      duration: 22,
     };
 
     const mapped = mapHookExecutionResult(result);
@@ -310,14 +307,14 @@ describe("Hook outcome primitives", () => {
 
   test("maps timed out hook execution to timeout failure", () => {
     const result: HookResult = {
+      duration: 1000,
       exitCode: -1,
-      signalCode: "SIGTERM",
       killed: true,
-      stdout: "",
+      signalCode: "SIGTERM",
       stderr: "timed out",
+      stdout: "",
       success: false,
       timedOut: true,
-      duration: 1000,
     };
 
     const mapped = mapHookExecutionResult(result);
@@ -329,14 +326,14 @@ describe("Hook outcome primitives", () => {
 
   test("maps non-zero exit hook execution to failure reason", () => {
     const result: HookResult = {
+      duration: 17,
       exitCode: 19,
-      signalCode: null,
       killed: false,
-      stdout: "",
+      signalCode: null,
       stderr: "boom",
+      stdout: "",
       success: false,
       timedOut: false,
-      duration: 17,
     };
 
     const mapped = mapHookExecutionResult(result);

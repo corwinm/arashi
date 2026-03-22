@@ -5,25 +5,25 @@
  * without requiring full git repository setup.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  getShortCommitSha,
-  hasUncommittedChanges,
-  validateWorktreeListItem,
-  validateListCommandOutput,
-  formatAsTable,
-  formatAsJson,
-  gatherWorktreeData,
   discoverSubRepositories,
   findGitRepositories,
+  formatAsJson,
+  formatAsTable,
+  gatherWorktreeData,
+  getShortCommitSha,
+  hasUncommittedChanges,
+  validateListCommandOutput,
+  validateWorktreeListItem,
 } from "../../../src/core/list";
 import type {
-  WorktreeListItem,
   ListCommandOutput,
   SubRepositoryInfo,
+  WorktreeListItem,
 } from "../../../src/types/list";
 import { ListCommandError } from "../../../src/types/list";
-import { GitTestRepo, createFile, commitChanges } from "../../helpers/git-test-utils";
+import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-utils";
 import { mkdir } from "fs/promises";
 import { join } from "path";
 
@@ -122,12 +122,12 @@ describe("hasUncommittedChanges()", () => {
 describe("validateWorktreeListItem()", () => {
   test("validates a valid worktree item", () => {
     const validItem: WorktreeListItem = {
-      path: "/absolute/path/to/worktree",
       branch: "main",
       commit: "abc1234",
-      locked: false,
       hasChanges: false,
       isMain: true,
+      locked: false,
+      path: "/absolute/path/to/worktree",
     };
 
     expect(() => {
@@ -137,12 +137,12 @@ describe("validateWorktreeListItem()", () => {
 
   test("validates worktree with null branch (detached HEAD)", () => {
     const validItem: WorktreeListItem = {
-      path: "/absolute/path/to/worktree",
       branch: null,
       commit: "abc1234",
-      locked: false,
       hasChanges: false,
       isMain: false,
+      locked: false,
+      path: "/absolute/path/to/worktree",
     };
 
     expect(() => {
@@ -152,13 +152,13 @@ describe("validateWorktreeListItem()", () => {
 
   test("validates locked worktree with lock reason", () => {
     const validItem: WorktreeListItem = {
-      path: "/absolute/path/to/worktree",
       branch: "feature",
       commit: "def5678",
-      locked: true,
-      lockReason: "Working on critical fix",
       hasChanges: true,
       isMain: false,
+      lockReason: "Working on critical fix",
+      locked: true,
+      path: "/absolute/path/to/worktree",
     };
 
     expect(() => {
@@ -168,12 +168,12 @@ describe("validateWorktreeListItem()", () => {
 
   test("validates worktree with sub-repositories", () => {
     const validItem: WorktreeListItem = {
-      path: "/absolute/path/to/worktree",
       branch: "main",
       commit: "abc1234",
-      locked: false,
       hasChanges: false,
       isMain: true,
+      locked: false,
+      path: "/absolute/path/to/worktree",
       subRepositories: [
         {
           relativePath: "repos/sub-repo",
@@ -191,12 +191,12 @@ describe("validateWorktreeListItem()", () => {
 
   test("throws for relative path", () => {
     const invalidItem = {
-      path: "relative/path",
       branch: "main",
       commit: "abc1234",
-      locked: false,
       hasChanges: false,
       isMain: true,
+      locked: false,
+      path: "relative/path",
     };
 
     expect(() => {
@@ -206,12 +206,12 @@ describe("validateWorktreeListItem()", () => {
 
   test("throws for invalid commit format (not 7 hex characters)", () => {
     const invalidItem = {
-      path: "/absolute/path",
       branch: "main",
       commit: "invalid",
-      locked: false,
       hasChanges: false,
       isMain: true,
+      locked: false,
+      path: "/absolute/path",
     };
 
     expect(() => {
@@ -221,12 +221,12 @@ describe("validateWorktreeListItem()", () => {
 
   test("throws for non-boolean locked field", () => {
     const invalidItem = {
-      path: "/absolute/path",
       branch: "main",
       commit: "abc1234",
-      locked: "yes" as unknown as boolean,
       hasChanges: false,
       isMain: true,
+      locked: "yes" as unknown as boolean,
+      path: "/absolute/path",
     };
 
     expect(() => {
@@ -236,12 +236,12 @@ describe("validateWorktreeListItem()", () => {
 
   test("throws for non-string branch when not null", () => {
     const invalidItem = {
-      path: "/absolute/path",
       branch: 123 as unknown as string,
       commit: "abc1234",
-      locked: false,
       hasChanges: false,
       isMain: true,
+      locked: false,
+      path: "/absolute/path",
     };
 
     expect(() => {
@@ -251,12 +251,12 @@ describe("validateWorktreeListItem()", () => {
 
   test("throws for non-array subRepositories", () => {
     const invalidItem = {
-      path: "/absolute/path",
       branch: "main",
       commit: "abc1234",
-      locked: false,
       hasChanges: false,
       isMain: true,
+      locked: false,
+      path: "/absolute/path",
       subRepositories: "not an array" as unknown as SubRepositoryInfo[],
     };
 
@@ -269,6 +269,8 @@ describe("validateWorktreeListItem()", () => {
 describe("validateListCommandOutput()", () => {
   test("validates valid output structure", () => {
     const validOutput: ListCommandOutput = {
+      repositoryPath: "/repo/main",
+      totalCount: 2,
       worktrees: [
         {
           path: "/repo/main",
@@ -287,8 +289,6 @@ describe("validateListCommandOutput()", () => {
           isMain: false,
         },
       ],
-      totalCount: 2,
-      repositoryPath: "/repo/main",
     };
 
     expect(() => {
@@ -298,9 +298,9 @@ describe("validateListCommandOutput()", () => {
 
   test("throws when worktrees is empty", () => {
     const invalidOutput = {
-      worktrees: [],
-      totalCount: 0,
       repositoryPath: "/repo",
+      totalCount: 0,
+      worktrees: [],
     };
 
     expect(() => {
@@ -310,6 +310,8 @@ describe("validateListCommandOutput()", () => {
 
   test("throws when totalCount does not match array length", () => {
     const invalidOutput = {
+      repositoryPath: "/repo",
+      totalCount: 5,
       worktrees: [
         {
           path: "/repo/main",
@@ -320,8 +322,6 @@ describe("validateListCommandOutput()", () => {
           isMain: true,
         },
       ],
-      totalCount: 5,
-      repositoryPath: "/repo",
     };
 
     expect(() => {
@@ -331,6 +331,8 @@ describe("validateListCommandOutput()", () => {
 
   test("throws when no main worktree exists", () => {
     const invalidOutput = {
+      repositoryPath: "/repo",
+      totalCount: 2,
       worktrees: [
         {
           path: "/repo/feature1",
@@ -349,8 +351,6 @@ describe("validateListCommandOutput()", () => {
           isMain: false,
         },
       ],
-      totalCount: 2,
-      repositoryPath: "/repo",
     };
 
     expect(() => {
@@ -360,6 +360,8 @@ describe("validateListCommandOutput()", () => {
 
   test("throws when multiple main worktrees exist", () => {
     const invalidOutput = {
+      repositoryPath: "/repo",
+      totalCount: 2,
       worktrees: [
         {
           path: "/repo/main1",
@@ -378,8 +380,6 @@ describe("validateListCommandOutput()", () => {
           isMain: true,
         },
       ],
-      totalCount: 2,
-      repositoryPath: "/repo",
     };
 
     expect(() => {
@@ -389,6 +389,8 @@ describe("validateListCommandOutput()", () => {
 
   test("throws when repositoryPath is relative", () => {
     const invalidOutput = {
+      repositoryPath: "relative/path",
+      totalCount: 1,
       worktrees: [
         {
           path: "/repo/main",
@@ -399,8 +401,6 @@ describe("validateListCommandOutput()", () => {
           isMain: true,
         },
       ],
-      totalCount: 1,
-      repositoryPath: "relative/path",
     };
 
     expect(() => {
@@ -412,6 +412,8 @@ describe("validateListCommandOutput()", () => {
 describe("formatAsJson()", () => {
   test("formats output as valid JSON", () => {
     const output: ListCommandOutput = {
+      repositoryPath: "/repo/main",
+      totalCount: 1,
       worktrees: [
         {
           path: "/repo/main",
@@ -422,8 +424,6 @@ describe("formatAsJson()", () => {
           isMain: true,
         },
       ],
-      totalCount: 1,
-      repositoryPath: "/repo/main",
     };
 
     const json = formatAsJson(output);
@@ -434,6 +434,8 @@ describe("formatAsJson()", () => {
 
   test("JSON output contains all worktree fields", () => {
     const output: ListCommandOutput = {
+      repositoryPath: "/repo/main",
+      totalCount: 1,
       worktrees: [
         {
           path: "/repo/main",
@@ -444,8 +446,6 @@ describe("formatAsJson()", () => {
           isMain: true,
         },
       ],
-      totalCount: 1,
-      repositoryPath: "/repo/main",
     };
 
     const json = formatAsJson(output);
@@ -462,6 +462,8 @@ describe("formatAsJson()", () => {
 
   test("JSON output includes sub-repositories when present", () => {
     const output: ListCommandOutput = {
+      repositoryPath: "/repo/main",
+      totalCount: 1,
       worktrees: [
         {
           path: "/repo/main",
@@ -480,8 +482,6 @@ describe("formatAsJson()", () => {
           ],
         },
       ],
-      totalCount: 1,
-      repositoryPath: "/repo/main",
     };
 
     const json = formatAsJson(output);
@@ -496,6 +496,8 @@ describe("formatAsJson()", () => {
 describe("formatAsTable()", () => {
   test("formats single main worktree with helpful message", () => {
     const output: ListCommandOutput = {
+      repositoryPath: "/repo/main",
+      totalCount: 1,
       worktrees: [
         {
           path: "/repo/main",
@@ -506,8 +508,6 @@ describe("formatAsTable()", () => {
           isMain: true,
         },
       ],
-      totalCount: 1,
-      repositoryPath: "/repo/main",
     };
 
     const table = formatAsTable(output, false);
@@ -519,6 +519,8 @@ describe("formatAsTable()", () => {
 
   test("formats multiple worktrees in table format", () => {
     const output: ListCommandOutput = {
+      repositoryPath: "/repo/main",
+      totalCount: 2,
       worktrees: [
         {
           path: "/repo/main",
@@ -537,8 +539,6 @@ describe("formatAsTable()", () => {
           isMain: false,
         },
       ],
-      totalCount: 2,
-      repositoryPath: "/repo/main",
     };
 
     const table = formatAsTable(output, false);
@@ -554,6 +554,8 @@ describe("formatAsTable()", () => {
 
   test("verbose mode shows detailed information", () => {
     const output: ListCommandOutput = {
+      repositoryPath: "/repo/main",
+      totalCount: 2,
       worktrees: [
         {
           path: "/repo/main",
@@ -580,8 +582,6 @@ describe("formatAsTable()", () => {
           isMain: false,
         },
       ],
-      totalCount: 2,
-      repositoryPath: "/repo/main",
     };
 
     const table = formatAsTable(output, true);
@@ -597,6 +597,8 @@ describe("formatAsTable()", () => {
 
   test("shows locked status for locked worktrees", () => {
     const output: ListCommandOutput = {
+      repositoryPath: "/repo/main",
+      totalCount: 2,
       worktrees: [
         {
           path: "/repo/main",
@@ -616,8 +618,6 @@ describe("formatAsTable()", () => {
           isMain: false,
         },
       ],
-      totalCount: 2,
-      repositoryPath: "/repo/main",
     };
 
     const table = formatAsTable(output, false);
@@ -627,6 +627,8 @@ describe("formatAsTable()", () => {
 
   test("shows detached HEAD correctly", () => {
     const output: ListCommandOutput = {
+      repositoryPath: "/repo/main",
+      totalCount: 2,
       worktrees: [
         {
           path: "/repo/main",
@@ -645,8 +647,6 @@ describe("formatAsTable()", () => {
           isMain: false,
         },
       ],
-      totalCount: 2,
-      repositoryPath: "/repo/main",
     };
 
     const table = formatAsTable(output, false);

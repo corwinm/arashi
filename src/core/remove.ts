@@ -9,11 +9,11 @@ import * as git from "../lib/git.ts";
 import { ArashiError } from "../lib/errors.ts";
 import { GitErrorCode } from "../types/git.ts";
 import type {
+  RemovalOperation,
+  RemovalSummary,
   WorktreeEntry,
   WorktreeGrouping,
   WorktreeInfo,
-  RemovalSummary,
-  RemovalOperation,
 } from "../types/remove.ts";
 import { resolveWorktreeStatuses } from "./worktree.ts";
 
@@ -53,10 +53,10 @@ export function parseWorktreeList(
 
     const isMain = canonicalWorktreePath === canonicalRepoPath;
     worktrees.push({
-      path: current.path,
       branch: current.branch || "",
-      repository: repoName,
       isMain,
+      path: current.path,
+      repository: repoName,
     });
   };
 
@@ -69,7 +69,7 @@ export function parseWorktreeList(
     }
 
     if (line.startsWith("worktree ")) {
-      current.path = line.substring("worktree ".length);
+      current.path = line.slice("worktree ".length);
       current.repository = repoName;
       continue;
     }
@@ -80,7 +80,7 @@ export function parseWorktreeList(
     }
 
     if (line.startsWith("branch ")) {
-      const ref = line.substring("branch ".length);
+      const ref = line.slice("branch ".length);
       current.branch = ref.replace("refs/heads/", "");
       continue;
     }
@@ -177,7 +177,7 @@ export function groupWorktreesByParent(entries: WorktreeEntry[]): WorktreeGroupi
 
   for (const entry of entries) {
     if (entry.childrenPaths.length > 0) {
-      groupByParent.set(normalizePath(entry.path), { parent: entry, children: [] });
+      groupByParent.set(normalizePath(entry.path), { children: [], parent: entry });
     }
   }
 
@@ -194,7 +194,7 @@ export function groupWorktreesByParent(entries: WorktreeEntry[]): WorktreeGroupi
 
     let group = groupByParent.get(normalizePath(parent.path));
     if (!group) {
-      group = { parent, children: [] };
+      group = { children: [], parent };
       groupByParent.set(normalizePath(parent.path), group);
     }
     group.children.push(entry);
@@ -291,13 +291,13 @@ export function createRemovalSummary(
   totalBranches: number,
 ): RemovalSummary {
   return {
-    totalWorktrees,
+    duration: 0,
+    errors: [],
+    operations: [],
+    successfulBranches: 0,
     successfulWorktrees: 0,
     totalBranches,
-    successfulBranches: 0,
-    operations: [],
-    errors: [],
-    duration: 0,
+    totalWorktrees,
   };
 }
 
@@ -393,6 +393,8 @@ export function formatRemovalSummaryJson(
   },
 ): string {
   const payload: Record<string, unknown> = {
+    errors: summary.errors,
+    operations: summary.operations,
     success: summary.errors.length === 0,
     summary: {
       totalWorktrees: summary.totalWorktrees,
@@ -401,14 +403,12 @@ export function formatRemovalSummaryJson(
       successfulBranches: summary.successfulBranches,
       duration: summary.duration,
     },
-    operations: summary.operations,
-    errors: summary.errors,
   };
 
   if (extras?.skippedMain && extras.skippedMain.length > 0) {
     payload.skippedMain = extras.skippedMain.map((wt) => ({
-      repository: wt.repository,
       path: wt.path,
+      repository: wt.repository,
     }));
   }
 

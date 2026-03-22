@@ -2,13 +2,13 @@
  * Integration test: User Story 1 - remove single branch
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { spawn } from "bun";
 import { executeRemove } from "../../src/commands/remove.ts";
 import {
-  createRemoveWorkspace,
   createNestedWorktrees,
+  createRemoveWorkspace,
   createWorktreesForBranch,
 } from "../helpers/remove-test-workspace.ts";
 
@@ -45,8 +45,8 @@ describe("remove command - US1 single branch", () => {
     for (const repoPath of reposToCheck) {
       const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
         cwd: repoPath,
-        stdout: "ignore",
         stderr: "ignore",
+        stdout: "ignore",
       });
       const exitCode = await proc.exited;
       expect(exitCode).not.toBe(0);
@@ -68,18 +68,18 @@ describe("remove command - US1 single branch", () => {
     const originalCwd = process.cwd();
     process.chdir(workspace.rootPath);
 
-    let observedChoices: Array<{ value: string; name: string }> = [];
+    let observedChoices: { value: string; name: string }[] = [];
 
     try {
       const exitCode = await executeRemove(
         undefined,
         { force: false },
         {
+          confirm: async () => ({ status: "ok", value: true }),
           multiSelect: async (_message, choices) => {
             observedChoices = choices.map((choice) => ({ value: choice.value, name: choice.name }));
             return { status: "ok", value: [] };
           },
-          confirm: async () => ({ status: "ok", value: true }),
         },
       );
       expect(exitCode).toBe(0);

@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../helpers/create-bare-create-workspace.ts";
+import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
+import type { BareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { join } from "path";
 
 let workspace: BareCreateWorkspace | null = null;
@@ -26,8 +24,8 @@ describe("create conflict guidance from bare root", () => {
       ["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"],
       {
         cwd: workspace.bareRepoPath,
-        stdout: "pipe",
         stderr: "pipe",
+        stdout: "pipe",
       },
     );
     const firstStdout = await new Response(firstRun.stdout).text();
@@ -45,8 +43,8 @@ describe("create conflict guidance from bare root", () => {
       ["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress", "--conflict", "ABORT"],
       {
         cwd: workspace.bareRepoPath,
-        stdout: "pipe",
         stderr: "pipe",
+        stdout: "pipe",
       },
     );
 

@@ -6,7 +6,7 @@
  * within the full worktree creation flow for all repository types.
  */
 
-import { test, expect, beforeEach, afterEach, describe } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { spawn } from "bun";
@@ -23,7 +23,7 @@ describe("Nested Worktree Paths Integration", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   async function initGitRepo(path: string) {
@@ -45,26 +45,26 @@ describe("Nested Worktree Paths Integration", () => {
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
         JSON.stringify({
-          version: "1.0.0",
-          reposDir: "./repos",
-          worktree_strategy: "same_branch",
           repos: {},
+          reposDir: "./repos",
+          version: "1.0.0",
+          worktree_strategy: "same_branch",
         }),
       );
 
       await initGitRepo(metaRepoPath);
 
       const repo: Repository = {
-        name: "parent-repo",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "parent-repo",
+        path: metaRepoPath,
       };
 
       // Create worktree
       const result = await createCoordinatedWorktrees("feature", [repo], {
-        showProgress: false,
         executeHooks: false,
+        showProgress: false,
       });
 
       // Verify worktree was created as sibling
@@ -86,26 +86,26 @@ describe("Nested Worktree Paths Integration", () => {
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
         JSON.stringify({
-          version: "1.0.0",
-          reposDir: "./repos",
-          worktree_strategy: "same_branch",
           repos: {},
+          reposDir: "./repos",
+          version: "1.0.0",
+          worktree_strategy: "same_branch",
         }),
       );
 
       await initGitRepo(metaRepoPath);
 
       const repo: Repository = {
-        name: "existing-repo",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "existing-repo",
+        path: metaRepoPath,
       };
 
       // Create worktree with different branch name
       const result = await createCoordinatedWorktrees("bugfix-123", [repo], {
-        showProgress: false,
         executeHooks: false,
+        showProgress: false,
       });
 
       expect(result.successCount).toBe(1);

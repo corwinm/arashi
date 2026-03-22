@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { basename, join } from "path";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../helpers/create-bare-create-workspace.ts";
+import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
+import type { BareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { createRepoSpecificHookInRepo } from "../helpers/hooks.ts";
 
 let workspace: BareCreateWorkspace | null = null;
@@ -34,8 +32,8 @@ describe("create command parity between non-bare and bare invocation", () => {
 
     const command = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-progress"], {
       cwd: workspace.worktreePath,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const exitCode = await command.exited;
@@ -46,7 +44,7 @@ describe("create command parity between non-bare and bare invocation", () => {
     expect(`${stdout}\n${stderr}`).toContain("Hook results:");
 
     const combinedOutput = `${stdout}\n${stderr}`;
-    const escapedRepoName = repoName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedRepoName = repoName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
     const match =
       combinedOutput.match(
         new RegExp(`Worktree locations:[\\s\\S]*?${escapedRepoName}:\\s+([^\\n]+)`),

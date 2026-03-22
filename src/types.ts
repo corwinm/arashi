@@ -4,9 +4,7 @@ export interface ArashiConfig {
   version: string;
   reposDir: string;
   worktree_strategy: "same_branch";
-  repos: {
-    [repoName: string]: RepoConfig;
-  };
+  repos: Record<string, RepoConfig>;
 }
 
 export interface RepoConfig {
@@ -22,13 +20,14 @@ export interface WorktreeInfo {
   path: string;
   head: string;
   isBare: boolean;
-  repos: {
-    [repoName: string]: {
+  repos: Record<
+    string,
+    {
       path: string;
       branch: string;
       status: "clean" | "dirty" | "error";
-    };
-  };
+    }
+  >;
 }
 
 export interface CreateOptions {

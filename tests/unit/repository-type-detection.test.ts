@@ -6,7 +6,7 @@
  * as meta-repo, child, or standalone based on configuration and location.
  */
 
-import { test, expect, beforeEach, afterEach, describe } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { join } from "path";
 
@@ -23,7 +23,7 @@ describe("detectRepositoryType", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   describe("US1: Meta-repo Detection", () => {
@@ -36,10 +36,10 @@ describe("detectRepositoryType", () => {
       await writeFile(arashiConfigPath, JSON.stringify({ version: "1.0.0" }));
 
       const repo: Repository = {
-        name: "meta-repo",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "meta-repo",
+        path: metaRepoPath,
       };
 
       const result = await detectRepositoryType(repo, null);
@@ -59,16 +59,16 @@ describe("detectRepositoryType", () => {
       await writeFile(arashiConfigPath, JSON.stringify({ version: "1.0.0" }));
 
       const repo: Repository = {
-        name: "meta-repo",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "meta-repo",
+        path: metaRepoPath,
       };
 
       const config: ArashiConfig = {
-        version: "1.0.0",
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
       };
 
       const result = await detectRepositoryType(repo, config);

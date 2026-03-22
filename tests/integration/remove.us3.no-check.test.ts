@@ -2,7 +2,7 @@
  * Integration test: User Story 3 - --no-check-dirty bypass
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { executeRemove } from "../../src/commands/remove.ts";
 import {
@@ -35,8 +35,8 @@ describe("remove command - US3 no-check-dirty", () => {
         branchName,
         { checkDirty: false, force: false },
         {
-          multiSelect: async () => ({ status: "ok", value: [branchName] }),
           confirm: async () => ({ status: "ok", value: true }),
+          multiSelect: async () => ({ status: "ok", value: [branchName] }),
         },
       );
       expect(exitCode).toBe(0);

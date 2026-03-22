@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, dirname, join, resolve } from "path";
 
@@ -10,8 +10,8 @@ let workspacePath = "";
 async function runGit(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
 
   const exitCode = await proc.exited;
@@ -29,10 +29,10 @@ async function writeWorkspaceConfig(worktreesDir: string): Promise<void> {
     join(workspacePath, ".arashi", "config.json"),
     JSON.stringify(
       {
-        version: "1.0.0",
-        reposDir: "./repos",
-        worktreesDir,
         repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
+        worktreesDir,
       },
       null,
       2,
@@ -43,8 +43,8 @@ async function writeWorkspaceConfig(worktreesDir: string): Promise<void> {
 async function runCreate(branch: string): Promise<void> {
   const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"], {
     cwd: workspacePath,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
 
   const stdout = await new Response(proc.stdout).text();
@@ -71,7 +71,7 @@ describe("create command worktree location resolution", () => {
 
   afterEach(async () => {
     if (workspacePath.length > 0) {
-      await rm(workspacePath, { recursive: true, force: true });
+      await rm(workspacePath, { force: true, recursive: true });
     }
   });
 

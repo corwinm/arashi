@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createCommand, executeSwitch } from "../../src/commands/switch.ts";
 import type { SwitchProcessRunner } from "../../src/lib/switch-launcher.ts";
 import type { SwitchCandidate } from "../../src/core/switch.ts";
@@ -6,8 +6,8 @@ import type { WorkspaceRepository } from "../../src/lib/config.ts";
 
 const candidate: SwitchCandidate = {
   branchName: "feature/switch-command",
-  worktreePath: "/workspace/feature-switch-command",
   repoName: "workspace",
+  worktreePath: "/workspace/feature-switch-command",
 };
 
 describe("switch command integration", () => {
@@ -32,13 +32,13 @@ describe("switch command integration", () => {
       undefined,
       {},
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories }),
         discoverSwitchCandidates: async (targets) => {
           discoveredRepoSets.push(targets.map((target) => target.name));
           return { candidates: [candidate], skippedCount: 0 };
         },
+        findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        loadWorkspaceRepositories: async () => ({ repositories }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
       },
@@ -59,13 +59,13 @@ describe("switch command integration", () => {
       undefined,
       { repos: true },
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories }),
         discoverSwitchCandidates: async (targets) => {
           discoveredRepoSets.push(targets.map((target) => target.name));
           return { candidates: [candidate], skippedCount: 0 };
         },
+        findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        loadWorkspaceRepositories: async () => ({ repositories }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
       },
@@ -79,13 +79,6 @@ describe("switch command integration", () => {
       undefined,
       { repos: true },
       {
-        findWorkspaceRoot: async () => "/workspace/current",
-        loadWorkspaceRepositories: async () => ({
-          repositories: [
-            { name: "workspace", path: "/workspace/current" },
-            { name: "repo-a", path: "/workspace/current/repos/repo-a" },
-          ],
-        }),
         discoverSwitchCandidates: async () => ({
           candidates: [
             {
@@ -101,7 +94,14 @@ describe("switch command integration", () => {
           ],
           skippedCount: 0,
         }),
+        findWorkspaceRoot: async () => "/workspace/current",
         launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        loadWorkspaceRepositories: async () => ({
+          repositories: [
+            { name: "workspace", path: "/workspace/current" },
+            { name: "repo-a", path: "/workspace/current/repos/repo-a" },
+          ],
+        }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
       },
@@ -116,14 +116,6 @@ describe("switch command integration", () => {
       "docs",
       { repos: true },
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({
-          repositories: [
-            { name: "workspace", path: "/workspace" },
-            { name: "docs", path: "/workspace/repos/docs" },
-            { name: "api", path: "/workspace/repos/api" },
-          ],
-        }),
         discoverSwitchCandidates: async () => ({
           candidates: [
             {
@@ -139,7 +131,15 @@ describe("switch command integration", () => {
           ],
           skippedCount: 0,
         }),
+        findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        loadWorkspaceRepositories: async () => ({
+          repositories: [
+            { name: "workspace", path: "/workspace" },
+            { name: "docs", path: "/workspace/repos/docs" },
+            { name: "api", path: "/workspace/repos/api" },
+          ],
+        }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
       },
@@ -155,14 +155,6 @@ describe("switch command integration", () => {
       "doc",
       { repos: true },
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({
-          repositories: [
-            { name: "workspace", path: "/workspace" },
-            { name: "docs-site", path: "/workspace/repos/docs-site" },
-            { name: "api", path: "/workspace/repos/api" },
-          ],
-        }),
         discoverSwitchCandidates: async () => ({
           candidates: [
             {
@@ -178,7 +170,15 @@ describe("switch command integration", () => {
           ],
           skippedCount: 0,
         }),
+        findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        loadWorkspaceRepositories: async () => ({
+          repositories: [
+            { name: "workspace", path: "/workspace" },
+            { name: "docs-site", path: "/workspace/repos/docs-site" },
+            { name: "api", path: "/workspace/repos/api" },
+          ],
+        }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
       },
@@ -194,14 +194,6 @@ describe("switch command integration", () => {
         "docs",
         { repos: true },
         {
-          findWorkspaceRoot: async () => "/workspace",
-          loadWorkspaceRepositories: async () => ({
-            repositories: [
-              { name: "workspace", path: "/workspace" },
-              { name: "api", path: "/workspace/repos/api" },
-              { name: "web", path: "/workspace/repos/web" },
-            ],
-          }),
           discoverSwitchCandidates: async () => ({
             candidates: [
               {
@@ -217,7 +209,15 @@ describe("switch command integration", () => {
             ],
             skippedCount: 0,
           }),
+          findWorkspaceRoot: async () => "/workspace",
           launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+          loadWorkspaceRepositories: async () => ({
+            repositories: [
+              { name: "workspace", path: "/workspace" },
+              { name: "api", path: "/workspace/repos/api" },
+              { name: "web", path: "/workspace/repos/web" },
+            ],
+          }),
           stdinIsTTY: false,
           stdoutIsTTY: false,
         },
@@ -239,13 +239,13 @@ describe("switch command integration", () => {
       undefined,
       { all: true },
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories }),
         discoverSwitchCandidates: async (targets) => {
           discoveredRepoSets.push(targets.map((target) => target.name));
           return { candidates: [candidate], skippedCount: 0 };
         },
+        findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        loadWorkspaceRepositories: async () => ({ repositories }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
       },
@@ -261,28 +261,6 @@ describe("switch command integration", () => {
       undefined,
       { all: true },
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({
-          repositories: [
-            { name: "workspace", path: "/workspace" },
-            { name: "docs", path: "/workspace/repos/docs" },
-          ],
-        }),
-        discoverSwitchCandidates: async () => ({
-          candidates: [
-            {
-              repoName: "workspace",
-              branchName: "main",
-              worktreePath: "/workspace",
-            },
-            {
-              repoName: "workspace",
-              branchName: "feature/a",
-              worktreePath: "/workspace-feature-a",
-            },
-          ],
-          skippedCount: 0,
-        }),
         augmentAllScopeCandidates: async (candidates) => {
           return [
             ...candidates,
@@ -298,11 +276,33 @@ describe("switch command integration", () => {
             },
           ];
         },
+        discoverSwitchCandidates: async () => ({
+          candidates: [
+            {
+              repoName: "workspace",
+              branchName: "main",
+              worktreePath: "/workspace",
+            },
+            {
+              repoName: "workspace",
+              branchName: "feature/a",
+              worktreePath: "/workspace-feature-a",
+            },
+          ],
+          skippedCount: 0,
+        }),
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
+        loadWorkspaceRepositories: async () => ({
+          repositories: [
+            { name: "workspace", path: "/workspace" },
+            { name: "docs", path: "/workspace/repos/docs" },
+          ],
+        }),
         selectSwitchCandidate: async (candidates) => {
           selectedCandidates.push(candidates);
           return candidates[3];
         },
-        launchSwitchTarget: async () => ({ mode: "fallback", command: ["noop"] }),
         stdinIsTTY: true,
         stdoutIsTTY: true,
       },
@@ -323,27 +323,27 @@ describe("switch command integration", () => {
       invocations.push(command);
 
       if (command[0] === "which" && command[1] === "sesh") {
-        return { exitCode: 0, stdout: "/usr/local/bin/sesh\n", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/sesh\n" };
       }
 
       if (command[0] === "tmux") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
     };
 
     const result = await executeSwitch(
       undefined,
       { sesh: true },
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         discoverSwitchCandidates: async () => ({
           candidates: [candidate],
           skippedCount: 0,
         }),
         env: { TMUX: "/tmp/tmux-1000/default" },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         platform: "darwin",
         runProcess,
         stdinIsTTY: false,
@@ -358,13 +358,21 @@ describe("switch command integration", () => {
   });
 
   test("applies configured switch launch mode defaults", async () => {
-    const launchOptions: Array<{ sesh?: boolean }> = [];
+    const launchOptions: { sesh?: boolean }[] = [];
 
     await executeSwitch(
       undefined,
       {},
       {
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
         findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async (_candidate, options) => {
+          launchOptions.push(options);
+          return { mode: "sesh", command: ["tmux"] };
+        },
         loadWorkspaceRepositories: async () => ({
           repositories: [],
           config: {
@@ -378,14 +386,6 @@ describe("switch command integration", () => {
             },
           },
         }),
-        discoverSwitchCandidates: async () => ({
-          candidates: [candidate],
-          skippedCount: 0,
-        }),
-        launchSwitchTarget: async (_candidate, options) => {
-          launchOptions.push(options);
-          return { mode: "sesh", command: ["tmux"] };
-        },
         stdinIsTTY: false,
         stdoutIsTTY: false,
       },
@@ -395,13 +395,21 @@ describe("switch command integration", () => {
   });
 
   test("allows opt-out from configured switch launch mode", async () => {
-    const launchOptions: Array<{ sesh?: boolean }> = [];
+    const launchOptions: { sesh?: boolean }[] = [];
 
     await executeSwitch(
       undefined,
       { defaultLaunch: false },
       {
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
         findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async (_candidate, options) => {
+          launchOptions.push(options);
+          return { mode: "fallback", command: ["open"] };
+        },
         loadWorkspaceRepositories: async () => ({
           repositories: [],
           config: {
@@ -415,14 +423,6 @@ describe("switch command integration", () => {
             },
           },
         }),
-        discoverSwitchCandidates: async () => ({
-          candidates: [candidate],
-          skippedCount: 0,
-        }),
-        launchSwitchTarget: async (_candidate, options) => {
-          launchOptions.push(options);
-          return { mode: "fallback", command: ["open"] };
-        },
         stdinIsTTY: false,
         stdoutIsTTY: false,
       },
@@ -437,27 +437,27 @@ describe("switch command integration", () => {
       invocations.push(command);
 
       if (command[0] === "which" && command[1] === "code") {
-        return { exitCode: 0, stdout: "/usr/local/bin/code\n", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/code\n" };
       }
 
       if (command[0] === "code") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
     };
 
     const result = await executeSwitch(
       undefined,
       {},
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         discoverSwitchCandidates: async () => ({
           candidates: [candidate],
           skippedCount: 0,
         }),
         env: { TERM_PROGRAM: "vscode" },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         platform: "darwin",
         runProcess,
         stdinIsTTY: false,
@@ -476,27 +476,27 @@ describe("switch command integration", () => {
       invocations.push(command);
 
       if (command[0] === "which" && command[1] === "code") {
-        return { exitCode: 1, stdout: "", stderr: "not found" };
+        return { exitCode: 1, stderr: "not found", stdout: "" };
       }
 
       if (command[0] === "open") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
     };
 
     const result = await executeSwitch(
       undefined,
       {},
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         discoverSwitchCandidates: async () => ({
           candidates: [candidate],
           skippedCount: 0,
         }),
         env: { TERM_PROGRAM: "vscode" },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         platform: "darwin",
         runProcess,
         stdinIsTTY: false,
@@ -514,23 +514,23 @@ describe("switch command integration", () => {
       invocations.push(command);
 
       if (command[0] === "tmux") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
     };
 
     const result = await executeSwitch(
       undefined,
       {},
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         discoverSwitchCandidates: async () => ({
           candidates: [candidate],
           skippedCount: 0,
         }),
         env: { TMUX: "/tmp/tmux-1000/default", TERM_PROGRAM: "vscode" },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         platform: "darwin",
         runProcess,
         stdinIsTTY: false,
@@ -554,23 +554,23 @@ describe("switch command integration", () => {
       invocations.push(command);
 
       if (command[0] === "kitty") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
     };
 
     const result = await executeSwitch(
       undefined,
       {},
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         discoverSwitchCandidates: async () => ({
           candidates: [candidate],
           skippedCount: 0,
         }),
         env: { TERM: "xterm-kitty", KITTY_PID: "100" },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         platform: "linux",
         runProcess,
         stdinIsTTY: false,
@@ -595,23 +595,23 @@ describe("switch command integration", () => {
       invocations.push(command);
 
       if (command[0] === "wezterm") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
     };
 
     const result = await executeSwitch(
       undefined,
       {},
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         discoverSwitchCandidates: async () => ({
           candidates: [candidate],
           skippedCount: 0,
         }),
         env: { TERM_PROGRAM: "WezTerm" },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         platform: "linux",
         runProcess,
         stdinIsTTY: false,
@@ -635,23 +635,23 @@ describe("switch command integration", () => {
       invocations.push(command);
 
       if (command[0] === "open") {
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return { exitCode: 0, stderr: "", stdout: "" };
       }
 
-      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
     };
 
     const result = await executeSwitch(
       undefined,
       {},
       {
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         discoverSwitchCandidates: async () => ({
           candidates: [candidate],
           skippedCount: 0,
         }),
         env: { TERM_PROGRAM: "iTerm.app" },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
         platform: "darwin",
         runProcess,
         stdinIsTTY: false,

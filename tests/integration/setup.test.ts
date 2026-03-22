@@ -1,4 +1,4 @@
-import { beforeEach, afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -18,11 +18,11 @@ interface WorkspaceOptions {
 }
 
 async function runCommand(cwd: string, args: string[]): Promise<CommandResult> {
-  const proc = spawn(args, { cwd, stdout: "pipe", stderr: "pipe" });
+  const proc = spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;
-  return { exitCode, stdout, stderr };
+  return { exitCode, stderr, stdout };
 }
 
 async function writeSetupScript(repoPath: string, content: string): Promise<void> {
@@ -52,8 +52,6 @@ async function createWorkspace(
       { path: string; defaultBranch: string; isBare: boolean; worktrees: never[] }
     >;
   } = {
-    version: "1.0.0",
-    reposDir: "./repos",
     repos: {
       "repo-a": {
         path: "./repos/repo-a",
@@ -68,6 +66,8 @@ async function createWorkspace(
         worktrees: [],
       },
     },
+    reposDir: "./repos",
+    version: "1.0.0",
   };
 
   if (options.hooksTimeoutMs !== undefined) {
@@ -86,7 +86,7 @@ async function createWorkspace(
     await writeSetupScript(repoBPath, options.repoBSetup);
   }
 
-  return { workspaceRoot, repoAPath, repoBPath };
+  return { repoAPath, repoBPath, workspaceRoot };
 }
 
 async function runSetup(workspaceRoot: string, args: string[] = []): Promise<CommandResult> {
@@ -103,7 +103,7 @@ describe("setup command", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("runs main repository setup before sub-repositories", async () => {

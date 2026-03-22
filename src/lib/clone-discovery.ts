@@ -40,9 +40,9 @@ export async function discoverCloneRepositories(
     const repoExists = await pathExists(repoPath);
 
     const state: ConfiguredRepositoryState = {
+      config: repoConfig,
       name,
       path: repoPath,
-      config: repoConfig,
     };
 
     if (repoExists) {
@@ -84,13 +84,13 @@ export async function discoverCloneRepositories(
   unmanagedLocal.sort((a, b) => a.name.localeCompare(b.name));
 
   return {
-    configuredPresent,
     configuredMissing,
+    configuredPresent,
     unmanagedLocal,
   };
 }
 
-export function inferCloneProtocolPreference(urls: Array<string | undefined>): ProtocolPreference {
+export function inferCloneProtocolPreference(urls: (string | undefined)[]): ProtocolPreference {
   const protocols = new Set<CloneProtocol>();
 
   for (const url of urls) {

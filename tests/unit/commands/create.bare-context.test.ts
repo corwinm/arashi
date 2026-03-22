@@ -2,10 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir } from "fs/promises";
 import { join } from "path";
 import { resolveCreateInvocationContext } from "../../../src/commands/create.ts";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../../helpers/create-bare-create-workspace.ts";
+import { createBareCreateWorkspace } from "../../helpers/create-bare-create-workspace.ts";
+import type { BareCreateWorkspace } from "../../helpers/create-bare-create-workspace.ts";
 
 let workspace: BareCreateWorkspace | null = null;
 

@@ -4,7 +4,7 @@
  * Tests file system operations, end-to-end flows, and error handling.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   loadConfig,
   saveConfig,
@@ -19,17 +19,17 @@ import {
   ConfigValidationError,
   UnsupportedConfigVersionError,
   ConfigError,
-  type Config,
 } from "../../src/lib/config";
-import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
+import type { Config } from "../../src/lib/config";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
 async function runGit(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
@@ -46,7 +46,7 @@ describe("configExists", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("returns false when config does not exist", async () => {
@@ -71,7 +71,7 @@ describe("saveConfig", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("writes configuration to file", async () => {
@@ -124,8 +124,6 @@ describe("saveConfig", () => {
 
   test("drops deprecated repository metadata while preserving canonical fields", async () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "test-repo": {
           path: "./repos/test-repo",
@@ -140,6 +138,8 @@ describe("saveConfig", () => {
           ],
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     await saveConfig(testDir, config as unknown as Config);
@@ -159,7 +159,7 @@ describe("loadConfig", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("loads valid configuration", async () => {
@@ -177,9 +177,9 @@ describe("loadConfig", () => {
       configPath,
       JSON.stringify(
         {
-          version: "1",
-          reposDir: "./repos",
           repos: {},
+          reposDir: "./repos",
+          version: "1",
         },
         null,
         2,
@@ -199,9 +199,9 @@ describe("loadConfig", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        version: "2.0.0",
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
+        version: "2.0.0",
       }),
     );
 
@@ -255,8 +255,8 @@ describe("loadConfig", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
         // Missing version
       }),
     );
@@ -291,11 +291,11 @@ describe("loadConfig", () => {
     const configPath = getConfigPath(testDir);
     await mkdir(join(testDir, ".arashi"), { recursive: true });
     const configWithExtras = {
-      version: "1.0.0",
-      reposDir: "./repos",
-      repos: {},
-      future_feature: "some value",
       custom_data: { team: "backend" },
+      future_feature: "some value",
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     };
     await writeFile(configPath, JSON.stringify(configWithExtras, null, 2));
 
@@ -313,7 +313,7 @@ describe("addRepo", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("adds repository to configuration", async () => {
@@ -340,8 +340,8 @@ describe("addRepo", () => {
 
   test("adds repository with complete configuration", async () => {
     await addRepo(testDir, "full-repo", {
-      path: "./repos/full",
       gitUrl: "git@github.com:team/full.git",
+      path: "./repos/full",
     });
 
     const config = await loadConfig(testDir);
@@ -405,7 +405,7 @@ describe("removeRepo", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("removes repository from configuration", async () => {
@@ -455,13 +455,11 @@ describe("round-trip tests", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("save and load preserves all data", async () => {
     const original: Config = {
-      version: "1.0.0",
-      reposDir: "/absolute/path/to/repos",
       repos: {
         repo1: {
           path: "./repos/repo1",
@@ -471,6 +469,8 @@ describe("round-trip tests", () => {
           path: "./repos/repo2",
         },
       },
+      reposDir: "/absolute/path/to/repos",
+      version: "1.0.0",
     };
 
     await saveConfig(testDir, original);
@@ -497,14 +497,14 @@ describe("round-trip tests", () => {
 
   test("persists repository gitUrl fields across save/load", async () => {
     const config: Config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "repo-with-url": {
           path: "./repos/repo-with-url",
           gitUrl: "git@github.com:team/repo-with-url.git",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     await saveConfig(testDir, config);
@@ -536,7 +536,7 @@ describe("end-to-end workflow", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("complete initialization workflow", async () => {
@@ -605,7 +605,7 @@ describe("repairRepositoryGitUrls", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("repairs missing gitUrl from local origin remote", async () => {
@@ -616,13 +616,13 @@ describe("repairRepositoryGitUrls", () => {
     await runGit(["remote", "add", "origin", "git@github.com:team/child-repo.git"], repoPath);
 
     const config: Config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "child-repo": {
           path: "./repos/child-repo",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     const result = await repairRepositoryGitUrls(testDir, config);

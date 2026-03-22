@@ -354,12 +354,12 @@ export async function discoverRepositories(
 
     // T028: Return RepositoryDiscoveryResult
     return {
+      duration: Date.now() - startTime,
+      errors,
       repositories,
-      workspacePath,
       scanDepth: maxDepth,
       scannedDirectories,
-      errors,
-      duration: Date.now() - startTime,
+      workspacePath,
     };
   } catch (error) {
     s.fail("Discovery failed");
@@ -435,7 +435,7 @@ async function createRepositoryInfo(repoPath: string): Promise<Repository> {
   const name = basename(repoPath);
 
   // T040: Integrate detectDefaultBranch()
-  let defaultBranch = "main"; // fallback
+  let defaultBranch = "main"; // Fallback
   try {
     defaultBranch = await detectDefaultBranch(repoPath);
   } catch (error) {
@@ -449,12 +449,12 @@ async function createRepositoryInfo(repoPath: string): Promise<Repository> {
   const setupResult = await detectSetupScript(repoPath);
 
   return {
-    name,
-    path: repoPath,
     defaultBranch,
     hasSetupScript: setupResult.hasSetupScript,
-    setupScriptPath: setupResult.setupScriptPath,
+    name,
+    path: repoPath,
     remoteUrl: undefined,
+    setupScriptPath: setupResult.setupScriptPath,
   };
 }
 
@@ -484,10 +484,10 @@ function classifyError(path: string, error: unknown): DiscoveryError {
   }
 
   return {
-    path,
-    message,
-    code,
     cause: error instanceof Error ? error : undefined,
+    code,
+    message,
+    path,
   };
 }
 
@@ -674,11 +674,11 @@ export async function validateWorkspace(
   const isValid = missing.length === 0 && discoveryResult.errors.length === 0;
 
   return {
-    isValid,
-    present,
-    missing,
-    extra,
     errors: discoveryResult.errors,
+    extra,
+    isValid,
+    missing,
+    present,
   };
 }
 
@@ -705,10 +705,10 @@ export async function cloneRepository(
   // T084: Create CloneOperation object with unique ID and PENDING status
   const operation: CloneOperation = {
     id: crypto.randomUUID(),
-    url,
-    targetPath,
-    status: CloneStatus.PENDING,
     startTime: new Date(),
+    status: CloneStatus.PENDING,
+    targetPath,
+    url,
   };
 
   try {
@@ -735,7 +735,7 @@ export async function cloneRepository(
 
     // Clean up if force mode and target exists
     if (targetExists && options.force) {
-      await rm(targetPath, { recursive: true, force: true });
+      await rm(targetPath, { force: true, recursive: true });
     }
 
     // T085: Execute git clone command using git utilities spawn
@@ -766,9 +766,9 @@ export async function cloneRepository(
     };
 
     updateProgress({
-      phase: ClonePhase.CLONING,
-      percentage: 0,
       message: "Cloning repository...",
+      percentage: 0,
+      phase: ClonePhase.CLONING,
     });
 
     // Execute git clone
@@ -795,9 +795,9 @@ export async function cloneRepository(
 
       operation.status = CloneStatus.COMPLETED;
       operation.progress = {
-        phase: ClonePhase.COMPLETED,
-        percentage: 100,
         message: "Clone completed successfully",
+        percentage: 100,
+        phase: ClonePhase.COMPLETED,
       };
     } catch (error: unknown) {
       // T090: Handle clone failure: categorize error, cleanup partial clone, update status to FAILED
@@ -826,11 +826,11 @@ function parseCloneProgress(output: string, callback: (progress: CloneProgress) 
     const receivingMatch = line.match(/Receiving objects:\s+(\d+)%\s+\((\d+)\/(\d+)\)/);
     if (receivingMatch) {
       callback({
-        phase: ClonePhase.RECEIVING,
-        percentage: parseInt(receivingMatch[1]),
+        message: `Receiving objects: ${receivingMatch[1]}%`,
         objectsReceived: parseInt(receivingMatch[2]),
         objectsTotal: parseInt(receivingMatch[3]),
-        message: `Receiving objects: ${receivingMatch[1]}%`,
+        percentage: parseInt(receivingMatch[1]),
+        phase: ClonePhase.RECEIVING,
       });
       continue;
     }
@@ -839,11 +839,11 @@ function parseCloneProgress(output: string, callback: (progress: CloneProgress) 
     const resolvingMatch = line.match(/Resolving deltas:\s+(\d+)%\s+\((\d+)\/(\d+)\)/);
     if (resolvingMatch) {
       callback({
-        phase: ClonePhase.RESOLVING,
-        percentage: parseInt(resolvingMatch[1]),
         deltasResolved: parseInt(resolvingMatch[2]),
         deltasTotal: parseInt(resolvingMatch[3]),
         message: `Resolving deltas: ${resolvingMatch[1]}%`,
+        percentage: parseInt(resolvingMatch[1]),
+        phase: ClonePhase.RESOLVING,
       });
       continue;
     }
@@ -886,9 +886,9 @@ async function handleCloneFailure(
   }
 
   operation.error = {
+    cause: error instanceof Error ? error : undefined,
     code: errorCode,
     message: errorMessage,
-    cause: error instanceof Error ? error : undefined,
   };
 
   // Cleanup partial clone
@@ -902,7 +902,7 @@ async function handleCloneFailure(
     }
 
     if (targetExists) {
-      await rm(targetPath, { recursive: true, force: true });
+      await rm(targetPath, { force: true, recursive: true });
     }
   } catch {
     // Ignore cleanup errors

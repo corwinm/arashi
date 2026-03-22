@@ -1,7 +1,9 @@
 import { basename, resolve } from "path";
 import type { WorkspaceRepository } from "../lib/config.ts";
-import { select as promptSelect, type Choice, type PromptOutcome } from "../lib/prompts.ts";
-import { discoverAllWorktrees, type RepositoryTarget } from "./remove.ts";
+import { select as promptSelect } from "../lib/prompts.ts";
+import type { Choice, PromptOutcome } from "../lib/prompts.ts";
+import { discoverAllWorktrees } from "./remove.ts";
+import type { RepositoryTarget } from "./remove.ts";
 import type { WorktreeInfo } from "../types/remove.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 
@@ -65,8 +67,8 @@ export function buildSwitchCandidates(worktrees: WorktreeInfo[]): SwitchCandidat
 
     const candidate: SwitchCandidate = {
       branchName: worktree.branch.trim(),
-      worktreePath: resolve(worktree.path),
       repoName: worktree.repository.trim(),
+      worktreePath: resolve(worktree.path),
     };
     const dedupeKey = `${candidate.repoName}\u0000${candidate.worktreePath}`;
 
@@ -90,12 +92,11 @@ export function filterSwitchCandidates(
   }
 
   const query = filter.trim().toLowerCase();
-  return candidates.filter((candidate) => {
-    return (
+  return candidates.filter(
+    (candidate) =>
       candidate.branchName.toLowerCase().includes(query) ||
-      candidate.worktreePath.toLowerCase().includes(query)
-    );
-  });
+      candidate.worktreePath.toLowerCase().includes(query),
+  );
 }
 
 export async function selectSwitchCandidate(
@@ -126,7 +127,7 @@ export async function selectSwitchCandidate(
 
   const prompt = deps.selectPrompt ?? promptSelect;
   const normalizedWorkspaceRepoName = options.workspaceRepoName?.trim();
-  const sortedCandidates = [...candidates].sort((left, right) => {
+  const sortedCandidates = [...candidates].toSorted((left, right) => {
     if (normalizedWorkspaceRepoName) {
       const leftIsWorkspace = left.repoName === normalizedWorkspaceRepoName;
       const rightIsWorkspace = right.repoName === normalizedWorkspaceRepoName;
@@ -150,9 +151,9 @@ export async function selectSwitchCandidate(
   });
   const choiceNames = buildChoiceNames(sortedCandidates, normalizedWorkspaceRepoName);
   const choices: Choice<SwitchCandidate>[] = sortedCandidates.map((candidate, index) => ({
-    value: candidate,
-    name: choiceNames[index],
     description: candidate.worktreePath,
+    name: choiceNames[index],
+    value: candidate,
   }));
 
   const outcome = await prompt("Select a worktree to switch to:", choices);

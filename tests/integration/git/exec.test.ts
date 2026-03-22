@@ -5,10 +5,10 @@
  * in various repository scenarios.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { exec } from "../../../src/lib/git";
 import { ArashiError } from "../../../src/lib/errors";
-import { GitTestRepo, createFile, commitChanges } from "../../helpers/git-test-utils";
+import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-utils";
 import { GitErrorCode } from "../../../src/types/git";
 
 describe("exec() - Integration Tests", () => {
@@ -58,7 +58,7 @@ describe("exec() - Integration Tests", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(defaultBranch);
-    // stderr might contain warnings but command succeeds
+    // Stderr might contain warnings but command succeeds
   });
 
   test("should execute git log and return commit history", async () => {

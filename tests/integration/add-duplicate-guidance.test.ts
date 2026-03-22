@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawn } from "bun";
@@ -12,29 +12,29 @@ describe("add command duplicate guidance", () => {
     await mkdir(join(testDir, ".arashi"), { recursive: true });
 
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "arashi-docs": {
           path: "./repos/arashi-docs",
           gitUrl: "git@github.com:corwinm/arashi-docs.git",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     await writeFile(join(testDir, ".arashi", "config.json"), JSON.stringify(config, null, 2));
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("suggests clone instead of remove for duplicate repository", async () => {
     const entrypoint = join(import.meta.dir, "..", "..", "src", "index.ts");
     const proc = spawn(["bun", entrypoint, "add", "git@github.com:corwinm/arashi-docs.git"], {
       cwd: testDir,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const stdout = await new Response(proc.stdout).text();

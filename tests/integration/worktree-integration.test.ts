@@ -5,8 +5,9 @@
  * Tests use real git repositories to verify end-to-end functionality
  */
 
-import { describe, test, expect, afterEach } from "bun:test";
-import { createTestWorkspace, type TestWorkspace } from "../helpers/create-test-workspace.ts";
+import { afterEach, describe, expect, test } from "bun:test";
+import { createTestWorkspace } from "../helpers/create-test-workspace.ts";
+import type { TestWorkspace } from "../helpers/create-test-workspace.ts";
 import { access } from "fs/promises";
 import { constants } from "fs";
 
@@ -119,9 +120,9 @@ describe("Conflict Detection and Resolution (Integration)", () => {
     // Setup: Create workspace with existing branch in one repo
     const existingBranchName = "existing-feature";
     workspace = await createTestWorkspace([
-      { name: "repo-1", defaultBranch: "main", createExistingBranch: existingBranchName },
-      { name: "repo-2", defaultBranch: "main" },
-      { name: "repo-3", defaultBranch: "master" },
+      { createExistingBranch: existingBranchName, defaultBranch: "main", name: "repo-1" },
+      { defaultBranch: "main", name: "repo-2" },
+      { defaultBranch: "master", name: "repo-3" },
     ]);
 
     const { createCoordinatedWorktrees, checkBranchConflicts } =
@@ -138,9 +139,9 @@ describe("Conflict Detection and Resolution (Integration)", () => {
 
     // Now create worktrees with REUSE_EXISTING strategy
     const result = await createCoordinatedWorktrees(existingBranchName, workspace.repositories, {
+      conflictResolution: "REUSE_EXISTING",
       executeHooks: false,
       showProgress: false,
-      conflictResolution: "REUSE_EXISTING",
     });
 
     // All repos should succeed (repo-1 reuses existing branch)
@@ -158,19 +159,19 @@ describe("Repository Filtering (Integration)", () => {
   test("should create worktrees only in explicitly selected repositories", async () => {
     // Setup: Create 5 test repositories
     workspace = await createTestWorkspace([
-      { name: "repo-1", defaultBranch: "main" },
-      { name: "repo-2", defaultBranch: "main" },
-      { name: "repo-3", defaultBranch: "master" },
-      { name: "repo-4", defaultBranch: "develop" },
-      { name: "repo-5", defaultBranch: "main" },
+      { defaultBranch: "main", name: "repo-1" },
+      { defaultBranch: "main", name: "repo-2" },
+      { defaultBranch: "master", name: "repo-3" },
+      { defaultBranch: "develop", name: "repo-4" },
+      { defaultBranch: "main", name: "repo-5" },
     ]);
 
     const { applyRepositoryFilter } = await import("../../src/core/worktree.ts");
 
     // Filter to only repos 1, 3, and 5
     const filter = {
-      mode: "explicit" as const,
       explicitList: ["repo-1", "repo-3", "repo-5"],
+      mode: "explicit" as const,
       selectedRepositories: null,
     };
 
@@ -202,11 +203,11 @@ describe("Repository Filtering (Integration)", () => {
     const branch4Exists = await verifyBranchExists(workspace.repositories[3].path, branchName);
     const branch5Exists = await verifyBranchExists(workspace.repositories[4].path, branchName);
 
-    expect(branch1Exists).toBe(true); // repo-1: included
-    expect(branch2Exists).toBe(false); // repo-2: excluded
-    expect(branch3Exists).toBe(true); // repo-3: included
-    expect(branch4Exists).toBe(false); // repo-4: excluded
-    expect(branch5Exists).toBe(true); // repo-5: included
+    expect(branch1Exists).toBe(true); // Repo-1: included
+    expect(branch2Exists).toBe(false); // Repo-2: excluded
+    expect(branch3Exists).toBe(true); // Repo-3: included
+    expect(branch4Exists).toBe(false); // Repo-4: excluded
+    expect(branch5Exists).toBe(true); // Repo-5: included
   });
 });
 

@@ -56,9 +56,9 @@ export async function createChildHookWorkspace(
 
     childRepoPaths[repoName] = repoPath;
     discoveredRepos[repoName] = {
-      path: `./repos/${repoName}`,
       defaultBranch: "main",
       isBare: false,
+      path: `./repos/${repoName}`,
     };
   }
 
@@ -67,13 +67,13 @@ export async function createChildHookWorkspace(
     join(workspacePath, ".arashi", "config.json"),
     JSON.stringify(
       {
-        version: "1.0.0",
-        reposDir: "./repos",
-        worktreesDir,
         hooks: {
           timeout: options.hookTimeoutMs ?? 1000,
         },
         repos: discoveredRepos,
+        reposDir: "./repos",
+        version: "1.0.0",
+        worktreesDir,
       },
       null,
       2,
@@ -90,22 +90,22 @@ export async function createChildHookWorkspace(
   await mkdir(nestedChildInvocationPath, { recursive: true });
 
   return {
-    rootPath,
-    workspacePath,
-    reposDirPath,
-    workspaceName,
-    hookRootPath,
+    childInvocationPath,
     childRepoNames,
     childRepoPaths,
-    childInvocationPath,
-    nestedChildInvocationPath,
-    getMainWorktreePath: (branchName: string) =>
-      join(worktreesRootPath, `${workspaceName}-${branchName}`),
-    getChildWorktreePath: (repoName: string, branchName: string) =>
-      join(worktreesRootPath, `${workspaceName}-${branchName}`, "repos", repoName),
     cleanup: async () => {
       await rm(rootPath, { recursive: true, force: true });
     },
+    getChildWorktreePath: (repoName: string, branchName: string) =>
+      join(worktreesRootPath, `${workspaceName}-${branchName}`, "repos", repoName),
+    getMainWorktreePath: (branchName: string) =>
+      join(worktreesRootPath, `${workspaceName}-${branchName}`),
+    hookRootPath,
+    nestedChildInvocationPath,
+    reposDirPath,
+    rootPath,
+    workspaceName,
+    workspacePath,
   };
 }
 
@@ -118,8 +118,8 @@ async function initGitRepo(repoPath: string, branch: string): Promise<void> {
 async function execGit(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
 
   const exitCode = await proc.exited;

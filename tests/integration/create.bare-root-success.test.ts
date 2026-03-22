@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { join } from "path";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../helpers/create-bare-create-workspace.ts";
+import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
+import type { BareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 
 let workspace: BareCreateWorkspace | null = null;
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
@@ -25,8 +23,8 @@ describe("create command from bare root", () => {
 
     const command = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"], {
       cwd: workspace.bareRepoPath,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const exitCode = await command.exited;

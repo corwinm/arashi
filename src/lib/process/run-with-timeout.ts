@@ -36,10 +36,10 @@ export async function runWithTimeout(
     const proc = Bun.spawn(command, {
       cwd: options.cwd,
       env: options.env ?? (process.env as Record<string, string>),
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: options.timeoutMs,
       killSignal: "SIGTERM",
+      stderr: "pipe",
+      stdout: "pipe",
+      timeout: options.timeoutMs,
     });
 
     const [stdout, stderr] = await Promise.all([
@@ -52,26 +52,26 @@ export async function runWithTimeout(
     const durationMs = Date.now() - startTime;
 
     return {
-      stdout,
-      stderr,
-      exitCode: proc.exitCode ?? -1,
-      timedOut: proc.killed && proc.signalCode === "SIGTERM",
       durationMs,
-      signalCode: proc.signalCode,
+      exitCode: proc.exitCode ?? -1,
       killed: proc.killed,
+      signalCode: proc.signalCode,
+      stderr,
+      stdout,
+      timedOut: proc.killed && proc.signalCode === "SIGTERM",
     };
   } catch (error) {
     const durationMs = Date.now() - startTime;
     const message = error instanceof Error ? error.message : String(error);
 
     return {
-      stdout: "",
-      stderr: message,
-      exitCode: -1,
-      timedOut: false,
       durationMs,
-      signalCode: null,
+      exitCode: -1,
       killed: false,
+      signalCode: null,
+      stderr: message,
+      stdout: "",
+      timedOut: false,
     };
   }
 }

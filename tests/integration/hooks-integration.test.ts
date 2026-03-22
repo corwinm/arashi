@@ -1,6 +1,6 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { runLifecycleHook } from "../../src/lib/hooks";
-import { createTestRepo, cleanupTestRepo, createHookInRepo } from "../helpers/hooks";
+import { cleanupTestRepo, createHookInRepo, createTestRepo } from "../helpers/hooks";
 
 // ============================================================================
 // Integration Tests
@@ -108,9 +108,9 @@ describe("Hook System Integration", () => {
     );
 
     const result = await runLifecycleHook("pre-create", testRepo, {
+      BASE_BRANCH: "main",
       BRANCH: "feature-456",
       WORKTREE_PATH: "/path/to/worktree",
-      BASE_BRANCH: "main",
     });
 
     expect(result).not.toBeNull();

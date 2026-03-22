@@ -6,7 +6,7 @@
  * worktree destination paths based on repository type.
  */
 
-import { test, expect, beforeEach, afterEach, describe } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { spawn } from "child_process";
@@ -62,7 +62,7 @@ describe("calculateWorktreePath", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   describe("US1: Meta-repo Sibling Strategy - Non-bare", () => {
@@ -77,16 +77,16 @@ describe("calculateWorktreePath", () => {
       );
 
       const repo: Repository = {
-        name: "my-project",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "my-project",
+        path: metaRepoPath,
       };
 
       const config: ArashiConfig = {
-        version: "1.0.0",
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
       };
 
       const result = await calculateWorktreePath(repo, "feature-123", config);
@@ -111,16 +111,16 @@ describe("calculateWorktreePath", () => {
       );
 
       const repo: Repository = {
-        name: "project",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "project",
+        path: metaRepoPath,
       };
 
       const config: ArashiConfig = {
-        version: "1.0.0",
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
       };
 
       // Test various branch names
@@ -148,16 +148,16 @@ describe("calculateWorktreePath", () => {
       );
 
       const repo: Repository = {
-        name: "my-project.git",
-        path: bareRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "my-project.git",
+        path: bareRepoPath,
       };
 
       const config: ArashiConfig = {
-        version: "1.0.0",
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
       };
 
       const result = await calculateWorktreePath(repo, "feature-123", config);
@@ -174,16 +174,16 @@ describe("calculateWorktreePath", () => {
       await createGitRepo(bareRepoPath, true);
 
       const repo: Repository = {
-        name: "standalone.git",
-        path: bareRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "standalone.git",
+        path: bareRepoPath,
       };
 
       const config: ArashiConfig = {
-        version: "1.0.0",
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
       };
 
       const result = await calculateWorktreePath(repo, "bugfix-789", config);
@@ -202,7 +202,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", reposDir: "./repos" }),
+        JSON.stringify({ reposDir: "./repos", version: "1.0.0" }),
       );
 
       // Create child repo
@@ -210,16 +210,16 @@ describe("calculateWorktreePath", () => {
       await createGitRepo(childRepoPath, false);
 
       const childRepo: Repository = {
-        name: "child-repo",
-        path: childRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "child-repo",
+        path: childRepoPath,
       };
 
       const config: ArashiConfig = {
-        version: "1.0.0",
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
       };
 
       const result = await calculateWorktreePath(childRepo, "feature-123", config);
@@ -248,7 +248,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(bareMetaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(bareMetaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", reposDir: "./repos" }),
+        JSON.stringify({ reposDir: "./repos", version: "1.0.0" }),
       );
 
       // Create child repo inside bare parent
@@ -256,16 +256,16 @@ describe("calculateWorktreePath", () => {
       await createGitRepo(childRepoPath, false);
 
       const childRepo: Repository = {
-        name: "child-repo",
-        path: childRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "child-repo",
+        path: childRepoPath,
       };
 
       const config: ArashiConfig = {
-        version: "1.0.0",
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
       };
 
       const result = await calculateWorktreePath(childRepo, "feature-123", config);
@@ -288,7 +288,7 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(bareMetaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(bareMetaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", reposDir: "./repos" }),
+        JSON.stringify({ reposDir: "./repos", version: "1.0.0" }),
       );
 
       // Create multiple child repos
@@ -299,17 +299,17 @@ describe("calculateWorktreePath", () => {
         const childPath = join(bareMetaRepoPath, "repos", name);
         await createGitRepo(childPath, false);
         childRepos.push({
-          name,
-          path: childPath,
           defaultBranch: "main",
           hasSetupScript: false,
+          name,
+          path: childPath,
         });
       }
 
       const config: ArashiConfig = {
-        version: "1.0.0",
-        reposDir: "./repos",
         repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
       };
 
       // All children should nest inside branch-name-only parent worktree
@@ -334,46 +334,46 @@ describe("calculateWorktreePath", () => {
       await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
-        JSON.stringify({ version: "1.0.0", reposDir: "./repos" }),
+        JSON.stringify({ reposDir: "./repos", version: "1.0.0" }),
       );
 
       const repo: Repository = {
-        name: "variant-repo",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "variant-repo",
+        path: metaRepoPath,
       };
 
       const withDot = await calculateWorktreePath(repo, "feature-variants", {
-        version: "1.0.0",
+        repos: {},
         reposDir: "./repos",
+        version: "1.0.0",
         worktree_strategy: "same_branch",
         worktreesDir: ".",
-        repos: {},
       });
 
       const withDotSlash = await calculateWorktreePath(repo, "feature-variants", {
-        version: "1.0.0",
+        repos: {},
         reposDir: "./repos",
+        version: "1.0.0",
         worktree_strategy: "same_branch",
         worktreesDir: "./",
-        repos: {},
       });
 
       const managedNoSlash = await calculateWorktreePath(repo, "feature-variants", {
-        version: "1.0.0",
+        repos: {},
         reposDir: "./repos",
+        version: "1.0.0",
         worktree_strategy: "same_branch",
         worktreesDir: ".arashi/worktrees",
-        repos: {},
       });
 
       const managedWithSlash = await calculateWorktreePath(repo, "feature-variants", {
-        version: "1.0.0",
+        repos: {},
         reposDir: "./repos",
+        version: "1.0.0",
         worktree_strategy: "same_branch",
         worktreesDir: ".arashi/worktrees/",
-        repos: {},
       });
 
       expect(withDot.path).toBe(withDotSlash.path);

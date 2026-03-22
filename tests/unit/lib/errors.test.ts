@@ -2,18 +2,18 @@
  * Unit tests for ArashiError class
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { ArashiError } from "../../../src/lib/errors";
 import { GitErrorCode } from "../../../src/types/git";
 import type { GitErrorContext } from "../../../src/types/git";
 
 describe("ArashiError", () => {
   const baseContext: GitErrorContext = {
-    stdout: "",
-    stderr: "",
-    exitCode: 1,
     args: ["status"],
     cwd: "/test/repo",
+    exitCode: 1,
+    stderr: "",
+    stdout: "",
   };
 
   test("creates error with message and context", () => {
@@ -108,11 +108,11 @@ describe("ArashiError", () => {
 
   test("preserves all context properties", () => {
     const context: GitErrorContext = {
-      stdout: "some output",
-      stderr: "some error",
-      exitCode: 128,
       args: ["worktree", "add", "/path", "branch"],
       cwd: "/repo/path",
+      exitCode: 128,
+      stderr: "some error",
+      stdout: "some output",
     };
 
     const error = new ArashiError("Test", context);
@@ -126,11 +126,11 @@ describe("ArashiError", () => {
 
   test("toJSON() returns serializable object", () => {
     const context: GitErrorContext = {
-      stdout: "output",
-      stderr: "fatal: error",
-      exitCode: 1,
       args: ["status"],
       cwd: "/repo",
+      exitCode: 1,
+      stderr: "fatal: error",
+      stdout: "output",
     };
 
     const error = new ArashiError("Test error", context);
@@ -145,11 +145,11 @@ describe("ArashiError", () => {
 
   test("toJSON() includes all context properties", () => {
     const context: GitErrorContext = {
-      stdout: "output",
-      stderr: "error",
-      exitCode: 1,
       args: ["test"],
       cwd: "/path",
+      exitCode: 1,
+      stderr: "error",
+      stdout: "output",
     };
 
     const error = new ArashiError("Test", context);
@@ -187,11 +187,11 @@ describe("ArashiError", () => {
 
   test("handles context without cwd", () => {
     const context: GitErrorContext = {
-      stdout: "",
-      stderr: "error",
-      exitCode: 1,
       args: ["test"],
-      // cwd is optional
+      exitCode: 1,
+      stderr: "error",
+      stdout: "",
+      // Cwd is optional
     };
 
     const error = new ArashiError("Test", context);

@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "path";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../helpers/create-bare-create-workspace.ts";
+import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
+import type { BareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 
 let workspace: BareCreateWorkspace | null = null;
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
@@ -27,8 +25,8 @@ describe("create rollback guarantees in bare context", () => {
 
     const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"], {
       cwd: workspace.bareRepoPath,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const exitCode = await proc.exited;
@@ -36,8 +34,8 @@ describe("create rollback guarantees in bare context", () => {
 
     const branchCheck = Bun.spawnSync(["git", "show-ref", "--verify", `refs/heads/${branch}`], {
       cwd: workspace.bareRepoPath,
-      stdout: "ignore",
       stderr: "ignore",
+      stdout: "ignore",
     });
 
     expect(branchCheck.exitCode).not.toBe(0);

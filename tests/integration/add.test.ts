@@ -10,15 +10,15 @@
  * - Error handling and rollback
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "path";
 import { mkdir, rm } from "fs/promises";
 import { existsSync } from "fs";
 import {
-  isValidGitUrl,
   deriveRepoName,
-  parseGitUrl,
   detectSetupScript,
+  isValidGitUrl,
+  parseGitUrl,
 } from "../../src/commands/add.ts";
 import { AddCommandErrorCode } from "../../src/lib/errors.ts";
 
@@ -157,7 +157,7 @@ describe("Add Command - Setup Script Detection", () => {
 
   afterEach(async () => {
     if (existsSync(testRepoPath)) {
-      await rm(testRepoPath, { recursive: true, force: true });
+      await rm(testRepoPath, { force: true, recursive: true });
     }
   });
 
@@ -262,8 +262,8 @@ describe("Add Command - Edge Cases", () => {
 });
 
 // Note: Full end-to-end integration tests with actual git repositories
-// would require network access and are better suited for manual testing
-// or CI/CD pipelines with test repositories.
+// Would require network access and are better suited for manual testing
+// Or CI/CD pipelines with test repositories.
 
 describe("Add Command - Validation Summary", () => {
   test("all URL validation functions work correctly", () => {

@@ -94,10 +94,10 @@ export interface ValidationResult {
 }
 
 export const GLOBAL_HOOKS = {
-  preCreate: "pre-create",
   postCreate: "post-create",
-  preRemove: "pre-remove",
   postRemove: "post-remove",
+  preCreate: "pre-create",
+  preRemove: "pre-remove",
 } as const;
 
 export const REPO_SPECIFIC_LIFECYCLES = ["pre-create", "post-create"] as const;
@@ -170,21 +170,19 @@ export interface RemoveHookOperationDataOptions {
 export function buildRemoveHookOperationData(
   options: RemoveHookOperationDataOptions,
 ): Record<string, string> {
-  const uniqueBranches = Array.from(
-    new Set(options.branchNames.filter((value) => value.length > 0)),
-  );
-  const uniqueWorktreePaths = Array.from(
-    new Set(options.worktreePaths.filter((value) => value.length > 0)),
-  );
-  const uniqueRepositories = Array.from(
-    new Set(options.repositoryNames.filter((value) => value.length > 0)),
-  );
+  const uniqueBranches = [...new Set(options.branchNames.filter((value) => value.length > 0))];
+  const uniqueWorktreePaths = [
+    ...new Set(options.worktreePaths.filter((value) => value.length > 0)),
+  ];
+  const uniqueRepositories = [
+    ...new Set(options.repositoryNames.filter((value) => value.length > 0)),
+  ];
 
   const operationData = buildHookOperationData({
     branchName: uniqueBranches[0],
+    mainRepoPath: options.mainRepoPath,
     repoName: uniqueRepositories[0],
     worktreePath: uniqueWorktreePaths[0],
-    mainRepoPath: options.mainRepoPath,
   });
 
   operationData.OPERATION = "remove";
@@ -212,35 +210,35 @@ export function mapHookSkippedOutcome(
 ): HookOutcomeMapping {
   return {
     hookStatus: "skipped",
-    reasonCode,
     message,
+    reasonCode,
   };
 }
 
 export function mapHookExecutionResult(result: HookResult): HookOutcomeMapping {
   if (result.success) {
     return {
-      hookStatus: "success",
-      reasonCode: "none",
-      message: "Hook completed",
       durationMs: result.duration,
+      hookStatus: "success",
+      message: "Hook completed",
+      reasonCode: "none",
     };
   }
 
   if (result.timedOut) {
     return {
-      hookStatus: "failure",
-      reasonCode: "timeout",
-      message: "Hook timed out after configured limit",
       durationMs: result.duration,
+      hookStatus: "failure",
+      message: "Hook timed out after configured limit",
+      reasonCode: "timeout",
     };
   }
 
   return {
-    hookStatus: "failure",
-    reasonCode: "exit_non_zero",
-    message: `Hook exited with code ${result.exitCode}`,
     durationMs: result.duration,
+    hookStatus: "failure",
+    message: `Hook exited with code ${result.exitCode}`,
+    reasonCode: "exit_non_zero",
   };
 }
 
@@ -375,11 +373,11 @@ export async function resolveScopedLifecycleHooks(options: {
 
     if (target.path !== options.workspaceRoot && (await pathExists(repositoryHookPath))) {
       resolved.push({
+        executionPath: target.path,
         hookName: options.hookName,
         scope: "repository",
         scriptPath: repositoryHookPath,
         sourceScriptPath: repositoryHookPath,
-        executionPath: target.path,
         targetRepositoryName: target.name,
         targetRepositoryPath: target.path,
       });
@@ -387,11 +385,11 @@ export async function resolveScopedLifecycleHooks(options: {
 
     if (await pathExists(workspaceHookPath)) {
       resolved.push({
+        executionPath: options.workspaceRoot,
         hookName: options.hookName,
         scope: "workspace",
         scriptPath: workspaceHookPath,
         sourceScriptPath: workspaceHookPath,
-        executionPath: options.workspaceRoot,
         targetRepositoryName: target.name,
         targetRepositoryPath: target.path,
       });
@@ -399,11 +397,11 @@ export async function resolveScopedLifecycleHooks(options: {
 
     if (await pathExists(globalRepositoryHookPath)) {
       resolved.push({
+        executionPath: target.path,
         hookName: options.hookName,
         scope: "global-repository",
         scriptPath: globalRepositoryHookPath,
         sourceScriptPath: globalRepositoryHookPath,
-        executionPath: target.path,
         targetRepositoryName: target.name,
         targetRepositoryPath: target.path,
       });
@@ -411,11 +409,11 @@ export async function resolveScopedLifecycleHooks(options: {
 
     if (await pathExists(globalSharedHookPath)) {
       resolved.push({
+        executionPath: target.path,
         hookName: options.hookName,
         scope: "global-shared",
         scriptPath: globalSharedHookPath,
         sourceScriptPath: globalSharedHookPath,
-        executionPath: target.path,
         targetRepositoryName: target.name,
         targetRepositoryPath: target.path,
       });
@@ -436,7 +434,7 @@ export async function validateHook(hookPath: string): Promise<ValidationResult> 
     const stats = await stat(hookPath);
 
     if (!stats.isFile()) {
-      return { valid: false, error: `Hook is not a file: ${hookPath}` };
+      return { error: `Hook is not a file: ${hookPath}`, valid: false };
     }
 
     // Check execute permissions on Unix
@@ -445,15 +443,15 @@ export async function validateHook(hookPath: string): Promise<ValidationResult> 
         await access(hookPath, constants.X_OK);
       } catch {
         return {
-          valid: false,
           error: `Hook is not executable: ${hookPath}. Run: chmod +x ${hookPath}`,
+          valid: false,
         };
       }
     }
 
     return { valid: true };
   } catch (error) {
-    return { valid: false, error: `Failed to validate hook: ${error}` };
+    return { error: `Failed to validate hook: ${error}`, valid: false };
   }
 }
 
@@ -465,7 +463,7 @@ export async function validateHook(hookPath: string): Promise<ValidationResult> 
  */
 export async function executeHook(options: HookExecutionOptions): Promise<HookResult> {
   const startTime = Date.now();
-  const timeout = options.timeout ?? 300000;
+  const timeout = options.timeout ?? 300_000;
 
   console.log(`🪝 Executing hook: ${options.hookName}`);
 
@@ -473,10 +471,10 @@ export async function executeHook(options: HookExecutionOptions): Promise<HookRe
     const proc = Bun.spawn(getShellCommand(options.scriptPath), {
       cwd: options.context.repoPath,
       env: buildEnvironment(options.context),
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout,
       killSignal: "SIGTERM",
+      stderr: "pipe",
+      stdout: "pipe",
+      timeout,
     });
 
     // Stream output in parallel
@@ -491,28 +489,28 @@ export async function executeHook(options: HookExecutionOptions): Promise<HookRe
     const exitCode = proc.exitCode ?? -1;
 
     return {
+      duration,
       exitCode,
-      signalCode: proc.signalCode,
       killed: proc.killed,
-      stdout,
+      signalCode: proc.signalCode,
       stderr,
+      stdout,
       success: exitCode === 0,
       timedOut: proc.killed && proc.signalCode === "SIGTERM",
-      duration,
     };
   } catch (error) {
     const duration = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     return {
+      duration,
       exitCode: -1,
-      signalCode: null,
       killed: false,
-      stdout: "",
+      signalCode: null,
       stderr: `Failed to execute hook: ${errorMessage}`,
+      stdout: "",
       success: false,
       timedOut: false,
-      duration,
     };
   }
 }
@@ -553,13 +551,13 @@ export async function runLifecycleHook(
 
   // Execute hook
   const result = await executeHook({
-    hookName: lifecyclePoint,
-    scriptPath: hookPath,
     context: {
       hookName: lifecyclePoint,
       repoPath,
       operationData,
     },
+    hookName: lifecyclePoint,
+    scriptPath: hookPath,
     timeout: options?.timeout,
   });
 

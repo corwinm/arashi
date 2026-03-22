@@ -4,41 +4,41 @@ import { resolveDefaultWithPrecedence } from "../../src/lib/default-resolution.t
 describe("resolveDefaultWithPrecedence", () => {
   test("prefers explicit values over all other sources", () => {
     const resolved = resolveDefaultWithPrecedence({
+      builtInValue: false,
+      configValue: false,
       explicitValue: true,
       hasExplicitValue: true,
       optOut: true,
-      configValue: false,
-      builtInValue: false,
     });
 
     expect(resolved).toEqual({
-      value: true,
       source: "explicit",
+      value: true,
     });
   });
 
   test("applies opt-out before config defaults", () => {
     const resolved = resolveDefaultWithPrecedence({
-      optOut: true,
-      configValue: "sesh",
       builtInValue: "auto",
+      configValue: "sesh",
+      optOut: true,
     });
 
     expect(resolved).toEqual({
-      value: "auto",
       source: "opt-out",
+      value: "auto",
     });
   });
 
   test("uses config value when no explicit value or opt-out is present", () => {
     const resolved = resolveDefaultWithPrecedence({
-      configValue: true,
       builtInValue: false,
+      configValue: true,
     });
 
     expect(resolved).toEqual({
-      value: true,
       source: "config",
+      value: true,
     });
   });
 
@@ -48,8 +48,8 @@ describe("resolveDefaultWithPrecedence", () => {
     });
 
     expect(resolved).toEqual({
-      value: "auto",
       source: "built-in",
+      value: "auto",
     });
   });
 });

@@ -24,7 +24,7 @@ describe("remove command - lifecycle hooks", () => {
 
   afterEach(async () => {
     await workspace.cleanup();
-    await rm(homePath, { recursive: true, force: true });
+    await rm(homePath, { force: true, recursive: true });
     if (originalHome === undefined) {
       delete process.env.HOME;
     } else {
@@ -113,8 +113,8 @@ echo "post:$ARASHI_REPO_NAME" >> "$ARASHI_MAIN_REPO_PATH/.arashi/remove-hooks-or
     try {
       const exitCode = await executeRemove(worktrees["repo-a"], {
         force: true,
-        path: true,
         keepBranches: true,
+        path: true,
       });
       expect(exitCode).toBe(0);
     } finally {
@@ -159,8 +159,8 @@ echo "post:$ARASHI_REPO_NAME" >> "$ARASHI_MAIN_REPO_PATH/.arashi/remove-hooks-or
     try {
       const exitCode = await executeRemove(worktrees["repo-a"], {
         force: true,
-        path: true,
         keepBranches: true,
+        path: true,
       });
       expect(exitCode).toBe(0);
     } finally {
@@ -329,8 +329,8 @@ async function createGlobalHook(
 async function gitBranchExists(repoPath: string, branchName: string): Promise<boolean> {
   const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
     cwd: repoPath,
-    stdout: "ignore",
     stderr: "ignore",
+    stdout: "ignore",
   });
   const exitCode = await proc.exited;
   return exitCode === 0;

@@ -72,8 +72,6 @@ export class ArashiError extends Error {
    */
   toJSON(): object {
     return {
-      name: this.name,
-      message: this.message,
       code: this.code,
       context: {
         stdout: this.context.stdout,
@@ -82,6 +80,8 @@ export class ArashiError extends Error {
         args: this.context.args,
         cwd: this.context.cwd,
       },
+      message: this.message,
+      name: this.name,
       stack: this.stack,
     };
   }
@@ -128,10 +128,10 @@ export class AddCommandError extends Error {
    */
   toJSON(): object {
     return {
-      name: this.name,
-      message: this.message,
       code: this.code,
       context: this.context,
+      message: this.message,
+      name: this.name,
       stack: this.stack,
     };
   }
@@ -175,10 +175,10 @@ export class RemoveCommandError extends Error {
 
   toJSON(): object {
     return {
-      name: this.name,
-      message: this.message,
       code: this.code,
       context: this.context,
+      message: this.message,
+      name: this.name,
       stack: this.stack,
     };
   }

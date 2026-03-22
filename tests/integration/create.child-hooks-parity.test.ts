@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "path";
-import {
-  createChildHookWorkspace,
-  type ChildHookWorkspace,
-} from "../helpers/create-child-hook-workspace.ts";
+import { createChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
+import type { ChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
 import { createRepoSpecificHookInRepo } from "../helpers/hooks.ts";
 
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
@@ -23,7 +21,7 @@ function extractHookOutcomeLines(output: string): string[] {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.startsWith("-") && line.includes("->"))
-    .sort();
+    .toSorted();
 }
 
 describe("create command hook parity between root and child invocation", () => {
@@ -44,8 +42,8 @@ describe("create command hook parity between root and child invocation", () => {
 
     const rootRun = Bun.spawn(["bun", CLI_ENTRY, "create", rootBranch, "--no-progress"], {
       cwd: workspace.workspacePath,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const rootExitCode = await rootRun.exited;
@@ -54,8 +52,8 @@ describe("create command hook parity between root and child invocation", () => {
 
     const childRun = Bun.spawn(["bun", CLI_ENTRY, "create", childBranch, "--no-progress"], {
       cwd: workspace.childInvocationPath,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const childExitCode = await childRun.exited;

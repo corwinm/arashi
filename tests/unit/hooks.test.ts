@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   GLOBAL_HOOKS,
   buildRemoveHookOperationData,
@@ -9,17 +9,17 @@ import {
   validateHook,
 } from "../../src/lib/hooks";
 import {
-  createTestRepo,
   cleanupTestRepo,
   createHookInRepo,
-  createTestContext,
   createMockHook,
+  createTestContext,
+  createTestRepo,
 } from "../helpers/hooks";
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 
 // ============================================================================
-// findHook() Tests
+// FindHook() Tests
 // ============================================================================
 
 describe("findHook", () => {
@@ -75,9 +75,9 @@ describe("remove lifecycle helpers", () => {
   test("buildRemoveHookOperationData includes aggregate remove metadata", () => {
     const operationData = buildRemoveHookOperationData({
       branchNames: ["feature-a", "feature-a", "feature-b"],
-      worktreePaths: ["/tmp/wt-a", "/tmp/wt-a", "/tmp/wt-b"],
-      repositoryNames: ["repo-a", "repo-a", "repo-b"],
       mainRepoPath: "/tmp/workspace",
+      repositoryNames: ["repo-a", "repo-a", "repo-b"],
+      worktreePaths: ["/tmp/wt-a", "/tmp/wt-a", "/tmp/wt-b"],
     });
 
     expect(operationData.OPERATION).toBe("remove");
@@ -133,8 +133,8 @@ describe("resolveScopedLifecycleHooks", () => {
 
     const resolved = await resolveScopedLifecycleHooks({
       hookName: "pre-remove",
-      workspaceRoot,
       targetRepositories: [{ name: "repo-a", path: targetRepo }],
+      workspaceRoot,
     });
 
     expect(resolved).toHaveLength(4);
@@ -164,8 +164,8 @@ describe("resolveScopedLifecycleHooks", () => {
 
     const resolved = await resolveScopedLifecycleHooks({
       hookName: "pre-remove",
-      workspaceRoot,
       targetRepositories: [{ name: "repo-a", path: targetRepo }],
+      workspaceRoot,
     });
 
     expect(resolved).toEqual([]);
@@ -173,7 +173,7 @@ describe("resolveScopedLifecycleHooks", () => {
 });
 
 // ============================================================================
-// validateHook() Tests
+// ValidateHook() Tests
 // ============================================================================
 
 describe("validateHook", () => {
@@ -238,7 +238,7 @@ describe("validateHook", () => {
 });
 
 // ============================================================================
-// executeHook() Tests
+// ExecuteHook() Tests
 // ============================================================================
 
 describe("executeHook", () => {
@@ -246,9 +246,9 @@ describe("executeHook", () => {
     const hookPath = createMockHook("echo 'test output'");
 
     const result = await executeHook({
+      context: createTestContext(),
       hookName: "test-hook",
       scriptPath: hookPath,
-      context: createTestContext(),
     });
 
     expect(result.success).toBe(true);
@@ -265,9 +265,9 @@ describe("executeHook", () => {
     const hookPath = createMockHook("echo 'stdout message' && echo 'stderr message' >&2");
 
     const result = await executeHook({
+      context: createTestContext(),
       hookName: "test-hook",
       scriptPath: hookPath,
-      context: createTestContext(),
     });
 
     expect(result.stdout).toContain("stdout message");
@@ -280,9 +280,9 @@ describe("executeHook", () => {
     const hookPath = createMockHook("exit 1");
 
     const result = await executeHook({
+      context: createTestContext(),
       hookName: "test-hook",
       scriptPath: hookPath,
-      context: createTestContext(),
     });
 
     expect(result.success).toBe(false);
@@ -293,7 +293,7 @@ describe("executeHook", () => {
   });
 
   // Note: Timeout enforcement tests are not included due to Bun test framework limitations
-  // with streaming + timeout. The timeout feature works correctly in production (verified manually).
+  // With streaming + timeout. The timeout feature works correctly in production (verified manually).
 
   test("passes environment variables correctly", async () => {
     const testRepo = createTestRepo();
@@ -304,13 +304,13 @@ describe("executeHook", () => {
 		`);
 
     const result = await executeHook({
-      hookName: "test-hook",
-      scriptPath: hookPath,
       context: {
         hookName: "test-hook",
         repoPath: testRepo,
         operationData: { BRANCH: "main" },
       },
+      hookName: "test-hook",
+      scriptPath: hookPath,
     });
 
     expect(result.stdout).toContain("Hook: test-hook");
@@ -331,8 +331,6 @@ describe("executeHook", () => {
     `);
 
     const result = await executeHook({
-      hookName: "test-hook",
-      scriptPath: hookPath,
       context: {
         hookName: "test-hook",
         repoPath: testRepo,
@@ -342,6 +340,8 @@ describe("executeHook", () => {
         targetRepoPath: "/tmp/repo-a",
         operationData: {},
       },
+      hookName: "test-hook",
+      scriptPath: hookPath,
     });
 
     expect(result.stdout).toContain("Scope: global-shared");
@@ -355,7 +355,7 @@ describe("executeHook", () => {
 });
 
 // ============================================================================
-// runLifecycleHook() Tests
+// RunLifecycleHook() Tests
 // ============================================================================
 
 describe("runLifecycleHook", () => {

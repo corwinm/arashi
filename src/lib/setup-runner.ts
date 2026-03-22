@@ -11,10 +11,10 @@ export async function runSetupTarget(
 ): Promise<SetupExecutionResult> {
   if (!target.setupScriptPath) {
     return {
+      detail: target.skipReason ?? "no setup script found",
+      durationMs: 0,
       repositoryName: target.name,
       status: "skipped",
-      durationMs: 0,
-      detail: target.skipReason ?? "no setup script found",
     };
   }
 
@@ -28,29 +28,29 @@ export async function runSetupTarget(
 
   if (result.timedOut) {
     return {
+      detail: `Timed out after ${options.timeoutMs}ms`,
+      durationMs: result.durationMs,
+      output,
       repositoryName: target.name,
       status: "timed-out",
-      durationMs: result.durationMs,
-      detail: `Timed out after ${options.timeoutMs}ms`,
-      output,
     };
   }
 
   if (result.exitCode !== 0) {
     return {
+      detail: output || `Setup exited with code ${result.exitCode}`,
+      durationMs: result.durationMs,
+      output,
       repositoryName: target.name,
       status: "failed",
-      durationMs: result.durationMs,
-      detail: output || `Setup exited with code ${result.exitCode}`,
-      output,
     };
   }
 
   return {
-    repositoryName: target.name,
-    status: "success",
     durationMs: result.durationMs,
     output,
+    repositoryName: target.name,
+    status: "success",
   };
 }
 

@@ -5,8 +5,8 @@
  * git validation, error handling, and rollback behavior.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir, chmod } from "fs/promises";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawn } from "bun";
@@ -22,8 +22,8 @@ async function createTempGitRepo(): Promise<string> {
   // Initialize git repository
   const gitInit = spawn(["git", "init"], {
     cwd: testDir,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
   await gitInit.exited;
 
@@ -45,7 +45,7 @@ async function createTempDir(): Promise<string> {
  * Helper to clean up test directory
  */
 async function cleanup(testDir: string): Promise<void> {
-  await rm(testDir, { recursive: true, force: true });
+  await rm(testDir, { force: true, recursive: true });
 }
 
 /**
@@ -66,15 +66,15 @@ async function runInitCommand(
 
   const proc = spawn(["bun", arashiBin, "init", ...args], {
     cwd,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
 
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;
 
-  return { exitCode, stdout, stderr };
+  return { exitCode, stderr, stdout };
 }
 
 describe("init command - success cases", () => {
@@ -203,7 +203,7 @@ describe("init command - success cases", () => {
 
     expect(result.exitCode).toBe(0);
     // When --no-discover is used, output should not show repository discovery
-    // but should indicate discovery was skipped or show 0 repositories
+    // But should indicate discovery was skipped or show 0 repositories
 
     // Verify no repositories discovered in config
     const loadedConfig = await config.loadConfig(testDir);
@@ -915,6 +915,6 @@ describe("init command - dry-run and verbose together", () => {
     // Verify nothing created (except the custom directory we created for the test)
     expect(await filesystem.fileExists(join(testDir, ".arashi"))).toBe(false);
     // The custom directory was created by us for the test, so it exists
-    // but the .arashi structure inside testDir should not exist
+    // But the .arashi structure inside testDir should not exist
   });
 });

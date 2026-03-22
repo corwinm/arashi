@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { join } from "path";
-import {
-  createChildHookWorkspace,
-  type ChildHookWorkspace,
-} from "../helpers/create-child-hook-workspace.ts";
+import { createChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
+import type { ChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
 import { createRepoSpecificHookInRepo } from "../helpers/hooks.ts";
 
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
@@ -41,8 +39,8 @@ describe("create command child-repo hook success flows", () => {
 
     const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-progress"], {
       cwd: workspace.childInvocationPath,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const exitCode = await proc.exited;
@@ -90,8 +88,8 @@ describe("create command child-repo hook success flows", () => {
 
     const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-progress"], {
       cwd: workspace.nestedChildInvocationPath,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const exitCode = await proc.exited;

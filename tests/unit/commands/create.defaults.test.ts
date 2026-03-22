@@ -4,9 +4,9 @@ import type { Config } from "../../../src/lib/config.ts";
 
 function baseConfig(): Config {
   return {
-    version: "1.0.0",
-    reposDir: "./repos",
     repos: {},
+    reposDir: "./repos",
+    version: "1.0.0",
   };
 }
 
@@ -15,18 +15,18 @@ describe("resolveCreateDefaults", () => {
     const config = baseConfig();
     config.defaults = {
       create: {
-        switch: true,
         launch: true,
         launchMode: "sesh",
+        switch: true,
       },
     };
 
     const resolved = resolveCreateDefaults({}, config);
 
     expect(resolved).toEqual({
-      shouldSwitch: true,
-      shouldLaunch: true,
       launchMode: "sesh",
+      shouldLaunch: true,
+      shouldSwitch: true,
     });
   });
 
@@ -34,24 +34,24 @@ describe("resolveCreateDefaults", () => {
     const config = baseConfig();
     config.defaults = {
       create: {
-        switch: true,
         launch: true,
         launchMode: "sesh",
+        switch: true,
       },
     };
 
     const resolved = resolveCreateDefaults(
       {
-        switch: false,
         launch: false,
+        switch: false,
       },
       config,
     );
 
     expect(resolved).toEqual({
-      shouldSwitch: false,
-      shouldLaunch: false,
       launchMode: "auto",
+      shouldLaunch: false,
+      shouldSwitch: false,
     });
   });
 
@@ -59,8 +59,8 @@ describe("resolveCreateDefaults", () => {
     const config = baseConfig();
     config.defaults = {
       create: {
-        switch: false,
         launch: false,
+        switch: false,
       },
     };
 
@@ -73,9 +73,9 @@ describe("resolveCreateDefaults", () => {
     );
 
     expect(resolved).toEqual({
-      shouldSwitch: true,
-      shouldLaunch: true,
       launchMode: "sesh",
+      shouldLaunch: true,
+      shouldSwitch: true,
     });
   });
 
@@ -83,9 +83,9 @@ describe("resolveCreateDefaults", () => {
     const resolved = resolveCreateDefaults({}, baseConfig());
 
     expect(resolved).toEqual({
-      shouldSwitch: false,
-      shouldLaunch: false,
       launchMode: "auto",
+      shouldLaunch: false,
+      shouldSwitch: false,
     });
   });
 });

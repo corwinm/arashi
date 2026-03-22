@@ -7,22 +7,19 @@
 import { Command } from "commander";
 import { basename, resolve } from "path";
 import chalk from "chalk";
-import {
-  confirm as promptConfirm,
-  multiSelect as promptMultiSelect,
-  type Choice,
-  type PromptOutcome,
-} from "../lib/prompts.ts";
+import { confirm as promptConfirm, multiSelect as promptMultiSelect } from "../lib/prompts.ts";
+import type { Choice, PromptOutcome } from "../lib/prompts.ts";
 import * as logger from "../lib/logger.ts";
-import { loadConfig, findWorkspaceRoot, type Config } from "../lib/config.ts";
+import { loadConfig, findWorkspaceRoot } from "../lib/config.ts";
+import type { Config } from "../lib/config.ts";
 import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
 import { getDefaultBranch } from "../lib/git.ts";
 import { existsSync } from "fs";
 import type {
+  RemovalOperation,
   RemoveCommandOptions,
   WorktreeEntry,
   WorktreeGrouping,
-  RemovalOperation,
 } from "../types/remove.ts";
 import {
   branchExists,
@@ -38,8 +35,8 @@ import {
   groupWorktreesByParent,
   removeWorktree,
   refreshRemainingChildStatuses,
-  type RepositoryTarget,
 } from "../core/remove.ts";
+import type { RepositoryTarget } from "../core/remove.ts";
 import { buildWorktreeEntries, resolveWorktreeStatuses } from "../core/worktree.ts";
 import * as hooks from "../lib/hooks.ts";
 
@@ -128,9 +125,9 @@ export async function executeRemove(
     if (matchingByPath.length > 0) {
       usedPathMode.value = true;
       const enriched = await buildWorktreeEntries(matchingByPath, {
-        reposDirName,
         childRepoNames,
         includeDirtyDetails: options.checkDirty !== false,
+        reposDirName,
       });
       pathWorktrees.push(...enriched);
     } else if (options.path) {
@@ -145,9 +142,9 @@ export async function executeRemove(
   } else {
     const allWorktrees = await discoverAllWorktrees(repositories);
     const entries = await buildWorktreeEntries(allWorktrees, {
-      reposDirName,
       childRepoNames,
       includeDirtyDetails: options.checkDirty !== false,
+      reposDirName,
     });
     const selectable = entries.filter((wt) => !wt.isMain && wt.branch);
 
@@ -168,7 +165,7 @@ export async function executeRemove(
     const selected = expandSelectedWorktrees(selection.value, grouping, selectablePaths, entries);
     usedPathMode.value = true;
     pathWorktrees.push(...selected);
-    targetBranches = Array.from(new Set(selected.map((wt) => wt.branch).filter(Boolean)));
+    targetBranches = [...new Set(selected.map((wt) => wt.branch).filter(Boolean))];
 
     if (targetBranches.length === 0) {
       logger.info("No worktrees selected to remove");
@@ -190,7 +187,7 @@ export async function executeRemove(
       skippedMain.push(...mainWorktrees);
     }
     worktreesToRemove.push(...removable);
-    targetBranches = Array.from(new Set(removable.map((wt) => wt.branch).filter(Boolean)));
+    targetBranches = [...new Set(removable.map((wt) => wt.branch).filter(Boolean))];
     for (const wt of removable) {
       if (!wt.branch) {
         continue;
@@ -204,9 +201,9 @@ export async function executeRemove(
     for (const branch of targetBranches) {
       const worktrees = await discoverWorktreesByBranch(branch, repositories);
       const enriched = await buildWorktreeEntries(worktrees, {
-        reposDirName,
         childRepoNames,
         includeDirtyDetails: options.checkDirty !== false,
+        reposDirName,
       });
       const mainWorktrees = enriched.filter((wt) => wt.isMain);
       const removable = enriched.filter((wt) => !wt.isMain);
@@ -292,7 +289,7 @@ export async function executeRemove(
       targetRepositories.add(repoName);
     }
   }
-  const targetRepositoryNames = Array.from(targetRepositories).sort((a, b) => a.localeCompare(b));
+  const targetRepositoryNames = [...targetRepositories].toSorted((a, b) => a.localeCompare(b));
   const removeHookTargets = targetRepositoryNames.map((repoName) => ({
     name: repoName,
     path: getRepoPath(repositories, repoName),
@@ -300,26 +297,26 @@ export async function executeRemove(
 
   const removeHookOperationData = hooks.buildRemoveHookOperationData({
     branchNames: targetBranches,
-    worktreePaths: worktreesToRemove.map((worktree) => worktree.path),
-    repositoryNames: targetRepositoryNames,
     mainRepoPath: workspaceRoot,
+    repositoryNames: targetRepositoryNames,
+    worktreePaths: worktreesToRemove.map((worktree) => worktree.path),
   });
 
   const preRemoveOutcome = await runRemoveLifecycleHook({
     hookName: hooks.GLOBAL_HOOKS.preRemove,
-    workspaceRoot,
-    targetRepositories: removeHookTargets,
     operationData: removeHookOperationData,
-    timeoutMs: config.hooks?.timeout,
     stopOnFailure: true,
+    targetRepositories: removeHookTargets,
+    timeoutMs: config.hooks?.timeout,
+    workspaceRoot,
   });
   if (preRemoveOutcome.hookStatus === "failure") {
     summary.errors.push(formatHookFailure(hooks.GLOBAL_HOOKS.preRemove, preRemoveOutcome));
     summary.duration = Date.now() - startTime;
     if (options.json) {
-      console.log(formatRemovalSummaryJson(summary, { skippedMain, missingBranches }));
+      console.log(formatRemovalSummaryJson(summary, { missingBranches, skippedMain }));
     } else {
-      console.log(formatRemovalSummaryHuman(summary, { skippedMain, missingBranches }));
+      console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
     }
     return 1;
   }
@@ -339,11 +336,11 @@ export async function executeRemove(
     for (let index = 0; index < worktreesToRemove.length; index += 1) {
       const worktree = worktreesToRemove[index];
       const operation: RemovalOperation = {
-        type: "worktree_remove",
-        repository: worktree.repository,
         branchName: worktree.branch,
-        worktreePath: worktree.path,
+        repository: worktree.repository,
         status: "pending",
+        type: "worktree_remove",
+        worktreePath: worktree.path,
       };
 
       try {
@@ -379,10 +376,10 @@ export async function executeRemove(
       for (const repoName of branchPresence[branch]) {
         const repoPath = getRepoPath(repositories, repoName);
         const operation: RemovalOperation = {
-          type: "branch_delete",
-          repository: repoName,
           branchName: branch,
+          repository: repoName,
           status: "pending",
+          type: "branch_delete",
         };
 
         const currentBranch = await getCurrentBranch(repoPath);
@@ -412,11 +409,11 @@ export async function executeRemove(
 
   const postRemoveOutcome = await runRemoveLifecycleHook({
     hookName: hooks.GLOBAL_HOOKS.postRemove,
-    workspaceRoot,
-    targetRepositories: removeHookTargets,
     operationData: removeHookOperationData,
-    timeoutMs: config.hooks?.timeout,
     stopOnFailure: false,
+    targetRepositories: removeHookTargets,
+    timeoutMs: config.hooks?.timeout,
+    workspaceRoot,
   });
   if (postRemoveOutcome.hookStatus === "failure") {
     summary.errors.push(formatHookFailure(hooks.GLOBAL_HOOKS.postRemove, postRemoveOutcome));
@@ -425,9 +422,9 @@ export async function executeRemove(
   summary.duration = Date.now() - startTime;
 
   if (options.json) {
-    console.log(formatRemovalSummaryJson(summary, { skippedMain, missingBranches }));
+    console.log(formatRemovalSummaryJson(summary, { missingBranches, skippedMain }));
   } else {
-    console.log(formatRemovalSummaryHuman(summary, { skippedMain, missingBranches }));
+    console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
   }
 
   return summary.errors.length > 0 ? 1 : 0;
@@ -466,30 +463,34 @@ function formatWorktreeStatusLabel(worktree: WorktreeEntry): string {
   return chalk.green("clean");
 }
 
+function formatChildSummary(children: WorktreeEntry[]): string | null {
+  if (children.length === 0) {
+    return null;
+  }
+
+  const sortedChildren = [...children];
+  sortedChildren.sort((a: WorktreeEntry, b: WorktreeEntry) =>
+    a.repository.localeCompare(b.repository),
+  );
+
+  const parts = sortedChildren.map((child: WorktreeEntry) => {
+    const branchLabel = child.branch || "detached";
+    const status =
+      child.status === "prunable" ? "prunable" : child.status === "dirty" ? "dirty" : null;
+    return status
+      ? `${child.repository}=${branchLabel} (${status})`
+      : `${child.repository}=${branchLabel}`;
+  });
+
+  return parts.join(", ");
+}
+
 function buildWorktreeChoices(
   grouping: WorktreeGrouping,
   selectablePaths: Set<string>,
   defaultBranches: Record<string, string | null>,
 ): Choice<string>[] {
   const choices: Choice<string>[] = [];
-
-  const formatChildSummary = (children: WorktreeEntry[]): string | null => {
-    if (children.length === 0) {
-      return null;
-    }
-    const parts = children
-      .slice()
-      .sort((a, b) => a.repository.localeCompare(b.repository))
-      .map((child) => {
-        const branchLabel = child.branch || "detached";
-        const status =
-          child.status === "prunable" ? "prunable" : child.status === "dirty" ? "dirty" : null;
-        return status
-          ? `${child.repository}=${branchLabel} (${status})`
-          : `${child.repository}=${branchLabel}`;
-      });
-    return parts.join(", ");
-  };
 
   const pushEntry = (entry: WorktreeEntry, childSummary?: string | null) => {
     if (!selectablePaths.has(entry.path)) {
@@ -501,16 +502,18 @@ function buildWorktreeChoices(
       defaultBranches[entry.repository] === entry.branch ? chalk.cyan("default") : null;
     const suffix = childSummary ? ` (${childSummary})` : "";
     const label = `${branchLabel} - ${status}${defaultTag ? `, ${defaultTag}` : ""}${suffix}`;
-    choices.push({ value: entry.path, name: label });
+    choices.push({ name: label, value: entry.path });
   };
 
-  const groups = [...grouping.groups].sort((a, b) => a.parent.path.localeCompare(b.parent.path));
+  const groups = [...grouping.groups].toSorted((a, b) =>
+    a.parent.path.localeCompare(b.parent.path),
+  );
   for (const group of groups) {
     const summary = formatChildSummary(group.children);
     pushEntry(group.parent, summary);
   }
 
-  const orphans = [...grouping.orphans].sort((a, b) => a.path.localeCompare(b.path));
+  const orphans = [...grouping.orphans].toSorted((a, b) => a.path.localeCompare(b.path));
   for (const orphan of orphans) {
     pushEntry(orphan, null);
   }
@@ -546,7 +549,7 @@ function expandSelectedWorktrees(
     }
   }
 
-  return Array.from(selected.values());
+  return [...selected.values()];
 }
 
 async function getDefaultBranchMap(
@@ -602,9 +605,15 @@ async function promptConfirmation(
         const details = wt.dirtyDetails;
         const parts: string[] = [];
         if (details) {
-          if (details.modifiedFiles > 0) parts.push(`${details.modifiedFiles} modified files`);
-          if (details.untrackedFiles > 0) parts.push(`${details.untrackedFiles} untracked files`);
-          if (details.stagedFiles > 0) parts.push(`${details.stagedFiles} staged files`);
+          if (details.modifiedFiles > 0) {
+            parts.push(`${details.modifiedFiles} modified files`);
+          }
+          if (details.untrackedFiles > 0) {
+            parts.push(`${details.untrackedFiles} untracked files`);
+          }
+          if (details.stagedFiles > 0) {
+            parts.push(`${details.stagedFiles} staged files`);
+          }
         }
         const detailText = parts.length > 0 ? ` (${parts.join(", ")})` : "";
         logger.info(`  • ${wt.repository}: ${wt.path}${detailText}`);
@@ -646,12 +655,12 @@ function handleError(error: unknown, options: RemoveCommandOptions): void {
       console.log(
         JSON.stringify(
           {
-            success: false,
             error: {
               code: error.code,
               message: error.message,
               context: error.context,
             },
+            success: false,
           },
           null,
           2,
@@ -680,11 +689,11 @@ function handleError(error: unknown, options: RemoveCommandOptions): void {
     console.log(
       JSON.stringify(
         {
-          success: false,
           error: {
             code: "UNKNOWN_ERROR",
             message,
           },
+          success: false,
         },
         null,
         2,
@@ -762,8 +771,8 @@ async function runRemoveLifecycleHook(options: {
   const spinner = logger.spinner(`Running ${options.hookName} hooks...`).start();
   const resolvedHooks = await hooks.resolveScopedLifecycleHooks({
     hookName: options.hookName,
-    workspaceRoot: options.workspaceRoot,
     targetRepositories: options.targetRepositories,
+    workspaceRoot: options.workspaceRoot,
   });
 
   if (resolvedHooks.length === 0) {
@@ -792,8 +801,6 @@ async function runRemoveLifecycleHook(options: {
     }
 
     const result = await hooks.executeHook({
-      hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
-      scriptPath: resolvedHook.scriptPath,
       context: {
         hookName: options.hookName,
         repoPath: resolvedHook.executionPath,
@@ -807,6 +814,8 @@ async function runRemoveLifecycleHook(options: {
           REPO_PATH: resolvedHook.targetRepositoryPath,
         },
       },
+      hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
+      scriptPath: resolvedHook.scriptPath,
       timeout: options.timeoutMs,
     });
     executedCount += 1;
@@ -828,16 +837,16 @@ async function runRemoveLifecycleHook(options: {
     spinner.succeed(`${options.hookName} hooks completed (${executedCount})`);
     return {
       hookStatus: "success",
-      reasonCode: "none",
       message: `Executed ${executedCount} hook script${executedCount === 1 ? "" : "s"}`,
+      reasonCode: "none",
     };
   }
 
   spinner.fail(`${options.hookName} hooks failed`);
   return {
     hookStatus: "failure",
-    reasonCode: failureReason === "timeout" ? "timeout" : "exit_non_zero",
     message: failures.join("; "),
+    reasonCode: failureReason === "timeout" ? "timeout" : "exit_non_zero",
   };
 }
 

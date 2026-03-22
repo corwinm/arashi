@@ -14,29 +14,29 @@ describe("clone command", () => {
   });
 
   afterEach(async () => {
-    await rm(workspaceRoot, { recursive: true, force: true });
+    await rm(workspaceRoot, { force: true, recursive: true });
   });
 
   test("reports success when no repositories are missing", async () => {
     await mkdir(join(workspaceRoot, "repos", "repo-a"), { recursive: true });
 
     const config: Config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "repo-a": {
           path: "./repos/repo-a",
           gitUrl: "git@github.com:team/repo-a.git",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     const result = await executeClone(
       { all: true },
       {
-        workspaceRoot,
         loadConfig: async () => config,
         saveConfig: async () => {},
+        workspaceRoot,
       },
     );
 
@@ -47,8 +47,6 @@ describe("clone command", () => {
 
   test("supports interactive selection of missing repositories", async () => {
     const config: Config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "repo-a": {
           path: "./repos/repo-a",
@@ -59,27 +57,29 @@ describe("clone command", () => {
           gitUrl: "git@github.com:team/repo-b.git",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     const cloned: string[] = [];
     const result = await executeClone(
       {},
       {
-        workspaceRoot,
-        loadConfig: async () => config,
-        saveConfig: async () => {},
-        stdinIsTTY: true,
-        stdoutIsTTY: true,
-        promptMultiSelect: async <T>() => ({
-          status: "ok",
-          value: ["repo-b"] as unknown as T[],
-        }),
         cloneRepository: async (gitUrl, destinationPath) => {
           cloned.push(gitUrl);
           await mkdir(destinationPath, { recursive: true });
           await writeFile(join(destinationPath, ".git"), "gitdir: ./.git/worktrees/main\n");
           return { stdout: "", stderr: "", exitCode: 0 };
         },
+        loadConfig: async () => config,
+        promptMultiSelect: async <T>() => ({
+          status: "ok",
+          value: ["repo-b"] as unknown as T[],
+        }),
+        saveConfig: async () => {},
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        workspaceRoot,
       },
     );
 
@@ -90,8 +90,6 @@ describe("clone command", () => {
 
   test("clones all missing repositories with --all", async () => {
     const config: Config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "repo-a": {
           path: "./repos/repo-a",
@@ -102,21 +100,23 @@ describe("clone command", () => {
           gitUrl: "https://github.com/team/repo-b.git",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     const clonedDestinations: string[] = [];
     const result = await executeClone(
       { all: true },
       {
-        workspaceRoot,
-        loadConfig: async () => config,
-        saveConfig: async () => {},
         cloneRepository: async (_gitUrl, destinationPath) => {
           clonedDestinations.push(destinationPath);
           await mkdir(destinationPath, { recursive: true });
           await writeFile(join(destinationPath, ".git"), "gitdir: ./.git/worktrees/main\n");
           return { stdout: "", stderr: "", exitCode: 0 };
         },
+        loadConfig: async () => config,
+        saveConfig: async () => {},
+        workspaceRoot,
       },
     );
 
@@ -126,8 +126,6 @@ describe("clone command", () => {
 
   test("continues cloning after partial failures", async () => {
     const config: Config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "repo-a": {
           path: "./repos/repo-a",
@@ -138,14 +136,13 @@ describe("clone command", () => {
           gitUrl: "git@github.com:team/repo-b.git",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     const result = await executeClone(
       { all: true },
       {
-        workspaceRoot,
-        loadConfig: async () => config,
-        saveConfig: async () => {},
         cloneRepository: async (gitUrl, destinationPath) => {
           if (gitUrl.includes("repo-a")) {
             throw new Error("simulated clone failure");
@@ -155,6 +152,9 @@ describe("clone command", () => {
           await writeFile(join(destinationPath, ".git"), "gitdir: ./.git/worktrees/main\n");
           return { stdout: "", stderr: "", exitCode: 0 };
         },
+        loadConfig: async () => config,
+        saveConfig: async () => {},
+        workspaceRoot,
       },
     );
 

@@ -41,11 +41,11 @@ export function filterRepositories(
 
   if (onlyList.length === 0) {
     return {
+      missing: [],
       repositories: Object.entries(repos).map(([name, config]) => ({
         name,
         config,
       })),
-      missing: [],
     };
   }
 
@@ -58,8 +58,8 @@ export function filterRepositories(
       missing.push(name);
       continue;
     }
-    repositories.push({ name, config });
+    repositories.push({ config, name });
   }
 
-  return { repositories, missing };
+  return { missing, repositories };
 }

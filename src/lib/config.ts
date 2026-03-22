@@ -7,13 +7,13 @@
  * @module config
  */
 
-import { join, dirname, basename, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { mkdir } from "fs/promises";
 import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
 import {
   DEFAULT_WORKTREES_DIR,
-  normalizeWorktreesDir,
   WorktreeLocationValidationError,
+  normalizeWorktreesDir,
 } from "./worktree-location.ts";
 
 // ============================================================================
@@ -98,10 +98,10 @@ export interface CommandDefaultsConfig {
 
 export const DEFAULT_CONFIG_SCHEMA_URL = "https://unpkg.com/arashi/schema/config.schema.json";
 
-type ConfigErrorContext = {
+interface ConfigErrorContext {
   errors: string[];
   [key: string]: unknown;
-};
+}
 
 /**
  * Resolved repository information from workspace configuration.
@@ -198,7 +198,7 @@ export class UnsupportedConfigVersionError extends ConfigError {
     super(
       `Unsupported configuration version "${version}". This version of arashi supports "${supportedVersion}".`,
       undefined,
-      { version, supportedVersion },
+      { supportedVersion, version },
     );
     this.name = "UnsupportedConfigVersionError";
   }
@@ -311,10 +311,10 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
 export function generateDefaultConfig(): Config {
   return {
     $schema: DEFAULT_CONFIG_SCHEMA_URL,
-    version: CURRENT_CONFIG_VERSION,
-    reposDir: "./repos",
-    worktreesDir: DEFAULT_WORKTREES_DIR,
     repos: {},
+    reposDir: "./repos",
+    version: CURRENT_CONFIG_VERSION,
+    worktreesDir: DEFAULT_WORKTREES_DIR,
   };
 }
 
@@ -356,7 +356,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function getFirstDefined<T>(...values: Array<T | undefined>): T | undefined {
+function getFirstDefined<T>(...values: (T | undefined)[]): T | undefined {
   for (const value of values) {
     if (value !== undefined) {
       return value;
@@ -400,8 +400,8 @@ function resolveConfigVersion(
 
   if (canonicalVersion !== version) {
     return {
-      version: canonicalVersion,
       migratedFromVersion: version,
+      version: canonicalVersion,
     };
   }
 
@@ -424,7 +424,7 @@ function normalizeRepoConfig(
 
   validateNoUnknownKeys(value, REPO_ALLOWED_KEYS, prefix, errors);
 
-  const path = value.path;
+  const { path } = value;
   const gitUrl = getFirstDefined(
     value.gitUrl as string | undefined,
     value.git_url as string | undefined,
@@ -464,7 +464,7 @@ function normalizeWorkspaceHooks(
 
   validateNoUnknownKeys(value, ROOT_HOOKS_ALLOWED_KEYS, prefix, errors);
 
-  const timeout = value.timeout;
+  const { timeout } = value;
   if (timeout === undefined) {
     return undefined;
   }
@@ -689,10 +689,10 @@ function normalizeConfigInternal(config: unknown): {
   const normalizedReposDir = reposDir as string;
 
   const normalizedConfig: Config = {
-    version: normalizedVersion,
-    reposDir: normalizedReposDir,
-    worktreesDir,
     repos: normalizedRepos,
+    reposDir: normalizedReposDir,
+    version: normalizedVersion,
+    worktreesDir,
   };
 
   if (typeof schema === "string") {
@@ -833,8 +833,8 @@ export async function loadConfigWithFallback(
   try {
     return {
       config: await loadConfig(workspaceRoot),
-      source: "local-file",
       configPath: localPath,
+      source: "local-file",
     };
   } catch (error) {
     if (!(error instanceof ConfigNotFoundError) || !options.bareRepoPath) {
@@ -853,8 +853,8 @@ export async function loadConfigWithFallback(
     const text = await readTrackedFileFromDefaultBranch(barePath, repoConfigPath);
     return {
       config: parseAndValidateConfig(text, `${barePath}:${repoConfigPath}`),
-      source: "repository-content",
       configPath: `${barePath}:${repoConfigPath}`,
+      source: "repository-content",
     };
   } catch (error) {
     if (error instanceof ConfigError) {
@@ -886,10 +886,10 @@ function normalizePersistedConfig(config: Config): Config {
 
   const persisted: Config = {
     $schema: config.$schema ?? DEFAULT_CONFIG_SCHEMA_URL,
-    version: config.version,
-    reposDir: config.reposDir,
-    worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
     repos,
+    reposDir: config.reposDir,
+    version: config.version,
+    worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
   };
 
   if (config.hooks) {
@@ -975,7 +975,7 @@ export async function addRepo(
     throw new ConfigError(
       `Repository "${name}" already exists in configuration. Use "arashi clone" to materialize missing local repositories.`,
       undefined,
-      { name, existingConfig: config.repos[name] },
+      { existingConfig: config.repos[name], name },
     );
   }
 
@@ -1026,9 +1026,9 @@ export async function loadWorkspaceRepositories(
 
   for (const [name, repoConfig] of Object.entries(config.repos)) {
     repositories.push({
+      gitUrl: repoConfig.gitUrl,
       name,
       path: resolve(workspaceRoot, repoConfig.path),
-      gitUrl: repoConfig.gitUrl,
     });
   }
 
@@ -1070,9 +1070,9 @@ export async function repairRepositoryGitUrls(
   }
 
   return {
-    updated: repaired.length > 0,
     repaired,
     unresolved,
+    updated: repaired.length > 0,
   };
 }
 

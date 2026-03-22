@@ -4,14 +4,14 @@
  * Tests pure functions and validation logic without file system operations.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  getConfigPath,
-  generateDefaultConfig,
-  normalizeConfig,
-  validateConfig,
   ConfigValidationError,
   UnsupportedConfigVersionError,
+  generateDefaultConfig,
+  getConfigPath,
+  normalizeConfig,
+  validateConfig,
 } from "../../src/lib/config";
 import { join } from "path";
 import { DEFAULT_WORKTREES_DIR } from "../../src/lib/worktree-location";
@@ -59,8 +59,6 @@ describe("generateDefaultConfig", () => {
 describe("validateConfig - root level", () => {
   test("accepts valid complete configuration", () => {
     const validConfig = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "example-repo": {
           path: "./repos/example-repo",
@@ -68,6 +66,8 @@ describe("validateConfig - root level", () => {
           isBare: false,
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(validConfig)).not.toThrow();
@@ -75,9 +75,9 @@ describe("validateConfig - root level", () => {
 
   test("accepts minimal valid configuration", () => {
     const minimalConfig = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(minimalConfig)).not.toThrow();
@@ -85,8 +85,6 @@ describe("validateConfig - root level", () => {
 
   test("accepts command-scoped defaults configuration", () => {
     const configWithDefaults = {
-      version: "1.0.0",
-      reposDir: "./repos",
       defaults: {
         create: {
           switch: true,
@@ -98,6 +96,8 @@ describe("validateConfig - root level", () => {
         },
       },
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(configWithDefaults)).not.toThrow();
@@ -105,8 +105,6 @@ describe("validateConfig - root level", () => {
 
   test("normalizes snake_case launch mode aliases", () => {
     const normalized = normalizeConfig({
-      version: "1.0.0",
-      reposDir: "./repos",
       defaults: {
         create: {
           switch: true,
@@ -117,6 +115,8 @@ describe("validateConfig - root level", () => {
         },
       },
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     });
 
     expect(normalized.defaults?.create?.launchMode).toBe("sesh");
@@ -126,8 +126,6 @@ describe("validateConfig - root level", () => {
 
   test("ignores malformed defaults and preserves baseline behavior", () => {
     const normalized = normalizeConfig({
-      version: "1.0.0",
-      reposDir: "./repos",
       defaults: {
         create: "invalid",
         switch: {
@@ -135,6 +133,8 @@ describe("validateConfig - root level", () => {
         },
       },
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     });
 
     expect(normalized.defaults).toBeUndefined();
@@ -153,8 +153,8 @@ describe("validateConfig - root level", () => {
 
   test("catches missing version field", () => {
     const config = {
-      reposDir: "./repos",
       repos: {},
+      reposDir: "./repos",
     };
 
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
@@ -163,8 +163,8 @@ describe("validateConfig - root level", () => {
 
   test("catches missing reposDir field", () => {
     const config = {
-      version: "1.0.0",
       repos: {},
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
@@ -173,8 +173,8 @@ describe("validateConfig - root level", () => {
 
   test("catches missing repos field", () => {
     const config = {
-      version: "1.0.0",
       reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
@@ -183,7 +183,7 @@ describe("validateConfig - root level", () => {
 
   test("catches invalid field types", () => {
     const config = {
-      version: 1.0, // Should be string
+      version: 1, // Should be string
       reposDir: "./repos",
       repos: [], // Should be object
     };
@@ -218,9 +218,9 @@ describe("validateConfig - root level", () => {
 
   test("rejects unsupported config version", () => {
     const config = {
-      version: "2.0.0",
-      reposDir: "./repos",
       repos: {},
+      reposDir: "./repos",
+      version: "2.0.0",
     };
 
     expect(() => validateConfig(config)).toThrow(UnsupportedConfigVersionError);
@@ -229,9 +229,9 @@ describe("validateConfig - root level", () => {
 
   test("normalizes supported version alias", () => {
     const normalized = normalizeConfig({
-      version: "1",
-      reposDir: "./repos",
       repos: {},
+      reposDir: "./repos",
+      version: "1",
     });
 
     expect(normalized.version).toBe("1.0.0");
@@ -239,9 +239,9 @@ describe("validateConfig - root level", () => {
 
   test("applies default worktreesDir when omitted", () => {
     const normalized = normalizeConfig({
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     });
 
     expect(normalized.worktreesDir).toBe(DEFAULT_WORKTREES_DIR);
@@ -249,28 +249,28 @@ describe("validateConfig - root level", () => {
 
   test("normalizes supported worktreesDir path variants", () => {
     const dotVariant = normalizeConfig({
-      version: "1.0.0",
-      reposDir: "./repos",
-      worktreesDir: "./",
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+      worktreesDir: "./",
     });
     expect(dotVariant.worktreesDir).toBe(".");
 
     const managedVariant = normalizeConfig({
-      version: "1.0.0",
-      reposDir: "./repos",
-      worktreesDir: ".arashi/worktrees/",
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+      worktreesDir: ".arashi/worktrees/",
     });
     expect(managedVariant.worktreesDir).toBe(DEFAULT_WORKTREES_DIR);
   });
 
   test("rejects absolute worktreesDir paths", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
-      worktreesDir: "/tmp/worktrees",
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+      worktreesDir: "/tmp/worktrees",
     };
 
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
@@ -279,11 +279,11 @@ describe("validateConfig - root level", () => {
 
   test("rejects unknown root fields", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
-      repos: {},
-      future_feature: "some value",
       custom_metadata: { team: "backend" },
+      future_feature: "some value",
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
@@ -294,8 +294,6 @@ describe("validateConfig - root level", () => {
 describe("validateConfig - RepoConfig validation", () => {
   test("accepts valid repository configuration", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -303,6 +301,8 @@ describe("validateConfig - RepoConfig validation", () => {
           isBare: false,
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).not.toThrow();
@@ -310,13 +310,13 @@ describe("validateConfig - RepoConfig validation", () => {
 
   test("accepts repository with minimal fields", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).not.toThrow();
@@ -324,14 +324,14 @@ describe("validateConfig - RepoConfig validation", () => {
 
   test("accepts repository gitUrl when present", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
           gitUrl: "git@github.com:team/my-repo.git",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).not.toThrow();
@@ -339,14 +339,14 @@ describe("validateConfig - RepoConfig validation", () => {
 
   test("catches invalid gitUrl type", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
           gitUrl: 123,
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
@@ -355,13 +355,13 @@ describe("validateConfig - RepoConfig validation", () => {
 
   test("catches missing path field in repository", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "my-repo": {
           defaultBranch: "main",
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
@@ -371,8 +371,6 @@ describe("validateConfig - RepoConfig validation", () => {
 
   test("accepts deprecated repository metadata keys during migration", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -381,6 +379,8 @@ describe("validateConfig - RepoConfig validation", () => {
           worktrees: [],
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).not.toThrow();
@@ -388,8 +388,6 @@ describe("validateConfig - RepoConfig validation", () => {
 
   test("drops deprecated repository metadata keys during normalization", () => {
     const normalized = normalizeConfig({
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
@@ -398,6 +396,8 @@ describe("validateConfig - RepoConfig validation", () => {
           worktrees: [],
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     });
 
     expect(normalized.repos["my-repo"]).toEqual({
@@ -407,14 +407,14 @@ describe("validateConfig - RepoConfig validation", () => {
 
   test("catches unknown repository properties", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "my-repo": {
           path: "./repos/my-repo",
           customField: true,
         },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
@@ -447,9 +447,9 @@ describe("validateConfig - error messages", () => {
 
   test("error message includes helpful context", () => {
     const config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     };
     delete (config as { version?: string }).version;
 

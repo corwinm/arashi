@@ -1,8 +1,8 @@
 import {
-  confirm as inquirerConfirm,
-  select as inquirerSelect,
   checkbox as inquirerCheckbox,
+  confirm as inquirerConfirm,
   input as inquirerInput,
+  select as inquirerSelect,
 } from "@inquirer/prompts";
 import readline from "readline";
 
@@ -13,15 +13,22 @@ import readline from "readline";
 /**
  * Choice type for select and multiSelect prompts
  */
-export type Choice<T> = {
+export interface Choice<T> {
   value: T;
   name: string;
   description?: string;
-};
+}
 
 export type PromptOutcome<T> =
   | { status: "ok"; value: T }
   | { status: "cancelled"; reason: "exit" | "abort" };
+
+type PromptKey = {
+  name?: string;
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+};
 
 // ============================================================================
 // Prompt Outcome Wrapper
@@ -48,10 +55,24 @@ async function withPromptOutcome<T>(promptFn: () => Promise<T>): Promise<PromptO
       promptError?.message?.includes("User force closed")
     ) {
       const reason = promptError?.name === "AbortPromptError" ? "abort" : "exit";
-      return { status: "cancelled", reason };
+      return { reason, status: "cancelled" };
     }
     // Re-throw other errors
     throw error;
+  }
+}
+
+function handleVimNavigationKeypress(_str: string, key: PromptKey): void {
+  if (!key || key.ctrl || key.meta) {
+    return;
+  }
+
+  if (key.name === "j") {
+    process.stdin.emit("keypress", "", { ctrl: false, meta: false, name: "down", shift: false });
+  }
+
+  if (key.name === "k") {
+    process.stdin.emit("keypress", "", { ctrl: false, meta: false, name: "up", shift: false });
   }
 }
 
@@ -63,24 +84,9 @@ function withVimNavigation<T>(
   }
 
   readline.emitKeypressEvents(process.stdin);
-  const handler = (
-    _str: string,
-    key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean },
-  ) => {
-    if (!key || key.ctrl || key.meta) {
-      return;
-    }
-    if (key.name === "j") {
-      process.stdin.emit("keypress", "", { name: "down", ctrl: false, meta: false, shift: false });
-    }
-    if (key.name === "k") {
-      process.stdin.emit("keypress", "", { name: "up", ctrl: false, meta: false, shift: false });
-    }
-  };
-
-  process.stdin.on("keypress", handler);
+  process.stdin.on("keypress", handleVimNavigationKeypress);
   return promptFn().finally(() => {
-    process.stdin.off("keypress", handler);
+    process.stdin.off("keypress", handleVimNavigationKeypress);
   });
 }
 
@@ -109,12 +115,13 @@ export async function confirm(
   message: string,
   defaultValue?: boolean,
 ): Promise<PromptOutcome<boolean>> {
-  return withPromptOutcome(async () => {
-    return await inquirerConfirm({
-      message,
-      default: defaultValue,
-    });
-  });
+  return withPromptOutcome(
+    async () =>
+      await inquirerConfirm({
+        message,
+        default: defaultValue,
+      }),
+  );
 }
 
 // ============================================================================
@@ -145,12 +152,13 @@ export async function select<T>(message: string, choices: Choice<T>[]): Promise<
   }
 
   return withVimNavigation(() =>
-    withPromptOutcome(async () => {
-      return await inquirerSelect({
-        message,
-        choices,
-      });
-    }),
+    withPromptOutcome(
+      async () =>
+        await inquirerSelect({
+          message,
+          choices,
+        }),
+    ),
   );
 }
 
@@ -182,12 +190,13 @@ export async function multiSelect<T>(
   choices: Choice<T>[],
 ): Promise<PromptOutcome<T[]>> {
   return withVimNavigation(() =>
-    withPromptOutcome(async () => {
-      return await inquirerCheckbox({
-        message,
-        choices,
-      });
-    }),
+    withPromptOutcome(
+      async () =>
+        await inquirerCheckbox({
+          message,
+          choices,
+        }),
+    ),
   );
 }
 
@@ -214,10 +223,11 @@ export async function input(
   message: string,
   defaultValue?: string,
 ): Promise<PromptOutcome<string>> {
-  return withPromptOutcome(async () => {
-    return await inquirerInput({
-      message,
-      default: defaultValue,
-    });
-  });
+  return withPromptOutcome(
+    async () =>
+      await inquirerInput({
+        message,
+        default: defaultValue,
+      }),
+  );
 }

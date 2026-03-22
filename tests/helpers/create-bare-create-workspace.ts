@@ -45,10 +45,10 @@ export async function createBareCreateWorkspace(
       join(seedPath, ".arashi", "config.json"),
       JSON.stringify(
         {
-          version: "1.0.0",
-          reposDir: configReposDir,
-          worktreesDir: configWorktreesDir,
           repos: {},
+          reposDir: configReposDir,
+          version: "1.0.0",
+          worktreesDir: configWorktreesDir,
         },
         null,
         2,
@@ -64,20 +64,20 @@ export async function createBareCreateWorkspace(
   await execGit(["worktree", "add", worktreePath, "main"], bareRepoPath);
 
   return {
-    rootPath,
     bareRepoPath,
-    worktreePath,
     cleanup: async () => {
       await rm(rootPath, { recursive: true, force: true });
     },
+    rootPath,
+    worktreePath,
   };
 }
 
 async function execGit(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
 
   const exitCode = await proc.exited;

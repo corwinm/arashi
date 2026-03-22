@@ -1,37 +1,37 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { groupWorktreesByParent } from "../../../src/core/remove.ts";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
 
 describe("groupWorktreesByParent", () => {
   test("groups children under parentPath and leaves orphans ungrouped", () => {
     const parent: WorktreeEntry = {
-      path: "/workspace/parent",
       branch: "main",
-      repository: "root",
-      isMain: false,
-      status: "present",
-      parentPath: null,
       childrenPaths: ["/workspace/parent/repos/repo-a"],
+      isMain: false,
+      parentPath: null,
+      path: "/workspace/parent",
+      repository: "root",
+      status: "present",
     };
 
     const child: WorktreeEntry = {
-      path: "/workspace/parent/repos/repo-a",
       branch: "feature-a",
-      repository: "repo-a",
-      isMain: false,
-      status: "present",
-      parentPath: "/workspace/parent",
       childrenPaths: [],
+      isMain: false,
+      parentPath: "/workspace/parent",
+      path: "/workspace/parent/repos/repo-a",
+      repository: "repo-a",
+      status: "present",
     };
 
     const orphan: WorktreeEntry = {
-      path: "/workspace/orphan",
       branch: "orphan-branch",
-      repository: "repo-orphan",
-      isMain: false,
-      status: "present",
-      parentPath: null,
       childrenPaths: [],
+      isMain: false,
+      parentPath: null,
+      path: "/workspace/orphan",
+      repository: "repo-orphan",
+      status: "present",
     };
 
     const grouping = groupWorktreesByParent([parent, child, orphan]);
@@ -45,13 +45,13 @@ describe("groupWorktreesByParent", () => {
 
   test("treats entries with missing parents as orphans", () => {
     const child: WorktreeEntry = {
-      path: "/workspace/ghost/repos/repo-a",
       branch: "feature-a",
-      repository: "repo-a",
-      isMain: false,
-      status: "present",
-      parentPath: "/workspace/ghost",
       childrenPaths: [],
+      isMain: false,
+      parentPath: "/workspace/ghost",
+      path: "/workspace/ghost/repos/repo-a",
+      repository: "repo-a",
+      status: "present",
     };
 
     const grouping = groupWorktreesByParent([child]);

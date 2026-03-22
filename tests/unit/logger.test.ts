@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { info, success, warn, error, spinner, table, section } from "../../src/lib/logger";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { error, info, section, spinner, success, table, warn } from "../../src/lib/logger";
 
 // Capture console output
 let consoleOutput: string[] = [];
@@ -109,8 +109,8 @@ describe("US2: Spinner Display", () => {
 describe("US3: Table Formatting", () => {
   test("table formats data with aligned columns", () => {
     const data = [
-      { name: "Alice", age: "30", city: "NYC" },
-      { name: "Bob", age: "25", city: "SF" },
+      { age: "30", city: "NYC", name: "Alice" },
+      { age: "25", city: "SF", name: "Bob" },
     ];
 
     table(data);
@@ -144,8 +144,8 @@ describe("US3: Table Formatting", () => {
 
   test("table auto-sizes columns based on content", () => {
     const data = [
-      { short: "a", long: "very long content here" },
-      { short: "b", long: "x" },
+      { long: "very long content here", short: "a" },
+      { long: "x", short: "b" },
     ];
 
     table(data);

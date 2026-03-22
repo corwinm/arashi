@@ -16,8 +16,8 @@ import { discoverRepositories } from "../core/repository.ts";
 import {
   DEFAULT_WORKTREES_DIR,
   DEFAULT_WORKTREES_GITIGNORE_ENTRY,
-  normalizeWorktreesDir,
   WorktreeLocationValidationError,
+  normalizeWorktreesDir,
 } from "../lib/worktree-location.ts";
 
 // ============================================================================
@@ -96,14 +96,14 @@ interface Operation {
 // ============================================================================
 
 const ExitCode = {
-  SUCCESS: 0,
-  NOT_GIT_REPOSITORY: 1,
   CONFIG_EXISTS: 2,
-  PERMISSION_DENIED: 3,
-  DISK_FULL: 4,
-  INVALID_PATH: 5,
   CONFIG_WRITE_FAILED: 6,
   DISCOVERY_FAILED: 7,
+  DISK_FULL: 4,
+  INVALID_PATH: 5,
+  NOT_GIT_REPOSITORY: 1,
+  PERMISSION_DENIED: 3,
+  SUCCESS: 0,
   UNKNOWN: 99,
 } as const;
 
@@ -127,7 +127,7 @@ async function executeRollback(): Promise<void> {
   logger.info("\nRolling back changes...");
 
   // Reverse order (LIFO)
-  const reversedOps = [...operations].reverse();
+  const reversedOps = [...operations].toReversed();
 
   for (const op of reversedOps) {
     try {
@@ -206,7 +206,6 @@ function logDryRun(action: string, details: string): void {
 
 const HOOK_TEMPLATES: HookTemplate[] = [
   {
-    filename: "pre-create.sh.example",
     content: `#!/usr/bin/env bash
 # Pre-Create Hook Example
 #
@@ -235,9 +234,9 @@ fi
 echo "Pre-create hook: Validation passed"
 exit 0
 `,
+    filename: "pre-create.sh.example",
   },
   {
-    filename: "post-create.sh.example",
     content: `#!/usr/bin/env bash
 # Post-Create Hook Example
 #
@@ -274,9 +273,9 @@ fi
 echo "Post-create hook: Setup complete"
 exit 0
 `,
+    filename: "post-create.sh.example",
   },
   {
-    filename: "pre-remove.sh.example",
     content: `#!/usr/bin/env bash
 # Pre-Remove Hook Example
 #
@@ -307,9 +306,9 @@ fi
 
 exit 0
 `,
+    filename: "pre-remove.sh.example",
   },
   {
-    filename: "post-remove.sh.example",
     content: `#!/usr/bin/env bash
 # Post-Remove Hook Example
 #
@@ -334,9 +333,9 @@ set -e
 echo "Post-remove hook: cleanup complete for $ARASHI_REMOVE_TARGET_BRANCHES"
 exit 0
 `,
+    filename: "post-remove.sh.example",
   },
   {
-    filename: "setup.sh.example",
     content: `#!/usr/bin/env bash
 # Setup Hook Example
 #
@@ -363,6 +362,7 @@ git config core.hooksPath .arashi/hooks
 echo "Setup hook: Initialization complete"
 exit 0
 `,
+    filename: "setup.sh.example",
   },
 ];
 
@@ -382,7 +382,6 @@ async function writeHookTemplates(hooksDir: string): Promise<void> {
 
     // Track for rollback
     addOperation({
-      type: "WRITE_FILE",
       path: templatePath,
       rollback: async () => {
         const file = Bun.file(templatePath);
@@ -391,6 +390,7 @@ async function writeHookTemplates(hooksDir: string): Promise<void> {
           await filesystem.removeDir(templatePath);
         }
       },
+      type: "WRITE_FILE",
     });
   }
 }
@@ -481,16 +481,15 @@ async function updateGitignore(cwd: string, reposDir: string, worktreesDir: stri
   // Track for rollback
   if (originalContent !== null) {
     addOperation({
-      type: "MODIFY_FILE",
-      path: gitignorePath,
       originalContent,
+      path: gitignorePath,
       rollback: async () => {
         await filesystem.writeTextFile(gitignorePath, originalContent);
       },
+      type: "MODIFY_FILE",
     });
   } else {
     addOperation({
-      type: "WRITE_FILE",
       path: gitignorePath,
       rollback: async () => {
         const file = Bun.file(gitignorePath);
@@ -499,6 +498,7 @@ async function updateGitignore(cwd: string, reposDir: string, worktreesDir: stri
           await filesystem.removeDir(gitignorePath);
         }
       },
+      type: "WRITE_FILE",
     });
   }
 }
@@ -525,9 +525,9 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     logVerbose("Checking if current directory is a git repository...", options);
     if (!(await isGitRepository(cwd))) {
       return {
-        success: false,
         error: "Not a git repository",
         exitCode: ExitCode.NOT_GIT_REPOSITORY,
+        success: false,
       };
     }
     logVerbose(`✓ Confirmed git repository at: ${cwd}`, options);
@@ -537,9 +537,9 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     if (!options.force && (await config.configExists(cwd))) {
       const existingConfigPath = config.getConfigPath(cwd);
       return {
-        success: false,
         error: `Arashi configuration already exists at: ${existingConfigPath}`,
         exitCode: ExitCode.CONFIG_EXISTS,
+        success: false,
       };
     }
 
@@ -548,7 +548,7 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
       const existingConfigPath = config.getConfigPath(cwd);
       const timestamp = new Date()
         .toISOString()
-        .replace(/[:.]/g, "-")
+        .replaceAll(/[:.]/g, "-")
         .split("T")
         .join("T")
         .slice(0, -5);
@@ -575,9 +575,9 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
 
     if (!isValidPath(reposDir)) {
       return {
-        success: false,
         error: `Invalid repos directory path: ${reposDir}`,
         exitCode: ExitCode.INVALID_PATH,
+        success: false,
       };
     }
 
@@ -587,9 +587,9 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     const rawWorktreesDir = options.worktreesDir;
     if (rawWorktreesDir !== undefined && !isValidPath(rawWorktreesDir)) {
       return {
-        success: false,
         error: `Invalid worktrees directory path: ${rawWorktreesDir}`,
         exitCode: ExitCode.INVALID_PATH,
+        success: false,
       };
     }
 
@@ -599,9 +599,9 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     } catch (error) {
       if (error instanceof WorktreeLocationValidationError) {
         return {
-          success: false,
           error: `Invalid worktrees directory path: ${rawWorktreesDir ?? DEFAULT_WORKTREES_DIR} (${error.message})`,
           exitCode: ExitCode.INVALID_PATH,
+          success: false,
         };
       }
 
@@ -619,19 +619,19 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
       try {
         await filesystem.ensureDir(arashiDir);
         addOperation({
-          type: "CREATE_DIR",
           path: arashiDir,
           rollback: async () => {
             await filesystem.removeDir(arashiDir);
           },
+          type: "CREATE_DIR",
         });
         logVerbose("✓ .arashi directory created", options);
       } catch (error) {
         if (error instanceof filesystem.PermissionError) {
           return {
-            success: false,
             error: `Permission denied creating directory: ${arashiDir}`,
             exitCode: ExitCode.PERMISSION_DENIED,
+            success: false,
           };
         }
         throw error;
@@ -648,20 +648,20 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
       try {
         await filesystem.ensureDir(hooksDir);
         addOperation({
-          type: "CREATE_DIR",
           path: hooksDir,
           rollback: async () => {
             await filesystem.removeDir(hooksDir);
           },
+          type: "CREATE_DIR",
         });
         logVerbose("✓ Hooks directory created", options);
       } catch (error) {
         await executeRollback();
         if (error instanceof filesystem.PermissionError) {
           return {
-            success: false,
             error: `Permission denied creating hooks directory: ${hooksDir}`,
             exitCode: ExitCode.PERMISSION_DENIED,
+            success: false,
           };
         }
         throw error;
@@ -686,12 +686,12 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
           error instanceof filesystem.DiskFullError
         ) {
           return {
-            success: false,
             error: `Failed to write hook templates: ${(error as Error).message}`,
             exitCode:
               error instanceof filesystem.DiskFullError
                 ? ExitCode.DISK_FULL
                 : ExitCode.PERMISSION_DENIED,
+            success: false,
           };
         }
         throw error;
@@ -706,26 +706,26 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
       try {
         await filesystem.ensureDir(absoluteReposPath);
         addOperation({
-          type: "CREATE_DIR",
           path: absoluteReposPath,
           rollback: async () => {
             await filesystem.removeDir(absoluteReposPath);
           },
+          type: "CREATE_DIR",
         });
         logVerbose("✓ Repos directory created", options);
       } catch (error) {
         await executeRollback();
         if (error instanceof filesystem.PermissionError) {
           return {
-            success: false,
             error: `Permission denied creating repos directory: ${absoluteReposPath}`,
             exitCode: ExitCode.PERMISSION_DENIED,
+            success: false,
           };
         } else if (error instanceof filesystem.DiskFullError) {
           return {
-            success: false,
             error: `Insufficient disk space creating repos directory: ${absoluteReposPath}`,
             exitCode: ExitCode.DISK_FULL,
+            success: false,
           };
         }
         throw error;
@@ -734,7 +734,7 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
 
     // 9. Discover repositories (unless --no-discover)
     let discoveredCount = 0;
-    let discoveredRepos: Record<string, config.RepoConfig> = {};
+    const discoveredRepos: Record<string, config.RepoConfig> = {};
 
     if (!options.noDiscover) {
       if (options.dryRun) {
@@ -759,9 +759,9 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
         } catch (error) {
           await executeRollback();
           return {
-            success: false,
             error: `Repository discovery failed: ${(error as Error).message}`,
             exitCode: ExitCode.DISCOVERY_FAILED,
+            success: false,
           };
         }
       }
@@ -772,10 +772,10 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     // 10. Generate and write config
     const arashiConfig: config.Config = {
       $schema: config.DEFAULT_CONFIG_SCHEMA_URL,
-      version: "1.0.0",
-      reposDir: reposDir,
-      worktreesDir,
       repos: discoveredRepos,
+      reposDir: reposDir,
+      version: "1.0.0",
+      worktreesDir,
     };
 
     const configPath = config.getConfigPath(cwd);
@@ -789,7 +789,6 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
         await config.saveConfig(cwd, arashiConfig);
 
         addOperation({
-          type: "WRITE_FILE",
           path: configPath,
           rollback: async () => {
             const file = Bun.file(configPath);
@@ -798,6 +797,7 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
               await filesystem.removeDir(configPath);
             }
           },
+          type: "WRITE_FILE",
         });
         logVerbose("✓ Configuration written", options);
       } catch (error) {
@@ -807,12 +807,12 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
           error instanceof filesystem.DiskFullError
         ) {
           return {
-            success: false,
             error: `Failed to write configuration: ${(error as Error).message}`,
             exitCode:
               error instanceof filesystem.DiskFullError
                 ? ExitCode.DISK_FULL
                 : ExitCode.CONFIG_WRITE_FAILED,
+            success: false,
           };
         }
         throw error;
@@ -833,9 +833,9 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
         await executeRollback();
         if (error instanceof filesystem.PermissionError) {
           return {
-            success: false,
             error: `Failed to update .gitignore: ${(error as Error).message}`,
             exitCode: ExitCode.PERMISSION_DENIED,
+            success: false,
           };
         }
         throw error;
@@ -852,12 +852,12 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     }
 
     return {
-      success: true,
       configPath: configPath,
-      hooksPath: hooksDir,
-      reposPath: absoluteReposPath,
       discoveredCount,
       exitCode: ExitCode.SUCCESS,
+      hooksPath: hooksDir,
+      reposPath: absoluteReposPath,
+      success: true,
     };
   } catch (error) {
     // Unexpected error - rollback and exit
@@ -866,9 +866,9 @@ async function executeInit(options: InitOptions): Promise<InitResult> {
     }
 
     return {
-      success: false,
       error: `Unexpected error: ${(error as Error).message}`,
       exitCode: ExitCode.UNKNOWN,
+      success: false,
     };
   }
 }
@@ -915,35 +915,42 @@ function displayError(result: InitResult): void {
   logger.error(result.error || "Unknown error");
 
   switch (result.exitCode) {
-    case ExitCode.NOT_GIT_REPOSITORY:
+    case ExitCode.NOT_GIT_REPOSITORY: {
       console.log("\nThe current directory is not a git repository.");
       console.log("Run 'git init' to initialize a repository first, or 'cd' to a git repository.");
       break;
+    }
 
-    case ExitCode.CONFIG_EXISTS:
+    case ExitCode.CONFIG_EXISTS: {
       console.log("\nTo reinitialize, use: arashi init --force");
       console.log("This will backup your existing configuration.");
       break;
+    }
 
-    case ExitCode.PERMISSION_DENIED:
+    case ExitCode.PERMISSION_DENIED: {
       console.log("\nCheck directory permissions and try again.");
       break;
+    }
 
-    case ExitCode.DISK_FULL:
+    case ExitCode.DISK_FULL: {
       console.log("\nFree up disk space and try again.");
       break;
+    }
 
-    case ExitCode.INVALID_PATH:
+    case ExitCode.INVALID_PATH: {
       console.log("\nUse a valid relative or absolute path.");
       break;
+    }
 
-    case ExitCode.CONFIG_WRITE_FAILED:
+    case ExitCode.CONFIG_WRITE_FAILED: {
       console.log("\nCheck permissions and disk space.");
       break;
+    }
 
-    case ExitCode.DISCOVERY_FAILED:
+    case ExitCode.DISCOVERY_FAILED: {
       console.log("\nUse --no-discover to skip discovery, or fix the error and try again.");
       break;
+    }
   }
 }
 

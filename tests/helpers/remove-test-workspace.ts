@@ -2,7 +2,7 @@
  * Test helpers for remove command
  */
 
-import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawn } from "bun";
@@ -36,8 +36,6 @@ export async function createRemoveWorkspace(
   }
 
   const config = {
-    version: "1.0.0",
-    reposDir: "./repos",
     repos: Object.fromEntries(
       repos.map((repo) => [
         repo.name,
@@ -49,16 +47,18 @@ export async function createRemoveWorkspace(
         },
       ]),
     ),
+    reposDir: "./repos",
+    version: "1.0.0",
   };
 
   await mkdir(join(rootPath, ".arashi"), { recursive: true });
   await writeFile(join(rootPath, ".arashi", "config.json"), JSON.stringify(config, null, 2));
 
   const cleanup = async () => {
-    await rm(rootPath, { recursive: true, force: true });
+    await rm(rootPath, { force: true, recursive: true });
   };
 
-  return { rootPath, repos, cleanup };
+  return { cleanup, repos, rootPath };
 }
 
 export async function createWorktree(
@@ -116,7 +116,7 @@ export async function createNestedWorktrees(
     childPaths[repo.name] = worktreePath;
   }
 
-  return { parentPath, childPaths };
+  return { childPaths, parentPath };
 }
 
 export async function markWorktreeDirty(worktreePath: string): Promise<void> {
@@ -136,8 +136,8 @@ async function initGitRepo(repoPath: string, branch: string): Promise<void> {
 async function ensureBranch(repoPath: string, branchName: string): Promise<void> {
   const check = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
     cwd: repoPath,
-    stdout: "ignore",
     stderr: "ignore",
+    stdout: "ignore",
   });
   const exitCode = await check.exited;
   if (exitCode !== 0) {

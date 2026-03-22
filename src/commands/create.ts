@@ -10,27 +10,26 @@ import * as config from "../lib/config.ts";
 import * as logger from "../lib/logger.ts";
 import { discoverRepositories } from "../core/repository.ts";
 import * as git from "../lib/git.ts";
-import { resolve, basename } from "path";
+import { basename, resolve } from "path";
 import {
   createCoordinatedWorktrees,
   applyRepositoryFilter,
-  type OperationSummary,
-  type RepositoryResult,
-  type RepositoryFilter,
-  type HookOutcomeRecord,
-  type WorktreeOperationOptions,
-  type ConflictResolutionStrategy,
   InvalidBranchNameError,
   RepositoryValidationError,
   ConflictAbortedError,
   UserAbortedError,
 } from "../core/worktree.ts";
+import type {
+  OperationSummary,
+  RepositoryResult,
+  RepositoryFilter,
+  HookOutcomeRecord,
+  WorktreeOperationOptions,
+  ConflictResolutionStrategy,
+} from "../core/worktree.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
-import {
-  launchSwitchTarget,
-  type LaunchSwitchResult,
-  type SwitchProcessRunner,
-} from "../lib/switch-launcher.ts";
+import { launchSwitchTarget } from "../lib/switch-launcher.ts";
+import type { LaunchSwitchResult, SwitchProcessRunner } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 
 interface CreateCommandOptions {
@@ -115,19 +114,19 @@ export async function resolveCreateInvocationContext(
 
   if (isBare) {
     return {
-      invocationPath: absoluteInvocationPath,
-      workspaceRoot: absoluteInvocationPath,
       executionPath: absoluteInvocationPath,
+      invocationPath: absoluteInvocationPath,
       repositoryType: "bare",
+      workspaceRoot: absoluteInvocationPath,
     };
   }
 
   const workspaceRoot = await config.findWorkspaceRoot(absoluteInvocationPath);
   return {
-    invocationPath: absoluteInvocationPath,
-    workspaceRoot,
     executionPath: workspaceRoot,
+    invocationPath: absoluteInvocationPath,
     repositoryType: "non-bare",
+    workspaceRoot,
   };
 }
 
@@ -192,36 +191,36 @@ export function resolveCreateDefaults(
   const createDefaults = workspaceConfig.defaults?.create;
 
   const switchResolution = resolveDefaultWithPrecedence<boolean>({
+    builtInValue: false,
+    configValue: createDefaults?.switch,
     explicitValue: true,
     hasExplicitValue: options.switch === true,
     optOut: options.switch === false,
-    configValue: createDefaults?.switch,
-    builtInValue: false,
   });
 
   const launchResolution = resolveDefaultWithPrecedence<boolean>({
+    builtInValue: false,
+    configValue: createDefaults?.launch,
     explicitValue: true,
     hasExplicitValue: options.launch === true || options.sesh === true,
     optOut: options.launch === false,
-    configValue: createDefaults?.launch,
-    builtInValue: false,
   });
 
   const launchModeResolution = resolveDefaultWithPrecedence<config.LaunchMode>({
+    builtInValue: "auto",
+    configValue: createDefaults?.launchMode,
     explicitValue: "sesh",
     hasExplicitValue: options.sesh === true,
     optOut: options.launch === false,
-    configValue: createDefaults?.launchMode,
-    builtInValue: "auto",
   });
 
   const shouldLaunch = launchResolution.value;
   const shouldSwitch = shouldLaunch || switchResolution.value;
 
   return {
-    shouldSwitch,
-    shouldLaunch,
     launchMode: shouldLaunch ? launchModeResolution.value : "auto",
+    shouldLaunch,
+    shouldSwitch,
   };
 }
 
@@ -270,8 +269,8 @@ async function applyPostCreateDefaults(
   const launchCandidate = deps.launchSwitchTarget ?? launchSwitchTarget;
   const launchResult = await launchCandidate(
     {
-      repoName: primaryResult.repository.name,
       branchName: primaryResult.branchName,
+      repoName: primaryResult.repository.name,
       worktreePath: primaryResult.worktreePath,
     },
     {
@@ -426,10 +425,10 @@ export async function executeCreate(
     }
 
     const metaRepo = {
-      name: basename(currentDir),
-      path: currentDir,
       defaultBranch,
       hasSetupScript: false,
+      name: basename(currentDir),
+      path: currentDir,
     };
 
     allRepositories.unshift(metaRepo);
@@ -451,8 +450,8 @@ export async function executeCreate(
 
   // 4. Apply repository filter
   const filter: RepositoryFilter = {
-    mode: options.interactive ? "interactive" : options.only ? "explicit" : "all",
     explicitList: options.only ? options.only.split(",").map((s) => s.trim()) : [],
+    mode: options.interactive ? "interactive" : options.only ? "explicit" : "all",
     selectedRepositories: null,
   };
 
@@ -469,24 +468,24 @@ export async function executeCreate(
   );
 
   const hooksEnabled = resolveEnabledFlag({
-    positive: options.hooks,
     negative: options.noHooks,
+    positive: options.hooks,
   });
   const progressEnabled = resolveEnabledFlag({
-    positive: options.progress,
     negative: options.noProgress,
+    positive: options.progress,
   });
 
   // 5. Build options for worktree orchestration
   const worktreeOptions: WorktreeOperationOptions = {
-    executeHooks: hooksEnabled,
-    hookTimeout: arashiConfig.hooks?.timeout,
-    showProgress: progressEnabled,
-    interactive: options.interactive || false,
     conflictResolution: options.conflict || null,
     dryRun: options.dryRun || false,
-    workspaceRoot: context.workspaceRoot,
+    executeHooks: hooksEnabled,
+    hookTimeout: arashiConfig.hooks?.timeout,
+    interactive: options.interactive || false,
     resolvedConfig: arashiConfig,
+    showProgress: progressEnabled,
+    workspaceRoot: context.workspaceRoot,
   };
 
   // 6. Execute coordinated worktree creation

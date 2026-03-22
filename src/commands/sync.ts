@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { resolve } from "path";
-import { findWorkspaceRoot, loadConfig, type Config } from "../lib/config.ts";
+import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import type { Config } from "../lib/config.ts";
 import * as logger from "../lib/logger.ts";
 import { exec } from "../lib/git.ts";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
@@ -66,23 +67,23 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
       });
     } catch (error) {
       outcome = {
-        status: "failure" as const,
         createdBranch: false,
-        previousBranch: null,
         currentBranch: null,
         errorMessage: error instanceof Error ? error.message : String(error),
+        previousBranch: null,
+        status: "failure" as const,
       };
     }
 
     const durationMs = Date.now() - startTime;
 
     const result: SyncResult = {
-      repositoryName: repo.name,
-      targetBranch: parentBranch,
-      status: outcome.status,
-      durationMs,
       createdBranch: outcome.createdBranch,
+      durationMs,
       errorMessage: outcome.errorMessage,
+      repositoryName: repo.name,
+      status: outcome.status,
+      targetBranch: parentBranch,
     };
 
     if (outcome.status === "success") {
@@ -102,10 +103,10 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
 
     if (outcome.createdBranch) {
       recordCreatedBranch(tracker, {
-        repositoryName: repo.name,
-        repoPath,
         branchName: parentBranch,
         previousBranch: outcome.previousBranch,
+        repoPath,
+        repositoryName: repo.name,
       });
     }
 
@@ -115,12 +116,12 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
   const successCount = results.filter((result) => result.status === "success").length;
   const failureCount = results.length - successCount;
 
-  printSummary({ successCount, failureCount, results });
+  printSummary({ failureCount, results, successCount });
 
   return {
-    successCount,
     failureCount,
     results,
+    successCount,
   };
 }
 
@@ -151,7 +152,7 @@ function getSyncTimeoutMs(config: Config): number {
     return Math.floor(timeoutSeconds * 1000);
   }
 
-  return 300000;
+  return 300_000;
 }
 
 function formatDuration(durationMs: number): string {

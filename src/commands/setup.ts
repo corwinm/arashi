@@ -50,17 +50,17 @@ async function executeSetup(options: SetupCommandOptions): Promise<void> {
 
   const orderedTargets = orderSetupTargets(discovery.targets);
   const executableTargets = orderedTargets.filter(isExecutableTarget);
-  const timeoutMs = repositoriesResult.config.hooks?.timeout ?? 300000;
+  const timeoutMs = repositoriesResult.config.hooks?.timeout ?? 300_000;
 
   const executions: SetupExecutionResult[] = [];
   let executionIndex = 0;
   for (const target of orderedTargets) {
     if (!isExecutableTarget(target)) {
       const skippedResult: SetupExecutionResult = {
+        detail: target.skipReason,
+        durationMs: 0,
         repositoryName: target.name,
         status: "skipped",
-        durationMs: 0,
-        detail: target.skipReason,
       };
       executions.push(skippedResult);
       logger.info(formatResultLine(skippedResult));
@@ -93,9 +93,7 @@ export function createCommand(): Command {
     .option(
       "--only <repo>",
       "Only include a specific repository (repeatable)",
-      (value, previous: string[] = []) => {
-        return previous.concat(value);
-      },
+      (value, previous: string[] = []) => previous.concat(value),
     )
     .option("-v, --verbose", "Show full setup script output")
     .action(async (options: SetupCommandOptions) => {

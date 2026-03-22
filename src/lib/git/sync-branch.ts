@@ -1,4 +1,5 @@
-import { runWithTimeout, type RunWithTimeoutResult } from "../process/run-with-timeout.ts";
+import { runWithTimeout } from "../process/run-with-timeout.ts";
+import type { RunWithTimeoutResult } from "../process/run-with-timeout.ts";
 
 export interface SyncBranchOutcome {
   status: "success" | "failure" | "timeout";
@@ -42,10 +43,10 @@ export async function alignRepositoryBranch(options: {
   if (existsOutcome.exists) {
     if (previousBranch === targetBranch) {
       return {
-        status: "success",
         createdBranch: false,
-        previousBranch,
         currentBranch: targetBranch,
+        previousBranch,
+        status: "success",
       };
     }
 
@@ -69,10 +70,10 @@ export async function alignRepositoryBranch(options: {
     }
 
     return {
-      status: "success",
       createdBranch: false,
-      previousBranch,
       currentBranch: targetBranch,
+      previousBranch,
+      status: "success",
     };
   }
 
@@ -92,10 +93,10 @@ export async function alignRepositoryBranch(options: {
   }
 
   return {
-    status: "success",
     createdBranch: true,
-    previousBranch,
     currentBranch: targetBranch,
+    previousBranch,
+    status: "success",
   };
 }
 
@@ -123,10 +124,10 @@ async function getCurrentBranch(
   const currentBranch = branch === "HEAD" ? null : branch;
 
   return {
-    status: "success",
     createdBranch: false,
-    previousBranch: currentBranch,
     currentBranch,
+    previousBranch: currentBranch,
+    status: "success",
   };
 }
 
@@ -149,11 +150,11 @@ async function branchExists(
 
   if (outcome.result.exitCode === 0) {
     return {
-      status: "success",
       createdBranch: false,
-      previousBranch: null,
       currentBranch: null,
       exists: true,
+      previousBranch: null,
+      status: "success",
     };
   }
 
@@ -162,11 +163,11 @@ async function branchExists(
   }
 
   return {
-    status: "success",
     createdBranch: false,
-    previousBranch: null,
     currentBranch: null,
     exists: false,
+    previousBranch: null,
+    status: "success",
   };
 }
 
@@ -180,8 +181,8 @@ async function runGit(
   const remainingMs = timeoutMs - elapsed;
   if (remainingMs <= 0) {
     return {
-      result: createImmediateTimeoutResult(),
       remainingMs,
+      result: createImmediateTimeoutResult(),
     };
   }
 
@@ -190,16 +191,16 @@ async function runGit(
     timeoutMs: remainingMs,
   });
 
-  return { result, remainingMs };
+  return { remainingMs, result };
 }
 
 function buildTimeoutOutcome(previousBranch: string | null): SyncBranchOutcome {
   return {
-    status: "timeout",
     createdBranch: false,
-    previousBranch,
     currentBranch: previousBranch,
     errorMessage: "Repository operation timed out",
+    previousBranch,
+    status: "timeout",
   };
 }
 
@@ -213,11 +214,11 @@ function buildFailureOutcome(
   const detail = stderr || stdout || "Unknown error";
 
   return {
-    status: "failure",
     createdBranch: false,
-    previousBranch,
     currentBranch: previousBranch,
     errorMessage: `git ${commandDescription} failed: ${detail}`,
+    previousBranch,
+    status: "failure",
   };
 }
 
@@ -228,12 +229,12 @@ function isNotRepositoryError(stderr: string): boolean {
 
 function createImmediateTimeoutResult(): RunWithTimeoutResult {
   return {
-    stdout: "",
-    stderr: "",
-    exitCode: -1,
-    timedOut: true,
     durationMs: 0,
-    signalCode: null,
+    exitCode: -1,
     killed: false,
+    signalCode: null,
+    stderr: "",
+    stdout: "",
+    timedOut: true,
   };
 }

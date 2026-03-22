@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { join, resolve } from "path";
 import {
   DEFAULT_WORKTREES_DIR,
+  WorktreeLocationValidationError,
   isDefaultWorktreesDir,
   normalizeWorktreesDir,
   normalizeWorktreesDirWithDefault,
   resolveWorktreesBasePath,
-  WorktreeLocationValidationError,
 } from "../../src/lib/worktree-location.ts";
 
 describe("worktree location normalization", () => {

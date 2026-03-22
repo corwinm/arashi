@@ -5,10 +5,10 @@
  * This keeps the npm package size small while providing pre-compiled binaries
  */
 
-import { createWriteStream, chmodSync } from "node:fs";
-import { mkdir, access, constants } from "node:fs/promises";
+import { chmodSync, createWriteStream } from "node:fs";
+import { access, constants, mkdir } from "node:fs/promises";
 import { get } from "node:https";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -19,8 +19,8 @@ const GITHUB_REPO = "corwinm/arashi";
 
 // Determine platform and binary name
 function getPlatformInfo() {
-  const platform = process.platform;
-  const arch = process.arch;
+  const { platform } = process;
+  const { arch } = process;
 
   let binaryName;
   if (platform === "darwin" && arch === "arm64") {
@@ -99,7 +99,7 @@ async function install() {
     // Get version from package.json
     const packageJsonPath = join(__dirname, "..", "package.json");
     const { readFile } = await import("node:fs/promises");
-    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf-8"));
+    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
     const { version } = packageJson;
 
     const { binaryName, isWindows } = getPlatformInfo();

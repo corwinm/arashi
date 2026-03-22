@@ -1,21 +1,21 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, rmSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import {
-  FilesystemError,
-  PermissionError,
-  NotFoundError,
   DiskFullError,
-  InvalidPathError,
   EncodingError,
+  FilesystemError,
+  InvalidPathError,
+  NotFoundError,
+  PermissionError,
+  copyFile,
   ensureDir,
   fileExists,
-  isExecutable,
   getWorktreePath,
-  copyFile,
-  removeDir,
+  isExecutable,
   readTextFile,
+  removeDir,
   writeTextFile,
 } from "../../src/lib/filesystem";
 
@@ -29,7 +29,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (existsSync(testDir)) {
-    rmSync(testDir, { recursive: true, force: true });
+    rmSync(testDir, { force: true, recursive: true });
   }
 });
 
@@ -328,7 +328,7 @@ describe("US5: Directory Cleanup Operations", () => {
     } finally {
       // Cleanup
       chmodSync(dirPath, 0o755);
-      rmSync(dirPath, { recursive: true, force: true });
+      rmSync(dirPath, { force: true, recursive: true });
     }
   });
 });

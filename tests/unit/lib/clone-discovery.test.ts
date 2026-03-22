@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { Config } from "../../../src/lib/config.ts";
@@ -18,19 +18,19 @@ describe("clone-discovery", () => {
   });
 
   afterEach(async () => {
-    await rm(workspaceRoot, { recursive: true, force: true });
+    await rm(workspaceRoot, { force: true, recursive: true });
   });
 
   test("classifies configured present and missing repositories", async () => {
     await mkdir(join(workspaceRoot, "repos", "repo-a"), { recursive: true });
 
     const config: Config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {
         "repo-a": { path: "./repos/repo-a", gitUrl: "git@github.com:team/repo-a.git" },
         "repo-b": { path: "./repos/repo-b", gitUrl: "git@github.com:team/repo-b.git" },
       },
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     const result = await discoverCloneRepositories(workspaceRoot, config);
@@ -45,9 +45,9 @@ describe("clone-discovery", () => {
     await writeFile(join(unmanagedPath, ".git"), "gitdir: ./.git/worktrees/main\n");
 
     const config: Config = {
-      version: "1.0.0",
-      reposDir: "./repos",
       repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     };
 
     const result = await discoverCloneRepositories(workspaceRoot, config);

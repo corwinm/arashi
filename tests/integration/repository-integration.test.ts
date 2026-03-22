@@ -5,10 +5,10 @@
  * using real git repositories.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { rm, mkdir, stat } from "fs/promises";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdir, rm, stat } from "fs/promises";
 import { join } from "path";
-import { discoverRepositories, cloneRepository, CloneStatus } from "../../src/core/repository.js";
+import { CloneStatus, cloneRepository, discoverRepositories } from "../../src/core/repository.js";
 import { createStandardTestRepos } from "../helpers/create-test-repos.js";
 
 const TEST_WORKSPACE = join(import.meta.dir, "../temp-integration-workspace");
@@ -16,7 +16,7 @@ const TEST_WORKSPACE = join(import.meta.dir, "../temp-integration-workspace");
 describe("Repository Management MVP Integration", () => {
   beforeAll(async () => {
     // Clean up and create fresh test workspace
-    await rm(TEST_WORKSPACE, { recursive: true, force: true });
+    await rm(TEST_WORKSPACE, { force: true, recursive: true });
     await mkdir(TEST_WORKSPACE, { recursive: true });
 
     // Create standard test repositories
@@ -25,7 +25,7 @@ describe("Repository Management MVP Integration", () => {
 
   afterAll(async () => {
     // Clean up after all tests
-    await rm(TEST_WORKSPACE, { recursive: true, force: true });
+    await rm(TEST_WORKSPACE, { force: true, recursive: true });
   });
 
   // T042: Integration test - Discover multiple repos with different default branches
@@ -70,7 +70,7 @@ describe("Repository Management MVP Integration", () => {
   });
 
   // Note: Real test fixture discovery is not included as fixtures should be created
-  // dynamically by tests. Performance and functional tests below provide adequate coverage.
+  // Dynamically by tests. Performance and functional tests below provide adequate coverage.
 
   // T045: Performance test - Discover 50 mock repositories in under 5 seconds
   test("T045: discovers 50 repositories in under 5 seconds", async () => {
@@ -86,29 +86,29 @@ describe("Repository Management MVP Integration", () => {
           await mkdir(repoPath, { recursive: true });
           const proc = Bun.spawn(["git", "init", "-b", "main"], {
             cwd: repoPath,
-            stdout: "ignore",
             stderr: "ignore",
+            stdout: "ignore",
           });
           await proc.exited;
 
           const proc2 = Bun.spawn(["git", "config", "user.name", "Test"], {
             cwd: repoPath,
-            stdout: "ignore",
             stderr: "ignore",
+            stdout: "ignore",
           });
           await proc2.exited;
 
           const proc3 = Bun.spawn(["git", "config", "user.email", "test@test.com"], {
             cwd: repoPath,
-            stdout: "ignore",
             stderr: "ignore",
+            stdout: "ignore",
           });
           await proc3.exited;
 
           const proc4 = Bun.spawn(["git", "commit", "--allow-empty", "-m", "Initial"], {
             cwd: repoPath,
-            stdout: "ignore",
             stderr: "ignore",
+            stdout: "ignore",
           });
           await proc4.exited;
         })(),
@@ -132,8 +132,8 @@ describe("Repository Management MVP Integration", () => {
     console.log(`Performance: Discovered 50 repositories in ${duration}ms`);
 
     // Clean up perf test repos
-    await rm(perfTestPath, { recursive: true, force: true });
-  }, 10000); // Increased timeout for performance test
+    await rm(perfTestPath, { force: true, recursive: true });
+  }, 10_000); // Increased timeout for performance test
 });
 
 // ============================================================================
@@ -201,7 +201,7 @@ describe("Integration: Setup Script Detection", () => {
     expect(noSetupRepo!.setupScriptPath).toBeUndefined();
 
     // Clean up
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(workspaceDir, { force: true, recursive: true });
   });
 });
 
@@ -214,7 +214,7 @@ describe("Integration: Repository Cloning", () => {
   test("T081: clones repository from local git path", async () => {
     // Arrange: Create a source repository with content
     const sourceRepo = join(TEST_WORKSPACE, "clone-source");
-    await rm(sourceRepo, { recursive: true, force: true });
+    await rm(sourceRepo, { force: true, recursive: true });
     await mkdir(sourceRepo, { recursive: true });
 
     // Initialize git repo
@@ -237,7 +237,7 @@ describe("Integration: Repository Cloning", () => {
     }).exited;
 
     const targetPath = join(TEST_WORKSPACE, "clone-target");
-    await rm(targetPath, { recursive: true, force: true });
+    await rm(targetPath, { force: true, recursive: true });
 
     // Act: Clone the repository
     const result = await cloneRepository(sourceRepo, targetPath);
@@ -266,7 +266,7 @@ describe("Integration: Repository Cloning", () => {
     expect(codeContent).toContain("version = '1.0.0'");
 
     // Clean up
-    await rm(sourceRepo, { recursive: true, force: true });
-    await rm(targetPath, { recursive: true, force: true });
-  }, 15000);
+    await rm(sourceRepo, { force: true, recursive: true });
+    await rm(targetPath, { force: true, recursive: true });
+  }, 15_000);
 });

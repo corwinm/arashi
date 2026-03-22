@@ -8,19 +8,12 @@ import {
   discoverSwitchCandidates,
   filterSwitchCandidates,
   selectSwitchCandidate,
-  type SwitchCandidate,
-  type SwitchCandidateDiscoveryResult,
 } from "../core/switch.ts";
-import {
-  launchSwitchTarget,
-  type LaunchSwitchResult,
-  type SwitchProcessRunner,
-} from "../lib/switch-launcher.ts";
-import {
-  SwitchCommandError,
-  SwitchCommandErrorCode,
-  type SwitchLaunchMode,
-} from "../types/switch.ts";
+import type { SwitchCandidate, SwitchCandidateDiscoveryResult } from "../core/switch.ts";
+import { launchSwitchTarget } from "../lib/switch-launcher.ts";
+import type { LaunchSwitchResult, SwitchProcessRunner } from "../lib/switch-launcher.ts";
+import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
+import type { SwitchLaunchMode } from "../types/switch.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 
 export interface SwitchCommandOptions {
@@ -131,16 +124,16 @@ export async function executeSwitch(
 
   if (scope === "all") {
     scopedCandidates = await augmentAllCandidates(scopedCandidates, {
-      workspaceRoot,
       reposDir: workspace.config?.reposDir ?? "./repos",
       repositories: workspace.repositories,
+      workspaceRoot,
     });
   }
 
   if (scopedCandidates.length === 0) {
     throw new SwitchCommandError(getNoTargetsMessage(scope), SwitchCommandErrorCode.NO_TARGETS, {
-      workspaceRoot,
       scope,
+      workspaceRoot,
     });
   }
 
@@ -179,11 +172,11 @@ export async function executeSwitch(
   });
 
   const resolvedLaunchMode = resolveDefaultWithPrecedence<LaunchMode>({
+    builtInValue: "auto",
+    configValue: workspace.config?.defaults?.switch?.launchMode,
     explicitValue: "sesh",
     hasExplicitValue: options.sesh === true,
     optOut: options.defaultLaunch === false,
-    configValue: workspace.config?.defaults?.switch?.launchMode,
-    builtInValue: "auto",
   });
 
   const launchResult = await launchCandidate(
@@ -203,11 +196,11 @@ export async function executeSwitch(
   );
 
   return {
-    selected,
     launchMode: launchResult.mode,
-    totalCandidates: scopedCandidates.length,
     matchedCandidates: matchedCandidates.length,
+    selected,
     skippedCandidates: discovery.skippedCount,
+    totalCandidates: scopedCandidates.length,
   };
 }
 
@@ -361,8 +354,8 @@ async function augmentAllScopeCandidates(
       }
 
       const candidate: SwitchCandidate = {
-        repoName: childRepository.name,
         branchName,
+        repoName: childRepository.name,
         worktreePath: childWorktreePath,
       };
       const key = `${candidate.repoName}\u0000${candidate.worktreePath}`;
@@ -407,13 +400,13 @@ function filterRepoScopedCandidates(
     return exactMatches;
   }
 
-  const partialRepoNames = Array.from(
-    new Set(
+  const partialRepoNames = [
+    ...new Set(
       candidates
         .map((candidate) => candidate.repoName)
         .filter((repoName) => repoName.toLowerCase().includes(query)),
     ),
-  );
+  ];
 
   if (partialRepoNames.length === 1) {
     const partialRepoName = partialRepoNames[0];
@@ -432,9 +425,7 @@ function buildRepoNoMatchMessage(
   candidates: SwitchCandidate[],
   filter: string | undefined,
 ): string {
-  const availableRepos = Array.from(
-    new Set(candidates.map((candidate) => candidate.repoName)),
-  ).sort();
+  const availableRepos = [...new Set(candidates.map((candidate) => candidate.repoName))].toSorted();
   const availableReposText =
     availableRepos.length > 0 ? availableRepos.join(", ") : "(no child repositories found)";
 

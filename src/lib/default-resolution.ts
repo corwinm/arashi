@@ -20,28 +20,28 @@ export function resolveDefaultWithPrecedence<T>(
   const hasExplicitValue = options.hasExplicitValue ?? options.explicitValue !== undefined;
   if (hasExplicitValue && options.explicitValue !== undefined) {
     return {
-      value: options.explicitValue,
       source: "explicit",
+      value: options.explicitValue,
     };
   }
 
   if (options.optOut) {
     return {
-      value: options.builtInValue,
       source: "opt-out",
+      value: options.builtInValue,
     };
   }
 
   const hasConfigValue = options.hasConfigValue ?? options.configValue !== undefined;
   if (hasConfigValue && options.configValue !== undefined) {
     return {
-      value: options.configValue,
       source: "config",
+      value: options.configValue,
     };
   }
 
   return {
-    value: options.builtInValue,
     source: "built-in",
+    value: options.builtInValue,
   };
 }

@@ -33,15 +33,15 @@ export async function discoverSetupTargets(
 
     targets.push({
       ...repository,
+      hasSetupTask,
       scopeType: index === 0 ? "main" : "sub",
       selected,
-      hasSetupTask,
       setupScriptPath,
       skipReason,
     });
   }
 
-  return { targets, missing };
+  return { missing, targets };
 }
 
 export function orderSetupTargets(targets: SetupTarget[]): SetupTarget[] {
@@ -55,7 +55,7 @@ function normalizeOnly(only: string[] | undefined): string[] {
     return [];
   }
 
-  return Array.from(new Set(only.map((name) => name.trim()).filter(Boolean)));
+  return [...new Set(only.map((name) => name.trim()).filter(Boolean))];
 }
 
 function findMissingRepositories(repositories: WorkspaceRepository[], only: string[]): string[] {

@@ -1,10 +1,10 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   buildSwitchCandidates,
   filterSwitchCandidates,
   selectSwitchCandidate,
-  type SwitchCandidate,
 } from "../../../src/core/switch.ts";
+import type { SwitchCandidate } from "../../../src/core/switch.ts";
 import type { WorktreeInfo } from "../../../src/types/remove.ts";
 import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
 
@@ -12,22 +12,22 @@ describe("buildSwitchCandidates", () => {
   test("normalizes valid entries and skips invalid worktrees", () => {
     const worktrees: WorktreeInfo[] = [
       {
-        path: "/tmp/workspace-feature",
         branch: "feature/auth",
-        repository: "workspace",
         isMain: false,
+        path: "/tmp/workspace-feature",
+        repository: "workspace",
       },
       {
-        path: "/tmp/workspace-main",
         branch: "",
-        repository: "workspace",
         isMain: true,
+        path: "/tmp/workspace-main",
+        repository: "workspace",
       },
       {
-        path: "",
         branch: "main",
-        repository: "repo-a",
         isMain: false,
+        path: "",
+        repository: "repo-a",
       },
     ];
 
@@ -36,8 +36,8 @@ describe("buildSwitchCandidates", () => {
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]).toEqual({
       branchName: "feature/auth",
-      worktreePath: "/tmp/workspace-feature",
       repoName: "workspace",
+      worktreePath: "/tmp/workspace-feature",
     });
     expect(result.skippedCount).toBe(2);
   });
@@ -47,13 +47,13 @@ describe("filterSwitchCandidates", () => {
   const candidates: SwitchCandidate[] = [
     {
       branchName: "feature/auth-refresh",
-      worktreePath: "/workspace/feature-auth-refresh",
       repoName: "workspace",
+      worktreePath: "/workspace/feature-auth-refresh",
     },
     {
       branchName: "bugfix/login",
-      worktreePath: "/workspace/bugfix-login",
       repoName: "workspace",
+      worktreePath: "/workspace/bugfix-login",
     },
   ];
 
@@ -73,14 +73,14 @@ describe("filterSwitchCandidates", () => {
 describe("selectSwitchCandidate", () => {
   const first: SwitchCandidate = {
     branchName: "feature/a",
-    worktreePath: "/workspace/feature-a",
     repoName: "workspace",
+    worktreePath: "/workspace/feature-a",
   };
 
   const second: SwitchCandidate = {
     branchName: "feature/b",
-    worktreePath: "/workspace/feature-b",
     repoName: "workspace",
+    worktreePath: "/workspace/feature-b",
   };
 
   test("auto-selects when one candidate remains", async () => {
@@ -112,13 +112,13 @@ describe("selectSwitchCandidate", () => {
     const crossRepoCandidates: SwitchCandidate[] = [
       {
         branchName: "feature/a",
-        worktreePath: "/workspace/repo-a-feature-a",
         repoName: "repo-a",
+        worktreePath: "/workspace/repo-a-feature-a",
       },
       {
         branchName: "feature/a",
-        worktreePath: "/workspace/repo-b-feature-a",
         repoName: "repo-b",
+        worktreePath: "/workspace/repo-b-feature-a",
       },
     ];
     const seenChoiceNames: string[] = [];
@@ -144,18 +144,18 @@ describe("selectSwitchCandidate", () => {
     const mixedCandidates: SwitchCandidate[] = [
       {
         branchName: "main",
+        repoName: "workspace",
         worktreePath: "/workspace",
-        repoName: "workspace",
       },
       {
         branchName: "feature/a",
+        repoName: "workspace",
         worktreePath: "/workspace-feature-a",
-        repoName: "workspace",
       },
       {
         branchName: "feature/a",
-        worktreePath: "/workspace/repos/docs",
         repoName: "docs",
+        worktreePath: "/workspace/repos/docs",
       },
     ];
     const seenChoiceNames: string[] = [];

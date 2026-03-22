@@ -9,8 +9,9 @@
 import { Command } from "commander";
 import { stat } from "fs/promises";
 import { resolve } from "path";
-import { loadConfig, findWorkspaceRoot, type Config } from "../lib/config.js";
-import { getGitStatus, getFullGitStatus } from "../lib/git.js";
+import { loadConfig, findWorkspaceRoot } from "../lib/config.js";
+import type { Config } from "../lib/config.js";
+import { getFullGitStatus, getGitStatus } from "../lib/git.js";
 import * as logger from "../lib/logger.js";
 
 /**
@@ -84,11 +85,11 @@ export function parseGitStatus(output: string): {
   const lines = output.split("\n").filter((line) => line.length > 0);
   const files: GitFileStatus[] = [];
   let branch: BranchTrackingInfo = {
-    localBranch: "unknown",
-    remoteBranch: null,
     ahead: 0,
     behind: 0,
     isDetached: false,
+    localBranch: "unknown",
+    remoteBranch: null,
   };
 
   for (const line of lines) {
@@ -101,7 +102,7 @@ export function parseGitStatus(output: string): {
     // Parse file status (2 characters + space + path)
     const stagingStatus = line[0];
     const workingStatus = line[1];
-    const path = line.substring(3);
+    const path = line.slice(3);
 
     files.push({
       path,
@@ -110,7 +111,7 @@ export function parseGitStatus(output: string): {
     });
   }
 
-  return { files, branch };
+  return { branch, files };
 }
 
 /**
@@ -124,16 +125,16 @@ export function parseGitStatus(output: string): {
  */
 export function parseBranchLine(line: string): BranchTrackingInfo {
   // Remove "## "
-  const branchInfo = line.substring(3);
+  const branchInfo = line.slice(3);
 
   // Handle detached HEAD: "## HEAD (no branch)" or "## HEAD (detached..."
   if (branchInfo.includes("no branch") || branchInfo.startsWith("HEAD (detached")) {
     return {
-      localBranch: "",
-      remoteBranch: null,
       ahead: 0,
       behind: 0,
       isDetached: true,
+      localBranch: "",
+      remoteBranch: null,
     };
   }
 
@@ -166,11 +167,11 @@ export function parseBranchLine(line: string): BranchTrackingInfo {
   }
 
   return {
-    localBranch,
-    remoteBranch,
     ahead,
     behind,
     isDetached: false,
+    localBranch,
+    remoteBranch,
   };
 }
 
@@ -193,8 +194,6 @@ export async function checkRepoStatus(
   const repoExists = await pathExists(path);
   if (!repoExists) {
     return {
-      name,
-      path,
       branch: {
         localBranch: "",
         remoteBranch: null,
@@ -202,8 +201,10 @@ export async function checkRepoStatus(
         behind: 0,
         isDetached: false,
       },
-      files: [],
       error: `Repository is missing at ${path}. Run \`arashi clone\` to clone missing repositories.`,
+      files: [],
+      name,
+      path,
     };
   }
 
@@ -214,8 +215,6 @@ export async function checkRepoStatus(
     // Check for errors
     if (result.error) {
       return {
-        name,
-        path,
         branch: {
           localBranch: "",
           remoteBranch: null,
@@ -223,8 +222,10 @@ export async function checkRepoStatus(
           behind: 0,
           isDetached: false,
         },
-        files: [],
         error: result.error,
+        files: [],
+        name,
+        path,
       };
     }
 
@@ -239,14 +240,14 @@ export async function checkRepoStatus(
     }
 
     return {
+      branch: parsed.branch,
+      error: null,
+      files: parsed.files,
+      fullStatus,
       name,
       path,
-      branch: parsed.branch,
-      files: parsed.files,
-      error: null,
-      fullStatus,
     };
-  } catch (err) {
+  } catch (error) {
     // Catch any unexpected errors
     return {
       name,
@@ -259,7 +260,7 @@ export async function checkRepoStatus(
         isDetached: false,
       },
       files: [],
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: error instanceof Error ? error.message : "Unknown error",
     };
   }
 }
@@ -290,7 +291,7 @@ export async function checkAllRepos(
   verbose: boolean = false,
 ): Promise<RepoStatus[]> {
   // Build list of repositories to check
-  const reposToCheck: Array<{ name: string; path: string }> = [
+  const reposToCheck: { name: string; path: string }[] = [
     { name: "Main Repository", path: workspaceRoot },
   ];
 
@@ -317,24 +318,26 @@ function getStatusSymbol(isClean: boolean): string {
  * Helper to get status color function
  */
 function getStatusColor(isClean: boolean, hasError: boolean) {
-  if (hasError) return (text: string) => `\x1b[31m${text}\x1b[0m`; // red
+  if (hasError) {
+    return (text: string) => `\x1b[31m${text}\x1b[0m`;
+  } // Red
   return isClean
-    ? (text: string) => `\x1b[32m${text}\x1b[0m` // green
-    : (text: string) => `\x1b[33m${text}\x1b[0m`; // yellow
+    ? (text: string) => `\x1B[32m${text}\x1B[0m` // Green
+    : (text: string) => `\u001b[33m${text}\u001b[0m`; // Yellow
 }
 
 /**
  * Helper to apply cyan color
  */
 function cyan(text: string): string {
-  return `\x1b[36m${text}\x1b[0m`;
+  return `\u001b[36m${text}\u001b[0m`;
 }
 
 /**
  * Helper to apply bold
  */
 function bold(text: string): string {
-  return `\x1b[1m${text}\x1b[0m`;
+  return `\u001b[1m${text}\x1B[0m`;
 }
 
 /**
@@ -382,9 +385,15 @@ export function formatRepoSection(status: RepoStatus): string {
     section += `  Status: ${colorFn(getStatusSymbol(false) + " Dirty")} (${status.files.length} changes)\n`;
 
     const parts = [];
-    if (stagedCount > 0) parts.push(`${stagedCount} staged`);
-    if (modifiedCount > 0) parts.push(`${modifiedCount} modified`);
-    if (untrackedCount > 0) parts.push(`${untrackedCount} untracked`);
+    if (stagedCount > 0) {
+      parts.push(`${stagedCount} staged`);
+    }
+    if (modifiedCount > 0) {
+      parts.push(`${modifiedCount} modified`);
+    }
+    if (untrackedCount > 0) {
+      parts.push(`${untrackedCount} untracked`);
+    }
 
     section += `    ${parts.join(", ")}\n`;
   }
@@ -444,9 +453,15 @@ export function formatVerboseOutput(statuses: RepoStatus[]): string {
         output += ` → ${status.branch.remoteBranch}`;
         if (status.branch.ahead > 0 || status.branch.behind > 0) {
           output += ` [`;
-          if (status.branch.ahead > 0) output += `↑${status.branch.ahead}`;
-          if (status.branch.ahead > 0 && status.branch.behind > 0) output += ", ";
-          if (status.branch.behind > 0) output += `↓${status.branch.behind}`;
+          if (status.branch.ahead > 0) {
+            output += `↑${status.branch.ahead}`;
+          }
+          if (status.branch.ahead > 0 && status.branch.behind > 0) {
+            output += ", ";
+          }
+          if (status.branch.behind > 0) {
+            output += `↓${status.branch.behind}`;
+          }
           output += `]`;
         }
       }
@@ -485,8 +500,12 @@ export function formatShortLine(status: RepoStatus): string {
   // Add tracking info
   if (status.branch.ahead > 0 || status.branch.behind > 0) {
     line += " ";
-    if (status.branch.ahead > 0) line += `↑${status.branch.ahead}`;
-    if (status.branch.behind > 0) line += `↓${status.branch.behind}`;
+    if (status.branch.ahead > 0) {
+      line += `↑${status.branch.ahead}`;
+    }
+    if (status.branch.behind > 0) {
+      line += `↓${status.branch.behind}`;
+    }
   }
 
   line += "): ";
@@ -511,9 +530,15 @@ export function formatShortLine(status: RepoStatus): string {
     ).length;
 
     const parts = [];
-    if (stagedCount > 0) parts.push(`${stagedCount} staged`);
-    if (modifiedCount > 0) parts.push(`${modifiedCount} modified`);
-    if (untrackedCount > 0) parts.push(`${untrackedCount} untracked`);
+    if (stagedCount > 0) {
+      parts.push(`${stagedCount} staged`);
+    }
+    if (modifiedCount > 0) {
+      parts.push(`${modifiedCount} modified`);
+    }
+    if (untrackedCount > 0) {
+      parts.push(`${untrackedCount} untracked`);
+    }
 
     line += colorFn(`● ${status.files.length} changes (${parts.join(", ")})`);
   }
@@ -569,9 +594,9 @@ async function statusCommand(options: StatusOptions): Promise<void> {
   let config: Config;
   try {
     config = await loadConfig(workspaceRoot);
-  } catch (err) {
+  } catch (error) {
     logger.error("Failed to load workspace configuration");
-    logger.error(err instanceof Error ? err.message : String(err));
+    logger.error(error instanceof Error ? error.message : String(error));
     process.exit(2);
   }
 

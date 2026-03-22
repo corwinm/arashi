@@ -9,10 +9,10 @@
  */
 
 import { Command } from "commander";
-import { join, basename } from "path";
-import { spinner, success, error as logError, info } from "../lib/logger.ts";
+import { basename, join } from "path";
+import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { clone, getDefaultBranch } from "../lib/git.ts";
-import { loadConfig, saveConfig, getConfigPath, configExists } from "../lib/config.ts";
+import { configExists, getConfigPath, loadConfig, saveConfig } from "../lib/config.ts";
 import { AddCommandError, AddCommandErrorCode } from "../lib/errors.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
 import { executeClone } from "./clone.ts";
@@ -94,11 +94,11 @@ interface RollbackOperation {
  * Git URL validation patterns for different protocols
  */
 const GIT_URL_PATTERNS = {
-  https: /^https:\/\/[^/]+\/.+/,
-  ssh: /^(ssh:\/\/[^@]+@[^/]+\/|git@[^:]+:)[^/].+/,
-  git: /^git:\/\/[^/]+\/.+/,
   file: /^(file:\/\/)?\/[^/].+/,
+  git: /^git:\/\/[^/]+\/.+/,
+  https: /^https:\/\/[^/]+\/.+/,
   scp: /^[^@]+@[^:]+:[^/].+/,
+  ssh: /^(ssh:\/\/[^@]+@[^/]+\/|git@[^:]+:)[^/].+/,
 };
 
 /**
@@ -136,14 +136,14 @@ export function isValidGitUrl(url: string): boolean {
  */
 export function deriveRepoName(gitUrl: string): string {
   // Remove trailing slashes and .git suffix
-  let url = gitUrl
+  const url = gitUrl
     .trim()
     .replace(/\/+$/, "")
     .replace(/\.git$/, "");
 
   // Extract last path segment
   const parts = url.split(/[/:]/);
-  let name = parts[parts.length - 1];
+  const name = parts[parts.length - 1];
 
   // Validate name contains safe characters
   if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
@@ -189,9 +189,9 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
         owner = pathParts[0];
-        repository = pathParts[pathParts.length - 1];
+        repository = pathParts.at(-1);
       } else {
-        repository = pathParts[pathParts.length - 1];
+        repository = pathParts.at(-1);
       }
     } else {
       repository = deriveRepoName(trimmedUrl);
@@ -206,9 +206,9 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
         owner = pathParts[0];
-        repository = pathParts[pathParts.length - 1];
+        repository = pathParts.at(-1);
       } else {
-        repository = pathParts[pathParts.length - 1];
+        repository = pathParts.at(-1);
       }
     } else {
       repository = deriveRepoName(trimmedUrl);
@@ -222,9 +222,9 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
         owner = pathParts[0];
-        repository = pathParts[pathParts.length - 1];
+        repository = pathParts.at(-1);
       } else {
-        repository = pathParts[pathParts.length - 1];
+        repository = pathParts.at(-1);
       }
     } else {
       repository = deriveRepoName(trimmedUrl);
@@ -242,12 +242,12 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
   const derivedName = deriveRepoName(trimmedUrl);
 
   return {
-    url: trimmedUrl,
-    protocol,
+    derivedName,
     host,
     owner,
+    protocol,
     repository,
-    derivedName,
+    url: trimmedUrl,
   };
 }
 
@@ -295,7 +295,7 @@ export async function detectSetupScript(repoPath: string): Promise<string | null
       if (scriptName === "Makefile") {
         try {
           const content = await file.text();
-          if (content.match(/^(setup|install):/m)) {
+          if (/^(setup|install):/m.test(content)) {
             return scriptPath;
           }
         } catch {
@@ -355,9 +355,9 @@ async function executeAdd(
         `Repository name "${repositoryName}" already exists at ${config.repos[repositoryName].path}`,
         AddCommandErrorCode.DUPLICATE_NAME,
         {
-          name: repositoryName,
           existingPath: config.repos[repositoryName].path,
           gitUrl,
+          name: repositoryName,
         },
       );
     }
@@ -370,14 +370,14 @@ async function executeAdd(
     const s2 = spinner(`Cloning repository from ${gitUrl}...`).start();
     try {
       await clone(gitUrl, clonePath);
-      operations.push({ type: "clone", path: clonePath, reversible: true });
+      operations.push({ path: clonePath, reversible: true, type: "clone" });
       s2.succeed("Repository cloned");
     } catch (error) {
       s2.fail("Clone failed");
       throw new AddCommandError(
         `Git clone operation failed: ${(error as Error).message}`,
         AddCommandErrorCode.CLONE_FAILED,
-        { url: gitUrl, error: (error as Error).message },
+        { error: (error as Error).message, url: gitUrl },
       );
     }
 
@@ -409,8 +409,8 @@ async function executeAdd(
     const s5 = spinner("Updating configuration...").start();
     try {
       const repoConfig: RepoConfig = {
-        path: join(".", config.reposDir, repositoryName),
         gitUrl: urlInfo.url,
+        path: join(".", config.reposDir, repositoryName),
       };
 
       config.repos[repositoryName] = repoConfig;
@@ -427,16 +427,16 @@ async function executeAdd(
 
     // Success!
     return {
-      repositoryName,
       clonePath,
       defaultBranch,
+      gitUrl,
+      repositoryName,
       setupScript,
       setupScriptCreated: false,
-      gitUrl,
     };
   } catch (error) {
     // Rollback operations in reverse order
-    for (const op of operations.reverse()) {
+    for (const op of operations.toReversed()) {
       try {
         if (op.type === "clone") {
           // Remove cloned directory
@@ -526,7 +526,6 @@ export function createCommand(): Command {
           console.log(
             JSON.stringify(
               {
-                success: true,
                 repository: {
                   name: result.repositoryName,
                   path: result.clonePath.replace(workspaceRoot, "."),
@@ -537,6 +536,7 @@ export function createCommand(): Command {
                     : null,
                   setupScriptCreated: result.setupScriptCreated,
                 },
+                success: true,
               },
               null,
               2,
@@ -553,12 +553,12 @@ export function createCommand(): Command {
             console.log(
               JSON.stringify(
                 {
-                  success: false,
                   error: {
                     code: error.code,
                     message: error.message,
                     details: error.context,
                   },
+                  success: false,
                 },
                 null,
                 2,
@@ -593,11 +593,11 @@ export function createCommand(): Command {
             console.log(
               JSON.stringify(
                 {
-                  success: false,
                   error: {
                     code: "UNKNOWN_ERROR",
                     message: (error as Error).message,
                   },
+                  success: false,
                 },
                 null,
                 2,

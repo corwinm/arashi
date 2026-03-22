@@ -9,23 +9,23 @@ const branchName = "feature/defaults";
 
 function createLoadedConfig(configOverrides: Partial<Config> = {}): LoadedConfig {
   return {
-    source: "local-file",
-    configPath: "/workspace/.arashi/config.json",
     config: {
       version: "1.0.0",
       reposDir: "./repos",
       repos: {},
       ...configOverrides,
     },
+    configPath: "/workspace/.arashi/config.json",
+    source: "local-file",
   };
 }
 
 function createSummary(worktreePath: string = `${workspaceRoot}/${branchName}`): OperationSummary {
   return {
-    totalRepositories: 1,
-    successCount: 1,
+    errorSummary: null,
     failureCount: 0,
-    skippedCount: 0,
+    hookOutcomes: [],
+    nextSteps: [],
     repositoryResults: [
       {
         repository: {
@@ -44,22 +44,17 @@ function createSummary(worktreePath: string = `${workspaceRoot}/${branchName}`):
       },
     ],
     rolledBack: false,
+    skippedCount: 0,
+    successCount: 1,
     totalDuration: 20,
-    errorSummary: null,
-    hookOutcomes: [],
-    nextSteps: [],
+    totalRepositories: 1,
   };
 }
 
 function baseDeps(overrides: Partial<CreateCommandDependencies> = {}): CreateCommandDependencies {
   return {
-    resolveCreateInvocationContext: async () => ({
-      invocationPath: workspaceRoot,
-      workspaceRoot,
-      executionPath: workspaceRoot,
-      repositoryType: "non-bare",
-    }),
-    loadConfigWithFallback: async () => createLoadedConfig(),
+    applyRepositoryFilter: async (_filter, repositories) => repositories,
+    createCoordinatedWorktrees: async () => createSummary(),
     discoverRepositories: async () => ({
       repositories: [],
       workspacePath: `${workspaceRoot}/repos`,
@@ -69,21 +64,30 @@ function baseDeps(overrides: Partial<CreateCommandDependencies> = {}): CreateCom
       duration: 1,
     }),
     isGitRepository: async () => true,
+    loadConfigWithFallback: async () => createLoadedConfig(),
+    resolveCreateInvocationContext: async () => ({
+      invocationPath: workspaceRoot,
+      workspaceRoot,
+      executionPath: workspaceRoot,
+      repositoryType: "non-bare",
+    }),
     resolveCurrentBranch: async () => "main",
-    applyRepositoryFilter: async (_filter, repositories) => repositories,
-    createCoordinatedWorktrees: async () => createSummary(),
     ...overrides,
   };
 }
 
 describe("create defaults integration", () => {
   test("applies configured create launch defaults", async () => {
-    const launchCalls: Array<{ sesh?: boolean }> = [];
+    const launchCalls: { sesh?: boolean }[] = [];
 
     await executeCreate(
       branchName,
       {},
       baseDeps({
+        launchSwitchTarget: async (_candidate, options) => {
+          launchCalls.push(options);
+          return { mode: "sesh", command: ["tmux"] };
+        },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
             defaults: {
@@ -94,10 +98,6 @@ describe("create defaults integration", () => {
               },
             },
           }),
-        launchSwitchTarget: async (_candidate, options) => {
-          launchCalls.push(options);
-          return { mode: "sesh", command: ["tmux"] };
-        },
       }),
     );
 
@@ -105,12 +105,16 @@ describe("create defaults integration", () => {
   });
 
   test("allows one-off opt-out from configured create launch defaults", async () => {
-    const launchCalls: Array<{ sesh?: boolean }> = [];
+    const launchCalls: { sesh?: boolean }[] = [];
 
     await executeCreate(
       branchName,
       { launch: false },
       baseDeps({
+        launchSwitchTarget: async (_candidate, options) => {
+          launchCalls.push(options);
+          return { mode: "sesh", command: ["tmux"] };
+        },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
             defaults: {
@@ -121,10 +125,6 @@ describe("create defaults integration", () => {
               },
             },
           }),
-        launchSwitchTarget: async (_candidate, options) => {
-          launchCalls.push(options);
-          return { mode: "sesh", command: ["tmux"] };
-        },
       }),
     );
 
@@ -132,7 +132,7 @@ describe("create defaults integration", () => {
   });
 
   test("preserves backward compatibility when create defaults are absent", async () => {
-    const launchCalls: Array<{ sesh?: boolean }> = [];
+    const launchCalls: { sesh?: boolean }[] = [];
 
     await executeCreate(
       branchName,
@@ -140,7 +140,7 @@ describe("create defaults integration", () => {
       baseDeps({
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { mode: "fallback", command: ["open"] };
+          return { command: ["open"], mode: "fallback" };
         },
       }),
     );
@@ -149,7 +149,7 @@ describe("create defaults integration", () => {
   });
 
   test("allows explicit create launch override without config defaults", async () => {
-    const launchCalls: Array<{ sesh?: boolean }> = [];
+    const launchCalls: { sesh?: boolean }[] = [];
 
     await executeCreate(
       branchName,
@@ -157,7 +157,7 @@ describe("create defaults integration", () => {
       baseDeps({
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { mode: "fallback", command: ["open"] };
+          return { command: ["open"], mode: "fallback" };
         },
       }),
     );

@@ -1,5 +1,6 @@
 import chalk from "chalk";
-import ora, { Ora } from "ora";
+import type { Ora } from "ora";
+import ora from "ora";
 
 // ============================================================================
 // NO_COLOR Detection
@@ -123,13 +124,13 @@ export function spinner(text: string): Ora {
  * ]);
  * ```
  */
-export function table(data: Array<Record<string, string>>): void {
+export function table(data: Record<string, string>[]): void {
   if (data.length === 0) {
     return;
   }
 
   // Get all unique column names from all rows
-  const columns = Array.from(new Set(data.flatMap((row) => Object.keys(row))));
+  const columns = [...new Set(data.flatMap((row) => Object.keys(row)))];
 
   // Calculate maximum width for each column
   const columnWidths: Record<string, number> = {};

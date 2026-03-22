@@ -1,4 +1,4 @@
-import type { PullResult, PullSummary, PullOverallStatus } from "./pull-types.ts";
+import type { PullOverallStatus, PullResult, PullSummary } from "./pull-types.ts";
 
 export function formatProgress(repoName: string, index: number, total: number): string {
   return `[${index}/${total}] ${repoName}`;
