@@ -6,15 +6,16 @@
  * include detailed sub-repository information in verbose mode.
  */
 
-import { Command } from "commander";
-import { listCommand } from "../core/list.ts";
-import * as logger from "../lib/logger.ts";
 import {
   ConfigurationMissingError,
   ListCommandError,
   NotInRepositoryError,
 } from "../types/list.ts";
-import type { ListCommandOptions } from "../types/list.ts";
+import { Command } from "commander";
+import { listCommand } from "../core/list.ts";
+import { error as logError } from "../lib/logger.ts";
+
+type ListCommandOptions = Parameters<typeof listCommand>[0];
 
 interface CliOptions {
   /** Show detailed sub-repository information */
@@ -50,30 +51,32 @@ Examples:
         await executeList(options);
       } catch (error) {
         if (error instanceof NotInRepositoryError) {
-          logger.error("Not in a git repository");
-          logger.error("Run this command from a repository root.");
+          logError("Not in a git repository");
+          logError("Run this command from a repository root.");
           process.exit(1);
         } else if (error instanceof ConfigurationMissingError) {
-          logger.error("Arashi configuration not found");
-          logger.error('Run "arashi init" to create configuration.');
+          logError("Arashi configuration not found");
+          logError('Run "arashi init" to create configuration.');
           process.exit(1);
         } else if (error instanceof ListCommandError) {
-          logger.error(`List command error: ${error.message}`);
+          logError(`List command error: ${error.message}`);
           if (error.context) {
             console.error("Context:", error.context);
           }
           process.exit(1);
         } else if (error instanceof Error) {
-          logger.error(`Unexpected error: ${error.message}`);
+          logError(`Unexpected error: ${error.message}`);
           console.error(error.stack);
           process.exit(1);
         } else {
-          logger.error("An unknown error occurred");
+          logError("An unknown error occurred");
           process.exit(1);
         }
       }
     });
 }
+
+export default createCommand;
 
 async function executeList(options: CliOptions): Promise<void> {
   const listOptions: ListCommandOptions = {

@@ -8,20 +8,65 @@
  * @module commands/add
  */
 
-import { Command } from "commander";
+import { AddCommandError, AddCommandErrorCode } from "../lib/errors.ts";
 import { basename, join } from "path";
-import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { clone, getDefaultBranch } from "../lib/git.ts";
 import { configExists, getConfigPath, loadConfig, saveConfig } from "../lib/config.ts";
-import { AddCommandError, AddCommandErrorCode } from "../lib/errors.ts";
-import { confirm as promptConfirm } from "../lib/prompts.ts";
+import { info, error as logError, spinner, success } from "../lib/logger.ts";
+import { Command } from "commander";
 import { executeClone } from "./clone.ts";
-import type { RepoConfig } from "../lib/config.ts";
+import { confirm as promptConfirm } from "../lib/prompts.ts";
+
+type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
 
 const ZERO = 0;
 const JSON_INDENT = 2;
 const ERROR_EXIT_CODE = 1;
 const CANCELLED_EXIT_CODE = 2;
+
+const detectDefaultBranchOrThrow = async (clonePath: string, gitUrl: string): Promise<string> => {
+  try {
+    return await getDefaultBranch(clonePath);
+  } catch {
+    throw new AddCommandError(
+      "Unable to detect default branch: repository has no remote branches",
+      AddCommandErrorCode.BRANCH_DETECTION_FAILED,
+      { repositoryPath: clonePath, url: gitUrl },
+    );
+  }
+};
+
+const hasMakefileSetupTarget = async (file: Bun.BunFile): Promise<boolean> => {
+  try {
+    const content = await file.text();
+    return /^(setup|install):/m.test(content);
+  } catch {
+    return false;
+  }
+};
+
+const maybeRunCloneFallback = async (error: AddCommandError): Promise<void> => {
+  if (
+    error.code !== AddCommandErrorCode.DUPLICATE_NAME ||
+    !process.stdin.isTTY ||
+    !process.stdout.isTTY
+  ) {
+    return;
+  }
+
+  const fallback = await promptConfirm(
+    "Repository is already configured. Run `arashi clone` now?",
+    true,
+  );
+  if (fallback.status === "ok" && fallback.value) {
+    const cloneResult = await executeClone({}, { workspaceRoot: process.cwd() });
+    if (cloneResult.status === "cancelled") {
+      process.exit(ZERO);
+    }
+
+    process.exit(cloneResult.failed.length > ZERO ? ERROR_EXIT_CODE : ZERO);
+  }
+};
 
 const getLastPathSegment = (pathParts: string[]): string => {
   const lastPart = pathParts.at(-1);
@@ -157,7 +202,7 @@ export function deriveRepoName(gitUrl: string): string {
 
   // Extract last path segment
   const parts = url.split(/[/:]/);
-  const name = parts.at(-1);
+  const name = getLastPathSegment(parts);
 
   // Validate name contains safe characters
   if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
@@ -188,69 +233,60 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
   }
 
   const trimmedUrl = gitUrl.trim();
-  let protocol: GitUrlInfo["protocol"];
+  let protocol: GitUrlInfo["protocol"] = "scp";
   let host: string | null = null;
   let owner: string | null = null;
-  let repository: string;
+  let repository = deriveRepoName(trimmedUrl);
 
   // Determine protocol
   if (GIT_URL_PATTERNS.https.test(trimmedUrl)) {
     protocol = "https";
     const match = trimmedUrl.match(/^https:\/\/([^/]+)\/(.+)/);
     if (match) {
-      host = match[1];
-      const path = match[2].replace(/\.git$/, "");
+      const [, matchedHost, matchedPath] = match;
+      host = matchedHost;
+      const path = matchedPath.replace(/\.git$/, "");
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
-        owner = pathParts[0];
-        repository = getLastPathSegment(pathParts);
-      } else {
-        repository = getLastPathSegment(pathParts);
+        const [pathOwner] = pathParts;
+        owner = pathOwner;
       }
-    } else {
-      repository = deriveRepoName(trimmedUrl);
+      repository = getLastPathSegment(pathParts);
     }
   } else if (GIT_URL_PATTERNS.ssh.test(trimmedUrl) || GIT_URL_PATTERNS.scp.test(trimmedUrl)) {
     protocol = "ssh";
     // Match patterns like git@github.com:user/repo.git or ssh://git@github.com/user/repo.git
     const sshMatch = trimmedUrl.match(/^(?:ssh:\/\/)?([^@]+)@([^:/]+):?(.+)/);
     if (sshMatch) {
-      host = sshMatch[2];
-      const path = sshMatch[3].replace(/^\//, "").replace(/\.git$/, "");
+      const matchedHost = sshMatch[2];
+      const matchedPath = sshMatch[3];
+      host = matchedHost;
+      const path = matchedPath.replace(/^\//, "").replace(/\.git$/, "");
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
-        owner = pathParts[0];
-        repository = getLastPathSegment(pathParts);
-      } else {
-        repository = getLastPathSegment(pathParts);
+        const [pathOwner] = pathParts;
+        owner = pathOwner;
       }
-    } else {
-      repository = deriveRepoName(trimmedUrl);
+      repository = getLastPathSegment(pathParts);
     }
   } else if (GIT_URL_PATTERNS.git.test(trimmedUrl)) {
     protocol = "git";
     const match = trimmedUrl.match(/^git:\/\/([^/]+)\/(.+)/);
     if (match) {
-      host = match[1];
-      const path = match[2].replace(/\.git$/, "");
+      const [, matchedHost, matchedPath] = match;
+      host = matchedHost;
+      const path = matchedPath.replace(/\.git$/, "");
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
-        owner = pathParts[0];
-        repository = getLastPathSegment(pathParts);
-      } else {
-        repository = getLastPathSegment(pathParts);
+        const [pathOwner] = pathParts;
+        owner = pathOwner;
       }
-    } else {
-      repository = deriveRepoName(trimmedUrl);
+      repository = getLastPathSegment(pathParts);
     }
   } else if (GIT_URL_PATTERNS.file.test(trimmedUrl)) {
     protocol = "file";
     const path = trimmedUrl.replace(/^file:\/\//, "").replace(/\.git$/, "");
     repository = basename(path);
-  } else {
-    // Fallback - shouldn't reach here if isValidGitUrl passed
-    protocol = "scp";
-    repository = deriveRepoName(trimmedUrl);
   }
 
   const derivedName = deriveRepoName(trimmedUrl);
@@ -307,12 +343,9 @@ export async function detectSetupScript(repoPath: string): Promise<string | null
     if (await file.exists()) {
       // For Makefile, verify it has setup/install target
       if (scriptName === "Makefile") {
-        try {
-          const content = await file.text();
-          if (/^(setup|install):/m.test(content)) {
-            return scriptPath;
-          }
-        } catch {}
+        if (await hasMakefileSetupTarget(file)) {
+          return scriptPath;
+        }
       } else {
         return scriptPath;
       }
@@ -395,18 +428,11 @@ const executeAdd = async (
 
     // Step 7: Detect default branch
     const s3 = spinner("Detecting default branch...").start();
-    let defaultBranch: string;
-    try {
-      defaultBranch = await getDefaultBranch(clonePath);
-      s3.succeed(`Detected default branch: ${defaultBranch}`);
-    } catch {
+    const defaultBranch = await detectDefaultBranchOrThrow(clonePath, gitUrl).catch((error) => {
       s3.fail("Branch detection failed");
-      throw new AddCommandError(
-        "Unable to detect default branch: repository has no remote branches",
-        AddCommandErrorCode.BRANCH_DETECTION_FAILED,
-        { repositoryPath: clonePath, url: gitUrl },
-      );
-    }
+      throw error;
+    });
+    s3.succeed(`Detected default branch: ${defaultBranch}`);
 
     // Step 8: Detect setup script
     const s4 = spinner("Checking for setup script...").start();
@@ -579,25 +605,7 @@ export function createCommand(): Command {
             );
           } else {
             displayError(error);
-
-            if (
-              error.code === AddCommandErrorCode.DUPLICATE_NAME &&
-              process.stdin.isTTY &&
-              process.stdout.isTTY
-            ) {
-              const fallback = await promptConfirm(
-                "Repository is already configured. Run `arashi clone` now?",
-                true,
-              );
-
-              if (fallback.status === "ok" && fallback.value) {
-                const cloneResult = await executeClone({}, { workspaceRoot: process.cwd() });
-                if (cloneResult.status === "cancelled") {
-                  process.exit(ZERO);
-                }
-                process.exit(cloneResult.failed.length > ZERO ? ERROR_EXIT_CODE : ZERO);
-              }
-            }
+            await maybeRunCloneFallback(error);
           }
           process.exit(CANCELLED_EXIT_CODE);
         } else {

@@ -1,6 +1,7 @@
-import type { SwitchCandidate } from "../core/switch.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
-import type { SwitchLaunchMode } from "../types/switch.ts";
+import type { SwitchCandidate } from "../core/switch.ts";
+
+type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "fallback";
 
 export interface SwitchProcessResult {
   exitCode: number;

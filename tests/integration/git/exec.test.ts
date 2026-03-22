@@ -5,11 +5,11 @@
  * in various repository scenarios.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { exec } from "../../../src/lib/git";
-import { ArashiError } from "../../../src/lib/errors";
 import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-utils";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { ArashiError } from "../../../src/lib/errors";
 import { GitErrorCode } from "../../../src/types/git";
+import { exec } from "../../../src/lib/git";
 
 describe("exec() - Integration Tests", () => {
   let testRepo: GitTestRepo;

@@ -7,19 +7,41 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
-import { exec as gitExec } from "../../src/lib/git";
-import type {
-  BranchCreatedEntry,
-  DirectoryCreatedEntry,
-  WorktreeCreatedEntry,
-} from "../../src/core/rollback";
 import {
   rollbackBranchCreated,
   rollbackDirectoryCreated,
   rollbackWorktreeCreated,
 } from "../../src/core/rollback";
+import { exec as gitExec } from "../../src/lib/git";
+import { join } from "path";
+import { tmpdir } from "os";
+
+interface WorktreeCreatedEntry {
+  type: "worktree_created";
+  timestamp: number;
+  data: {
+    repositoryPath: string;
+    worktreePath: string;
+    branchName: string;
+  };
+}
+
+interface BranchCreatedEntry {
+  type: "branch_created";
+  timestamp: number;
+  data: {
+    repositoryPath: string;
+    branchName: string;
+  };
+}
+
+interface DirectoryCreatedEntry {
+  type: "directory_created";
+  timestamp: number;
+  data: {
+    directoryPath: string;
+  };
+}
 
 describe("Rollback Integration Tests - User Story 3", () => {
   let testDir: string;

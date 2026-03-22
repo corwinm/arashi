@@ -6,9 +6,9 @@
  */
 
 import { mkdir, rm } from "fs/promises";
+import type { Repository } from "../../src/core/repository.ts";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { Repository } from "../../src/core/repository.ts";
 
 export interface TestWorkspace {
   /** Root directory of the test workspace */

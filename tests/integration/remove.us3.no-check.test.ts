@@ -3,13 +3,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { executeRemove } from "../../src/commands/remove.ts";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
   markWorktreeDirty,
 } from "../helpers/remove-test-workspace.ts";
+import { executeRemove } from "../../src/commands/remove.ts";
+import { existsSync } from "fs";
 
 describe("remove command - US3 no-check-dirty", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;

@@ -1,13 +1,14 @@
-import { Command } from "commander";
-import { resolve } from "path";
-import type { Config } from "../lib/config.ts";
+import type { SyncResult, SyncSummary } from "../lib/git/sync-types.ts";
+import { createRollbackTracker, recordCreatedBranch } from "../lib/git/sync-rollback.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import { info, error as logError, spinner, success } from "../lib/logger.ts";
+import { Command } from "commander";
+import { alignRepositoryBranch } from "../lib/git/sync-branch.ts";
 import { exec } from "../lib/git.ts";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
-import { alignRepositoryBranch } from "../lib/git/sync-branch.ts";
-import { createRollbackTracker, recordCreatedBranch } from "../lib/git/sync-rollback.ts";
-import type { SyncResult, SyncSummary } from "../lib/git/sync-types.ts";
-import { info, error as logError, spinner, success } from "../lib/logger.ts";
+import { resolve } from "path";
+
+type Config = Awaited<ReturnType<typeof loadConfig>>;
 
 const ZERO = 0;
 const ERROR_EXIT_CODE = 1;

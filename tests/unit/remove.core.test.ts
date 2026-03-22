@@ -2,17 +2,17 @@
  * Unit tests for remove core helpers
  */
 
-import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
-import { spawn } from "bun";
 import {
   createRemovalSummary,
   formatRemovalSummaryHuman,
   parseWorktreeList,
 } from "../../src/core/remove.ts";
+import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "fs/promises";
 import { getWorktreeDirtyStatus } from "../../src/core/worktree.ts";
+import { join } from "path";
+import { spawn } from "bun";
+import { tmpdir } from "os";
 
 describe("remove core helpers", () => {
   test("parseWorktreeList parses porcelain output", () => {

@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test";
 import { createCommand, executeSwitch } from "../../src/commands/switch.ts";
-import type { SwitchProcessRunner } from "../../src/lib/switch-launcher.ts";
+import { describe, expect, test } from "bun:test";
 import type { SwitchCandidate } from "../../src/core/switch.ts";
+import type { SwitchProcessRunner } from "../../src/lib/switch-launcher.ts";
 import type { WorkspaceRepository } from "../../src/lib/config.ts";
 
 const candidate: SwitchCandidate = {
@@ -264,13 +264,13 @@ describe("switch command integration", () => {
         augmentAllScopeCandidates: async (candidates) => [
           ...candidates,
           {
-            repoName: "docs",
             branchName: "main",
+            repoName: "docs",
             worktreePath: "/workspace/repos/docs",
           },
           {
-            repoName: "docs",
             branchName: "feature/a",
+            repoName: "docs",
             worktreePath: "/workspace-feature-a/repos/docs",
           },
         ],
@@ -373,14 +373,14 @@ describe("switch command integration", () => {
         },
         loadWorkspaceRepositories: async () => ({
           config: {
-            version: "1.0.0",
-            reposDir: "./repos",
-            repos: {},
             defaults: {
               switch: {
                 launchMode: "sesh",
               },
             },
+            repos: {},
+            reposDir: "./repos",
+            version: "1.0.0",
           },
           repositories: [],
         }),
@@ -410,14 +410,14 @@ describe("switch command integration", () => {
         },
         loadWorkspaceRepositories: async () => ({
           config: {
-            version: "1.0.0",
-            reposDir: "./repos",
-            repos: {},
             defaults: {
               switch: {
                 launchMode: "sesh",
               },
             },
+            repos: {},
+            reposDir: "./repos",
+            version: "1.0.0",
           },
           repositories: [],
         }),

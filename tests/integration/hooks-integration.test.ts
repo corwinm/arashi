@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { runLifecycleHook } from "../../src/lib/hooks";
 import { cleanupTestRepo, createHookInRepo, createTestRepo } from "../helpers/hooks";
+import { runLifecycleHook } from "../../src/lib/hooks";
 
 // ============================================================================
 // Integration Tests

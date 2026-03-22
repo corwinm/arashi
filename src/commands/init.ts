@@ -6,17 +6,18 @@
  * and provides example hook templates.
  */
 
-import { Command } from "commander";
-import { join, resolve } from "path";
-import { exec as gitExec } from "../lib/git.ts";
-import { discoverRepositories } from "../core/repository.ts";
 import {
   DEFAULT_CONFIG_SCHEMA_URL,
   configExists,
   getConfigPath,
   saveConfig,
 } from "../lib/config.ts";
-import type { Config, RepoConfig } from "../lib/config.ts";
+import {
+  DEFAULT_WORKTREES_DIR,
+  DEFAULT_WORKTREES_GITIGNORE_ENTRY,
+  WorktreeLocationValidationError,
+  normalizeWorktreesDir,
+} from "../lib/worktree-location.ts";
 import {
   DiskFullError,
   PermissionError,
@@ -28,12 +29,13 @@ import {
   writeTextFile,
 } from "../lib/filesystem.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
-import {
-  DEFAULT_WORKTREES_DIR,
-  DEFAULT_WORKTREES_GITIGNORE_ENTRY,
-  WorktreeLocationValidationError,
-  normalizeWorktreesDir,
-} from "../lib/worktree-location.ts";
+import { join, resolve } from "path";
+import { Command } from "commander";
+import { discoverRepositories } from "../core/repository.ts";
+import { exec as gitExec } from "../lib/git.ts";
+
+type Config = Parameters<typeof saveConfig>[1];
+type RepoConfig = Config["repos"][string];
 
 const ZERO = 0;
 const JSON_INDENT = 2;
@@ -998,3 +1000,5 @@ export function createCommand(): Command {
       }
     });
 }
+
+export default createCommand;

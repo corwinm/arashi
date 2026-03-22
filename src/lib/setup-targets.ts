@@ -1,5 +1,5 @@
-import type { WorkspaceRepository } from "./config.ts";
 import type { SetupScopeType, SetupTarget } from "./setup-types.ts";
+import type { WorkspaceRepository } from "./config.ts";
 import { join } from "path";
 
 const DEFAULT_SETUP_PATTERNS = ["setup.sh", "setup.bash", ".arashi/setup.sh"];

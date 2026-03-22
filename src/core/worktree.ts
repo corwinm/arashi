@@ -11,13 +11,8 @@
  * Feature: 001-worktree-orchestration
  */
 
-import type { Repository } from "./repository.ts";
-import { OperationLog } from "./rollback.ts";
-import { existsSync } from "fs";
-import { basename, join, parse, resolve, sep } from "path";
-import type { Config as ArashiConfig } from "../lib/config.ts";
 import { ConfigNotFoundError, loadConfig } from "../lib/config.ts";
-import { exec, isBareRepo } from "../lib/git.ts";
+import type { DirtyStatus, WorktreeEntry, WorktreeInfo } from "../types/remove.ts";
 import {
   GLOBAL_HOOKS,
   buildHookOperationData,
@@ -28,12 +23,38 @@ import {
   mapHookSkippedOutcome,
   validateHook,
 } from "../lib/hooks.ts";
-import type { HookOutcomeMapping, HookOutcomeReasonCode, HookOutcomeStatus } from "../lib/hooks.ts";
-import { spinner, warn } from "../lib/logger.ts";
+import { basename, join, parse, resolve, sep } from "path";
+import { exec, isBareRepo } from "../lib/git.ts";
 import { multiSelect, select } from "../lib/prompts.ts";
-import type { Choice } from "../lib/prompts.ts";
+import { spinner, warn } from "../lib/logger.ts";
+import { OperationLog } from "./rollback.ts";
+import type { Repository } from "./repository.ts";
+import { existsSync } from "fs";
 import { resolveWorktreesBasePath } from "../lib/worktree-location.ts";
-import type { DirtyStatus, WorktreeEntry, WorktreeInfo } from "../types/remove.ts";
+
+type ArashiConfig = Awaited<ReturnType<typeof loadConfig>>;
+
+interface Choice<T> {
+  value: T;
+  name: string;
+  description?: string;
+}
+
+type HookOutcomeStatus = "success" | "failure" | "skipped";
+type HookOutcomeReasonCode =
+  | "none"
+  | "not_found"
+  | "disabled"
+  | "timeout"
+  | "exit_non_zero"
+  | "not_applicable";
+
+interface HookOutcomeMapping {
+  hookStatus: HookOutcomeStatus;
+  reasonCode: HookOutcomeReasonCode;
+  message: string;
+  durationMs?: number;
+}
 
 const ZERO = 0;
 const ONE = 1;

@@ -1,6 +1,7 @@
 import chalk from "chalk";
-import type { Ora } from "ora";
 import ora from "ora";
+
+type Ora = ReturnType<typeof ora>;
 
 // ============================================================================
 // NO_COLOR Detection

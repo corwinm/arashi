@@ -7,14 +7,14 @@
  * @module config
  */
 
-import { mkdir } from "fs/promises";
-import { basename, dirname, join, resolve } from "path";
-import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
 import {
   DEFAULT_WORKTREES_DIR,
   WorktreeLocationValidationError,
   normalizeWorktreesDir,
 } from "./worktree-location.ts";
+import { basename, dirname, join, resolve } from "path";
+import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
+import { mkdir } from "fs/promises";
 
 const ZERO = 0;
 const TWO = 2;

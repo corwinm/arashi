@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
 import { join } from "path";
 import { spawn } from "bun";
+import { tmpdir } from "os";
 
 interface CommandResult {
   exitCode: number;

@@ -5,8 +5,7 @@
  * Supports repository filtering, conflict resolution, progress tracking, and automatic rollback.
  */
 
-import { Command } from "commander";
-import { basename, resolve } from "path";
+import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
 import {
   ConflictAbortedError,
   InvalidBranchNameError,
@@ -15,23 +14,35 @@ import {
   applyRepositoryFilter,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
-import type {
-  ConflictResolutionStrategy,
-  HookOutcomeRecord,
-  OperationSummary,
-  RepositoryFilter,
-  RepositoryResult,
-  WorktreeOperationOptions,
-} from "../core/worktree.ts";
-import { discoverRepositories } from "../core/repository.ts";
-import type { SwitchCandidate } from "../core/switch.ts";
-import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
-import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
-import type { Config, LaunchMode, LoadedConfig } from "../lib/config.ts";
-import { exec } from "../lib/git.ts";
+import { basename, resolve } from "path";
 import { error, info, success, warn } from "../lib/logger.ts";
+import { Command } from "commander";
+import type { SwitchCandidate } from "../core/switch.ts";
+import { discoverRepositories } from "../core/repository.ts";
+import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
-import type { LaunchSwitchResult, SwitchProcessRunner } from "../lib/switch-launcher.ts";
+import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
+
+type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
+type Config = LoadedConfig["config"];
+type ConflictResolutionStrategy = "ABORT" | "REUSE_EXISTING" | "CREATE_ALTERNATE";
+type HookOutcomeRecord = Awaited<
+  ReturnType<typeof createCoordinatedWorktrees>
+>["hookOutcomes"][number];
+type LaunchMode = "auto" | "sesh";
+type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
+type OperationSummary = Awaited<ReturnType<typeof createCoordinatedWorktrees>>;
+type RepositoryResult = OperationSummary["repositoryResults"][number];
+type SwitchProcessRunner = NonNullable<
+  NonNullable<Parameters<typeof launchSwitchTarget>[2]>["runProcess"]
+>;
+type WorktreeOperationOptions = Parameters<typeof createCoordinatedWorktrees>[2];
+
+interface RepositoryFilter {
+  mode: "all" | "explicit" | "interactive";
+  explicitList: string[];
+  selectedRepositories: Parameters<typeof createCoordinatedWorktrees>[1] | null;
+}
 
 const ZERO = 0;
 const ONE = 1;

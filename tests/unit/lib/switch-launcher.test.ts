@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { detectTerminalApp, launchSwitchTarget } from "../../../src/lib/switch-launcher.ts";
-import type { SwitchProcessRunner } from "../../../src/lib/switch-launcher.ts";
 import type { SwitchCandidate } from "../../../src/core/switch.ts";
 import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
+
+type SwitchProcessRunner = NonNullable<
+  NonNullable<Parameters<typeof launchSwitchTarget>[2]>["runProcess"]
+>;
 
 const candidate: SwitchCandidate = {
   branchName: "feature/auth",

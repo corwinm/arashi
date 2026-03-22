@@ -1,6 +1,6 @@
-import { readdir, stat } from "fs/promises";
-import { join, resolve } from "path";
 import type { Config, RepoConfig } from "./config.ts";
+import { join, resolve } from "path";
+import { readdir, stat } from "fs/promises";
 
 export type CloneProtocol = "ssh" | "https";
 

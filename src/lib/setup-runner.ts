@@ -1,5 +1,5 @@
-import { runWithTimeout } from "./process/run-with-timeout.ts";
 import type { SetupExecutionResult, SetupTarget } from "./setup-types.ts";
+import { runWithTimeout } from "./process/run-with-timeout.ts";
 
 export interface SetupRunnerOptions {
   timeoutMs: number;

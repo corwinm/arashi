@@ -1,6 +1,3 @@
-import { Command } from "commander";
-import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
-import { info, error as logError } from "../lib/logger.ts";
 import {
   buildSummary,
   formatProgress,
@@ -12,8 +9,11 @@ import {
   isExecutableTarget,
   orderSetupTargets,
 } from "../lib/setup-targets.ts";
-import { runSetupTarget } from "../lib/setup-runner.ts";
+import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import { info, error as logError } from "../lib/logger.ts";
+import { Command } from "commander";
 import type { SetupExecutionResult } from "../lib/setup-types.ts";
+import { runSetupTarget } from "../lib/setup-runner.ts";
 
 const ZERO = 0;
 const ONE = 1;

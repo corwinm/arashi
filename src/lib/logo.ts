@@ -1,5 +1,6 @@
 import { hasMinimumColumns } from "./terminal-context.ts";
-import type { TerminalContext } from "./terminal-context.ts";
+
+type TerminalContext = Parameters<typeof hasMinimumColumns>[0];
 
 export const FULL_LOGO_TEXT = [
   "◢▲◣  ▓█▀█  ▓█▀▄  ▓█▀█  ▓█▀▀  ▓█░█  ▓█",

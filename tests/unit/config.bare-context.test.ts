@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { ConfigNotFoundError, loadConfigWithFallback } from "../../src/lib/config.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
-import type { BareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
+type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
 

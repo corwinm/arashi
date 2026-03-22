@@ -5,6 +5,7 @@
  * without requiring full git repository setup.
  */
 
+import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-utils";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   discoverSubRepositories,
@@ -17,15 +18,35 @@ import {
   validateListCommandOutput,
   validateWorktreeListItem,
 } from "../../../src/core/list";
-import type {
-  ListCommandOutput,
-  SubRepositoryInfo,
-  WorktreeListItem,
-} from "../../../src/types/list";
 import { ListCommandError } from "../../../src/types/list";
-import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-utils";
-import { mkdir } from "fs/promises";
 import { join } from "path";
+import { mkdir } from "fs/promises";
+
+interface SubRepositoryInfo {
+  relativePath: string;
+  branch: string | null;
+  commit: string;
+  hasChanges: boolean;
+}
+
+interface WorktreeListItem {
+  path: string;
+  branch: string | null;
+  commit: string;
+  locked: boolean;
+  lockReason?: string;
+  hasChanges: boolean;
+  isMain: boolean;
+  parentPath?: string | null;
+  childrenPaths?: string[];
+  subRepositories?: SubRepositoryInfo[];
+}
+
+interface ListCommandOutput {
+  worktrees: WorktreeListItem[];
+  totalCount: number;
+  repositoryPath: string;
+}
 
 describe("getShortCommitSha()", () => {
   let testRepo: GitTestRepo;
@@ -474,10 +495,10 @@ describe("formatAsJson()", () => {
           path: "/repo/main",
           subRepositories: [
             {
-              relativePath: "repos/sub",
               branch: "develop",
               commit: "xyz9876",
               hasChanges: true,
+              relativePath: "repos/sub",
             },
           ],
         },
@@ -566,10 +587,10 @@ describe("formatAsTable()", () => {
           path: "/repo/main",
           subRepositories: [
             {
-              relativePath: "repos/sub",
               branch: "develop",
               commit: "xyz9876",
               hasChanges: true,
+              relativePath: "repos/sub",
             },
           ],
         },

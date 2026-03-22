@@ -6,10 +6,10 @@
  */
 
 import { basename, join, resolve } from "path";
+import { spinner as createSpinner, warn } from "../lib/logger.js";
 import { readdir, rm, stat } from "fs/promises";
 import { exec as execGit } from "../lib/git.js";
 import { fileExists } from "../lib/filesystem.js";
-import { spinner as createSpinner, warn } from "../lib/logger.js";
 
 const ZERO = 0;
 const ONE = 1;

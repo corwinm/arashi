@@ -1,5 +1,5 @@
-import { exec } from "./git.ts";
 import { isAbsolute, resolve } from "path";
+import { exec } from "./git.ts";
 
 export interface PullExecutionOptions {
   timeoutMs?: number;

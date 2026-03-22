@@ -19,10 +19,16 @@ mock.module("@inquirer/prompts", () => ({
   select: mockSelect,
 }));
 
-let promptApi: typeof import("../../src/lib/prompts");
+async function loadPromptApi() {
+  return import("../../src/lib/prompts");
+}
+
+type PromptApi = Awaited<ReturnType<typeof loadPromptApi>>;
+
+let promptApi: PromptApi;
 
 beforeAll(async () => {
-  promptApi = await import("../../src/lib/prompts");
+  promptApi = await loadPromptApi();
 });
 
 describe("Types", () => {

@@ -7,10 +7,20 @@
 
 import { describe, expect, test } from "bun:test";
 import { isValidBranchName, resolveWorktreeStatuses } from "../../../src/core/worktree.ts";
+import { mapHookExecutionResult, mapHookSkippedOutcome } from "../../../src/lib/hooks.ts";
 import type { Repository } from "../../../src/core/repository.ts";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
-import { mapHookExecutionResult, mapHookSkippedOutcome } from "../../../src/lib/hooks.ts";
-import type { HookResult } from "../../../src/lib/hooks.ts";
+
+interface HookResult {
+  exitCode: number;
+  signalCode: string | null;
+  killed: boolean;
+  stdout: string;
+  stderr: string;
+  success: boolean;
+  timedOut: boolean;
+  duration: number;
+}
 
 // ============================================================================
 // Test Fixtures

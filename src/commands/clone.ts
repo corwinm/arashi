@@ -1,5 +1,9 @@
-import { Command } from "commander";
-import { join } from "path";
+import {
+  applyCloneProtocol,
+  discoverCloneRepositories,
+  inferCloneProtocolPreference,
+} from "../lib/clone-discovery.ts";
+import { clone as cloneRepository, exec } from "../lib/git.ts";
 import {
   findWorkspaceRoot,
   loadConfig,
@@ -7,23 +11,28 @@ import {
   repairRepositoryGitUrls,
   saveConfig,
 } from "../lib/config.ts";
-import type { Config } from "../lib/config.ts";
-import { clone as cloneRepository, exec } from "../lib/git.ts";
-import { removeDir } from "../lib/filesystem.ts";
-import {
-  applyCloneProtocol,
-  discoverCloneRepositories,
-  inferCloneProtocolPreference,
-} from "../lib/clone-discovery.ts";
-import type { CloneProtocol } from "../lib/clone-discovery.ts";
+import { info, error as logError, spinner, success, warn } from "../lib/logger.ts";
 import {
   confirm as promptConfirm,
   input as promptInput,
   multiSelect as promptMultiSelect,
   select as promptSelect,
 } from "../lib/prompts.ts";
-import type { Choice, PromptOutcome } from "../lib/prompts.ts";
-import { info, error as logError, spinner, success, warn } from "../lib/logger.ts";
+import { Command } from "commander";
+import { join } from "path";
+import { removeDir } from "../lib/filesystem.ts";
+
+interface Choice<T> {
+  value: T;
+  name: string;
+  description?: string;
+}
+
+type CloneProtocol = "ssh" | "https";
+type Config = Awaited<ReturnType<typeof loadConfig>>;
+type PromptOutcome<T> =
+  | { status: "ok"; value: T }
+  | { status: "cancelled"; reason: "exit" | "abort" };
 
 const ZERO = 0;
 const SUCCESS_EXIT_CODE = 0;

@@ -8,12 +8,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
+import type { Repository } from "../../src/core/repository.ts";
+import { createCoordinatedWorktrees } from "../../src/core/worktree.ts";
 import { join } from "path";
 import { spawn } from "bun";
-
-// Will test the full flow through createCoordinatedWorktrees
-import { createCoordinatedWorktrees } from "../../src/core/worktree.ts";
-import type { Repository } from "../../src/core/repository.ts";
 
 describe("Nested Worktree Paths Integration", () => {
   const testDir = join(import.meta.dir, "../temp-integration-workspace");

@@ -8,12 +8,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { join } from "path";
-
-// Import the function we're testing (will be implemented in T009)
-import { detectRepositoryType } from "../../src/core/worktree.ts";
-import type { Repository } from "../../src/core/repository.ts";
 import type { Config as ArashiConfig } from "../../src/lib/config.ts";
+import type { Repository } from "../../src/core/repository.ts";
+import { detectRepositoryType } from "../../src/core/worktree.ts";
+import { join } from "path";
 
 describe("detectRepositoryType", () => {
   const testDir = join(import.meta.dir, "temp-test-workspace");

@@ -3,9 +3,9 @@
  */
 
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
 import { join } from "path";
 import { spawn } from "bun";
+import { tmpdir } from "os";
 
 export interface RemoveTestRepository {
   name: string;

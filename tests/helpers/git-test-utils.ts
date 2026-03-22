@@ -3,8 +3,8 @@
  */
 
 import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
+import { tmpdir } from "os";
 
 /**
  * Creates a temporary directory for test git repositories

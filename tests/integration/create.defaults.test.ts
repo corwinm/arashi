@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { executeCreate } from "../../src/commands/create.ts";
-import type { CreateCommandDependencies } from "../../src/commands/create.ts";
 import type { Config, LoadedConfig } from "../../src/lib/config.ts";
+import { describe, expect, test } from "bun:test";
 import type { OperationSummary } from "../../src/core/worktree.ts";
+import { executeCreate } from "../../src/commands/create.ts";
+type CreateCommandDependencies = NonNullable<Parameters<typeof executeCreate>[1]>;
 
 const workspaceRoot = "/workspace";
 const branchName = "feature/defaults";
@@ -33,10 +33,10 @@ function createSummary(worktreePath: string = `${workspaceRoot}/${branchName}`):
         error: null,
         hookOutcomes: [],
         repository: {
-          name: "workspace",
-          path: workspaceRoot,
           defaultBranch: "main",
           hasSetupScript: false,
+          name: "workspace",
+          path: workspaceRoot,
         },
         status: "success",
         warnings: [],

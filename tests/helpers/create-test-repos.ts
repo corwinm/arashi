@@ -2,8 +2,8 @@
  * Test helper for creating temporary git repositories for testing
  */
 
-import { mkdir } from "fs/promises";
 import { join } from "path";
+import { mkdir } from "fs/promises";
 import { spawn } from "child_process";
 
 export interface TestRepoOptions {

@@ -2,12 +2,6 @@
  * Core helpers for remove command
  */
 
-import { realpathSync } from "fs";
-import chalk from "chalk";
-import { resolve as resolvePath } from "path";
-import { ArashiError } from "../lib/errors.ts";
-import { exec } from "../lib/git.ts";
-import { GitErrorCode } from "../types/git.ts";
 import type {
   RemovalOperation,
   RemovalSummary,
@@ -15,6 +9,12 @@ import type {
   WorktreeGrouping,
   WorktreeInfo,
 } from "../types/remove.ts";
+import { ArashiError } from "../lib/errors.ts";
+import { GitErrorCode } from "../types/git.ts";
+import chalk from "chalk";
+import { exec } from "../lib/git.ts";
+import { realpathSync } from "fs";
+import { resolve as resolvePath } from "path";
 import { resolveWorktreeStatuses } from "./worktree.ts";
 
 const ZERO = 0;

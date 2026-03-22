@@ -9,13 +9,35 @@
  * - Chronological ordering
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
-import type {
-  BranchCreatedEntry,
-  DirectoryCreatedEntry,
-  WorktreeCreatedEntry,
-} from "../../../src/core/rollback";
 import { InvalidLogEntryError, OperationLog } from "../../../src/core/rollback";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+interface WorktreeCreatedEntry {
+  type: "worktree_created";
+  timestamp: number;
+  data: {
+    repositoryPath: string;
+    worktreePath: string;
+    branchName: string;
+  };
+}
+
+interface BranchCreatedEntry {
+  type: "branch_created";
+  timestamp: number;
+  data: {
+    repositoryPath: string;
+    branchName: string;
+  };
+}
+
+interface DirectoryCreatedEntry {
+  type: "directory_created";
+  timestamp: number;
+  data: {
+    directoryPath: string;
+  };
+}
 
 describe("OperationLog - User Story 2: Operation Logging", () => {
   let log: OperationLog;

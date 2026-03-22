@@ -5,25 +5,27 @@
  * directories, finding git repositories, and handling various edge cases.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, rm } from "fs/promises";
-import { join } from "path";
-import { spawn } from "child_process";
-import { stat } from "fs/promises";
 import {
   CloneErrorCode,
   CloneStatus,
   cloneRepository,
+  detectDefaultBranch,
+  detectSetupScript,
   discoverRepositories,
   validateWorkspace,
 } from "../../../src/core/repository.js";
-import type {
-  CloneOperation,
-  CloneProgress,
-  RepositoryDiscoveryResult,
-  ValidationResult,
-  WorkspaceConfiguration,
-} from "../../../src/core/repository.js";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, rm, stat } from "fs/promises";
+import { join } from "path";
+import { spawn } from "child_process";
+
+type CloneOperation = Awaited<ReturnType<typeof cloneRepository>>;
+type CloneProgress = Parameters<
+  NonNullable<NonNullable<Parameters<typeof cloneRepository>[2]>["onProgress"]>
+>[0];
+type RepositoryDiscoveryResult = Awaited<ReturnType<typeof discoverRepositories>>;
+type ValidationResult = Awaited<ReturnType<typeof validateWorkspace>>;
+type WorkspaceConfiguration = Parameters<typeof validateWorkspace>[0];
 
 // Test workspace directory
 const TEST_WORKSPACE = join(import.meta.dir, "../temp-test-workspace");
@@ -219,8 +221,6 @@ describe("Repository Discovery (US1)", () => {
 // ============================================================================
 // User Story 2: Default Branch Detection (T029-T034)
 // ============================================================================
-
-import { detectDefaultBranch, detectSetupScript } from "../../../src/core/repository.js";
 
 describe("Default Branch Detection (US2)", () => {
   beforeEach(async () => {

@@ -4,10 +4,23 @@
  * Removes worktrees and deletes branches across multiple repositories.
  */
 
-import { Command } from "commander";
-import { existsSync } from "fs";
+import {
+  GLOBAL_HOOKS,
+  buildRemoveHookOperationData,
+  executeHook,
+  mapHookExecutionResult,
+  mapHookSkippedOutcome,
+  resolveScopedLifecycleHooks,
+  validateHook,
+} from "../lib/hooks.ts";
+import type {
+  RemovalOperation,
+  RemoveCommandOptions,
+  WorktreeEntry,
+  WorktreeGrouping,
+} from "../types/remove.ts";
+import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
 import { basename, resolve } from "path";
-import chalk from "chalk";
 import {
   branchExists,
   createRemovalSummary,
@@ -23,35 +36,46 @@ import {
   refreshRemainingChildStatuses,
   removeWorktree,
 } from "../core/remove.ts";
-import type { RepositoryTarget } from "../core/remove.ts";
 import { buildWorktreeEntries, resolveWorktreeStatuses } from "../core/worktree.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
-import type { Config } from "../lib/config.ts";
-import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
-import { getDefaultBranch } from "../lib/git.ts";
-import {
-  GLOBAL_HOOKS,
-  buildRemoveHookOperationData,
-  executeHook,
-  mapHookExecutionResult,
-  mapHookSkippedOutcome,
-  resolveScopedLifecycleHooks,
-  validateHook,
-} from "../lib/hooks.ts";
-import type {
-  HookOutcomeMapping,
-  HookOutcomeReasonCode,
-  HookTargetRepository,
-} from "../lib/hooks.ts";
 import { info, error as logError, spinner, warn } from "../lib/logger.ts";
 import { confirm as promptConfirm, multiSelect as promptMultiSelect } from "../lib/prompts.ts";
-import type { Choice, PromptOutcome } from "../lib/prompts.ts";
-import type {
-  RemovalOperation,
-  RemoveCommandOptions,
-  WorktreeEntry,
-  WorktreeGrouping,
-} from "../types/remove.ts";
+import { Command } from "commander";
+import chalk from "chalk";
+import { existsSync } from "fs";
+import { getDefaultBranch } from "../lib/git.ts";
+
+interface Choice<T> {
+  value: T;
+  name: string;
+  description?: string;
+}
+
+type Config = Awaited<ReturnType<typeof loadConfig>>;
+type HookOutcomeReasonCode =
+  | "none"
+  | "not_found"
+  | "disabled"
+  | "timeout"
+  | "exit_non_zero"
+  | "not_applicable";
+
+interface HookOutcomeMapping {
+  hookStatus: "success" | "failure" | "skipped";
+  reasonCode: HookOutcomeReasonCode;
+  message: string;
+  durationMs?: number;
+}
+
+interface HookTargetRepository {
+  name: string;
+  path: string;
+}
+
+type PromptOutcome<T> =
+  | { status: "ok"; value: T }
+  | { status: "cancelled"; reason: "exit" | "abort" };
+type RepositoryTarget = Parameters<typeof discoverAllWorktrees>[0][number];
 
 const ZERO = 0;
 const ONE = 1;
@@ -64,6 +88,60 @@ interface CliOptions {
   force?: boolean;
   path?: boolean;
   json?: boolean;
+}
+
+const loadWorkspaceConfig = async (workspaceRoot: string): Promise<Config> => {
+  try {
+    return await loadConfig(workspaceRoot);
+  } catch (error) {
+    let message = String(error);
+    if (error instanceof Error) {
+      ({ message } = error);
+    }
+
+    throw new RemoveCommandError(
+      "Failed to load workspace configuration",
+      RemoveCommandErrorCode.CONFIG_ERROR,
+      { error: message },
+    );
+  }
+};
+
+const formatDirtyDetailsText = (worktree: WorktreeEntry): string => {
+  const details = worktree.dirtyDetails;
+  if (!details) {
+    return "";
+  }
+
+  const parts: string[] = [];
+  if (details.modifiedFiles > ZERO) {
+    parts.push(`${details.modifiedFiles} modified files`);
+  }
+  if (details.untrackedFiles > ZERO) {
+    parts.push(`${details.untrackedFiles} untracked files`);
+  }
+  if (details.stagedFiles > ZERO) {
+    parts.push(`${details.stagedFiles} staged files`);
+  }
+  if (parts.length === ZERO) {
+    return "";
+  }
+
+  return ` (${parts.join(", ")})`;
+};
+
+interface SelectionExpansionOptions {
+  entries: WorktreeEntry[];
+  grouping: WorktreeGrouping;
+  selectablePaths: Set<string>;
+  selectedPaths: string[];
+}
+
+interface ConfirmationOptions {
+  branchPresence: Record<string, string[]>;
+  checkDirty: boolean;
+  confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
+  worktrees: WorktreeEntry[];
 }
 
 export function createCommand(): Command {
@@ -109,21 +187,7 @@ export async function executeRemove(
   }
 
   const workspaceRoot = await getWorkspaceRoot();
-  let config: Config;
-  try {
-    config = await loadConfig(workspaceRoot);
-  } catch (error) {
-    let message = String(error);
-    if (error instanceof Error) {
-      ({ message } = error);
-    }
-
-    throw new RemoveCommandError(
-      "Failed to load workspace configuration",
-      RemoveCommandErrorCode.CONFIG_ERROR,
-      { error: message },
-    );
-  }
+  const config = await loadWorkspaceConfig(workspaceRoot);
   const reposDirName = basename(config.reposDir);
   const childRepoNames = new Set(Object.keys(config.repos));
   const repositories = buildRepositoryTargets(workspaceRoot, config.repos);
@@ -184,7 +248,12 @@ export async function executeRemove(
       info("Selection cancelled");
       return ZERO;
     }
-    const selected = expandSelectedWorktrees(selection.value, grouping, selectablePaths, entries);
+    const selected = expandSelectedWorktrees({
+      entries,
+      grouping,
+      selectablePaths,
+      selectedPaths: selection.value,
+    });
     usedPathMode.value = true;
     pathWorktrees.push(...selected);
     targetBranches = [...new Set(selected.map((wt) => wt.branch).filter(Boolean))];
@@ -211,12 +280,11 @@ export async function executeRemove(
     worktreesToRemove.push(...removable);
     targetBranches = [...new Set(removable.map((wt) => wt.branch).filter(Boolean))];
     for (const wt of removable) {
-      if (!wt.branch) {
-        continue;
-      }
-      branchPresence[wt.branch] = branchPresence[wt.branch] || [];
-      if (!branchPresence[wt.branch].includes(wt.repository)) {
-        branchPresence[wt.branch].push(wt.repository);
+      if (wt.branch) {
+        branchPresence[wt.branch] = branchPresence[wt.branch] || [];
+        if (!branchPresence[wt.branch].includes(wt.repository)) {
+          branchPresence[wt.branch].push(wt.repository);
+        }
       }
     }
   } else {
@@ -279,12 +347,12 @@ export async function executeRemove(
 
   if (!options.force) {
     ensureInteractive(allowNonInteractive);
-    const confirmation = await promptConfirmation(
-      worktreesToRemove,
+    const confirmation = await promptConfirmation({
       branchPresence,
-      options.checkDirty !== false,
-      prompt.confirm,
-    );
+      checkDirty: options.checkDirty !== false,
+      confirm: prompt.confirm,
+      worktrees: worktreesToRemove,
+    });
     if (confirmation === "cancelled") {
       info("Operation cancelled");
       return ZERO;
@@ -417,14 +485,16 @@ export async function executeRemove(
         if (currentBranch === branch) {
           operation.status = "failed";
           operation.error = "Branch is currently checked out";
-        } else {
-          try {
-            await deleteBranch(repoPath, branch);
-            operation.status = "success";
-          } catch (error) {
-            operation.status = "failed";
-            operation.error = formatBranchDeletionError(error);
-          }
+        } else if (
+          await deleteBranch(repoPath, branch)
+            .then(() => true)
+            .catch((error) => {
+              operation.status = "failed";
+              operation.error = formatBranchDeletionError(error);
+              return false;
+            })
+        ) {
+          operation.status = "success";
         }
 
         summary.operations.push(operation);
@@ -575,31 +645,30 @@ const buildWorktreeChoices = (
   return choices;
 };
 
-const expandSelectedWorktrees = (
-  selectedPaths: string[],
-  grouping: WorktreeGrouping,
-  selectablePaths: Set<string>,
-  entries: WorktreeEntry[],
-): WorktreeEntry[] => {
+const expandSelectedWorktrees = ({
+  entries,
+  grouping,
+  selectablePaths,
+  selectedPaths,
+}: SelectionExpansionOptions): WorktreeEntry[] => {
   const entryByPath = new Map(entries.map((entry) => [entry.path, entry]));
   const selected = new Map<string, WorktreeEntry>();
   const groupByParentPath = new Map(grouping.groups.map((group) => [group.parent.path, group]));
 
   for (const path of selectedPaths) {
-    if (!selectablePaths.has(path)) {
-      continue;
-    }
-    const group = groupByParentPath.get(path);
-    if (group) {
-      selected.set(group.parent.path, group.parent);
-      for (const child of group.children) {
-        selected.set(child.path, child);
+    if (selectablePaths.has(path)) {
+      const group = groupByParentPath.get(path);
+      if (group) {
+        selected.set(group.parent.path, group.parent);
+        for (const child of group.children) {
+          selected.set(child.path, child);
+        }
+      } else {
+        const entry = entryByPath.get(path);
+        if (entry) {
+          selected.set(entry.path, entry);
+        }
       }
-      continue;
-    }
-    const entry = entryByPath.get(path);
-    if (entry) {
-      selected.set(entry.path, entry);
     }
   }
 
@@ -645,34 +714,18 @@ const warnOnDefaultMainRemoval = (
   }
 };
 
-const promptConfirmation = async (
-  worktrees: WorktreeEntry[],
-  branchPresence: Record<string, string[]>,
-  checkDirty: boolean,
-  confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>,
-): Promise<"confirmed" | "declined" | "cancelled"> => {
+const promptConfirmation = async ({
+  branchPresence,
+  checkDirty,
+  confirm,
+  worktrees,
+}: ConfirmationOptions): Promise<"confirmed" | "declined" | "cancelled"> => {
   if (checkDirty) {
     const dirty = worktrees.filter((wt) => wt.isDirty);
     if (dirty.length > ZERO) {
       warn(`Uncommitted changes detected in ${dirty.length} worktrees:`);
       for (const wt of dirty) {
-        const details = wt.dirtyDetails;
-        const parts: string[] = [];
-        if (details) {
-          if (details.modifiedFiles > ZERO) {
-            parts.push(`${details.modifiedFiles} modified files`);
-          }
-          if (details.untrackedFiles > ZERO) {
-            parts.push(`${details.untrackedFiles} untracked files`);
-          }
-          if (details.stagedFiles > ZERO) {
-            parts.push(`${details.stagedFiles} staged files`);
-          }
-        }
-        let detailText = "";
-        if (parts.length > ZERO) {
-          detailText = ` (${parts.join(", ")})`;
-        }
+        const detailText = formatDirtyDetailsText(wt);
         info(`  • ${wt.repository}: ${wt.path}${detailText}`);
       }
 
@@ -884,47 +937,46 @@ const runRemoveLifecycleHook = async (options: {
     hookSpinner.text = `Running ${options.hookName} (${resolvedHook.scope}:${resolvedHook.targetRepositoryName})...`;
 
     const validation = await validateHook(resolvedHook.scriptPath);
-    if (!validation.valid) {
+    if (validation.valid) {
+      const result = await executeHook({
+        context: {
+          hookName: options.hookName,
+          hookScope: resolvedHook.scope,
+          operationData: {
+            ...options.operationData,
+            REPO_NAME: resolvedHook.targetRepositoryName,
+            REPO_PATH: resolvedHook.targetRepositoryPath,
+          },
+          repoPath: resolvedHook.executionPath,
+          sourceScriptPath: resolvedHook.sourceScriptPath,
+          targetRepoName: resolvedHook.targetRepositoryName,
+          targetRepoPath: resolvedHook.targetRepositoryPath,
+        },
+        hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
+        scriptPath: resolvedHook.scriptPath,
+        timeout: options.timeoutMs,
+      });
+      executedCount += 1;
+
+      const mapping = mapHookExecutionResult(result);
+      if (mapping.hookStatus === "failure") {
+        failureReason = mapping.reasonCode;
+        const stderr = result.stderr.trim();
+        let failureMessage = mapping.message;
+        if (stderr.length > ZERO) {
+          failureMessage = stderr;
+        }
+
+        failures.push(
+          `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${failureMessage}`,
+        );
+        if (options.stopOnFailure) {
+          break;
+        }
+      }
+    } else {
       failures.push(
         `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${validation.error ?? "Hook validation failed"}`,
-      );
-      if (options.stopOnFailure) {
-        break;
-      }
-      continue;
-    }
-
-    const result = await executeHook({
-      context: {
-        hookName: options.hookName,
-        hookScope: resolvedHook.scope,
-        operationData: {
-          ...options.operationData,
-          REPO_NAME: resolvedHook.targetRepositoryName,
-          REPO_PATH: resolvedHook.targetRepositoryPath,
-        },
-        repoPath: resolvedHook.executionPath,
-        sourceScriptPath: resolvedHook.sourceScriptPath,
-        targetRepoName: resolvedHook.targetRepositoryName,
-        targetRepoPath: resolvedHook.targetRepositoryPath,
-      },
-      hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
-      scriptPath: resolvedHook.scriptPath,
-      timeout: options.timeoutMs,
-    });
-    executedCount += 1;
-
-    const mapping = mapHookExecutionResult(result);
-    if (mapping.hookStatus === "failure") {
-      failureReason = mapping.reasonCode;
-      const stderr = result.stderr.trim();
-      let failureMessage = mapping.message;
-      if (stderr.length > ZERO) {
-        failureMessage = stderr;
-      }
-
-      failures.push(
-        `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${failureMessage}`,
       );
       if (options.stopOnFailure) {
         break;

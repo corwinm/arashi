@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { existsSync } from "fs";
 import { join } from "path";
-import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
-import type { BareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
+
+type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");

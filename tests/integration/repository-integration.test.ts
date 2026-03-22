@@ -5,11 +5,11 @@
  * using real git repositories.
  */
 
+import { CloneStatus, cloneRepository, discoverRepositories } from "../../src/core/repository.js";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, stat } from "fs/promises";
-import { join } from "path";
-import { CloneStatus, cloneRepository, discoverRepositories } from "../../src/core/repository.js";
 import { createStandardTestRepos } from "../helpers/create-test-repos.js";
+import { join } from "path";
 
 const TEST_WORKSPACE = join(import.meta.dir, "../temp-integration-workspace");
 

@@ -1,20 +1,28 @@
-import { Command } from "commander";
+import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { basename, resolve, sep } from "path";
-import type { Config, LaunchMode, WorkspaceRepository } from "../lib/config.ts";
-import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
-import { exec } from "../lib/git.ts";
-import { info, error as logError, success } from "../lib/logger.ts";
 import {
   discoverSwitchCandidates,
   filterSwitchCandidates,
   selectSwitchCandidate,
 } from "../core/switch.ts";
-import type { SwitchCandidate, SwitchCandidateDiscoveryResult } from "../core/switch.ts";
+import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import { info, error as logError, success } from "../lib/logger.ts";
+import { Command } from "commander";
+import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
-import type { LaunchSwitchResult, SwitchProcessRunner } from "../lib/switch-launcher.ts";
-import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
-import type { SwitchLaunchMode } from "../types/switch.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
+
+type LoadWorkspaceRepositoriesResult = Awaited<ReturnType<typeof loadWorkspaceRepositories>>;
+type Config = NonNullable<LoadWorkspaceRepositoriesResult["config"]>;
+type LaunchMode = "auto" | "sesh";
+type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
+type SwitchCandidateDiscoveryResult = Awaited<ReturnType<typeof discoverSwitchCandidates>>;
+type SwitchCandidate = SwitchCandidateDiscoveryResult["candidates"][number];
+type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "fallback";
+type SwitchProcessRunner = NonNullable<
+  NonNullable<Parameters<typeof launchSwitchTarget>[2]>["runProcess"]
+>;
+type WorkspaceRepository = LoadWorkspaceRepositoriesResult["repositories"][number];
 
 const ZERO = 0;
 const ONE = 1;

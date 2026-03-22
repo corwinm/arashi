@@ -1,6 +1,6 @@
+import { basename, join, resolve } from "path";
 import { mkdir, rm } from "fs/promises";
 import { tmpdir } from "os";
-import { basename, join, resolve } from "path";
 
 export interface ChildHookWorkspace {
   rootPath: string;

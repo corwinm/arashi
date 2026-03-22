@@ -1,12 +1,12 @@
-import { describe, expect, test } from "bun:test";
 import {
   buildSwitchCandidates,
   filterSwitchCandidates,
   selectSwitchCandidate,
 } from "../../../src/core/switch.ts";
-import type { SwitchCandidate } from "../../../src/core/switch.ts";
-import type { WorktreeInfo } from "../../../src/types/remove.ts";
+import { describe, expect, test } from "bun:test";
 import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
+import type { WorktreeInfo } from "../../../src/types/remove.ts";
+type SwitchCandidate = ReturnType<typeof buildSwitchCandidates>["candidates"][number];
 
 describe("buildSwitchCandidates", () => {
   test("normalizes valid entries and skips invalid worktrees", () => {

@@ -4,7 +4,6 @@
  * Tests file system operations, end-to-end flows, and error handling.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   ConfigError,
   ConfigNotFoundError,
@@ -20,10 +19,12 @@ import {
   repairRepositoryGitUrls,
   saveConfig,
 } from "../../src/lib/config";
-import type { Config } from "../../src/lib/config";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
 import { join } from "path";
+import { tmpdir } from "os";
+
+type Config = Awaited<ReturnType<typeof loadConfig>>;
 
 async function runGit(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
@@ -132,8 +133,8 @@ describe("saveConfig", () => {
           worktrees: [
             {
               branch: "feature-123",
-              path: "./repos/test-repo.worktrees/feature-123",
               createdAt: "2026-02-03T10:30:00Z",
+              path: "./repos/test-repo.worktrees/feature-123",
             },
           ],
         },

@@ -1,7 +1,7 @@
 import { access, stat } from "fs/promises";
-import { join } from "path";
 import { constants } from "fs";
 import { homedir } from "os";
+import { join } from "path";
 
 const ZERO = 0;
 const ONE = 1;

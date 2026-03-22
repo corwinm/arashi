@@ -5,11 +5,11 @@
  * This keeps the npm package size small while providing pre-compiled binaries
  */
 
-import { chmodSync, createWriteStream } from "node:fs";
 import { access, constants, mkdir } from "node:fs/promises";
-import { get } from "node:https";
+import { chmodSync, createWriteStream } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { get } from "node:https";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

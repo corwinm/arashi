@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
-import type { Config } from "../../../src/lib/config.ts";
 import {
   applyCloneProtocol,
   discoverCloneRepositories,
   inferCloneProtocolPreference,
 } from "../../../src/lib/clone-discovery.ts";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import type { Config } from "../../../src/lib/config.ts";
+import { join } from "path";
+import { tmpdir } from "os";
 
 describe("clone-discovery", () => {
   let workspaceRoot: string;

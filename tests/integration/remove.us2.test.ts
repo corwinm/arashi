@@ -3,14 +3,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { rm } from "fs/promises";
-import { spawn } from "bun";
-import { executeRemove } from "../../src/commands/remove.ts";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
 } from "../helpers/remove-test-workspace.ts";
+import { executeRemove } from "../../src/commands/remove.ts";
+import { existsSync } from "fs";
+import { rm } from "fs/promises";
+import { spawn } from "bun";
 
 describe("remove command - US2 multi-select", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;

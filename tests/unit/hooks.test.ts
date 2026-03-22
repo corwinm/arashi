@@ -1,4 +1,3 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   GLOBAL_HOOKS,
   buildRemoveHookOperationData,
@@ -8,6 +7,8 @@ import {
   runLifecycleHook,
   validateHook,
 } from "../../src/lib/hooks";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import {
   cleanupTestRepo,
   createHookInRepo,
@@ -15,7 +16,6 @@ import {
   createTestContext,
   createTestRepo,
 } from "../helpers/hooks";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 
 // ============================================================================

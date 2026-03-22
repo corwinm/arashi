@@ -22,6 +22,7 @@
     "func-style": "off",
     "no-ternary": "off",
     "max-statements": "off",
+    "max-lines": "off",
     "max-lines-per-function": "off"
   },
   "ignorePatterns": [

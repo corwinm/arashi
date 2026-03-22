@@ -7,18 +7,45 @@
  * @module core/list
  */
 
-import chalk from "chalk";
-import { isAbsolute, relative } from "path";
-import { loadConfig } from "../lib/config.ts";
-import { exec } from "../lib/git.ts";
-import { spinner, warn } from "../lib/logger.ts";
 import { ListCommandError, NotInRepositoryError } from "../types/list.ts";
-import type {
-  ListCommandOptions,
-  ListCommandOutput,
-  SubRepositoryInfo,
-  WorktreeListItem,
-} from "../types/list.ts";
+import { isAbsolute, relative } from "path";
+import { spinner, warn } from "../lib/logger.ts";
+import chalk from "chalk";
+import { exec } from "../lib/git.ts";
+import { loadConfig } from "../lib/config.ts";
+
+interface SubRepositoryInfo {
+  relativePath: string;
+  branch: string | null;
+  commit: string;
+  hasChanges: boolean;
+}
+
+interface WorktreeListItem {
+  path: string;
+  branch: string | null;
+  commit: string;
+  locked: boolean;
+  lockReason?: string;
+  hasChanges: boolean;
+  isMain: boolean;
+  parentPath?: string | null;
+  childrenPaths?: string[];
+  subRepositories?: SubRepositoryInfo[];
+}
+
+interface ListCommandOptions {
+  verbose?: boolean;
+  json?: boolean;
+  table?: boolean;
+  maxDepth?: number;
+}
+
+interface ListCommandOutput {
+  worktrees: WorktreeListItem[];
+  totalCount: number;
+  repositoryPath: string;
+}
 
 const ZERO = 0;
 const DEFAULT_MAX_DEPTH = 3;
@@ -29,6 +56,13 @@ const DETACHED_LABEL = "detached";
 const EMPTY_SHA = "0000000";
 const ROOT_PATH = "/";
 const SKIPPED_DIRECTORY_NAMES = new Set([".arashi", "node_modules"]);
+
+const tryAddGitRepository = async (gitRepos: string[], repoPath: string): Promise<void> => {
+  try {
+    await exec(["rev-parse", "--git-dir"], repoPath);
+    gitRepos.push(repoPath);
+  } catch {}
+};
 
 // ============================================================================
 // Main Command
@@ -228,19 +262,16 @@ export const listCommand = async (options?: ListCommandOptions): Promise<void> =
     s?.succeed("Discovery complete");
 
     // Format and display
-    let output_str: string;
+    let output_str = formatAsSimpleList(output);
     if (opts.json) {
       output_str = formatAsJson(output);
     } else if (opts.table || opts.verbose) {
       // Table format when explicitly requested or in verbose mode
       output_str = formatAsTable(output, opts.verbose || false);
-    } else {
-      // Simple list format (default) - perfect for piping to fzf
-      output_str = formatAsSimpleList(output);
     }
 
     // Use process.stdout.write directly for better pipe compatibility with fzf
-    process.stdout.write(output_str + "\n");
+    process.stdout.write(`${output_str}\n`);
   } catch (error) {
     s?.fail("Failed to list worktrees");
     throw error;
@@ -403,19 +434,22 @@ export const validateWorktreeListItem = (item: unknown): asserts item is Worktre
     throw new ListCommandError("subRepositories must be array when present");
   }
 
-  if (candidate.parentPath !== undefined && candidate.parentPath !== null) {
-    if (typeof candidate.parentPath !== "string" || !isAbsolute(candidate.parentPath)) {
-      throw new ListCommandError("parentPath must be absolute string or null");
-    }
+  if (
+    candidate.parentPath !== undefined &&
+    candidate.parentPath !== null &&
+    (typeof candidate.parentPath !== "string" || !isAbsolute(candidate.parentPath))
+  ) {
+    throw new ListCommandError("parentPath must be absolute string or null");
   }
 
-  if (candidate.childrenPaths !== undefined) {
-    if (
-      !Array.isArray(candidate.childrenPaths) ||
-      candidate.childrenPaths.some((path: unknown) => typeof path !== "string" || !isAbsolute(path))
-    ) {
-      throw new ListCommandError("childrenPaths must be array of absolute strings when present");
-    }
+  if (
+    candidate.childrenPaths !== undefined &&
+    (!Array.isArray(candidate.childrenPaths) ||
+      candidate.childrenPaths.some(
+        (path: unknown) => typeof path !== "string" || !isAbsolute(path),
+      ))
+  ) {
+    throw new ListCommandError("childrenPaths must be array of absolute strings when present");
   }
 };
 
@@ -521,10 +555,6 @@ export const gatherWorktreeData = async (repoPath: string): Promise<WorktreeList
     const result = await exec(["worktree", "list", "--porcelain"], repoPath);
     const worktrees: WorktreeListItem[] = [];
 
-    // Resolve repoPath to canonical form for comparison (handles /var vs /private/var on macOS)
-    const { realpathSync } = await import("fs");
-    const canonicalRepoPath = realpathSync(repoPath);
-
     // Parse porcelain output
     const lines = result.stdout.trim().split("\n");
     let currentWorktree: Partial<WorktreeListItem> = {};
@@ -541,15 +571,8 @@ export const gatherWorktreeData = async (repoPath: string): Promise<WorktreeList
           // Determine if this is the main worktree:
           // - For non-bare repos: matches the repository path
           // - For bare repos: first non-bare worktree in the list
-          const canonicalWorktreePath = realpathSync(currentWorktree.path);
-          const isMain =
-            !foundFirstNonBare &&
-            (canonicalWorktreePath === canonicalRepoPath || foundFirstNonBare === false);
-
-          // Mark that we've found the first non-bare worktree
-          if (!foundFirstNonBare) {
-            foundFirstNonBare = true;
-          }
+          const isMain = !foundFirstNonBare;
+          foundFirstNonBare = true;
 
           worktrees.push({
             branch: currentWorktree.branch || null,
@@ -563,11 +586,7 @@ export const gatherWorktreeData = async (repoPath: string): Promise<WorktreeList
         }
         currentWorktree = {};
         isBare = false;
-        continue;
-      }
-
-      // Parse fields
-      if (line.startsWith("worktree ")) {
+      } else if (line.startsWith("worktree ")) {
         currentWorktree.path = line.slice("worktree ".length);
       } else if (line === "bare") {
         // Skip bare worktrees
@@ -584,7 +603,8 @@ export const gatherWorktreeData = async (repoPath: string): Promise<WorktreeList
         currentWorktree.locked = true;
         const reasonMatch = line.match(/^locked\s+(.+)$/);
         if (reasonMatch) {
-          currentWorktree.lockReason = reasonMatch[1];
+          const [, lockReason] = reasonMatch;
+          currentWorktree.lockReason = lockReason;
         }
       }
     }
@@ -592,14 +612,8 @@ export const gatherWorktreeData = async (repoPath: string): Promise<WorktreeList
     // Handle last worktree if file doesn't end with empty line
     if (currentWorktree.path && !isBare) {
       const hasChanges = await hasUncommittedChanges(currentWorktree.path);
-      const canonicalWorktreePath = realpathSync(currentWorktree.path);
-      const isMain =
-        !foundFirstNonBare &&
-        (canonicalWorktreePath === canonicalRepoPath || foundFirstNonBare === false);
-
-      if (!foundFirstNonBare) {
-        foundFirstNonBare = true;
-      }
+      const isMain = !foundFirstNonBare;
+      foundFirstNonBare = true;
 
       worktrees.push({
         branch: currentWorktree.branch || null,
@@ -687,10 +701,7 @@ export const discoverSubRepositories = async (
         hasChanges,
         relativePath,
       });
-    } catch {
-      // Skip repositories that we can't read
-      continue;
-    }
+    } catch {}
   }
 
   return subRepos;
@@ -801,11 +812,7 @@ export const formatAsSimpleList = (output: ListCommandOutput): string =>
  * ```
  */
 export const formatAsTable = (output: ListCommandOutput, verbose: boolean): string => {
-  const lines: string[] = [];
-
-  // Header
-  lines.push(chalk.bold(`Worktrees (${output.totalCount} total)`));
-  lines.push("");
+  const lines: string[] = [chalk.bold(`Worktrees (${output.totalCount} total)`), ""];
 
   if (output.worktrees.length === 1 && output.worktrees[0].isMain) {
     // No additional worktrees
@@ -1038,44 +1045,20 @@ export const findGitRepositories = async (
       const entries = await readdir(currentPath, { withFileTypes: true });
 
       for (const entry of entries) {
-        if (!entry.isDirectory()) {
-          continue;
-        }
+        if (entry.isDirectory()) {
+          const fullPath = join(currentPath, entry.name);
 
-        const fullPath = join(currentPath, entry.name);
-
-        // Check if this directory is a git repository
-        if (entry.name === ".git") {
-          const repoPath = currentPath;
-
-          // Exclude root if requested
-          if (excludeRoot && repoPath === rootPath) {
-            continue;
+          if (entry.name === ".git") {
+            const repoPath = currentPath;
+            if (!excludeRoot || repoPath !== rootPath) {
+              await tryAddGitRepository(gitRepos, repoPath);
+            }
+          } else if (!SKIPPED_DIRECTORY_NAMES.has(entry.name)) {
+            await scan(fullPath, depth + 1);
           }
-
-          // Verify it's a git repository
-          try {
-            await exec(["rev-parse", "--git-dir"], repoPath);
-            gitRepos.push(repoPath);
-          } catch {
-            // Not a valid git repository
-          }
-
-          continue; // Don't traverse into .git directories
         }
-
-        // Skip common directories that shouldn't be scanned
-        if (SKIPPED_DIRECTORY_NAMES.has(entry.name)) {
-          continue;
-        }
-
-        // Recursively scan subdirectories
-        await scan(fullPath, depth + 1);
       }
-    } catch {
-      // Silently skip directories we can't read (permissions, etc.)
-      return;
-    }
+    } catch {}
   }
 
   await scan(rootPath, 0);

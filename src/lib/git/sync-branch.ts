@@ -1,5 +1,6 @@
 import { runWithTimeout } from "../process/run-with-timeout.ts";
-import type { RunWithTimeoutResult } from "../process/run-with-timeout.ts";
+
+type RunWithTimeoutResult = Awaited<ReturnType<typeof runWithTimeout>>;
 
 export interface SyncBranchOutcome {
   status: "success" | "failure" | "timeout";

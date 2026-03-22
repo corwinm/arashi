@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { existsSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { spawn } from "bun";
-import { executeRemove } from "../../src/commands/remove.ts";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
 } from "../helpers/remove-test-workspace.ts";
+import { executeRemove } from "../../src/commands/remove.ts";
+import { existsSync } from "fs";
+import { join } from "path";
+import { spawn } from "bun";
+import { tmpdir } from "os";
 
 describe("remove command - lifecycle hooks", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;

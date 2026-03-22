@@ -4,7 +4,6 @@
  * Tests pure functions and validation logic without file system operations.
  */
 
-import { describe, expect, test } from "bun:test";
 import {
   ConfigValidationError,
   UnsupportedConfigVersionError,
@@ -13,8 +12,9 @@ import {
   normalizeConfig,
   validateConfig,
 } from "../../src/lib/config";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
 import { DEFAULT_WORKTREES_DIR } from "../../src/lib/worktree-location";
+import { join } from "path";
 
 describe("getConfigPath", () => {
   test("constructs correct path with repo path", () => {

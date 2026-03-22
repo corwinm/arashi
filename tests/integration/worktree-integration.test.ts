@@ -6,10 +6,10 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { createTestWorkspace } from "../helpers/create-test-workspace.ts";
-import type { TestWorkspace } from "../helpers/create-test-workspace.ts";
 import { access } from "fs/promises";
 import { constants } from "fs";
+import { createTestWorkspace } from "../helpers/create-test-workspace.ts";
+type TestWorkspace = Awaited<ReturnType<typeof createTestWorkspace>>;
 
 // ============================================================================
 // Test Setup and Teardown

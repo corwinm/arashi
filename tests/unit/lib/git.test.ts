@@ -5,14 +5,6 @@
  * for all git operations.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  exec,
-  getDefaultBranch,
-  isBareRepo,
-  readTrackedFileFromDefaultBranch,
-} from "../../../src/lib/git";
-import { ArashiError } from "../../../src/lib/errors";
 import {
   GitTestRepo,
   commitChanges,
@@ -22,6 +14,14 @@ import {
   initBareGitRepo,
   removeTempDir,
 } from "../../helpers/git-test-utils";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  exec,
+  getDefaultBranch,
+  isBareRepo,
+  readTrackedFileFromDefaultBranch,
+} from "../../../src/lib/git";
+import { ArashiError } from "../../../src/lib/errors";
 import { join } from "path";
 
 describe("exec()", () => {

@@ -1,7 +1,3 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import {
   DiskFullError,
   EncodingError,
@@ -18,6 +14,10 @@ import {
   removeDir,
   writeTextFile,
 } from "../../src/lib/filesystem";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // Test directory setup
 let testDir: string;

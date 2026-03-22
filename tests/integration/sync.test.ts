@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawn } from "bun";
-import { join } from "path";
 import { readFile, writeFile } from "fs/promises";
 import { createRemoveWorkspace } from "../helpers/remove-test-workspace.ts";
-import type { RemoveTestWorkspace } from "../helpers/remove-test-workspace.ts";
 import { executeSync } from "../../src/commands/sync.ts";
+import { join } from "path";
+import { spawn } from "bun";
+type RemoveTestWorkspace = Awaited<ReturnType<typeof createRemoveWorkspace>>;
 
 type SyncConfig = {
   repos: Record<string, { path: string } & Record<string, unknown>>;

@@ -6,13 +6,14 @@
  * Supports three output modes: default, verbose, and short.
  */
 
-import { Command } from "commander";
-import { stat } from "fs/promises";
-import { resolve } from "path";
-import type { Config } from "../lib/config.js";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
 import { getFullGitStatus, getGitStatus } from "../lib/git.js";
 import { info, error as logError, spinner } from "../lib/logger.js";
+import { Command } from "commander";
+import { resolve } from "path";
+import { stat } from "fs/promises";
+
+type Config = Awaited<ReturnType<typeof loadConfig>>;
 
 const ZERO = 0;
 const ONE = 1;

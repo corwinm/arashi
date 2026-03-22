@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { resolveCreateDefaults } from "../../../src/commands/create.ts";
 import type { Config } from "../../../src/lib/config.ts";
+import { resolveCreateDefaults } from "../../../src/commands/create.ts";
 
 function baseConfig(): Config {
   return {

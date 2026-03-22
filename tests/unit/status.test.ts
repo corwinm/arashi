@@ -4,13 +4,13 @@
  * Tests for git status parsing, branch tracking parsing, and output formatting.
  */
 
-import { describe, expect, test } from "bun:test";
 import {
   checkRepoStatus,
   formatShortLine,
   parseBranchLine,
   parseGitStatus,
 } from "../../src/commands/status.ts";
+import { describe, expect, test } from "bun:test";
 
 describe("parseGitStatus", () => {
   test("parses clean repository output", () => {

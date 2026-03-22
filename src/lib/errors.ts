@@ -3,8 +3,15 @@
  * Preserves full diagnostic context from git commands
  */
 
-import type { GitErrorContext } from "../types/git.js";
 import { GitErrorCode } from "../types/git.js";
+
+interface GitErrorContext {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  args: string[];
+  cwd?: string;
+}
 
 export class ArashiError extends Error {
   /** Error name (always 'ArashiError') */

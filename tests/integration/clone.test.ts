@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
 import type { Config } from "../../src/lib/config.ts";
 import { executeClone } from "../../src/commands/clone.ts";
+import { join } from "path";
+import { tmpdir } from "os";
 
 describe("clone command", () => {
   let workspaceRoot: string;

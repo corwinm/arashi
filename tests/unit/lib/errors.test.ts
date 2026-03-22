@@ -5,7 +5,14 @@
 import { describe, expect, test } from "bun:test";
 import { ArashiError } from "../../../src/lib/errors";
 import { GitErrorCode } from "../../../src/types/git";
-import type { GitErrorContext } from "../../../src/types/git";
+
+interface GitErrorContext {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  args: string[];
+  cwd?: string;
+}
 
 describe("ArashiError", () => {
   const baseContext: GitErrorContext = {

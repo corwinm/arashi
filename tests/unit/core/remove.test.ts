@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { groupWorktreesByParent } from "../../../src/core/remove.ts";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
+import { groupWorktreesByParent } from "../../../src/core/remove.ts";
 
 describe("groupWorktreesByParent", () => {
   test("groups children under parentPath and leaves orphans ungrouped", () => {

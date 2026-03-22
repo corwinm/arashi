@@ -8,8 +8,8 @@
  */
 
 import { basename, dirname } from "path";
-import type { CommandResult } from "../types/git";
 import { ArashiError } from "./errors";
+import type { CommandResult } from "../types/git";
 
 /**
  * Execute a git command and capture output

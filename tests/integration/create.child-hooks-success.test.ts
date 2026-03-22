@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, realpathSync } from "fs";
-import { join } from "path";
 import { createChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
-import type { ChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
 import { createRepoSpecificHookInRepo } from "../helpers/hooks.ts";
+import { join } from "path";
+type ChildHookWorkspace = Awaited<ReturnType<typeof createChildHookWorkspace>>;
 
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
 let workspace: ChildHookWorkspace | null = null;

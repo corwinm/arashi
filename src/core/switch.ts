@@ -1,11 +1,24 @@
+import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { basename, resolve } from "path";
 import type { WorkspaceRepository } from "../lib/config.ts";
-import { select as promptSelect } from "../lib/prompts.ts";
-import type { Choice, PromptOutcome } from "../lib/prompts.ts";
-import { discoverAllWorktrees } from "./remove.ts";
-import type { RepositoryTarget } from "./remove.ts";
 import type { WorktreeInfo } from "../types/remove.ts";
-import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
+import { discoverAllWorktrees } from "./remove.ts";
+import { select as promptSelect } from "../lib/prompts.ts";
+
+interface Choice<T> {
+  value: T;
+  name: string;
+  description?: string;
+}
+
+type PromptOutcome<T> =
+  | { status: "ok"; value: T }
+  | { status: "cancelled"; reason: "exit" | "abort" };
+
+interface RepositoryTarget {
+  name: string;
+  path: string;
+}
 
 export interface SwitchCandidate {
   branchName: string;

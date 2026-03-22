@@ -7,10 +7,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
 import { join } from "path";
-import { spawn } from "bun";
 import { listCommand } from "../../src/core/list";
+import { spawn } from "bun";
+import { tmpdir } from "os";
 
 interface JsonSubRepository {
   branch: string | null;

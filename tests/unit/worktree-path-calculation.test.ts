@@ -8,13 +8,11 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
+import type { Config as ArashiConfig } from "../../src/lib/config.ts";
+import type { Repository } from "../../src/core/repository.ts";
+import { calculateWorktreePath } from "../../src/core/worktree.ts";
 import { join } from "path";
 import { spawn } from "child_process";
-
-// Import functions we're testing (will be implemented in T010, T020)
-import { calculateWorktreePath } from "../../src/core/worktree.ts";
-import type { Repository } from "../../src/core/repository.ts";
-import type { Config as ArashiConfig } from "../../src/lib/config.ts";
 
 /**
  * Helper to execute git commands

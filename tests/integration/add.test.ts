@@ -11,16 +11,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { join } from "path";
-import { mkdir, rm } from "fs/promises";
-import { existsSync } from "fs";
 import {
   deriveRepoName,
   detectSetupScript,
   isValidGitUrl,
   parseGitUrl,
 } from "../../src/commands/add.ts";
+import { mkdir, rm } from "fs/promises";
 import { AddCommandErrorCode } from "../../src/lib/errors.ts";
+import { existsSync } from "fs";
+import { join } from "path";
 
 // Test workspace directory
 const TEST_WORKSPACE = join(import.meta.dir, "../temp-integration-workspace");

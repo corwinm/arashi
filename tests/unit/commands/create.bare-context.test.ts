@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir } from "fs/promises";
-import { join } from "path";
-import { resolveCreateInvocationContext } from "../../../src/commands/create.ts";
 import { createBareCreateWorkspace } from "../../helpers/create-bare-create-workspace.ts";
-import type { BareCreateWorkspace } from "../../helpers/create-bare-create-workspace.ts";
+import { join } from "path";
+import { mkdir } from "fs/promises";
+import { resolveCreateInvocationContext } from "../../../src/commands/create.ts";
+type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
 
