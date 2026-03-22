@@ -29,8 +29,21 @@ import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
 import type { Config } from "../lib/config.ts";
 import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
 import { getDefaultBranch } from "../lib/git.ts";
-import * as hooks from "../lib/hooks.ts";
-import * as logger from "../lib/logger.ts";
+import {
+  GLOBAL_HOOKS,
+  buildRemoveHookOperationData,
+  executeHook,
+  mapHookExecutionResult,
+  mapHookSkippedOutcome,
+  resolveScopedLifecycleHooks,
+  validateHook,
+} from "../lib/hooks.ts";
+import type {
+  HookOutcomeMapping,
+  HookOutcomeReasonCode,
+  HookTargetRepository,
+} from "../lib/hooks.ts";
+import { error as logError, info, spinner, warn } from "../lib/logger.ts";
 import { confirm as promptConfirm, multiSelect as promptMultiSelect } from "../lib/prompts.ts";
 import type { Choice, PromptOutcome } from "../lib/prompts.ts";
 import type {
@@ -53,7 +66,7 @@ interface CliOptions {
   json?: boolean;
 }
 
-export const createCommand = (): Command => {
+const createCommand = (): Command => {
   return new Command("remove")
     .description("Remove worktrees and delete branches")
     .argument("[target]", "Branch name or worktree path to remove (optional - prompts if omitted)")
@@ -73,7 +86,7 @@ export const createCommand = (): Command => {
     });
 };
 
-export const executeRemove = async (
+const executeRemove = async (
   branchArg: string | undefined,
   options: RemoveCommandOptions,
   promptHandlers?: {
@@ -89,8 +102,8 @@ export const executeRemove = async (
     if (options.json) {
       console.log(formatRemovalSummaryJson(summary, {}));
     } else {
-      logger.warn("Both --keep-worktrees and --keep-branches specified");
-      logger.info("No operations will be performed. At least one removal type must be enabled.");
+      warn("Both --keep-worktrees and --keep-branches specified");
+      info("No operations will be performed. At least one removal type must be enabled.");
     }
     return ZERO;
   }
@@ -158,7 +171,7 @@ export const executeRemove = async (
     const selectable = entries.filter((wt) => !wt.isMain && wt.branch);
 
     if (selectable.length === 0) {
-      logger.info("No worktrees found to remove");
+      info("No worktrees found to remove");
       return ZERO;
     }
 
@@ -168,7 +181,7 @@ export const executeRemove = async (
     const choices = buildWorktreeChoices(grouping, selectablePaths, defaultBranches);
     const selection = await prompt.multiSelect("Select worktrees to remove:", choices);
     if (selection.status === "cancelled") {
-      logger.info("Selection cancelled");
+      info("Selection cancelled");
       return ZERO;
     }
     const selected = expandSelectedWorktrees(selection.value, grouping, selectablePaths, entries);
@@ -177,7 +190,7 @@ export const executeRemove = async (
     targetBranches = [...new Set(selected.map((wt) => wt.branch).filter(Boolean))];
 
     if (targetBranches.length === 0) {
-      logger.info("No worktrees selected to remove");
+      info("No worktrees selected to remove");
       return ZERO;
     }
   }
@@ -251,15 +264,15 @@ export const executeRemove = async (
   warnOnDefaultMainRemoval(skippedMain, defaultBranches);
   if (usedPathMode.value && worktreesToRemove.length === 0) {
     if (skippedMain.length > 0) {
-      logger.info("Selected worktree is main and cannot be removed");
+      info("Selected worktree is main and cannot be removed");
     } else {
-      logger.info("No removable worktrees found for the provided path");
+      info("No removable worktrees found for the provided path");
     }
     return ZERO;
   }
 
   if (options.checkDirty !== false && worktreesToRemove.length > 0) {
-    const dirtyCheckSpinner = logger.spinner("Checking for uncommitted changes...").start();
+    const dirtyCheckSpinner = spinner("Checking for uncommitted changes...").start();
     await resolveWorktreeStatuses(worktreesToRemove, true);
     dirtyCheckSpinner.succeed("Dirty check complete");
   }
@@ -273,11 +286,11 @@ export const executeRemove = async (
       prompt.confirm,
     );
     if (confirmation === "cancelled") {
-      logger.info("Operation cancelled");
+      info("Operation cancelled");
       return ZERO;
     }
     if (confirmation === "declined") {
-      logger.info("Operation cancelled by user");
+      info("Operation cancelled by user");
       return ZERO;
     }
   }
@@ -310,7 +323,7 @@ export const executeRemove = async (
     path: getRepoPath(repositories, repoName),
   }));
 
-  const removeHookOperationData = hooks.buildRemoveHookOperationData({
+  const removeHookOperationData = buildRemoveHookOperationData({
     branchNames: targetBranches,
     mainRepoPath: workspaceRoot,
     repositoryNames: targetRepositoryNames,
@@ -318,7 +331,7 @@ export const executeRemove = async (
   });
 
   const preRemoveOutcome = await runRemoveLifecycleHook({
-    hookName: hooks.GLOBAL_HOOKS.preRemove,
+    hookName: GLOBAL_HOOKS.preRemove,
     operationData: removeHookOperationData,
     stopOnFailure: true,
     targetRepositories: removeHookTargets,
@@ -326,7 +339,7 @@ export const executeRemove = async (
     workspaceRoot,
   });
   if (preRemoveOutcome.hookStatus === "failure") {
-    summary.errors.push(formatHookFailure(hooks.GLOBAL_HOOKS.preRemove, preRemoveOutcome));
+    summary.errors.push(formatHookFailure(GLOBAL_HOOKS.preRemove, preRemoveOutcome));
     summary.duration = Date.now() - startTime;
     if (options.json) {
       console.log(formatRemovalSummaryJson(summary, { missingBranches, skippedMain }));
@@ -426,7 +439,7 @@ export const executeRemove = async (
   }
 
   const postRemoveOutcome = await runRemoveLifecycleHook({
-    hookName: hooks.GLOBAL_HOOKS.postRemove,
+    hookName: GLOBAL_HOOKS.postRemove,
     operationData: removeHookOperationData,
     stopOnFailure: false,
     targetRepositories: removeHookTargets,
@@ -434,7 +447,7 @@ export const executeRemove = async (
     workspaceRoot,
   });
   if (postRemoveOutcome.hookStatus === "failure") {
-    summary.errors.push(formatHookFailure(hooks.GLOBAL_HOOKS.postRemove, postRemoveOutcome));
+    summary.errors.push(formatHookFailure(GLOBAL_HOOKS.postRemove, postRemoveOutcome));
   }
 
   summary.duration = Date.now() - startTime;
@@ -626,9 +639,9 @@ const warnOnDefaultMainRemoval = (
     return;
   }
 
-  logger.warn("Default branch main worktree selected; main worktrees cannot be removed:");
+  warn("Default branch main worktree selected; main worktrees cannot be removed:");
   for (const wt of warnings) {
-    logger.info(`  • ${wt.repository}: ${wt.branch} (${wt.path})`);
+    info(`  • ${wt.repository}: ${wt.branch} (${wt.path})`);
   }
 };
 
@@ -641,7 +654,7 @@ const promptConfirmation = async (
   if (checkDirty) {
     const dirty = worktrees.filter((wt) => wt.isDirty);
     if (dirty.length > ZERO) {
-      logger.warn(`Uncommitted changes detected in ${dirty.length} worktrees:`);
+      warn(`Uncommitted changes detected in ${dirty.length} worktrees:`);
       for (const wt of dirty) {
         const details = wt.dirtyDetails;
         const parts: string[] = [];
@@ -660,7 +673,7 @@ const promptConfirmation = async (
         if (parts.length > ZERO) {
           detailText = ` (${parts.join(", ")})`;
         }
-        logger.info(`  • ${wt.repository}: ${wt.path}${detailText}`);
+        info(`  • ${wt.repository}: ${wt.path}${detailText}`);
       }
 
       const outcome = await confirm(
@@ -729,12 +742,12 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
         ),
       );
     } else {
-      logger.error(error.message);
+      logError(error.message);
       if (error.code === RemoveCommandErrorCode.BRANCH_NOT_FOUND) {
-        logger.info('Hint: Run "arashi list" to see all worktrees');
+        info('Hint: Run "arashi list" to see all worktrees');
       }
       if (error.code === RemoveCommandErrorCode.NON_INTERACTIVE) {
-        logger.info("Hint: Run this command in an interactive terminal");
+        info("Hint: Run this command in an interactive terminal");
       }
     }
 
@@ -769,7 +782,7 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
       ),
     );
   } else {
-    logger.error(`Unexpected error: ${message}`);
+    logError(`Unexpected error: ${message}`);
   }
   process.exit(ONE);
 };
@@ -844,33 +857,33 @@ const formatBranchDeletionError = (error: unknown): string => {
 const runRemoveLifecycleHook = async (options: {
   hookName: string;
   workspaceRoot: string;
-  targetRepositories: hooks.HookTargetRepository[];
+  targetRepositories: HookTargetRepository[];
   operationData: Record<string, string>;
   timeoutMs?: number;
   stopOnFailure: boolean;
-}): Promise<hooks.HookOutcomeMapping> => {
-  const spinner = logger.spinner(`Running ${options.hookName} hooks...`).start();
-  const resolvedHooks = await hooks.resolveScopedLifecycleHooks({
+}): Promise<HookOutcomeMapping> => {
+  const hookSpinner = spinner(`Running ${options.hookName} hooks...`).start();
+  const resolvedHooks = await resolveScopedLifecycleHooks({
     hookName: options.hookName,
     targetRepositories: options.targetRepositories,
     workspaceRoot: options.workspaceRoot,
   });
 
   if (resolvedHooks.length === 0) {
-    const skipped = hooks.mapHookSkippedOutcome("not_found", "Hook script not found");
-    spinner.stop();
-    logger.info(`Skipping ${options.hookName} hooks: ${skipped.message}`);
+    const skipped = mapHookSkippedOutcome("not_found", "Hook script not found");
+    hookSpinner.stop();
+    info(`Skipping ${options.hookName} hooks: ${skipped.message}`);
     return skipped;
   }
 
   const failures: string[] = [];
-  let failureReason: hooks.HookOutcomeReasonCode = "exit_non_zero";
+  let failureReason: HookOutcomeReasonCode = "exit_non_zero";
   let executedCount = 0;
 
   for (const resolvedHook of resolvedHooks) {
-    spinner.text = `Running ${options.hookName} (${resolvedHook.scope}:${resolvedHook.targetRepositoryName})...`;
+    hookSpinner.text = `Running ${options.hookName} (${resolvedHook.scope}:${resolvedHook.targetRepositoryName})...`;
 
-    const validation = await hooks.validateHook(resolvedHook.scriptPath);
+    const validation = await validateHook(resolvedHook.scriptPath);
     if (!validation.valid) {
       failures.push(
         `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${validation.error ?? "Hook validation failed"}`,
@@ -881,7 +894,7 @@ const runRemoveLifecycleHook = async (options: {
       continue;
     }
 
-    const result = await hooks.executeHook({
+    const result = await executeHook({
       context: {
         hookName: options.hookName,
         repoPath: resolvedHook.executionPath,
@@ -901,7 +914,7 @@ const runRemoveLifecycleHook = async (options: {
     });
     executedCount += 1;
 
-    const mapping = hooks.mapHookExecutionResult(result);
+    const mapping = mapHookExecutionResult(result);
     if (mapping.hookStatus === "failure") {
       failureReason = mapping.reasonCode;
       const stderr = result.stderr.trim();
@@ -920,7 +933,7 @@ const runRemoveLifecycleHook = async (options: {
   }
 
   if (failures.length === 0) {
-    spinner.succeed(`${options.hookName} hooks completed (${executedCount})`);
+    hookSpinner.succeed(`${options.hookName} hooks completed (${executedCount})`);
     let hookScriptLabel = "scripts";
     if (executedCount === ONE) {
       hookScriptLabel = "script";
@@ -933,8 +946,8 @@ const runRemoveLifecycleHook = async (options: {
     };
   }
 
-  spinner.fail(`${options.hookName} hooks failed`);
-  let reasonCode: hooks.HookOutcomeReasonCode = "exit_non_zero";
+  hookSpinner.fail(`${options.hookName} hooks failed`);
+  let reasonCode: HookOutcomeReasonCode = "exit_non_zero";
   if (failureReason === "timeout") {
     reasonCode = "timeout";
   }
@@ -946,6 +959,7 @@ const runRemoveLifecycleHook = async (options: {
   };
 };
 
-const formatHookFailure = (hookName: string, outcome: hooks.HookOutcomeMapping): string => {
-  return `${hookName} hook failed: ${outcome.message}`;
-};
+const formatHookFailure = (hookName: string, outcome: HookOutcomeMapping): string =>
+  `${hookName} hook failed: ${outcome.message}`;
+
+export { createCommand, executeRemove };

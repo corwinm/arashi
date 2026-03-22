@@ -2,8 +2,8 @@ import { Command } from "commander";
 import { basename, resolve, sep } from "path";
 import type { Config, LaunchMode, WorkspaceRepository } from "../lib/config.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
-import * as logger from "../lib/logger.ts";
-import * as git from "../lib/git.ts";
+import { exec } from "../lib/git.ts";
+import { error as logError, info, success } from "../lib/logger.ts";
 import {
   discoverSwitchCandidates,
   filterSwitchCandidates,
@@ -16,7 +16,17 @@ import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import type { SwitchLaunchMode } from "../types/switch.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 
-export interface SwitchCommandOptions {
+const ZERO = 0;
+const ONE = 1;
+const SUCCESS_EXIT_CODE = 0;
+const ERROR_EXIT_CODE = 1;
+const USAGE_EXIT_CODE = 2;
+const AUTO_LAUNCH_MODE: LaunchMode = "auto";
+const SESH_LAUNCH_MODE: LaunchMode = "sesh";
+const DETACHED_HEAD = "HEAD";
+const KEY_SEPARATOR = "\u0000";
+
+interface SwitchCommandOptions {
   sesh?: boolean;
   repos?: boolean;
   all?: boolean;
@@ -25,7 +35,7 @@ export interface SwitchCommandOptions {
 
 type SwitchRepositoryScope = "parent" | "repos" | "all";
 
-export interface SwitchCommandDependencies {
+interface SwitchCommandDependencies {
   findWorkspaceRoot?: () => Promise<string>;
   loadWorkspaceRepositories?: (
     workspaceRoot: string,
@@ -61,7 +71,7 @@ export interface SwitchCommandDependencies {
   runProcess?: SwitchProcessRunner;
 }
 
-export interface SwitchExecutionResult {
+interface SwitchExecutionResult {
   selected: SwitchCandidate;
   launchMode: SwitchLaunchMode;
   totalCandidates: number;
@@ -69,7 +79,7 @@ export interface SwitchExecutionResult {
   skippedCandidates: number;
 }
 
-export function createCommand(): Command {
+const createCommand = (): Command => {
   return new Command("switch")
     .description("Open a terminal context for an existing worktree")
     .argument("[filter]", "Filter targets by branch name or worktree path")
@@ -92,18 +102,18 @@ Examples:
     .action(async (filter: string | undefined, options: SwitchCommandOptions) => {
       try {
         await executeSwitch(filter, options);
-        process.exit(0);
+        process.exit(SUCCESS_EXIT_CODE);
       } catch (error) {
         handleSwitchError(error);
       }
     });
-}
+};
 
-export async function executeSwitch(
+const executeSwitch = async (
   filter: string | undefined,
   options: SwitchCommandOptions,
   deps: SwitchCommandDependencies = {},
-): Promise<SwitchExecutionResult> {
+): Promise<SwitchExecutionResult> => {
   const resolveWorkspaceRoot = deps.findWorkspaceRoot ?? findWorkspaceRoot;
   const resolveWorkspaceRepositories = deps.loadWorkspaceRepositories ?? loadWorkspaceRepositories;
   const discoverCandidates = deps.discoverSwitchCandidates ?? discoverSwitchCandidates;
@@ -137,11 +147,12 @@ export async function executeSwitch(
     });
   }
 
-  const matchedCandidates =
-    scope === "repos"
-      ? filterRepoScopedCandidates(scopedCandidates, filter)
-      : filterSwitchCandidates(scopedCandidates, filter);
-  if (matchedCandidates.length === 0) {
+  let matchedCandidates = filterSwitchCandidates(scopedCandidates, filter);
+  if (scope === "repos") {
+    matchedCandidates = filterRepoScopedCandidates(scopedCandidates, filter);
+  }
+
+  if (matchedCandidates.length === ZERO) {
     if (scope === "repos") {
       throw new SwitchCommandError(
         buildRepoNoMatchMessage(scopedCandidates, filter),
@@ -172,9 +183,9 @@ export async function executeSwitch(
   });
 
   const resolvedLaunchMode = resolveDefaultWithPrecedence<LaunchMode>({
-    builtInValue: "auto",
+    builtInValue: AUTO_LAUNCH_MODE,
     configValue: workspace.config?.defaults?.switch?.launchMode,
-    explicitValue: "sesh",
+    explicitValue: SESH_LAUNCH_MODE,
     hasExplicitValue: options.sesh === true,
     optOut: options.defaultLaunch === false,
   });
@@ -182,7 +193,7 @@ export async function executeSwitch(
   const launchResult = await launchCandidate(
     selected,
     {
-      sesh: resolvedLaunchMode.value === "sesh",
+      sesh: resolvedLaunchMode.value === SESH_LAUNCH_MODE,
     },
     {
       env: deps.env ?? process.env,
@@ -191,7 +202,7 @@ export async function executeSwitch(
     },
   );
 
-  logger.success(
+  success(
     `Opened ${launchResult.mode} context for ${selected.repoName} (${selected.branchName}) at ${selected.worktreePath}`,
   );
 
@@ -202,47 +213,47 @@ export async function executeSwitch(
     skippedCandidates: discovery.skippedCount,
     totalCandidates: scopedCandidates.length,
   };
-}
+};
 
-function handleSwitchError(error: unknown): never {
+const handleSwitchError = (error: unknown): never => {
   if (error instanceof SwitchCommandError) {
     if (error.code === SwitchCommandErrorCode.USER_CANCELLED) {
-      logger.info("Switch cancelled.");
-      process.exit(0);
+      info("Switch cancelled.");
+      process.exit(SUCCESS_EXIT_CODE);
     }
 
-    logger.error(error.message);
+    logError(error.message);
 
     if (error.code === SwitchCommandErrorCode.AMBIGUOUS_NON_INTERACTIVE) {
-      logger.info("Hint: provide a more specific filter, e.g. `arashi switch feature-auth`.");
-      process.exit(2);
+      info("Hint: provide a more specific filter, e.g. `arashi switch feature-auth`.");
+      process.exit(USAGE_EXIT_CODE);
     }
 
     if (error.code === SwitchCommandErrorCode.NO_TARGETS) {
-      logger.info("Hint: create a worktree first with `arashi create <branch>`.");
-      process.exit(2);
+      info("Hint: create a worktree first with `arashi create <branch>`.");
+      process.exit(USAGE_EXIT_CODE);
     }
 
     if (error.code === SwitchCommandErrorCode.NO_MATCHES) {
-      logger.info("Hint: run `arashi list` to see available worktree paths and branches.");
-      process.exit(2);
+      info("Hint: run `arashi list` to see available worktree paths and branches.");
+      process.exit(USAGE_EXIT_CODE);
     }
 
     if (
       error.code === SwitchCommandErrorCode.SESH_REQUIRES_TMUX ||
       error.code === SwitchCommandErrorCode.SESH_NOT_FOUND
     ) {
-      process.exit(2);
+      process.exit(USAGE_EXIT_CODE);
     }
 
-    process.exit(1);
+    process.exit(ERROR_EXIT_CODE);
   }
 
-  logger.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-}
+  logError(error instanceof Error ? error.message : String(error));
+  process.exit(ERROR_EXIT_CODE);
+};
 
-function resolveSwitchScope(options: SwitchCommandOptions): SwitchRepositoryScope {
+const resolveSwitchScope = (options: SwitchCommandOptions): SwitchRepositoryScope => {
   if (options.all) {
     return "all";
   }
@@ -252,13 +263,13 @@ function resolveSwitchScope(options: SwitchCommandOptions): SwitchRepositoryScop
   }
 
   return "parent";
-}
+};
 
-function filterRepositoriesByScope(
+const filterRepositoriesByScope = (
   scope: SwitchRepositoryScope,
   workspaceRoot: string,
   repositories: WorkspaceRepository[],
-): WorkspaceRepository[] {
+): WorkspaceRepository[] => {
   const normalizedWorkspaceRoot = resolve(workspaceRoot);
   const parentRepositories = repositories.filter(
     (repo) => resolve(repo.path) === normalizedWorkspaceRoot,
@@ -275,14 +286,18 @@ function filterRepositoriesByScope(
     return childRepositories;
   }
 
-  if (parentRepositories.length > 0) {
+  if (parentRepositories.length > ZERO) {
     return parentRepositories;
   }
 
-  return repositories.length > 0 ? [repositories[0]] : [];
-}
+  if (repositories.length > ZERO) {
+    return [repositories[ZERO]];
+  }
 
-function getNoTargetsMessage(scope: SwitchRepositoryScope): string {
+  return [];
+};
+
+const getNoTargetsMessage = (scope: SwitchRepositoryScope): string => {
   if (scope === "repos") {
     return "No switch targets were found for child repositories in the current workspace. Try `arashi switch --all` to include all worktrees.";
   }
@@ -292,13 +307,13 @@ function getNoTargetsMessage(scope: SwitchRepositoryScope): string {
   }
 
   return "No switch targets were found in this workspace.";
-}
+};
 
-function filterCandidatesByScope(
+const filterCandidatesByScope = (
   scope: SwitchRepositoryScope,
   workspaceRoot: string,
   candidates: SwitchCandidate[],
-): SwitchCandidate[] {
+): SwitchCandidate[] => {
   if (scope !== "repos") {
     return candidates;
   }
@@ -310,16 +325,16 @@ function filterCandidatesByScope(
     const candidatePath = resolve(candidate.worktreePath);
     return candidatePath === normalizedWorkspaceRoot || candidatePath.startsWith(workspacePrefix);
   });
-}
+};
 
-async function augmentAllScopeCandidates(
+const augmentAllScopeCandidates = async (
   candidates: SwitchCandidate[],
   options: {
     workspaceRoot: string;
     reposDir: string;
     repositories: WorkspaceRepository[];
   },
-): Promise<SwitchCandidate[]> {
+): Promise<SwitchCandidate[]> => {
   const normalizedWorkspaceRoot = resolve(options.workspaceRoot);
   const parentRepoName = basename(normalizedWorkspaceRoot);
   const parentCandidates = candidates.filter((candidate) => candidate.repoName === parentRepoName);
@@ -327,13 +342,13 @@ async function augmentAllScopeCandidates(
     (repo) => resolve(repo.path) !== normalizedWorkspaceRoot,
   );
 
-  if (parentCandidates.length === 0 || childRepositories.length === 0) {
+  if (parentCandidates.length === ZERO || childRepositories.length === ZERO) {
     return candidates;
   }
 
   const merged = [...candidates];
   const seen = new Set<string>(
-    candidates.map((candidate) => `${candidate.repoName}\u0000${candidate.worktreePath}`),
+    candidates.map((candidate) => `${candidate.repoName}${KEY_SEPARATOR}${candidate.worktreePath}`),
   );
 
   for (const parentCandidate of parentCandidates) {
@@ -358,7 +373,7 @@ async function augmentAllScopeCandidates(
         repoName: childRepository.name,
         worktreePath: childWorktreePath,
       };
-      const key = `${candidate.repoName}\u0000${candidate.worktreePath}`;
+      const key = `${candidate.repoName}${KEY_SEPARATOR}${candidate.worktreePath}`;
 
       if (seen.has(key)) {
         continue;
@@ -370,33 +385,33 @@ async function augmentAllScopeCandidates(
   }
 
   return merged;
-}
+};
 
-async function getBranchName(repoPath: string): Promise<string | null> {
+const getBranchName = async (repoPath: string): Promise<string | null> => {
   try {
-    const result = await git.exec(["rev-parse", "--abbrev-ref", "HEAD"], repoPath);
+    const result = await exec(["rev-parse", "--abbrev-ref", DETACHED_HEAD], repoPath);
     const branchName = result.stdout.trim();
-    if (!branchName || branchName === "HEAD") {
+    if (!branchName || branchName === DETACHED_HEAD) {
       return null;
     }
     return branchName;
   } catch {
     return null;
   }
-}
+};
 
-function filterRepoScopedCandidates(
+const filterRepoScopedCandidates = (
   candidates: SwitchCandidate[],
   filter: string | undefined,
-): SwitchCandidate[] {
-  if (!filter || filter.trim().length === 0) {
+): SwitchCandidate[] => {
+  if (!filter || filter.trim().length === ZERO) {
     return [...candidates];
   }
 
   const query = filter.trim().toLowerCase();
 
   const exactMatches = candidates.filter((candidate) => candidate.repoName.toLowerCase() === query);
-  if (exactMatches.length > 0) {
+  if (exactMatches.length > ZERO) {
     return exactMatches;
   }
 
@@ -408,30 +423,38 @@ function filterRepoScopedCandidates(
     ),
   ];
 
-  if (partialRepoNames.length === 1) {
-    const partialRepoName = partialRepoNames[0];
+  if (partialRepoNames.length === ONE) {
+    const partialRepoName = partialRepoNames[ZERO];
     return candidates.filter((candidate) => candidate.repoName === partialRepoName);
   }
 
-  if (partialRepoNames.length > 1) {
+  if (partialRepoNames.length > ONE) {
     const partialRepoSet = new Set(partialRepoNames);
     return candidates.filter((candidate) => partialRepoSet.has(candidate.repoName));
   }
 
   return [];
-}
+};
 
-function buildRepoNoMatchMessage(
+const buildRepoNoMatchMessage = (
   candidates: SwitchCandidate[],
   filter: string | undefined,
-): string {
-  const availableRepos = [...new Set(candidates.map((candidate) => candidate.repoName))].toSorted();
-  const availableReposText =
-    availableRepos.length > 0 ? availableRepos.join(", ") : "(no child repositories found)";
+): string => {
+  const availableRepos = [...new Set(candidates.map((candidate) => candidate.repoName))];
+  availableRepos.sort();
 
-  if (!filter || filter.trim().length === 0) {
+  let availableReposText = "(no child repositories found)";
+  if (availableRepos.length > ZERO) {
+    availableReposText = availableRepos.join(", ");
+  }
+
+  if (!filter || filter.trim().length === ZERO) {
     return `No child repository matches were found. Available repositories: ${availableReposText}`;
   }
 
   return `No child repository matched \`${filter}\`. Available repositories: ${availableReposText}`;
-}
+};
+
+export { createCommand, executeSwitch };
+
+export type { SwitchCommandDependencies, SwitchCommandOptions, SwitchExecutionResult };

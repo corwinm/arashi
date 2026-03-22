@@ -18,6 +18,20 @@ import { confirm as promptConfirm } from "../lib/prompts.ts";
 import { executeClone } from "./clone.ts";
 import type { RepoConfig } from "../lib/config.ts";
 
+const ZERO = 0;
+const JSON_INDENT = 2;
+const ERROR_EXIT_CODE = 1;
+const CANCELLED_EXIT_CODE = 2;
+
+const getLastPathSegment = (pathParts: string[]): string => {
+  const lastPart = pathParts.at(-1);
+  if (!lastPart) {
+    throw new Error("Unable to determine repository name from path");
+  }
+
+  return lastPart;
+};
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -25,7 +39,7 @@ import type { RepoConfig } from "../lib/config.ts";
 /**
  * Git URL information parsed from a repository URL
  */
-export interface GitUrlInfo {
+interface GitUrlInfo {
   /** Original URL string */
   url: string;
   /** Detected protocol */
@@ -43,7 +57,7 @@ export interface GitUrlInfo {
 /**
  * Command-line options for the add command
  */
-export interface AddCommandOptions {
+interface AddCommandOptions {
   /** Custom repository name (overrides auto-derived name) */
   name?: string;
   /** Whether to create setup.sh template if no setup script found */
@@ -57,7 +71,7 @@ export interface AddCommandOptions {
 /**
  * Result of add operation
  */
-export interface AddCommandResult {
+interface AddCommandResult {
   /** Name of the added repository */
   repositoryName: string;
   /** Absolute filesystem path where repository was cloned */
@@ -111,14 +125,14 @@ const GIT_URL_PATTERNS = {
  * isValidGitUrl('https://github.com/user/repo.git') // true
  * isValidGitUrl('invalid-url') // false
  */
-export function isValidGitUrl(url: string): boolean {
+const isValidGitUrl = (url: string): boolean => {
   if (!url || typeof url !== "string" || url.trim() === "") {
     return false;
   }
 
   const trimmedUrl = url.trim();
   return Object.values(GIT_URL_PATTERNS).some((pattern) => pattern.test(trimmedUrl));
-}
+};
 
 /**
  * Derive repository name from a Git URL
@@ -134,7 +148,7 @@ export function isValidGitUrl(url: string): boolean {
  * deriveRepoName('https://github.com/user/my-repo.git') // 'my-repo'
  * deriveRepoName('git@github.com:user/project') // 'project'
  */
-export function deriveRepoName(gitUrl: string): string {
+const deriveRepoName = (gitUrl: string): string => {
   // Remove trailing slashes and .git suffix
   const url = gitUrl
     .trim()
@@ -151,7 +165,7 @@ export function deriveRepoName(gitUrl: string): string {
   }
 
   return name;
-}
+};
 
 /**
  * Parse a Git URL and extract structured information
@@ -164,7 +178,7 @@ export function deriveRepoName(gitUrl: string): string {
  * const info = parseGitUrl('https://github.com/facebook/react.git');
  * // { protocol: 'https', host: 'github.com', owner: 'facebook', repository: 'react', ... }
  */
-export function parseGitUrl(gitUrl: string): GitUrlInfo {
+const parseGitUrl = (gitUrl: string): GitUrlInfo => {
   if (!isValidGitUrl(gitUrl)) {
     throw new AddCommandError(
       `The URL "${gitUrl}" is not a valid Git repository URL`,
@@ -189,9 +203,9 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
         owner = pathParts[0];
-        repository = pathParts.at(-1);
+        repository = getLastPathSegment(pathParts);
       } else {
-        repository = pathParts.at(-1);
+        repository = getLastPathSegment(pathParts);
       }
     } else {
       repository = deriveRepoName(trimmedUrl);
@@ -206,9 +220,9 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
         owner = pathParts[0];
-        repository = pathParts.at(-1);
+        repository = getLastPathSegment(pathParts);
       } else {
-        repository = pathParts.at(-1);
+        repository = getLastPathSegment(pathParts);
       }
     } else {
       repository = deriveRepoName(trimmedUrl);
@@ -222,9 +236,9 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
         owner = pathParts[0];
-        repository = pathParts.at(-1);
+        repository = getLastPathSegment(pathParts);
       } else {
-        repository = pathParts.at(-1);
+        repository = getLastPathSegment(pathParts);
       }
     } else {
       repository = deriveRepoName(trimmedUrl);
@@ -249,7 +263,7 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
     repository,
     url: trimmedUrl,
   };
-}
+};
 
 // ============================================================================
 // Setup Script Detection
@@ -285,7 +299,7 @@ const SETUP_SCRIPT_NAMES = [
  *   console.log(`Found setup script: ${setupScript}`);
  * }
  */
-export async function detectSetupScript(repoPath: string): Promise<string | null> {
+const detectSetupScript = async (repoPath: string): Promise<string | null> => {
   for (const scriptName of SETUP_SCRIPT_NAMES) {
     const scriptPath = join(repoPath, scriptName);
     const file = Bun.file(scriptPath);
@@ -298,10 +312,7 @@ export async function detectSetupScript(repoPath: string): Promise<string | null
           if (/^(setup|install):/m.test(content)) {
             return scriptPath;
           }
-        } catch {
-          // Ignore read errors, continue to next script
-          continue;
-        }
+        } catch {}
       } else {
         return scriptPath;
       }
@@ -309,7 +320,7 @@ export async function detectSetupScript(repoPath: string): Promise<string | null
   }
 
   return null;
-}
+};
 
 // ============================================================================
 // Add Command Implementation
@@ -323,16 +334,17 @@ export async function detectSetupScript(repoPath: string): Promise<string | null
  * @param workspaceRoot - Root directory of the workspace
  * @returns Result of add operation
  */
-async function executeAdd(
+const executeAdd = async (
   gitUrl: string,
   options: AddCommandOptions,
   workspaceRoot: string,
-): Promise<AddCommandResult> {
+): Promise<AddCommandResult> => {
   const operations: RollbackOperation[] = [];
 
   try {
     // Step 1: Validate workspace is initialized
-    if (!(await configExists(workspaceRoot))) {
+    const hasConfig = await configExists(workspaceRoot);
+    if (!hasConfig) {
       throw new AddCommandError(
         'Workspace not initialized. Run "arashi init" first.',
         AddCommandErrorCode.CONFIG_UPDATE_FAILED,
@@ -436,28 +448,29 @@ async function executeAdd(
     };
   } catch (error) {
     // Rollback operations in reverse order
-    for (const op of operations.toReversed()) {
+    const rollbackOperations = [...operations];
+    rollbackOperations.reverse();
+
+    for (const operation of rollbackOperations) {
       try {
-        if (op.type === "clone") {
-          // Remove cloned directory
-          await Bun.$`rm -rf ${op.path}`;
+        if (operation.type === "clone") {
+          await Bun.$`rm -rf ${operation.path}`;
         }
       } catch (cleanupError) {
-        // Log warning but don't fail the error reporting
-        info(`Warning: Failed to clean up ${op.path}: ${(cleanupError as Error).message}`);
-        info(`Please manually remove: rm -rf ${op.path}`);
+        info(`Warning: Failed to clean up ${operation.path}: ${(cleanupError as Error).message}`);
+        info(`Please manually remove: rm -rf ${operation.path}`);
       }
     }
 
     // Re-throw original error
     throw error;
   }
-}
+};
 
 /**
  * Display success message in human-readable format
  */
-function displaySuccess(result: AddCommandResult, workspaceRoot: string): void {
+const displaySuccess = (result: AddCommandResult, workspaceRoot: string): void => {
   success("\nRepository added successfully:");
   console.log(`  Name:     ${result.repositoryName}`);
   console.log(`  Location: ${result.clonePath.replace(workspaceRoot, ".")}`);
@@ -474,12 +487,12 @@ function displaySuccess(result: AddCommandResult, workspaceRoot: string): void {
     console.log("\nNext steps:");
     console.log(`  Create worktree: arashi create my-branch`);
   }
-}
+};
 
 /**
  * Display error message in human-readable format
  */
-function displayError(error: AddCommandError): void {
+const displayError = (error: AddCommandError): void => {
   logError(`\n✗ ${error.message}\n`);
 
   if (error.code === AddCommandErrorCode.INVALID_URL) {
@@ -500,14 +513,14 @@ function displayError(error: AddCommandError): void {
     console.log("  - Authentication required (use SSH with configured keys)");
     console.log("  - Insufficient disk space");
   }
-}
+};
 
 /**
  * Create the add command for Commander.js
  *
  * @returns Commander Command object
  */
-export function createCommand(): Command {
+const createCommand = (): Command => {
   const cmd = new Command("add");
 
   cmd
@@ -561,7 +574,7 @@ export function createCommand(): Command {
                   success: false,
                 },
                 null,
-                2,
+                JSON_INDENT,
               ),
             );
           } else {
@@ -580,13 +593,13 @@ export function createCommand(): Command {
               if (fallback.status === "ok" && fallback.value) {
                 const cloneResult = await executeClone({}, { workspaceRoot: process.cwd() });
                 if (cloneResult.status === "cancelled") {
-                  process.exit(0);
+                  process.exit(ZERO);
                 }
-                process.exit(cloneResult.failed.length > 0 ? 1 : 0);
+                process.exit(cloneResult.failed.length > ZERO ? ERROR_EXIT_CODE : ZERO);
               }
             }
           }
-          process.exit(2);
+          process.exit(CANCELLED_EXIT_CODE);
         } else {
           logError(`\nUnexpected error: ${(error as Error).message}`);
           if (options.json) {
@@ -600,14 +613,18 @@ export function createCommand(): Command {
                   success: false,
                 },
                 null,
-                2,
+                JSON_INDENT,
               ),
             );
           }
-          process.exit(1);
+          process.exit(ERROR_EXIT_CODE);
         }
       }
     });
 
   return cmd;
-}
+};
+
+export { createCommand, detectSetupScript, deriveRepoName, isValidGitUrl, parseGitUrl };
+
+export type { AddCommandOptions, AddCommandResult, GitUrlInfo };

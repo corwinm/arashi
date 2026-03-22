@@ -9,10 +9,10 @@
 import { Command } from "commander";
 import { stat } from "fs/promises";
 import { resolve } from "path";
-import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
 import type { Config } from "../lib/config.js";
+import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
 import { getFullGitStatus, getGitStatus } from "../lib/git.js";
-import * as logger from "../lib/logger.js";
+import { error as logError, info, spinner } from "../lib/logger.js";
 
 const ZERO = 0;
 const ONE = 1;
@@ -58,7 +58,7 @@ const summarizeStatuses = (statuses: RepoStatus[]) => {
 /**
  * Command-line options for the status command
  */
-export interface StatusOptions {
+interface StatusOptions {
   /** Show full git status output for each repository */
   verbose?: boolean;
   /** Show one-line summary per repository */
@@ -68,7 +68,7 @@ export interface StatusOptions {
 /**
  * Status of a single file in a git repository
  */
-export interface GitFileStatus {
+interface GitFileStatus {
   /** Relative path to the file */
   path: string;
   /** Status in staging area (one character: ' ', 'M', 'A', 'D', 'R', 'C') */
@@ -80,7 +80,7 @@ export interface GitFileStatus {
 /**
  * Branch tracking information relative to remote
  */
-export interface BranchTrackingInfo {
+interface BranchTrackingInfo {
   /** Name of the local branch */
   localBranch: string;
   /** Name of the remote tracking branch (null if no remote) */
@@ -96,7 +96,7 @@ export interface BranchTrackingInfo {
 /**
  * Complete status information for a single repository
  */
-export interface RepoStatus {
+interface RepoStatus {
   /** Repository name (from config) */
   name: string;
   /** Absolute path to repository */
@@ -119,7 +119,7 @@ export interface RepoStatus {
  * @param output - Git status porcelain output
  * @returns Parsed file statuses and branch information
  */
-export const parseBranchLine = (line: string): BranchTrackingInfo => {
+const parseBranchLine = (line: string): BranchTrackingInfo => {
   const branchInfo = line.slice(THREE);
 
   if (branchInfo.includes("no branch") || branchInfo.startsWith("HEAD (detached")) {
@@ -160,7 +160,7 @@ export const parseBranchLine = (line: string): BranchTrackingInfo => {
   };
 };
 
-export const parseGitStatus = (
+const parseGitStatus = (
   output: string,
 ): {
   files: GitFileStatus[];
@@ -209,7 +209,7 @@ const pathExists = async (path: string): Promise<boolean> => {
   }
 };
 
-export const checkRepoStatus = async (
+const checkRepoStatus = async (
   name: string,
   path: string,
   verbose: boolean = false,
@@ -285,7 +285,7 @@ export const checkRepoStatus = async (
  * @param verbose - Whether to get full git status output
  * @returns Array of repository statuses
  */
-export const checkAllRepos = async (
+const checkAllRepos = async (
   workspaceRoot: string,
   config: Config,
   verbose: boolean = false,
@@ -320,11 +320,11 @@ const getStatusSymbol = (isClean: boolean): string => {
  */
 const getStatusColor = (isClean: boolean) => (hasError: boolean) => {
   if (hasError) {
-    return (text: string) => `\x1b[31m${text}\x1b[0m`;
+    return (text: string) => `\u001b[31m${text}\u001b[0m`;
   }
 
   if (isClean) {
-    return (text: string) => `\x1B[32m${text}\x1B[0m`;
+    return (text: string) => `\u001b[32m${text}\u001b[0m`;
   }
 
   return (text: string) => `\u001b[33m${text}\u001b[0m`;
@@ -338,7 +338,7 @@ const cyan = (text: string): string => `\u001b[36m${text}\u001b[0m`;
 /**
  * Helper to apply bold
  */
-const bold = (text: string): string => `\u001b[1m${text}\x1B[0m`;
+const bold = (text: string): string => `\u001b[1m${text}\u001b[0m`;
 
 /**
  * Format a single repository section for default output
@@ -346,7 +346,7 @@ const bold = (text: string): string => `\u001b[1m${text}\x1B[0m`;
  * @param status - Repository status
  * @returns Formatted output string
  */
-export const formatRepoSection = (status: RepoStatus): string => {
+const formatRepoSection = (status: RepoStatus): string => {
   let section = `\n${bold(status.name)} (${status.path})\n`;
 
   // Branch info
@@ -373,12 +373,12 @@ export const formatRepoSection = (status: RepoStatus): string => {
     section += `  ${colorFn(status.error)}\n`;
   } else if (status.files.length === ZERO) {
     const colorFn = getStatusColor(true)(false);
-    section += `  Status: ${colorFn(getStatusSymbol(true) + " Clean")}\n`;
+    section += `  Status: ${colorFn(`${getStatusSymbol(true)} Clean`)}\n`;
   } else {
     const colorFn = getStatusColor(false)(false);
     const { modifiedCount, stagedCount, untrackedCount } = countRepoChanges(status);
 
-    section += `  Status: ${colorFn(getStatusSymbol(false) + " Dirty")} (${status.files.length} changes)\n`;
+    section += `  Status: ${colorFn(`${getStatusSymbol(false)} Dirty`)} (${status.files.length} changes)\n`;
 
     const parts = [];
     if (stagedCount > ZERO) {
@@ -403,7 +403,7 @@ export const formatRepoSection = (status: RepoStatus): string => {
  * @param statuses - Array of repository statuses
  * @returns Formatted summary string
  */
-export const formatSummary = (statuses: RepoStatus[]): string => {
+const formatSummary = (statuses: RepoStatus[]): string => {
   const { cleanCount, dirtyCount, total } = summarizeStatuses(statuses);
 
   return `\n${"─".repeat(SUMMARY_WIDTH)}\n${bold(`Summary: ${cleanCount} clean, ${dirtyCount} dirty (${total} total)`)}\n`;
@@ -415,7 +415,7 @@ export const formatSummary = (statuses: RepoStatus[]): string => {
  * @param statuses - Array of repository statuses
  * @returns Formatted output string
  */
-export const formatDefaultOutput = (statuses: RepoStatus[]): string => {
+const formatDefaultOutput = (statuses: RepoStatus[]): string => {
   let output = "";
 
   for (const status of statuses) {
@@ -432,7 +432,7 @@ export const formatDefaultOutput = (statuses: RepoStatus[]): string => {
  * @param statuses - Array of repository statuses
  * @returns Formatted output string
  */
-export const formatVerboseOutput = (statuses: RepoStatus[]): string => {
+const formatVerboseOutput = (statuses: RepoStatus[]): string => {
   let output = "";
 
   for (const status of statuses) {
@@ -465,7 +465,7 @@ export const formatVerboseOutput = (statuses: RepoStatus[]): string => {
     // Full git status output
     if (status.error) {
       const colorFn = getStatusColor(false)(true);
-      output += `  ${colorFn("✗ Error: " + status.error)}\n`;
+      output += `  ${colorFn(`✗ Error: ${status.error}`)}\n`;
     } else if (status.fullStatus) {
       // Indent each line of full status
       const lines = status.fullStatus.split("\n");
@@ -488,7 +488,7 @@ export const formatVerboseOutput = (statuses: RepoStatus[]): string => {
  * @param status - Repository status
  * @returns Formatted line
  */
-export const formatShortLine = (status: RepoStatus): string => {
+const formatShortLine = (status: RepoStatus): string => {
   let branchLabel = status.branch.localBranch;
   if (status.branch.isDetached) {
     branchLabel = "detached";
@@ -547,11 +547,11 @@ export const formatShortLine = (status: RepoStatus): string => {
  * @param statuses - Array of repository statuses
  * @returns Formatted output string
  */
-export const formatShortOutput = (statuses: RepoStatus[]): string => {
+const formatShortOutput = (statuses: RepoStatus[]): string => {
   let output = "";
 
   for (const status of statuses) {
-    output += formatShortLine(status) + "\n";
+    output += `${formatShortLine(status)}\n`;
   }
 
   const { cleanCount, dirtyCount } = summarizeStatuses(statuses);
@@ -567,8 +567,8 @@ export const formatShortOutput = (statuses: RepoStatus[]): string => {
  */
 const statusCommand = async (options: StatusOptions): Promise<void> => {
   if (options.verbose && options.short) {
-    logger.error("Cannot use --verbose and --short together");
-    logger.info("Use 'arashi status --help' for usage information");
+    logError("Cannot use --verbose and --short together");
+    info("Use 'arashi status --help' for usage information");
     process.exit(USAGE_EXIT_CODE);
   }
 
@@ -576,8 +576,8 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
-    logger.error("Not in an arashi workspace");
-    logger.info("Run 'arashi init' to initialize a workspace");
+    logError("Not in an arashi workspace");
+    info("Run 'arashi init' to initialize a workspace");
     process.exit(USAGE_EXIT_CODE);
   }
 
@@ -585,16 +585,16 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
   try {
     config = await loadConfig(workspaceRoot);
   } catch (error) {
-    logger.error("Failed to load workspace configuration");
+    logError("Failed to load workspace configuration");
     if (error instanceof Error) {
-      logger.error(error.message);
+      logError(error.message);
     } else {
-      logger.error(String(error));
+      logError(String(error));
     }
     process.exit(USAGE_EXIT_CODE);
   }
 
-  const statusSpinner = logger.spinner("Checking repository status...");
+  const statusSpinner = spinner("Checking repository status...");
   statusSpinner.start();
 
   const statuses = await checkAllRepos(workspaceRoot, config, options.verbose || false);
@@ -623,7 +623,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
  *
  * @returns Commander Command instance
  */
-export const createCommand = (): Command => {
+const createCommand = (): Command => {
   return new Command("status")
     .description("Show status of all managed repositories")
     .option("-v, --verbose", "Show full git status output")
@@ -639,3 +639,19 @@ Examples:
     )
     .action(statusCommand);
 };
+
+export {
+  checkAllRepos,
+  checkRepoStatus,
+  createCommand,
+  formatDefaultOutput,
+  formatRepoSection,
+  formatShortLine,
+  formatShortOutput,
+  formatSummary,
+  formatVerboseOutput,
+  parseBranchLine,
+  parseGitStatus,
+};
+
+export type { BranchTrackingInfo, GitFileStatus, RepoStatus, StatusOptions };
