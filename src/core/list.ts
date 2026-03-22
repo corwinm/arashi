@@ -7,18 +7,28 @@
  * @module core/list
  */
 
+import chalk from "chalk";
+import { isAbsolute, relative } from "path";
+import { loadConfig } from "../lib/config.ts";
+import { exec } from "../lib/git.ts";
+import { spinner, warn } from "../lib/logger.ts";
 import { ListCommandError, NotInRepositoryError } from "../types/list.ts";
 import type {
   ListCommandOptions,
   ListCommandOutput,
-  WorktreeListItem,
   SubRepositoryInfo,
+  WorktreeListItem,
 } from "../types/list.ts";
-import * as git from "../lib/git.ts";
-import * as config from "../lib/config.ts";
-import * as logger from "../lib/logger.ts";
-import { isAbsolute, relative } from "path";
-import chalk from "chalk";
+
+const ZERO = 0;
+const DEFAULT_MAX_DEPTH = 3;
+const SHORT_SHA_LENGTH = 7;
+const STATUS_WIDTH = 15;
+const JSON_INDENT = 2;
+const DETACHED_LABEL = "detached";
+const EMPTY_SHA = "0000000";
+const ROOT_PATH = "/";
+const SKIPPED_DIRECTORY_NAMES = new Set([".arashi", "node_modules"]);
 
 // ============================================================================
 // Main Command
@@ -52,12 +62,12 @@ import chalk from "chalk";
  * console.log(parent); // null
  * ```
  */
-async function findParentRepo(currentPath: string): Promise<string | null> {
+const findParentRepo = async (currentPath: string): Promise<string | null> => {
   const { resolve, dirname, relative, isAbsolute } = await import("path");
   const { access, constants } = await import("fs/promises");
 
   let searchPath = resolve(currentPath);
-  const root = "/";
+  const root = ROOT_PATH;
 
   // Walk up directory tree looking for .arashi/config.json
   while (searchPath !== root) {
@@ -69,7 +79,7 @@ async function findParentRepo(currentPath: string): Promise<string | null> {
 
       // Found a config - load it to check reposDir
       try {
-        const cfg = await config.loadConfig(searchPath);
+        const cfg = await loadConfig(searchPath);
         const reposDirAbs = resolve(searchPath, cfg.reposDir);
 
         // Check if current path is within reposDir
@@ -95,7 +105,7 @@ async function findParentRepo(currentPath: string): Promise<string | null> {
 
   // No parent config found
   return null;
-}
+};
 
 /**
  * List all worktrees in the current repository with their status
@@ -170,10 +180,10 @@ async function findParentRepo(currentPath: string): Promise<string | null> {
  * await listCommand({ verbose: true, json: true, maxDepth: 5 });
  * ```
  */
-export async function listCommand(options?: ListCommandOptions): Promise<void> {
+const listCommand = async (options?: ListCommandOptions): Promise<void> => {
   const opts: ListCommandOptions = {
     json: options?.json || false,
-    maxDepth: options?.maxDepth || 3,
+    maxDepth: options?.maxDepth || DEFAULT_MAX_DEPTH,
     table: options?.table || false,
     verbose: options?.verbose || false,
   };
@@ -183,7 +193,7 @@ export async function listCommand(options?: ListCommandOptions): Promise<void> {
 
   try {
     // Check if it's a git repository by trying to get the root
-    await git.exec(["rev-parse", "--git-dir"], cwd);
+    await exec(["rev-parse", "--git-dir"], cwd);
   } catch {
     throw new NotInRepositoryError(cwd);
   }
@@ -197,20 +207,18 @@ export async function listCommand(options?: ListCommandOptions): Promise<void> {
 
   // Load configuration (optional check - list can work without config)
   try {
-    await config.loadConfig(cwd);
+    await loadConfig(cwd);
   } catch {
     // Config not required for list command
     // Only warn in table/verbose mode (not in simple/json output)
     if (opts.table || opts.verbose) {
-      logger.warn("Arashi configuration not found. Some features may be limited.");
+      warn("Arashi configuration not found. Some features may be limited.");
     }
   }
 
   // Show progress for verbose mode (may be slow) - but not in JSON mode
   const s =
-    opts.verbose && !opts.json
-      ? logger.spinner("Discovering worktrees and sub-repositories...")
-      : null;
+    opts.verbose && !opts.json ? spinner("Discovering worktrees and sub-repositories...") : null;
   s?.start();
 
   try {
@@ -237,7 +245,7 @@ export async function listCommand(options?: ListCommandOptions): Promise<void> {
     s?.fail("Failed to list worktrees");
     throw error;
   }
-}
+};
 
 // ============================================================================
 // Helper Functions (Stubs)
@@ -260,14 +268,14 @@ export async function listCommand(options?: ListCommandOptions): Promise<void> {
  * console.log(sha); // "abc1234"
  * ```
  */
-export async function getShortCommitSha(repoPath: string): Promise<string> {
+const getShortCommitSha = async (repoPath: string): Promise<string> => {
   try {
-    const result = await git.exec(["rev-parse", "--short=7", "HEAD"], repoPath);
+    const result = await exec(["rev-parse", `--short=${SHORT_SHA_LENGTH}`, "HEAD"], repoPath);
     return result.stdout.trim();
   } catch (error) {
     throw new ListCommandError(`Failed to get commit SHA for ${repoPath}`, { error, repoPath });
   }
-}
+};
 
 /**
  * Determine if a worktree has uncommitted changes
@@ -295,18 +303,18 @@ export async function getShortCommitSha(repoPath: string): Promise<string> {
  * }
  * ```
  */
-export async function hasUncommittedChanges(worktreePath: string): Promise<boolean> {
+const hasUncommittedChanges = async (worktreePath: string): Promise<boolean> => {
   try {
-    const result = await git.exec(["status", "--porcelain"], worktreePath);
+    const result = await exec(["status", "--porcelain"], worktreePath);
     // If there's any output, there are changes
-    return result.stdout.trim().length > 0;
+    return result.stdout.trim().length > ZERO;
   } catch (error) {
     throw new ListCommandError(`Failed to check status for ${worktreePath}`, {
       error,
       worktreePath,
     });
   }
-}
+};
 
 /**
  * Validate WorktreeListItem structure using TypeScript type assertions
@@ -341,7 +349,7 @@ export async function hasUncommittedChanges(worktreePath: string): Promise<boole
  * validateWorktreeListItem(item); // Succeeds
  * ```
  */
-export function validateWorktreeListItem(item: unknown): asserts item is WorktreeListItem {
+const validateWorktreeListItem = (item: unknown): asserts item is WorktreeListItem => {
   if (typeof item !== "object" || item === null) {
     throw new ListCommandError("worktree item must be an object");
   }
@@ -409,7 +417,7 @@ export function validateWorktreeListItem(item: unknown): asserts item is Worktre
       throw new ListCommandError("childrenPaths must be array of absolute strings when present");
     }
   }
-}
+};
 
 /**
  * Validate ListCommandOutput structure using TypeScript type assertions
@@ -437,7 +445,7 @@ export function validateWorktreeListItem(item: unknown): asserts item is Worktre
  * validateListCommandOutput(output); // Succeeds or throws
  * ```
  */
-export function validateListCommandOutput(output: unknown): asserts output is ListCommandOutput {
+const validateListCommandOutput = (output: unknown): asserts output is ListCommandOutput => {
   if (typeof output !== "object" || output === null) {
     throw new ListCommandError("output must be an object");
   }
@@ -469,7 +477,7 @@ export function validateListCommandOutput(output: unknown): asserts output is Li
 
   // Validate each worktree
   candidate.worktrees.forEach((wt: unknown) => validateWorktreeListItem(wt));
-}
+};
 
 /**
  * Gather worktree data from git using `git worktree list --porcelain`
@@ -507,10 +515,10 @@ export function validateListCommandOutput(output: unknown): asserts output is Li
  * });
  * ```
  */
-export async function gatherWorktreeData(repoPath: string): Promise<WorktreeListItem[]> {
+const gatherWorktreeData = async (repoPath: string): Promise<WorktreeListItem[]> => {
   try {
     // Get worktree list in porcelain format
-    const result = await git.exec(["worktree", "list", "--porcelain"], repoPath);
+    const result = await exec(["worktree", "list", "--porcelain"], repoPath);
     const worktrees: WorktreeListItem[] = [];
 
     // Resolve repoPath to canonical form for comparison (handles /var vs /private/var on macOS)
@@ -545,7 +553,7 @@ export async function gatherWorktreeData(repoPath: string): Promise<WorktreeList
 
           worktrees.push({
             branch: currentWorktree.branch || null,
-            commit: currentWorktree.commit || "0000000",
+            commit: currentWorktree.commit || EMPTY_SHA,
             hasChanges,
             isMain,
             lockReason: currentWorktree.lockReason,
@@ -565,7 +573,7 @@ export async function gatherWorktreeData(repoPath: string): Promise<WorktreeList
         // Skip bare worktrees
         isBare = true;
       } else if (line.startsWith("HEAD ")) {
-        currentWorktree.commit = line.slice("HEAD ".length).slice(0, 7);
+        currentWorktree.commit = line.slice("HEAD ".length).slice(ZERO, SHORT_SHA_LENGTH);
       } else if (line.startsWith("branch ")) {
         const branchRef = line.slice("branch ".length);
         // Extract branch name from refs/heads/branch-name
@@ -595,7 +603,7 @@ export async function gatherWorktreeData(repoPath: string): Promise<WorktreeList
 
       worktrees.push({
         branch: currentWorktree.branch || null,
-        commit: currentWorktree.commit || "0000000",
+        commit: currentWorktree.commit || EMPTY_SHA,
         hasChanges,
         isMain,
         lockReason: currentWorktree.lockReason,
@@ -611,7 +619,7 @@ export async function gatherWorktreeData(repoPath: string): Promise<WorktreeList
       repoPath,
     });
   }
-}
+};
 
 /**
  * Discover nested git sub-repositories within a worktree directory
@@ -644,10 +652,10 @@ export async function gatherWorktreeData(repoPath: string): Promise<WorktreeList
  * });
  * ```
  */
-export async function discoverSubRepositories(
+const discoverSubRepositories = async (
   worktreePath: string,
-  maxDepth: number = 3,
-): Promise<SubRepositoryInfo[]> {
+  maxDepth: number = DEFAULT_MAX_DEPTH,
+): Promise<SubRepositoryInfo[]> => {
   // Find all git repositories within worktree
   const repoPaths = await findGitRepositories(worktreePath, maxDepth, true);
 
@@ -658,7 +666,7 @@ export async function discoverSubRepositories(
       // Get branch name
       let branch: string | null = null;
       try {
-        const branchResult = await git.exec(["symbolic-ref", "--short", "HEAD"], repoPath);
+        const branchResult = await exec(["symbolic-ref", "--short", "HEAD"], repoPath);
         branch = branchResult.stdout.trim();
       } catch {
         // Detached HEAD or error - leave as null
@@ -686,7 +694,7 @@ export async function discoverSubRepositories(
   }
 
   return subRepos;
-}
+};
 
 /**
  * Format status indicator with color for a worktree
@@ -709,7 +717,7 @@ export async function discoverSubRepositories(
  * console.log(status); // "✗ modified" (in red)
  * ```
  */
-export function formatStatus(wt: WorktreeListItem): string {
+const formatStatus = (wt: WorktreeListItem): string => {
   if (wt.locked) {
     return chalk.gray("🔒 locked");
   }
@@ -717,7 +725,7 @@ export function formatStatus(wt: WorktreeListItem): string {
     return chalk.red("✗ modified");
   }
   return chalk.green("✓ clean");
-}
+};
 
 /**
  * Format worktree data as a simple list of paths
@@ -742,9 +750,9 @@ export function formatStatus(wt: WorktreeListItem): string {
  * // /repo/bugfix
  * ```
  */
-export function formatAsSimpleList(output: ListCommandOutput): string {
+const formatAsSimpleList = (output: ListCommandOutput): string => {
   return output.worktrees.map((wt) => wt.path).join("\n");
-}
+};
 
 /**
  * Format worktree data as a human-readable table with colors
@@ -793,7 +801,7 @@ export function formatAsSimpleList(output: ListCommandOutput): string {
  * // /repo/feature-long-branch-name   feature  ✗ modified
  * ```
  */
-export function formatAsTable(output: ListCommandOutput, verbose: boolean): string {
+const formatAsTable = (output: ListCommandOutput, verbose: boolean): string => {
   const lines: string[] = [];
 
   // Header
@@ -815,7 +823,7 @@ export function formatAsTable(output: ListCommandOutput, verbose: boolean): stri
     // Verbose format with sub-repositories
     for (const wt of output.worktrees) {
       lines.push(`PATH: ${chalk.cyan(wt.path)}`);
-      lines.push(`BRANCH: ${chalk.yellow(wt.branch || "detached")}`);
+      lines.push(`BRANCH: ${chalk.yellow(wt.branch || DETACHED_LABEL)}`);
       lines.push(`STATUS: ${formatStatus(wt)}`);
       lines.push(`TYPE: ${wt.isMain ? "Main worktree" : "Linked worktree"}`);
 
@@ -825,7 +833,9 @@ export function formatAsTable(output: ListCommandOutput, verbose: boolean): stri
           const isLast = idx === wt.subRepositories!.length - 1;
           const prefix = isLast ? "└──" : "├──";
           const status = sub.hasChanges ? chalk.red("✗ modified") : chalk.green("✓ clean");
-          lines.push(`  ${prefix} ${sub.relativePath} (${sub.branch || "detached"}) - ${status}`);
+          lines.push(
+            `  ${prefix} ${sub.relativePath} (${sub.branch || DETACHED_LABEL}) - ${status}`,
+          );
         });
       }
 
@@ -838,13 +848,13 @@ export function formatAsTable(output: ListCommandOutput, verbose: boolean): stri
     const maxPathLen = Math.max(...output.worktrees.map((wt) => wt.path.length), 4); // Min 4 for "PATH"
     const maxBranchLen = Math.max(
       ...output.worktrees.map((wt) => (wt.branch || "detached").length),
-      6,
+      "BRANCH".length,
     ); // Min 6 for "BRANCH"
 
     // Use actual widths (no truncation)
     const pathWidth = maxPathLen;
     const branchWidth = maxBranchLen;
-    const statusWidth = 15; // Fixed for status indicators
+    const statusWidth = STATUS_WIDTH;
 
     // Build header - pad BEFORE applying bold/colors
     const headerPath = chalk.bold("PATH".padEnd(pathWidth));
@@ -859,7 +869,7 @@ export function formatAsTable(output: ListCommandOutput, verbose: boolean): stri
     // Build rows - pad BEFORE applying colors for proper alignment
     for (const wt of output.worktrees) {
       const pathPadded = wt.path.padEnd(pathWidth);
-      const branchPadded = (wt.branch || "detached").padEnd(branchWidth);
+      const branchPadded = (wt.branch || DETACHED_LABEL).padEnd(branchWidth);
       const status = formatStatus(wt);
 
       // Apply colors AFTER padding
@@ -874,7 +884,7 @@ export function formatAsTable(output: ListCommandOutput, verbose: boolean): stri
   }
 
   return lines.join("\n");
-}
+};
 
 /**
  * Format worktree data as JSON for machine parsing
@@ -911,9 +921,9 @@ export function formatAsTable(output: ListCommandOutput, verbose: boolean): stri
  * // Can be piped: arashi list --json | jq '.[] | select(.hasChanges)'
  * ```
  */
-export function formatAsJson(output: ListCommandOutput): string {
-  return JSON.stringify(output.worktrees, null, 2);
-}
+const formatAsJson = (output: ListCommandOutput): string => {
+  return JSON.stringify(output.worktrees, null, JSON_INDENT);
+};
 
 /**
  * Build complete list output structure by gathering all worktree data
@@ -945,10 +955,10 @@ export function formatAsJson(output: ListCommandOutput): string {
  * console.log(`Found ${output.totalCount} worktrees`);
  * ```
  */
-export async function buildListOutput(
+const buildListOutput = async (
   repoPath: string,
   options: ListCommandOptions,
-): Promise<ListCommandOutput> {
+): Promise<ListCommandOutput> => {
   // Gather worktree data
   const worktrees = await gatherWorktreeData(repoPath);
 
@@ -956,7 +966,10 @@ export async function buildListOutput(
   if (options.verbose) {
     for (const wt of worktrees) {
       try {
-        wt.subRepositories = await discoverSubRepositories(wt.path, options.maxDepth || 3);
+        wt.subRepositories = await discoverSubRepositories(
+          wt.path,
+          options.maxDepth || DEFAULT_MAX_DEPTH,
+        );
       } catch {
         // If sub-repo discovery fails, continue without it
         wt.subRepositories = [];
@@ -969,7 +982,7 @@ export async function buildListOutput(
     totalCount: worktrees.length,
     worktrees,
   };
-}
+};
 
 /**
  * Recursively find all git repositories within a directory
@@ -1009,11 +1022,11 @@ export async function buildListOutput(
  * const allRepos = await findGitRepositories('/path/to/worktree', 3, false);
  * ```
  */
-export async function findGitRepositories(
+const findGitRepositories = async (
   rootPath: string,
   maxDepth: number,
   excludeRoot?: boolean,
-): Promise<string[]> {
+): Promise<string[]> => {
   const gitRepos: string[] = [];
   const { readdir } = await import("fs/promises");
   const { join } = await import("path");
@@ -1044,7 +1057,7 @@ export async function findGitRepositories(
 
           // Verify it's a git repository
           try {
-            await git.exec(["rev-parse", "--git-dir"], repoPath);
+            await exec(["rev-parse", "--git-dir"], repoPath);
             gitRepos.push(repoPath);
           } catch {
             // Not a valid git repository
@@ -1054,7 +1067,7 @@ export async function findGitRepositories(
         }
 
         // Skip common directories that shouldn't be scanned
-        if (entry.name === "node_modules" || entry.name === ".arashi") {
+        if (SKIPPED_DIRECTORY_NAMES.has(entry.name)) {
           continue;
         }
 
@@ -1069,4 +1082,20 @@ export async function findGitRepositories(
 
   await scan(rootPath, 0);
   return gitRepos;
-}
+};
+
+export {
+  buildListOutput,
+  discoverSubRepositories,
+  findGitRepositories,
+  formatAsJson,
+  formatAsSimpleList,
+  formatAsTable,
+  formatStatus,
+  gatherWorktreeData,
+  getShortCommitSha,
+  hasUncommittedChanges,
+  listCommand,
+  validateListCommandOutput,
+  validateWorktreeListItem,
+};

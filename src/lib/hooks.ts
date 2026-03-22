@@ -3,17 +3,21 @@ import { join } from "path";
 import { constants } from "fs";
 import { homedir } from "os";
 
+const ZERO = 0;
+const ONE = 1;
+const DEFAULT_HOOK_TIMEOUT = 300_000;
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
 
-export interface Hook {
+interface Hook {
   name: string;
   scriptPath: string;
   lifecycle: LifecyclePoint;
 }
 
-export interface HookContext {
+interface HookContext {
   hookName: string;
   repoPath: string;
   operationData: Record<string, string>;
@@ -23,13 +27,13 @@ export interface HookContext {
   targetRepoPath?: string;
 }
 
-export interface LifecyclePoint {
+interface LifecyclePoint {
   name: string;
   timing: "pre" | "post" | "during";
   operation: string;
 }
 
-export interface HookResult {
+interface HookResult {
   exitCode: number;
   signalCode: string | null;
   killed: boolean;
@@ -40,14 +44,14 @@ export interface HookResult {
   duration: number;
 }
 
-export type HookScope = "repository" | "workspace" | "global-repository" | "global-shared";
+type HookScope = "repository" | "workspace" | "global-repository" | "global-shared";
 
-export interface HookTargetRepository {
+interface HookTargetRepository {
   name: string;
   path: string;
 }
 
-export interface ResolvedLifecycleHook {
+interface ResolvedLifecycleHook {
   hookName: string;
   scope: HookScope;
   scriptPath: string;
@@ -57,9 +61,9 @@ export interface ResolvedLifecycleHook {
   targetRepositoryPath: string;
 }
 
-export type HookOutcomeStatus = "success" | "failure" | "skipped";
+type HookOutcomeStatus = "success" | "failure" | "skipped";
 
-export type HookOutcomeReasonCode =
+type HookOutcomeReasonCode =
   | "none"
   | "not_found"
   | "disabled"
@@ -67,58 +71,55 @@ export type HookOutcomeReasonCode =
   | "exit_non_zero"
   | "not_applicable";
 
-export interface HookOutcomeMapping {
+interface HookOutcomeMapping {
   hookStatus: HookOutcomeStatus;
   reasonCode: HookOutcomeReasonCode;
   message: string;
   durationMs?: number;
 }
 
-export interface HookConfig {
+interface HookConfig {
   timeout: number;
   enabled: boolean;
   allowedHooks: string[] | null;
   blockedHooks: string[];
 }
 
-export interface HookExecutionOptions {
+interface HookExecutionOptions {
   hookName: string;
   scriptPath: string;
   context: HookContext;
   timeout?: number;
 }
 
-export interface ValidationResult {
+interface ValidationResult {
   valid: boolean;
   error?: string;
 }
 
-export const GLOBAL_HOOKS = {
+const GLOBAL_HOOKS = {
   postCreate: "post-create",
   postRemove: "post-remove",
   preCreate: "pre-create",
   preRemove: "pre-remove",
 } as const;
 
-export const REPO_SPECIFIC_LIFECYCLES = ["pre-create", "post-create"] as const;
+const REPO_SPECIFIC_LIFECYCLES = ["pre-create", "post-create"] as const;
 
-export type RepoSpecificLifecycle = (typeof REPO_SPECIFIC_LIFECYCLES)[number];
+type RepoSpecificLifecycle = (typeof REPO_SPECIFIC_LIFECYCLES)[number];
 
-export function getRepoSpecificHookName(
-  lifecycle: RepoSpecificLifecycle,
-  repoName: string,
-): string {
+const getRepoSpecificHookName = (lifecycle: RepoSpecificLifecycle, repoName: string): string => {
   return `${lifecycle}.${repoName}`;
-}
+};
 
-export function parseRepoSpecificHookName(
+const parseRepoSpecificHookName = (
   hookName: string,
-): { lifecycle: RepoSpecificLifecycle; repoName: string } | null {
+): { lifecycle: RepoSpecificLifecycle; repoName: string } | null => {
   for (const lifecycle of REPO_SPECIFIC_LIFECYCLES) {
     const prefix = `${lifecycle}.`;
     if (hookName.startsWith(prefix)) {
       const repoName = hookName.slice(prefix.length);
-      if (repoName.length === 0) {
+      if (repoName.length === ZERO) {
         return null;
       }
       return { lifecycle, repoName };
@@ -126,15 +127,15 @@ export function parseRepoSpecificHookName(
   }
 
   return null;
-}
+};
 
-export function buildHookOperationData(options: {
+const buildHookOperationData = (options: {
   branchName?: string;
   repoName?: string;
   worktreePath?: string;
   mainRepoPath?: string;
   parentRepoPath?: string;
-}): Record<string, string> {
+}): Record<string, string> => {
   const data: Record<string, string> = {};
 
   if (options.branchName) {
@@ -158,24 +159,24 @@ export function buildHookOperationData(options: {
   }
 
   return data;
-}
+};
 
-export interface RemoveHookOperationDataOptions {
+interface RemoveHookOperationDataOptions {
   branchNames: string[];
   worktreePaths: string[];
   repositoryNames: string[];
   mainRepoPath: string;
 }
 
-export function buildRemoveHookOperationData(
+const buildRemoveHookOperationData = (
   options: RemoveHookOperationDataOptions,
-): Record<string, string> {
-  const uniqueBranches = [...new Set(options.branchNames.filter((value) => value.length > 0))];
+): Record<string, string> => {
+  const uniqueBranches = [...new Set(options.branchNames.filter((value) => value.length > ZERO))];
   const uniqueWorktreePaths = [
-    ...new Set(options.worktreePaths.filter((value) => value.length > 0)),
+    ...new Set(options.worktreePaths.filter((value) => value.length > ZERO)),
   ];
   const uniqueRepositories = [
-    ...new Set(options.repositoryNames.filter((value) => value.length > 0)),
+    ...new Set(options.repositoryNames.filter((value) => value.length > ZERO)),
   ];
 
   const operationData = buildHookOperationData({
@@ -194,28 +195,28 @@ export function buildRemoveHookOperationData(
   operationData.REMOVE_TOTAL_REPOSITORIES = String(uniqueRepositories.length);
 
   return operationData;
-}
+};
 
-export function isHookSkipped(result: HookResult | null): boolean {
+const isHookSkipped = (result: HookResult | null): boolean => {
   return result === null;
-}
+};
 
-export function isHookFailure(result: HookResult | null): boolean {
+const isHookFailure = (result: HookResult | null): boolean => {
   return result !== null && !result.success;
-}
+};
 
-export function mapHookSkippedOutcome(
+const mapHookSkippedOutcome = (
   reasonCode: Exclude<HookOutcomeReasonCode, "none" | "timeout" | "exit_non_zero">,
   message: string,
-): HookOutcomeMapping {
+): HookOutcomeMapping => {
   return {
     hookStatus: "skipped",
     message,
     reasonCode,
   };
-}
+};
 
-export function mapHookExecutionResult(result: HookResult): HookOutcomeMapping {
+const mapHookExecutionResult = (result: HookResult): HookOutcomeMapping => {
   if (result.success) {
     return {
       durationMs: result.duration,
@@ -240,7 +241,7 @@ export function mapHookExecutionResult(result: HookResult): HookOutcomeMapping {
     message: `Hook exited with code ${result.exitCode}`,
     reasonCode: "exit_non_zero",
   };
-}
+};
 
 // ============================================================================
 // Helper Functions (Internal)
@@ -249,20 +250,22 @@ export function mapHookExecutionResult(result: HookResult): HookOutcomeMapping {
 /**
  * Returns platform-appropriate shell command for executing scripts.
  */
-function getShellCommand(scriptPath: string): string[] {
+const getShellCommand = (scriptPath: string): string[] => {
   if (process.platform === "win32") {
-    return scriptPath.endsWith(".ps1")
-      ? ["powershell.exe", "-File", scriptPath]
-      : ["cmd.exe", "/c", scriptPath];
+    if (scriptPath.endsWith(".ps1")) {
+      return ["powershell.exe", "-File", scriptPath];
+    }
+
+    return ["cmd.exe", "/c", scriptPath];
   }
-  // Execute script directly (it has shebang #!/bin/sh)
+
   return [scriptPath];
-}
+};
 
 /**
  * Constructs environment variables from hook context.
  */
-function buildEnvironment(context: HookContext): Record<string, string> {
+const buildEnvironment = (context: HookContext): Record<string, string> => {
   const env: Record<string, string> = {
     ...process.env,
     ARASHI_HOOK_NAME: context.hookName,
@@ -291,12 +294,12 @@ function buildEnvironment(context: HookContext): Record<string, string> {
   }
 
   return env;
-}
+};
 
 /**
  * Streams and prefixes output from a ReadableStream.
  */
-async function streamOutput(stream: ReadableStream, prefix: string): Promise<string> {
+const streamOutput = async (stream: ReadableStream, prefix: string): Promise<string> => {
   const decoder = new TextDecoder();
   const lines: string[] = [];
   let buffer = "";
@@ -318,7 +321,7 @@ async function streamOutput(stream: ReadableStream, prefix: string): Promise<str
   }
 
   return lines.join("\n");
-}
+};
 
 // ============================================================================
 // Public API
@@ -331,31 +334,31 @@ async function streamOutput(stream: ReadableStream, prefix: string): Promise<str
  * @param repoPath - Absolute path to the repository
  * @returns Absolute path to hook script if found, null if not found
  */
-export async function findHook(hookName: string, repoPath: string): Promise<string | null> {
+const findHook = async (hookName: string, repoPath: string): Promise<string | null> => {
   const hookPath = join(repoPath, ".arashi", "hooks", `${hookName}.sh`);
 
   try {
     await access(hookPath, constants.F_OK);
     return hookPath;
   } catch {
-    return null; // Not found is not an error
+    return null;
   }
-}
+};
 
-async function pathExists(path: string): Promise<boolean> {
+const pathExists = async (path: string): Promise<boolean> => {
   try {
     await access(path, constants.F_OK);
     return true;
   } catch {
     return false;
   }
-}
+};
 
-export async function resolveScopedLifecycleHooks(options: {
+const resolveScopedLifecycleHooks = async (options: {
   hookName: string;
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
-}): Promise<ResolvedLifecycleHook[]> {
+}): Promise<ResolvedLifecycleHook[]> => {
   const resolved: ResolvedLifecycleHook[] = [];
   const userHome = process.env.HOME ?? homedir();
   const globalHooksDir = join(userHome, ".arashi", "hooks");
@@ -421,7 +424,7 @@ export async function resolveScopedLifecycleHooks(options: {
   }
 
   return resolved;
-}
+};
 
 /**
  * Validates that a hook script is executable and properly configured.
@@ -429,7 +432,7 @@ export async function resolveScopedLifecycleHooks(options: {
  * @param hookPath - Absolute path to the hook script
  * @returns Validation result with status and error message if invalid
  */
-export async function validateHook(hookPath: string): Promise<ValidationResult> {
+const validateHook = async (hookPath: string): Promise<ValidationResult> => {
   try {
     const stats = await stat(hookPath);
 
@@ -453,7 +456,7 @@ export async function validateHook(hookPath: string): Promise<ValidationResult> 
   } catch (error) {
     return { error: `Failed to validate hook: ${error}`, valid: false };
   }
-}
+};
 
 /**
  * Executes a hook script with provided context and returns the result.
@@ -461,9 +464,9 @@ export async function validateHook(hookPath: string): Promise<ValidationResult> 
  * @param options - Hook execution options
  * @returns Complete execution result including exit code and output
  */
-export async function executeHook(options: HookExecutionOptions): Promise<HookResult> {
+const executeHook = async (options: HookExecutionOptions): Promise<HookResult> => {
   const startTime = Date.now();
-  const timeout = options.timeout ?? 300_000;
+  const timeout = options.timeout ?? DEFAULT_HOOK_TIMEOUT;
 
   console.log(`🪝 Executing hook: ${options.hookName}`);
 
@@ -477,7 +480,6 @@ export async function executeHook(options: HookExecutionOptions): Promise<HookRe
       timeout,
     });
 
-    // Stream output in parallel
     const [stdout, stderr] = await Promise.all([
       streamOutput(proc.stdout, `[${options.hookName}:OUT]`),
       streamOutput(proc.stderr, `[${options.hookName}:ERR]`),
@@ -486,7 +488,7 @@ export async function executeHook(options: HookExecutionOptions): Promise<HookRe
     await proc.exited;
 
     const duration = Date.now() - startTime;
-    const exitCode = proc.exitCode ?? -1;
+    const exitCode = proc.exitCode ?? -ONE;
 
     return {
       duration,
@@ -504,7 +506,7 @@ export async function executeHook(options: HookExecutionOptions): Promise<HookRe
 
     return {
       duration,
-      exitCode: -1,
+      exitCode: -ONE,
       killed: false,
       signalCode: null,
       stderr: `Failed to execute hook: ${errorMessage}`,
@@ -513,7 +515,7 @@ export async function executeHook(options: HookExecutionOptions): Promise<HookRe
       timedOut: false,
     };
   }
-}
+};
 
 /**
  * High-level function to discover, validate, and execute a hook for a lifecycle point.
@@ -524,32 +526,28 @@ export async function executeHook(options: HookExecutionOptions): Promise<HookRe
  * @param options - Optional settings (skipHooks, timeout)
  * @returns Execution result if hook ran, null if skipped or not found
  */
-export async function runLifecycleHook(
+const runLifecycleHook = async (
   lifecyclePoint: string,
   repoPath: string,
   operationData: Record<string, string>,
   options?: { skipHooks?: boolean; timeout?: number },
-): Promise<HookResult | null> {
-  // Check skip flag
+): Promise<HookResult | null> => {
   if (options?.skipHooks) {
     console.log(`⏭️  Skipping hooks (--no-hooks flag)`);
     return null;
   }
 
-  // Discover hook
   const hookPath = await findHook(lifecyclePoint, repoPath);
   if (!hookPath) {
-    return null; // No hook found, not an error
+    return null;
   }
 
-  // Validate hook
   const validation = await validateHook(hookPath);
   if (!validation.valid) {
     console.error(`❌ Hook validation failed: ${validation.error}`);
     return null;
   }
 
-  // Execute hook
   const result = await executeHook({
     context: {
       hookName: lifecyclePoint,
@@ -561,7 +559,6 @@ export async function runLifecycleHook(
     timeout: options?.timeout,
   });
 
-  // Log result
   if (result.success) {
     console.log(`✅ Hook "${lifecyclePoint}" succeeded (${result.duration}ms)`);
   } else if (result.timedOut) {
@@ -571,4 +568,37 @@ export async function runLifecycleHook(
   }
 
   return result;
-}
+};
+
+export {
+  GLOBAL_HOOKS,
+  Hook,
+  HookConfig,
+  HookContext,
+  HookExecutionOptions,
+  HookOutcomeMapping,
+  HookOutcomeReasonCode,
+  HookOutcomeStatus,
+  HookResult,
+  HookScope,
+  HookTargetRepository,
+  LifecyclePoint,
+  REPO_SPECIFIC_LIFECYCLES,
+  RemoveHookOperationDataOptions,
+  RepoSpecificLifecycle,
+  ResolvedLifecycleHook,
+  ValidationResult,
+  buildHookOperationData,
+  buildRemoveHookOperationData,
+  executeHook,
+  findHook,
+  getRepoSpecificHookName,
+  isHookFailure,
+  isHookSkipped,
+  mapHookExecutionResult,
+  mapHookSkippedOutcome,
+  parseRepoSpecificHookName,
+  resolveScopedLifecycleHooks,
+  runLifecycleHook,
+  validateHook,
+};

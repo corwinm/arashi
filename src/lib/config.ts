@@ -7,14 +7,17 @@
  * @module config
  */
 
-import { basename, dirname, join, resolve } from "path";
 import { mkdir } from "fs/promises";
+import { basename, dirname, join, resolve } from "path";
 import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
 import {
   DEFAULT_WORKTREES_DIR,
   WorktreeLocationValidationError,
   normalizeWorktreesDir,
 } from "./worktree-location.ts";
+
+const ZERO = 0;
+const TWO = 2;
 
 // ============================================================================
 // Data Types
@@ -23,7 +26,7 @@ import {
 /**
  * Information about a single git worktree
  */
-export interface WorktreeInfo {
+interface WorktreeInfo {
   /** Branch name for this worktree */
   branch: string;
   /** Filesystem path to the worktree */
@@ -37,20 +40,20 @@ export interface WorktreeInfo {
 /**
  * Configuration for a single repository
  */
-export interface RepoConfig {
+interface RepoConfig {
   /** Path to the repository (relative or absolute) */
   path: string;
   /** Canonical git URL for cloning the repository */
   gitUrl?: string;
 }
 
-export const CURRENT_CONFIG_VERSION = "1.0.0" as const;
-export type ConfigVersion = typeof CURRENT_CONFIG_VERSION;
+const CURRENT_CONFIG_VERSION = "1.0.0" as const;
+type ConfigVersion = typeof CURRENT_CONFIG_VERSION;
 
 /**
  * Root configuration object for Arashi
  */
-export interface Config {
+interface Config {
   /** JSON Schema URL for editor validation/autocomplete */
   $schema?: string;
   /** Configuration schema version for migrations */
@@ -75,9 +78,9 @@ export interface Config {
   repos: Record<string, RepoConfig>;
 }
 
-export type LaunchMode = "auto" | "sesh";
+type LaunchMode = "auto" | "sesh";
 
-export interface CreateCommandDefaults {
+interface CreateCommandDefaults {
   /** Default to switching to the new worktree after create */
   switch?: boolean;
   /** Default to launching a terminal/editor context after create */
@@ -86,17 +89,17 @@ export interface CreateCommandDefaults {
   launchMode?: LaunchMode;
 }
 
-export interface SwitchCommandDefaults {
+interface SwitchCommandDefaults {
   /** Preferred launch mode when running switch */
   launchMode?: LaunchMode;
 }
 
-export interface CommandDefaultsConfig {
+interface CommandDefaultsConfig {
   create?: CreateCommandDefaults;
   switch?: SwitchCommandDefaults;
 }
 
-export const DEFAULT_CONFIG_SCHEMA_URL = "https://unpkg.com/arashi/schema/config.schema.json";
+const DEFAULT_CONFIG_SCHEMA_URL = "https://unpkg.com/arashi/schema/config.schema.json";
 
 interface ConfigErrorContext {
   errors: string[];
@@ -106,7 +109,7 @@ interface ConfigErrorContext {
 /**
  * Resolved repository information from workspace configuration.
  */
-export interface WorkspaceRepository {
+interface WorkspaceRepository {
   /** Repository identifier from config or workspace name */
   name: string;
   /** Absolute path to repository root */
@@ -115,9 +118,9 @@ export interface WorkspaceRepository {
   gitUrl?: string;
 }
 
-export type ConfigSourceType = "local-file" | "repository-content";
+type ConfigSourceType = "local-file" | "repository-content";
 
-export interface LoadedConfig {
+interface LoadedConfig {
   config: Config;
   source: ConfigSourceType;
   configPath: string;
@@ -130,7 +133,7 @@ export interface LoadedConfig {
 /**
  * Base error class for configuration-related errors
  */
-export class ConfigError extends Error {
+class ConfigError extends Error {
   /**
    * Original error that caused this error (if any)
    */
@@ -157,7 +160,7 @@ export class ConfigError extends Error {
 /**
  * Error thrown when configuration file is not found
  */
-export class ConfigNotFoundError extends ConfigError {
+class ConfigNotFoundError extends ConfigError {
   constructor(path: string) {
     super(`Configuration file not found at ${path}. Run "arashi init" to create it.`, undefined, {
       path,
@@ -169,7 +172,7 @@ export class ConfigNotFoundError extends ConfigError {
 /**
  * Error thrown when configuration file contains invalid JSON
  */
-export class ConfigParseError extends ConfigError {
+class ConfigParseError extends ConfigError {
   constructor(path: string, cause: Error) {
     super(`Failed to parse configuration file at ${path}: ${cause.message}`, cause, { path });
     this.name = "ConfigParseError";
@@ -179,10 +182,10 @@ export class ConfigParseError extends ConfigError {
 /**
  * Error thrown when configuration fails validation
  */
-export class ConfigValidationError extends ConfigError {
+class ConfigValidationError extends ConfigError {
   constructor(errors: string[]) {
     super(
-      `Configuration validation failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`,
+      `Configuration validation failed:\n${errors.map((errorMessage) => `  - ${errorMessage}`).join("\n")}`,
       undefined,
       { errors },
     );
@@ -193,7 +196,7 @@ export class ConfigValidationError extends ConfigError {
 /**
  * Error thrown when configuration version is not supported by this CLI release.
  */
-export class UnsupportedConfigVersionError extends ConfigError {
+class UnsupportedConfigVersionError extends ConfigError {
   constructor(version: string, supportedVersion: ConfigVersion) {
     super(
       `Unsupported configuration version "${version}". This version of arashi supports "${supportedVersion}".`,
@@ -220,9 +223,7 @@ export class UnsupportedConfigVersionError extends ConfigError {
  * // Returns: /path/to/repo/.arashi/config.json
  * ```
  */
-export function getConfigPath(repoPath: string): string {
-  return join(repoPath, ".arashi", "config.json");
-}
+const getConfigPath = (repoPath: string): string => join(repoPath, ".arashi", "config.json");
 
 /**
  * Check if configuration file exists
@@ -237,11 +238,11 @@ export function getConfigPath(repoPath: string): string {
  * }
  * ```
  */
-export async function configExists(repoPath: string): Promise<boolean> {
+const configExists = async (repoPath: string): Promise<boolean> => {
   const configPath = getConfigPath(repoPath);
   const file = Bun.file(configPath);
   return await file.exists();
-}
+};
 
 /**
  * Find the workspace root by walking up the directory tree
@@ -261,7 +262,7 @@ export async function configExists(repoPath: string): Promise<boolean> {
  * // Returns: /workspace
  * ```
  */
-export async function findWorkspaceRoot(startPath: string = process.cwd()): Promise<string> {
+const findWorkspaceRoot = async (startPath: string = process.cwd()): Promise<string> => {
   const { dirname, resolve, parse } = await import("path");
 
   let currentPath = resolve(startPath);
@@ -289,7 +290,7 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
 
     currentPath = parentPath;
   }
-}
+};
 
 /**
  * Generate default configuration
@@ -308,7 +309,7 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
  * await saveConfig('/path/to/repo', defaultConfig);
  * ```
  */
-export function generateDefaultConfig(): Config {
+const generateDefaultConfig = (): Config => {
   return {
     $schema: DEFAULT_CONFIG_SCHEMA_URL,
     repos: {},
@@ -316,7 +317,7 @@ export function generateDefaultConfig(): Config {
     version: CURRENT_CONFIG_VERSION,
     worktreesDir: DEFAULT_WORKTREES_DIR,
   };
-}
+};
 
 // ============================================================================
 // Validation Functions
@@ -352,40 +353,44 @@ const REPO_ALLOWED_KEYS = new Set([
   "worktrees",
 ]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && Boolean(value) && !Array.isArray(value);
 
-function getFirstDefined<T>(...values: (T | undefined)[]): T | undefined {
+const getFirstDefined = <ValueType>(
+  ...values: (ValueType | undefined)[]
+): ValueType | undefined => {
   for (const value of values) {
     if (value !== undefined) {
       return value;
     }
   }
   return undefined;
-}
+};
 
-function validateNoUnknownKeys(
+const validateNoUnknownKeys = (
   value: Record<string, unknown>,
   allowedKeys: Set<string>,
   prefix: string,
   errors: string[],
-): void {
+): void => {
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
-      const label = prefix ? `${prefix}.${key}` : key;
+      let label = key;
+      if (prefix) {
+        label = `${prefix}.${key}`;
+      }
       errors.push(`${label}: unknown property`);
     }
   }
-}
+};
 
-function resolveConfigVersion(
+const resolveConfigVersion = (
   rawVersion: unknown,
   errors: string[],
 ): {
   version: ConfigVersion;
   migratedFromVersion?: string;
-} {
+} => {
   if (typeof rawVersion !== "string" || rawVersion.trim() === "") {
     errors.push("version: must be a non-empty string");
     return { version: CURRENT_CONFIG_VERSION };
@@ -408,18 +413,18 @@ function resolveConfigVersion(
   return {
     version: CURRENT_CONFIG_VERSION,
   };
-}
+};
 
-function normalizeRepoConfig(
+const normalizeRepoConfig = (
   repoName: string,
   value: unknown,
   errors: string[],
-): RepoConfig | null {
+): RepoConfig | undefined => {
   const prefix = `repos.${repoName}`;
 
   if (!isRecord(value)) {
     errors.push(`${prefix}: must be an object`);
-    return null;
+    return undefined;
   }
 
   validateNoUnknownKeys(value, REPO_ALLOWED_KEYS, prefix, errors);
@@ -432,7 +437,7 @@ function normalizeRepoConfig(
 
   if (typeof path !== "string" || path.trim() === "") {
     errors.push(`${prefix}.path: must be a non-empty string`);
-    return null;
+    return undefined;
   }
 
   const normalized: RepoConfig = { path };
@@ -446,13 +451,13 @@ function normalizeRepoConfig(
   }
 
   return normalized;
-}
+};
 
-function normalizeWorkspaceHooks(
+const normalizeWorkspaceHooks = (
   value: unknown,
   prefix: string,
   errors: string[],
-): Config["hooks"] | undefined {
+): Config["hooks"] | undefined => {
   if (value === undefined) {
     return undefined;
   }
@@ -475,13 +480,13 @@ function normalizeWorkspaceHooks(
   }
 
   return { timeout };
-}
+};
 
-function normalizeSyncConfig(
+const normalizeSyncConfig = (
   value: unknown,
   prefix: string,
   errors: string[],
-): Config["sync"] | undefined {
+): Config["sync"] | undefined => {
   if (value === undefined) {
     return undefined;
   }
@@ -514,17 +519,17 @@ function normalizeSyncConfig(
   return {
     timeoutSeconds,
   };
-}
+};
 
-function normalizeLaunchMode(value: unknown): LaunchMode | undefined {
+const normalizeLaunchMode = (value: unknown): LaunchMode | undefined => {
   if (value === "auto" || value === "sesh") {
     return value;
   }
 
   return undefined;
-}
+};
 
-function normalizeCreateCommandDefaults(value: unknown): CreateCommandDefaults | undefined {
+const normalizeCreateCommandDefaults = (value: unknown): CreateCommandDefaults | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
@@ -553,10 +558,14 @@ function normalizeCreateCommandDefaults(value: unknown): CreateCommandDefaults |
     delete normalized.launchMode;
   }
 
-  return Object.keys(normalized).length > 0 ? normalized : undefined;
-}
+  if (Object.keys(normalized).length > ZERO) {
+    return normalized;
+  }
 
-function normalizeSwitchCommandDefaults(value: unknown): SwitchCommandDefaults | undefined {
+  return undefined;
+};
+
+const normalizeSwitchCommandDefaults = (value: unknown): SwitchCommandDefaults | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
@@ -572,9 +581,9 @@ function normalizeSwitchCommandDefaults(value: unknown): SwitchCommandDefaults |
   return {
     launchMode,
   };
-}
+};
 
-function normalizeCommandDefaults(value: unknown): CommandDefaultsConfig | undefined {
+const normalizeCommandDefaults = (value: unknown): CommandDefaultsConfig | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
@@ -592,10 +601,14 @@ function normalizeCommandDefaults(value: unknown): CommandDefaultsConfig | undef
     normalized.switch = switchDefaults;
   }
 
-  return Object.keys(normalized).length > 0 ? normalized : undefined;
-}
+  if (Object.keys(normalized).length > ZERO) {
+    return normalized;
+  }
 
-function normalizeWorktreesDirConfig(value: unknown, errors: string[]): string {
+  return undefined;
+};
+
+const normalizeWorktreesDirConfig = (value: unknown, errors: string[]): string => {
   if (value === undefined) {
     return DEFAULT_WORKTREES_DIR;
   }
@@ -615,7 +628,7 @@ function normalizeWorktreesDirConfig(value: unknown, errors: string[]): string {
 
     throw error;
   }
-}
+};
 
 /**
  * Normalize legacy/snake_case config keys to canonical camelCase format.
@@ -629,10 +642,12 @@ function normalizeWorktreesDirConfig(value: unknown, errors: string[]): string {
  * accepted for backward compatibility but intentionally dropped from the
  * normalized result.
  */
-function normalizeConfigInternal(config: unknown): {
+const normalizeConfigInternal = (
+  config: unknown,
+): {
   config: Config;
   migratedFromVersion?: string;
-} {
+} => {
   const errors: string[] = [];
 
   if (!isRecord(config)) {
@@ -715,11 +730,11 @@ function normalizeConfigInternal(config: unknown): {
     config: normalizedConfig,
     migratedFromVersion: versionInfo.migratedFromVersion,
   };
-}
+};
 
-export function normalizeConfig(config: unknown): Config {
+const normalizeConfig = (config: unknown): Config => {
   return normalizeConfigInternal(config).config;
-}
+};
 
 /**
  * Validate configuration structure and required fields
@@ -748,9 +763,9 @@ export function normalizeConfig(config: unknown): Config {
  * }
  * ```
  */
-export function validateConfig(config: unknown): asserts config is Config {
+const validateConfig = (config: unknown): asserts config is Config => {
   normalizeConfig(config);
-}
+};
 
 // ============================================================================
 // Core Functions (TO BE IMPLEMENTED)
@@ -771,16 +786,17 @@ export function validateConfig(config: unknown): asserts config is Config {
  * console.log(config.reposDir); // "./repos"
  * ```
  */
-export async function loadConfig(repoPath: string): Promise<Config> {
+const loadConfig = async (repoPath: string): Promise<Config> => {
   const configPath = getConfigPath(repoPath);
 
   // Check if file exists
-  if (!(await configExists(repoPath))) {
+  const hasConfig = await configExists(repoPath);
+  if (!hasConfig) {
     throw new ConfigNotFoundError(configPath);
   }
 
   // Read file
-  let text: string;
+  let text = "";
   try {
     const file = Bun.file(configPath);
     text = await file.text();
@@ -791,7 +807,7 @@ export async function loadConfig(repoPath: string): Promise<Config> {
   }
 
   // Parse JSON
-  let data: unknown;
+  let data: unknown = undefined;
   try {
     data = JSON.parse(text);
   } catch (error) {
@@ -805,10 +821,10 @@ export async function loadConfig(repoPath: string): Promise<Config> {
   }
 
   return normalized.config;
-}
+};
 
-function parseAndValidateConfig(text: string, configPath: string): Config {
-  let data: unknown;
+const parseAndValidateConfig = (text: string, configPath: string): Config => {
+  let data: unknown = undefined;
   try {
     data = JSON.parse(text);
   } catch (error) {
@@ -816,18 +832,18 @@ function parseAndValidateConfig(text: string, configPath: string): Config {
   }
 
   return normalizeConfigInternal(data).config;
-}
+};
 
 /**
  * Load configuration from local filesystem first, then optionally from tracked
  * repository content in the default branch.
  */
-export async function loadConfigWithFallback(
+const loadConfigWithFallback = async (
   workspaceRoot: string,
   options: {
     bareRepoPath?: string;
   } = {},
-): Promise<LoadedConfig> {
+): Promise<LoadedConfig> => {
   const localPath = getConfigPath(workspaceRoot);
 
   try {
@@ -863,9 +879,9 @@ export async function loadConfigWithFallback(
 
     throw new ConfigNotFoundError(localPath);
   }
-}
+};
 
-function normalizePersistedRepoConfig(repoConfig: RepoConfig): RepoConfig {
+const normalizePersistedRepoConfig = (repoConfig: RepoConfig): RepoConfig => {
   const normalized: RepoConfig = {
     path: repoConfig.path,
   };
@@ -875,9 +891,9 @@ function normalizePersistedRepoConfig(repoConfig: RepoConfig): RepoConfig {
   }
 
   return normalized;
-}
+};
 
-function normalizePersistedConfig(config: Config): Config {
+const normalizePersistedConfig = (config: Config): Config => {
   const repos: Record<string, RepoConfig> = {};
 
   for (const [name, repoConfig] of Object.entries(config.repos)) {
@@ -905,7 +921,7 @@ function normalizePersistedConfig(config: Config): Config {
   }
 
   return persisted;
-}
+};
 
 /**
  * Save configuration to .arashi/config.json
@@ -924,7 +940,7 @@ function normalizePersistedConfig(config: Config): Config {
  * await saveConfig('/path/to/repo', config);
  * ```
  */
-export async function saveConfig(repoPath: string, config: Config): Promise<void> {
+const saveConfig = async (repoPath: string, config: Config): Promise<void> => {
   const configPath = getConfigPath(repoPath);
   const configDir = dirname(configPath);
 
@@ -936,7 +952,7 @@ export async function saveConfig(repoPath: string, config: Config): Promise<void
     await mkdir(configDir, { recursive: true });
 
     // Write pretty-printed JSON (2-space indentation)
-    const json = JSON.stringify(persistedConfig, null, 2);
+    const json = JSON.stringify(persistedConfig, null, TWO);
     await Bun.write(configPath, json);
   } catch (error) {
     throw new ConfigError(
@@ -945,7 +961,7 @@ export async function saveConfig(repoPath: string, config: Config): Promise<void
       { path: configPath },
     );
   }
-}
+};
 
 /**
  * Add a repository to the configuration
@@ -963,11 +979,7 @@ export async function saveConfig(repoPath: string, config: Config): Promise<void
  * });
  * ```
  */
-export async function addRepo(
-  repoPath: string,
-  name: string,
-  repoConfig: RepoConfig,
-): Promise<void> {
+const addRepo = async (repoPath: string, name: string, repoConfig: RepoConfig): Promise<void> => {
   const config = await loadConfig(repoPath);
 
   // Check if repository name already exists
@@ -984,7 +996,7 @@ export async function addRepo(
 
   // Save updated configuration
   await saveConfig(repoPath, config);
-}
+};
 
 /**
  * Remove a repository from the configuration
@@ -997,7 +1009,7 @@ export async function addRepo(
  * await removeRepo('/path/to/main-repo', 'my-app');
  * ```
  */
-export async function removeRepo(repoPath: string, name: string): Promise<void> {
+const removeRepo = async (repoPath: string, name: string): Promise<void> => {
   const config = await loadConfig(repoPath);
 
   // Remove repository (idempotent - no error if doesn't exist)
@@ -1005,16 +1017,16 @@ export async function removeRepo(repoPath: string, name: string): Promise<void> 
 
   // Save updated configuration
   await saveConfig(repoPath, config);
-}
+};
 
 /**
  * Load workspace configuration and build absolute repository list.
  *
  * Includes the workspace root repository plus discovered repositories.
  */
-export async function loadWorkspaceRepositories(
+const loadWorkspaceRepositories = async (
   workspaceRoot: string,
-): Promise<{ config: Config; repositories: WorkspaceRepository[] }> {
+): Promise<{ config: Config; repositories: WorkspaceRepository[] }> => {
   const config = await loadConfig(workspaceRoot);
   const repositories: WorkspaceRepository[] = [];
   const mainName = basename(workspaceRoot);
@@ -1033,9 +1045,9 @@ export async function loadWorkspaceRepositories(
   }
 
   return { config, repositories };
-}
+};
 
-export interface GitUrlRepairResult {
+interface GitUrlRepairResult {
   updated: boolean;
   repaired: string[];
   unresolved: string[];
@@ -1047,41 +1059,83 @@ export interface GitUrlRepairResult {
  * This provides backward-compatible repair behavior for existing workspaces
  * where `repos` entries were created before `gitUrl` tracking.
  */
-export async function repairRepositoryGitUrls(
+const repairRepositoryGitUrls = async (
   workspaceRoot: string,
   config: Config,
-): Promise<GitUrlRepairResult> {
+): Promise<GitUrlRepairResult> => {
   const repaired: string[] = [];
   const unresolved: string[] = [];
 
   for (const [name, repoConfig] of Object.entries(config.repos)) {
-    if (repoConfig.gitUrl && repoConfig.gitUrl.trim().length > 0) {
-      continue;
+    if (!repoConfig.gitUrl || repoConfig.gitUrl.trim().length === ZERO) {
+      const repoPath = resolve(workspaceRoot, repoConfig.path);
+      const gitUrl = await resolveOriginRemoteUrl(repoPath);
+      if (gitUrl) {
+        repoConfig.gitUrl = gitUrl;
+        repaired.push(name);
+      } else {
+        unresolved.push(name);
+      }
     }
+  }
 
-    const repoPath = resolve(workspaceRoot, repoConfig.path);
-    const gitUrl = await resolveOriginRemoteUrl(repoPath);
-    if (gitUrl) {
-      repoConfig.gitUrl = gitUrl;
-      repaired.push(name);
-    } else {
-      unresolved.push(name);
-    }
+  let updated = false;
+  if (repaired.length > ZERO) {
+    updated = true;
   }
 
   return {
     repaired,
     unresolved,
-    updated: repaired.length > 0,
+    updated,
   };
-}
+};
 
-async function resolveOriginRemoteUrl(repoPath: string): Promise<string | null> {
+const resolveOriginRemoteUrl = async (repoPath: string): Promise<string | undefined> => {
   try {
     const result = await exec(["remote", "get-url", "origin"], repoPath);
     const remoteUrl = result.stdout.trim();
-    return remoteUrl.length > 0 ? remoteUrl : null;
+    if (remoteUrl.length > ZERO) {
+      return remoteUrl;
+    }
+
+    return undefined;
   } catch {
-    return null;
+    return undefined;
   }
-}
+};
+
+export {
+  CURRENT_CONFIG_VERSION,
+  DEFAULT_CONFIG_SCHEMA_URL,
+  Config,
+  ConfigError,
+  ConfigNotFoundError,
+  ConfigParseError,
+  ConfigSourceType,
+  ConfigValidationError,
+  ConfigVersion,
+  CommandDefaultsConfig,
+  CreateCommandDefaults,
+  GitUrlRepairResult,
+  LaunchMode,
+  LoadedConfig,
+  RepoConfig,
+  SwitchCommandDefaults,
+  UnsupportedConfigVersionError,
+  WorkspaceRepository,
+  WorktreeInfo,
+  addRepo,
+  configExists,
+  findWorkspaceRoot,
+  generateDefaultConfig,
+  getConfigPath,
+  loadConfig,
+  loadConfigWithFallback,
+  loadWorkspaceRepositories,
+  normalizeConfig,
+  removeRepo,
+  repairRepositoryGitUrls,
+  saveConfig,
+  validateConfig,
+};
