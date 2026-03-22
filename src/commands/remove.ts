@@ -5,22 +5,9 @@
  */
 
 import { Command } from "commander";
+import { existsSync } from "fs";
 import { basename, resolve } from "path";
 import chalk from "chalk";
-import { confirm as promptConfirm, multiSelect as promptMultiSelect } from "../lib/prompts.ts";
-import type { Choice, PromptOutcome } from "../lib/prompts.ts";
-import * as logger from "../lib/logger.ts";
-import { loadConfig, findWorkspaceRoot } from "../lib/config.ts";
-import type { Config } from "../lib/config.ts";
-import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
-import { getDefaultBranch } from "../lib/git.ts";
-import { existsSync } from "fs";
-import type {
-  RemovalOperation,
-  RemoveCommandOptions,
-  WorktreeEntry,
-  WorktreeGrouping,
-} from "../types/remove.ts";
 import {
   branchExists,
   createRemovalSummary,
@@ -38,7 +25,24 @@ import {
 } from "../core/remove.ts";
 import type { RepositoryTarget } from "../core/remove.ts";
 import { buildWorktreeEntries, resolveWorktreeStatuses } from "../core/worktree.ts";
+import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import type { Config } from "../lib/config.ts";
+import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
+import { getDefaultBranch } from "../lib/git.ts";
 import * as hooks from "../lib/hooks.ts";
+import * as logger from "../lib/logger.ts";
+import { confirm as promptConfirm, multiSelect as promptMultiSelect } from "../lib/prompts.ts";
+import type { Choice, PromptOutcome } from "../lib/prompts.ts";
+import type {
+  RemovalOperation,
+  RemoveCommandOptions,
+  WorktreeEntry,
+  WorktreeGrouping,
+} from "../types/remove.ts";
+
+const ZERO = 0;
+const ONE = 1;
+const JSON_INDENT = 2;
 
 interface CliOptions {
   checkDirty?: boolean;
@@ -49,7 +53,7 @@ interface CliOptions {
   json?: boolean;
 }
 
-export function createCommand(): Command {
+export const createCommand = (): Command => {
   return new Command("remove")
     .description("Remove worktrees and delete branches")
     .argument("[target]", "Branch name or worktree path to remove (optional - prompts if omitted)")
@@ -67,20 +71,20 @@ export function createCommand(): Command {
         handleError(error, options || {});
       }
     });
-}
+};
 
-export async function executeRemove(
+export const executeRemove = async (
   branchArg: string | undefined,
   options: RemoveCommandOptions,
   promptHandlers?: {
     confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
     multiSelect: (message: string, choices: Choice<string>[]) => Promise<PromptOutcome<string[]>>;
   },
-): Promise<number> {
+): Promise<number> => {
   const startTime = Date.now();
 
   if (options.keepBranches && options.keepWorktrees) {
-    const summary = createRemovalSummary(0, 0);
+    const summary = createRemovalSummary(ZERO, ZERO);
     summary.duration = Date.now() - startTime;
     if (options.json) {
       console.log(formatRemovalSummaryJson(summary, {}));
@@ -88,7 +92,7 @@ export async function executeRemove(
       logger.warn("Both --keep-worktrees and --keep-branches specified");
       logger.info("No operations will be performed. At least one removal type must be enabled.");
     }
-    return 0;
+    return ZERO;
   }
 
   const workspaceRoot = await getWorkspaceRoot();
@@ -96,10 +100,15 @@ export async function executeRemove(
   try {
     config = await loadConfig(workspaceRoot);
   } catch (error) {
+    let message = String(error);
+    if (error instanceof Error) {
+      message = error.message;
+    }
+
     throw new RemoveCommandError(
       "Failed to load workspace configuration",
       RemoveCommandErrorCode.CONFIG_ERROR,
-      { error: error instanceof Error ? error.message : String(error) },
+      { error: message },
     );
   }
   const reposDirName = basename(config.reposDir);
@@ -122,7 +131,7 @@ export async function executeRemove(
   if (branchArg) {
     const inputPath = resolveInputPath(branchArg);
     const matchingByPath = await discoverWorktreesByPath(inputPath, repositories);
-    if (matchingByPath.length > 0) {
+    if (matchingByPath.length > ZERO) {
       usedPathMode.value = true;
       const enriched = await buildWorktreeEntries(matchingByPath, {
         childRepoNames,
@@ -150,7 +159,7 @@ export async function executeRemove(
 
     if (selectable.length === 0) {
       logger.info("No worktrees found to remove");
-      return 0;
+      return ZERO;
     }
 
     ensureInteractive(allowNonInteractive);
@@ -160,7 +169,7 @@ export async function executeRemove(
     const selection = await prompt.multiSelect("Select worktrees to remove:", choices);
     if (selection.status === "cancelled") {
       logger.info("Selection cancelled");
-      return 0;
+      return ZERO;
     }
     const selected = expandSelectedWorktrees(selection.value, grouping, selectablePaths, entries);
     usedPathMode.value = true;
@@ -169,7 +178,7 @@ export async function executeRemove(
 
     if (targetBranches.length === 0) {
       logger.info("No worktrees selected to remove");
-      return 0;
+      return ZERO;
     }
   }
 
@@ -246,13 +255,13 @@ export async function executeRemove(
     } else {
       logger.info("No removable worktrees found for the provided path");
     }
-    return 0;
+    return ZERO;
   }
 
   if (options.checkDirty !== false && worktreesToRemove.length > 0) {
-    const s = logger.spinner("Checking for uncommitted changes...").start();
+    const dirtyCheckSpinner = logger.spinner("Checking for uncommitted changes...").start();
     await resolveWorktreeStatuses(worktreesToRemove, true);
-    s.succeed("Dirty check complete");
+    dirtyCheckSpinner.succeed("Dirty check complete");
   }
 
   if (!options.force) {
@@ -265,18 +274,23 @@ export async function executeRemove(
     );
     if (confirmation === "cancelled") {
       logger.info("Operation cancelled");
-      return 0;
+      return ZERO;
     }
     if (confirmation === "declined") {
       logger.info("Operation cancelled by user");
-      return 0;
+      return ZERO;
     }
   }
 
-  const totalWorktrees = options.keepWorktrees ? 0 : worktreesToRemove.length;
-  const totalBranches = options.keepBranches
-    ? 0
-    : Object.values(branchPresence).reduce((sum, repos) => sum + repos.length, 0);
+  let totalWorktrees = worktreesToRemove.length;
+  if (options.keepWorktrees) {
+    totalWorktrees = ZERO;
+  }
+
+  let totalBranches = ZERO;
+  if (!options.keepBranches) {
+    totalBranches = Object.values(branchPresence).reduce((sum, repos) => sum + repos.length, ZERO);
+  }
 
   const summary = createRemovalSummary(totalWorktrees, totalBranches);
 
@@ -289,7 +303,8 @@ export async function executeRemove(
       targetRepositories.add(repoName);
     }
   }
-  const targetRepositoryNames = [...targetRepositories].toSorted((a, b) => a.localeCompare(b));
+  const targetRepositoryNames = [...targetRepositories];
+  targetRepositoryNames.sort((left: string, right: string) => left.localeCompare(right));
   const removeHookTargets = targetRepositoryNames.map((repoName) => ({
     name: repoName,
     path: getRepoPath(repositories, repoName),
@@ -318,7 +333,7 @@ export async function executeRemove(
     } else {
       console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
     }
-    return 1;
+    return ONE;
   }
 
   if (options.keepWorktrees && worktreesToRemove.length > 0) {
@@ -326,7 +341,10 @@ export async function executeRemove(
       try {
         await detachWorktree(worktree.path);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        let message = String(error);
+        if (error instanceof Error) {
+          message = error.message;
+        }
         summary.errors.push(`${worktree.repository}: Failed to detach worktree (${message})`);
       }
     }
@@ -427,13 +445,17 @@ export async function executeRemove(
     console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
   }
 
-  return summary.errors.length > 0 ? 1 : 0;
-}
+  if (summary.errors.length > ZERO) {
+    return ONE;
+  }
 
-function buildRepositoryTargets(
+  return ZERO;
+};
+
+const buildRepositoryTargets = (
   workspaceRoot: string,
   repos: Record<string, { path: string }>,
-): RepositoryTarget[] {
+): RepositoryTarget[] => {
   const targets: RepositoryTarget[] = [];
   const mainName = basename(workspaceRoot);
   targets.push({ name: mainName, path: workspaceRoot });
@@ -443,17 +465,17 @@ function buildRepositoryTargets(
   }
 
   return targets;
-}
+};
 
-function getRepoPath(repositories: RepositoryTarget[], repoName: string): string {
-  const repo = repositories.find((r) => r.name === repoName);
+const getRepoPath = (repositories: RepositoryTarget[], repoName: string): string => {
+  const repo = repositories.find((repository) => repository.name === repoName);
   if (!repo) {
     return repoName;
   }
   return repo.path;
-}
+};
 
-function formatWorktreeStatusLabel(worktree: WorktreeEntry): string {
+const formatWorktreeStatusLabel = (worktree: WorktreeEntry): string => {
   if (worktree.status === "prunable") {
     return chalk.gray("prunable");
   }
@@ -461,35 +483,42 @@ function formatWorktreeStatusLabel(worktree: WorktreeEntry): string {
     return chalk.yellow("dirty");
   }
   return chalk.green("clean");
-}
+};
 
-function formatChildSummary(children: WorktreeEntry[]): string | null {
-  if (children.length === 0) {
+const formatChildSummary = (children: WorktreeEntry[]): string | null => {
+  if (children.length === ZERO) {
     return null;
   }
 
   const sortedChildren = [...children];
-  sortedChildren.sort((a: WorktreeEntry, b: WorktreeEntry) =>
-    a.repository.localeCompare(b.repository),
+  sortedChildren.sort((left: WorktreeEntry, right: WorktreeEntry) =>
+    left.repository.localeCompare(right.repository),
   );
 
   const parts = sortedChildren.map((child: WorktreeEntry) => {
     const branchLabel = child.branch || "detached";
-    const status =
-      child.status === "prunable" ? "prunable" : child.status === "dirty" ? "dirty" : null;
-    return status
-      ? `${child.repository}=${branchLabel} (${status})`
-      : `${child.repository}=${branchLabel}`;
+    let status: string | null = null;
+    if (child.status === "prunable") {
+      status = "prunable";
+    } else if (child.status === "dirty") {
+      status = "dirty";
+    }
+
+    if (status) {
+      return `${child.repository}=${branchLabel} (${status})`;
+    }
+
+    return `${child.repository}=${branchLabel}`;
   });
 
   return parts.join(", ");
-}
+};
 
-function buildWorktreeChoices(
+const buildWorktreeChoices = (
   grouping: WorktreeGrouping,
   selectablePaths: Set<string>,
   defaultBranches: Record<string, string | null>,
-): Choice<string>[] {
+): Choice<string>[] => {
   const choices: Choice<string>[] = [];
 
   const pushEntry = (entry: WorktreeEntry, childSummary?: string | null) => {
@@ -498,35 +527,47 @@ function buildWorktreeChoices(
     }
     const status = formatWorktreeStatusLabel(entry);
     const branchLabel = entry.branch || "detached";
-    const defaultTag =
-      defaultBranches[entry.repository] === entry.branch ? chalk.cyan("default") : null;
-    const suffix = childSummary ? ` (${childSummary})` : "";
-    const label = `${branchLabel} - ${status}${defaultTag ? `, ${defaultTag}` : ""}${suffix}`;
+    let defaultTag: string | null = null;
+    if (defaultBranches[entry.repository] === entry.branch) {
+      defaultTag = chalk.cyan("default");
+    }
+
+    let suffix = "";
+    if (childSummary) {
+      suffix = ` (${childSummary})`;
+    }
+
+    let label = `${branchLabel} - ${status}`;
+    if (defaultTag) {
+      label += `, ${defaultTag}`;
+    }
+    label += suffix;
+
     choices.push({ name: label, value: entry.path });
   };
 
-  const groups = [...grouping.groups].toSorted((a, b) =>
-    a.parent.path.localeCompare(b.parent.path),
-  );
+  const groups = [...grouping.groups];
+  groups.sort((left, right) => left.parent.path.localeCompare(right.parent.path));
   for (const group of groups) {
     const summary = formatChildSummary(group.children);
     pushEntry(group.parent, summary);
   }
 
-  const orphans = [...grouping.orphans].toSorted((a, b) => a.path.localeCompare(b.path));
+  const orphans = [...grouping.orphans];
+  orphans.sort((left: WorktreeEntry, right: WorktreeEntry) => left.path.localeCompare(right.path));
   for (const orphan of orphans) {
     pushEntry(orphan, null);
   }
 
   return choices;
-}
+};
 
-function expandSelectedWorktrees(
+const expandSelectedWorktrees = (
   selectedPaths: string[],
   grouping: WorktreeGrouping,
   selectablePaths: Set<string>,
   entries: WorktreeEntry[],
-): WorktreeEntry[] {
+): WorktreeEntry[] => {
   const entryByPath = new Map(entries.map((entry) => [entry.path, entry]));
   const selected = new Map<string, WorktreeEntry>();
   const groupByParentPath = new Map(grouping.groups.map((group) => [group.parent.path, group]));
@@ -550,12 +591,12 @@ function expandSelectedWorktrees(
   }
 
   return [...selected.values()];
-}
+};
 
-async function getDefaultBranchMap(
+const getDefaultBranchMap = async (
   workspaceRoot: string,
   repos: Record<string, { path: string }>,
-): Promise<Record<string, string | null>> {
+): Promise<Record<string, string | null>> => {
   const map: Record<string, string | null> = {};
   const mainName = basename(workspaceRoot);
   map[mainName] = await resolveDefaultBranch(workspaceRoot);
@@ -566,22 +607,22 @@ async function getDefaultBranchMap(
   }
 
   return map;
-}
+};
 
-async function resolveDefaultBranch(repoPath: string): Promise<string | null> {
+const resolveDefaultBranch = async (repoPath: string): Promise<string | null> => {
   try {
     return await getDefaultBranch(repoPath);
   } catch {
     return null;
   }
-}
+};
 
-function warnOnDefaultMainRemoval(
+const warnOnDefaultMainRemoval = (
   skippedMain: WorktreeEntry[],
   defaultBranches: Record<string, string | null>,
-): void {
+): void => {
   const warnings = skippedMain.filter((wt) => defaultBranches[wt.repository] === wt.branch);
-  if (warnings.length === 0) {
+  if (warnings.length === ZERO) {
     return;
   }
 
@@ -589,33 +630,36 @@ function warnOnDefaultMainRemoval(
   for (const wt of warnings) {
     logger.info(`  • ${wt.repository}: ${wt.branch} (${wt.path})`);
   }
-}
+};
 
-async function promptConfirmation(
+const promptConfirmation = async (
   worktrees: WorktreeEntry[],
   branchPresence: Record<string, string[]>,
   checkDirty: boolean,
   confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>,
-): Promise<"confirmed" | "declined" | "cancelled"> {
+): Promise<"confirmed" | "declined" | "cancelled"> => {
   if (checkDirty) {
     const dirty = worktrees.filter((wt) => wt.isDirty);
-    if (dirty.length > 0) {
+    if (dirty.length > ZERO) {
       logger.warn(`Uncommitted changes detected in ${dirty.length} worktrees:`);
       for (const wt of dirty) {
         const details = wt.dirtyDetails;
         const parts: string[] = [];
         if (details) {
-          if (details.modifiedFiles > 0) {
+          if (details.modifiedFiles > ZERO) {
             parts.push(`${details.modifiedFiles} modified files`);
           }
-          if (details.untrackedFiles > 0) {
+          if (details.untrackedFiles > ZERO) {
             parts.push(`${details.untrackedFiles} untracked files`);
           }
-          if (details.stagedFiles > 0) {
+          if (details.stagedFiles > ZERO) {
             parts.push(`${details.stagedFiles} staged files`);
           }
         }
-        const detailText = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+        let detailText = "";
+        if (parts.length > ZERO) {
+          detailText = ` (${parts.join(", ")})`;
+        }
         logger.info(`  • ${wt.repository}: ${wt.path}${detailText}`);
       }
 
@@ -628,28 +672,46 @@ async function promptConfirmation(
   }
 
   const worktreeCount = worktrees.length;
-  const branchCount = Object.values(branchPresence).reduce((sum, repos) => sum + repos.length, 0);
+  const branchCount = Object.values(branchPresence).reduce(
+    (sum, repos) => sum + repos.length,
+    ZERO,
+  );
+
+  let worktreeLabel = "worktrees";
+  if (worktreeCount === ONE) {
+    worktreeLabel = "worktree";
+  }
+
+  let branchLabel = "branches";
+  if (branchCount === ONE) {
+    branchLabel = "branch";
+  }
 
   const outcome = await confirm(
-    `Remove ${worktreeCount} ${worktreeCount === 1 ? "worktree" : "worktrees"} and delete ${branchCount} ${branchCount === 1 ? "branch" : "branches"}?`,
+    `Remove ${worktreeCount} ${worktreeLabel} and delete ${branchCount} ${branchLabel}?`,
     false,
   );
   return resolveConfirmation(outcome);
-}
+};
 
-async function getWorkspaceRoot(): Promise<string> {
+const getWorkspaceRoot = async (): Promise<string> => {
   try {
     return await findWorkspaceRoot();
   } catch (error) {
+    let message = String(error);
+    if (error instanceof Error) {
+      message = error.message;
+    }
+
     throw new RemoveCommandError(
       'Arashi configuration not found. Run "arashi init" to create configuration.',
       RemoveCommandErrorCode.CONFIG_ERROR,
-      { error: error instanceof Error ? error.message : String(error) },
+      { error: message },
     );
   }
-}
+};
 
-function handleError(error: unknown, options: RemoveCommandOptions): void {
+const handleError = (error: unknown, options: RemoveCommandOptions): void => {
   if (error instanceof RemoveCommandError) {
     if (options.json) {
       console.log(
@@ -663,7 +725,7 @@ function handleError(error: unknown, options: RemoveCommandOptions): void {
             success: false,
           },
           null,
-          2,
+          JSON_INDENT,
         ),
       );
     } else {
@@ -676,15 +738,22 @@ function handleError(error: unknown, options: RemoveCommandOptions): void {
       }
     }
 
-    const exitCode =
+    let exitCode = ONE;
+    if (
       error.code === RemoveCommandErrorCode.BRANCH_NOT_FOUND ||
       error.code === RemoveCommandErrorCode.NON_INTERACTIVE
-        ? 2
-        : 1;
+    ) {
+      exitCode = JSON_INDENT;
+    }
+
     process.exit(exitCode);
   }
 
-  const message = error instanceof Error ? error.message : "Unknown error";
+  let message = "Unknown error";
+  if (error instanceof Error) {
+    message = error.message;
+  }
+
   if (options.json) {
     console.log(
       JSON.stringify(
@@ -696,34 +765,38 @@ function handleError(error: unknown, options: RemoveCommandOptions): void {
           success: false,
         },
         null,
-        2,
+        JSON_INDENT,
       ),
     );
   } else {
     logger.error(`Unexpected error: ${message}`);
   }
-  process.exit(1);
-}
+  process.exit(ONE);
+};
 
-function ensureInteractive(allowNonInteractive: boolean): void {
+const ensureInteractive = (allowNonInteractive: boolean): void => {
   if (!allowNonInteractive && !process.stdin.isTTY) {
     throw new RemoveCommandError(
       "Non-interactive terminal detected. Run this command in an interactive TTY.",
       RemoveCommandErrorCode.NON_INTERACTIVE,
     );
   }
-}
+};
 
-function resolveConfirmation(
+const resolveConfirmation = (
   outcome: PromptOutcome<boolean>,
-): "confirmed" | "declined" | "cancelled" {
+): "confirmed" | "declined" | "cancelled" => {
   if (outcome.status === "cancelled") {
     return "cancelled";
   }
-  return outcome.value ? "confirmed" : "declined";
-}
+  if (outcome.value) {
+    return "confirmed";
+  }
 
-function resolveInputPath(input: string): string {
+  return "declined";
+};
+
+const resolveInputPath = (input: string): string => {
   if (existsSync(input)) {
     return input;
   }
@@ -732,10 +805,14 @@ function resolveInputPath(input: string): string {
     return resolved;
   }
   return input;
-}
+};
 
-function formatWorktreeRemovalError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+const formatWorktreeRemovalError = (error: unknown): string => {
+  let message = String(error);
+  if (error instanceof Error) {
+    message = error.message;
+  }
+
   const lower = message.toLowerCase();
 
   if (lower.includes("in use") || lower.includes("busy")) {
@@ -747,10 +824,14 @@ function formatWorktreeRemovalError(error: unknown): string {
   }
 
   return message;
-}
+};
 
-function formatBranchDeletionError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+const formatBranchDeletionError = (error: unknown): string => {
+  let message = String(error);
+  if (error instanceof Error) {
+    message = error.message;
+  }
+
   const lower = message.toLowerCase();
 
   if (lower.includes("checked out")) {
@@ -758,16 +839,16 @@ function formatBranchDeletionError(error: unknown): string {
   }
 
   return message;
-}
+};
 
-async function runRemoveLifecycleHook(options: {
+const runRemoveLifecycleHook = async (options: {
   hookName: string;
   workspaceRoot: string;
   targetRepositories: hooks.HookTargetRepository[];
   operationData: Record<string, string>;
   timeoutMs?: number;
   stopOnFailure: boolean;
-}): Promise<hooks.HookOutcomeMapping> {
+}): Promise<hooks.HookOutcomeMapping> => {
   const spinner = logger.spinner(`Running ${options.hookName} hooks...`).start();
   const resolvedHooks = await hooks.resolveScopedLifecycleHooks({
     hookName: options.hookName,
@@ -824,8 +905,13 @@ async function runRemoveLifecycleHook(options: {
     if (mapping.hookStatus === "failure") {
       failureReason = mapping.reasonCode;
       const stderr = result.stderr.trim();
+      let failureMessage = mapping.message;
+      if (stderr.length > ZERO) {
+        failureMessage = stderr;
+      }
+
       failures.push(
-        `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${stderr.length > 0 ? stderr : mapping.message}`,
+        `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${failureMessage}`,
       );
       if (options.stopOnFailure) {
         break;
@@ -835,21 +921,31 @@ async function runRemoveLifecycleHook(options: {
 
   if (failures.length === 0) {
     spinner.succeed(`${options.hookName} hooks completed (${executedCount})`);
+    let hookScriptLabel = "scripts";
+    if (executedCount === ONE) {
+      hookScriptLabel = "script";
+    }
+
     return {
       hookStatus: "success",
-      message: `Executed ${executedCount} hook script${executedCount === 1 ? "" : "s"}`,
+      message: `Executed ${executedCount} hook ${hookScriptLabel}`,
       reasonCode: "none",
     };
   }
 
   spinner.fail(`${options.hookName} hooks failed`);
+  let reasonCode: hooks.HookOutcomeReasonCode = "exit_non_zero";
+  if (failureReason === "timeout") {
+    reasonCode = "timeout";
+  }
+
   return {
     hookStatus: "failure",
     message: failures.join("; "),
-    reasonCode: failureReason === "timeout" ? "timeout" : "exit_non_zero",
+    reasonCode,
   };
-}
+};
 
-function formatHookFailure(hookName: string, outcome: hooks.HookOutcomeMapping): string {
+const formatHookFailure = (hookName: string, outcome: hooks.HookOutcomeMapping): string => {
   return `${hookName} hook failed: ${outcome.message}`;
-}
+};
