@@ -73,7 +73,7 @@ export async function createWorktree(
 export async function createWorktreesForBranch(
   workspace: RemoveTestWorkspace,
   branchName: string,
-  includeMain: boolean = true,
+  includeMain = true,
 ): Promise<Record<string, string>> {
   const worktrees: Record<string, string> = {};
   const baseDir = join(workspace.rootPath, "worktrees");

@@ -365,12 +365,19 @@ const getFirstDefined = <ValueType>(
   return undefined;
 };
 
-const validateNoUnknownKeys = (
-  value: Record<string, unknown>,
-  allowedKeys: Set<string>,
-  prefix: string,
-  errors: string[],
-): void => {
+interface ValidateNoUnknownKeysOptions {
+  allowedKeys: Set<string>;
+  errors: string[];
+  prefix: string;
+  value: Record<string, unknown>;
+}
+
+const validateNoUnknownKeys = ({
+  allowedKeys,
+  errors,
+  prefix,
+  value,
+}: ValidateNoUnknownKeysOptions): void => {
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       let label = key;
@@ -425,7 +432,7 @@ const normalizeRepoConfig = (
     return undefined;
   }
 
-  validateNoUnknownKeys(value, REPO_ALLOWED_KEYS, prefix, errors);
+  validateNoUnknownKeys({ allowedKeys: REPO_ALLOWED_KEYS, errors, prefix, value });
 
   const { path } = value;
   const gitUrl = getFirstDefined(
@@ -465,7 +472,7 @@ const normalizeWorkspaceHooks = (
     return undefined;
   }
 
-  validateNoUnknownKeys(value, ROOT_HOOKS_ALLOWED_KEYS, prefix, errors);
+  validateNoUnknownKeys({ allowedKeys: ROOT_HOOKS_ALLOWED_KEYS, errors, prefix, value });
 
   const { timeout } = value;
   if (timeout === undefined) {
@@ -494,7 +501,7 @@ const normalizeSyncConfig = (
     return undefined;
   }
 
-  validateNoUnknownKeys(value, ROOT_SYNC_ALLOWED_KEYS, prefix, errors);
+  validateNoUnknownKeys({ allowedKeys: ROOT_SYNC_ALLOWED_KEYS, errors, prefix, value });
 
   const timeoutSeconds = getFirstDefined(
     value.timeoutSeconds as number | undefined,
@@ -652,7 +659,7 @@ const normalizeConfigInternal = (
     throw new ConfigValidationError(["Config must be an object"]);
   }
 
-  validateNoUnknownKeys(config, ROOT_ALLOWED_KEYS, "", errors);
+  validateNoUnknownKeys({ allowedKeys: ROOT_ALLOWED_KEYS, errors, prefix: "", value: config });
 
   const schema = config.$schema;
   const versionInfo = resolveConfigVersion(config.version, errors);
@@ -683,15 +690,15 @@ const normalizeConfigInternal = (
   }
 
   const normalizedRepos: Record<string, RepoConfig> = {};
-  if (!isRecord(reposRaw)) {
-    errors.push("repos: must be an object");
-  } else {
+  if (isRecord(reposRaw)) {
     for (const [repoName, repoConfig] of Object.entries(reposRaw)) {
       const normalized = normalizeRepoConfig(repoName, repoConfig, errors);
       if (normalized) {
         normalizedRepos[repoName] = normalized;
       }
     }
+  } else {
+    errors.push("repos: must be an object");
   }
 
   if (errors.length > 0) {

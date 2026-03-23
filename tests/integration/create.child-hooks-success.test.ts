@@ -27,13 +27,13 @@ describe("create command child-repo hook success flows", () => {
         workspace.hookRootPath,
         "pre-create",
         repoName,
-        'echo "${ARASHI_REPO_NAME}:${ARASHI_HOOK_NAME}" >> "${ARASHI_WORKTREE_PATH}/hook-events.log"',
+        `echo "\${ARASHI_REPO_NAME}:\${ARASHI_HOOK_NAME}" >> "\${ARASHI_WORKTREE_PATH}/hook-events.log"`,
       );
       createRepoSpecificHookInRepo(
         workspace.hookRootPath,
         "post-create",
         repoName,
-        'echo "${ARASHI_REPO_NAME}:${ARASHI_HOOK_NAME}" >> "${ARASHI_WORKTREE_PATH}/hook-events.log"',
+        `echo "\${ARASHI_REPO_NAME}:\${ARASHI_HOOK_NAME}" >> "\${ARASHI_WORKTREE_PATH}/hook-events.log"`,
       );
     }
 
@@ -82,7 +82,7 @@ describe("create command child-repo hook success flows", () => {
         workspace.hookRootPath,
         "post-create",
         repoName,
-        'echo "${ARASHI_MAIN_REPO_PATH}" > "${ARASHI_WORKTREE_PATH}/hook-main-path.log"',
+        `echo "\${ARASHI_MAIN_REPO_PATH}" > "\${ARASHI_WORKTREE_PATH}/hook-main-path.log"`,
       );
     }
 

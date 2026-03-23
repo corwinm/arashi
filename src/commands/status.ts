@@ -174,17 +174,16 @@ export const parseGitStatus = (
   for (const line of lines) {
     if (line.startsWith("##")) {
       branch = parseBranchLine(line);
-      continue;
+    } else {
+      const [stagingStatus = "", workingStatus = ""] = line;
+      const path = line.slice(THREE);
+
+      files.push({
+        path,
+        stagingStatus,
+        workingStatus,
+      });
     }
-
-    const [stagingStatus = "", workingStatus = ""] = line;
-    const path = line.slice(THREE);
-
-    files.push({
-      path,
-      stagingStatus,
-      workingStatus,
-    });
   }
 
   return { branch, files };
@@ -213,7 +212,7 @@ const pathExists = async (path: string): Promise<boolean> => {
 export const checkRepoStatus = async (
   name: string,
   path: string,
-  verbose: boolean = false,
+  verbose = false,
 ): Promise<RepoStatus> => {
   const repoExists = await pathExists(path);
   if (!repoExists) {
@@ -241,7 +240,7 @@ export const checkRepoStatus = async (
 
     const parsed = parseGitStatus(result.output);
 
-    let fullStatus: string | undefined;
+    let fullStatus: string | undefined = undefined;
     if (verbose) {
       const fullResult = await getFullGitStatus(path);
       if (fullResult.error) {
@@ -286,10 +285,10 @@ export const checkRepoStatus = async (
  * @param verbose - Whether to get full git status output
  * @returns Array of repository statuses
  */
-export const checkAllRepos = async (
+export const checkAllRepos = (
   workspaceRoot: string,
   config: Config,
-  verbose: boolean = false,
+  verbose = false,
 ): Promise<RepoStatus[]> => {
   const reposToCheck: { name: string; path: string }[] = [
     { name: "Main Repository", path: workspaceRoot },
@@ -303,6 +302,26 @@ export const checkAllRepos = async (
   const statusPromises = reposToCheck.map((repo) => checkRepoStatus(repo.name, repo.path, verbose));
 
   return Promise.all(statusPromises);
+};
+
+const formatTrackingSuffix = (branch: BranchTrackingInfo): string => {
+  if (!branch.remoteBranch) {
+    return "";
+  }
+
+  let suffix = ` → ${branch.remoteBranch}`;
+  if (branch.ahead > ZERO || branch.behind > ZERO) {
+    const trackingParts: string[] = [];
+    if (branch.ahead > ZERO) {
+      trackingParts.push(`↑${branch.ahead}`);
+    }
+    if (branch.behind > ZERO) {
+      trackingParts.push(`↓${branch.behind}`);
+    }
+    suffix += ` [${trackingParts.join(", ")}]`;
+  }
+
+  return suffix;
 };
 
 /**
@@ -444,22 +463,7 @@ export const formatVerboseOutput = (statuses: RepoStatus[]): string => {
       output += `  Branch: ${cyan("(detached HEAD)")}\n\n`;
     } else {
       output += `  Branch: ${cyan(status.branch.localBranch)}`;
-      if (status.branch.remoteBranch) {
-        output += ` → ${status.branch.remoteBranch}`;
-        if (status.branch.ahead > ZERO || status.branch.behind > ZERO) {
-          output += ` [`;
-          if (status.branch.ahead > ZERO) {
-            output += `↑${status.branch.ahead}`;
-          }
-          if (status.branch.ahead > ZERO && status.branch.behind > ZERO) {
-            output += ", ";
-          }
-          if (status.branch.behind > ZERO) {
-            output += `↓${status.branch.behind}`;
-          }
-          output += `]`;
-        }
-      }
+      output += formatTrackingSuffix(status.branch);
       output += "\n\n";
     }
 
@@ -573,7 +577,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     process.exit(USAGE_EXIT_CODE);
   }
 
-  let workspaceRoot: string;
+  let workspaceRoot = "";
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
@@ -582,7 +586,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     process.exit(USAGE_EXIT_CODE);
   }
 
-  let config: Config;
+  let config = createEmptyConfig();
   try {
     config = await loadConfig(workspaceRoot);
   } catch (error) {
@@ -602,13 +606,11 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
 
   statusSpinner.stop();
 
-  let output: string;
+  let output = formatDefaultOutput(statuses);
   if (options.verbose) {
     output = formatVerboseOutput(statuses);
   } else if (options.short) {
     output = formatShortOutput(statuses);
-  } else {
-    output = formatDefaultOutput(statuses);
   }
 
   console.log(output);
@@ -618,6 +620,13 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     process.exit(ERROR_EXIT_CODE);
   }
 };
+
+const createEmptyConfig = (): Config => ({
+  repos: {},
+  reposDir: "./repos",
+  version: "1.0.0",
+  worktreesDir: "../.worktrees",
+});
 
 /**
  * Create the status command for Commander

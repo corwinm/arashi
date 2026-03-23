@@ -271,9 +271,9 @@ describe("loadConfig", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        version: "", // Invalid
         repos: {},
         // Missing reposDir
+        version: "", // Invalid
       }),
     );
 

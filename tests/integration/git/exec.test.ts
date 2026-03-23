@@ -38,7 +38,7 @@ describe("exec() - Integration Tests", () => {
 
   test("should fail with NOT_A_REPOSITORY error in invalid directory", async () => {
     try {
-      await exec(["status"], "/tmp/not-a-git-repo-" + Date.now());
+      await exec(["status"], `/tmp/not-a-git-repo-${Date.now()}`);
       expect.unreachable("Should have thrown ArashiError");
     } catch (error) {
       expect(error).toBeInstanceOf(ArashiError);
@@ -171,7 +171,7 @@ describe("exec() - Integration Tests", () => {
     // This test is platform-dependent and might need adjustment
     // We'll test with a path that's likely to fail
     try {
-      await exec(["status"], "/root/.private-dir-" + Date.now());
+      await exec(["status"], `/root/.private-dir-${Date.now()}`);
       // If it doesn't throw, that's ok - path might not exist
     } catch (error) {
       if (error instanceof ArashiError) {

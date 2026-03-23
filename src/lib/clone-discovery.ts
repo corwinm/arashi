@@ -58,24 +58,16 @@ export async function discoverCloneRepositories(
   if (reposRootExists) {
     const entries = await readdir(reposRoot, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isDirectory()) {
-        continue;
+      if (entry.isDirectory() && !configuredNames.has(entry.name)) {
+        const candidatePath = join(reposRoot, entry.name);
+        const gitMarkerExists = await pathExists(join(candidatePath, ".git"));
+        if (gitMarkerExists) {
+          unmanagedLocal.push({
+            name: entry.name,
+            path: candidatePath,
+          });
+        }
       }
-
-      if (configuredNames.has(entry.name)) {
-        continue;
-      }
-
-      const candidatePath = join(reposRoot, entry.name);
-      const gitMarkerExists = await pathExists(join(candidatePath, ".git"));
-      if (!gitMarkerExists) {
-        continue;
-      }
-
-      unmanagedLocal.push({
-        name: entry.name,
-        path: candidatePath,
-      });
     }
   }
 
@@ -94,13 +86,11 @@ export function inferCloneProtocolPreference(urls: (string | undefined)[]): Prot
   const protocols = new Set<CloneProtocol>();
 
   for (const url of urls) {
-    if (!url) {
-      continue;
-    }
-
-    const protocol = detectCloneProtocol(url);
-    if (protocol) {
-      protocols.add(protocol);
+    if (url) {
+      const protocol = detectCloneProtocol(url);
+      if (protocol) {
+        protocols.add(protocol);
+      }
     }
   }
 

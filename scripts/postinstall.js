@@ -22,7 +22,7 @@ function getPlatformInfo() {
   const { platform } = process;
   const { arch } = process;
 
-  let binaryName;
+  let binaryName = "";
   if (platform === "darwin" && arch === "arm64") {
     binaryName = `${PACKAGE_NAME}-macos-arm64`;
   } else if (platform === "linux" && arch === "x64") {
@@ -139,4 +139,4 @@ async function install() {
   }
 }
 
-install();
+await install();

@@ -28,8 +28,12 @@ describe("Hook System Integration", () => {
 		`,
     );
 
-    const result = await runLifecycleHook("pre-create", testRepo, {
-      BRANCH: "feature-123",
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {
+        BRANCH: "feature-123",
+      },
+      repoPath: testRepo,
     });
 
     expect(result).not.toBeNull();
@@ -50,7 +54,11 @@ describe("Hook System Integration", () => {
 		`,
     );
 
-    const result = await runLifecycleHook("pre-create", testRepo, {});
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
 
     expect(result).not.toBeNull();
     expect(result?.success).toBe(false);
@@ -71,7 +79,11 @@ describe("Hook System Integration", () => {
 		`,
     );
 
-    const result = await runLifecycleHook("post-create", testRepo, {});
+    const result = await runLifecycleHook({
+      lifecyclePoint: "post-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
 
     expect(result).not.toBeNull();
     expect(result?.success).toBe(true);
@@ -107,10 +119,14 @@ describe("Hook System Integration", () => {
 		`,
     );
 
-    const result = await runLifecycleHook("pre-create", testRepo, {
-      BASE_BRANCH: "main",
-      BRANCH: "feature-456",
-      WORKTREE_PATH: "/path/to/worktree",
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {
+        BASE_BRANCH: "main",
+        BRANCH: "feature-456",
+        WORKTREE_PATH: "/path/to/worktree",
+      },
+      repoPath: testRepo,
     });
 
     expect(result).not.toBeNull();
@@ -126,7 +142,12 @@ describe("Hook System Integration", () => {
   test("skips hook execution with --no-hooks flag", async () => {
     createHookInRepo(testRepo, "pre-create", "echo 'This should not run'");
 
-    const result = await runLifecycleHook("pre-create", testRepo, {}, { skipHooks: true });
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {},
+      options: { skipHooks: true },
+      repoPath: testRepo,
+    });
 
     expect(result).toBeNull();
   });
@@ -144,7 +165,11 @@ describe("Hook System Integration", () => {
 		`,
     );
 
-    const result = await runLifecycleHook("post-create", testRepo, {});
+    const result = await runLifecycleHook({
+      lifecyclePoint: "post-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
 
     expect(result).not.toBeNull();
     expect(result?.success).toBe(true);
@@ -165,7 +190,11 @@ describe("Hook System Integration", () => {
     );
 
     // This should not throw
-    const result = await runLifecycleHook("pre-create", testRepo, {});
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
 
     expect(result).not.toBeNull();
     expect(result?.success).toBe(false);
@@ -180,8 +209,16 @@ describe("Hook System Integration", () => {
     createHookInRepo(testRepo, "pre-create", "echo 'Pre-create hook'");
     createHookInRepo(testRepo, "post-create", "echo 'Post-create hook'");
 
-    const preResult = await runLifecycleHook("pre-create", testRepo, {});
-    const postResult = await runLifecycleHook("post-create", testRepo, {});
+    const preResult = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
+    const postResult = await runLifecycleHook({
+      lifecyclePoint: "post-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
 
     expect(preResult?.success).toBe(true);
     expect(preResult?.stdout).toContain("Pre-create hook");

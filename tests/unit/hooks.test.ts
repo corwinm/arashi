@@ -370,7 +370,11 @@ describe("runLifecycleHook", () => {
   });
 
   test("returns null when hook doesn't exist", async () => {
-    const result = await runLifecycleHook("pre-create", testRepo, {});
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
 
     expect(result).toBeNull();
   });
@@ -378,14 +382,14 @@ describe("runLifecycleHook", () => {
   test("returns null when skipHooks is true", async () => {
     createHookInRepo(testRepo, "pre-create", "echo 'test'");
 
-    const result = await runLifecycleHook(
-      "pre-create",
-      testRepo,
-      {},
-      {
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {},
+      options: {
         skipHooks: true,
       },
-    );
+      repoPath: testRepo,
+    });
 
     expect(result).toBeNull();
   });
@@ -397,7 +401,11 @@ describe("runLifecycleHook", () => {
 
     createHookInRepo(testRepo, "pre-create", "echo 'test'", false);
 
-    const result = await runLifecycleHook("pre-create", testRepo, {});
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
 
     expect(result).toBeNull();
   });
@@ -405,7 +413,11 @@ describe("runLifecycleHook", () => {
   test("returns HookResult when hook executes successfully", async () => {
     createHookInRepo(testRepo, "pre-create", "echo 'success'");
 
-    const result = await runLifecycleHook("pre-create", testRepo, {});
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
 
     expect(result).not.toBeNull();
     expect(result?.success).toBe(true);
@@ -415,7 +427,11 @@ describe("runLifecycleHook", () => {
   test("returns HookResult when hook fails", async () => {
     createHookInRepo(testRepo, "pre-create", "exit 1");
 
-    const result = await runLifecycleHook("pre-create", testRepo, {});
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {},
+      repoPath: testRepo,
+    });
 
     expect(result).not.toBeNull();
     expect(result?.success).toBe(false);
@@ -425,8 +441,12 @@ describe("runLifecycleHook", () => {
   test("passes operation data to hook", async () => {
     createHookInRepo(testRepo, "pre-create", 'echo "Branch: $ARASHI_BRANCH"');
 
-    const result = await runLifecycleHook("pre-create", testRepo, {
-      BRANCH: "feature-123",
+    const result = await runLifecycleHook({
+      lifecyclePoint: "pre-create",
+      operationData: {
+        BRANCH: "feature-123",
+      },
+      repoPath: testRepo,
     });
 
     expect(result?.stdout).toContain("Branch: feature-123");

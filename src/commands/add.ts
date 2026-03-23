@@ -69,7 +69,8 @@ const maybeRunCloneFallback = async (error: AddCommandError): Promise<void> => {
 };
 
 const getLastPathSegment = (pathParts: string[]): string => {
-  const lastPart = pathParts.at(-1);
+  const filteredParts = pathParts.filter((part) => part.length > ZERO);
+  const lastPart = filteredParts.at(-1);
   if (!lastPart) {
     throw new Error("Unable to determine repository name from path");
   }
@@ -245,7 +246,7 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
     if (match) {
       const [, matchedHost, matchedPath] = match;
       host = matchedHost;
-      const path = matchedPath.replace(/\.git$/, "");
+      const path = matchedPath.replace(/\.git\/?$/, "").replace(/\/+$/, "");
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
         const [pathOwner] = pathParts;
@@ -258,10 +259,12 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
     // Match patterns like git@github.com:user/repo.git or ssh://git@github.com/user/repo.git
     const sshMatch = trimmedUrl.match(/^(?:ssh:\/\/)?([^@]+)@([^:/]+):?(.+)/);
     if (sshMatch) {
-      const matchedHost = sshMatch[2];
-      const matchedPath = sshMatch[3];
+      const [_fullMatch, _gitUser, matchedHost, matchedPath] = sshMatch;
       host = matchedHost;
-      const path = matchedPath.replace(/^\//, "").replace(/\.git$/, "");
+      const path = matchedPath
+        .replace(/^\//, "")
+        .replace(/\.git\/?$/, "")
+        .replace(/\/+$/, "");
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
         const [pathOwner] = pathParts;
@@ -275,7 +278,7 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
     if (match) {
       const [, matchedHost, matchedPath] = match;
       host = matchedHost;
-      const path = matchedPath.replace(/\.git$/, "");
+      const path = matchedPath.replace(/\.git\/?$/, "").replace(/\/+$/, "");
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
         const [pathOwner] = pathParts;
@@ -285,7 +288,10 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
     }
   } else if (GIT_URL_PATTERNS.file.test(trimmedUrl)) {
     protocol = "file";
-    const path = trimmedUrl.replace(/^file:\/\//, "").replace(/\.git$/, "");
+    const path = trimmedUrl
+      .replace(/^file:\/\//, "")
+      .replace(/\.git\/?$/, "")
+      .replace(/\/+$/, "");
     repository = basename(path);
   }
 

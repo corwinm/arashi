@@ -92,6 +92,22 @@ export interface HookExecutionOptions {
   timeout?: number;
 }
 
+interface RunLifecycleHookOptions {
+  lifecyclePoint: string;
+  operationData: Record<string, string>;
+  options?: { skipHooks?: boolean; timeout?: number };
+  repoPath: string;
+}
+
+type RunLifecycleHookArgs =
+  | [
+      lifecyclePoint: string,
+      repoPath: string,
+      operationData: Record<string, string>,
+      options?: { skipHooks?: boolean; timeout?: number },
+    ]
+  | [options: RunLifecycleHookOptions];
+
 export interface ValidationResult {
   valid: boolean;
   error?: string;
@@ -522,12 +538,32 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
  * @param options - Optional settings (skipHooks, timeout)
  * @returns Execution result if hook ran, null if skipped or not found
  */
+const normalizeRunLifecycleHookArgs = (...args: RunLifecycleHookArgs): RunLifecycleHookOptions => {
+  const [firstArg, repoPath, operationData, options] = args;
+  if (
+    typeof firstArg === "object" &&
+    firstArg !== null &&
+    "lifecyclePoint" in firstArg &&
+    "repoPath" in firstArg &&
+    "operationData" in firstArg
+  ) {
+    return firstArg as RunLifecycleHookOptions;
+  }
+
+  return {
+    lifecyclePoint: firstArg as string,
+    operationData: operationData as Record<string, string>,
+    options,
+    repoPath: repoPath as string,
+  };
+};
+
 export const runLifecycleHook = async (
-  lifecyclePoint: string,
-  repoPath: string,
-  operationData: Record<string, string>,
-  options?: { skipHooks?: boolean; timeout?: number },
+  ...args: RunLifecycleHookArgs
 ): Promise<HookResult | null> => {
+  const { lifecyclePoint, operationData, options, repoPath } = normalizeRunLifecycleHookArgs(
+    ...args,
+  );
   if (options?.skipHooks) {
     console.log(`⏭️  Skipping hooks (--no-hooks flag)`);
     return null;

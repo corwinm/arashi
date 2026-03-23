@@ -13,10 +13,10 @@ beforeEach(() => {
   originalLog = console.log;
   originalError = console.error;
   console.log = (...args: unknown[]) => {
-    consoleOutput.push(args.map((arg) => String(arg)).join(" "));
+    consoleOutput.push(args.map(String).join(" "));
   };
   console.error = (...args: unknown[]) => {
-    consoleOutput.push(args.map((arg) => String(arg)).join(" "));
+    consoleOutput.push(args.map(String).join(" "));
   };
 });
 

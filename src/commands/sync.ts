@@ -9,6 +9,7 @@ import { filterRepositories } from "../lib/config/filter-repos.ts";
 import { resolve } from "path";
 
 type Config = Awaited<ReturnType<typeof loadConfig>>;
+type SyncBranchOutcome = Awaited<ReturnType<typeof alignRepositoryBranch>>;
 
 const ZERO = 0;
 const ERROR_EXIT_CODE = 1;
@@ -65,7 +66,14 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
     syncSpinner.start();
 
     const startTime = Date.now();
-    let outcome;
+    const defaultOutcome: SyncBranchOutcome = {
+      createdBranch: false,
+      currentBranch: null,
+      errorMessage: "Unknown sync failure",
+      previousBranch: null,
+      status: "failure" as const,
+    };
+    let outcome: SyncBranchOutcome = defaultOutcome;
 
     try {
       outcome = await alignRepositoryBranch({

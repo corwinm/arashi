@@ -27,7 +27,7 @@ describe("create command parity between non-bare and bare invocation", () => {
       workspace.worktreePath,
       "post-create",
       repoName,
-      'echo "parity" > "${ARASHI_WORKTREE_PATH}/hook-parity.log"',
+      `echo "parity" > "\${ARASHI_WORKTREE_PATH}/hook-parity.log"`,
     );
 
     const command = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-progress"], {

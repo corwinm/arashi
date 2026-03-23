@@ -152,7 +152,7 @@ describe("validateConfig - root level", () => {
   });
 
   test("catches missing version field", () => {
-    const config = {
+    const config: unknown = {
       repos: {},
       reposDir: "./repos",
     };
@@ -162,7 +162,7 @@ describe("validateConfig - root level", () => {
   });
 
   test("catches missing reposDir field", () => {
-    const config = {
+    const config: unknown = {
       repos: {},
       version: "1.0.0",
     };
@@ -172,7 +172,7 @@ describe("validateConfig - root level", () => {
   });
 
   test("catches missing repos field", () => {
-    const config = {
+    const config: unknown = {
       reposDir: "./repos",
       version: "1.0.0",
     };
@@ -182,14 +182,14 @@ describe("validateConfig - root level", () => {
   });
 
   test("catches invalid field types", () => {
-    const config = {
-      version: 1, // Should be string
-      reposDir: "./repos",
+    const config: unknown = {
       repos: [], // Should be object
+      reposDir: "./repos",
+      version: 1, // Should be string
     };
 
     try {
-      validateConfig(config);
+      normalizeConfig(config);
       expect(true).toBe(false); // Should not reach here
     } catch (error) {
       expect(error).toBeInstanceOf(ConfigValidationError);
@@ -201,13 +201,13 @@ describe("validateConfig - root level", () => {
 
   test("catches empty string values", () => {
     const config = {
-      version: "", // Empty string not allowed
-      reposDir: "",
       repos: {},
+      reposDir: "",
+      version: "", // Empty string not allowed
     };
 
     try {
-      validateConfig(config);
+      normalizeConfig(config);
       expect(true).toBe(false);
     } catch (error) {
       expect(error).toBeInstanceOf(ConfigValidationError);
@@ -425,18 +425,18 @@ describe("validateConfig - RepoConfig validation", () => {
 describe("validateConfig - error messages", () => {
   test("provides multiple errors in single validation", () => {
     const config = {
-      version: "", // Invalid
-      reposDir: "./repos",
       repos: {
         "bad-repo": {
           // Missing path
           customField: true, // Unknown property
         },
       },
+      reposDir: "./repos",
+      version: "", // Invalid
     };
 
     try {
-      validateConfig(config);
+      normalizeConfig(config);
       expect(true).toBe(false);
     } catch (error) {
       expect(error).toBeInstanceOf(ConfigValidationError);
@@ -454,7 +454,7 @@ describe("validateConfig - error messages", () => {
     delete (config as { version?: string }).version;
 
     try {
-      validateConfig(config);
+      normalizeConfig(config);
       expect(true).toBe(false);
     } catch (error) {
       expect(error).toBeInstanceOf(ConfigValidationError);

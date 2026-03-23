@@ -156,14 +156,14 @@ describe("US2: fileExists and isExecutable - File Existence and Permission Check
     const filePath = join(testDir, "executable.sh");
     writeFileSync(filePath, "#!/bin/bash\necho hello");
 
-    if (process.platform !== "win32") {
-      chmodSync(filePath, 0o755); // Make executable
-      expect(await isExecutable(filePath)).toBe(true);
-    } else {
+    if (process.platform === "win32") {
       // On Windows, rename to .exe
       const exePath = join(testDir, "executable.exe");
       writeFileSync(exePath, "content");
       expect(await isExecutable(exePath)).toBe(true);
+    } else {
+      chmodSync(filePath, 0o755); // Make executable
+      expect(await isExecutable(filePath)).toBe(true);
     }
   });
 

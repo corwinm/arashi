@@ -18,13 +18,16 @@ import { constants } from "node:fs";
  * Base error class for filesystem operations
  */
 export class FilesystemError extends Error {
-  constructor(
-    public operation: string,
-    public path: string,
-    public code: string,
-    message: string,
-  ) {
+  public operation: string;
+  public path: string;
+  public code: string;
+
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    const [operation, path, code, message] = args;
     super(message);
+    this.operation = operation;
+    this.path = path;
+    this.code = code;
     this.name = "FilesystemError";
     Object.setPrototypeOf(this, FilesystemError.prototype);
   }
@@ -34,8 +37,8 @@ export class FilesystemError extends Error {
  * Error thrown when insufficient permissions to perform operation
  */
 export class PermissionError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "PermissionError";
     Object.setPrototypeOf(this, PermissionError.prototype);
   }
@@ -45,8 +48,8 @@ export class PermissionError extends FilesystemError {
  * Error thrown when file or directory not found
  */
 export class NotFoundError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "NotFoundError";
     Object.setPrototypeOf(this, NotFoundError.prototype);
   }
@@ -56,8 +59,8 @@ export class NotFoundError extends FilesystemError {
  * Error thrown when disk is full
  */
 export class DiskFullError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "DiskFullError";
     Object.setPrototypeOf(this, DiskFullError.prototype);
   }
@@ -67,8 +70,8 @@ export class DiskFullError extends FilesystemError {
  * Error thrown when path is invalid
  */
 export class InvalidPathError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "InvalidPathError";
     Object.setPrototypeOf(this, InvalidPathError.prototype);
   }
@@ -78,8 +81,8 @@ export class InvalidPathError extends FilesystemError {
  * Error thrown when file encoding is invalid
  */
 export class EncodingError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "EncodingError";
     Object.setPrototypeOf(this, EncodingError.prototype);
   }
@@ -217,11 +220,9 @@ export async function isExecutable(path: string): Promise<boolean> {
  * @throws InvalidPathError - repoPath is invalid
  */
 export function getWorktreePath(
-  repoPath: string,
-  branch: string,
-  isBare: boolean,
-  customPath?: string,
+  ...args: [repoPath: string, branch: string, isBare: boolean, customPath?: string]
 ): string {
+  const [repoPath, branch, isBare, customPath] = args;
   // Validate repoPath
   if (!repoPath || repoPath.trim() === "") {
     throw new InvalidPathError(

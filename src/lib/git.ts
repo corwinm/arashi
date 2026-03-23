@@ -35,7 +35,7 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
   }
 
   // T010: Execute git command using Bun.spawn()
-  let proc;
+  let proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | undefined = undefined;
   try {
     proc = Bun.spawn(["git", ...args], {
       cwd,
@@ -55,6 +55,9 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
   }
 
   // Capture stdout and stderr
+  if (!proc) {
+    throw new Error("Failed to spawn git process");
+  }
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;

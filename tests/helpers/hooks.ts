@@ -73,11 +73,18 @@ export function cleanupTestRepo(path: string): void {
  * @returns Absolute path to the created hook
  */
 export function createHookInRepo(
-  repoPath: string,
-  hookName: string,
-  script: string,
-  executable = true,
+  ...args: [
+    repoPath: string,
+    hookName: string,
+    script: string,
+    executableOrOptions?: boolean | { executable?: boolean },
+  ]
 ): string {
+  const [repoPath, hookName, script, executableOrOptions = true] = args;
+  const executable =
+    typeof executableOrOptions === "boolean"
+      ? executableOrOptions
+      : (executableOrOptions.executable ?? true);
   const hookPath = join(repoPath, ".arashi", "hooks", `${hookName}.sh`);
   mkdirSync(dirname(hookPath), { recursive: true });
   writeFileSync(hookPath, `#!/bin/sh\n${script}`);
@@ -88,12 +95,15 @@ export function createHookInRepo(
 }
 
 export function createRepoSpecificHookInRepo(
-  repoPath: string,
-  lifecycle: "pre-create" | "post-create",
-  repoName: string,
-  script: string,
-  executable = true,
+  ...args: [
+    repoPath: string,
+    lifecycle: "pre-create" | "post-create",
+    repoName: string,
+    script: string,
+    options?: { executable?: boolean },
+  ]
 ): string {
+  const [repoPath, lifecycle, repoName, script, options = {}] = args;
   const hookName = `${lifecycle}.${repoName}`;
-  return createHookInRepo(repoPath, hookName, script, executable);
+  return createHookInRepo(repoPath, hookName, script, options);
 }

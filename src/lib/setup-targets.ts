@@ -24,7 +24,7 @@ export async function discoverSetupTargets(
     const setupScriptPath = selected ? await detectSetupScript(repository.path) : undefined;
     const hasSetupTask = selected ? Boolean(setupScriptPath) : false;
 
-    let skipReason: string | undefined;
+    let skipReason: string | undefined = undefined;
     if (!selected) {
       skipReason = "excluded by --only filter";
     } else if (!hasSetupTask) {

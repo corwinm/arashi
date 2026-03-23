@@ -34,7 +34,7 @@ export interface PullCommandOptions {
 }
 
 const executePull = async (options: PullCommandOptions): Promise<void> => {
-  let workspaceRoot: string;
+  let workspaceRoot = "";
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
@@ -43,14 +43,13 @@ const executePull = async (options: PullCommandOptions): Promise<void> => {
     process.exit(USAGE_EXIT_CODE);
   }
 
-  let repositoriesResult;
-  try {
-    repositoriesResult = await loadWorkspaceRepositories(workspaceRoot);
-  } catch (error) {
-    logError("Failed to load workspace configuration");
-    logError(error instanceof Error ? error.message : String(error));
-    process.exit(USAGE_EXIT_CODE);
-  }
+  const repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch(
+    (error): never => {
+      logError("Failed to load workspace configuration");
+      logError(error instanceof Error ? error.message : String(error));
+      process.exit(USAGE_EXIT_CODE);
+    },
+  );
 
   const filterResult = filterRepositories(repositoriesResult.repositories, options.only);
   if (filterResult.missing.length > ZERO) {
@@ -89,10 +88,29 @@ const executePull = async (options: PullCommandOptions): Promise<void> => {
       if (lastResult) {
         info(formatResultLine(lastResult));
       }
-      continue;
-    }
+    } else if (remoteStatus.hasRemoteChanges) {
+      const pullResult = await runPullWithRollback(repo.path, {
+        branch: remoteStatus.branch || undefined,
+        remote: remoteStatus.remote || undefined,
+        timeoutMs,
+        verbose: options.verbose,
+      });
+      const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
+      const result: PullResult = {
+        elapsedSeconds,
+        errorMessage: pullResult.errorMessage,
+        output: pullResult.output,
+        repositoryId: repo.name,
+        status: pullResult.status,
+      };
+      results.push(result);
 
-    if (!remoteStatus.hasRemoteChanges) {
+      if (options.verbose && pullResult.output) {
+        console.log(pullResult.output);
+      }
+
+      info(formatResultLine(result));
+    } else {
       const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
       results.push({
         elapsedSeconds,
@@ -103,30 +121,7 @@ const executePull = async (options: PullCommandOptions): Promise<void> => {
       if (lastResult) {
         info(formatResultLine(lastResult));
       }
-      continue;
     }
-
-    const pullResult = await runPullWithRollback(repo.path, {
-      branch: remoteStatus.branch || undefined,
-      remote: remoteStatus.remote || undefined,
-      timeoutMs,
-      verbose: options.verbose,
-    });
-    const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
-    const result: PullResult = {
-      elapsedSeconds,
-      errorMessage: pullResult.errorMessage,
-      output: pullResult.output,
-      repositoryId: repo.name,
-      status: pullResult.status,
-    };
-    results.push(result);
-
-    if (options.verbose && pullResult.output) {
-      console.log(pullResult.output);
-    }
-
-    info(formatResultLine(result));
   }
 
   const summary = buildSummary(results);
@@ -148,7 +143,7 @@ export function createCommand(): Command {
     .option(
       "--only <repo>",
       "Only include a specific repository (repeatable)",
-      (value, previous: string[] = []) => previous.concat(value),
+      (value, previous: string[] = []) => [...previous, value],
     )
     .option("-v, --verbose", "Show verbose git output")
     .action(async (options: PullCommandOptions) => {

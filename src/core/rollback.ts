@@ -303,7 +303,8 @@ export class OperationLog {
 
     try {
       // Reverse array for LIFO processing
-      const reversedEntries = [...this.entries].toReversed();
+      const reversedEntries = [...this.entries];
+      reversedEntries.reverse();
 
       for (let i = 0; i < reversedEntries.length; i++) {
         const entry = reversedEntries[i];
@@ -372,7 +373,7 @@ export class OperationLog {
  *
  * @param entry - Log entry to rollback
  */
-async function rollbackOperation(entry: LogEntry): Promise<void> {
+function rollbackOperation(entry: LogEntry): Promise<void> {
   switch (entry.type) {
     case "worktree_created": {
       return rollbackWorktreeCreated(entry);

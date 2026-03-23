@@ -111,16 +111,12 @@ function withVimNavigation<T>(
  *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function confirm(
-  message: string,
-  defaultValue?: boolean,
-): Promise<PromptOutcome<boolean>> {
-  return withPromptOutcome(
-    async () =>
-      await inquirerConfirm({
-        default: defaultValue,
-        message,
-      }),
+export function confirm(message: string, defaultValue?: boolean): Promise<PromptOutcome<boolean>> {
+  return withPromptOutcome(() =>
+    inquirerConfirm({
+      default: defaultValue,
+      message,
+    }),
   );
 }
 
@@ -146,18 +142,17 @@ export async function confirm(
  *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function select<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T>> {
+export function select<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T>> {
   if (choices.length === 0) {
-    throw new Error("Cannot display select prompt with empty choices array");
+    return Promise.reject(new Error("Cannot display select prompt with empty choices array"));
   }
 
   return withVimNavigation(() =>
-    withPromptOutcome(
-      async () =>
-        await inquirerSelect({
-          choices,
-          message,
-        }),
+    withPromptOutcome(() =>
+      inquirerSelect({
+        choices,
+        message,
+      }),
     ),
   );
 }
@@ -185,17 +180,13 @@ export async function select<T>(message: string, choices: Choice<T>[]): Promise<
  *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function multiSelect<T>(
-  message: string,
-  choices: Choice<T>[],
-): Promise<PromptOutcome<T[]>> {
+export function multiSelect<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T[]>> {
   return withVimNavigation(() =>
-    withPromptOutcome(
-      async () =>
-        await inquirerCheckbox({
-          choices,
-          message,
-        }),
+    withPromptOutcome(() =>
+      inquirerCheckbox({
+        choices,
+        message,
+      }),
     ),
   );
 }
@@ -219,15 +210,11 @@ export async function multiSelect<T>(
  *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function input(
-  message: string,
-  defaultValue?: string,
-): Promise<PromptOutcome<string>> {
-  return withPromptOutcome(
-    async () =>
-      await inquirerInput({
-        default: defaultValue,
-        message,
-      }),
+export function input(message: string, defaultValue?: string): Promise<PromptOutcome<string>> {
+  return withPromptOutcome(() =>
+    inquirerInput({
+      default: defaultValue,
+      message,
+    }),
   );
 }

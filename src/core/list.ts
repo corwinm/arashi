@@ -8,7 +8,7 @@
  */
 
 import { ListCommandError, NotInRepositoryError } from "../types/list.ts";
-import { isAbsolute, relative } from "path";
+import { isAbsolute, join, relative } from "path";
 import { spinner, warn } from "../lib/logger.ts";
 import chalk from "chalk";
 import { exec } from "../lib/git.ts";
@@ -62,6 +62,36 @@ const tryAddGitRepository = async (gitRepos: string[], repoPath: string): Promis
     await exec(["rev-parse", "--git-dir"], repoPath);
     gitRepos.push(repoPath);
   } catch {}
+};
+
+const shouldIncludeRootRepository = (
+  excludeRoot: boolean | undefined,
+  repoPath: string,
+  rootPath: string,
+): boolean => !excludeRoot || repoPath !== rootPath;
+
+const handleDirectoryEntry = async (options: {
+  currentPath: string;
+  depth: number;
+  entry: { isDirectory: () => boolean; name: string };
+  excludeRoot?: boolean;
+  gitRepos: string[];
+  rootPath: string;
+  scan: (currentPath: string, depth: number) => Promise<void>;
+}): Promise<void> => {
+  if (!options.entry.isDirectory()) {
+    return;
+  }
+
+  const fullPath = join(options.currentPath, options.entry.name);
+  if (options.entry.name === ".git") {
+    const repoPath = options.currentPath;
+    if (shouldIncludeRootRepository(options.excludeRoot, repoPath, options.rootPath)) {
+      await tryAddGitRepository(options.gitRepos, repoPath);
+    }
+  } else if (!SKIPPED_DIRECTORY_NAMES.has(options.entry.name)) {
+    await options.scan(fullPath, options.depth + 1);
+  }
 };
 
 // ============================================================================
@@ -1034,7 +1064,6 @@ export const findGitRepositories = async (
 ): Promise<string[]> => {
   const gitRepos: string[] = [];
   const { readdir } = await import("fs/promises");
-  const { join } = await import("path");
 
   async function scan(currentPath: string, depth: number): Promise<void> {
     if (depth > maxDepth) {
@@ -1045,18 +1074,15 @@ export const findGitRepositories = async (
       const entries = await readdir(currentPath, { withFileTypes: true });
 
       for (const entry of entries) {
-        if (entry.isDirectory()) {
-          const fullPath = join(currentPath, entry.name);
-
-          if (entry.name === ".git") {
-            const repoPath = currentPath;
-            if (!excludeRoot || repoPath !== rootPath) {
-              await tryAddGitRepository(gitRepos, repoPath);
-            }
-          } else if (!SKIPPED_DIRECTORY_NAMES.has(entry.name)) {
-            await scan(fullPath, depth + 1);
-          }
-        }
+        await handleDirectoryEntry({
+          currentPath,
+          depth,
+          entry,
+          excludeRoot,
+          gitRepos,
+          rootPath,
+          scan,
+        });
       }
     } catch {}
   }

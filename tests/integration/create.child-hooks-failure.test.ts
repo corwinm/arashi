@@ -20,13 +20,14 @@ describe("create command child-repo hook failure reporting", () => {
   test("reports failing repo-specific hook with repository-level status", async () => {
     workspace = await createChildHookWorkspace();
     const branch = "feature-child-hooks-failure";
-    const failingRepo = workspace.childRepoNames[0];
+    const [failingRepo] = workspace.childRepoNames;
 
     createRepoSpecificHookInRepo(
       workspace.hookRootPath,
       "post-create",
       failingRepo,
-      'echo "forced failure for ${ARASHI_REPO_NAME}" >&2\nexit 19',
+      `echo "forced failure for \${ARASHI_REPO_NAME}" >&2
+exit 19`,
     );
 
     const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-progress"], {
@@ -53,7 +54,7 @@ describe("create command child-repo hook failure reporting", () => {
   test("reports timeout and skipped hook statuses with actionable guidance", async () => {
     workspace = await createChildHookWorkspace({ hookTimeoutMs: 100 });
     const branch = "feature-child-hooks-timeout";
-    const timeoutRepo = workspace.childRepoNames[0];
+    const [timeoutRepo] = workspace.childRepoNames;
 
     createRepoSpecificHookInRepo(workspace.hookRootPath, "post-create", timeoutRepo, "sleep 1");
 

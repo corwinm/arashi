@@ -2,10 +2,14 @@ import type { Config, LoadedConfig } from "../../src/lib/config.ts";
 import { describe, expect, test } from "bun:test";
 import type { OperationSummary } from "../../src/core/worktree.ts";
 import { executeCreate } from "../../src/commands/create.ts";
-type CreateCommandDependencies = NonNullable<Parameters<typeof executeCreate>[1]>;
+type CreateCommandDependencies = NonNullable<Parameters<typeof executeCreate>[2]>;
 
 const workspaceRoot = "/workspace";
 const branchName = "feature/defaults";
+
+function createLaunchCalls(): { sesh?: boolean }[] {
+  return [];
+}
 
 function createLoadedConfig(configOverrides: Partial<Config> = {}): LoadedConfig {
   return {
@@ -20,7 +24,7 @@ function createLoadedConfig(configOverrides: Partial<Config> = {}): LoadedConfig
   };
 }
 
-function createSummary(worktreePath: string = `${workspaceRoot}/${branchName}`): OperationSummary {
+function createSummary(worktreePath = `${workspaceRoot}/${branchName}`): OperationSummary {
   return {
     errorSummary: null,
     failureCount: 0,
@@ -78,7 +82,7 @@ function baseDeps(overrides: Partial<CreateCommandDependencies> = {}): CreateCom
 
 describe("create defaults integration", () => {
   test("applies configured create launch defaults", async () => {
-    const launchCalls: { sesh?: boolean }[] = [];
+    const launchCalls = createLaunchCalls();
 
     await executeCreate(
       branchName,
@@ -105,7 +109,7 @@ describe("create defaults integration", () => {
   });
 
   test("allows one-off opt-out from configured create launch defaults", async () => {
-    const launchCalls: { sesh?: boolean }[] = [];
+    const launchCalls = createLaunchCalls();
 
     await executeCreate(
       branchName,
@@ -132,7 +136,7 @@ describe("create defaults integration", () => {
   });
 
   test("preserves backward compatibility when create defaults are absent", async () => {
-    const launchCalls: { sesh?: boolean }[] = [];
+    const launchCalls = createLaunchCalls();
 
     await executeCreate(
       branchName,
@@ -149,7 +153,7 @@ describe("create defaults integration", () => {
   });
 
   test("allows explicit create launch override without config defaults", async () => {
-    const launchCalls: { sesh?: boolean }[] = [];
+    const launchCalls = createLaunchCalls();
 
     await executeCreate(
       branchName,

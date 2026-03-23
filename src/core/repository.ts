@@ -21,6 +21,24 @@ const CLONE_COMPLETE_PERCENTAGE = 100;
 const DEFAULT_EXCLUDE_PATTERNS = ["node_modules", ".git"];
 const COMMON_BRANCHES = ["main", "master", "develop", "trunk"];
 
+const scanSymlinkDirectory = async (options: {
+  dirPath: string;
+  entryName: string;
+  errors: DiscoveryError[];
+  scanDirectory: (dirPath: string, depth: number) => Promise<void>;
+  depth: number;
+}): Promise<void> => {
+  try {
+    const subPath = resolve(options.dirPath, options.entryName);
+    const stats = await stat(subPath);
+    if (stats.isDirectory()) {
+      await options.scanDirectory(subPath, options.depth + ONE);
+    }
+  } catch (symlinkError) {
+    options.errors.push(classifyError(join(options.dirPath, options.entryName), symlinkError));
+  }
+};
+
 // ============================================================================
 // Enums and Error Codes (T006)
 // ============================================================================
@@ -377,15 +395,13 @@ export const discoverRepositories = async (
           }
 
           if (entry.isSymbolicLink() && followSymlinks) {
-            try {
-              const subPath = resolve(dirPath, entry.name);
-              const stats = await stat(subPath);
-              if (stats.isDirectory()) {
-                await scanDirectory(subPath, depth + ONE);
-              }
-            } catch (symlinkError) {
-              errors.push(classifyError(join(dirPath, entry.name), symlinkError));
-            }
+            await scanSymlinkDirectory({
+              depth,
+              dirPath,
+              entryName: entry.name,
+              errors,
+              scanDirectory,
+            });
           }
         }
       }

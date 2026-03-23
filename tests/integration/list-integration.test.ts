@@ -139,7 +139,7 @@ async function runListCommand(
 
   // Mock console.log/warn/error and process.stdout.write to capture output
   console.log = (message: string) => {
-    capturedOutput += message + "\n";
+    capturedOutput += `${message}\n`;
   };
   console.warn = () => {}; // Suppress warnings
   console.error = () => {}; // Suppress errors

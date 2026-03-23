@@ -30,6 +30,23 @@ type WorkspaceConfiguration = Parameters<typeof validateWorkspace>[0];
 // Test workspace directory
 const TEST_WORKSPACE = join(import.meta.dir, "../temp-test-workspace");
 
+function sortStringArray(values: string[]): string[] {
+  const sortedValues = [...values];
+  for (let index = 1; index < sortedValues.length; index += 1) {
+    const currentValue = sortedValues[index];
+    let insertIndex = index - 1;
+
+    while (insertIndex >= 0 && sortedValues[insertIndex].localeCompare(currentValue) > 0) {
+      sortedValues[insertIndex + 1] = sortedValues[insertIndex];
+      insertIndex -= 1;
+    }
+
+    sortedValues[insertIndex + 1] = currentValue;
+  }
+
+  return sortedValues;
+}
+
 /**
  * Helper to execute git commands
  */
@@ -88,7 +105,11 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: All 3 repositories found
     expect(result.repositories).toHaveLength(3);
-    expect(result.repositories.map((r) => r.name).toSorted()).toEqual(["repo1", "repo2", "repo3"]);
+    expect(sortStringArray(result.repositories.map((r) => r.name))).toEqual([
+      "repo1",
+      "repo2",
+      "repo3",
+    ]);
     expect(result.errors).toHaveLength(0);
     expect(result.workspacePath).toBe(TEST_WORKSPACE);
   });
@@ -106,7 +127,7 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: Only actual repositories found
     expect(result.repositories).toHaveLength(2);
-    expect(result.repositories.map((r) => r.name).toSorted()).toEqual(["repo1", "repo2"]);
+    expect(sortStringArray(result.repositories.map((r) => r.name))).toEqual(["repo1", "repo2"]);
   });
 
   // T014: Unit test for discoverRepositories() respecting maxDepth option
@@ -124,7 +145,7 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: Only repos within depth 2 found
     expect(result1.repositories).toHaveLength(2);
-    expect(result1.repositories.map((r) => r.name).toSorted()).toEqual(["level1", "level2"]);
+    expect(sortStringArray(result1.repositories.map((r) => r.name))).toEqual(["level1", "level2"]);
 
     // Act: Discovery with maxDepth 4
     const result2: RepositoryDiscoveryResult = await discoverRepositories(TEST_WORKSPACE, {
@@ -147,7 +168,8 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: Only parent repo found, subdirectories not scanned
     expect(result.repositories).toHaveLength(1);
-    expect(result.repositories[0].name).toBe("parent-repo");
+    const [firstRepository] = result.repositories;
+    expect(firstRepository.name).toBe("parent-repo");
     // Should not have scanned deep into repository subdirectories
     expect(result.scannedDirectories).toBeLessThan(5);
   });
@@ -167,7 +189,7 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: Only non-excluded repos found
     expect(result.repositories).toHaveLength(2);
-    expect(result.repositories.map((r) => r.name).toSorted()).toEqual(["repo1", "repo2"]);
+    expect(sortStringArray(result.repositories.map((r) => r.name))).toEqual(["repo1", "repo2"]);
   });
 
   // T017: Unit test for discoverRepositories() handling permission errors gracefully
@@ -187,7 +209,8 @@ describe("Repository Discovery (US1)", () => {
 
       // Assert: Should continue despite permission error
       expect(result.repositories).toHaveLength(1);
-      expect(result.repositories[0].name).toBe("repo1");
+      const [firstRepository] = result.repositories;
+      expect(firstRepository.name).toBe("repo1");
       // May have recorded a permission error
       // Expect(result.errors.length).toBeGreaterThan(0);
 
@@ -524,7 +547,11 @@ describe("User Story 5: validateWorkspace()", () => {
     expect(result.present).toHaveLength(2);
     expect(result.missing).toHaveLength(0);
     expect(result.extra).toHaveLength(3);
-    expect(result.extra.map((r) => r.name).toSorted()).toEqual(["extra-1", "extra-2", "extra-3"]);
+    expect(sortStringArray(result.extra.map((r) => r.name))).toEqual([
+      "extra-1",
+      "extra-2",
+      "extra-3",
+    ]);
   });
 
   // T063: Unit test for validateWorkspace() reporting missing repo details
@@ -684,7 +711,7 @@ describe("User Story 4: cloneRepository()", () => {
 
     // Verify progress updates have expected structure
     if (progressUpdates.length > 0) {
-      const firstProgress = progressUpdates[0];
+      const [firstProgress] = progressUpdates;
       expect(firstProgress).toHaveProperty("phase");
       expect(firstProgress).toHaveProperty("percentage");
       expect(firstProgress).toHaveProperty("message");

@@ -16,14 +16,18 @@
     "import/no-nodejs-modules": "off",
     "import/max-dependencies": "off",
     "unicorn/no-null": "off",
+    "unicorn/no-await-expression-member": "off",
     "no-magic-numbers": "off",
     "no-inline-comments": "off",
+    "no-continue": "off",
+    "no-warning-comments": "off",
     "id-length": "off",
     "func-style": "off",
     "no-ternary": "off",
     "max-statements": "off",
     "max-lines": "off",
-    "max-lines-per-function": "off"
+    "max-lines-per-function": "off",
+    "max-classes-per-file": "off"
   },
   "ignorePatterns": [
     "node_modules/**",

@@ -28,7 +28,7 @@ export interface SetupCommandOptions {
 }
 
 const executeSetup = async (options: SetupCommandOptions): Promise<void> => {
-  let workspaceRoot: string;
+  let workspaceRoot = "";
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
@@ -37,14 +37,13 @@ const executeSetup = async (options: SetupCommandOptions): Promise<void> => {
     process.exit(USAGE_EXIT_CODE);
   }
 
-  let repositoriesResult;
-  try {
-    repositoriesResult = await loadWorkspaceRepositories(workspaceRoot);
-  } catch (error) {
-    logError("Failed to load workspace configuration");
-    logError(error instanceof Error ? error.message : String(error));
-    process.exit(USAGE_EXIT_CODE);
-  }
+  const repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch(
+    (error): never => {
+      logError("Failed to load workspace configuration");
+      logError(error instanceof Error ? error.message : String(error));
+      process.exit(USAGE_EXIT_CODE);
+    },
+  );
 
   const discovery = await discoverSetupTargets(repositoriesResult.repositories, options.only);
   if (discovery.missing.length > ZERO) {
@@ -56,13 +55,24 @@ const executeSetup = async (options: SetupCommandOptions): Promise<void> => {
   }
 
   const orderedTargets = orderSetupTargets(discovery.targets);
-  const executableTargets = orderedTargets.filter(isExecutableTarget);
+  const executableTargets = orderedTargets.filter((target) => isExecutableTarget(target));
   const timeoutMs = repositoriesResult.config.hooks?.timeout ?? DEFAULT_TIMEOUT_MS;
 
   const executions: SetupExecutionResult[] = [];
   let executionIndex = ZERO;
   for (const target of orderedTargets) {
-    if (!isExecutableTarget(target)) {
+    if (isExecutableTarget(target)) {
+      executionIndex += ONE;
+      info(formatProgress(target.name, executionIndex, executableTargets.length));
+      const result = await runSetupTarget(target, { timeoutMs });
+      executions.push(result);
+
+      if (options.verbose && result.output) {
+        console.log(result.output);
+      }
+
+      info(formatResultLine(result));
+    } else {
       const skippedResult: SetupExecutionResult = {
         detail: target.skipReason,
         durationMs: ZERO,
@@ -71,19 +81,7 @@ const executeSetup = async (options: SetupCommandOptions): Promise<void> => {
       };
       executions.push(skippedResult);
       info(formatResultLine(skippedResult));
-      continue;
     }
-
-    executionIndex += ONE;
-    info(formatProgress(target.name, executionIndex, executableTargets.length));
-    const result = await runSetupTarget(target, { timeoutMs });
-    executions.push(result);
-
-    if (options.verbose && result.output) {
-      console.log(result.output);
-    }
-
-    info(formatResultLine(result));
   }
 
   const filteredRun = Boolean(options.only && options.only.length > ZERO);
@@ -104,7 +102,7 @@ export function createCommand(): Command {
     .option(
       "--only <repo>",
       "Only include a specific repository (repeatable)",
-      (value, previous: string[] = []) => previous.concat(value),
+      (value, previous: string[] = []) => [...previous, value],
     )
     .option("-v, --verbose", "Show full setup script output")
     .action(async (options: SetupCommandOptions) => {

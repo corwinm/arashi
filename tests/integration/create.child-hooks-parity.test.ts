@@ -17,11 +17,12 @@ afterEach(async () => {
 });
 
 function extractHookOutcomeLines(output: string): string[] {
-  return output
+  const lines = output
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.startsWith("-") && line.includes("->"))
-    .toSorted();
+    .filter((line) => line.startsWith("-") && line.includes("->"));
+  lines.sort();
+  return lines;
 }
 
 describe("create command hook parity between root and child invocation", () => {
@@ -33,7 +34,7 @@ describe("create command hook parity between root and child invocation", () => {
         workspace.hookRootPath,
         "post-create",
         repoName,
-        'echo "${ARASHI_HOOK_NAME}" >> "${ARASHI_WORKTREE_PATH}/parity-hook.log"',
+        `echo "\${ARASHI_HOOK_NAME}" >> "\${ARASHI_WORKTREE_PATH}/parity-hook.log"`,
       );
     }
 

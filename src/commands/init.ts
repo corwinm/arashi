@@ -218,6 +218,22 @@ const logDryRun = (action: string, details: string): void => {
   console.log(`[DRY RUN] ${action}: ${details}`);
 };
 
+const collectDiscoveredRepos = (
+  discoveredRepos: Record<string, RepoConfig>,
+  options: InitOptions,
+  repositories: Awaited<ReturnType<typeof discoverRepositories>>["repositories"],
+): void => {
+  for (const repo of repositories) {
+    if (options.verbose) {
+      logVerbose(`  - ${repo.name} (${repo.defaultBranch})`, options);
+    }
+
+    discoveredRepos[repo.name] = {
+      path: repo.path,
+    };
+  }
+};
+
 // ============================================================================
 // Hook Templates
 // ============================================================================
@@ -391,23 +407,21 @@ const writeHookTemplates = async (hooksDir: string): Promise<void> => {
   for (const template of HOOK_TEMPLATES) {
     const templatePath = join(hooksDir, template.filename);
 
-    if (await fileExists(templatePath)) {
-      continue;
+    if (!(await fileExists(templatePath))) {
+      await writeTextFile(templatePath, template.content);
+
+      addOperation({
+        path: templatePath,
+        rollback: async () => {
+          const file = Bun.file(templatePath);
+          if (await file.exists()) {
+            await Bun.write(templatePath, "");
+            await removeDir(templatePath);
+          }
+        },
+        type: "WRITE_FILE",
+      });
     }
-
-    await writeTextFile(templatePath, template.content);
-
-    addOperation({
-      path: templatePath,
-      rollback: async () => {
-        const file = Bun.file(templatePath);
-        if (await file.exists()) {
-          await Bun.write(templatePath, "");
-          await removeDir(templatePath);
-        }
-      },
-      type: "WRITE_FILE",
-    });
   }
 };
 
@@ -471,7 +485,7 @@ const updateGitignore = async (
   const patterns = getManagedGitignorePatterns(reposDir, worktreesDir);
 
   let content = "";
-  let originalContent: string | undefined;
+  let originalContent: string | undefined = undefined;
 
   if (await fileExists(gitignorePath)) {
     originalContent = await readTextFile(gitignorePath);
@@ -494,16 +508,7 @@ const updateGitignore = async (
 
   await writeTextFile(gitignorePath, content);
 
-  if (originalContent !== undefined) {
-    addOperation({
-      originalContent,
-      path: gitignorePath,
-      rollback: async () => {
-        await writeTextFile(gitignorePath, originalContent);
-      },
-      type: "MODIFY_FILE",
-    });
-  } else {
+  if (originalContent === undefined) {
     addOperation({
       path: gitignorePath,
       rollback: async () => {
@@ -514,6 +519,15 @@ const updateGitignore = async (
         }
       },
       type: "WRITE_FILE",
+    });
+  } else {
+    addOperation({
+      originalContent,
+      path: gitignorePath,
+      rollback: async () => {
+        await writeTextFile(gitignorePath, originalContent);
+      },
+      type: "MODIFY_FILE",
     });
   }
 };
@@ -746,37 +760,26 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
     let discoveredCount = 0;
     const discoveredRepos: Record<string, RepoConfig> = {};
 
-    if (!options.noDiscover) {
-      if (options.dryRun) {
-        logDryRun("DISCOVER", `Scan ${reposDir} for git repositories`);
-        discoveredCount = 0; // Can't discover in dry-run mode
-      } else {
-        logVerbose(`Discovering repositories in: ${reposDir}`, options);
-        try {
-          const discoveryResult = await discoverRepositories(reposDir);
-          discoveredCount = discoveryResult.repositories.length;
-          logVerbose(`✓ Found ${discoveredCount} repositories`, options);
-
-          // Convert to config format
-          for (const repo of discoveryResult.repositories) {
-            if (options.verbose) {
-              logVerbose(`  - ${repo.name} (${repo.defaultBranch})`, options);
-            }
-            discoveredRepos[repo.name] = {
-              path: repo.path,
-            };
-          }
-        } catch (error) {
-          await executeRollback();
-          return {
-            error: `Repository discovery failed: ${(error as Error).message}`,
-            exitCode: ExitCode.DISCOVERY_FAILED,
-            success: false,
-          };
-        }
-      }
-    } else {
+    if (options.noDiscover) {
       logVerbose("Skipping repository discovery (--no-discover)", options);
+    } else if (options.dryRun) {
+      logDryRun("DISCOVER", `Scan ${reposDir} for git repositories`);
+      discoveredCount = 0; // Can't discover in dry-run mode
+    } else {
+      logVerbose(`Discovering repositories in: ${reposDir}`, options);
+      try {
+        const discoveryResult = await discoverRepositories(reposDir);
+        discoveredCount = discoveryResult.repositories.length;
+        logVerbose(`✓ Found ${discoveredCount} repositories`, options);
+        collectDiscoveredRepos(discoveredRepos, options, discoveryResult.repositories);
+      } catch (error) {
+        await executeRollback();
+        return {
+          error: `Repository discovery failed: ${(error as Error).message}`,
+          exitCode: ExitCode.DISCOVERY_FAILED,
+          success: false,
+        };
+      }
     }
 
     // 10. Generate and write config
@@ -979,12 +982,12 @@ export function createCommand(): Command {
     .action(async (options: InitOptions & { discover?: boolean }) => {
       // Commander converts --no-discover to discover: false
       const normalizedOptions: InitOptions = {
-        reposDir: options.reposDir,
-        worktreesDir: options.worktreesDir,
+        dryRun: options.dryRun,
         force: options.force,
         noDiscover: options.discover === false, // --no-discover sets discover: false
-        dryRun: options.dryRun,
+        reposDir: options.reposDir,
         verbose: options.verbose,
+        worktreesDir: options.worktreesDir,
       };
 
       const result = await executeInit(normalizedOptions);

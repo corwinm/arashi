@@ -309,11 +309,9 @@ async function createRepositoryHook(
 }
 
 async function createGlobalHook(
-  homeRoot: string,
-  hookName: string,
-  scriptBody: string,
-  repositoryName?: string,
+  ...args: [homeRoot: string, hookName: string, scriptBody: string, repositoryName?: string]
 ): Promise<void> {
+  const [homeRoot, hookName, scriptBody, repositoryName] = args;
   const baseDir = repositoryName
     ? join(homeRoot, ".arashi", "hooks", repositoryName)
     : join(homeRoot, ".arashi", "hooks");

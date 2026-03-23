@@ -80,6 +80,31 @@ const describeConflictLocation = (existsLocally: boolean, existsRemotely: boolea
   return "remotely";
 };
 
+const fallbackConfig = (): ArashiConfig => ({
+  repos: {},
+  reposDir: "./repos",
+  version: "1.0.0",
+});
+
+const loadResolvedConfig = async (
+  mainRepoPath: string,
+  resolvedConfig?: ArashiConfig,
+): Promise<ArashiConfig> => {
+  if (resolvedConfig) {
+    return resolvedConfig;
+  }
+
+  try {
+    return await loadConfig(mainRepoPath);
+  } catch (error) {
+    if (error instanceof ConfigNotFoundError) {
+      return fallbackConfig();
+    }
+
+    throw error;
+  }
+};
+
 // ============================================================================
 // Core Types (T005)
 // ============================================================================
@@ -393,6 +418,58 @@ export interface HookExecutionContext {
   timeout: number;
 }
 
+interface GitOperationErrorOptions {
+  message: string;
+  operation: string;
+  repository: Repository;
+  originalError: Error;
+}
+
+interface HookExecutionErrorOptions {
+  message: string;
+  hookType: HookType;
+  repository: Repository;
+  exitCode: number;
+  stderr: string;
+}
+
+interface CalculateWorktreePathOptions {
+  repo: Repository;
+  branchName: string;
+  config: ArashiConfig;
+  knownType?: RepositoryTypeInfo;
+}
+
+type CalculateWorktreePathArgs =
+  | [repo: Repository, branchName: string, config: ArashiConfig, knownType?: RepositoryTypeInfo]
+  | [options: CalculateWorktreePathOptions];
+
+interface BuildDryRunOutcomeOptions {
+  branchName: string;
+  repositories: Repository[];
+  conflictCheck: ConflictCheckResult;
+  options: NormalizedWorktreeOptions;
+  config: ArashiConfig;
+}
+
+interface ProcessRepositoryOptions {
+  repo: Repository;
+  branchName: string;
+  operationLog: OperationLog;
+  options: NormalizedWorktreeOptions;
+  config: ArashiConfig;
+  mainRepoPath: string;
+  conflicts?: BranchConflict[];
+  strategy?: ConflictResolutionStrategy | null;
+}
+
+interface ShouldReuseBranchOptions {
+  repo: Repository;
+  branchName: string;
+  conflicts: BranchConflict[];
+  strategy: ConflictResolutionStrategy;
+}
+
 // ============================================================================
 // Error Classes (T012)
 // ============================================================================
@@ -415,13 +492,15 @@ export class RepositoryValidationError extends Error {
  * Error thrown when git operation fails
  */
 export class GitOperationError extends Error {
-  constructor(
-    message: string,
-    public readonly operation: string,
-    public readonly repository: Repository,
-    public readonly originalError: Error,
-  ) {
-    super(message);
+  public readonly operation: string;
+  public readonly repository: Repository;
+  public readonly originalError: Error;
+
+  constructor(options: GitOperationErrorOptions) {
+    super(options.message);
+    this.operation = options.operation;
+    this.repository = options.repository;
+    this.originalError = options.originalError;
     this.name = "GitOperationError";
   }
 }
@@ -430,14 +509,17 @@ export class GitOperationError extends Error {
  * Error thrown when hook execution fails
  */
 export class HookExecutionError extends Error {
-  constructor(
-    message: string,
-    public readonly hookType: HookType,
-    public readonly repository: Repository,
-    public readonly exitCode: number,
-    public readonly stderr: string,
-  ) {
-    super(message);
+  public readonly hookType: HookType;
+  public readonly repository: Repository;
+  public readonly exitCode: number;
+  public readonly stderr: string;
+
+  constructor(options: HookExecutionErrorOptions) {
+    super(options.message);
+    this.hookType = options.hookType;
+    this.repository = options.repository;
+    this.exitCode = options.exitCode;
+    this.stderr = options.stderr;
     this.name = "HookExecutionError";
   }
 }
@@ -534,13 +616,13 @@ const runHookIfPresent = async (options: {
 
   const validation = await validateHook(hookPath);
   if (!validation.valid) {
-    const error = new HookExecutionError(
-      `Hook validation failed for ${options.hookName}: ${validation.error}`,
-      options.hookType,
-      options.repository,
-      LOCK_VALIDATION_EXIT_CODE,
-      validation.error ?? "Hook validation failed",
-    );
+    const error = new HookExecutionError({
+      exitCode: LOCK_VALIDATION_EXIT_CODE,
+      hookType: options.hookType,
+      message: `Hook validation failed for ${options.hookName}: ${validation.error}`,
+      repository: options.repository,
+      stderr: validation.error ?? "Hook validation failed",
+    });
     return {
       error,
       outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
@@ -565,13 +647,13 @@ const runHookIfPresent = async (options: {
   const mapping = mapHookExecutionResult(result);
   if (mapping.hookStatus === "failure") {
     return {
-      error: new HookExecutionError(
-        `Hook execution failed for ${options.hookName}`,
-        options.hookType,
-        options.repository,
-        result.exitCode,
-        result.stderr,
-      ),
+      error: new HookExecutionError({
+        exitCode: result.exitCode,
+        hookType: options.hookType,
+        message: `Hook execution failed for ${options.hookName}`,
+        repository: options.repository,
+        stderr: result.stderr,
+      }),
       outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
         ...mapping,
         message: result.stderr.trim().length > ZERO ? result.stderr.trim() : mapping.message,
@@ -683,17 +765,37 @@ export const calculateChildWorktreePath = (
  * @param knownType - Optional pre-computed repository type (optimization)
  * @returns Worktree path result with metadata
  */
+const normalizeCalculateWorktreePathArgs = (
+  ...args: CalculateWorktreePathArgs
+): CalculateWorktreePathOptions => {
+  const [firstArg, branchName, config, knownType] = args;
+  if (
+    typeof firstArg === "object" &&
+    firstArg !== null &&
+    "repo" in firstArg &&
+    "branchName" in firstArg &&
+    "config" in firstArg
+  ) {
+    return firstArg as CalculateWorktreePathOptions;
+  }
+
+  return {
+    branchName: branchName as string,
+    config: config as ArashiConfig,
+    knownType,
+    repo: firstArg as Repository,
+  };
+};
+
 export const calculateWorktreePath = async (
-  repo: Repository,
-  branchName: string,
-  config: ArashiConfig,
-  knownType?: RepositoryTypeInfo,
+  ...args: CalculateWorktreePathArgs
 ): Promise<{
   path: string;
   repositoryType: RepositoryType;
   strategy: "sibling" | "nested";
   parentWorktreePath?: string;
 }> => {
+  const { branchName, config, knownType, repo } = normalizeCalculateWorktreePathArgs(...args);
   // Detect repository type (or use provided type)
   let typeInfo = knownType;
   if (!typeInfo) {
@@ -983,13 +1085,13 @@ export const isValidBranchName = (branchName: string): boolean => {
 // Main Orchestration Functions (T018-T024)
 // ============================================================================
 
-const buildDryRunOutcome = async (
-  branchName: string,
-  repositories: Repository[],
-  conflictCheck: ConflictCheckResult,
-  options: NormalizedWorktreeOptions,
-  config: ArashiConfig,
-): Promise<DryRunOutcome> => {
+const buildDryRunOutcome = async ({
+  branchName,
+  config,
+  conflictCheck,
+  options,
+  repositories,
+}: BuildDryRunOutcomeOptions): Promise<DryRunOutcome> => {
   const plannedWorktrees: PlannedWorktree[] = [];
   const conflicts: DryRunConflict[] = [];
   const conflictByRepo = new Map<string, BranchConflict>();
@@ -1003,7 +1105,7 @@ const buildDryRunOutcome = async (
     let planStatus: DryRunPlanStatus = "actionable";
 
     try {
-      const pathResult = await calculateWorktreePath(repo, branchName, config);
+      const pathResult = await calculateWorktreePath({ branchName, config, repo });
       worktreePath = pathResult.path;
 
       if (existsSync(worktreePath)) {
@@ -1161,24 +1263,7 @@ export const createCoordinatedWorktrees = async (
     }
 
     // 3. Load canonical workspace configuration
-    let config: ArashiConfig;
-    if (options.resolvedConfig) {
-      config = options.resolvedConfig;
-    } else {
-      try {
-        config = await loadConfig(mainRepoPath);
-      } catch (error) {
-        if (!(error instanceof ConfigNotFoundError)) {
-          throw error;
-        }
-
-        config = {
-          repos: {},
-          reposDir: "./repos",
-          version: "1.0.0",
-        };
-      }
-    }
+    const config = await loadResolvedConfig(mainRepoPath, options.resolvedConfig);
 
     // 4. T039: Pre-flight conflict check
     const conflictCheck = await checkBranchConflicts(branchName, repositories);
@@ -1186,13 +1271,13 @@ export const createCoordinatedWorktrees = async (
     let conflictsToHandle: BranchConflict[] = [];
 
     if (opts.dryRun) {
-      const dryRunOutcome = await buildDryRunOutcome(
+      const dryRunOutcome = await buildDryRunOutcome({
         branchName,
-        repositories,
-        conflictCheck,
-        opts,
         config,
-      );
+        conflictCheck,
+        options: opts,
+        repositories,
+      });
 
       let errorSummary: string | null = NULL_SUMMARY;
       if (dryRunOutcome.overallStatus === "blocked") {
@@ -1244,16 +1329,16 @@ export const createCoordinatedWorktrees = async (
 
     // 6. Process each repository sequentially (T019-T023, T041)
     for (const repo of repositories) {
-      const repoResult = await processRepository(
-        repo,
+      const repoResult = await processRepository({
         branchName,
-        operationLog,
-        opts,
         config,
+        conflicts: conflictsToHandle,
         mainRepoPath,
-        conflictsToHandle,
-        resolvedStrategy,
-      );
+        operationLog,
+        options: opts,
+        repo,
+        strategy: resolvedStrategy,
+      });
       results.push(repoResult);
 
       // If repository processing failed, trigger rollback
@@ -1389,16 +1474,16 @@ const resolveBranchStartPoint = async (
  * @param strategy - Resolved conflict strategy
  * @returns RepositoryResult with status and details
  */
-const processRepository = async (
-  repo: Repository,
-  branchName: string,
-  operationLog: OperationLog,
-  options: NormalizedWorktreeOptions,
-  config: ArashiConfig,
-  mainRepoPath: string,
-  conflicts: BranchConflict[] = [],
-  strategy: ConflictResolutionStrategy | null = NULL_CONFLICT_STRATEGY,
-): Promise<RepositoryResult> => {
+const processRepository = async ({
+  branchName,
+  config,
+  conflicts = [],
+  mainRepoPath,
+  operationLog,
+  options,
+  repo,
+  strategy = NULL_CONFLICT_STRATEGY,
+}: ProcessRepositoryOptions): Promise<RepositoryResult> => {
   const startTime = Date.now();
   const hookOutcomes: HookOutcomeRecord[] = [];
 
@@ -1414,9 +1499,18 @@ const processRepository = async (
 
   try {
     // T041: Check if we should reuse existing branch
-    const shouldReuse = shouldReuseBranch(repo, branchName, conflicts, strategy || "ABORT");
+    const shouldReuse = shouldReuseBranch({
+      branchName,
+      conflicts,
+      repo,
+      strategy: strategy || "ABORT",
+    });
 
-    if (!shouldReuse) {
+    if (shouldReuse) {
+      if (spinnerInstance) {
+        spinnerInstance.text = `Reusing existing branch '${branchName}' in ${repo.name}...`;
+      }
+    } else {
       // T020: Create branch from default branch
       if (spinnerInstance) {
         spinnerInstance.text = `Creating branch '${branchName}' in ${repo.name}...`;
@@ -1429,12 +1523,12 @@ const processRepository = async (
         if (spinnerInstance) {
           spinnerInstance.fail(`Failed to create branch '${branchName}' in ${repo.name}`);
         }
-        throw new GitOperationError(
-          `Failed to create branch '${branchName}' in ${repo.name}`,
-          "branch_create",
-          repo,
-          error as Error,
-        );
+        throw new GitOperationError({
+          message: `Failed to create branch '${branchName}' in ${repo.name}`,
+          operation: "branch_create",
+          originalError: error as Error,
+          repository: repo,
+        });
       }
 
       // T022: Log branch creation for rollback
@@ -1446,10 +1540,6 @@ const processRepository = async (
         timestamp: Date.now(),
         type: "branch_created",
       });
-    } else {
-      if (spinnerInstance) {
-        spinnerInstance.text = `Reusing existing branch '${branchName}' in ${repo.name}...`;
-      }
     }
 
     // T021: Create worktree for the branch (whether new or existing)
@@ -1457,7 +1547,7 @@ const processRepository = async (
       spinnerInstance.text = `Creating worktree for ${repo.name}...`;
     }
 
-    const pathResult = await calculateWorktreePath(repo, branchName, config);
+    const pathResult = await calculateWorktreePath({ branchName, config, repo });
     const worktreePath = pathResult.path;
     try {
       await exec(["worktree", "add", worktreePath, branchName], repo.path);
@@ -1465,12 +1555,12 @@ const processRepository = async (
       if (spinnerInstance) {
         spinnerInstance.fail(`Failed to create worktree in ${repo.name}`);
       }
-      throw new GitOperationError(
-        `Failed to create worktree in ${repo.name}`,
-        "worktree_create",
-        repo,
-        error as Error,
-      );
+      throw new GitOperationError({
+        message: `Failed to create worktree in ${repo.name}`,
+        operation: "worktree_create",
+        originalError: error as Error,
+        repository: repo,
+      });
     }
 
     // T022: Log worktree creation for rollback
@@ -1633,10 +1723,8 @@ export const checkBranchConflicts = async (
       if (result.conflict) {
         conflicts.push(result.conflict);
       }
-    } else {
-      if (result.repo) {
-        nonConflicting.push(result.repo);
-      }
+    } else if (result.repo) {
+      nonConflicting.push(result.repo);
     }
   }
 
@@ -1729,12 +1817,7 @@ export const resolveConflicts = async (
  * Determine if we should reuse an existing branch (T041)
  * Helper function called during repository processing
  */
-const shouldReuseBranch = (
-  repo: Repository,
-  branchName: string,
-  conflicts: BranchConflict[],
-  strategy: ConflictResolutionStrategy,
-): boolean => {
+const shouldReuseBranch = ({ conflicts, repo, strategy }: ShouldReuseBranchOptions): boolean => {
   if (strategy !== "REUSE_EXISTING") {
     return false;
   }

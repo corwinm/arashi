@@ -98,11 +98,9 @@ async function createWorkspaceWithRepo(
 }
 
 async function createRemoteCommit(
-  remotePath: string,
-  baseDir: string,
-  name: string,
-  fileName: string,
+  ...args: [remotePath: string, baseDir: string, name: string, fileName: string]
 ): Promise<void> {
+  const [remotePath, baseDir, name, fileName] = args;
   const workdir = join(baseDir, name);
   await runGit(baseDir, ["clone", remotePath, workdir]);
   await runGit(workdir, ["fetch", "origin", "main"]);

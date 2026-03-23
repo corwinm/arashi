@@ -44,6 +44,13 @@ interface RepositoryFilter {
   selectedRepositories: Parameters<typeof createCoordinatedWorktrees>[1] | null;
 }
 
+interface ApplyPostCreateDefaultsOptions {
+  context: CreateInvocationContext;
+  defaults: ResolvedCreateDefaults;
+  deps: CreateCommandDependencies;
+  summary: OperationSummary;
+}
+
 const ZERO = 0;
 const ONE = 1;
 const TWO = 2;
@@ -280,12 +287,12 @@ const selectPrimaryCreateResult = (
   return primary ?? successfulResults[0] ?? null;
 };
 
-const applyPostCreateDefaults = async (
-  defaults: ResolvedCreateDefaults,
-  summary: OperationSummary,
-  context: CreateInvocationContext,
-  deps: CreateCommandDependencies,
-): Promise<void> => {
+const applyPostCreateDefaults = async ({
+  context,
+  defaults,
+  deps,
+  summary,
+}: ApplyPostCreateDefaultsOptions): Promise<void> => {
   if (!defaults.shouldSwitch) {
     return;
   }
@@ -419,19 +426,17 @@ export async function executeCreate(
   // 1. Resolve invocation context and load configuration
   const context = await resolveInvocationContext();
 
-  let loadedConfig: LoadedConfig;
-  try {
-    loadedConfig = await loadWorkspaceConfig(context.workspaceRoot, {
-      bareRepoPath: context.repositoryType === "bare" ? context.executionPath : undefined,
-    });
-  } catch (error) {
-    if (error instanceof ConfigNotFoundError) {
+  const loadedConfig = await loadWorkspaceConfig(context.workspaceRoot, {
+    bareRepoPath: context.repositoryType === "bare" ? context.executionPath : undefined,
+  }).catch((loadError): never => {
+    if (loadError instanceof ConfigNotFoundError) {
       throw new CreateSetupError(
         'Workspace configuration not found. Run "arashi init" from a checked-out worktree and retry.',
       );
     }
-    throw error;
-  }
+
+    throw loadError;
+  });
 
   const arashiConfig = loadedConfig.config;
 
@@ -485,9 +490,16 @@ export async function executeCreate(
   info(`Found ${allRepositories.length} ${repositoryLabel}`);
 
   // 4. Apply repository filter
+  let filterMode: RepositoryFilter["mode"] = "all";
+  if (options.interactive) {
+    filterMode = "interactive";
+  } else if (options.only) {
+    filterMode = "explicit";
+  }
+
   const filter: RepositoryFilter = {
     explicitList: options.only ? options.only.split(",").map((s) => s.trim()) : [],
-    mode: options.interactive ? "interactive" : options.only ? "explicit" : "all",
+    mode: filterMode,
     selectedRepositories: null,
   };
 
@@ -610,7 +622,7 @@ export async function executeCreate(
   }
 
   // Display warnings if any
-  const warnings = summary.repositoryResults.flatMap((r) => r.warnings);
+  const warnings = summary.repositoryResults.flatMap((result) => result.warnings);
   if (warnings.length > 0) {
     console.log("");
     warn("Warnings:");
@@ -619,7 +631,7 @@ export async function executeCreate(
     }
   }
 
-  await applyPostCreateDefaults(createDefaults, summary, context, deps);
+  await applyPostCreateDefaults({ context, defaults: createDefaults, deps, summary });
 
   console.log("");
   info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);

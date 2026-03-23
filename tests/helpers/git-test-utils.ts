@@ -140,7 +140,7 @@ export class GitTestRepo {
   /**
    * Create a file
    */
-  async addFile(filename: string, content: string = ""): Promise<this> {
+  async addFile(filename: string, content = ""): Promise<this> {
     await createFile(this.path, filename, content);
     return this;
   }

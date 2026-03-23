@@ -190,13 +190,11 @@ export async function executeClone(
       }
 
       const value = enteredUrl.value.trim();
-      if (!value) {
-        continue;
+      if (value) {
+        repository.config.gitUrl = value;
+        missingWithUrls.push(repository);
+        configUpdated = true;
       }
-
-      repository.config.gitUrl = value;
-      missingWithUrls.push(repository);
-      configUpdated = true;
     }
   }
 
@@ -269,36 +267,35 @@ export async function executeClone(
 
   for (const repository of selectedRepositories) {
     const rawGitUrl = repository.config.gitUrl;
-    if (!rawGitUrl) {
+    if (rawGitUrl) {
+      let cloneUrl = rawGitUrl;
+      if (preferredProtocol) {
+        cloneUrl = applyCloneProtocol(rawGitUrl, preferredProtocol);
+      }
+
+      const cloneSpinner = spinner(`Cloning ${repository.name}...`).start();
+
+      try {
+        await runClone(cloneUrl, repository.path);
+        cloneSpinner.succeed(`Cloned ${repository.name}`);
+        cloned.push(repository.name);
+
+        if (repository.config.gitUrl !== cloneUrl) {
+          repository.config.gitUrl = cloneUrl;
+          configUpdated = true;
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        cloneSpinner.fail(`Failed to clone ${repository.name}`);
+        failed.push({
+          name: repository.name,
+          reason,
+        });
+      }
+    } else {
       failed.push({
         name: repository.name,
         reason: "Missing gitUrl in configuration",
-      });
-      continue;
-    }
-
-    let cloneUrl = rawGitUrl;
-    if (preferredProtocol) {
-      cloneUrl = applyCloneProtocol(rawGitUrl, preferredProtocol);
-    }
-
-    const cloneSpinner = spinner(`Cloning ${repository.name}...`).start();
-
-    try {
-      await runClone(cloneUrl, repository.path);
-      cloneSpinner.succeed(`Cloned ${repository.name}`);
-      cloned.push(repository.name);
-
-      if (repository.config.gitUrl !== cloneUrl) {
-        repository.config.gitUrl = cloneUrl;
-        configUpdated = true;
-      }
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      cloneSpinner.fail(`Failed to clone ${repository.name}`);
-      failed.push({
-        name: repository.name,
-        reason,
       });
     }
   }
@@ -412,10 +409,6 @@ const reconcileUnmanagedRepositories = async (options: {
       return { cancelled: true, updatedConfig };
     }
 
-    if (action.value === "ignore") {
-      continue;
-    }
-
     if (action.value === "delete") {
       const confirmation = await options.confirm(
         `Delete unmanaged repository '${unmanagedRepository.name}' at ${unmanagedRepository.path}?`,
@@ -424,41 +417,39 @@ const reconcileUnmanagedRepositories = async (options: {
       if (confirmation.status === "cancelled") {
         return { cancelled: true, updatedConfig };
       }
-      if (!confirmation.value) {
-        continue;
+      if (confirmation.value) {
+        await options.deleteDirectory(unmanagedRepository.path);
+        info(`Deleted ${unmanagedRepository.name}`);
+      }
+    } else if (action.value !== "ignore") {
+      let gitUrl = await readOriginRemoteUrl(unmanagedRepository.path);
+      if (!gitUrl) {
+        const enteredUrl = await options.askInput(
+          `Enter git URL for '${unmanagedRepository.name}' (leave empty to skip):`,
+        );
+        if (enteredUrl.status === "cancelled") {
+          return { cancelled: true, updatedConfig };
+        }
+
+        const value = enteredUrl.value.trim();
+        if (value.length === ZERO) {
+          warn(`Skipped adding ${unmanagedRepository.name}: no git URL provided.`);
+        } else {
+          gitUrl = value;
+        }
       }
 
-      await options.deleteDirectory(unmanagedRepository.path);
-      info(`Deleted ${unmanagedRepository.name}`);
-      continue;
+      if (gitUrl) {
+        const repoConfig: Config["repos"][string] = {
+          gitUrl,
+          path: join(".", options.config.reposDir, unmanagedRepository.name),
+        };
+
+        options.config.repos[unmanagedRepository.name] = repoConfig;
+        updatedConfig = true;
+        info(`Added ${unmanagedRepository.name} to configuration.`);
+      }
     }
-
-    let gitUrl = await readOriginRemoteUrl(unmanagedRepository.path);
-    if (!gitUrl) {
-      const enteredUrl = await options.askInput(
-        `Enter git URL for '${unmanagedRepository.name}' (leave empty to skip):`,
-      );
-      if (enteredUrl.status === "cancelled") {
-        return { cancelled: true, updatedConfig };
-      }
-
-      const value = enteredUrl.value.trim();
-      if (value.length === ZERO) {
-        warn(`Skipped adding ${unmanagedRepository.name}: no git URL provided.`);
-        continue;
-      }
-
-      gitUrl = value;
-    }
-
-    const repoConfig: Config["repos"][string] = {
-      gitUrl,
-      path: join(".", options.config.reposDir, unmanagedRepository.name),
-    };
-
-    options.config.repos[unmanagedRepository.name] = repoConfig;
-    updatedConfig = true;
-    info(`Added ${unmanagedRepository.name} to configuration.`);
   }
 
   return { cancelled: false, updatedConfig };

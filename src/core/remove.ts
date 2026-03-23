@@ -170,15 +170,15 @@ export const groupWorktreesByParent = (entries: WorktreeEntry[]): WorktreeGroupi
   for (const entry of entries) {
     if (entry.parentPath) {
       const parent = entryByPath.get(normalizePath(entry.parentPath));
-      if (!parent) {
-        orphans.push(entry);
-      } else {
+      if (parent) {
         let group = groupByParent.get(normalizePath(parent.path));
         if (!group) {
           group = { children: [], parent };
           groupByParent.set(normalizePath(parent.path), group);
         }
         group.children.push(entry);
+      } else {
+        orphans.push(entry);
       }
     }
   }
