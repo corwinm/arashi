@@ -1,3 +1,9 @@
+## [1.9.0](https://github.com/corwinm/arashi/compare/v1.8.2...v1.9.0) (2026-03-30)
+
+### Features
+
+- add IDE-aware switch launch overrides ([#48](https://github.com/corwinm/arashi/issues/48)) ([57afa87](https://github.com/corwinm/arashi/commit/57afa878bb957e73690fef70d0bf6eb6068446f8))
+
 ## [1.8.2](https://github.com/corwinm/arashi/compare/v1.8.1...v1.8.2) (2026-02-24)
 
 ### Bug Fixes
