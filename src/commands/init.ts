@@ -28,14 +28,18 @@ import {
   removeDir,
   writeTextFile,
 } from "../lib/filesystem.ts";
+import { confirm, input } from "../lib/prompts.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
-import { join, resolve } from "path";
+import { isAbsolute, join, relative, resolve } from "path";
 import { Command } from "commander";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec as gitExec } from "../lib/git.ts";
 
 type Config = Parameters<typeof saveConfig>[1];
 type RepoConfig = Config["repos"][string];
+type PromptOutcome<T> =
+  | { status: "ok"; value: T }
+  | { status: "cancelled"; reason: "exit" | "abort" };
 
 const ZERO = 0;
 const JSON_INDENT = 2;
@@ -87,6 +91,26 @@ interface InitResult {
 
   /** Exit code */
   exitCode: number;
+
+  /** Resolved workspace root used for initialization */
+  workspaceRoot?: string;
+}
+
+interface InitDependencies {
+  /** Override current working directory for tests */
+  cwd?: string;
+
+  /** Override git command execution for tests */
+  gitExec?: typeof gitExec;
+
+  /** Override text prompt implementation for tests */
+  promptInput?: (message: string, defaultValue?: string) => Promise<PromptOutcome<string>>;
+
+  /** Override confirmation prompt implementation for tests */
+  promptConfirm?: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
+
+  /** Override stdin tty detection for tests */
+  stdinIsTTY?: boolean;
 }
 
 interface HookTemplate {
@@ -113,11 +137,18 @@ interface Operation {
   rollback: () => Promise<void>;
 }
 
+interface InitResolution {
+  bootstrapTarget?: string;
+  bootstrapped: boolean;
+  workspaceRoot: string;
+}
+
 // ============================================================================
 // Exit Codes
 // ============================================================================
 
 const ExitCode = {
+  CANCELLED: 8,
   CONFIG_EXISTS: 2,
   CONFIG_WRITE_FAILED: 6,
   DISCOVERY_FAILED: 7,
@@ -168,18 +199,6 @@ const executeRollback = async (): Promise<void> => {
 // ============================================================================
 
 /**
- * Check if current directory is a git repository
- */
-const isGitRepository = async (cwd: string): Promise<boolean> => {
-  try {
-    await gitExec(["rev-parse", "--git-dir"], cwd);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/**
  * Validate path format
  */
 const isValidPath = (path: string): boolean => {
@@ -196,6 +215,142 @@ const isValidPath = (path: string): boolean => {
   }
 
   return true;
+};
+
+const isSupportedBootstrapTarget = (value: string): boolean => {
+  if (!value || value.trim() === "") {
+    return false;
+  }
+
+  const target = value.trim();
+  if (target === ".") {
+    return true;
+  }
+
+  if (isAbsolute(target) || target === ".." || target.includes("/") || target.includes("\\")) {
+    return false;
+  }
+
+  return !target.includes("\0") && target.length <= PATH_MAX_LENGTH;
+};
+
+const getInteractiveAvailability = (deps: InitDependencies): boolean => {
+  if (deps.stdinIsTTY !== undefined) {
+    return deps.stdinIsTTY;
+  }
+
+  return Boolean(process.stdin.isTTY);
+};
+
+const createCancelledResult = (cwd: string): InitResult => ({
+  error: "Initialization cancelled.",
+  exitCode: ExitCode.CANCELLED,
+  success: false,
+  workspaceRoot: cwd,
+});
+
+const resolveInitRoot = async (
+  cwd: string,
+  options: InitOptions,
+  deps: InitDependencies,
+): Promise<InitResolution | InitResult> => {
+  const runGit = deps.gitExec ?? gitExec;
+  const promptConfirm = deps.promptConfirm ?? confirm;
+  const promptInput = deps.promptInput ?? input;
+
+  logVerbose("Checking if current directory is a git repository...", options);
+  try {
+    await runGit(["rev-parse", "--git-dir"], cwd);
+    logVerbose(`✓ Confirmed git repository at: ${cwd}`, options);
+    return {
+      bootstrapped: false,
+      workspaceRoot: cwd,
+    };
+  } catch {
+    logVerbose(`Current directory is not a git repository: ${cwd}`, options);
+  }
+
+  if (!getInteractiveAvailability(deps)) {
+    return {
+      error: "Not a git repository",
+      exitCode: ExitCode.NOT_GIT_REPOSITORY,
+      success: false,
+      workspaceRoot: cwd,
+    };
+  }
+
+  const shouldCreateRepo = await promptConfirm(
+    "This directory is not a git repository. Create one here or in a child directory?",
+    true,
+  );
+  if (shouldCreateRepo.status === "cancelled") {
+    return createCancelledResult(cwd);
+  }
+
+  if (!shouldCreateRepo.value) {
+    return createCancelledResult(cwd);
+  }
+
+  const targetOutcome = await promptInput(
+    "Repository target ('.' for current directory or a child directory name)",
+    ".",
+  );
+  if (targetOutcome.status === "cancelled") {
+    return createCancelledResult(cwd);
+  }
+
+  const bootstrapTarget = targetOutcome.value.trim();
+  if (!isSupportedBootstrapTarget(bootstrapTarget)) {
+    return {
+      error: `Invalid bootstrap target: ${bootstrapTarget}`,
+      exitCode: ExitCode.INVALID_PATH,
+      success: false,
+      workspaceRoot: cwd,
+    };
+  }
+
+  const workspaceRoot = bootstrapTarget === "." ? cwd : resolve(cwd, bootstrapTarget);
+
+  if (options.dryRun) {
+    if (bootstrapTarget !== ".") {
+      logDryRun("CREATE_DIR", workspaceRoot);
+    }
+    logDryRun("GIT_INIT", workspaceRoot);
+  } else {
+    logVerbose(`Bootstrapping git repository at: ${workspaceRoot}`, options);
+
+    const gitDir = join(workspaceRoot, ".git");
+    const gitDirExisted = await fileExists(gitDir);
+
+    if (bootstrapTarget !== "." && !(await fileExists(workspaceRoot))) {
+      await ensureDir(workspaceRoot);
+      addOperation({
+        path: workspaceRoot,
+        rollback: async () => {
+          await removeDir(workspaceRoot);
+        },
+        type: "CREATE_DIR",
+      });
+    }
+
+    await runGit(["init"], workspaceRoot);
+    if (!gitDirExisted) {
+      addOperation({
+        path: gitDir,
+        rollback: async () => {
+          await removeDir(gitDir);
+        },
+        type: "CREATE_DIR",
+      });
+    }
+    logVerbose(`✓ Bootstrapped git repository at: ${workspaceRoot}`, options);
+  }
+
+  return {
+    bootstrapTarget,
+    bootstrapped: true,
+    workspaceRoot,
+  };
 };
 
 // ============================================================================
@@ -539,9 +694,14 @@ const updateGitignore = async (
 /**
  * Execute init command
  */
-const executeInit = async (options: InitOptions): Promise<InitResult> => {
+export const executeInit = async (
+  options: InitOptions,
+  deps: InitDependencies = {},
+): Promise<InitResult> => {
   const startTime = Date.now();
-  const cwd = process.cwd();
+  const cwd = deps.cwd ?? process.cwd();
+
+  operations.length = ZERO;
 
   // Dry-run header
   if (options.dryRun) {
@@ -550,31 +710,28 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
   }
 
   try {
-    // 1. Validate we're in a git repository
-    logVerbose("Checking if current directory is a git repository...", options);
-    if (!(await isGitRepository(cwd))) {
-      return {
-        error: "Not a git repository",
-        exitCode: ExitCode.NOT_GIT_REPOSITORY,
-        success: false,
-      };
+    const initRoot = await resolveInitRoot(cwd, options, deps);
+    if ("success" in initRoot) {
+      return initRoot;
     }
-    logVerbose(`✓ Confirmed git repository at: ${cwd}`, options);
+
+    const { workspaceRoot } = initRoot;
 
     // 2. Check if already initialized (without --force)
     logVerbose("Checking for existing Arashi configuration...", options);
-    if (!options.force && (await configExists(cwd))) {
-      const existingConfigPath = getConfigPath(cwd);
+    if (!options.force && (await configExists(workspaceRoot))) {
+      const existingConfigPath = getConfigPath(workspaceRoot);
       return {
         error: `Arashi configuration already exists at: ${existingConfigPath}`,
         exitCode: ExitCode.CONFIG_EXISTS,
         success: false,
+        workspaceRoot,
       };
     }
 
     // 3. Backup existing config if --force is used
-    if (options.force && (await configExists(cwd))) {
-      const existingConfigPath = getConfigPath(cwd);
+    if (options.force && (await configExists(workspaceRoot))) {
+      const existingConfigPath = getConfigPath(workspaceRoot);
       const timestamp = new Date()
         .toISOString()
         .replaceAll(/[:.]/g, "-")
@@ -603,22 +760,32 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
     logVerbose(`Validating repos directory path: ${reposDir}`, options);
 
     if (!isValidPath(reposDir)) {
+      if (initRoot.bootstrapped && !options.dryRun) {
+        await executeRollback();
+      }
+
       return {
         error: `Invalid repos directory path: ${reposDir}`,
         exitCode: ExitCode.INVALID_PATH,
         success: false,
+        workspaceRoot,
       };
     }
 
-    const absoluteReposPath = resolve(cwd, reposDir);
+    const absoluteReposPath = resolve(workspaceRoot, reposDir);
     logVerbose(`Resolved repos directory: ${absoluteReposPath}`, options);
 
     const rawWorktreesDir = options.worktreesDir;
     if (rawWorktreesDir !== undefined && !isValidPath(rawWorktreesDir)) {
+      if (initRoot.bootstrapped && !options.dryRun) {
+        await executeRollback();
+      }
+
       return {
         error: `Invalid worktrees directory path: ${rawWorktreesDir}`,
         exitCode: ExitCode.INVALID_PATH,
         success: false,
+        workspaceRoot,
       };
     }
 
@@ -627,19 +794,24 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
       worktreesDir = normalizeWorktreesDir(rawWorktreesDir ?? DEFAULT_WORKTREES_DIR);
     } catch (error) {
       if (error instanceof WorktreeLocationValidationError) {
+        if (initRoot.bootstrapped && !options.dryRun) {
+          await executeRollback();
+        }
+
         return {
           error: `Invalid worktrees directory path: ${rawWorktreesDir ?? DEFAULT_WORKTREES_DIR} (${error.message})`,
           exitCode: ExitCode.INVALID_PATH,
           success: false,
+          workspaceRoot,
         };
       }
 
       throw error;
     }
-    logVerbose(`Resolved worktrees directory: ${resolve(cwd, worktreesDir)}`, options);
+    logVerbose(`Resolved worktrees directory: ${resolve(workspaceRoot, worktreesDir)}`, options);
 
     // 5. Create .arashi directory
-    const arashiDir = join(cwd, ".arashi");
+    const arashiDir = join(workspaceRoot, ".arashi");
 
     if (options.dryRun) {
       logDryRun("CREATE_DIR", arashiDir);
@@ -661,6 +833,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
             error: `Permission denied creating directory: ${arashiDir}`,
             exitCode: ExitCode.PERMISSION_DENIED,
             success: false,
+            workspaceRoot,
           };
         }
         throw error;
@@ -691,6 +864,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
             error: `Permission denied creating hooks directory: ${hooksDir}`,
             exitCode: ExitCode.PERMISSION_DENIED,
             success: false,
+            workspaceRoot,
           };
         }
         throw error;
@@ -716,6 +890,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
             exitCode:
               error instanceof DiskFullError ? ExitCode.DISK_FULL : ExitCode.PERMISSION_DENIED,
             success: false,
+            workspaceRoot,
           };
         }
         throw error;
@@ -744,12 +919,14 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
             error: `Permission denied creating repos directory: ${absoluteReposPath}`,
             exitCode: ExitCode.PERMISSION_DENIED,
             success: false,
+            workspaceRoot,
           };
         } else if (error instanceof DiskFullError) {
           return {
             error: `Insufficient disk space creating repos directory: ${absoluteReposPath}`,
             exitCode: ExitCode.DISK_FULL,
             success: false,
+            workspaceRoot,
           };
         }
         throw error;
@@ -768,7 +945,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
     } else {
       logVerbose(`Discovering repositories in: ${reposDir}`, options);
       try {
-        const discoveryResult = await discoverRepositories(reposDir);
+        const discoveryResult = await discoverRepositories(absoluteReposPath);
         discoveredCount = discoveryResult.repositories.length;
         logVerbose(`✓ Found ${discoveredCount} repositories`, options);
         collectDiscoveredRepos(discoveredRepos, options, discoveryResult.repositories);
@@ -778,6 +955,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
           error: `Repository discovery failed: ${(error as Error).message}`,
           exitCode: ExitCode.DISCOVERY_FAILED,
           success: false,
+          workspaceRoot,
         };
       }
     }
@@ -791,7 +969,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
       worktreesDir,
     };
 
-    const configPath = getConfigPath(cwd);
+    const configPath = getConfigPath(workspaceRoot);
     if (options.dryRun) {
       logDryRun("WRITE_FILE", `${configPath}`);
       console.log("\nConfiguration preview:");
@@ -799,7 +977,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
     } else {
       logVerbose("Writing configuration file...", options);
       try {
-        await saveConfig(cwd, arashiConfig);
+        await saveConfig(workspaceRoot, arashiConfig);
 
         addOperation({
           path: configPath,
@@ -821,6 +999,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
             exitCode:
               error instanceof DiskFullError ? ExitCode.DISK_FULL : ExitCode.CONFIG_WRITE_FAILED,
             success: false,
+            workspaceRoot,
           };
         }
         throw error;
@@ -828,14 +1007,14 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
     }
 
     // 11. Update .gitignore
-    const gitignorePath = join(cwd, ".gitignore");
+    const gitignorePath = join(workspaceRoot, ".gitignore");
     const managedPatterns = getManagedGitignorePatterns(reposDir, worktreesDir);
     if (options.dryRun) {
       logDryRun("UPDATE_FILE", `${gitignorePath} (add: ${managedPatterns.join(", ")})`);
     } else {
       logVerbose("Updating .gitignore...", options);
       try {
-        await updateGitignore(cwd, reposDir, worktreesDir);
+        await updateGitignore(workspaceRoot, reposDir, worktreesDir);
         logVerbose("✓ .gitignore updated", options);
       } catch (error) {
         await executeRollback();
@@ -844,6 +1023,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
             error: `Failed to update .gitignore: ${(error as Error).message}`,
             exitCode: ExitCode.PERMISSION_DENIED,
             success: false,
+            workspaceRoot,
           };
         }
         throw error;
@@ -859,6 +1039,8 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
       console.log("No changes were made. Run without --dry-run to apply.");
     }
 
+    operations.length = ZERO;
+
     return {
       configPath: configPath,
       discoveredCount,
@@ -866,6 +1048,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
       hooksPath: hooksDir,
       reposPath: absoluteReposPath,
       success: true,
+      workspaceRoot,
     };
   } catch (error) {
     // Unexpected error - rollback and exit
@@ -877,6 +1060,7 @@ const executeInit = async (options: InitOptions): Promise<InitResult> => {
       error: `Unexpected error: ${(error as Error).message}`,
       exitCode: ExitCode.UNKNOWN,
       success: false,
+      workspaceRoot: cwd,
     };
   }
 };
@@ -891,6 +1075,12 @@ const displaySuccess = (result: InitResult, options: InitOptions): void => {
   console.log(`  • Configuration: ${result.configPath}`);
   console.log(`  • Hooks directory: ${result.hooksPath}`);
   console.log(`  • Repositories directory: ${result.reposPath}`);
+
+  if (result.workspaceRoot && result.workspaceRoot !== process.cwd()) {
+    const changeDirTarget = relative(process.cwd(), result.workspaceRoot) || ".";
+    console.log(`  • Workspace root: ${result.workspaceRoot}`);
+    console.log(`  • Change into workspace: cd ${changeDirTarget}`);
+  }
 
   if (options.noDiscover) {
     console.log("\nDiscovery skipped (--no-discover)");
@@ -925,7 +1115,14 @@ const displayError = (result: InitResult): void => {
   switch (result.exitCode) {
     case ExitCode.NOT_GIT_REPOSITORY: {
       console.log("\nThe current directory is not a git repository.");
-      console.log("Run 'git init' to initialize a repository first, or 'cd' to a git repository.");
+      console.log(
+        "Run this command in an interactive terminal to let Arashi bootstrap a repository, or run 'git init' manually.",
+      );
+      break;
+    }
+
+    case ExitCode.CANCELLED: {
+      console.log("\nNo repository or Arashi workspace was created.");
       break;
     }
 
@@ -947,6 +1144,7 @@ const displayError = (result: InitResult): void => {
 
     case ExitCode.INVALID_PATH: {
       console.log("\nUse a valid relative or absolute path.");
+      console.log("For repo bootstrap, use '.' or a direct child directory name.");
       break;
     }
 
@@ -968,7 +1166,7 @@ const displayError = (result: InitResult): void => {
 
 export function createCommand(): Command {
   return new Command("init")
-    .description("Initialize Arashi workspace in the current git repository")
+    .description("Initialize Arashi workspace in the current repository or bootstrap a new one")
     .option("--repos-dir <path>", "Custom location for managed repositories", "./repos")
     .option(
       "--worktrees-dir <path>",
