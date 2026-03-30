@@ -15,9 +15,33 @@ describe("switch command integration", () => {
     const command = createCommand();
     expect(command.name()).toBe("switch");
     expect(command.options.some((option) => option.long === "--sesh")).toBe(true);
+    expect(command.options.some((option) => option.long === "--vscode")).toBe(true);
+    expect(command.options.some((option) => option.long === "--cursor")).toBe(true);
+    expect(command.options.some((option) => option.long === "--kiro")).toBe(true);
     expect(command.options.some((option) => option.long === "--no-default-launch")).toBe(true);
     expect(command.options.some((option) => option.long === "--repos")).toBe(true);
     expect(command.options.some((option) => option.long === "--all")).toBe(true);
+  });
+
+  test("rejects conflicting explicit launch overrides", async () => {
+    await expect(
+      executeSwitch(
+        undefined,
+        { cursor: true, vscode: true },
+        {
+          discoverSwitchCandidates: async () => ({
+            candidates: [candidate],
+            skippedCount: 0,
+          }),
+          findWorkspaceRoot: async () => "/workspace",
+          loadWorkspaceRepositories: async () => ({ repositories: [] }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICTING_LAUNCH_OPTIONS",
+    });
   });
 
   test("defaults to parent repository targets", async () => {
@@ -429,6 +453,53 @@ describe("switch command integration", () => {
     expect(launchOptions).toEqual([{ sesh: false }]);
   });
 
+  test("uses explicit IDE overrides ahead of configured launch defaults", async () => {
+    const launchOptions: {
+      preferredIde?: "vscode" | "cursor" | "kiro";
+      requirePreferredIde?: boolean;
+      sesh?: boolean;
+    }[] = [];
+
+    await executeSwitch(
+      undefined,
+      { cursor: true },
+      {
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async (_candidate, options) => {
+          launchOptions.push(options);
+          return { command: ["cursor"], mode: "cursor" };
+        },
+        loadWorkspaceRepositories: async () => ({
+          config: {
+            defaults: {
+              switch: {
+                launchMode: "sesh",
+              },
+            },
+            repos: {},
+            reposDir: "./repos",
+            version: "1.0.0",
+          },
+          repositories: [],
+        }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(launchOptions).toEqual([
+      {
+        preferredIde: "cursor",
+        requirePreferredIde: true,
+        sesh: false,
+      },
+    ]);
+  });
+
   test("invokes VS Code runner path in VS Code terminals", async () => {
     const invocations: string[][] = [];
     const runProcess: SwitchProcessRunner = async (command) => {
@@ -504,6 +575,48 @@ describe("switch command integration", () => {
 
     expect(result.launchMode).toBe("fallback");
     expect(invocations[1]).toEqual(["open", "-a", "Terminal", "/workspace/feature-switch-command"]);
+  });
+
+  test("invokes Cursor runner path in Cursor terminals", async () => {
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "which" && command[1] === "cursor") {
+        return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/cursor\n" };
+      }
+
+      if (command[0] === "cursor") {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        env: {
+          TERM_PROGRAM: "vscode",
+          VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+        },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        platform: "darwin",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("cursor");
+    expect(invocations[0]).toEqual(["which", "cursor"]);
+    expect(invocations[1]).toEqual(["cursor", "--new-window", "/workspace/feature-switch-command"]);
   });
 
   test("invokes tmux new-window automatically when inside tmux", async () => {

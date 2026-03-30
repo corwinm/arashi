@@ -1,7 +1,14 @@
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
 
-type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "fallback";
+type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";
+export type SupportedIde = "vscode" | "cursor" | "kiro";
+
+const IDE_COMMANDS: Record<SupportedIde, string> = {
+  cursor: "cursor",
+  kiro: "kiro",
+  vscode: "code",
+};
 
 export interface SwitchProcessResult {
   exitCode: number;
@@ -21,6 +28,8 @@ export type SwitchProcessRunner = (
 
 export interface LaunchSwitchOptions {
   sesh?: boolean;
+  preferredIde?: SupportedIde;
+  requirePreferredIde?: boolean;
 }
 
 export interface LaunchSwitchDependencies {
@@ -83,6 +92,18 @@ export async function launchSwitchTarget(
     };
   }
 
+  if (options.preferredIde) {
+    const launchResult = await launchWithPreferredIde(candidate, options.preferredIde, {
+      env,
+      platform,
+      requireAvailability: options.requirePreferredIde === true,
+      runProcess,
+    });
+    if (launchResult) {
+      return launchResult;
+    }
+  }
+
   if (isTmuxSession(env)) {
     const tmuxCommand = ["tmux", "new-window", "-c", candidate.worktreePath];
     const tmuxResult = await runProcess(tmuxCommand, {
@@ -104,32 +125,16 @@ export async function launchSwitchTarget(
     };
   }
 
-  if (isVsCodeTerminal(env)) {
-    const codeAvailable = await isCommandAvailable("code", {
+  const detectedIde = detectIntegratedIde(env);
+  if (detectedIde) {
+    const launchResult = await launchWithPreferredIde(candidate, detectedIde, {
       env,
       platform,
+      requireAvailability: false,
       runProcess,
     });
-
-    if (codeAvailable) {
-      const codeCommand = ["code", "--new-window", candidate.worktreePath];
-      const codeResult = await runProcess(codeCommand, {
-        cwd: candidate.worktreePath,
-        env,
-      });
-
-      if (codeResult.exitCode !== 0) {
-        throwLaunchFailure(
-          candidate.worktreePath,
-          codeCommand,
-          codeResult.stderr || codeResult.stdout,
-        );
-      }
-
-      return {
-        command: codeCommand,
-        mode: "vscode",
-      };
+    if (launchResult) {
+      return launchResult;
     }
   }
 
@@ -154,6 +159,34 @@ export function isVsCodeTerminal(env: Record<string, string | undefined> = proce
     typeof env.VSCODE_PID === "string" ||
     typeof env.VSCODE_GIT_IPC_HANDLE === "string"
   );
+}
+
+export function detectIntegratedIde(
+  env: Record<string, string | undefined> = process.env,
+): SupportedIde | null {
+  const ideSignals = [
+    env.TERM_PROGRAM,
+    env.TERM_PROGRAM_VERSION,
+    env.VSCODE_GIT_ASKPASS_NODE,
+    env.VSCODE_GIT_ASKPASS_EXTRA_ARGS,
+    env.VSCODE_GIT_IPC_HANDLE,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.toLowerCase());
+
+  if (ideSignals.some((value) => value.includes("cursor"))) {
+    return "cursor";
+  }
+
+  if (ideSignals.some((value) => value.includes("kiro"))) {
+    return "kiro";
+  }
+
+  if (isVsCodeTerminal(env)) {
+    return "vscode";
+  }
+
+  return null;
 }
 
 export function isTmuxSession(env: Record<string, string | undefined> = process.env): boolean {
@@ -312,6 +345,54 @@ async function launchWithFallback(
       path: candidate.worktreePath,
     },
   );
+}
+
+async function launchWithPreferredIde(
+  candidate: SwitchCandidate,
+  ide: SupportedIde,
+  deps: {
+    env: Record<string, string | undefined>;
+    platform: NodeJS.Platform;
+    requireAvailability: boolean;
+    runProcess: SwitchProcessRunner;
+  },
+): Promise<LaunchSwitchResult | null> {
+  const commandName = IDE_COMMANDS[ide];
+  const ideAvailable = await isCommandAvailable(commandName, {
+    env: deps.env,
+    platform: deps.platform,
+    runProcess: deps.runProcess,
+  });
+
+  if (!ideAvailable) {
+    if (!deps.requireAvailability) {
+      return null;
+    }
+
+    throw new SwitchCommandError(
+      `The \`${commandName}\` launcher is required for --${ide}. Install ${commandName} or choose a different switch mode.`,
+      SwitchCommandErrorCode.IDE_NOT_FOUND,
+      {
+        ide,
+        launcher: commandName,
+      },
+    );
+  }
+
+  const ideCommand = [commandName, "--new-window", candidate.worktreePath];
+  const ideResult = await deps.runProcess(ideCommand, {
+    cwd: candidate.worktreePath,
+    env: deps.env,
+  });
+
+  if (ideResult.exitCode !== 0) {
+    throwLaunchFailure(candidate.worktreePath, ideCommand, ideResult.stderr || ideResult.stdout);
+  }
+
+  return {
+    command: ideCommand,
+    mode: ide,
+  };
 }
 
 async function launchWithDetectedTerminalApp(

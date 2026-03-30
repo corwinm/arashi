@@ -18,7 +18,8 @@ type LaunchMode = "auto" | "sesh";
 type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
 type SwitchCandidateDiscoveryResult = Awaited<ReturnType<typeof discoverSwitchCandidates>>;
 type SwitchCandidate = SwitchCandidateDiscoveryResult["candidates"][number];
-type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "fallback";
+type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";
+type SupportedIde = "vscode" | "cursor" | "kiro";
 type SwitchProcessRunner = NonNullable<
   NonNullable<Parameters<typeof launchSwitchTarget>[2]>["runProcess"]
 >;
@@ -36,9 +37,18 @@ const KEY_SEPARATOR = "\u0000";
 
 export interface SwitchCommandOptions {
   sesh?: boolean;
+  vscode?: boolean;
+  cursor?: boolean;
+  kiro?: boolean;
   repos?: boolean;
   all?: boolean;
   defaultLaunch?: boolean;
+}
+
+interface LaunchResolution {
+  preferredIde?: SupportedIde;
+  requirePreferredIde?: boolean;
+  sesh?: boolean;
 }
 
 type SwitchRepositoryScope = "parent" | "repos" | "all";
@@ -92,6 +102,9 @@ export function createCommand(): Command {
     .description("Open a terminal context for an existing worktree")
     .argument("[filter]", "Filter targets by branch name or worktree path")
     .option("--sesh", "Use sesh in tmux mode")
+    .option("--vscode", "Open the selected worktree in VS Code")
+    .option("--cursor", "Open the selected worktree in Cursor")
+    .option("--kiro", "Open the selected worktree in Kiro")
     .option("--no-default-launch", "Ignore configured default launch mode for this invocation")
     .option("--repos", "Use child repositories only")
     .option("--all", "Use both parent and child repositories")
@@ -103,6 +116,7 @@ Examples:
   $ arashi switch --repos
   $ arashi switch --no-default-launch
   $ arashi switch --all feature-auth
+  $ arashi switch --cursor feature-auth
   $ arashi switch feature-auth
   $ arashi switch repo-a --sesh
 `,
@@ -190,18 +204,17 @@ export async function executeSwitch(
     workspaceRepoName: scope === "all" ? basename(resolve(workspaceRoot)) : undefined,
   });
 
-  const resolvedLaunchMode = resolveDefaultWithPrecedence<LaunchMode>({
-    builtInValue: AUTO_LAUNCH_MODE,
-    configValue: workspace.config?.defaults?.switch?.launchMode,
-    explicitValue: SESH_LAUNCH_MODE,
-    hasExplicitValue: options.sesh === true,
-    optOut: options.defaultLaunch === false,
-  });
+  const resolvedLaunch = resolveLaunchOptions(
+    options,
+    workspace.config?.defaults?.switch?.launchMode,
+  );
 
   const launchResult = await launchCandidate(
     selected,
     {
-      sesh: resolvedLaunchMode.value === SESH_LAUNCH_MODE,
+      preferredIde: resolvedLaunch.preferredIde,
+      requirePreferredIde: resolvedLaunch.requirePreferredIde,
+      sesh: resolvedLaunch.sesh,
     },
     {
       env: deps.env ?? process.env,
@@ -248,8 +261,10 @@ const handleSwitchError = (error: unknown): never => {
     }
 
     if (
+      error.code === SwitchCommandErrorCode.CONFLICTING_LAUNCH_OPTIONS ||
       error.code === SwitchCommandErrorCode.SESH_REQUIRES_TMUX ||
-      error.code === SwitchCommandErrorCode.SESH_NOT_FOUND
+      error.code === SwitchCommandErrorCode.SESH_NOT_FOUND ||
+      error.code === SwitchCommandErrorCode.IDE_NOT_FOUND
     ) {
       process.exit(USAGE_EXIT_CODE);
     }
@@ -461,4 +476,55 @@ const buildRepoNoMatchMessage = (
   }
 
   return `No child repository matched \`${filter}\`. Available repositories: ${availableReposText}`;
+};
+
+const resolveLaunchOptions = (
+  options: SwitchCommandOptions,
+  configLaunchMode: LaunchMode | undefined,
+): LaunchResolution => {
+  const explicitIde = resolveExplicitIde(options);
+  if (explicitIde) {
+    return {
+      preferredIde: explicitIde,
+      requirePreferredIde: true,
+      sesh: false,
+    };
+  }
+
+  const resolvedLaunchMode = resolveDefaultWithPrecedence<LaunchMode>({
+    builtInValue: AUTO_LAUNCH_MODE,
+    configValue: configLaunchMode,
+    explicitValue: SESH_LAUNCH_MODE,
+    hasExplicitValue: options.sesh === true,
+    optOut: options.defaultLaunch === false,
+  });
+
+  return {
+    sesh: resolvedLaunchMode.value === SESH_LAUNCH_MODE,
+  };
+};
+
+const resolveExplicitIde = (options: SwitchCommandOptions): SupportedIde | undefined => {
+  const launchOverrides = [
+    options.sesh === true ? "sesh" : null,
+    options.vscode === true ? "vscode" : null,
+    options.cursor === true ? "cursor" : null,
+    options.kiro === true ? "kiro" : null,
+  ].filter((value): value is "sesh" | SupportedIde => value !== null);
+
+  if (launchOverrides.length > ONE) {
+    throw new SwitchCommandError(
+      `Conflicting launch overrides provided (${launchOverrides.map((value) => `--${value}`).join(", ")}). Choose exactly one explicit switch mode.`,
+      SwitchCommandErrorCode.CONFLICTING_LAUNCH_OPTIONS,
+      {
+        launchOverrides,
+      },
+    );
+  }
+
+  if (launchOverrides[ZERO] === "sesh" || launchOverrides.length === ZERO) {
+    return undefined;
+  }
+
+  return launchOverrides[ZERO];
 };
