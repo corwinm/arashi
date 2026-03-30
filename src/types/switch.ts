@@ -3,8 +3,10 @@ export enum SwitchCommandErrorCode {
   NO_MATCHES = "NO_MATCHES",
   AMBIGUOUS_NON_INTERACTIVE = "AMBIGUOUS_NON_INTERACTIVE",
   USER_CANCELLED = "USER_CANCELLED",
+  CONFLICTING_LAUNCH_OPTIONS = "CONFLICTING_LAUNCH_OPTIONS",
   SESH_REQUIRES_TMUX = "SESH_REQUIRES_TMUX",
   SESH_NOT_FOUND = "SESH_NOT_FOUND",
+  IDE_NOT_FOUND = "IDE_NOT_FOUND",
   LAUNCH_FAILED = "LAUNCH_FAILED",
 }
 
@@ -24,4 +26,4 @@ export class SwitchCommandError extends Error {
   }
 }
 
-export type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "fallback";
+export type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";

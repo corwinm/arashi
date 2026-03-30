@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { detectTerminalApp, launchSwitchTarget } from "../../../src/lib/switch-launcher.ts";
+import {
+  detectIntegratedIde,
+  detectTerminalApp,
+  launchSwitchTarget,
+} from "../../../src/lib/switch-launcher.ts";
 import type { SwitchCandidate } from "../../../src/core/switch.ts";
 import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
 
@@ -89,6 +93,126 @@ describe("launchSwitchTarget", () => {
     expect(result.mode).toBe("vscode");
     expect(commands[0]).toEqual(["which", "code"]);
     expect(commands[1]).toEqual(["code", "--new-window", "/workspace/feature-auth"]);
+  });
+
+  test("uses Cursor launcher when explicitly requested", async () => {
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+
+      if (command[0] === "which" && command[1] === "cursor") {
+        return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/cursor\n" };
+      }
+
+      if (command[0] === "cursor") {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
+    };
+
+    const result = await launchSwitchTarget(
+      candidate,
+      { preferredIde: "cursor", requirePreferredIde: true },
+      {
+        env: { TMUX: "/tmp/tmux-1000/default" },
+        platform: "darwin",
+        runProcess,
+      },
+    );
+
+    expect(result.mode).toBe("cursor");
+    expect(commands[0]).toEqual(["which", "cursor"]);
+    expect(commands[1]).toEqual(["cursor", "--new-window", "/workspace/feature-auth"]);
+  });
+
+  test("returns actionable error when an explicit IDE launcher is unavailable", async () => {
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        { preferredIde: "kiro", requirePreferredIde: true },
+        {
+          env: {},
+          platform: "darwin",
+          runProcess: async (command) => {
+            if (command[0] === "which" && command[1] === "kiro") {
+              return { exitCode: 1, stderr: "not found", stdout: "" };
+            }
+
+            return { exitCode: 1, stderr: "unexpected", stdout: "" };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.IDE_NOT_FOUND,
+    });
+  });
+
+  test("uses Cursor launcher when detected from the terminal environment", async () => {
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+
+      if (command[0] === "which" && command[1] === "cursor") {
+        return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/cursor\n" };
+      }
+
+      if (command[0] === "cursor") {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
+    };
+
+    const result = await launchSwitchTarget(
+      candidate,
+      {},
+      {
+        env: {
+          TERM_PROGRAM: "vscode",
+          VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+        },
+        platform: "darwin",
+        runProcess,
+      },
+    );
+
+    expect(result.mode).toBe("cursor");
+    expect(commands[0]).toEqual(["which", "cursor"]);
+    expect(commands[1]).toEqual(["cursor", "--new-window", "/workspace/feature-auth"]);
+  });
+
+  test("falls back when an auto-detected IDE launcher is unavailable", async () => {
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+
+      if (command[0] === "which" && command[1] === "cursor") {
+        return { exitCode: 1, stderr: "not found", stdout: "" };
+      }
+
+      if (command[0] === "open") {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
+    };
+
+    const result = await launchSwitchTarget(
+      candidate,
+      {},
+      {
+        env: {
+          TERM_PROGRAM: "vscode",
+          VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+        },
+        platform: "darwin",
+        runProcess,
+      },
+    );
+
+    expect(result.mode).toBe("fallback");
+    expect(commands[1]).toEqual(["open", "-a", "Terminal", "/workspace/feature-auth"]);
   });
 
   test("falls back to terminal launcher when VS Code CLI is unavailable", async () => {
@@ -291,5 +415,29 @@ describe("detectTerminalApp", () => {
 
   test("returns null for unknown terminal apps", () => {
     expect(detectTerminalApp({ TERM_PROGRAM: "Apple_Terminal" })).toBeNull();
+  });
+});
+
+describe("detectIntegratedIde", () => {
+  test("detects Cursor from VS Code environment hints", () => {
+    expect(
+      detectIntegratedIde({
+        TERM_PROGRAM: "vscode",
+        VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+      }),
+    ).toBe("cursor");
+  });
+
+  test("detects Kiro from VS Code environment hints", () => {
+    expect(
+      detectIntegratedIde({
+        TERM_PROGRAM: "vscode",
+        VSCODE_GIT_ASKPASS_EXTRA_ARGS: "--host=kiro",
+      }),
+    ).toBe("kiro");
+  });
+
+  test("falls back to VS Code detection when no fork-specific hint exists", () => {
+    expect(detectIntegratedIde({ TERM_PROGRAM: "vscode" })).toBe("vscode");
   });
 });
