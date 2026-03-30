@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { fileExists, readTextFile, writeTextFile } from "../../src/lib/filesystem";
 import { getConfigPath, loadConfig, saveConfig } from "../../src/lib/config";
+import { executeInit } from "../../src/commands/init.ts";
 import { join } from "path";
 import { spawn } from "bun";
 import { tmpdir } from "os";
@@ -315,7 +316,7 @@ describe("init command - error cases", () => {
     expect(result.exitCode).toBe(1); // NOT_GIT_REPOSITORY
     // Error message is in stderr, help text is in stdout
     expect(result.stderr).toContain("Not a git repository");
-    expect(result.stdout).toContain("git init");
+    expect(result.stdout).toContain("interactive terminal");
 
     // Verify no files created
     expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
@@ -362,6 +363,104 @@ describe("init command - error cases", () => {
     expect(result.exitCode).toBe(5); // INVALID_PATH
 
     await cleanup(testDir);
+  });
+});
+
+describe("init command - repository bootstrap", () => {
+  let testDir: string;
+
+  afterEach(async () => {
+    if (testDir) {
+      await cleanup(testDir);
+    }
+  });
+
+  test("exits without creating files when bootstrap is declined", async () => {
+    testDir = await createTempDir();
+
+    const result = await executeInit(
+      {},
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: false }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(8);
+    expect(await fileExists(join(testDir, ".git"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, "repos"))).toBe(false);
+  });
+
+  test("bootstraps the current directory when target is '.'", async () => {
+    testDir = await createTempDir();
+
+    const result = await executeInit(
+      {},
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: true }),
+        promptInput: async () => ({ status: "ok", value: "." }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.workspaceRoot).toBe(testDir);
+    expect(await fileExists(join(testDir, ".git"))).toBe(true);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(true);
+    expect(await fileExists(join(testDir, "repos"))).toBe(true);
+
+    const loadedConfig = await loadConfig(testDir);
+    expect(loadedConfig.reposDir).toBe("./repos");
+  });
+
+  test("bootstraps a child directory when given a child repository name", async () => {
+    testDir = await createTempDir();
+    const childRepoPath = join(testDir, "my-arashi-repo");
+
+    const result = await executeInit(
+      {},
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: true }),
+        promptInput: async () => ({ status: "ok", value: "my-arashi-repo" }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.workspaceRoot).toBe(childRepoPath);
+    expect(await fileExists(join(childRepoPath, ".git"))).toBe(true);
+    expect(await fileExists(join(childRepoPath, ".arashi"))).toBe(true);
+    expect(await fileExists(join(childRepoPath, "repos"))).toBe(true);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+
+    const loadedConfig = await loadConfig(childRepoPath);
+    expect(loadedConfig.reposDir).toBe("./repos");
+  });
+
+  test("rejects unsupported bootstrap targets", async () => {
+    testDir = await createTempDir();
+
+    const result = await executeInit(
+      {},
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: true }),
+        promptInput: async () => ({ status: "ok", value: "foo/bar" }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(5);
+    expect(result.error).toContain("Invalid bootstrap target");
+    expect(await fileExists(join(testDir, ".git"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, "foo"))).toBe(false);
   });
 });
 
@@ -625,7 +724,7 @@ describe("init command - output format", () => {
     expect(result.exitCode).toBe(1);
     // Error message is in stderr, help text is in stdout
     expect(result.stderr).toContain("Not a git repository");
-    expect(result.stdout).toContain("git init");
+    expect(result.stdout).toContain("interactive terminal");
 
     await cleanup(nonGitDir);
   });
