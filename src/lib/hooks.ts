@@ -2,6 +2,7 @@ import { access, stat } from "fs/promises";
 import { constants } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 
 const ZERO = 0;
 const ONE = 1;
@@ -279,7 +280,7 @@ const getShellCommand = (scriptPath: string): string[] => {
  */
 const buildEnvironment = (context: HookContext): Record<string, string> => {
   const env: Record<string, string> = {
-    ...process.env,
+    ...normalizeSpawnEnvironment(process.env),
     ARASHI_HOOK_NAME: context.hookName,
     ARASHI_REPO_PATH: context.repoPath,
   };

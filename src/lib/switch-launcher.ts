@@ -1,4 +1,5 @@
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
+import { normalizeSpawnEnvironment, stripDirectiveEnvironment } from "./shell-directives.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
 
 type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";
@@ -49,6 +50,7 @@ export async function launchSwitchTarget(
   deps: LaunchSwitchDependencies = {},
 ): Promise<LaunchSwitchResult> {
   const env = deps.env ?? process.env;
+  const childEnv = stripDirectiveEnvironment(env);
   const platform = deps.platform ?? process.platform;
   const runProcess = deps.runProcess ?? runSwitchProcess;
 
@@ -61,7 +63,7 @@ export async function launchSwitchTarget(
     }
 
     const seshAvailable = await isCommandAvailable("sesh", {
-      env,
+      env: childEnv,
       platform,
       runProcess,
     });
@@ -75,7 +77,7 @@ export async function launchSwitchTarget(
     const seshCommand = buildSeshTmuxCommand(candidate.worktreePath);
     const seshResult = await runProcess(seshCommand, {
       cwd: candidate.worktreePath,
-      env,
+      env: childEnv,
     });
 
     if (seshResult.exitCode !== 0) {
@@ -94,7 +96,7 @@ export async function launchSwitchTarget(
 
   if (options.preferredIde) {
     const launchResult = await launchWithPreferredIde(candidate, options.preferredIde, {
-      env,
+      env: childEnv,
       platform,
       requireAvailability: options.requirePreferredIde === true,
       runProcess,
@@ -108,7 +110,7 @@ export async function launchSwitchTarget(
     const tmuxCommand = ["tmux", "new-window", "-c", candidate.worktreePath];
     const tmuxResult = await runProcess(tmuxCommand, {
       cwd: candidate.worktreePath,
-      env,
+      env: childEnv,
     });
 
     if (tmuxResult.exitCode !== 0) {
@@ -128,7 +130,7 @@ export async function launchSwitchTarget(
   const detectedIde = detectIntegratedIde(env);
   if (detectedIde) {
     const launchResult = await launchWithPreferredIde(candidate, detectedIde, {
-      env,
+      env: childEnv,
       platform,
       requireAvailability: false,
       runProcess,
@@ -139,7 +141,7 @@ export async function launchSwitchTarget(
   }
 
   const terminalAppResult = await launchWithDetectedTerminalApp(candidate, {
-    env,
+    env: childEnv,
     runProcess,
   });
   if (terminalAppResult) {
@@ -147,7 +149,7 @@ export async function launchSwitchTarget(
   }
 
   return launchWithFallback(candidate, {
-    env,
+    env: childEnv,
     platform,
     runProcess,
   });
@@ -263,7 +265,7 @@ export async function runSwitchProcess(
   try {
     const proc = Bun.spawn(command, {
       cwd: options.cwd,
-      env: normalizeEnv(options.env),
+      env: normalizeSpawnEnvironment(options.env),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -285,18 +287,6 @@ export async function runSwitchProcess(
       stdout: "",
     };
   }
-}
-
-function normalizeEnv(env: Record<string, string | undefined>): Record<string, string> {
-  const normalized: Record<string, string> = {};
-
-  for (const [key, value] of Object.entries(env)) {
-    if (typeof value === "string") {
-      normalized[key] = value;
-    }
-  }
-
-  return normalized;
 }
 
 function buildSeshTmuxCommand(worktreePath: string): string[] {

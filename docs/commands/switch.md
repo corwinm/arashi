@@ -1,6 +1,6 @@
 # Switch Command
 
-Open a new terminal context in an existing worktree.
+Open a new terminal context in an existing worktree, or change the current shell directory when shell integration is active.
 
 ## Usage
 
@@ -11,6 +11,8 @@ arashi switch [filter] [options]
 ## Options
 
 - `--sesh` Use `sesh` in tmux mode (requires active tmux session)
+- `--cd` Request parent-shell directory switching for this invocation
+- `--no-cd` Disable parent-shell directory switching for this invocation
 - `--no-default-launch` Ignore configured switch launch-mode defaults for one invocation
 - `--repos` Search child repositories in the current workspace only
 - `--all` Search parent + child repositories
@@ -36,6 +38,12 @@ arashi switch feature-auth
 # Use sesh/tmux switching mode
 arashi switch feature-auth --sesh
 
+# Change the current shell directory when shell integration is active
+arashi switch feature-auth --cd
+
+# Force launch behavior even if switch defaults prefer cd
+arashi switch feature-auth --no-cd
+
 # Ignore configured launch-mode defaults for one run
 arashi switch --no-default-launch
 ```
@@ -52,4 +60,9 @@ arashi switch --no-default-launch
 - If `--repos` has no repository matches, Arashi prints available child repositories.
 - Inside tmux, Arashi opens a new tmux window automatically.
 - In Kitty, Ghostty, WezTerm, and iTerm2 terminals, Arashi attempts terminal-native launch commands before generic fallback behavior.
-- Configure a default switch launch mode in `.arashi/config.json` under `defaults.switch.launchMode`.
+- Shell integration is configured with `arashi shell install` or manual `arashi shell init <shell>` setup.
+- Configure default switch behavior in `.arashi/config.json` under `defaults.switch.mode` (`launch`, `cd`, or `auto`).
+- Configure default switch launch behavior in `.arashi/config.json` under `defaults.switch.launchMode`.
+- `defaults.switch.mode: "auto"` prefers `cd` when shell integration is active and falls back to normal launch behavior otherwise.
+- If `--cd` is used without active shell integration, Arashi warns and skips launch fallback for that invocation.
+- If `defaults.switch.mode: "cd"` is configured without active shell integration, Arashi warns and then follows normal launch resolution.

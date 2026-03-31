@@ -36,7 +36,7 @@ Verify install:
 arashi --version
 ```
 
-By default, the installer places `arashi` in `~/.arashi/bin` and adds that path to your shell config.
+By default, the installer places `arashi` in `~/.arashi/bin`, adds that path to your shell config, and in interactive installs offers to enable shell integration for `arashi switch --cd`.
 
 If curl installation fails, use npm installation below or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
 
@@ -99,7 +99,9 @@ Arashi currently provides these commands:
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
-- `arashi switch [filter] [--repos|--all] [--sesh] [--no-default-launch]`
+- `arashi switch [filter] [--repos|--all] [--cd|--no-cd] [--sesh] [--no-default-launch]`
+- `arashi shell init <bash|zsh|fish>`
+- `arashi shell install`
 - `arashi pull`
 - `arashi sync`
 - `arashi setup [--only <repo>] [--verbose]`
@@ -113,13 +115,39 @@ arashi add git@github.com:your-org/backend.git
 arashi create feature-auth-refresh
 arashi create feature-auth-refresh --launch
 arashi create feature-auth-refresh --no-launch
+arashi shell install
 arashi status
 arashi switch feature-auth-refresh          # parent repo worktrees
 arashi switch --repos feature-auth-refresh  # child repo worktrees in current workspace
 arashi switch --all feature-auth-refresh    # all repos
 arashi switch --repos docs                  # repo-name matching in child repos
+arashi switch --cd feature-auth-refresh     # parent-shell cd when shell integration is active
 arashi switch --no-default-launch           # bypass configured launch mode defaults once
 ```
+
+## Shell Integration
+
+Use shell integration when you want `arashi switch` to change the current shell directory instead of only opening a new terminal or editor context.
+
+The official curl installer can offer this automatically. If you skip it or use npm, install it for the active shell with:
+
+```bash
+arashi shell install
+```
+
+Or print wrapper code for manual setup:
+
+```bash
+arashi shell init bash
+arashi shell init zsh
+arashi shell init fish
+```
+
+Once installed, you can use `arashi switch --cd <filter>` for one-off parent-shell switching or set `.arashi/config.json` `defaults.switch.mode` to `"cd"` or `"auto"`.
+
+If shell integration is inactive, `arashi switch --cd` warns and skips launch fallback for that invocation.
+
+For automated installs, set `ARASHI_SHELL_INTEGRATION=yes` to enable it without prompting or `ARASHI_SHELL_INTEGRATION=no` to skip it.
 
 ## Hooks
 
@@ -220,12 +248,15 @@ Example config header:
       "launchMode": "sesh"
     },
     "switch": {
+      "mode": "auto",
       "launchMode": "sesh"
     }
   },
   "repos": {}
 }
 ```
+
+`defaults.switch.mode` accepts `"launch"`, `"cd"`, or `"auto"`. `"auto"` prefers parent-shell switching only when shell integration is active.
 
 Defaults precedence for create/switch behavior: explicit CLI flag > opt-out flag > config default > built-in default.
 
@@ -244,6 +275,7 @@ Arashi also ships a dedicated `skills.sh` integration package for guided install
 - Configuration details: [`docs/configuration.md`](./docs/configuration.md)
 - Clone command details: [`docs/commands/clone.md`](./docs/commands/clone.md)
 - Hook behavior: [`docs/hooks.md`](./docs/hooks.md)
+- Shell integration details: [`docs/commands/shell.md`](./docs/commands/shell.md)
 - Setup command details: [`docs/commands/setup.md`](./docs/commands/setup.md)
 - Switch command details: [`docs/commands/switch.md`](./docs/commands/switch.md)
 - Remove command details: [`docs/commands/remove.md`](./docs/commands/remove.md)

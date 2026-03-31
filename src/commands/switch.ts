@@ -6,7 +6,8 @@ import {
   selectSwitchCandidate,
 } from "../core/switch.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
-import { info, error as logError, success } from "../lib/logger.ts";
+import { getDirectiveContext, writeCdDirective } from "../lib/shell-directives.ts";
+import { info, error as logError, success, warn } from "../lib/logger.ts";
 import { Command } from "commander";
 import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
@@ -15,10 +16,11 @@ import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 type LoadWorkspaceRepositoriesResult = Awaited<ReturnType<typeof loadWorkspaceRepositories>>;
 type Config = NonNullable<LoadWorkspaceRepositoriesResult["config"]>;
 type LaunchMode = "auto" | "sesh";
+type ConfigSwitchMode = "launch" | "cd" | "auto";
 type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
 type SwitchCandidateDiscoveryResult = Awaited<ReturnType<typeof discoverSwitchCandidates>>;
 type SwitchCandidate = SwitchCandidateDiscoveryResult["candidates"][number];
-type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";
+type SwitchLaunchMode = "cd" | "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";
 type SupportedIde = "vscode" | "cursor" | "kiro";
 type SwitchProcessRunner = NonNullable<
   NonNullable<Parameters<typeof launchSwitchTarget>[2]>["runProcess"]
@@ -31,12 +33,16 @@ const SUCCESS_EXIT_CODE = 0;
 const ERROR_EXIT_CODE = 1;
 const USAGE_EXIT_CODE = 2;
 const AUTO_LAUNCH_MODE: LaunchMode = "auto";
+const AUTO_SWITCH_MODE: ConfigSwitchMode = "auto";
+const CD_SWITCH_MODE: ConfigSwitchMode = "cd";
+const LAUNCH_SWITCH_MODE: ConfigSwitchMode = "launch";
 const SESH_LAUNCH_MODE: LaunchMode = "sesh";
 const DETACHED_HEAD = "HEAD";
 const KEY_SEPARATOR = "\u0000";
 
 export interface SwitchCommandOptions {
   sesh?: boolean;
+  cd?: boolean;
   vscode?: boolean;
   cursor?: boolean;
   kiro?: boolean;
@@ -50,6 +56,12 @@ interface LaunchResolution {
   preferredIde?: SupportedIde;
   requirePreferredIde?: boolean;
   sesh?: boolean;
+}
+
+interface SwitchBehaviorResolution {
+  mode: ConfigSwitchMode;
+  skipLaunchWhenUnavailable: boolean;
+  warnOnMissingIntegration: boolean;
 }
 
 type SwitchRepositoryScope = "parent" | "repos" | "all";
@@ -76,7 +88,11 @@ export interface SwitchCommandDependencies {
   ) => Promise<SwitchCandidate[]>;
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
-    options: { sesh?: boolean },
+    options: {
+      preferredIde?: SupportedIde;
+      requirePreferredIde?: boolean;
+      sesh?: boolean;
+    },
     deps: {
       env: Record<string, string | undefined>;
       platform: NodeJS.Platform;
@@ -104,6 +120,8 @@ export function createCommand(): Command {
     .argument("[filter]", "Filter targets by branch name or worktree path")
     .option("--path", "Treat argument as exact worktree path")
     .option("--sesh", "Use sesh in tmux mode")
+    .option("--cd", "Change the current shell directory when shell integration is active")
+    .option("--no-cd", "Disable parent-shell directory switching for this invocation")
     .option("--vscode", "Open the selected worktree in VS Code")
     .option("--cursor", "Open the selected worktree in Cursor")
     .option("--kiro", "Open the selected worktree in Kiro")
@@ -225,6 +243,47 @@ export async function executeSwitch(
     options,
     workspace.config?.defaults?.switch?.launchMode,
   );
+  const commandEnv = deps.env ?? process.env;
+  const directiveContext = getDirectiveContext(commandEnv);
+  const resolvedBehavior = resolveSwitchBehavior(
+    options,
+    workspace.config?.defaults?.switch?.mode,
+    directiveContext !== null,
+  );
+
+  if (resolvedBehavior.mode === CD_SWITCH_MODE && directiveContext) {
+    await writeCdDirective(directiveContext, selected.worktreePath);
+    success(
+      `Prepared shell directory switch for ${selected.repoName} (${selected.branchName}) to ${selected.worktreePath}`,
+    );
+
+    return {
+      launchMode: "cd",
+      matchedCandidates: matchedCandidates.length,
+      selected,
+      skippedCandidates: discovery.skippedCount,
+      totalCandidates: scopedCandidates.length,
+    };
+  }
+
+  if (resolvedBehavior.warnOnMissingIntegration && !directiveContext) {
+    warn(
+      "Shell integration is not active, so `arashi switch` cannot change the current shell directory for this invocation.",
+    );
+    info(
+      "Hint: run `arashi shell install`, restart your shell, and invoke `arashi` through the installed wrapper.",
+    );
+
+    if (resolvedBehavior.skipLaunchWhenUnavailable) {
+      return {
+        launchMode: "cd",
+        matchedCandidates: matchedCandidates.length,
+        selected,
+        skippedCandidates: discovery.skippedCount,
+        totalCandidates: scopedCandidates.length,
+      };
+    }
+  }
 
   const launchResult = await launchCandidate(
     selected,
@@ -234,7 +293,7 @@ export async function executeSwitch(
       sesh: resolvedLaunch.sesh,
     },
     {
-      env: deps.env ?? process.env,
+      env: commandEnv,
       platform: deps.platform ?? process.platform,
       runProcess: deps.runProcess,
     },
@@ -279,6 +338,7 @@ const handleSwitchError = (error: unknown): never => {
 
     if (
       error.code === SwitchCommandErrorCode.CONFLICTING_LAUNCH_OPTIONS ||
+      error.code === SwitchCommandErrorCode.CONFLICTING_SWITCH_OPTIONS ||
       error.code === SwitchCommandErrorCode.SESH_REQUIRES_TMUX ||
       error.code === SwitchCommandErrorCode.SESH_NOT_FOUND ||
       error.code === SwitchCommandErrorCode.IDE_NOT_FOUND
@@ -538,6 +598,64 @@ const resolveLaunchOptions = (
 
   return {
     sesh: resolvedLaunchMode.value === SESH_LAUNCH_MODE,
+  };
+};
+
+const resolveSwitchBehavior = (
+  options: SwitchCommandOptions,
+  configMode: ConfigSwitchMode | undefined,
+  shellIntegrationActive: boolean,
+): SwitchBehaviorResolution => {
+  const hasExplicitLaunchOverride =
+    options.sesh === true ||
+    options.vscode === true ||
+    options.cursor === true ||
+    options.kiro === true;
+
+  if (options.cd === true && hasExplicitLaunchOverride) {
+    throw new SwitchCommandError(
+      "Conflicting switch behavior overrides provided (--cd with an explicit launch override). Choose either parent-shell switching or a launch target.",
+      SwitchCommandErrorCode.CONFLICTING_SWITCH_OPTIONS,
+    );
+  }
+
+  if (hasExplicitLaunchOverride) {
+    return {
+      mode: LAUNCH_SWITCH_MODE,
+      skipLaunchWhenUnavailable: false,
+      warnOnMissingIntegration: false,
+    };
+  }
+
+  if (options.cd === true) {
+    return {
+      mode: CD_SWITCH_MODE,
+      skipLaunchWhenUnavailable: true,
+      warnOnMissingIntegration: true,
+    };
+  }
+
+  if (options.cd === false) {
+    return {
+      mode: LAUNCH_SWITCH_MODE,
+      skipLaunchWhenUnavailable: false,
+      warnOnMissingIntegration: false,
+    };
+  }
+
+  const mode = configMode ?? LAUNCH_SWITCH_MODE;
+  if (mode === AUTO_SWITCH_MODE) {
+    return {
+      mode: shellIntegrationActive ? CD_SWITCH_MODE : LAUNCH_SWITCH_MODE,
+      skipLaunchWhenUnavailable: false,
+      warnOnMissingIntegration: false,
+    };
+  }
+
+  return {
+    mode,
+    skipLaunchWhenUnavailable: false,
+    warnOnMissingIntegration: mode === CD_SWITCH_MODE,
   };
 };
 

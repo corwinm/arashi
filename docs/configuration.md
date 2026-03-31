@@ -16,6 +16,7 @@ To enable JSON validation and editor autocomplete, include a `$schema` property:
       "launchMode": "sesh"
     },
     "switch": {
+      "mode": "auto",
       "launchMode": "sesh"
     }
   },
@@ -52,7 +53,18 @@ You can set command-scoped defaults under `defaults`.
 
 ### `defaults.switch`
 
+- `mode` (`launch` | `cd` | `auto`): preferred switch behavior for `arashi switch`
 - `launchMode` (`auto` | `sesh`): preferred launch mode for `arashi switch`
+
+Use `mode: "launch"` to preserve launcher-only behavior, `mode: "cd"` to request parent-shell directory switching by default, or `mode: "auto"` to prefer `cd` only when shell integration is active.
+
+Enable shell integration with:
+
+```bash
+arashi shell install
+```
+
+If you prefer manual setup, print shell-specific wrapper code with `arashi shell init <bash|zsh|fish>`.
 
 ## Precedence Rules
 
@@ -67,4 +79,6 @@ Examples:
 
 - `arashi create feature-auth --launch` overrides config to force launch for that run.
 - `arashi create feature-auth --no-launch` disables configured create launch defaults for that run.
+- `arashi switch feature-auth --cd` overrides config to request parent-shell directory switching for that run.
+- `arashi switch feature-auth --no-cd` forces launch behavior for that run even when switch defaults prefer `cd`.
 - `arashi switch --no-default-launch` bypasses configured switch launch mode defaults for that run.

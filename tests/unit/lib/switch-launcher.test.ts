@@ -97,8 +97,15 @@ describe("launchSwitchTarget", () => {
 
   test("uses Cursor launcher when explicitly requested", async () => {
     const commands: string[][] = [];
-    const runProcess: SwitchProcessRunner = async (command) => {
+    const envs: Record<string, string | undefined>[] = [];
+    const currentEnv = {
+      ARASHI_DIRECTIVE_FILE: "/tmp/arashi-directive",
+      ARASHI_SHELL: "bash",
+      TMUX: "/tmp/tmux-1000/default",
+    };
+    const runProcess: SwitchProcessRunner = async (command, options) => {
       commands.push(command);
+      envs.push(options.env);
 
       if (command[0] === "which" && command[1] === "cursor") {
         return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/cursor\n" };
@@ -115,7 +122,7 @@ describe("launchSwitchTarget", () => {
       candidate,
       { preferredIde: "cursor", requirePreferredIde: true },
       {
-        env: { TMUX: "/tmp/tmux-1000/default" },
+        env: currentEnv,
         platform: "darwin",
         runProcess,
       },
@@ -124,6 +131,8 @@ describe("launchSwitchTarget", () => {
     expect(result.mode).toBe("cursor");
     expect(commands[0]).toEqual(["which", "cursor"]);
     expect(commands[1]).toEqual(["cursor", "--new-window", "/workspace/feature-auth"]);
+    expect(envs[1]?.ARASHI_DIRECTIVE_FILE).toBeUndefined();
+    expect(envs[1]?.ARASHI_SHELL).toBeUndefined();
   });
 
   test("returns actionable error when an explicit IDE launcher is unavailable", async () => {

@@ -79,6 +79,7 @@ export interface Config {
 }
 
 export type LaunchMode = "auto" | "sesh";
+export type SwitchMode = "launch" | "cd" | "auto";
 
 export interface CreateCommandDefaults {
   /** Default to switching to the new worktree after create */
@@ -90,6 +91,8 @@ export interface CreateCommandDefaults {
 }
 
 export interface SwitchCommandDefaults {
+  /** Preferred switch behavior when running switch */
+  mode?: SwitchMode;
   /** Preferred launch mode when running switch */
   launchMode?: LaunchMode;
 }
@@ -534,6 +537,14 @@ const normalizeLaunchMode = (value: unknown): LaunchMode | undefined => {
   return undefined;
 };
 
+const normalizeSwitchMode = (value: unknown): SwitchMode | undefined => {
+  if (value === "launch" || value === "cd" || value === "auto") {
+    return value;
+  }
+
+  return undefined;
+};
+
 const normalizeCreateCommandDefaults = (value: unknown): CreateCommandDefaults | undefined => {
   if (!isRecord(value)) {
     return undefined;
@@ -575,17 +586,24 @@ const normalizeSwitchCommandDefaults = (value: unknown): SwitchCommandDefaults |
     return undefined;
   }
 
+  const mode = normalizeSwitchMode(value.mode as unknown);
   const launchMode = normalizeLaunchMode(
     getFirstDefined(value.launchMode as unknown, value.launch_mode as unknown),
   );
 
-  if (launchMode === undefined) {
+  if (mode === undefined && launchMode === undefined) {
     return undefined;
   }
 
-  return {
-    launchMode,
-  };
+  const normalized: SwitchCommandDefaults = {};
+  if (mode !== undefined) {
+    normalized.mode = mode;
+  }
+  if (launchMode !== undefined) {
+    normalized.launchMode = launchMode;
+  }
+
+  return normalized;
 };
 
 const normalizeCommandDefaults = (value: unknown): CommandDefaultsConfig | undefined => {

@@ -10,6 +10,7 @@
 import { basename, dirname } from "path";
 import { ArashiError } from "./errors";
 import type { CommandResult } from "../types/git";
+import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 
 /**
  * Execute a git command and capture output
@@ -39,7 +40,7 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
   try {
     proc = Bun.spawn(["git", ...args], {
       cwd,
-      env: process.env as Record<string, string>,
+      env: normalizeSpawnEnvironment(process.env),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -170,7 +171,7 @@ export async function clone(gitUrl: string, destPath: string): Promise<CommandRe
   try {
     const proc = Bun.spawn(["git", "clone", gitUrl, repoName], {
       cwd: parentDir,
-      env: process.env as Record<string, string>,
+      env: normalizeSpawnEnvironment(process.env),
       stderr: "pipe",
       stdout: "pipe",
     });

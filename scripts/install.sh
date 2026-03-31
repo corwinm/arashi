@@ -12,6 +12,9 @@ INSTALL_DIR_OVERRIDE=""
 NO_MODIFY_PATH=false
 DEBUG_LOG=false
 PROGRESS_UI=false
+SHELL_INTEGRATION_MODE="prompt"
+SHELL_INTEGRATION_START="# >>> arashi shell integration >>>"
+SHELL_INTEGRATION_END="# <<< arashi shell integration <<<"
 
 log() {
   printf '==> %s\n' "$*"
@@ -44,11 +47,14 @@ Usage:
 Options:
   --version, -v      Install a specific version (for example 1.4.0 or v1.4.0)
   --install-dir      Override target install directory (default: ~/.arashi/bin)
+  --shell-integration     Enable shell integration without prompting
+  --no-shell-integration  Skip shell integration setup
   --help, -h         Show this help
 
 Environment:
   ARASHI_VERSION     Same as --version
   ARASHI_INSTALL_DIR Same as --install-dir
+  ARASHI_SHELL_INTEGRATION  yes|no|prompt (default: prompt)
 EOF
 }
 
@@ -63,6 +69,9 @@ parse_args() {
   fi
   if [ -n "${ARASHI_INSTALL_DIR:-}" ]; then
     INSTALL_DIR_OVERRIDE="$ARASHI_INSTALL_DIR"
+  fi
+  if [ -n "${ARASHI_SHELL_INTEGRATION:-}" ]; then
+    SHELL_INTEGRATION_MODE="$ARASHI_SHELL_INTEGRATION"
   fi
 
   while [ "$#" -gt 0 ]; do
@@ -83,6 +92,12 @@ parse_args() {
         ;;
       --no-modify-path)
         NO_MODIFY_PATH=true
+        ;;
+      --shell-integration)
+        SHELL_INTEGRATION_MODE="yes"
+        ;;
+      --no-shell-integration)
+        SHELL_INTEGRATION_MODE="no"
         ;;
       --help|-h)
         usage
@@ -405,6 +420,9 @@ Get started in a new project:
   arashi switch <feature-name>  # Switch to your new feature worktrees
 
 For more information visit https://arashi.haphazard.dev
+
+If you skip shell integration during install, you can enable it later with:
+  arashi shell install
 EOF
 }
 
@@ -418,6 +436,47 @@ detect_shell_name() {
     return
   fi
   printf 'sh\n'
+}
+
+is_supported_shell() {
+  case "$1" in
+    bash|zsh|fish)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+resolve_shell_rc_file() {
+  local shell_name="$1"
+
+  case "$shell_name" in
+    zsh)
+      printf '%s\n' "$HOME/.zshrc"
+      ;;
+    bash)
+      if [ -f "$HOME/.bashrc" ]; then
+        printf '%s\n' "$HOME/.bashrc"
+      elif [ -f "$HOME/.bash_profile" ]; then
+        printf '%s\n' "$HOME/.bash_profile"
+      elif [ "$(uname -s)" = "Darwin" ]; then
+        printf '%s\n' "$HOME/.bash_profile"
+      else
+        printf '%s\n' "$HOME/.bashrc"
+      fi
+      ;;
+    fish)
+      printf '%s\n' "$HOME/.config/fish/config.fish"
+      ;;
+    ksh)
+      printf '%s\n' "$HOME/.kshrc"
+      ;;
+    *)
+      printf '%s\n' "$HOME/.profile"
+      ;;
+  esac
 }
 
 build_posix_path_line() {
@@ -463,23 +522,15 @@ configure_shell_path() {
 
   case "$shell_name" in
     zsh)
-      rc_file="$HOME/.zshrc"
+      rc_file="$(resolve_shell_rc_file "$shell_name")"
       path_line="$(build_posix_path_line "$install_dir")"
       ;;
     bash)
-      if [ -f "$HOME/.bashrc" ]; then
-        rc_file="$HOME/.bashrc"
-      elif [ -f "$HOME/.bash_profile" ]; then
-        rc_file="$HOME/.bash_profile"
-      elif [ "$(uname -s)" = "Darwin" ]; then
-        rc_file="$HOME/.bash_profile"
-      else
-        rc_file="$HOME/.bashrc"
-      fi
+      rc_file="$(resolve_shell_rc_file "$shell_name")"
       path_line="$(build_posix_path_line "$install_dir")"
       ;;
     fish)
-      rc_file="$HOME/.config/fish/config.fish"
+      rc_file="$(resolve_shell_rc_file "$shell_name")"
       path_line="$(build_fish_path_line "$install_dir")"
       ;;
     ksh)
@@ -523,6 +574,123 @@ configure_shell_path() {
   log "Added $install_dir to PATH in $rc_file"
   echo ""
   warn "Open a new shell or run: export PATH=\"$install_dir:\$PATH\""
+}
+
+build_shell_integration_line() {
+  local shell_name="$1"
+
+  case "$shell_name" in
+    fish)
+      printf 'command arashi shell init fish | source'
+      ;;
+    bash|zsh)
+      printf 'eval "$(command arashi shell init %s)"' "$shell_name"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+shell_integration_installed() {
+  local rc_file="$1"
+  grep -F "$SHELL_INTEGRATION_START" "$rc_file" >/dev/null 2>&1
+}
+
+prompt_shell_integration() {
+  local shell_name="$1"
+
+  case "$SHELL_INTEGRATION_MODE" in
+    yes)
+      return 0
+      ;;
+    no)
+      return 1
+      ;;
+    prompt)
+      ;;
+    *)
+      warn "Unknown ARASHI_SHELL_INTEGRATION value: $SHELL_INTEGRATION_MODE"
+      return 1
+      ;;
+  esac
+
+  if [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+    return 1
+  fi
+
+  printf '\n' >&2
+  printf 'Install shell integration for %s so `arashi switch --cd` can change the current shell directory? [Y/n] ' "$shell_name" >&2
+
+  local response
+  if [ -r /dev/tty ]; then
+    IFS= read -r response < /dev/tty || return 1
+  else
+    IFS= read -r response || return 1
+  fi
+
+  case "$response" in
+    ""|y|Y|yes|YES)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+configure_shell_integration() {
+  local shell_name
+  local rc_file
+  local integration_line
+
+  shell_name="$(detect_shell_name)"
+  if ! is_supported_shell "$shell_name"; then
+    warn "Skipping shell integration prompt for unsupported shell: $shell_name"
+    return
+  fi
+
+  rc_file="$(resolve_shell_rc_file "$shell_name")"
+  integration_line="$(build_shell_integration_line "$shell_name")" || {
+    warn "Could not build shell integration line for $shell_name"
+    return
+  }
+
+  mkdir -p "$(dirname "$rc_file")" 2>/dev/null || {
+    warn "Could not create shell config directory for $rc_file"
+    warn "Run 'arashi shell install' manually after installation"
+    return
+  }
+
+  if [ ! -f "$rc_file" ]; then
+    : > "$rc_file" 2>/dev/null || {
+      warn "Could not create shell config file: $rc_file"
+      warn "Run 'arashi shell install' manually after installation"
+      return
+    }
+  fi
+
+  if shell_integration_installed "$rc_file"; then
+    log "Shell integration already configured in $rc_file"
+    return
+  fi
+
+  if ! prompt_shell_integration "$shell_name"; then
+    log "Skipping shell integration setup"
+    return
+  fi
+
+  {
+    printf '\n%s\n' "$SHELL_INTEGRATION_START"
+    printf '%s\n' "$integration_line"
+    printf '%s\n' "$SHELL_INTEGRATION_END"
+  } >> "$rc_file" || {
+    warn "Failed to update shell integration in $rc_file"
+    warn "Run 'arashi shell install' manually after installation"
+    return
+  }
+
+  log "Added shell integration to $rc_file"
 }
 
 main() {
@@ -603,13 +771,15 @@ main() {
   chmod 755 "$staging_wrapper_path" || fail "Failed to set executable permissions on wrapper"
   mv -f "$staging_wrapper_path" "$target_wrapper_path" || fail "Failed to place wrapper at $target_wrapper_path"
 
-  if [ NO_MODIFY_PATH = "true" ]; then
-    if [ DUBUG_LOG = "true" ]; then
+  if [ "$NO_MODIFY_PATH" = "true" ]; then
+    if [ "$DEBUG_LOG" = "true" ]; then
       log "Skipping PATH modification as --no-modify-path is set"
     fi
   else
     configure_shell_path "$install_dir"
   fi
+
+  configure_shell_integration
 
   print_post_install_notes "$install_dir" "$target_wrapper_path" "$target_binary_path"
 }

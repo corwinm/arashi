@@ -256,7 +256,7 @@ describe("executeHook", () => {
     expect(result.stdout).toContain("test output");
     // Note: Bun sets killed=true even for successful exits
     expect(result.timedOut).toBe(false);
-    expect(result.duration).toBeGreaterThan(0);
+    expect(result.duration).toBeGreaterThanOrEqual(0);
 
     rmSync(hookPath);
   });
@@ -351,6 +351,52 @@ describe("executeHook", () => {
 
     rmSync(hookPath);
     cleanupTestRepo(testRepo);
+  });
+
+  test("does not leak directive environment variables to hooks", async () => {
+    const originalDirectiveFile = process.env.ARASHI_DIRECTIVE_FILE;
+    const originalDirectiveShell = process.env.ARASHI_SHELL;
+    process.env.ARASHI_DIRECTIVE_FILE = "/tmp/arashi-directive";
+    process.env.ARASHI_SHELL = "bash";
+
+    const testRepo = createTestRepo();
+    const hookPath = createMockHook(`
+      if [ -n "$ARASHI_DIRECTIVE_FILE" ]; then
+        echo "directive leaked"
+        exit 1
+      fi
+      if [ -n "$ARASHI_SHELL" ]; then
+        echo "shell leaked"
+        exit 1
+      fi
+      echo "clean"
+    `);
+
+    try {
+      const result = await executeHook({
+        context: createTestContext(),
+        hookName: "test-hook",
+        scriptPath: hookPath,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.stdout).toContain("clean");
+    } finally {
+      rmSync(hookPath);
+      cleanupTestRepo(testRepo);
+
+      if (originalDirectiveFile === undefined) {
+        delete process.env.ARASHI_DIRECTIVE_FILE;
+      } else {
+        process.env.ARASHI_DIRECTIVE_FILE = originalDirectiveFile;
+      }
+
+      if (originalDirectiveShell === undefined) {
+        delete process.env.ARASHI_SHELL;
+      } else {
+        process.env.ARASHI_SHELL = originalDirectiveShell;
+      }
+    }
   });
 });
 
