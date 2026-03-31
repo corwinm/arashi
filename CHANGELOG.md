@@ -1,3 +1,14 @@
+## [1.10.0](https://github.com/corwinm/arashi/compare/v1.9.0...v1.10.0) (2026-03-31)
+
+### Features
+
+- add shell-integrated switch cd flow ([#51](https://github.com/corwinm/arashi/issues/51)) ([75aadb1](https://github.com/corwinm/arashi/commit/75aadb178fc41207a0e6c1be01c957db392b3ac6))
+- **init:** bootstrap repos from non-git directories ([#49](https://github.com/corwinm/arashi/issues/49)) ([a5ec11c](https://github.com/corwinm/arashi/commit/a5ec11cae023330d73d8fff1875b3c344e813a84))
+
+### Bug Fixes
+
+- add exact-path switch targeting ([#131](https://github.com/corwinm/arashi/issues/131)) ([f4a9be1](https://github.com/corwinm/arashi/commit/f4a9be1f0ef8ac97751505f2aae755d651ebb4fb))
+
 ## [1.9.0](https://github.com/corwinm/arashi/compare/v1.8.2...v1.9.0) (2026-03-30)
 
 ### Features
