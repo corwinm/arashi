@@ -37,6 +37,8 @@ The curl installer (`scripts/install.sh`) is bound to GitHub Releases artifacts:
 - Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies both the wrapper (`arashi`) and target platform binary SHA-256 checksums before install.
 - Default install placement is `~/.arashi/bin` unless overridden with `ARASHI_INSTALL_DIR` or `--install-dir`.
 - Installer updates the active shell config (`.zshrc`, `.bashrc`/`.bash_profile`, `.profile`, or fish config) to include the install directory on `PATH`.
+- Interactive curl installs offer to enable shell integration for bash, zsh, and fish so `arashi switch --cd` works without a second setup step.
+- For unattended installs, set `ARASHI_SHELL_INTEGRATION=yes` to enable shell integration without prompting or `ARASHI_SHELL_INTEGRATION=no` to skip it.
 - Install placement uses staged temp files and atomic moves to `arashi` (wrapper) and `arashi.bin` (platform binary).
 
 Checksum manifest expectations:
@@ -52,6 +54,7 @@ Checksum manifest expectations:
 - Download/network errors: retry the command; if failures persist, use npm installation or manual releases.
 - Checksum mismatch: treat as a blocked install, retry once, then fall back to npm/manual and report the issue.
 - Unsupported platform: use npm (`npm install -g arashi`) when available, otherwise use manual release assets.
+- If you skip shell integration during install, run `arashi shell install` later.
 
 ## npm troubleshooting and fallback guidance
 

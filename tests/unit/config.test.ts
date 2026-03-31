@@ -93,6 +93,7 @@ describe("validateConfig - root level", () => {
         },
         switch: {
           launchMode: "sesh",
+          mode: "cd",
         },
       },
       repos: {},
@@ -112,6 +113,7 @@ describe("validateConfig - root level", () => {
         },
         switch: {
           launch_mode: "auto",
+          mode: "auto",
         },
       },
       repos: {},
@@ -121,6 +123,7 @@ describe("validateConfig - root level", () => {
 
     expect(normalized.defaults?.create?.launchMode).toBe("sesh");
     expect(normalized.defaults?.create?.launch).toBe(true);
+    expect(normalized.defaults?.switch?.mode).toBe("auto");
     expect(normalized.defaults?.switch?.launchMode).toBe("auto");
   });
 

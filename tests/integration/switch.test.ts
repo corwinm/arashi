@@ -1,8 +1,11 @@
 import { createCommand, executeSwitch } from "../../src/commands/switch.ts";
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "fs/promises";
 import type { SwitchCandidate } from "../../src/core/switch.ts";
 import type { SwitchProcessRunner } from "../../src/lib/switch-launcher.ts";
 import type { WorkspaceRepository } from "../../src/lib/config.ts";
+import { join } from "path";
+import { tmpdir } from "os";
 
 const candidate: SwitchCandidate = {
   branchName: "feature/switch-command",
@@ -15,6 +18,7 @@ describe("switch command integration", () => {
     const command = createCommand();
     expect(command.name()).toBe("switch");
     expect(command.options.some((option) => option.long === "--sesh")).toBe(true);
+    expect(command.options.some((option) => option.long === "--cd")).toBe(true);
     expect(command.options.some((option) => option.long === "--vscode")).toBe(true);
     expect(command.options.some((option) => option.long === "--cursor")).toBe(true);
     expect(command.options.some((option) => option.long === "--kiro")).toBe(true);
@@ -400,6 +404,205 @@ describe("switch command integration", () => {
             defaults: {
               switch: {
                 launchMode: "sesh",
+              },
+            },
+            repos: {},
+            reposDir: "./repos",
+            version: "1.0.0",
+          },
+          repositories: [],
+        }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(launchOptions).toEqual([{ sesh: true }]);
+  });
+
+  test("writes a cd directive when --cd is requested through shell integration", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "arashi-switch-directive-"));
+    const directivePath = join(tempDir, "directive.sh");
+    let launchCalled = false;
+
+    try {
+      const result = await executeSwitch(
+        undefined,
+        { cd: true },
+        {
+          discoverSwitchCandidates: async () => ({
+            candidates: [candidate],
+            skippedCount: 0,
+          }),
+          env: {
+            ARASHI_DIRECTIVE_FILE: directivePath,
+            ARASHI_SHELL: "bash",
+          },
+          findWorkspaceRoot: async () => "/workspace",
+          launchSwitchTarget: async () => {
+            launchCalled = true;
+            return { command: ["open"], mode: "fallback" };
+          },
+          loadWorkspaceRepositories: async () => ({ repositories: [] }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
+
+      expect(result.launchMode).toBe("cd");
+      expect(await Bun.file(directivePath).text()).toBe(
+        "cd -- '/workspace/feature-switch-command'\n",
+      );
+      expect(launchCalled).toBe(false);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  test("auto mode prefers cd when shell integration is active", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "arashi-switch-auto-"));
+    const directivePath = join(tempDir, "directive.sh");
+
+    try {
+      const result = await executeSwitch(
+        undefined,
+        {},
+        {
+          discoverSwitchCandidates: async () => ({
+            candidates: [candidate],
+            skippedCount: 0,
+          }),
+          env: {
+            ARASHI_DIRECTIVE_FILE: directivePath,
+            ARASHI_SHELL: "bash",
+          },
+          findWorkspaceRoot: async () => "/workspace",
+          loadWorkspaceRepositories: async () => ({
+            config: {
+              defaults: {
+                switch: {
+                  mode: "auto",
+                },
+              },
+              repos: {},
+              reposDir: "./repos",
+              version: "1.0.0",
+            },
+            repositories: [],
+          }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
+
+      expect(result.launchMode).toBe("cd");
+      expect(await Bun.file(directivePath).text()).toBe(
+        "cd -- '/workspace/feature-switch-command'\n",
+      );
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  test("auto mode falls back to launch behavior when shell integration is inactive", async () => {
+    let launchCalled = false;
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async () => {
+          launchCalled = true;
+          return { command: ["open"], mode: "fallback" };
+        },
+        loadWorkspaceRepositories: async () => ({
+          config: {
+            defaults: {
+              switch: {
+                mode: "auto",
+              },
+            },
+            repos: {},
+            reposDir: "./repos",
+            version: "1.0.0",
+          },
+          repositories: [],
+        }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("fallback");
+    expect(launchCalled).toBe(true);
+  });
+
+  test("does not launch when --cd is requested without shell integration", async () => {
+    const originalError = console.error;
+    const warnings: string[] = [];
+    let launchCalled = false;
+    console.error = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+
+    try {
+      const result = await executeSwitch(
+        undefined,
+        { cd: true },
+        {
+          discoverSwitchCandidates: async () => ({
+            candidates: [candidate],
+            skippedCount: 0,
+          }),
+          findWorkspaceRoot: async () => "/workspace",
+          launchSwitchTarget: async () => {
+            launchCalled = true;
+            return { command: ["open"], mode: "fallback" };
+          },
+          loadWorkspaceRepositories: async () => ({ repositories: [] }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
+
+      expect(result.launchMode).toBe("cd");
+      expect(launchCalled).toBe(false);
+      expect(warnings.join("\n")).toContain("Shell integration is not active");
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  test("keeps explicit sesh behavior ahead of cd mode defaults", async () => {
+    const launchOptions: { sesh?: boolean }[] = [];
+
+    await executeSwitch(
+      undefined,
+      { sesh: true },
+      {
+        discoverSwitchCandidates: async () => ({
+          candidates: [candidate],
+          skippedCount: 0,
+        }),
+        env: {
+          ARASHI_DIRECTIVE_FILE: "/tmp/arashi-directive",
+          ARASHI_SHELL: "bash",
+        },
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async (_candidate, options) => {
+          launchOptions.push(options);
+          return { command: ["tmux"], mode: "sesh" };
+        },
+        loadWorkspaceRepositories: async () => ({
+          config: {
+            defaults: {
+              switch: {
+                mode: "cd",
               },
             },
             repos: {},

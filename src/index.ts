@@ -9,6 +9,7 @@ import { createCommand as createListCommand } from "./commands/list.ts";
 import { createCommand as createPullCommand } from "./commands/pull.ts";
 import { createCommand as createRemoveCommand } from "./commands/remove.ts";
 import { createCommand as createSetupCommand } from "./commands/setup.ts";
+import { createCommand as createShellCommand } from "./commands/shell.ts";
 import { createCommand as createStatusCommand } from "./commands/status.ts";
 import { createCommand as createSwitchCommand } from "./commands/switch.ts";
 import { createCommand as createSyncCommand } from "./commands/sync.ts";
@@ -64,6 +65,7 @@ program.addCommand(createStatusCommand());
 program.addCommand(createRemoveCommand());
 program.addCommand(createPullCommand());
 program.addCommand(createSyncCommand());
+program.addCommand(createShellCommand());
 program.addCommand(createSetupCommand());
 program.addCommand(createSwitchCommand());
 

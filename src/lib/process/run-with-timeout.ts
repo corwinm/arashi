@@ -1,3 +1,5 @@
+import { normalizeSpawnEnvironment } from "../shell-directives.ts";
+
 export interface RunWithTimeoutResult {
   stdout: string;
   stderr: string;
@@ -35,7 +37,12 @@ export async function runWithTimeout(
   try {
     const proc = Bun.spawn(command, {
       cwd: options.cwd,
-      env: options.env ?? (process.env as Record<string, string>),
+      env: normalizeSpawnEnvironment(
+        (options.env ?? (process.env as Record<string, string>)) as Record<
+          string,
+          string | undefined
+        >,
+      ),
       killSignal: "SIGTERM",
       stderr: "pipe",
       stdout: "pipe",

@@ -8,6 +8,7 @@ export enum SwitchCommandErrorCode {
   SESH_NOT_FOUND = "SESH_NOT_FOUND",
   IDE_NOT_FOUND = "IDE_NOT_FOUND",
   LAUNCH_FAILED = "LAUNCH_FAILED",
+  CONFLICTING_SWITCH_OPTIONS = "CONFLICTING_SWITCH_OPTIONS",
 }
 
 export class SwitchCommandError extends Error {
@@ -26,4 +27,4 @@ export class SwitchCommandError extends Error {
   }
 }
 
-export type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";
+export type SwitchLaunchMode = "cd" | "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";

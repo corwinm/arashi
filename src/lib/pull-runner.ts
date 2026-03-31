@@ -1,5 +1,6 @@
 import { isAbsolute, resolve } from "path";
 import { exec } from "./git.ts";
+import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 
 export interface PullExecutionOptions {
   timeoutMs?: number;
@@ -115,7 +116,7 @@ async function runGitCommand(
 ): Promise<{ exitCode: number; output: string; error?: string; timedOut?: boolean }> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    env: process.env as Record<string, string>,
+    env: normalizeSpawnEnvironment(process.env),
     stderr: "pipe",
     stdout: "pipe",
   });
