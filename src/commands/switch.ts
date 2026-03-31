@@ -40,6 +40,7 @@ export interface SwitchCommandOptions {
   vscode?: boolean;
   cursor?: boolean;
   kiro?: boolean;
+  path?: boolean;
   repos?: boolean;
   all?: boolean;
   defaultLaunch?: boolean;
@@ -101,6 +102,7 @@ export function createCommand(): Command {
   return new Command("switch")
     .description("Open a terminal context for an existing worktree")
     .argument("[filter]", "Filter targets by branch name or worktree path")
+    .option("--path", "Treat argument as exact worktree path")
     .option("--sesh", "Use sesh in tmux mode")
     .option("--vscode", "Open the selected worktree in VS Code")
     .option("--cursor", "Open the selected worktree in Cursor")
@@ -117,6 +119,7 @@ Examples:
   $ arashi switch --no-default-launch
   $ arashi switch --all feature-auth
   $ arashi switch --cursor feature-auth
+  $ arashi switch --path /path/to/worktree
   $ arashi switch feature-auth
   $ arashi switch repo-a --sesh
 `,
@@ -170,11 +173,25 @@ export async function executeSwitch(
   }
 
   let matchedCandidates = filterSwitchCandidates(scopedCandidates, filter);
-  if (scope === "repos") {
+  if (options.path) {
+    matchedCandidates = filterSwitchCandidatesByExactPath(scopedCandidates, filter);
+  } else if (scope === "repos") {
     matchedCandidates = filterRepoScopedCandidates(scopedCandidates, filter);
   }
 
   if (matchedCandidates.length === ZERO) {
+    if (options.path) {
+      throw new SwitchCommandError(
+        buildPathNoMatchMessage(filter),
+        SwitchCommandErrorCode.NO_MATCHES,
+        {
+          filter,
+          pathMode: true,
+          scope,
+        },
+      );
+    }
+
     if (scope === "repos") {
       throw new SwitchCommandError(
         buildRepoNoMatchMessage(scopedCandidates, filter),
@@ -459,6 +476,18 @@ const filterRepoScopedCandidates = (
   return [];
 };
 
+const filterSwitchCandidatesByExactPath = (
+  candidates: SwitchCandidate[],
+  filter: string | undefined,
+): SwitchCandidate[] => {
+  if (!filter || filter.trim().length === ZERO) {
+    return [];
+  }
+
+  const normalizedPath = resolve(filter.trim());
+  return candidates.filter((candidate) => resolve(candidate.worktreePath) === normalizedPath);
+};
+
 const buildRepoNoMatchMessage = (
   candidates: SwitchCandidate[],
   filter: string | undefined,
@@ -476,6 +505,14 @@ const buildRepoNoMatchMessage = (
   }
 
   return `No child repository matched \`${filter}\`. Available repositories: ${availableReposText}`;
+};
+
+const buildPathNoMatchMessage = (filter: string | undefined): string => {
+  if (!filter || filter.trim().length === ZERO) {
+    return "Exact path mode requires a worktree path. Run `arashi switch --path <worktree-path>`.";
+  }
+
+  return `No worktree exists at exact path \`${resolve(filter.trim())}\`. Run \`arashi list\` to see available worktree paths.`;
 };
 
 const resolveLaunchOptions = (

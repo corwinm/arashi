@@ -14,6 +14,7 @@ describe("switch command integration", () => {
   test("registers switch command with --sesh option", () => {
     const command = createCommand();
     expect(command.name()).toBe("switch");
+    expect(command.options.some((option) => option.long === "--path")).toBe(true);
     expect(command.options.some((option) => option.long === "--sesh")).toBe(true);
     expect(command.options.some((option) => option.long === "--vscode")).toBe(true);
     expect(command.options.some((option) => option.long === "--cursor")).toBe(true);
@@ -96,6 +97,105 @@ describe("switch command integration", () => {
     );
 
     expect(discoveredRepoSets).toEqual([["repo-a", "repo-b"]]);
+  });
+
+  test("selects a worktree by exact path when --path is enabled", async () => {
+    const result = await executeSwitch(
+      "/workspace/main",
+      { path: true },
+      {
+        discoverSwitchCandidates: async () => ({
+          candidates: [
+            {
+              branchName: "main",
+              repoName: "workspace",
+              worktreePath: "/workspace/main",
+            },
+            {
+              branchName: "main",
+              repoName: "workspace",
+              worktreePath: "/workspace/main-copy",
+            },
+          ],
+          skippedCount: 0,
+        }),
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+        loadWorkspaceRepositories: async () => ({
+          repositories: [{ name: "workspace", path: "/workspace" }],
+        }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.matchedCandidates).toBe(1);
+    expect(result.selected.worktreePath).toBe("/workspace/main");
+  });
+
+  test("reports a clear error when --path does not match a worktree", async () => {
+    await expect(
+      executeSwitch(
+        "/workspace/missing",
+        { path: true },
+        {
+          discoverSwitchCandidates: async () => ({
+            candidates: [
+              {
+                branchName: "main",
+                repoName: "workspace",
+                worktreePath: "/workspace/main",
+              },
+            ],
+            skippedCount: 0,
+          }),
+          findWorkspaceRoot: async () => "/workspace",
+          loadWorkspaceRepositories: async () => ({
+            repositories: [{ name: "workspace", path: "/workspace" }],
+          }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "NO_MATCHES",
+      message:
+        "No worktree exists at exact path `/workspace/missing`. Run `arashi list` to see available worktree paths.",
+    });
+  });
+
+  test("keeps ambiguous fuzzy matching behavior when --path is not enabled", async () => {
+    await expect(
+      executeSwitch(
+        "main",
+        {},
+        {
+          discoverSwitchCandidates: async () => ({
+            candidates: [
+              {
+                branchName: "main",
+                repoName: "workspace",
+                worktreePath: "/workspace/main",
+              },
+              {
+                branchName: "feature/main-fix",
+                repoName: "workspace",
+                worktreePath: "/workspace/feature-main-fix",
+              },
+            ],
+            skippedCount: 0,
+          }),
+          findWorkspaceRoot: async () => "/workspace",
+          loadWorkspaceRepositories: async () => ({
+            repositories: [{ name: "workspace", path: "/workspace" }],
+          }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "AMBIGUOUS_NON_INTERACTIVE",
+    });
   });
 
   test("limits --repos candidates to the current workspace path", async () => {
