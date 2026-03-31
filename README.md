@@ -125,6 +125,14 @@ arashi switch --cd feature-auth-refresh     # parent-shell cd when shell integra
 arashi switch --no-default-launch           # bypass configured launch mode defaults once
 ```
 
+## Workflow Guides
+
+Use the docs site workflow guides when you want setup guidance by outcome instead of by individual command.
+
+- Hooks and configuration defaults: [arashi.haphazard.dev/workflows/hooks-and-config](https://arashi.haphazard.dev/workflows/hooks-and-config/)
+- Integrations for VSCode, tmux, and `tmux` plus `sesh`: [arashi.haphazard.dev/workflows/integrations](https://arashi.haphazard.dev/workflows/integrations/)
+- Agent-assisted and spec-driven change flow: [arashi.haphazard.dev/workflows/agents-and-specs](https://arashi.haphazard.dev/workflows/agents-and-specs/)
+
 ## Shell Integration
 
 Use shell integration when you want `arashi switch` to change the current shell directory instead of only opening a new terminal or editor context.
@@ -275,6 +283,7 @@ Arashi also ships a dedicated `skills.sh` integration package for guided install
 - Configuration details: [`docs/configuration.md`](./docs/configuration.md)
 - Clone command details: [`docs/commands/clone.md`](./docs/commands/clone.md)
 - Hook behavior: [`docs/hooks.md`](./docs/hooks.md)
+- Workflow guides: [https://arashi.haphazard.dev/workflows/](https://arashi.haphazard.dev/workflows/)
 - Shell integration details: [`docs/commands/shell.md`](./docs/commands/shell.md)
 - Setup command details: [`docs/commands/setup.md`](./docs/commands/setup.md)
 - Switch command details: [`docs/commands/switch.md`](./docs/commands/switch.md)
