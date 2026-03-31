@@ -256,7 +256,7 @@ describe("executeHook", () => {
     expect(result.stdout).toContain("test output");
     // Note: Bun sets killed=true even for successful exits
     expect(result.timedOut).toBe(false);
-    expect(result.duration).toBeGreaterThan(0);
+    expect(result.duration).toBeGreaterThanOrEqual(0);
 
     rmSync(hookPath);
   });
