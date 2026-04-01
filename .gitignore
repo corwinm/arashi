@@ -14,6 +14,8 @@ coverage/
 Thumbs.db
 bin/arashi.bin*
 bin/arashi-*
+bin/index.js.map
+*.bun-build
 .oxlintcache
 .oxfmtcache
 
