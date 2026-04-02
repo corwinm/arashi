@@ -144,6 +144,95 @@ describe("checkRepoStatus", () => {
     expect(status.error).toContain("arashi clone");
     expect(status.files).toHaveLength(0);
   });
+
+  test("refreshes tracked remote before parsing branch status", async () => {
+    const callOrder: string[] = [];
+
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      dependencies: {
+        fetchRemoteTrackingTarget: async (_repoPath, target) => {
+          callOrder.push(`fetch:${target.remote}/${target.branch}`);
+          return { ok: true };
+        },
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => {
+          callOrder.push("status");
+          return { error: null, output: "## main...origin/main [behind 2]" };
+        },
+        resolveRemoteTrackingTarget: async () => {
+          callOrder.push("resolve");
+          return {
+            ok: true as const,
+            target: {
+              branch: "main",
+              remote: "origin",
+              upstream: "origin/main",
+            },
+          };
+        },
+      },
+    });
+
+    expect(callOrder).toEqual(["resolve", "fetch:origin/main", "status"]);
+    expect(status.branch.behind).toBe(2);
+    expect(status.error).toBeNull();
+    expect(status.refreshWarning).toBeNull();
+  });
+
+  test("skips remote refresh when no tracking target can be resolved", async () => {
+    let fetchCalled = false;
+
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      dependencies: {
+        fetchRemoteTrackingTarget: async () => {
+          fetchCalled = true;
+          return { ok: true };
+        },
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({ error: null, output: "## main" }),
+        resolveRemoteTrackingTarget: async () => ({
+          error: "No remotes configured for repository",
+          ok: false as const,
+          upstream: null,
+        }),
+      },
+    });
+
+    expect(fetchCalled).toBe(false);
+    expect(status.branch.localBranch).toBe("main");
+    expect(status.error).toBeNull();
+    expect(status.refreshWarning).toBeNull();
+  });
+
+  test("preserves local status when remote refresh fails", async () => {
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      dependencies: {
+        fetchRemoteTrackingTarget: async () => ({
+          error: "Git command failed: authentication required",
+          ok: false as const,
+        }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: `## main...origin/main
+ M src/file.ts`,
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: {
+            branch: "main",
+            remote: "origin",
+            upstream: "origin/main",
+          },
+        }),
+      },
+    });
+
+    expect(status.error).toBeNull();
+    expect(status.files).toHaveLength(1);
+    expect(status.refreshWarning).toContain("Remote tracking may be stale");
+    expect(formatShortLine(status)).toContain("remote tracking stale");
+  });
 });
 
 describe("formatShortLine", () => {
