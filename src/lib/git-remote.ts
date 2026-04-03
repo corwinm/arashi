@@ -1,5 +1,15 @@
 import { exec } from "./git.ts";
 
+export interface RemoteTrackingTarget {
+  upstream: string | null;
+  remote: string;
+  branch: string;
+}
+
+export type RemoteTrackingTargetResolution =
+  | { ok: true; target: RemoteTrackingTarget }
+  | { ok: false; error: string; upstream: string | null };
+
 export interface RemoteChangeStatus {
   repositoryId: string;
   upstream: string | null;
@@ -11,10 +21,9 @@ export interface RemoteChangeStatus {
   error?: string;
 }
 
-export async function checkRemoteChanges(
-  repositoryId: string,
+export async function resolveRemoteTrackingTarget(
   repoPath: string,
-): Promise<RemoteChangeStatus> {
+): Promise<RemoteTrackingTargetResolution> {
   let upstream: string | null = null;
   let remote: string | null = null;
   let branch: string | null = null;
@@ -37,52 +46,83 @@ export async function checkRemoteChanges(
   if (!remote || !branch) {
     const fallback = await resolveRemoteAndBranch(repoPath);
     if (!fallback.ok) {
-      return {
-        ahead: 0,
-        behind: 0,
-        branch: null,
-        error: fallback.error,
-        hasRemoteChanges: false,
-        remote: null,
-        repositoryId,
-        upstream,
-      };
+      return { error: fallback.error, ok: false, upstream };
     }
     ({ remote } = fallback);
     ({ branch } = fallback);
   }
 
   if (!remote || !branch) {
+    return { error: "Unable to determine remote tracking branch", ok: false, upstream };
+  }
+
+  return {
+    ok: true,
+    target: {
+      branch,
+      remote,
+      upstream,
+    },
+  };
+}
+
+export async function fetchRemoteTrackingTarget(
+  repoPath: string,
+  target: RemoteTrackingTarget,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await exec(
+      [
+        "fetch",
+        "--prune",
+        target.remote,
+        `+refs/heads/${target.branch}:refs/remotes/${target.remote}/${target.branch}`,
+      ],
+      repoPath,
+    );
+    return { ok: true };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Remote fetch failed",
+      ok: false,
+    };
+  }
+}
+
+export async function checkRemoteChanges(
+  repositoryId: string,
+  repoPath: string,
+): Promise<RemoteChangeStatus> {
+  const resolution = await resolveRemoteTrackingTarget(repoPath);
+  if (!resolution.ok) {
     return {
       ahead: 0,
       behind: 0,
       branch: null,
-      error: "Unable to determine remote tracking branch",
+      error: resolution.error,
       hasRemoteChanges: false,
       remote: null,
       repositoryId,
-      upstream,
+      upstream: resolution.upstream,
     };
   }
 
-  try {
-    await exec(
-      ["fetch", "--prune", remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
-      repoPath,
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Remote fetch failed";
+  const { target } = resolution;
+  const fetchResult = await fetchRemoteTrackingTarget(repoPath, target);
+  if (!fetchResult.ok) {
     return {
       ahead: 0,
       behind: 0,
-      branch,
-      error: message,
+      branch: target.branch,
+      error: fetchResult.error,
       hasRemoteChanges: false,
-      remote,
+      remote: target.remote,
       repositoryId,
-      upstream,
+      upstream: target.upstream,
     };
   }
+
+  const { branch, remote, upstream } = target;
 
   try {
     const compareRef = `refs/remotes/${remote}/${branch}`;

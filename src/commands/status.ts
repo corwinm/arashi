@@ -6,6 +6,7 @@
  * Supports three output modes: default, verbose, and short.
  */
 
+import { fetchRemoteTrackingTarget, resolveRemoteTrackingTarget } from "../lib/git-remote.js";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
 import { getFullGitStatus, getGitStatus } from "../lib/git.js";
 import { info, error as logError, spinner } from "../lib/logger.js";
@@ -108,9 +109,30 @@ export interface RepoStatus {
   files: GitFileStatus[];
   /** Error message if status check failed */
   error: string | null;
+  /** Warning shown when remote tracking refresh fails but local status is still available */
+  refreshWarning?: string | null;
   /** Full git status output (for verbose mode) */
   fullStatus?: string;
 }
+
+interface StatusCommandDependencies {
+  fetchRemoteTrackingTarget: typeof fetchRemoteTrackingTarget;
+  getFullGitStatus: typeof getFullGitStatus;
+  getGitStatus: typeof getGitStatus;
+  resolveRemoteTrackingTarget: typeof resolveRemoteTrackingTarget;
+}
+
+interface CheckRepoStatusOptions {
+  dependencies?: StatusCommandDependencies;
+  verbose?: boolean;
+}
+
+const defaultStatusCommandDependencies: StatusCommandDependencies = {
+  fetchRemoteTrackingTarget,
+  getFullGitStatus,
+  getGitStatus,
+  resolveRemoteTrackingTarget,
+};
 
 /**
  * Parse git status porcelain output
@@ -209,11 +231,14 @@ const pathExists = async (path: string): Promise<boolean> => {
   }
 };
 
+const createRefreshWarning = (error: string): string => `Remote tracking may be stale: ${error}`;
+
 export const checkRepoStatus = async (
   name: string,
   path: string,
-  verbose = false,
+  options: CheckRepoStatusOptions = {},
 ): Promise<RepoStatus> => {
+  const { dependencies = defaultStatusCommandDependencies, verbose = false } = options;
   const repoExists = await pathExists(path);
   if (!repoExists) {
     return {
@@ -222,11 +247,21 @@ export const checkRepoStatus = async (
       files: [],
       name,
       path,
+      refreshWarning: null,
     };
   }
 
   try {
-    const result = await getGitStatus(path);
+    let refreshWarning: string | null = null;
+    const trackingTarget = await dependencies.resolveRemoteTrackingTarget(path);
+    if (trackingTarget.ok) {
+      const fetchResult = await dependencies.fetchRemoteTrackingTarget(path, trackingTarget.target);
+      if (!fetchResult.ok) {
+        refreshWarning = createRefreshWarning(fetchResult.error);
+      }
+    }
+
+    const result = await dependencies.getGitStatus(path);
 
     if (result.error) {
       return {
@@ -235,6 +270,7 @@ export const checkRepoStatus = async (
         files: [],
         name,
         path,
+        refreshWarning,
       };
     }
 
@@ -242,7 +278,7 @@ export const checkRepoStatus = async (
 
     let fullStatus: string | undefined = undefined;
     if (verbose) {
-      const fullResult = await getFullGitStatus(path);
+      const fullResult = await dependencies.getFullGitStatus(path);
       if (fullResult.error) {
         fullStatus = fullResult.error;
       } else {
@@ -257,6 +293,7 @@ export const checkRepoStatus = async (
       fullStatus,
       name,
       path,
+      refreshWarning,
     };
   } catch (error) {
     let errorMessage = "Unknown error";
@@ -270,6 +307,7 @@ export const checkRepoStatus = async (
       files: [],
       name,
       path,
+      refreshWarning: null,
     };
   }
 };
@@ -299,7 +337,9 @@ export const checkAllRepos = (
     reposToCheck.push({ name, path: absolutePath });
   }
 
-  const statusPromises = reposToCheck.map((repo) => checkRepoStatus(repo.name, repo.path, verbose));
+  const statusPromises = reposToCheck.map((repo) =>
+    checkRepoStatus(repo.name, repo.path, { verbose }),
+  );
 
   return Promise.all(statusPromises);
 };
@@ -354,6 +394,11 @@ const getStatusColor = (isClean: boolean) => (hasError: boolean) => {
  * Helper to apply cyan color
  */
 const cyan = (text: string): string => `\u001B[36m${text}\u001B[0m`;
+
+/**
+ * Helper to apply yellow color
+ */
+const yellow = (text: string): string => `\u001B[33m${text}\u001B[0m`;
 
 /**
  * Helper to apply bold
@@ -412,6 +457,10 @@ export const formatRepoSection = (status: RepoStatus): string => {
     }
 
     section += `    ${parts.join(", ")}\n`;
+  }
+
+  if (status.refreshWarning) {
+    section += `  ${yellow(`Warning: ${status.refreshWarning}`)}\n`;
   }
 
   return section;
@@ -481,6 +530,10 @@ export const formatVerboseOutput = (statuses: RepoStatus[]): string => {
       const colorFn = getStatusColor(true)(false);
       output += `  ${colorFn("✓ Clean - No changes")}\n`;
     }
+
+    if (status.refreshWarning) {
+      output += `  ${yellow(`Warning: ${status.refreshWarning}`)}\n`;
+    }
   }
 
   output += formatSummary(statuses);
@@ -541,6 +594,10 @@ export const formatShortLine = (status: RepoStatus): string => {
     }
 
     line += colorFn(`● ${status.files.length} changes (${parts.join(", ")})`);
+  }
+
+  if (status.refreshWarning) {
+    line += ` ${yellow("(remote tracking stale)")}`;
   }
 
   return line;
