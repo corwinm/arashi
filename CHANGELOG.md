@@ -1,3 +1,10 @@
+## [1.10.1](https://github.com/corwinm/arashi/compare/v1.10.0...v1.10.1) (2026-04-07)
+
+### Bug Fixes
+
+- **status:** refresh remote tracking before reporting branch state ([#138](https://github.com/corwinm/arashi/issues/138)) ([#53](https://github.com/corwinm/arashi/issues/53)) ([1dcbf6d](https://github.com/corwinm/arashi/commit/1dcbf6dfe8d08e11855667398ab9ba07c3fff770))
+- surface linked child repo status in list output ([#54](https://github.com/corwinm/arashi/issues/54)) ([39bf320](https://github.com/corwinm/arashi/commit/39bf3209e86720ca65f195480c3a96d915d8faeb))
+
 ## [1.10.0](https://github.com/corwinm/arashi/compare/v1.9.0...v1.10.0) (2026-03-31)
 
 ### Features
