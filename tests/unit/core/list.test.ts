@@ -20,7 +20,7 @@ import {
 } from "../../../src/core/list";
 import { ListCommandError } from "../../../src/types/list";
 import { join } from "path";
-import { mkdir } from "fs/promises";
+import { mkdir, rename, writeFile } from "fs/promises";
 
 interface SubRepositoryInfo {
   relativePath: string;
@@ -704,6 +704,23 @@ describe("findGitRepositories()", () => {
     expect(repos).toContain(nestedRepoPath);
   });
 
+  test("finds repository when nested git metadata uses a .git file", async () => {
+    const nestedRepoPath = join(testRepo.path, "linked-repo");
+    await mkdir(nestedRepoPath, { recursive: true });
+
+    const { spawn } = await import("bun");
+    await spawn(["git", "init"], { cwd: nestedRepoPath }).exited;
+    await spawn(["git", "config", "user.email", "test@example.com"], { cwd: nestedRepoPath })
+      .exited;
+    await spawn(["git", "config", "user.name", "Test User"], { cwd: nestedRepoPath }).exited;
+    await rename(join(nestedRepoPath, ".git"), join(nestedRepoPath, ".gitdir"));
+    await writeFile(join(nestedRepoPath, ".git"), "gitdir: ./.gitdir\n");
+
+    const repos = await findGitRepositories(testRepo.path, 3, true);
+
+    expect(repos).toContain(nestedRepoPath);
+  });
+
   test("respects maxDepth parameter", async () => {
     // Create nested repositories at different depths
     const depth1 = join(testRepo.path, "level1");
@@ -881,6 +898,25 @@ describe("discoverSubRepositories()", () => {
     const subRepos = await discoverSubRepositories(testRepo.path, 3);
 
     expect(subRepos[0].hasChanges).toBe(true);
+  });
+
+  test("discovers nested repository when git metadata uses a .git file", async () => {
+    const nestedPath = join(testRepo.path, "repos", "linked-nested");
+    await mkdir(nestedPath, { recursive: true });
+
+    const { spawn } = await import("bun");
+    await spawn(["git", "init"], { cwd: nestedPath }).exited;
+    await spawn(["git", "config", "user.email", "test@example.com"], { cwd: nestedPath }).exited;
+    await spawn(["git", "config", "user.name", "Test"], { cwd: nestedPath }).exited;
+    await createFile(nestedPath, "README.md", "# Linked Nested");
+    await commitChanges(nestedPath, "Initial commit");
+    await rename(join(nestedPath, ".git"), join(nestedPath, ".gitdir"));
+    await writeFile(join(nestedPath, ".git"), "gitdir: ./.gitdir\n");
+
+    const subRepos = await discoverSubRepositories(testRepo.path, 3);
+
+    expect(subRepos).toHaveLength(1);
+    expect(subRepos[0].relativePath).toBe("repos/linked-nested");
   });
 
   test("returns empty array when no sub-repositories exist", async () => {

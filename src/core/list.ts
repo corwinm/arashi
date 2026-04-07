@@ -73,23 +73,26 @@ const shouldIncludeRootRepository = (
 const handleDirectoryEntry = async (options: {
   currentPath: string;
   depth: number;
-  entry: { isDirectory: () => boolean; name: string };
+  entry: { isDirectory: () => boolean; isFile: () => boolean; name: string };
   excludeRoot?: boolean;
   gitRepos: string[];
   rootPath: string;
   scan: (currentPath: string, depth: number) => Promise<void>;
 }): Promise<void> => {
+  if (options.entry.name === ".git" && (options.entry.isDirectory() || options.entry.isFile())) {
+    const repoPath = options.currentPath;
+    if (shouldIncludeRootRepository(options.excludeRoot, repoPath, options.rootPath)) {
+      await tryAddGitRepository(options.gitRepos, repoPath);
+    }
+    return;
+  }
+
   if (!options.entry.isDirectory()) {
     return;
   }
 
   const fullPath = join(options.currentPath, options.entry.name);
-  if (options.entry.name === ".git") {
-    const repoPath = options.currentPath;
-    if (shouldIncludeRootRepository(options.excludeRoot, repoPath, options.rootPath)) {
-      await tryAddGitRepository(options.gitRepos, repoPath);
-    }
-  } else if (!SKIPPED_DIRECTORY_NAMES.has(options.entry.name)) {
+  if (!SKIPPED_DIRECTORY_NAMES.has(options.entry.name)) {
     await options.scan(fullPath, options.depth + 1);
   }
 };
