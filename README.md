@@ -129,6 +129,8 @@ arashi switch --no-default-launch           # bypass configured launch mode defa
 
 Use the docs site workflow guides when you want setup guidance by outcome instead of by individual command.
 
+For contributors working on Arashi itself, the project planning workflow in the `arashi-arashi` meta-repo now uses OpenSpec. Older SpecKit-oriented references in legacy planning artifacts are historical context only.
+
 - Hooks and configuration defaults: [arashi.haphazard.dev/workflows/hooks-and-config](https://arashi.haphazard.dev/workflows/hooks-and-config/)
 - Integrations for VSCode, tmux, and `tmux` plus `sesh`: [arashi.haphazard.dev/workflows/integrations](https://arashi.haphazard.dev/workflows/integrations/)
 - Agent-assisted and spec-driven change flow: [arashi.haphazard.dev/workflows/agents-and-specs](https://arashi.haphazard.dev/workflows/agents-and-specs/)
