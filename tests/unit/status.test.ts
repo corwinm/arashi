@@ -6,7 +6,9 @@
 
 import {
   checkRepoStatus,
+  formatRepoSection,
   formatShortLine,
+  formatVerboseOutput,
   parseBranchLine,
   parseGitStatus,
 } from "../../src/commands/status.ts";
@@ -209,6 +211,8 @@ describe("checkRepoStatus", () => {
       dependencies: {
         fetchRemoteTrackingTarget: async () => ({
           error: "Git command failed: authentication required",
+          kind: "generic" as const,
+          message: "Git command failed: authentication required",
           ok: false as const,
         }),
         getFullGitStatus: async () => ({ error: null, output: "" }),
@@ -230,8 +234,102 @@ describe("checkRepoStatus", () => {
 
     expect(status.error).toBeNull();
     expect(status.files).toHaveLength(1);
-    expect(status.refreshWarning).toContain("Remote tracking may be stale");
+    expect(status.refreshWarning).toMatchObject({
+      kind: "stale-remote-tracking",
+      message: expect.stringContaining("Remote tracking may be stale"),
+    });
     expect(formatShortLine(status)).toContain("remote tracking stale");
+  });
+
+  test("preserves local status when resolved remote branch is missing", async () => {
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      dependencies: {
+        fetchRemoteTrackingTarget: async () => ({
+          error: "Git command failed: fatal: couldn't find remote ref refs/heads/feature-123",
+          kind: "missing-remote-ref" as const,
+          message: "couldn't find remote ref refs/heads/feature-123",
+          ok: false as const,
+        }),
+        getFullGitStatus: async () => ({ error: null, output: "On branch feature-123" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: `## feature-123...origin/feature-123
+ M src/file.ts`,
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: {
+            branch: "feature-123",
+            remote: "origin",
+            upstream: "origin/feature-123",
+          },
+        }),
+      },
+      verbose: true,
+    });
+
+    expect(status.error).toBeNull();
+    expect(status.files).toHaveLength(1);
+    expect(status.refreshWarning).toEqual({
+      kind: "missing-remote-ref",
+      message: "couldn't find remote ref refs/heads/feature-123",
+    });
+    expect(formatShortLine(status)).toContain("couldn't find remote ref refs/heads/feature-123");
+  });
+});
+
+describe("status formatting", () => {
+  test("renders missing remote branch inline on the branch line", () => {
+    const section = formatRepoSection({
+      branch: {
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+        localBranch: "feature-123",
+        remoteBranch: "origin/feature-123",
+      },
+      error: null,
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
+      refreshWarning: {
+        kind: "missing-remote-ref",
+        message: "couldn't find remote ref refs/heads/feature-123",
+      },
+    });
+
+    expect(section).toContain(
+      "\u001B[33mBranch: feature-123 → couldn't find remote ref refs/heads/feature-123\u001B[0m",
+    );
+    expect(section).not.toContain("Remote tracking may be stale");
+  });
+
+  test("preserves generic stale remote-tracking warning in verbose output", () => {
+    const output = formatVerboseOutput([
+      {
+        branch: {
+          ahead: 0,
+          behind: 0,
+          isDetached: false,
+          localBranch: "main",
+          remoteBranch: "origin/main",
+        },
+        error: null,
+        files: [],
+        fullStatus: "On branch main",
+        name: "repo-a",
+        path: "/tmp/repo-a",
+        refreshWarning: {
+          kind: "stale-remote-tracking",
+          message: "Remote tracking may be stale: Git command failed: authentication required",
+        },
+      },
+    ]);
+
+    expect(output).toContain(
+      "Warning: Remote tracking may be stale: Git command failed: authentication required",
+    );
+    expect(output).toContain("Branch: \u001B[36mmain\u001B[0m → origin/main");
   });
 });
 

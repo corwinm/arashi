@@ -98,6 +98,11 @@ export interface BranchTrackingInfo {
 /**
  * Complete status information for a single repository
  */
+export interface RepoRefreshWarning {
+  kind: "missing-remote-ref" | "stale-remote-tracking";
+  message: string;
+}
+
 export interface RepoStatus {
   /** Repository name (from config) */
   name: string;
@@ -110,7 +115,7 @@ export interface RepoStatus {
   /** Error message if status check failed */
   error: string | null;
   /** Warning shown when remote tracking refresh fails but local status is still available */
-  refreshWarning?: string | null;
+  refreshWarning?: RepoRefreshWarning | null;
   /** Full git status output (for verbose mode) */
   fullStatus?: string;
 }
@@ -231,7 +236,24 @@ const pathExists = async (path: string): Promise<boolean> => {
   }
 };
 
-const createRefreshWarning = (error: string): string => `Remote tracking may be stale: ${error}`;
+type RemoteTrackingFetchFailure = Exclude<
+  Awaited<ReturnType<typeof fetchRemoteTrackingTarget>>,
+  { ok: true }
+>;
+
+const createRefreshWarning = (failure: RemoteTrackingFetchFailure): RepoRefreshWarning => {
+  if (failure.kind === "missing-remote-ref") {
+    return {
+      kind: "missing-remote-ref",
+      message: failure.message,
+    };
+  }
+
+  return {
+    kind: "stale-remote-tracking",
+    message: `Remote tracking may be stale: ${failure.error}`,
+  };
+};
 
 export const checkRepoStatus = async (
   name: string,
@@ -252,12 +274,12 @@ export const checkRepoStatus = async (
   }
 
   try {
-    let refreshWarning: string | null = null;
+    let refreshWarning: RepoRefreshWarning | null = null;
     const trackingTarget = await dependencies.resolveRemoteTrackingTarget(path);
     if (trackingTarget.ok) {
       const fetchResult = await dependencies.fetchRemoteTrackingTarget(path, trackingTarget.target);
       if (!fetchResult.ok) {
-        refreshWarning = createRefreshWarning(fetchResult.error);
+        refreshWarning = createRefreshWarning(fetchResult);
       }
     }
 
@@ -344,7 +366,14 @@ export const checkAllRepos = (
   return Promise.all(statusPromises);
 };
 
-const formatTrackingSuffix = (branch: BranchTrackingInfo): string => {
+const formatTrackingSuffix = (
+  branch: BranchTrackingInfo,
+  refreshWarning: RepoRefreshWarning | null | undefined = null,
+): string => {
+  if (refreshWarning?.kind === "missing-remote-ref") {
+    return ` → ${refreshWarning.message}`;
+  }
+
   if (!branch.remoteBranch) {
     return "";
   }
@@ -363,6 +392,22 @@ const formatTrackingSuffix = (branch: BranchTrackingInfo): string => {
 
   return suffix;
 };
+
+const formatBranchLine = (status: RepoStatus): string => {
+  if (status.branch.isDetached) {
+    return `  Branch: ${cyan("(detached HEAD)")}`;
+  }
+
+  const trackingSuffix = formatTrackingSuffix(status.branch, status.refreshWarning);
+  if (status.refreshWarning?.kind === "missing-remote-ref") {
+    return `  ${yellow(`Branch: ${status.branch.localBranch}${trackingSuffix}`)}`;
+  }
+
+  return `  Branch: ${cyan(status.branch.localBranch)}${trackingSuffix}`;
+};
+
+const shouldShowGenericRefreshWarning = (status: RepoStatus): boolean =>
+  status.refreshWarning?.kind === "stale-remote-tracking";
 
 /**
  * Helper to get clean/dirty symbol
@@ -415,21 +460,7 @@ export const formatRepoSection = (status: RepoStatus): string => {
   let section = `\n${bold(status.name)} (${status.path})\n`;
 
   // Branch info
-  if (status.branch.isDetached) {
-    section += `  Branch: ${cyan("(detached HEAD)")}\n`;
-  } else {
-    section += `  Branch: ${cyan(status.branch.localBranch)}`;
-    if (status.branch.remoteBranch) {
-      section += ` → ${status.branch.remoteBranch}`;
-      if (status.branch.ahead > ZERO) {
-        section += ` [↑${status.branch.ahead}]`;
-      }
-      if (status.branch.behind > ZERO) {
-        section += ` [↓${status.branch.behind}]`;
-      }
-    }
-    section += "\n";
-  }
+  section += `${formatBranchLine(status)}\n`;
 
   // Status
   if (status.error) {
@@ -459,8 +490,8 @@ export const formatRepoSection = (status: RepoStatus): string => {
     section += `    ${parts.join(", ")}\n`;
   }
 
-  if (status.refreshWarning) {
-    section += `  ${yellow(`Warning: ${status.refreshWarning}`)}\n`;
+  if (shouldShowGenericRefreshWarning(status)) {
+    section += `  ${yellow(`Warning: ${status.refreshWarning?.message}`)}\n`;
   }
 
   return section;
@@ -508,13 +539,7 @@ export const formatVerboseOutput = (statuses: RepoStatus[]): string => {
     output += `\n${bold(status.name)} (${status.path})\n`;
 
     // Branch info
-    if (status.branch.isDetached) {
-      output += `  Branch: ${cyan("(detached HEAD)")}\n\n`;
-    } else {
-      output += `  Branch: ${cyan(status.branch.localBranch)}`;
-      output += formatTrackingSuffix(status.branch);
-      output += "\n\n";
-    }
+    output += `${formatBranchLine(status)}\n\n`;
 
     // Full git status output
     if (status.error) {
@@ -531,8 +556,8 @@ export const formatVerboseOutput = (statuses: RepoStatus[]): string => {
       output += `  ${colorFn("✓ Clean - No changes")}\n`;
     }
 
-    if (status.refreshWarning) {
-      output += `  ${yellow(`Warning: ${status.refreshWarning}`)}\n`;
+    if (shouldShowGenericRefreshWarning(status)) {
+      output += `  ${yellow(`Warning: ${status.refreshWarning?.message}`)}\n`;
     }
   }
 
@@ -596,7 +621,9 @@ export const formatShortLine = (status: RepoStatus): string => {
     line += colorFn(`● ${status.files.length} changes (${parts.join(", ")})`);
   }
 
-  if (status.refreshWarning) {
+  if (status.refreshWarning?.kind === "missing-remote-ref") {
+    line += ` ${yellow(`(${status.refreshWarning.message})`)}`;
+  } else if (shouldShowGenericRefreshWarning(status)) {
     line += ` ${yellow("(remote tracking stale)")}`;
   }
 
