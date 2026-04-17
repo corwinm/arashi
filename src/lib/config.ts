@@ -80,6 +80,7 @@ export interface Config {
 
 export type LaunchMode = "auto" | "sesh";
 export type SwitchMode = "launch" | "cd" | "auto";
+export type CreateDefaultsEditorHost = "vscode" | "cursor" | "kiro";
 
 export interface CreateCommandDefaults {
   /** Default to switching to the new worktree after create */
@@ -97,8 +98,20 @@ export interface SwitchCommandDefaults {
   launchMode?: LaunchMode;
 }
 
+export interface EditorCommandDefaults {
+  /** Editor-scoped create defaults */
+  create?: CreateCommandDefaults;
+}
+
+export interface EditorDefaultsConfig {
+  vscode?: EditorCommandDefaults;
+  cursor?: EditorCommandDefaults;
+  kiro?: EditorCommandDefaults;
+}
+
 export interface CommandDefaultsConfig {
   create?: CreateCommandDefaults;
+  editors?: EditorDefaultsConfig;
   switch?: SwitchCommandDefaults;
 }
 
@@ -606,18 +619,67 @@ const normalizeSwitchCommandDefaults = (value: unknown): SwitchCommandDefaults |
   return normalized;
 };
 
+const normalizeEditorCommandDefaults = (value: unknown): EditorCommandDefaults | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const createDefaults = normalizeCreateCommandDefaults(value.create);
+  if (!createDefaults) {
+    return undefined;
+  }
+
+  return {
+    create: createDefaults,
+  };
+};
+
+const normalizeEditorDefaultsConfig = (value: unknown): EditorDefaultsConfig | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const normalized: EditorDefaultsConfig = {};
+
+  const vscodeDefaults = normalizeEditorCommandDefaults(value.vscode);
+  if (vscodeDefaults) {
+    normalized.vscode = vscodeDefaults;
+  }
+
+  const cursorDefaults = normalizeEditorCommandDefaults(value.cursor);
+  if (cursorDefaults) {
+    normalized.cursor = cursorDefaults;
+  }
+
+  const kiroDefaults = normalizeEditorCommandDefaults(value.kiro);
+  if (kiroDefaults) {
+    normalized.kiro = kiroDefaults;
+  }
+
+  if (Object.keys(normalized).length > ZERO) {
+    return normalized;
+  }
+
+  return undefined;
+};
+
 const normalizeCommandDefaults = (value: unknown): CommandDefaultsConfig | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
 
   const createDefaults = normalizeCreateCommandDefaults(value.create);
+  const editorDefaults = normalizeEditorDefaultsConfig(value.editors);
   const switchDefaults = normalizeSwitchCommandDefaults(value.switch);
 
   const normalized: CommandDefaultsConfig = {};
 
   if (createDefaults) {
     normalized.create = createDefaults;
+  }
+
+  if (editorDefaults) {
+    normalized.editors = editorDefaults;
   }
 
   if (switchDefaults) {

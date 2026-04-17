@@ -30,6 +30,51 @@ describe("resolveCreateDefaults", () => {
     });
   });
 
+  test("uses editor-scoped defaults for editor-hosted create invocations", () => {
+    const config = baseConfig();
+    config.defaults = {
+      create: {
+        launch: true,
+        switch: true,
+      },
+      editors: {
+        vscode: {
+          create: {
+            launch: true,
+            launchMode: "sesh",
+          },
+        },
+      },
+    };
+
+    const resolved = resolveCreateDefaults({ editorHost: "vscode" }, config);
+
+    expect(resolved).toEqual({
+      launchMode: "sesh",
+      shouldLaunch: true,
+      shouldSwitch: true,
+    });
+  });
+
+  test("does not fall back to generic defaults for editor-hosted create without overrides", () => {
+    const config = baseConfig();
+    config.defaults = {
+      create: {
+        launch: true,
+        launchMode: "sesh",
+        switch: true,
+      },
+    };
+
+    const resolved = resolveCreateDefaults({ editorHost: "cursor" }, config);
+
+    expect(resolved).toEqual({
+      launchMode: "auto",
+      shouldLaunch: false,
+      shouldSwitch: false,
+    });
+  });
+
   test("allows CLI opt-out flags to disable configured defaults", () => {
     const config = baseConfig();
     config.defaults = {
@@ -66,6 +111,35 @@ describe("resolveCreateDefaults", () => {
 
     const resolved = resolveCreateDefaults(
       {
+        launch: true,
+        sesh: true,
+      },
+      config,
+    );
+
+    expect(resolved).toEqual({
+      launchMode: "sesh",
+      shouldLaunch: true,
+      shouldSwitch: true,
+    });
+  });
+
+  test("allows explicit CLI options to override editor-scoped defaults", () => {
+    const config = baseConfig();
+    config.defaults = {
+      editors: {
+        vscode: {
+          create: {
+            launch: false,
+            switch: false,
+          },
+        },
+      },
+    };
+
+    const resolved = resolveCreateDefaults(
+      {
+        editorHost: "vscode",
         launch: true,
         sesh: true,
       },

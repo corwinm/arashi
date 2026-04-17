@@ -254,8 +254,15 @@ Example config header:
   "defaults": {
     "create": {
       "switch": true,
-      "launch": true,
-      "launchMode": "sesh"
+      "launch": false
+    },
+    "editors": {
+      "vscode": {
+        "create": {
+          "launch": true,
+          "launchMode": "sesh"
+        }
+      }
     },
     "switch": {
       "mode": "auto",
@@ -268,7 +275,9 @@ Example config header:
 
 `defaults.switch.mode` accepts `"launch"`, `"cd"`, or `"auto"`. `"auto"` prefers parent-shell switching only when shell integration is active.
 
-Defaults precedence for create/switch behavior: explicit CLI flag > opt-out flag > config default > built-in default.
+Use `defaults.create` for terminal `arashi create` behavior. Use `defaults.editors.<host>.create` for editor-specific overrides such as VS Code extension create flows. Supported hosts are `vscode`, `cursor`, and `kiro`.
+
+Defaults precedence for create/switch behavior: explicit CLI flag > opt-out flag > config default > built-in default. For editor-hosted `create`, Arashi uses the matching `defaults.editors.<host>.create` override when present and otherwise skips post-create defaults instead of falling back to terminal defaults.
 
 ## skills.sh Integration
 

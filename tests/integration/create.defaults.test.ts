@@ -108,6 +108,40 @@ describe("create defaults integration", () => {
     expect(launchCalls).toEqual([{ sesh: true }]);
   });
 
+  test("applies editor-scoped create defaults for editor-hosted invocations", async () => {
+    const launchCalls = createLaunchCalls();
+
+    await executeCreate(
+      branchName,
+      { editorHost: "vscode" },
+      baseDeps({
+        launchSwitchTarget: async (_candidate, options) => {
+          launchCalls.push(options);
+          return { command: ["tmux"], mode: "sesh" };
+        },
+        loadConfigWithFallback: async () =>
+          createLoadedConfig({
+            defaults: {
+              create: {
+                launch: true,
+                switch: true,
+              },
+              editors: {
+                vscode: {
+                  create: {
+                    launch: true,
+                    launchMode: "sesh",
+                  },
+                },
+              },
+            },
+          }),
+      }),
+    );
+
+    expect(launchCalls).toEqual([{ sesh: true }]);
+  });
+
   test("allows one-off opt-out from configured create launch defaults", async () => {
     const launchCalls = createLaunchCalls();
 
@@ -146,6 +180,33 @@ describe("create defaults integration", () => {
           launchCalls.push(options);
           return { command: ["open"], mode: "fallback" };
         },
+      }),
+    );
+
+    expect(launchCalls).toHaveLength(0);
+  });
+
+  test("does not apply terminal defaults to editor-hosted create without editor overrides", async () => {
+    const launchCalls = createLaunchCalls();
+
+    await executeCreate(
+      branchName,
+      { editorHost: "cursor" },
+      baseDeps({
+        launchSwitchTarget: async (_candidate, options) => {
+          launchCalls.push(options);
+          return { command: ["tmux"], mode: "sesh" };
+        },
+        loadConfigWithFallback: async () =>
+          createLoadedConfig({
+            defaults: {
+              create: {
+                launch: true,
+                launchMode: "sesh",
+                switch: true,
+              },
+            },
+          }),
       }),
     );
 
