@@ -6,7 +6,7 @@
  */
 
 import { Command, Option } from "commander";
-import { basename, resolve } from "path";
+import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
 import {
   ConflictAbortedError,
   InvalidBranchNameError,
@@ -15,13 +15,13 @@ import {
   applyRepositoryFilter,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
-import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
+import { basename, resolve } from "path";
 import { error, info, success, warn } from "../lib/logger.ts";
-import { discoverRepositories } from "../core/repository.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
-import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
+import { discoverRepositories } from "../core/repository.ts";
 import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
+import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];

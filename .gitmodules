@@ -1,0 +1,15 @@
+[submodule "tests/fixtures/test-repos/develop-repo"]
+	path = tests/fixtures/test-repos/develop-repo
+	url = https://github.com/test/develop-repo.git
+[submodule "tests/fixtures/test-repos/main-repo"]
+	path = tests/fixtures/test-repos/main-repo
+	url = https://github.com/test/main-repo.git
+[submodule "tests/fixtures/test-repos/master-repo"]
+	path = tests/fixtures/test-repos/master-repo
+	url = https://github.com/test/master-repo.git
+[submodule "tests/fixtures/test-repos/no-remote-repo"]
+	path = tests/fixtures/test-repos/no-remote-repo
+	url = https://github.com/test/no-remote-repo.git
+[submodule "tests/fixtures/test-repos/with-setup-repo"]
+	path = tests/fixtures/test-repos/with-setup-repo
+	url = https://github.com/test/with-setup-repo.git

@@ -18,9 +18,9 @@ import {
   validateListCommandOutput,
   validateWorktreeListItem,
 } from "../../../src/core/list";
+import { mkdir, rename, writeFile } from "fs/promises";
 import { ListCommandError } from "../../../src/types/list";
 import { join } from "path";
-import { mkdir, rename, writeFile } from "fs/promises";
 
 interface SubRepositoryInfo {
   relativePath: string;
