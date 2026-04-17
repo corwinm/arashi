@@ -21,6 +21,38 @@ export interface RemoteChangeStatus {
   error?: string;
 }
 
+export type RemoteTrackingFetchResult =
+  | { ok: true }
+  | {
+      ok: false;
+      kind: "generic" | "missing-remote-ref";
+      error: string;
+      message: string;
+    };
+
+export function classifyRemoteTrackingFetchFailure(
+  error: string,
+  target: RemoteTrackingTarget,
+): Exclude<RemoteTrackingFetchResult, { ok: true }> {
+  const missingRemoteRefMatch = error.match(/could(?:n't| not) find remote ref\s+(\S+)/i);
+  if (missingRemoteRefMatch) {
+    const remoteRef = missingRemoteRefMatch[1] || `refs/heads/${target.branch}`;
+    return {
+      error,
+      kind: "missing-remote-ref",
+      message: `couldn't find remote ref ${remoteRef}`,
+      ok: false,
+    };
+  }
+
+  return {
+    error,
+    kind: "generic",
+    message: error,
+    ok: false,
+  };
+}
+
 export async function resolveRemoteTrackingTarget(
   repoPath: string,
 ): Promise<RemoteTrackingTargetResolution> {
@@ -69,7 +101,7 @@ export async function resolveRemoteTrackingTarget(
 export async function fetchRemoteTrackingTarget(
   repoPath: string,
   target: RemoteTrackingTarget,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<RemoteTrackingFetchResult> {
   try {
     await exec(
       [
@@ -82,10 +114,8 @@ export async function fetchRemoteTrackingTarget(
     );
     return { ok: true };
   } catch (error) {
-    return {
-      error: error instanceof Error ? error.message : "Remote fetch failed",
-      ok: false,
-    };
+    const errorMessage = error instanceof Error ? error.message : "Remote fetch failed";
+    return classifyRemoteTrackingFetchFailure(errorMessage, target);
   }
 }
 
