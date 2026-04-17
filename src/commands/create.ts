@@ -5,7 +5,8 @@
  * Supports repository filtering, conflict resolution, progress tracking, and automatic rollback.
  */
 
-import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
+import { Command, Option } from "commander";
+import { basename, resolve } from "path";
 import {
   ConflictAbortedError,
   InvalidBranchNameError,
@@ -14,14 +15,13 @@ import {
   applyRepositoryFilter,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
-import { basename, resolve } from "path";
+import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
 import { error, info, success, warn } from "../lib/logger.ts";
-import { Command } from "commander";
-import type { SwitchCandidate } from "../core/switch.ts";
 import { discoverRepositories } from "../core/repository.ts";
+import type { SwitchCandidate } from "../core/switch.ts";
+import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
-import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
@@ -102,9 +102,26 @@ interface CreateCommandOptions {
   /** Force sesh launch mode when launching */
   sesh?: boolean;
 
+  /** Internal editor-host context for create default resolution */
+  editorHost?: CreateDefaultsEditorHost;
+
   /** Dry run - show what would be done without making changes */
   dryRun?: boolean;
 }
+
+const CREATE_DEFAULT_EDITOR_HOSTS = ["vscode", "cursor", "kiro"] as const;
+type CreateDefaultsEditorHost = (typeof CREATE_DEFAULT_EDITOR_HOSTS)[number];
+
+const resolveConfiguredCreateDefaults = (
+  options: CreateCommandOptions,
+  workspaceConfig: Config,
+) => {
+  if (options.editorHost) {
+    return workspaceConfig.defaults?.editors?.[options.editorHost]?.create;
+  }
+
+  return workspaceConfig.defaults?.create;
+};
 
 export interface ResolvedCreateDefaults {
   shouldSwitch: boolean;
@@ -234,7 +251,7 @@ export function resolveCreateDefaults(
   options: CreateCommandOptions,
   workspaceConfig: Config,
 ): ResolvedCreateDefaults {
-  const createDefaults = workspaceConfig.defaults?.create;
+  const createDefaults = resolveConfiguredCreateDefaults(options, workspaceConfig);
 
   const switchResolution = resolveDefaultWithPrecedence<boolean>({
     builtInValue: false,
@@ -335,6 +352,13 @@ const applyPostCreateDefaults = async ({
 };
 
 export function createCommand(): Command {
+  const editorHostOption = new Option(
+    "--editor-host <host>",
+    "Internal editor host context for create default resolution",
+  )
+    .choices([...CREATE_DEFAULT_EDITOR_HOSTS])
+    .hideHelp();
+
   return new Command("create")
     .description("Create coordinated worktrees across multiple repositories")
     .argument("<branch>", "Branch name to create across repositories")
@@ -352,6 +376,7 @@ export function createCommand(): Command {
     .option("--no-hooks", "Disable hook execution")
     .option("--no-progress", "Hide progress indicators")
     .option("--dry-run", "Show what would be done without making changes")
+    .addOption(editorHostOption)
     .addHelpText(
       "after",
       `

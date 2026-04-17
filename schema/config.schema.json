@@ -8,6 +8,9 @@
         "create": {
           "$ref": "#/definitions/CreateCommandDefaults"
         },
+        "editors": {
+          "$ref": "#/definitions/EditorDefaultsConfig"
+        },
         "switch": {
           "$ref": "#/definitions/SwitchCommandDefaults"
         }
@@ -89,6 +92,31 @@
         "switch": {
           "description": "Default to switching to the new worktree after create",
           "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "EditorCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "$ref": "#/definitions/CreateCommandDefaults",
+          "description": "Editor-scoped create defaults"
+        }
+      },
+      "type": "object"
+    },
+    "EditorDefaultsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "$ref": "#/definitions/EditorCommandDefaults"
+        },
+        "kiro": {
+          "$ref": "#/definitions/EditorCommandDefaults"
+        },
+        "vscode": {
+          "$ref": "#/definitions/EditorCommandDefaults"
         }
       },
       "type": "object"

@@ -104,6 +104,33 @@ describe("validateConfig - root level", () => {
     expect(() => validateConfig(configWithDefaults)).not.toThrow();
   });
 
+  test("accepts editor-scoped create defaults configuration", () => {
+    const configWithEditorDefaults = {
+      defaults: {
+        create: {
+          switch: true,
+        },
+        editors: {
+          cursor: {
+            create: {
+              launch: true,
+            },
+          },
+          vscode: {
+            create: {
+              launchMode: "sesh",
+            },
+          },
+        },
+      },
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    expect(() => validateConfig(configWithEditorDefaults)).not.toThrow();
+  });
+
   test("normalizes snake_case launch mode aliases", () => {
     const normalized = normalizeConfig({
       defaults: {
@@ -125,6 +152,36 @@ describe("validateConfig - root level", () => {
     expect(normalized.defaults?.create?.launch).toBe(true);
     expect(normalized.defaults?.switch?.mode).toBe("auto");
     expect(normalized.defaults?.switch?.launchMode).toBe("auto");
+  });
+
+  test("normalizes editor-scoped create defaults", () => {
+    const normalized = normalizeConfig({
+      defaults: {
+        create: {
+          launch: true,
+        },
+        editors: {
+          kiro: {
+            create: {
+              switch: true,
+            },
+          },
+          vscode: {
+            create: {
+              launch_mode: "sesh",
+            },
+          },
+        },
+      },
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+    });
+
+    expect(normalized.defaults?.create?.launch).toBe(true);
+    expect(normalized.defaults?.editors?.vscode?.create?.launchMode).toBe("sesh");
+    expect(normalized.defaults?.editors?.vscode?.create?.launch).toBe(true);
+    expect(normalized.defaults?.editors?.kiro?.create?.switch).toBe(true);
   });
 
   test("ignores malformed defaults and preserves baseline behavior", () => {
