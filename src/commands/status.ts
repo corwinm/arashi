@@ -6,7 +6,11 @@
  * Supports three output modes: default, verbose, and short.
  */
 
-import { fetchRemoteTrackingTarget, resolveRemoteTrackingTarget } from "../lib/git-remote.js";
+import {
+  compareCurrentBranchToDefaultBranch,
+  fetchRemoteTrackingTarget,
+  resolveRemoteTrackingTarget,
+} from "../lib/git-remote.js";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
 import { getFullGitStatus, getGitStatus } from "../lib/git.js";
 import { info, error as logError, spinner } from "../lib/logger.js";
@@ -14,6 +18,7 @@ import { Command } from "commander";
 import { resolve } from "path";
 import { stat } from "fs/promises";
 
+type DefaultBranchComparison = Awaited<ReturnType<typeof compareCurrentBranchToDefaultBranch>>;
 type Config = Awaited<ReturnType<typeof loadConfig>>;
 
 const ZERO = 0;
@@ -110,6 +115,8 @@ export interface RepoStatus {
   path: string;
   /** Branch and tracking information */
   branch: BranchTrackingInfo;
+  /** Default branch comparison state */
+  defaultBranch?: DefaultBranchComparison | null;
   /** List of changed files */
   files: GitFileStatus[];
   /** Error message if status check failed */
@@ -121,6 +128,7 @@ export interface RepoStatus {
 }
 
 interface StatusCommandDependencies {
+  compareCurrentBranchToDefaultBranch: typeof compareCurrentBranchToDefaultBranch;
   fetchRemoteTrackingTarget: typeof fetchRemoteTrackingTarget;
   getFullGitStatus: typeof getFullGitStatus;
   getGitStatus: typeof getGitStatus;
@@ -133,6 +141,7 @@ interface CheckRepoStatusOptions {
 }
 
 const defaultStatusCommandDependencies: StatusCommandDependencies = {
+  compareCurrentBranchToDefaultBranch,
   fetchRemoteTrackingTarget,
   getFullGitStatus,
   getGitStatus,
@@ -265,6 +274,7 @@ export const checkRepoStatus = async (
   if (!repoExists) {
     return {
       branch: createEmptyBranchTrackingInfo(true),
+      defaultBranch: null,
       error: `Repository is missing at ${path}. Run \`arashi clone\` to clone missing repositories.`,
       files: [],
       name,
@@ -288,6 +298,7 @@ export const checkRepoStatus = async (
     if (result.error) {
       return {
         branch: createEmptyBranchTrackingInfo(true),
+        defaultBranch: null,
         error: result.error,
         files: [],
         name,
@@ -297,6 +308,11 @@ export const checkRepoStatus = async (
     }
 
     const parsed = parseGitStatus(result.output);
+    const defaultBranch = await dependencies.compareCurrentBranchToDefaultBranch(
+      path,
+      parsed.branch.localBranch,
+      parsed.branch.isDetached,
+    );
 
     let fullStatus: string | undefined = undefined;
     if (verbose) {
@@ -310,6 +326,7 @@ export const checkRepoStatus = async (
 
     return {
       branch: parsed.branch,
+      defaultBranch,
       error: null,
       files: parsed.files,
       fullStatus,
@@ -325,6 +342,7 @@ export const checkRepoStatus = async (
 
     return {
       branch: createEmptyBranchTrackingInfo(true),
+      defaultBranch: null,
       error: errorMessage,
       files: [],
       name,
@@ -409,6 +427,38 @@ const formatBranchLine = (status: RepoStatus): string => {
 const shouldShowGenericRefreshWarning = (status: RepoStatus): boolean =>
   status.refreshWarning?.kind === "stale-remote-tracking";
 
+const formatDefaultBranchLine = (status: RepoStatus): string | null => {
+  if (!status.defaultBranch) {
+    return null;
+  }
+
+  if (status.defaultBranch.state === "available" && status.defaultBranch.behind > ZERO) {
+    return `  ${yellow(`Default: ${status.defaultBranch.branch} [↓${status.defaultBranch.behind}]`)}`;
+  }
+
+  if (status.defaultBranch.state === "unavailable") {
+    return `  ${yellow(`Default: ${status.defaultBranch.branch} (unavailable)`)}`;
+  }
+
+  return null;
+};
+
+const formatShortDefaultIndicator = (status: RepoStatus): string => {
+  if (!status.defaultBranch) {
+    return "";
+  }
+
+  if (status.defaultBranch.state === "available" && status.defaultBranch.behind > ZERO) {
+    return ` ${yellow(`default↓${status.defaultBranch.behind}`)}`;
+  }
+
+  if (status.defaultBranch.state === "unavailable") {
+    return ` ${yellow("(default unavailable)")}`;
+  }
+
+  return "";
+};
+
 /**
  * Helper to get clean/dirty symbol
  */
@@ -461,6 +511,11 @@ export const formatRepoSection = (status: RepoStatus): string => {
 
   // Branch info
   section += `${formatBranchLine(status)}\n`;
+
+  const defaultBranchLine = formatDefaultBranchLine(status);
+  if (defaultBranchLine) {
+    section += `${defaultBranchLine}\n`;
+  }
 
   // Status
   if (status.error) {
@@ -539,7 +594,14 @@ export const formatVerboseOutput = (statuses: RepoStatus[]): string => {
     output += `\n${bold(status.name)} (${status.path})\n`;
 
     // Branch info
-    output += `${formatBranchLine(status)}\n\n`;
+    output += `${formatBranchLine(status)}\n`;
+
+    const defaultBranchLine = formatDefaultBranchLine(status);
+    if (defaultBranchLine) {
+      output += `${defaultBranchLine}\n`;
+    }
+
+    output += "\n";
 
     // Full git status output
     if (status.error) {
@@ -626,6 +688,8 @@ export const formatShortLine = (status: RepoStatus): string => {
   } else if (shouldShowGenericRefreshWarning(status)) {
     line += ` ${yellow("(remote tracking stale)")}`;
   }
+
+  line += formatShortDefaultIndicator(status);
 
   return line;
 };

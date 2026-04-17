@@ -65,11 +65,11 @@ A  added.ts
     const result = parseGitStatus(output);
 
     expect(result.files).toHaveLength(5);
-    expect(result.files[0].stagingStatus).toBe("M"); // Staged modified
-    expect(result.files[1].workingStatus).toBe("M"); // Unstaged modified
-    expect(result.files[2].stagingStatus).toBe("A"); // Added
-    expect(result.files[3].workingStatus).toBe("D"); // Deleted
-    expect(result.files[4].workingStatus).toBe("?"); // Untracked
+    expect(result.files[0].stagingStatus).toBe("M");
+    expect(result.files[1].workingStatus).toBe("M");
+    expect(result.files[2].stagingStatus).toBe("A");
+    expect(result.files[3].workingStatus).toBe("D");
+    expect(result.files[4].workingStatus).toBe("?");
   });
 });
 
@@ -145,6 +145,7 @@ describe("checkRepoStatus", () => {
 
     expect(status.error).toContain("arashi clone");
     expect(status.files).toHaveLength(0);
+    expect(status.defaultBranch).toBeNull();
   });
 
   test("refreshes tracked remote before parsing branch status", async () => {
@@ -152,6 +153,11 @@ describe("checkRepoStatus", () => {
 
     const status = await checkRepoStatus("repo-a", process.cwd(), {
       dependencies: {
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          reason: "on-default-branch" as const,
+          state: "skipped" as const,
+        }),
         fetchRemoteTrackingTarget: async (_repoPath, target) => {
           callOrder.push(`fetch:${target.remote}/${target.branch}`);
           return { ok: true };
@@ -181,11 +187,56 @@ describe("checkRepoStatus", () => {
     expect(status.refreshWarning).toBeNull();
   });
 
+  test("records default-branch comparison after parsing local status", async () => {
+    const calls: string[] = [];
+
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      dependencies: {
+        compareCurrentBranchToDefaultBranch: async (_repoPath, currentBranch, isDetached) => {
+          calls.push(`default:${currentBranch}:${String(isDetached)}`);
+          return {
+            ahead: 0,
+            behind: 3,
+            branch: "main",
+            state: "available" as const,
+          };
+        },
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => {
+          calls.push("status");
+          return { error: null, output: "## feature/demo...origin/feature/demo" };
+        },
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: {
+            branch: "feature/demo",
+            remote: "origin",
+            upstream: "origin/feature/demo",
+          },
+        }),
+      },
+    });
+
+    expect(calls).toEqual(["status", "default:feature/demo:false"]);
+    expect(status.defaultBranch).toEqual({
+      ahead: 0,
+      behind: 3,
+      branch: "main",
+      state: "available",
+    });
+  });
+
   test("skips remote refresh when no tracking target can be resolved", async () => {
     let fetchCalled = false;
 
     const status = await checkRepoStatus("repo-a", process.cwd(), {
       dependencies: {
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: null,
+          reason: "unresolved" as const,
+          state: "skipped" as const,
+        }),
         fetchRemoteTrackingTarget: async () => {
           fetchCalled = true;
           return { ok: true };
@@ -209,6 +260,12 @@ describe("checkRepoStatus", () => {
   test("preserves local status when remote refresh fails", async () => {
     const status = await checkRepoStatus("repo-a", process.cwd(), {
       dependencies: {
+        compareCurrentBranchToDefaultBranch: async () => ({
+          ahead: 0,
+          behind: 1,
+          branch: "main",
+          state: "available" as const,
+        }),
         fetchRemoteTrackingTarget: async () => ({
           error: "Git command failed: authentication required",
           kind: "generic" as const,
@@ -244,6 +301,12 @@ describe("checkRepoStatus", () => {
   test("preserves local status when resolved remote branch is missing", async () => {
     const status = await checkRepoStatus("repo-a", process.cwd(), {
       dependencies: {
+        compareCurrentBranchToDefaultBranch: async () => ({
+          ahead: 0,
+          behind: 0,
+          branch: "main",
+          state: "available" as const,
+        }),
         fetchRemoteTrackingTarget: async () => ({
           error: "Git command failed: fatal: couldn't find remote ref refs/heads/feature-123",
           kind: "missing-remote-ref" as const,
@@ -276,6 +339,41 @@ describe("checkRepoStatus", () => {
     });
     expect(formatShortLine(status)).toContain("couldn't find remote ref refs/heads/feature-123");
   });
+
+  test("preserves local status when default-branch comparison is unavailable", async () => {
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      dependencies: {
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          message: "Git command failed: authentication required",
+          state: "unavailable" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: `## feature/demo...origin/feature/demo
+ M src/file.ts`,
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: {
+            branch: "feature/demo",
+            remote: "origin",
+            upstream: "origin/feature/demo",
+          },
+        }),
+      },
+    });
+
+    expect(status.error).toBeNull();
+    expect(status.files).toHaveLength(1);
+    expect(status.defaultBranch).toEqual({
+      branch: "main",
+      message: "Git command failed: authentication required",
+      state: "unavailable",
+    });
+  });
 });
 
 describe("status formatting", () => {
@@ -302,6 +400,56 @@ describe("status formatting", () => {
       "\u001B[33mBranch: feature-123 → couldn't find remote ref refs/heads/feature-123\u001B[0m",
     );
     expect(section).not.toContain("Remote tracking may be stale");
+  });
+
+  test("renders a dedicated default line when the current branch is behind default", () => {
+    const section = formatRepoSection({
+      branch: {
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+        localBranch: "feature/demo",
+        remoteBranch: "origin/feature/demo",
+      },
+      defaultBranch: {
+        ahead: 0,
+        behind: 5,
+        branch: "main",
+        state: "available",
+      },
+      error: null,
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
+      refreshWarning: null,
+    });
+
+    expect(section).toContain("\u001B[33mDefault: main [↓5]\u001B[0m");
+  });
+
+  test("renders unavailable default-branch comparisons concisely", () => {
+    const section = formatRepoSection({
+      branch: {
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+        localBranch: "feature/demo",
+        remoteBranch: "origin/feature/demo",
+      },
+      defaultBranch: {
+        branch: "main",
+        message: "Git command failed: authentication required",
+        state: "unavailable",
+      },
+      error: null,
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
+      refreshWarning: null,
+    });
+
+    expect(section).toContain("\u001B[33mDefault: main (unavailable)\u001B[0m");
+    expect(section).not.toContain("authentication required");
   });
 
   test("preserves generic stale remote-tracking warning in verbose output", () => {
@@ -351,5 +499,52 @@ describe("formatShortLine", () => {
     });
 
     expect(line).toContain("arashi clone");
+  });
+
+  test("shows a compact behind-default indicator", () => {
+    const line = formatShortLine({
+      branch: {
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+        localBranch: "feature/demo",
+        remoteBranch: "origin/feature/demo",
+      },
+      defaultBranch: {
+        ahead: 0,
+        behind: 4,
+        branch: "main",
+        state: "available",
+      },
+      error: null,
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
+    });
+
+    expect(line).toContain("default↓4");
+  });
+
+  test("shows when default-branch comparison is unavailable", () => {
+    const line = formatShortLine({
+      branch: {
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+        localBranch: "feature/demo",
+        remoteBranch: "origin/feature/demo",
+      },
+      defaultBranch: {
+        branch: "main",
+        message: "Git command failed: authentication required",
+        state: "unavailable",
+      },
+      error: null,
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
+    });
+
+    expect(line).toContain("default unavailable");
   });
 });

@@ -1,4 +1,4 @@
-import { exec } from "./git.ts";
+import { exec, getDefaultBranch } from "./git.ts";
 
 export interface RemoteTrackingTarget {
   upstream: string | null;
@@ -20,6 +20,34 @@ export interface RemoteChangeStatus {
   hasRemoteChanges: boolean;
   error?: string;
 }
+
+export interface DefaultBranchTarget {
+  branch: string;
+  compareRef: string;
+  refreshTarget: RemoteTrackingTarget | null;
+}
+
+export type DefaultBranchTargetResolution =
+  | { ok: true; target: DefaultBranchTarget }
+  | { ok: false; error: string; branch: string | null };
+
+export type DefaultBranchComparison =
+  | {
+      state: "available";
+      branch: string;
+      ahead: number;
+      behind: number;
+    }
+  | {
+      state: "skipped";
+      reason: "detached-head" | "on-default-branch" | "unresolved";
+      branch: string | null;
+    }
+  | {
+      state: "unavailable";
+      branch: string;
+      message: string;
+    };
 
 export type RemoteTrackingFetchResult =
   | { ok: true }
@@ -119,6 +147,118 @@ export async function fetchRemoteTrackingTarget(
   }
 }
 
+export async function resolveDefaultBranchTarget(
+  repoPath: string,
+): Promise<DefaultBranchTargetResolution> {
+  let branch: string | null = null;
+
+  try {
+    branch = await getDefaultBranch(repoPath);
+  } catch (error) {
+    return {
+      branch: null,
+      error: error instanceof Error ? error.message : "Unable to detect default branch",
+      ok: false,
+    };
+  }
+
+  const remote = await resolveRemoteForBranch(repoPath, branch);
+  if (remote) {
+    return {
+      ok: true,
+      target: {
+        branch,
+        compareRef: `refs/remotes/${remote}/${branch}`,
+        refreshTarget: {
+          branch,
+          remote,
+          upstream: `${remote}/${branch}`,
+        },
+      },
+    };
+  }
+
+  if (await refExists(repoPath, `refs/heads/${branch}`)) {
+    return {
+      ok: true,
+      target: {
+        branch,
+        compareRef: `refs/heads/${branch}`,
+        refreshTarget: null,
+      },
+    };
+  }
+
+  return {
+    branch,
+    error: `Unable to resolve default branch target for ${branch}`,
+    ok: false,
+  };
+}
+
+export async function compareCurrentBranchToDefaultBranch(
+  repoPath: string,
+  currentBranch: string,
+  isDetached = false,
+): Promise<DefaultBranchComparison> {
+  if (isDetached) {
+    return {
+      branch: null,
+      reason: "detached-head",
+      state: "skipped",
+    };
+  }
+
+  const resolution = await resolveDefaultBranchTarget(repoPath);
+  if (!resolution.ok) {
+    return {
+      branch: resolution.branch,
+      reason: "unresolved",
+      state: "skipped",
+    };
+  }
+
+  const { target } = resolution;
+  if (currentBranch === target.branch) {
+    return {
+      branch: target.branch,
+      reason: "on-default-branch",
+      state: "skipped",
+    };
+  }
+
+  if (target.refreshTarget) {
+    const fetchResult = await fetchRemoteTrackingTarget(repoPath, target.refreshTarget);
+    if (!fetchResult.ok) {
+      return {
+        branch: target.branch,
+        message: fetchResult.message,
+        state: "unavailable",
+      };
+    }
+  }
+
+  try {
+    const result = await exec(
+      ["rev-list", "--left-right", "--count", `HEAD...${target.compareRef}`],
+      repoPath,
+    );
+    const { ahead, behind } = parseAheadBehind(result.stdout);
+    return {
+      ahead,
+      behind,
+      branch: target.branch,
+      state: "available",
+    };
+  } catch (error) {
+    return {
+      branch: target.branch,
+      message: error instanceof Error ? error.message : "Unable to compare with default branch",
+      state: "unavailable",
+    };
+  }
+}
+
 export async function checkRemoteChanges(
   repositoryId: string,
   repoPath: string,
@@ -160,9 +300,7 @@ export async function checkRemoteChanges(
       ["rev-list", "--left-right", "--count", `HEAD...${compareRef}`],
       repoPath,
     );
-    const parts = result.stdout.trim().split(/\s+/);
-    const ahead = Number.parseInt(parts[0] || "0", 10);
-    const behind = Number.parseInt(parts[1] || "0", 10);
+    const { ahead, behind } = parseAheadBehind(result.stdout);
 
     return {
       ahead,
@@ -186,6 +324,14 @@ export async function checkRemoteChanges(
       upstream,
     };
   }
+}
+
+function parseAheadBehind(output: string): { ahead: number; behind: number } {
+  const parts = output.trim().split(/\s+/);
+  const ahead = Number.parseInt(parts[0] || "0", 10);
+  const behind = Number.parseInt(parts[1] || "0", 10);
+
+  return { ahead, behind };
 }
 
 function parseRemoteTrackingRef(ref: string | null): { remote: string; branch: string } | null {
@@ -236,6 +382,56 @@ async function resolveRemoteAndBranch(
   const branch = mergeBranch || currentBranch;
 
   return { branch, ok: true, remote };
+}
+
+async function resolveRemoteForBranch(repoPath: string, branch: string): Promise<string | null> {
+  if (await refExists(repoPath, `refs/remotes/origin/${branch}`)) {
+    return "origin";
+  }
+
+  const remoteRefs = await listRemoteTrackingRefs(repoPath);
+  const matchingRemotes = remoteRefs
+    .filter((ref) => ref.branch === branch)
+    .map((ref) => ref.remote);
+  if (matchingRemotes.length === 0) {
+    return null;
+  }
+
+  const defaultRemote = await pickDefaultRemote(repoPath);
+  if (defaultRemote && matchingRemotes.includes(defaultRemote)) {
+    return defaultRemote;
+  }
+
+  return matchingRemotes[0] || null;
+}
+
+async function listRemoteTrackingRefs(
+  repoPath: string,
+): Promise<{ remote: string; branch: string }[]> {
+  try {
+    const result = await exec(
+      ["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+      repoPath,
+    );
+    return result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => parseRemoteTrackingRef(line))
+      .filter((value): value is { remote: string; branch: string } => value !== null)
+      .filter((value) => value.branch !== "HEAD");
+  } catch {
+    return [];
+  }
+}
+
+async function refExists(repoPath: string, ref: string): Promise<boolean> {
+  try {
+    await exec(["show-ref", "--verify", ref], repoPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function getCurrentBranch(repoPath: string): Promise<string | null> {
