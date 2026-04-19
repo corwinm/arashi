@@ -1,3 +1,9 @@
+## [1.11.1](https://github.com/corwinm/arashi/compare/v1.11.0...v1.11.1) (2026-04-19)
+
+### Bug Fixes
+
+- **release:** pin bun and verify installed binaries ([8eaa18f](https://github.com/corwinm/arashi/commit/8eaa18f3010befe53f08372fe467648d6145d903))
+
 ## [1.11.0](https://github.com/corwinm/arashi/compare/v1.10.1...v1.11.0) (2026-04-19)
 
 ### Features
