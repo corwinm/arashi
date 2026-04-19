@@ -383,6 +383,36 @@ choose_install_dir() {
   printf '%s\n' "$default_install_dir"
 }
 
+verify_installed_binary() {
+  local wrapper_path="$1"
+  local version_output=""
+  local verify_status=0
+
+  log "Running post-install smoke test"
+
+  set +e
+  version_output="$("$wrapper_path" --version 2>&1)"
+  verify_status=$?
+  set -e
+
+  if [ "$verify_status" -eq 0 ]; then
+    if [ -z "$version_output" ]; then
+      fail "Installed binary returned success but produced no version output"
+    fi
+
+    log "Verified arashi executable ($version_output)"
+    return
+  fi
+
+  warn "Installed binary failed smoke test with exit code $verify_status"
+  if [ -n "$version_output" ]; then
+    warn "$version_output"
+  fi
+  warn "This usually indicates a bad release asset or a compiler regression in the published binary"
+  warn "Retry with a pinned version: curl -fsSL https://arashi.haphazard.dev/install | ARASHI_VERSION=<version> bash"
+  fail "Installed arashi binary could not start"
+}
+
 print_post_install_notes() {
   local install_dir="$1"
   local wrapper_path="$2"
@@ -391,7 +421,7 @@ print_post_install_notes() {
   log_debug "Installed $PROJECT_NAME wrapper to $wrapper_path"
   log_debug "Installed $PROJECT_NAME binary to $binary_path"
 
-  if [ NO_MODIFY_PATH = "true" ]; then
+  if [ "$NO_MODIFY_PATH" = "true" ]; then
     case ":$PATH:" in
       *":$install_dir:"*)
         ;;
@@ -770,6 +800,8 @@ main() {
   cp "$downloaded_wrapper_asset" "$staging_wrapper_path" || fail "Failed to stage wrapper in $install_dir"
   chmod 755 "$staging_wrapper_path" || fail "Failed to set executable permissions on wrapper"
   mv -f "$staging_wrapper_path" "$target_wrapper_path" || fail "Failed to place wrapper at $target_wrapper_path"
+
+  verify_installed_binary "$target_wrapper_path"
 
   if [ "$NO_MODIFY_PATH" = "true" ]; then
     if [ "$DEBUG_LOG" = "true" ]; then

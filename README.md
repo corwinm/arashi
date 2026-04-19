@@ -37,8 +37,9 @@ arashi --version
 ```
 
 By default, the installer places `arashi` in `~/.arashi/bin`, adds that path to your shell config, and in interactive installs offers to enable shell integration for `arashi switch --cd`.
+It also runs a quick `arashi --version` smoke test before declaring success.
 
-If curl installation fails, use npm installation below or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
+If curl installation fails, or if the smoke test reports a bad release artifact, use npm installation below or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
 
 ### Option 2: Install with npm
 

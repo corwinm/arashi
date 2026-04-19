@@ -35,6 +35,7 @@ The curl installer (`scripts/install.sh`) is bound to GitHub Releases artifacts:
   - `darwin-arm64` -> `arashi-macos-arm64`
   - `linux-x64` -> `arashi-linux-x64`
 - Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies both the wrapper (`arashi`) and target platform binary SHA-256 checksums before install.
+- Runtime verification: after staging the wrapper and binary, the installer runs `arashi --version` as a smoke test before updating shell PATH configuration.
 - Default install placement is `~/.arashi/bin` unless overridden with `ARASHI_INSTALL_DIR` or `--install-dir`.
 - Installer updates the active shell config (`.zshrc`, `.bashrc`/`.bash_profile`, `.profile`, or fish config) to include the install directory on `PATH`.
 - Interactive curl installs offer to enable shell integration for bash, zsh, and fish so `arashi switch --cd` works without a second setup step.
@@ -53,6 +54,7 @@ Checksum manifest expectations:
 - Permission denied writing install location: rerun with `ARASHI_INSTALL_DIR="$HOME/.local/bin"` or another writable path.
 - Download/network errors: retry the command; if failures persist, use npm installation or manual releases.
 - Checksum mismatch: treat as a blocked install, retry once, then fall back to npm/manual and report the issue.
+- Smoke test failure (for example `arashi --version` exits immediately or returns code `137`): rerun with a pinned release using `ARASHI_VERSION=<version>`, or use npm/manual release assets while reporting the bad release artifact.
 - Unsupported platform: use npm (`npm install -g arashi`) when available, otherwise use manual release assets.
 - If you skip shell integration during install, run `arashi shell install` later.
 
@@ -61,7 +63,7 @@ Checksum manifest expectations:
 - `npm: command not found`: install Node.js/npm, then retry. If unavailable, use the curl installer.
 - Permission errors with global npm installs: configure user-level npm prefix or use curl with `ARASHI_INSTALL_DIR="$HOME/.local/bin"`.
 - Postinstall download failure: retry install once, then use curl/manual release assets.
-- Verification fails after npm install: run `arashi --version`; if missing, reinstall or switch to curl/manual release flow.
+- Verification fails after npm install: run `arashi --version`; if it exits immediately or returns no output, reinstall with a pinned release or switch to curl/manual release flow.
 
 ## Why a Wrapper?
 

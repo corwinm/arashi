@@ -5,11 +5,12 @@
  * This keeps the npm package size small while providing pre-compiled binaries
  */
 
-import { access, constants, mkdir } from "node:fs/promises";
+import { access, constants, mkdir, readFile, rm } from "node:fs/promises";
 import { chmodSync, createWriteStream } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { get } from "node:https";
+import { spawnSync } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -81,8 +82,36 @@ function downloadFile(url, dest) {
   });
 }
 
+function verifyBinary(binaryPath) {
+  const result = spawnSync(binaryPath, ["--version"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    const signalDetail = result.signal ? ` (signal: ${result.signal})` : "";
+    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+    throw new Error(
+      `Downloaded binary failed smoke test with exit code ${result.status ?? "unknown"}${signalDetail}${output ? `: ${output}` : ""}`,
+    );
+  }
+
+  const versionOutput = (result.stdout ?? "").trim();
+  if (!versionOutput) {
+    throw new Error("Downloaded binary returned success but produced no version output");
+  }
+
+  console.log(`✓ Verified ${PACKAGE_NAME} executable (${versionOutput})`);
+}
+
 // Main installation logic
 async function install() {
+  let binaryPath = "";
+
   try {
     // Skip postinstall in development (when installing from the repo)
     // Check if we're in development by looking for src/ directory
@@ -98,13 +127,12 @@ async function install() {
 
     // Get version from package.json
     const packageJsonPath = join(__dirname, "..", "package.json");
-    const { readFile } = await import("node:fs/promises");
     const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
     const { version } = packageJson;
 
     const { binaryName, isWindows } = getPlatformInfo();
     const binDir = join(__dirname, "..", "bin");
-    const binaryPath = join(binDir, binaryName);
+    binaryPath = join(binDir, binaryName);
 
     // Check if binary already exists
     try {
@@ -128,9 +156,15 @@ async function install() {
       chmodSync(binaryPath, 0o755);
     }
 
+    verifyBinary(binaryPath);
+
     console.log(`✓ Successfully installed ${PACKAGE_NAME} v${version}`);
     console.log(`  Binary location: ${binaryPath}`);
   } catch (error) {
+    if (binaryPath) {
+      await rm(binaryPath, { force: true }).catch(() => {});
+    }
+
     console.error(`✗ Failed to install ${PACKAGE_NAME}:`, error.message);
     console.error(
       `\nYou can manually download binaries from: https://github.com/${GITHUB_REPO}/releases`,
