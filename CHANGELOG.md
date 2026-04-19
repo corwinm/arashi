@@ -1,3 +1,14 @@
+## [1.11.0](https://github.com/corwinm/arashi/compare/v1.10.1...v1.11.0) (2026-04-19)
+
+### Features
+
+- add editor-scoped create defaults ([#57](https://github.com/corwinm/arashi/issues/57)) ([83ab2c8](https://github.com/corwinm/arashi/commit/83ab2c8024fed36b1c668c8bcd5b009a56da63b6))
+
+### Bug Fixes
+
+- **status:** inline missing remote branch warnings ([#56](https://github.com/corwinm/arashi/issues/56)) ([a41c21d](https://github.com/corwinm/arashi/commit/a41c21d4696c64b414d8d9447a76c6dc2942acfd))
+- **status:** show default-branch drift in status output ([#58](https://github.com/corwinm/arashi/issues/58)) ([9d154fc](https://github.com/corwinm/arashi/commit/9d154fcf6279b2499bff4d391f278efca6104806))
+
 ## [1.10.1](https://github.com/corwinm/arashi/compare/v1.10.0...v1.10.1) (2026-04-07)
 
 ### Bug Fixes
