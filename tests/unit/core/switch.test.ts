@@ -4,9 +4,9 @@ import {
   selectSwitchCandidate,
 } from "../../../src/core/switch.ts";
 import { describe, expect, test } from "bun:test";
-import { resolve } from "path";
 import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
 import type { WorktreeInfo } from "../../../src/types/remove.ts";
+import { resolve } from "path";
 type SwitchCandidate = ReturnType<typeof buildSwitchCandidates>["candidates"][number];
 
 describe("buildSwitchCandidates", () => {

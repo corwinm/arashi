@@ -1,10 +1,10 @@
 import { createCommand, executeSwitch } from "../../src/commands/switch.ts";
 import { describe, expect, test } from "bun:test";
+import { join, resolve } from "path";
 import { mkdtemp, rm } from "fs/promises";
 import type { SwitchCandidate } from "../../src/core/switch.ts";
 import type { SwitchProcessRunner } from "../../src/lib/switch-launcher.ts";
 import type { WorkspaceRepository } from "../../src/lib/config.ts";
-import { join, resolve } from "path";
 import { tmpdir } from "os";
 
 const candidate: SwitchCandidate = {

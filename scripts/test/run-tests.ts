@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync } from "fs";
 import { dirname, join, relative } from "path";
+import { readFileSync, readdirSync } from "fs";
 import { fileURLToPath } from "url";
 
 const currentFilePath = fileURLToPath(import.meta.url);
