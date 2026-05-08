@@ -23,6 +23,10 @@ import {
 } from "../../../src/lib/git";
 import { ArashiError } from "../../../src/lib/errors";
 import { join } from "path";
+import { realpathSync } from "fs";
+
+const toComparablePath = (value: string): string =>
+  realpathSync.native(value).replaceAll("\\", "/").toLowerCase();
 
 describe("exec()", () => {
   let testRepo: GitTestRepo;
@@ -51,10 +55,7 @@ describe("exec()", () => {
     const result = await exec(["rev-parse", "--show-toplevel"], testRepo.path);
 
     expect(result.exitCode).toBe(0);
-    // Git may return canonical path (e.g., /private/var vs /var on macOS)
-    // So we compare the realpath-resolved values
-    const { realpathSync } = await import("fs");
-    expect(realpathSync(result.stdout.trim())).toBe(realpathSync(testRepo.path));
+    expect(toComparablePath(result.stdout.trim())).toBe(toComparablePath(testRepo.path));
     expect(result.stderr).toBe("");
   });
 

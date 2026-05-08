@@ -22,6 +22,14 @@ const ONE = 1;
 const JSON_INDENT = 2;
 const DETACHED_HEAD = "HEAD";
 
+const toComparablePath = (value: string): string => {
+  try {
+    return realpathSync.native(value).replaceAll("\\", "/").toLowerCase();
+  } catch {
+    return resolvePath(value).replaceAll("\\", "/").toLowerCase();
+  }
+};
+
 export interface RepositoryTarget {
   name: string;
   path: string;
@@ -36,27 +44,14 @@ export const parseWorktreeList = (
   const lines = output.trim().split("\n");
   let current: Partial<WorktreeInfo> = {};
   let isBare = false;
-  let canonicalRepoPath = repoPath;
-
-  try {
-    canonicalRepoPath = realpathSync(repoPath);
-  } catch {
-    canonicalRepoPath = repoPath;
-  }
+  const canonicalRepoPath = toComparablePath(repoPath);
 
   const pushCurrent = () => {
     if (!current.path || isBare) {
       return;
     }
 
-    let canonicalWorktreePath = current.path;
-    try {
-      canonicalWorktreePath = realpathSync(current.path);
-    } catch {
-      canonicalWorktreePath = current.path;
-    }
-
-    const isMain = canonicalWorktreePath === canonicalRepoPath;
+    const isMain = toComparablePath(current.path) === canonicalRepoPath;
     worktrees.push({
       branch: current.branch || "",
       isMain,
