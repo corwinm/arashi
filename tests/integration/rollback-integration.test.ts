@@ -16,6 +16,8 @@ import { exec as gitExec } from "../../src/lib/git";
 import { join } from "path";
 import { tmpdir } from "os";
 
+const normalizePathSeparators = (value: string): string => value.replaceAll("\\", "/");
+
 interface WorktreeCreatedEntry {
   type: "worktree_created";
   timestamp: number;
@@ -89,7 +91,9 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Verify worktree exists
       const listResult = await gitExec(["worktree", "list"], repoPath);
-      expect(listResult.stdout).toContain(worktreePath);
+      expect(normalizePathSeparators(listResult.stdout)).toContain(
+        normalizePathSeparators(worktreePath),
+      );
 
       // Create rollback entry
       const entry: WorktreeCreatedEntry = {
@@ -107,7 +111,9 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Verify worktree is removed
       const listAfter = await gitExec(["worktree", "list"], repoPath);
-      expect(listAfter.stdout).not.toContain(worktreePath);
+      expect(normalizePathSeparators(listAfter.stdout)).not.toContain(
+        normalizePathSeparators(worktreePath),
+      );
     });
 
     test("should be idempotent when worktree does not exist", async () => {
@@ -284,7 +290,9 @@ describe("Rollback Integration Tests - User Story 3", () => {
       expect(branchList.stdout).toContain(branchName);
 
       const worktreeList = await gitExec(["worktree", "list"], repoPath);
-      expect(worktreeList.stdout).toContain(worktreePath);
+      expect(normalizePathSeparators(worktreeList.stdout)).toContain(
+        normalizePathSeparators(worktreePath),
+      );
 
       const fs = await import("fs/promises");
       try {

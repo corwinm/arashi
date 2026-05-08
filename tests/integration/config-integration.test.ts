@@ -26,6 +26,8 @@ import { tmpdir } from "os";
 
 type Config = Awaited<ReturnType<typeof loadConfig>>;
 
+const normalizePathSeparators = (value: string): string => value.replaceAll("\\", "/");
+
 async function runGit(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
@@ -222,7 +224,7 @@ describe("loadConfig", () => {
       const err = error as ConfigNotFoundError;
       expect(err.message).toContain("not found");
       expect(err.message).toContain("arashi init");
-      expect(err.context.path).toContain(".arashi/config.json");
+      expect(normalizePathSeparators(err.context.path)).toContain(".arashi/config.json");
     }
   });
 

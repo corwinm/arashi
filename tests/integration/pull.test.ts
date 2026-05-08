@@ -10,6 +10,8 @@ interface CommandResult {
   stderr: string;
 }
 
+const SLOW_PULL_TEST_TIMEOUT = process.platform === "win32" ? 15_000 : 5000;
+
 async function runCommand(cwd: string, args: string[]): Promise<CommandResult> {
   const proc = spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
   const stdout = await new Response(proc.stdout).text();
@@ -131,18 +133,22 @@ describe("pull command", () => {
     await rm(testDir, { force: true, recursive: true });
   });
 
-  test("pulls remote changes across multiple repositories", async () => {
-    const { workspaceRoot, mainRemote, repoRemote } = await createWorkspaceWithRepo(testDir);
+  test(
+    "pulls remote changes across multiple repositories",
+    async () => {
+      const { workspaceRoot, mainRemote, repoRemote } = await createWorkspaceWithRepo(testDir);
 
-    await createRemoteCommit(mainRemote, testDir, "main-remote-update", "main.txt");
-    await createRemoteCommit(repoRemote, testDir, "repo-remote-update", "repo.txt");
+      await createRemoteCommit(mainRemote, testDir, "main-remote-update", "main.txt");
+      await createRemoteCommit(repoRemote, testDir, "repo-remote-update", "repo.txt");
 
-    const result = await runPullCommand(workspaceRoot);
+      const result = await runPullCommand(workspaceRoot);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("updated");
-    expect(result.stdout).toContain("repo-a");
-  });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("updated");
+      expect(result.stdout).toContain("repo-a");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
 
   test("reports manual-update and rolls back on conflicts or errors", async () => {
     const { workspaceRoot, repoRemote, repoPath } = await createWorkspaceWithRepo(testDir);
@@ -163,18 +169,22 @@ describe("pull command", () => {
     expect(statusAfter).toContain("README.md");
   });
 
-  test("respects --only repository filtering", async () => {
-    const { workspaceRoot, mainRemote, repoRemote } = await createWorkspaceWithRepo(testDir);
+  test(
+    "respects --only repository filtering",
+    async () => {
+      const { workspaceRoot, mainRemote, repoRemote } = await createWorkspaceWithRepo(testDir);
 
-    await createRemoteCommit(mainRemote, testDir, "main-remote-update-only", "main-only.txt");
-    await createRemoteCommit(repoRemote, testDir, "repo-remote-update-only", "repo-only.txt");
+      await createRemoteCommit(mainRemote, testDir, "main-remote-update-only", "main-only.txt");
+      await createRemoteCommit(repoRemote, testDir, "repo-remote-update-only", "repo-only.txt");
 
-    const result = await runPullCommand(workspaceRoot, ["--only", "repo-a"]);
+      const result = await runPullCommand(workspaceRoot, ["--only", "repo-a"]);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("repo-a");
-    expect(result.stdout).not.toContain("workspace");
-  });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("repo-a");
+      expect(result.stdout).not.toContain("workspace");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
 
   test("includes verbose git output when --verbose is set", async () => {
     const { workspaceRoot, repoRemote } = await createWorkspaceWithRepo(testDir);

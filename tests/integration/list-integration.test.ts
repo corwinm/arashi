@@ -27,6 +27,8 @@ interface JsonWorktree {
   subRepositories?: JsonSubRepository[];
 }
 
+const normalizePathSeparators = (value: string): string => value.replaceAll("\\", "/");
+
 /**
  * Helper to create a temporary git repository for testing
  */
@@ -222,7 +224,7 @@ describe("list command - basic functionality", () => {
     expect(output).not.toContain("BRANCH");
     expect(output).not.toContain("Legend");
     // Should contain full paths (not truncated)
-    expect(output).toContain(testDir);
+    expect(normalizePathSeparators(output)).toContain(normalizePathSeparators(testDir));
     const lines = output.trim().split("\n");
     expect(lines.length).toBe(3); // Main + 2 worktrees
 
@@ -375,9 +377,10 @@ describe("list command - verbose mode", () => {
     const wtPath = await createUniqueWorktree(testDir, "verbose-sub");
 
     const { output } = await runListCommand(testDir, { verbose: true });
+    const normalizedOutput = normalizePathSeparators(output);
 
-    expect(output).toContain("SUB-REPOSITORIES:");
-    expect(output).toContain("repos/nested-repo");
+    expect(normalizedOutput).toContain("SUB-REPOSITORIES:");
+    expect(normalizedOutput).toContain("repos/nested-repo");
 
     // Cleanup
     await spawn(["git", "worktree", "remove", wtPath], { cwd: testDir }).exited;
@@ -393,9 +396,10 @@ describe("list command - verbose mode", () => {
     const wtPath = await createUniqueWorktree(testDir, "verbose-status");
 
     const { output } = await runListCommand(testDir, { verbose: true });
+    const normalizedOutput = normalizePathSeparators(output);
 
-    expect(output).toContain("repos/nested-repo");
-    expect(output).toContain("modified");
+    expect(normalizedOutput).toContain("repos/nested-repo");
+    expect(normalizedOutput).toContain("modified");
 
     // Cleanup
     await spawn(["git", "worktree", "remove", wtPath], { cwd: testDir }).exited;
@@ -428,10 +432,11 @@ describe("list command - verbose mode", () => {
 
     // With maxDepth = 2, should find level1/repo1 but not deep-repo
     const { output } = await runListCommand(testDir, { maxDepth: 2, verbose: true });
+    const normalizedOutput = normalizePathSeparators(output);
 
-    expect(output).toContain("level1/repo1");
+    expect(normalizedOutput).toContain("level1/repo1");
     // Deep repo should not be found
-    expect(output).not.toContain("deep-repo");
+    expect(normalizedOutput).not.toContain("deep-repo");
 
     // Cleanup
     await spawn(["git", "worktree", "remove", wtPath], { cwd: testDir }).exited;

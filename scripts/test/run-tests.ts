@@ -35,6 +35,25 @@ const windowsShellExecutionPatterns = [
   /bootstrap\.sh/,
 ];
 
+const windowsSupplementalTests = [
+  "tests/integration/config-integration.test.ts",
+  "tests/integration/create.bare-config-fallback.test.ts",
+  "tests/integration/create.bare-context.setup.test.ts",
+  "tests/integration/create.bare-missing-config-error.test.ts",
+  "tests/integration/create.bare-rollback-guarantee.test.ts",
+  "tests/integration/create.bare-root-success.test.ts",
+  "tests/integration/create.defaults.test.ts",
+  "tests/integration/create.worktree-location-resolution.test.ts",
+  "tests/integration/switch.test.ts",
+  "tests/unit/commands/create.bare-context.test.ts",
+  "tests/unit/commands/create.defaults.test.ts",
+  "tests/unit/core/worktree.test.ts",
+  "tests/unit/lib/shell-integration.test.ts",
+  "tests/unit/lib/switch-launcher.test.ts",
+  "tests/unit/repository-type-detection.test.ts",
+  "tests/unit/setup-output.test.ts",
+].toSorted((left, right) => left.localeCompare(right));
+
 function normalizeRelativePath(path: string): string {
   return path.replaceAll("\\", "/");
 }
@@ -81,12 +100,16 @@ function collectTestFiles(rootDir: string): string[] {
 function getHostTestFiles(): string[] {
   const unitTests = collectTestFiles(join(workspaceRoot, "tests", "unit"));
   const integrationTests = collectTestFiles(join(workspaceRoot, "tests", "integration"));
+  const hostTests = [...unitTests, ...integrationTests];
 
   if (process.platform !== "win32") {
-    return [...unitTests, ...integrationTests];
+    return hostTests;
   }
 
-  return [...unitTests, ...integrationTests].filter((filePath) => !shouldSkipWindowsTest(filePath));
+  const windowsHostTests = hostTests.filter((filePath) => !shouldSkipWindowsTest(filePath));
+  return [...new Set([...windowsHostTests, ...windowsSupplementalTests])].toSorted((left, right) =>
+    left.localeCompare(right),
+  );
 }
 
 async function main(): Promise<void> {

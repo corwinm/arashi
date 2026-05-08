@@ -74,17 +74,16 @@ export async function createBareCreateWorkspace(
 }
 
 async function execGit(args: string[], cwd: string): Promise<void> {
-  const proc = Bun.spawn(["git", ...args], {
+  const proc = Bun.spawnSync(["git", ...args], {
     cwd,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const exitCode = await proc.exited;
-  if (exitCode === 0) {
+  if (proc.exitCode === 0) {
     return;
   }
 
-  const stderr = await new Response(proc.stderr).text();
+  const stderr = new TextDecoder().decode(proc.stderr);
   throw new Error(`Git command failed: git ${args.join(" ")}\n${stderr}`);
 }

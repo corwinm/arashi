@@ -56,6 +56,8 @@ const DETACHED_LABEL = "detached";
 const EMPTY_SHA = "0000000";
 const SKIPPED_DIRECTORY_NAMES = new Set([".arashi", "node_modules"]);
 
+const normalizeRelativeDisplayPath = (path: string): string => path.replaceAll("\\", "/");
+
 const tryAddGitRepository = async (gitRepos: string[], repoPath: string): Promise<void> => {
   try {
     await exec(["rev-parse", "--git-dir"], repoPath);
@@ -735,7 +737,7 @@ export const discoverSubRepositories = async (
       const hasChanges = await hasUncommittedChanges(repoPath);
 
       // Get relative path
-      const relativePath = relative(worktreePath, repoPath);
+      const relativePath = normalizeRelativeDisplayPath(relative(worktreePath, repoPath));
 
       subRepos.push({
         branch,
