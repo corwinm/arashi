@@ -10,10 +10,10 @@ export function filterRepositories(
   only: string[] | undefined,
 ): RepositoryFilterResult {
   if (!only || only.length === 0) {
-    return { selected: repositories, missing: [] };
+    return { missing: [], selected: repositories };
   }
 
-  const normalizedOnly = Array.from(new Set(only.map((name) => name.trim()).filter(Boolean)));
+  const normalizedOnly = [...new Set(only.map((name) => name.trim()).filter(Boolean))];
   const repoMap = new Map(repositories.map((repo) => [repo.name, repo]));
   const selected: WorkspaceRepository[] = [];
   const missing: string[] = [];
@@ -27,5 +27,5 @@ export function filterRepositories(
     }
   }
 
-  return { selected, missing };
+  return { missing, selected };
 }

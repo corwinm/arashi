@@ -7,9 +7,10 @@
  * @module git
  */
 
-import { dirname, basename } from "path";
-import type { CommandResult } from "../types/git";
+import { basename, dirname } from "path";
 import { ArashiError } from "./errors";
+import type { CommandResult } from "../types/git";
+import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 
 /**
  * Execute a git command and capture output
@@ -35,26 +36,29 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
   }
 
   // T010: Execute git command using Bun.spawn()
-  let proc;
+  let proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | undefined = undefined;
   try {
     proc = Bun.spawn(["git", ...args], {
       cwd,
-      stdout: "pipe",
+      env: normalizeSpawnEnvironment(process.env),
       stderr: "pipe",
-      env: process.env as Record<string, string>,
+      stdout: "pipe",
     });
   } catch (error) {
     // Handle spawn errors (e.g., directory doesn't exist, git not found)
     throw new ArashiError(`Failed to spawn git command: ${(error as Error).message}`, {
-      stdout: "",
-      stderr: (error as Error).message,
-      exitCode: -1,
       args,
       cwd,
+      exitCode: -1,
+      stderr: (error as Error).message,
+      stdout: "",
     });
   }
 
   // Capture stdout and stderr
+  if (!proc) {
+    throw new Error("Failed to spawn git process");
+  }
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;
@@ -63,18 +67,18 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
   if (exitCode !== 0) {
     const errorMessage = stderr.trim() || stdout.trim() || "Git command failed with no output";
     throw new ArashiError(`Git command failed: ${errorMessage}`, {
-      stdout,
-      stderr,
-      exitCode,
       args,
       cwd,
+      exitCode,
+      stderr,
+      stdout,
     });
   }
 
   return {
-    stdout,
-    stderr,
     exitCode,
+    stderr,
+    stdout,
   };
 }
 
@@ -129,7 +133,7 @@ export async function isBareRepo(repoPath: string): Promise<boolean> {
     return false;
   }
 
-  // commonDir doesn't end with /.git, so it might be a bare repo
+  // CommonDir doesn't end with /.git, so it might be a bare repo
   // We need to check by running git command in the common directory
   try {
     const bareCheckResult = await exec(["rev-parse", "--is-bare-repository"], commonDir);
@@ -167,9 +171,9 @@ export async function clone(gitUrl: string, destPath: string): Promise<CommandRe
   try {
     const proc = Bun.spawn(["git", "clone", gitUrl, repoName], {
       cwd: parentDir,
-      stdout: "pipe",
+      env: normalizeSpawnEnvironment(process.env),
       stderr: "pipe",
-      env: process.env as Record<string, string>,
+      stdout: "pipe",
     });
 
     const stdout = await new Response(proc.stdout).text();
@@ -179,29 +183,29 @@ export async function clone(gitUrl: string, destPath: string): Promise<CommandRe
     if (exitCode !== 0) {
       const errorMessage = stderr.trim() || stdout.trim() || "Git clone failed with no output";
       throw new ArashiError(`Git clone failed: ${errorMessage}`, {
-        stdout,
-        stderr,
-        exitCode,
         args: ["clone", gitUrl, repoName],
         cwd: parentDir,
+        exitCode,
+        stderr,
+        stdout,
       });
     }
 
     return {
-      stdout,
-      stderr,
       exitCode,
+      stderr,
+      stdout,
     };
   } catch (error) {
     if (error instanceof ArashiError) {
       throw error;
     }
     throw new ArashiError(`Failed to spawn git clone: ${(error as Error).message}`, {
-      stdout: "",
-      stderr: (error as Error).message,
-      exitCode: -1,
       args: ["clone", gitUrl, repoName],
       cwd: parentDir,
+      exitCode: -1,
+      stderr: (error as Error).message,
+      stdout: "",
     });
   }
 }
@@ -293,11 +297,11 @@ export async function getDefaultBranch(repoPath: string): Promise<string> {
 
   // Unable to detect default branch
   throw new ArashiError("Unable to detect default branch: repository has no remote branches", {
-    stdout: "",
-    stderr: "No remote branches found",
-    exitCode: 1,
     args: ["branch", "-r", "--list"],
     cwd: repoPath,
+    exitCode: 1,
+    stderr: "No remote branches found",
+    stdout: "",
   });
 }
 
@@ -334,20 +338,20 @@ export async function getGitStatus(repoPath: string): Promise<GitStatusResult> {
   try {
     const result = await exec(["status", "--porcelain=v1", "--branch"], repoPath);
     return {
-      output: result.stdout.trim(),
       error: null,
+      output: result.stdout.trim(),
     };
   } catch (error) {
     // Return error information instead of throwing
     if (error instanceof ArashiError) {
       return {
-        output: "",
         error: error.message,
+        output: "",
       };
     }
     return {
-      output: "",
       error: error instanceof Error ? error.message : "Unknown error",
+      output: "",
     };
   }
 }
@@ -369,20 +373,20 @@ export async function getFullGitStatus(repoPath: string): Promise<GitStatusResul
   try {
     const result = await exec(["status"], repoPath);
     return {
-      output: result.stdout.trim(),
       error: null,
+      output: result.stdout.trim(),
     };
   } catch (error) {
     // Return error information instead of throwing
     if (error instanceof ArashiError) {
       return {
-        output: "",
         error: error.message,
+        output: "",
       };
     }
     return {
-      output: "",
       error: error instanceof Error ? error.message : "Unknown error",
+      output: "",
     };
   }
 }
@@ -421,11 +425,11 @@ async function resolveDefaultBranchForTrackedRead(repoPath: string): Promise<str
 
   if (!first) {
     throw new ArashiError("Unable to resolve default branch for tracked file read", {
-      stdout: refs.stdout,
-      stderr: refs.stderr,
-      exitCode: refs.exitCode,
       args: ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
       cwd: repoPath,
+      exitCode: refs.exitCode,
+      stderr: refs.stderr,
+      stdout: refs.stdout,
     });
   }
 

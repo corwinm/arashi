@@ -1,0 +1,163 @@
+{
+  "$ref": "#/definitions/Config",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "CommandDefaultsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "$ref": "#/definitions/CreateCommandDefaults"
+        },
+        "editors": {
+          "$ref": "#/definitions/EditorDefaultsConfig"
+        },
+        "switch": {
+          "$ref": "#/definitions/SwitchCommandDefaults"
+        }
+      },
+      "type": "object"
+    },
+    "Config": {
+      "additionalProperties": false,
+      "description": "Root configuration object for Arashi",
+      "properties": {
+        "$schema": {
+          "description": "JSON Schema URL for editor validation/autocomplete",
+          "type": "string"
+        },
+        "defaults": {
+          "$ref": "#/definitions/CommandDefaultsConfig",
+          "description": "Optional command-scoped defaults for create and switch"
+        },
+        "hooks": {
+          "additionalProperties": false,
+          "description": "Optional workspace-level hooks settings",
+          "properties": {
+            "timeout": {
+              "description": "Timeout in milliseconds for long-running operations",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "repos": {
+          "additionalProperties": {
+            "$ref": "#/definitions/RepoConfig"
+          },
+          "description": "Map of repository names to their configurations",
+          "type": "object"
+        },
+        "reposDir": {
+          "description": "Directory where repositories are located",
+          "type": "string"
+        },
+        "sync": {
+          "additionalProperties": false,
+          "description": "Optional sync command settings",
+          "properties": {
+            "timeoutSeconds": {
+              "description": "Sync timeout in seconds",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "version": {
+          "$ref": "#/definitions/ConfigVersion",
+          "description": "Configuration schema version for migrations"
+        },
+        "worktreesDir": {
+          "description": "Base directory where worktrees are created (workspace-relative)",
+          "type": "string"
+        }
+      },
+      "required": ["version", "reposDir", "repos"],
+      "type": "object"
+    },
+    "ConfigVersion": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "CreateCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "launch": {
+          "description": "Default to launching a terminal/editor context after create",
+          "type": "boolean"
+        },
+        "launchMode": {
+          "$ref": "#/definitions/LaunchMode",
+          "description": "Preferred launch mode for create-triggered launch"
+        },
+        "switch": {
+          "description": "Default to switching to the new worktree after create",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "EditorCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "$ref": "#/definitions/CreateCommandDefaults",
+          "description": "Editor-scoped create defaults"
+        }
+      },
+      "type": "object"
+    },
+    "EditorDefaultsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "$ref": "#/definitions/EditorCommandDefaults"
+        },
+        "kiro": {
+          "$ref": "#/definitions/EditorCommandDefaults"
+        },
+        "vscode": {
+          "$ref": "#/definitions/EditorCommandDefaults"
+        }
+      },
+      "type": "object"
+    },
+    "LaunchMode": {
+      "enum": ["auto", "sesh"],
+      "type": "string"
+    },
+    "RepoConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for a single repository",
+      "properties": {
+        "gitUrl": {
+          "description": "Canonical git URL for cloning the repository",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the repository (relative or absolute)",
+          "type": "string"
+        }
+      },
+      "required": ["path"],
+      "type": "object"
+    },
+    "SwitchCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "launchMode": {
+          "$ref": "#/definitions/LaunchMode",
+          "description": "Preferred launch mode when running switch"
+        },
+        "mode": {
+          "$ref": "#/definitions/SwitchMode",
+          "description": "Preferred switch behavior when running switch"
+        }
+      },
+      "type": "object"
+    },
+    "SwitchMode": {
+      "enum": ["launch", "cd", "auto"],
+      "type": "string"
+    }
+  }
+}

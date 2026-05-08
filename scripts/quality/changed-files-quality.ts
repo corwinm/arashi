@@ -44,7 +44,7 @@ function getChangedFiles(): string[] {
     .filter(Boolean)
     .filter((file) => {
       const dotIndex = file.lastIndexOf(".");
-      if (dotIndex < 0) {
+      if (dotIndex === -1) {
         return false;
       }
 
@@ -56,8 +56,8 @@ function splitQualityTargets(files: string[]): {
   lintTargets: string[];
   formatTargets: string[];
 } {
-  const lintTargets = files.filter((file) => {
-    return (
+  const lintTargets = files.filter(
+    (file) =>
       file.endsWith(".js") ||
       file.endsWith(".cjs") ||
       file.endsWith(".mjs") ||
@@ -65,13 +65,12 @@ function splitQualityTargets(files: string[]): {
       file.endsWith(".ts") ||
       file.endsWith(".cts") ||
       file.endsWith(".mts") ||
-      file.endsWith(".tsx")
-    );
-  });
+      file.endsWith(".tsx"),
+  );
 
   const formatTargets = files;
 
-  return { lintTargets, formatTargets };
+  return { formatTargets, lintTargets };
 }
 
 const changedFiles = getChangedFiles();

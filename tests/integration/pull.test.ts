@@ -1,8 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
-import { tmpdir } from "os";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { spawn } from "bun";
+import { tmpdir } from "os";
 
 interface CommandResult {
   exitCode: number;
@@ -11,11 +11,11 @@ interface CommandResult {
 }
 
 async function runCommand(cwd: string, args: string[]): Promise<CommandResult> {
-  const proc = spawn(args, { cwd, stdout: "pipe", stderr: "pipe" });
+  const proc = spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;
-  return { exitCode, stdout, stderr };
+  return { exitCode, stderr, stdout };
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
@@ -77,17 +77,16 @@ async function createWorkspaceWithRepo(
   const configDir = join(workspaceRoot, ".arashi");
   await mkdir(configDir, { recursive: true });
   const config: Record<string, unknown> = {
-    version: "1.0.0",
-    repos_dir: "./repos",
-    auto_setup: true,
-    discovered_repos: {
+    repos: {
       "repo-a": {
+        defaultBranch: "main",
+        isBare: false,
         path: "./repos/repo-a",
-        default_branch: "main",
-        is_bare: false,
         worktrees: [],
       },
     },
+    reposDir: "./repos",
+    version: "1.0.0",
   };
   if (options?.hooksTimeoutMs !== undefined) {
     config.hooks = { timeout: options.hooksTimeoutMs };
@@ -95,15 +94,13 @@ async function createWorkspaceWithRepo(
 
   await writeFile(join(configDir, "config.json"), JSON.stringify(config, null, 2));
 
-  return { workspaceRoot, mainRemote, repoRemote, repoPath };
+  return { mainRemote, repoPath, repoRemote, workspaceRoot };
 }
 
 async function createRemoteCommit(
-  remotePath: string,
-  baseDir: string,
-  name: string,
-  fileName: string,
+  ...args: [remotePath: string, baseDir: string, name: string, fileName: string]
 ): Promise<void> {
+  const [remotePath, baseDir, name, fileName] = args;
   const workdir = join(baseDir, name);
   await runGit(baseDir, ["clone", remotePath, workdir]);
   await runGit(workdir, ["fetch", "origin", "main"]);
@@ -131,7 +128,7 @@ describe("pull command", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   test("pulls remote changes across multiple repositories", async () => {

@@ -1,14 +1,14 @@
-import { describe, expect, test } from "bun:test";
-import { buildSummary, formatResultLine, formatSummary } from "../../src/lib/setup-output.ts";
 import type { SetupExecutionResult, SetupTarget } from "../../src/lib/setup-types.ts";
+import { buildSummary, formatResultLine, formatSummary } from "../../src/lib/setup-output.ts";
+import { describe, expect, test } from "bun:test";
 
 function createTarget(name: string, selected = true): SetupTarget {
   return {
+    hasSetupTask: selected,
     name,
     path: `/tmp/${name}`,
     scopeType: name === "workspace" ? "main" : "sub",
     selected,
-    hasSetupTask: selected,
   };
 }
 
@@ -16,12 +16,12 @@ describe("setup output formatting", () => {
   test("builds success summary counts", () => {
     const targets = [createTarget("workspace"), createTarget("repo-a")];
     const executions: SetupExecutionResult[] = [
-      { repositoryName: "workspace", status: "success", durationMs: 500 },
+      { durationMs: 500, repositoryName: "workspace", status: "success" },
       {
+        detail: "no setup script found",
+        durationMs: 0,
         repositoryName: "repo-a",
         status: "skipped",
-        durationMs: 0,
-        detail: "no setup script found",
       },
     ];
 
@@ -38,8 +38,8 @@ describe("setup output formatting", () => {
   test("builds failure summary counts", () => {
     const targets = [createTarget("workspace"), createTarget("repo-a")];
     const executions: SetupExecutionResult[] = [
-      { repositoryName: "workspace", status: "failed", durationMs: 1000, detail: "boom" },
-      { repositoryName: "repo-a", status: "timed-out", durationMs: 1000, detail: "timed out" },
+      { detail: "boom", durationMs: 1000, repositoryName: "workspace", status: "failed" },
+      { detail: "timed out", durationMs: 1000, repositoryName: "repo-a", status: "timed-out" },
     ];
 
     const summary = buildSummary(targets, executions);
@@ -52,22 +52,22 @@ describe("setup output formatting", () => {
 
   test("formats result and filtered summary output", () => {
     const line = formatResultLine({
+      detail: "script error",
+      durationMs: 2100,
       repositoryName: "repo-a",
       status: "failed",
-      durationMs: 2100,
-      detail: "script error",
     });
 
     expect(line).toBe("repo-a: failed (2.10s) - script error");
 
     const targets = [createTarget("workspace"), createTarget("repo-a", false)];
     const summary = buildSummary(targets, [
-      { repositoryName: "workspace", status: "success", durationMs: 100 },
+      { durationMs: 100, repositoryName: "workspace", status: "success" },
       {
+        detail: "excluded by --only filter",
+        durationMs: 0,
         repositoryName: "repo-a",
         status: "skipped",
-        durationMs: 0,
-        detail: "excluded by --only filter",
       },
     ]);
 

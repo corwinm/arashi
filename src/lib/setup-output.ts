@@ -36,17 +36,17 @@ export function buildSummary(
   }
 
   return {
-    overallStatus,
-    totalRepositoriesEvaluated: targets.length,
-    executedCount,
-    successCount,
-    skippedCount,
-    failedCount,
-    timedOutCount,
-    selectedCount,
     excludedCount,
-    targets,
+    executedCount,
     executions,
+    failedCount,
+    overallStatus,
+    selectedCount,
+    skippedCount,
+    successCount,
+    targets,
+    timedOutCount,
+    totalRepositoriesEvaluated: targets.length,
   };
 }
 

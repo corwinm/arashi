@@ -5,27 +5,27 @@
  * worktree discovery, sub-repository detection, and output formatting.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
-import { tmpdir } from "os";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { spawn } from "bun";
 import { listCommand } from "../../src/core/list";
+import { spawn } from "bun";
+import { tmpdir } from "os";
 
-type JsonSubRepository = {
+interface JsonSubRepository {
   branch: string | null;
   commit: string;
   hasChanges: boolean;
   relativePath: string;
-};
+}
 
-type JsonWorktree = {
+interface JsonWorktree {
   branch: string | null;
   hasChanges: boolean;
   locked: boolean;
   path: string;
   subRepositories?: JsonSubRepository[];
-};
+}
 
 /**
  * Helper to create a temporary git repository for testing
@@ -36,8 +36,8 @@ async function createTempGitRepo(): Promise<string> {
   // Initialize git repository
   const gitInit = spawn(["git", "init"], {
     cwd: testDir,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
   await gitInit.exited;
 
@@ -53,16 +53,15 @@ async function createTempGitRepo(): Promise<string> {
   // Initialize Arashi config to avoid warnings
   await mkdir(join(testDir, ".arashi"), { recursive: true });
   const testConfig = {
-    version: "1.0.0",
-    repos_dir: "./repos",
-    auto_setup: true,
-    discovered_repos: {},
-    hooks: {
-      timeout: 300,
-    },
     discovery: {
       max_depth: 3,
     },
+    hooks: {
+      timeout: 300,
+    },
+    repos: {},
+    reposDir: "./repos",
+    version: "1.0.0",
   };
   await writeFile(join(testDir, ".arashi", "config.json"), JSON.stringify(testConfig, null, 2));
 
@@ -76,7 +75,7 @@ async function createUniqueWorktree(mainRepoPath: string, branchName: string): P
   const worktreePath = join(
     mainRepoPath,
     "..",
-    `worktree-${branchName}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    `worktree-${branchName}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
   );
   await createWorktree(mainRepoPath, branchName, worktreePath);
   return worktreePath;
@@ -118,7 +117,7 @@ async function createNestedRepo(parentPath: string, relativePath: string): Promi
  * Helper to clean up test directory
  */
 async function cleanup(testDir: string): Promise<void> {
-  await rm(testDir, { recursive: true, force: true });
+  await rm(testDir, { force: true, recursive: true });
 }
 
 /**
@@ -140,7 +139,7 @@ async function runListCommand(
 
   // Mock console.log/warn/error and process.stdout.write to capture output
   console.log = (message: string) => {
-    capturedOutput += message + "\n";
+    capturedOutput += `${message}\n`;
   };
   console.warn = () => {}; // Suppress warnings
   console.error = () => {}; // Suppress errors
@@ -157,7 +156,7 @@ async function runListCommand(
     await listCommand(options);
     return { output: capturedOutput };
   } catch (error) {
-    return { output: capturedOutput, error: error as Error };
+    return { error: error as Error, output: capturedOutput };
   } finally {
     process.chdir(originalCwd);
     console.log = originalLog;
@@ -225,7 +224,7 @@ describe("list command - basic functionality", () => {
     // Should contain full paths (not truncated)
     expect(output).toContain(testDir);
     const lines = output.trim().split("\n");
-    expect(lines.length).toBe(3); // main + 2 worktrees
+    expect(lines.length).toBe(3); // Main + 2 worktrees
 
     // Cleanup worktrees
     await spawn(["git", "worktree", "remove", wt1Path], { cwd: testDir }).exited;
@@ -428,7 +427,7 @@ describe("list command - verbose mode", () => {
     const wtPath = await createUniqueWorktree(testDir, "verbose-depth");
 
     // With maxDepth = 2, should find level1/repo1 but not deep-repo
-    const { output } = await runListCommand(testDir, { verbose: true, maxDepth: 2 });
+    const { output } = await runListCommand(testDir, { maxDepth: 2, verbose: true });
 
     expect(output).toContain("level1/repo1");
     // Deep repo should not be found
@@ -577,7 +576,7 @@ describe("list command - detached HEAD", () => {
     const wtPath = join(
       testDir,
       "..",
-      `worktree-detached-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      `worktree-detached-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     );
     await spawn(["git", "worktree", "add", "--detach", wtPath, commit], {
       cwd: testDir,
@@ -601,7 +600,7 @@ describe("list command - detached HEAD", () => {
     const wtPath = join(
       testDir,
       "..",
-      `worktree-detached-json-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      `worktree-detached-json-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     );
     await spawn(["git", "worktree", "add", "--detach", wtPath, commit], {
       cwd: testDir,
@@ -711,16 +710,15 @@ describe("list command - edge cases", () => {
     // Initialize Arashi config in the worktree
     await mkdir(join(wtPath, ".arashi"), { recursive: true });
     const testConfig = {
-      version: "1.0.0",
-      repos_dir: "./repos",
-      auto_setup: true,
-      discovered_repos: {},
-      hooks: { timeout: 300 },
       discovery: { max_depth: 3 },
+      hooks: { timeout: 300 },
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
     };
     await writeFile(join(wtPath, ".arashi", "config.json"), JSON.stringify(testConfig, null, 2));
 
-    const { output } = await runListCommand(wtPath, { verbose: true, json: true });
+    const { output } = await runListCommand(wtPath, { json: true, verbose: true });
     const parsed = JSON.parse(output);
 
     // Should have subRepositories as empty array or undefined

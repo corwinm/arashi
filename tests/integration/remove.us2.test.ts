@@ -2,15 +2,15 @@
  * Integration test: User Story 2 - interactive multi-select
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync } from "fs";
-import { rm } from "fs/promises";
-import { spawn } from "bun";
-import { executeRemove } from "../../src/commands/remove.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
 } from "../helpers/remove-test-workspace.ts";
+import { executeRemove } from "../../src/commands/remove.ts";
+import { existsSync } from "fs";
+import { rm } from "fs/promises";
+import { spawn } from "bun";
 
 describe("remove command - US2 multi-select", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
@@ -37,11 +37,11 @@ describe("remove command - US2 multi-select", () => {
         undefined,
         { force: false },
         {
+          confirm: async () => ({ status: "ok", value: true }),
           multiSelect: async (_message, choices) => ({
             status: "ok",
             value: choices.map((choice) => choice.value),
           }),
-          confirm: async () => ({ status: "ok", value: true }),
         },
       );
       expect(exitCode).toBe(0);
@@ -58,8 +58,8 @@ describe("remove command - US2 multi-select", () => {
       for (const branch of [branchA, branchB]) {
         const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], {
           cwd: repoPath,
-          stdout: "ignore",
           stderr: "ignore",
+          stdout: "ignore",
         });
         const exitCode = await proc.exited;
         expect(exitCode).not.toBe(0);
@@ -71,7 +71,7 @@ describe("remove command - US2 multi-select", () => {
     const branchName = "feature-missing";
     const worktrees = await createWorktreesForBranch(workspace, branchName, true);
     const missingPath = worktrees["repo-a"];
-    await rm(missingPath, { recursive: true, force: true });
+    await rm(missingPath, { force: true, recursive: true });
 
     const originalCwd = process.cwd();
     process.chdir(workspace.rootPath);
@@ -83,11 +83,11 @@ describe("remove command - US2 multi-select", () => {
         undefined,
         { force: false },
         {
+          confirm: async () => ({ status: "ok", value: true }),
           multiSelect: async (_message, choices) => {
             observedChoiceNames = choices.map((choice) => choice.name);
             return { status: "ok", value: [] };
           },
-          confirm: async () => ({ status: "ok", value: true }),
         },
       );
       expect(exitCode).toBe(0);
@@ -113,8 +113,8 @@ describe("remove command - US2 multi-select", () => {
         undefined,
         { force: false },
         {
-          multiSelect: async () => ({ status: "ok", value: [] }),
           confirm: async () => ({ status: "ok", value: true }),
+          multiSelect: async () => ({ status: "ok", value: [] }),
         },
       );
       expect(exitCode).toBe(0);
@@ -126,8 +126,8 @@ describe("remove command - US2 multi-select", () => {
     for (const repoPath of reposToCheck) {
       const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
         cwd: repoPath,
-        stdout: "ignore",
         stderr: "ignore",
+        stdout: "ignore",
       });
       const exitCode = await proc.exited;
       expect(exitCode).toBe(0);

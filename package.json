@@ -1,6 +1,6 @@
 {
   "name": "arashi",
-  "version": "1.5.0",
+  "version": "1.11.1",
   "description": "Git worktree manager for meta-repositories - The eye of the storm for your development workflow",
   "keywords": [
     "cli",
@@ -32,6 +32,7 @@
     "bin/arashi.bat",
     "bin/arashi.ps1",
     "scripts/postinstall.js",
+    "schema/config.schema.json",
     "README.md",
     "LICENSE"
   ],
@@ -47,7 +48,8 @@
   "type": "module",
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build src/index.ts --compile --minify --sourcemap --outfile bin/arashi.bin",
+    "build": "bun build src/index.ts --compile --minify --outfile bin/arashi.bin",
+    "build:debug": "bun build src/index.ts --compile --sourcemap --outfile bin/arashi.bin",
     "build:all": "bun run build:mac && bun run build:linux && bun run build:windows",
     "build:mac": "bun build src/index.ts --compile --target=bun-darwin-arm64 --outfile bin/arashi-macos-arm64",
     "build:linux": "bun build src/index.ts --compile --target=bun-linux-x64 --outfile bin/arashi-linux-x64",
@@ -57,10 +59,14 @@
     "lint": "oxlint -D no-explicit-any .",
     "lint:fix": "oxlint --fix -D no-explicit-any .",
     "lint:ci": "oxlint --format github -D no-explicit-any .",
+    "schema:generate": "ts-json-schema-generator --tsconfig tsconfig.schema.json --path src/lib/config.ts --type Config --expose export --jsDoc extended --out schema/config.schema.json",
+    "schema:publish": "bun run schema:generate && oxfmt --config .oxfmtrc.json --write schema/config.schema.json",
+    "schema:check": "bun run schema:publish && git diff --exit-code -- schema/config.schema.json",
     "format": "oxfmt --config .oxfmtrc.json --write .",
     "format:check": "oxfmt --config .oxfmtrc.json --check .",
     "quality:changed": "bun run scripts/quality/changed-files-quality.ts",
     "postinstall": "node scripts/postinstall.js",
+    "prepublishOnly": "bun run schema:publish",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -80,6 +86,7 @@
     "oxfmt": "0.28.0",
     "oxlint": "1.43.0",
     "semantic-release": "^24.2.0",
+    "ts-json-schema-generator": "2.4.0",
     "typescript": "^5.9.3"
   },
   "lint-staged": {

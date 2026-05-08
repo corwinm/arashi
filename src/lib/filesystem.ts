@@ -1,5 +1,12 @@
-import { mkdir, exists as bunExists, stat, copyFile as bunCopyFile, rm } from "node:fs/promises";
-import { readFile, writeFile } from "node:fs/promises";
+import {
+  copyFile as bunCopyFile,
+  exists as bunExists,
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { constants } from "node:fs";
 
@@ -11,13 +18,16 @@ import { constants } from "node:fs";
  * Base error class for filesystem operations
  */
 export class FilesystemError extends Error {
-  constructor(
-    public operation: string,
-    public path: string,
-    public code: string,
-    message: string,
-  ) {
+  public operation: string;
+  public path: string;
+  public code: string;
+
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    const [operation, path, code, message] = args;
     super(message);
+    this.operation = operation;
+    this.path = path;
+    this.code = code;
     this.name = "FilesystemError";
     Object.setPrototypeOf(this, FilesystemError.prototype);
   }
@@ -27,8 +37,8 @@ export class FilesystemError extends Error {
  * Error thrown when insufficient permissions to perform operation
  */
 export class PermissionError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "PermissionError";
     Object.setPrototypeOf(this, PermissionError.prototype);
   }
@@ -38,8 +48,8 @@ export class PermissionError extends FilesystemError {
  * Error thrown when file or directory not found
  */
 export class NotFoundError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "NotFoundError";
     Object.setPrototypeOf(this, NotFoundError.prototype);
   }
@@ -49,8 +59,8 @@ export class NotFoundError extends FilesystemError {
  * Error thrown when disk is full
  */
 export class DiskFullError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "DiskFullError";
     Object.setPrototypeOf(this, DiskFullError.prototype);
   }
@@ -60,8 +70,8 @@ export class DiskFullError extends FilesystemError {
  * Error thrown when path is invalid
  */
 export class InvalidPathError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "InvalidPathError";
     Object.setPrototypeOf(this, InvalidPathError.prototype);
   }
@@ -71,8 +81,8 @@ export class InvalidPathError extends FilesystemError {
  * Error thrown when file encoding is invalid
  */
 export class EncodingError extends FilesystemError {
-  constructor(operation: string, path: string, code: string, message: string) {
-    super(operation, path, code, message);
+  constructor(...args: [operation: string, path: string, code: string, message: string]) {
+    super(...args);
     this.name = "EncodingError";
     Object.setPrototypeOf(this, EncodingError.prototype);
   }
@@ -95,21 +105,26 @@ function mapError(operation: string, path: string, error: unknown): FilesystemEr
 
   switch (code) {
     case "EACCES":
-    case "EPERM":
+    case "EPERM": {
       return new PermissionError(operation, path, code, `Permission denied: ${message}`);
+    }
 
-    case "ENOENT":
+    case "ENOENT": {
       return new NotFoundError(operation, path, code, `Not found: ${message}`);
+    }
 
-    case "ENOSPC":
+    case "ENOSPC": {
       return new DiskFullError(operation, path, code, `No space left on device: ${message}`);
+    }
 
     case "EINVAL":
-    case "ENAMETOOLONG":
+    case "ENAMETOOLONG": {
       return new InvalidPathError(operation, path, code, `Invalid path: ${message}`);
+    }
 
-    default:
+    default: {
       return new FilesystemError(operation, path, code, message);
+    }
   }
 }
 
@@ -181,11 +196,10 @@ export async function isExecutable(path: string): Promise<boolean> {
       // On Windows, check file extension
       const executableExtensions = [".exe", ".bat", ".cmd", ".com"];
       return executableExtensions.some((ext) => path.toLowerCase().endsWith(ext));
-    } else {
-      // On Unix/macOS, check execute permission bit
-      // Check if any execute bit is set (owner, group, or other)
-      return !!(stats.mode & (constants.S_IXUSR | constants.S_IXGRP | constants.S_IXOTH));
     }
+    // On Unix/macOS, check execute permission bit
+    // Check if any execute bit is set (owner, group, or other)
+    return Boolean(stats.mode & (constants.S_IXUSR | constants.S_IXGRP | constants.S_IXOTH));
   } catch {
     return false;
   }
@@ -206,11 +220,9 @@ export async function isExecutable(path: string): Promise<boolean> {
  * @throws InvalidPathError - repoPath is invalid
  */
 export function getWorktreePath(
-  repoPath: string,
-  branch: string,
-  isBare: boolean,
-  customPath?: string,
+  ...args: [repoPath: string, branch: string, isBare: boolean, customPath?: string]
 ): string {
+  const [repoPath, branch, isBare, customPath] = args;
   // Validate repoPath
   if (!repoPath || repoPath.trim() === "") {
     throw new InvalidPathError(
@@ -353,7 +365,7 @@ export async function removeDir(path: string): Promise<void> {
     }
 
     // Remove recursively
-    await rm(path, { recursive: true, force: true });
+    await rm(path, { force: true, recursive: true });
   } catch (error: unknown) {
     throw mapError("removeDir", path, error);
   }

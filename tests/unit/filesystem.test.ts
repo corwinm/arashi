@@ -1,23 +1,23 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { mkdirSync, rmSync, writeFileSync, chmodSync, existsSync } from "node:fs";
 import {
-  FilesystemError,
-  PermissionError,
-  NotFoundError,
   DiskFullError,
-  InvalidPathError,
   EncodingError,
+  FilesystemError,
+  InvalidPathError,
+  NotFoundError,
+  PermissionError,
+  copyFile,
   ensureDir,
   fileExists,
-  isExecutable,
   getWorktreePath,
-  copyFile,
-  removeDir,
+  isExecutable,
   readTextFile,
+  removeDir,
   writeTextFile,
 } from "../../src/lib/filesystem";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // Test directory setup
 let testDir: string;
@@ -29,7 +29,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (existsSync(testDir)) {
-    rmSync(testDir, { recursive: true, force: true });
+    rmSync(testDir, { force: true, recursive: true });
   }
 });
 
@@ -156,14 +156,14 @@ describe("US2: fileExists and isExecutable - File Existence and Permission Check
     const filePath = join(testDir, "executable.sh");
     writeFileSync(filePath, "#!/bin/bash\necho hello");
 
-    if (process.platform !== "win32") {
-      chmodSync(filePath, 0o755); // Make executable
-      expect(await isExecutable(filePath)).toBe(true);
-    } else {
+    if (process.platform === "win32") {
       // On Windows, rename to .exe
       const exePath = join(testDir, "executable.exe");
       writeFileSync(exePath, "content");
       expect(await isExecutable(exePath)).toBe(true);
+    } else {
+      chmodSync(filePath, 0o755); // Make executable
+      expect(await isExecutable(filePath)).toBe(true);
     }
   });
 
@@ -328,7 +328,7 @@ describe("US5: Directory Cleanup Operations", () => {
     } finally {
       // Cleanup
       chmodSync(dirPath, 0o755);
-      rmSync(dirPath, { recursive: true, force: true });
+      rmSync(dirPath, { force: true, recursive: true });
     }
   });
 });

@@ -5,19 +5,43 @@
  * Uses temporary test resources that are created and cleaned up for each test.
  */
 
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
-import { exec as gitExec } from "../../src/lib/git";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import {
-  rollbackWorktreeCreated,
   rollbackBranchCreated,
   rollbackDirectoryCreated,
-  WorktreeCreatedEntry,
-  BranchCreatedEntry,
-  DirectoryCreatedEntry,
+  rollbackWorktreeCreated,
 } from "../../src/core/rollback";
+import { exec as gitExec } from "../../src/lib/git";
+import { join } from "path";
+import { tmpdir } from "os";
+
+interface WorktreeCreatedEntry {
+  type: "worktree_created";
+  timestamp: number;
+  data: {
+    repositoryPath: string;
+    worktreePath: string;
+    branchName: string;
+  };
+}
+
+interface BranchCreatedEntry {
+  type: "branch_created";
+  timestamp: number;
+  data: {
+    repositoryPath: string;
+    branchName: string;
+  };
+}
+
+interface DirectoryCreatedEntry {
+  type: "directory_created";
+  timestamp: number;
+  data: {
+    directoryPath: string;
+  };
+}
 
 describe("Rollback Integration Tests - User Story 3", () => {
   let testDir: string;
@@ -44,7 +68,7 @@ describe("Rollback Integration Tests - User Story 3", () => {
     // Clean up test directory
     if (testDir) {
       try {
-        await rm(testDir, { recursive: true, force: true });
+        await rm(testDir, { force: true, recursive: true });
       } catch (error) {
         console.error("Failed to clean up test directory:", error);
       }
@@ -69,13 +93,13 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Create rollback entry
       const entry: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
+          branchName: branchName,
           repositoryPath: repoPath,
           worktreePath: worktreePath,
-          branchName: branchName,
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       };
 
       // Execute rollback - should complete successfully
@@ -91,13 +115,13 @@ describe("Rollback Integration Tests - User Story 3", () => {
       const branchName = "feature-test";
 
       const entry: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
+          branchName: branchName,
           repositoryPath: repoPath,
           worktreePath: worktreePath,
-          branchName: branchName,
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       };
 
       // Should not throw even though worktree doesn't exist
@@ -123,12 +147,12 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Create rollback entry
       const entry: BranchCreatedEntry = {
-        type: "branch_created",
-        timestamp: Date.now(),
         data: {
-          repositoryPath: repoPath,
           branchName: branchName,
+          repositoryPath: repoPath,
         },
+        timestamp: Date.now(),
+        type: "branch_created",
       };
 
       // Execute rollback - should complete successfully
@@ -143,12 +167,12 @@ describe("Rollback Integration Tests - User Story 3", () => {
       const branchName = "non-existent-branch";
 
       const entry: BranchCreatedEntry = {
-        type: "branch_created",
-        timestamp: Date.now(),
         data: {
-          repositoryPath: repoPath,
           branchName: branchName,
+          repositoryPath: repoPath,
         },
+        timestamp: Date.now(),
+        type: "branch_created",
       };
 
       // Should not throw even though branch doesn't exist
@@ -182,11 +206,11 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Create rollback entry
       const entry: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: {
           directoryPath: dirPath,
         },
+        timestamp: Date.now(),
+        type: "directory_created",
       };
 
       // Execute rollback - should complete successfully
@@ -200,11 +224,11 @@ describe("Rollback Integration Tests - User Story 3", () => {
       const dirPath = join(testDir, "non-existent-directory");
 
       const entry: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: {
           directoryPath: dirPath,
         },
+        timestamp: Date.now(),
+        type: "directory_created",
       };
 
       // Should not throw even though directory doesn't exist
@@ -238,21 +262,21 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Log all operations in order
       log.add({
-        type: "branch_created",
+        data: { branchName, repositoryPath: repoPath },
         timestamp: Date.now(),
-        data: { repositoryPath: repoPath, branchName },
+        type: "branch_created",
       });
 
       log.add({
-        type: "worktree_created",
+        data: { branchName, repositoryPath: repoPath, worktreePath },
         timestamp: Date.now() + 100,
-        data: { repositoryPath: repoPath, worktreePath, branchName },
+        type: "worktree_created",
       });
 
       log.add({
-        type: "directory_created",
-        timestamp: Date.now() + 200,
         data: { directoryPath: dirPath },
+        timestamp: Date.now() + 200,
+        type: "directory_created",
       });
 
       // Verify all resources exist
@@ -314,25 +338,25 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Log: fake worktree (will fail), real branch, real directory
       log.add({
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
+          branchName: "fake-branch",
           repositoryPath: repoPath,
           worktreePath: "/nonexistent/worktree",
-          branchName: "fake-branch",
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       });
 
       log.add({
-        type: "branch_created",
+        data: { branchName, repositoryPath: repoPath },
         timestamp: Date.now() + 100,
-        data: { repositoryPath: repoPath, branchName },
+        type: "branch_created",
       });
 
       log.add({
-        type: "directory_created",
-        timestamp: Date.now() + 200,
         data: { directoryPath: dirPath2 },
+        timestamp: Date.now() + 200,
+        type: "directory_created",
       });
 
       // Execute rollback

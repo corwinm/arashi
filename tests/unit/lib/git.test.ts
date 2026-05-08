@@ -5,7 +5,16 @@
  * for all git operations.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import {
+  GitTestRepo,
+  commitChanges,
+  createFile,
+  createInitialCommit,
+  createTempDir,
+  initBareGitRepo,
+  removeTempDir,
+} from "../../helpers/git-test-utils";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   exec,
   getDefaultBranch,
@@ -13,15 +22,6 @@ import {
   readTrackedFileFromDefaultBranch,
 } from "../../../src/lib/git";
 import { ArashiError } from "../../../src/lib/errors";
-import {
-  GitTestRepo,
-  createFile,
-  commitChanges,
-  createTempDir,
-  removeTempDir,
-  initBareGitRepo,
-  createInitialCommit,
-} from "../../helpers/git-test-utils";
 import { join } from "path";
 
 describe("exec()", () => {
@@ -72,7 +72,7 @@ describe("exec()", () => {
       expect(error).toBeInstanceOf(ArashiError);
       const arashiError = error as ArashiError;
 
-      // stderr should contain an error message (either git error or spawn error)
+      // Stderr should contain an error message (either git error or spawn error)
       expect(arashiError.context.stderr).toBeTruthy();
       expect(arashiError.context.exitCode).not.toBe(0);
       expect(arashiError.context.args).toEqual(["status"]);
@@ -109,7 +109,7 @@ describe("exec()", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe(".git");
-    // stderr may or may not be empty, but command should succeed
+    // Stderr may or may not be empty, but command should succeed
   });
 
   test("should preserve exact git command arguments order", async () => {
@@ -242,7 +242,7 @@ describe("isBareRepo()", () => {
       }
 
       // Create a worktree from the bare repository using the actual branch name
-      // git worktree add will create the worktreePath directory
+      // Git worktree add will create the worktreePath directory
       const worktreeResult = Bun.spawnSync(["git", "worktree", "add", worktreePath, branchName], {
         cwd: bareRepoPath,
       });

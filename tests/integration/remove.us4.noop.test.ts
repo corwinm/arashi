@@ -2,14 +2,14 @@
  * Integration test: User Story 4 - no-op when both keep flags set
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync } from "fs";
-import { spawn } from "bun";
-import { executeRemove } from "../../src/commands/remove.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
 } from "../helpers/remove-test-workspace.ts";
+import { executeRemove } from "../../src/commands/remove.ts";
+import { existsSync } from "fs";
+import { spawn } from "bun";
 
 describe("remove command - US4 no-op keep flags", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
@@ -31,9 +31,9 @@ describe("remove command - US4 no-op keep flags", () => {
 
     try {
       const exitCode = await executeRemove(branchName, {
+        force: true,
         keepBranches: true,
         keepWorktrees: true,
-        force: true,
       });
       expect(exitCode).toBe(0);
     } finally {
@@ -48,8 +48,8 @@ describe("remove command - US4 no-op keep flags", () => {
     for (const repoPath of reposToCheck) {
       const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
         cwd: repoPath,
-        stdout: "ignore",
         stderr: "ignore",
+        stdout: "ignore",
       });
       const exitCode = await proc.exited;
       expect(exitCode).toBe(0);

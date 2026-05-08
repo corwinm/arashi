@@ -5,23 +5,75 @@
  * Supports repository filtering, conflict resolution, progress tracking, and automatic rollback.
  */
 
-import { Command } from "commander";
-import * as config from "../lib/config.ts";
-import * as logger from "../lib/logger.ts";
-import { discoverRepositories } from "../core/repository.ts";
-import * as git from "../lib/git.ts";
-import { resolve, basename } from "path";
+import { Command, Option } from "commander";
+import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
 import {
-  createCoordinatedWorktrees,
-  applyRepositoryFilter,
-  type RepositoryFilter,
-  type WorktreeOperationOptions,
-  type ConflictResolutionStrategy,
+  ConflictAbortedError,
   InvalidBranchNameError,
   RepositoryValidationError,
-  ConflictAbortedError,
   UserAbortedError,
+  applyRepositoryFilter,
+  createCoordinatedWorktrees,
 } from "../core/worktree.ts";
+import { basename, resolve } from "path";
+import { error, info, success, warn } from "../lib/logger.ts";
+import type { SwitchCandidate } from "../core/switch.ts";
+import { discoverRepositories } from "../core/repository.ts";
+import { exec } from "../lib/git.ts";
+import { launchSwitchTarget } from "../lib/switch-launcher.ts";
+import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
+
+type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
+type Config = LoadedConfig["config"];
+type ConflictResolutionStrategy = "ABORT" | "REUSE_EXISTING" | "CREATE_ALTERNATE";
+type HookOutcomeRecord = Awaited<
+  ReturnType<typeof createCoordinatedWorktrees>
+>["hookOutcomes"][number];
+type LaunchMode = "auto" | "sesh";
+type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
+type OperationSummary = Awaited<ReturnType<typeof createCoordinatedWorktrees>>;
+type RepositoryResult = OperationSummary["repositoryResults"][number];
+type SwitchProcessRunner = NonNullable<
+  NonNullable<Parameters<typeof launchSwitchTarget>[2]>["runProcess"]
+>;
+type WorktreeOperationOptions = Parameters<typeof createCoordinatedWorktrees>[2];
+
+interface RepositoryFilter {
+  mode: "all" | "explicit" | "interactive";
+  explicitList: string[];
+  selectedRepositories: Parameters<typeof createCoordinatedWorktrees>[1] | null;
+}
+
+interface ApplyPostCreateDefaultsOptions {
+  context: CreateInvocationContext;
+  defaults: ResolvedCreateDefaults;
+  deps: CreateCommandDependencies;
+  summary: OperationSummary;
+}
+
+const ZERO = 0;
+const ONE = 1;
+const TWO = 2;
+const ERROR_EXIT_CODE = 1;
+const CANCELLED_EXIT_CODE = 2;
+const MILLISECONDS_PER_SECOND = 1000;
+const AUTO_LAUNCH_MODE: LaunchMode = "auto";
+const SESH_LAUNCH_MODE: LaunchMode = "sesh";
+
+const describeConflictScope = (existsLocally: boolean, existsRemotely: boolean): string => {
+  if (existsLocally && existsRemotely) {
+    return "local and remote";
+  }
+
+  if (existsLocally) {
+    return "local";
+  }
+
+  return "remote";
+};
+
+const formatDurationSeconds = (durationMs: number): string =>
+  `${(durationMs / MILLISECONDS_PER_SECOND).toFixed(TWO)}s`;
 
 interface CreateCommandOptions {
   /** Only create worktrees in specified repositories (comma-separated) */
@@ -35,12 +87,68 @@ interface CreateCommandOptions {
 
   /** Disable hook execution */
   noHooks?: boolean;
+  hooks?: boolean;
 
   /** Hide progress indicators */
   noProgress?: boolean;
+  progress?: boolean;
+
+  /** Auto-switch to newly created parent worktree */
+  switch?: boolean;
+
+  /** Launch terminal/editor context for newly created parent worktree */
+  launch?: boolean;
+
+  /** Force sesh launch mode when launching */
+  sesh?: boolean;
+
+  /** Internal editor-host context for create default resolution */
+  editorHost?: CreateDefaultsEditorHost;
 
   /** Dry run - show what would be done without making changes */
   dryRun?: boolean;
+}
+
+const CREATE_DEFAULT_EDITOR_HOSTS = ["vscode", "cursor", "kiro"] as const;
+type CreateDefaultsEditorHost = (typeof CREATE_DEFAULT_EDITOR_HOSTS)[number];
+
+const resolveConfiguredCreateDefaults = (
+  options: CreateCommandOptions,
+  workspaceConfig: Config,
+) => {
+  if (options.editorHost) {
+    return workspaceConfig.defaults?.editors?.[options.editorHost]?.create;
+  }
+
+  return workspaceConfig.defaults?.create;
+};
+
+export interface ResolvedCreateDefaults {
+  shouldSwitch: boolean;
+  shouldLaunch: boolean;
+  launchMode: LaunchMode;
+}
+
+export interface CreateCommandDependencies {
+  resolveCreateInvocationContext?: (invocationPath?: string) => Promise<CreateInvocationContext>;
+  loadConfigWithFallback?: typeof loadConfigWithFallback;
+  discoverRepositories?: typeof discoverRepositories;
+  isGitRepository?: (path: string) => Promise<boolean>;
+  resolveCurrentBranch?: (path: string) => Promise<string>;
+  applyRepositoryFilter?: typeof applyRepositoryFilter;
+  createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
+  launchSwitchTarget?: (
+    candidate: SwitchCandidate,
+    options: { sesh?: boolean },
+    deps: {
+      env: Record<string, string | undefined>;
+      platform: NodeJS.Platform;
+      runProcess?: SwitchProcessRunner;
+    },
+  ) => Promise<LaunchSwitchResult>;
+  env?: Record<string, string | undefined>;
+  platform?: NodeJS.Platform;
+  runProcess?: SwitchProcessRunner;
 }
 
 export interface CreateInvocationContext {
@@ -61,42 +169,206 @@ export async function resolveCreateInvocationContext(
   invocationPath: string = resolve("."),
 ): Promise<CreateInvocationContext> {
   const absoluteInvocationPath = resolve(invocationPath);
-  const bareProbe = await git.exec(["rev-parse", "--is-bare-repository"], absoluteInvocationPath);
+  const bareProbe = await exec(["rev-parse", "--is-bare-repository"], absoluteInvocationPath);
   const isBare = bareProbe.stdout.trim() === "true";
 
   if (isBare) {
     return {
-      invocationPath: absoluteInvocationPath,
-      workspaceRoot: absoluteInvocationPath,
       executionPath: absoluteInvocationPath,
+      invocationPath: absoluteInvocationPath,
       repositoryType: "bare",
+      workspaceRoot: absoluteInvocationPath,
     };
   }
 
-  const workspaceRoot = await config.findWorkspaceRoot(absoluteInvocationPath);
+  const workspaceRoot = await findWorkspaceRoot(absoluteInvocationPath);
   return {
-    invocationPath: absoluteInvocationPath,
-    workspaceRoot,
     executionPath: workspaceRoot,
+    invocationPath: absoluteInvocationPath,
     repositoryType: "non-bare",
+    workspaceRoot,
   };
 }
 
-async function isGitRepository(path: string): Promise<boolean> {
+const isGitRepository = async (path: string): Promise<boolean> => {
   try {
-    await git.exec(["rev-parse", "--git-dir"], path);
+    await exec(["rev-parse", "--git-dir"], path);
     return true;
   } catch {
     return false;
   }
+};
+
+const printHookResults = (hookOutcomes: HookOutcomeRecord[]): void => {
+  if (hookOutcomes.length === ZERO) {
+    return;
+  }
+
+  info("Hook results:");
+  for (const outcome of hookOutcomes) {
+    let reason = "";
+    if (outcome.reasonCode !== "none") {
+      reason = ` (${outcome.reasonCode})`;
+    }
+    console.log(
+      `  - ${outcome.repositoryId}: ${outcome.hookName} -> ${outcome.hookStatus}${reason}`,
+    );
+  }
+};
+
+const printNextSteps = (nextSteps: string[]): void => {
+  if (nextSteps.length === ZERO) {
+    return;
+  }
+
+  info("Next steps:");
+  for (const step of nextSteps) {
+    console.log(`  - ${step}`);
+  }
+};
+
+const resolveEnabledFlag = (options: { positive?: boolean; negative?: boolean }): boolean => {
+  if (options.positive === true) {
+    return true;
+  }
+
+  if (options.positive === false) {
+    return false;
+  }
+
+  if (options.negative === true) {
+    return false;
+  }
+
+  if (options.negative === false) {
+    return true;
+  }
+
+  return true;
+};
+
+export function resolveCreateDefaults(
+  options: CreateCommandOptions,
+  workspaceConfig: Config,
+): ResolvedCreateDefaults {
+  const createDefaults = resolveConfiguredCreateDefaults(options, workspaceConfig);
+
+  const switchResolution = resolveDefaultWithPrecedence<boolean>({
+    builtInValue: false,
+    configValue: createDefaults?.switch,
+    explicitValue: true,
+    hasExplicitValue: options.switch === true,
+    optOut: options.switch === false,
+  });
+
+  const launchResolution = resolveDefaultWithPrecedence<boolean>({
+    builtInValue: false,
+    configValue: createDefaults?.launch,
+    explicitValue: true,
+    hasExplicitValue: options.launch === true || options.sesh === true,
+    optOut: options.launch === false,
+  });
+
+  const launchModeResolution = resolveDefaultWithPrecedence<LaunchMode>({
+    builtInValue: AUTO_LAUNCH_MODE,
+    configValue: createDefaults?.launchMode,
+    explicitValue: SESH_LAUNCH_MODE,
+    hasExplicitValue: options.sesh === true,
+    optOut: options.launch === false,
+  });
+
+  const shouldLaunch = launchResolution.value;
+  const shouldSwitch = shouldLaunch || switchResolution.value;
+
+  return {
+    launchMode: shouldLaunch ? launchModeResolution.value : AUTO_LAUNCH_MODE,
+    shouldLaunch,
+    shouldSwitch,
+  };
 }
 
+const selectPrimaryCreateResult = (
+  repositoryResults: RepositoryResult[],
+  context: CreateInvocationContext,
+): RepositoryResult | null => {
+  const successfulResults = repositoryResults.filter(
+    (result) => result.status === "success" && result.worktreePath,
+  );
+
+  if (successfulResults.length === ZERO) {
+    return null;
+  }
+
+  const executionRepoName = basename(resolve(context.executionPath));
+  const primary = successfulResults.find((result) => result.repository.name === executionRepoName);
+  return primary ?? successfulResults[0] ?? null;
+};
+
+const applyPostCreateDefaults = async ({
+  context,
+  defaults,
+  deps,
+  summary,
+}: ApplyPostCreateDefaultsOptions): Promise<void> => {
+  if (!defaults.shouldSwitch) {
+    return;
+  }
+
+  const primaryResult = selectPrimaryCreateResult(summary.repositoryResults, context);
+  if (!primaryResult || !primaryResult.worktreePath) {
+    warn(
+      "Could not resolve the primary worktree for post-create defaults. Skipping switch/launch defaults.",
+    );
+    return;
+  }
+
+  info(`Default switch target: ${primaryResult.worktreePath}`);
+
+  if (!defaults.shouldLaunch) {
+    info("Launch skipped (resolved defaults disabled launch for this invocation).");
+    return;
+  }
+
+  const launchCandidate = deps.launchSwitchTarget ?? launchSwitchTarget;
+  const launchResult = await launchCandidate(
+    {
+      branchName: primaryResult.branchName,
+      repoName: primaryResult.repository.name,
+      worktreePath: primaryResult.worktreePath,
+    },
+    {
+      sesh: defaults.launchMode === SESH_LAUNCH_MODE,
+    },
+    {
+      env: deps.env ?? process.env,
+      platform: deps.platform ?? process.platform,
+      runProcess: deps.runProcess,
+    },
+  );
+
+  success(
+    `Opened ${launchResult.mode} context for ${primaryResult.repository.name} at ${primaryResult.worktreePath}`,
+  );
+};
+
 export function createCommand(): Command {
+  const editorHostOption = new Option(
+    "--editor-host <host>",
+    "Internal editor host context for create default resolution",
+  )
+    .choices([...CREATE_DEFAULT_EDITOR_HOSTS])
+    .hideHelp();
+
   return new Command("create")
     .description("Create coordinated worktrees across multiple repositories")
     .argument("<branch>", "Branch name to create across repositories")
     .option("--only <repos>", "Only create in specified repositories (comma-separated)")
     .option("-i, --interactive", "Interactively select repositories")
+    .option("--switch", "Switch to the created parent worktree after create")
+    .option("--no-switch", "Disable configured create switch defaults for this invocation")
+    .option("--launch", "Launch terminal/editor context after create")
+    .option("--no-launch", "Disable configured create launch defaults for this invocation")
+    .option("--sesh", "Launch using sesh mode (implies --launch)")
     .option(
       "--conflict <strategy>",
       "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
@@ -104,47 +376,54 @@ export function createCommand(): Command {
     .option("--no-hooks", "Disable hook execution")
     .option("--no-progress", "Hide progress indicators")
     .option("--dry-run", "Show what would be done without making changes")
+    .addOption(editorHostOption)
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ arashi create feature-auth
+  $ arashi create feature-auth --switch
+  $ arashi create feature-auth --launch
+  $ arashi create feature-auth --sesh
+  $ arashi create feature-auth --no-switch --no-launch
+`,
+    )
     .action(async (branchName: string, options: CreateCommandOptions) => {
       try {
         await executeCreate(branchName, options);
-      } catch (error) {
-        if (error instanceof InvalidBranchNameError) {
-          logger.error(`Invalid branch name: ${error.branchName}`);
-          logger.error(error.reason);
-          process.exit(1);
-        } else if (error instanceof RepositoryValidationError) {
-          logger.error(`Repository validation error: ${error.message}`);
-          process.exit(1);
-        } else if (error instanceof CreateSetupError) {
-          logger.error(error.message);
-          process.exit(1);
-        } else if (error instanceof ConflictAbortedError) {
-          logger.warn("Create aborted due to branch/worktree conflicts.");
-          for (const conflict of error.conflicts) {
-            const scope =
-              conflict.existsLocally && conflict.existsRemotely
-                ? "local and remote"
-                : conflict.existsLocally
-                  ? "local"
-                  : "remote";
-            logger.info(
+      } catch (createError) {
+        if (createError instanceof InvalidBranchNameError) {
+          error(`Invalid branch name: ${createError.branchName}`);
+          error(createError.reason);
+          process.exit(ERROR_EXIT_CODE);
+        } else if (createError instanceof RepositoryValidationError) {
+          error(`Repository validation error: ${createError.message}`);
+          process.exit(ERROR_EXIT_CODE);
+        } else if (createError instanceof CreateSetupError) {
+          error(createError.message);
+          process.exit(ERROR_EXIT_CODE);
+        } else if (createError instanceof ConflictAbortedError) {
+          warn("Create aborted due to branch/worktree conflicts.");
+          for (const conflict of createError.conflicts) {
+            const scope = describeConflictScope(conflict.existsLocally, conflict.existsRemotely);
+            info(
               `Conflict: ${conflict.repository.name} already has branch "${conflict.branchName}" (${scope}).`,
             );
           }
-          logger.info(
+          info(
             "Next step: retry with --conflict REUSE_EXISTING or choose a different branch name.",
           );
-          process.exit(2);
-        } else if (error instanceof UserAbortedError) {
-          logger.warn("Operation cancelled by user");
-          process.exit(2);
-        } else if (error instanceof Error) {
-          logger.error(`Unexpected error: ${error.message}`);
-          console.error(error.stack);
-          process.exit(1);
+          process.exit(CANCELLED_EXIT_CODE);
+        } else if (createError instanceof UserAbortedError) {
+          warn("Operation cancelled by user");
+          process.exit(CANCELLED_EXIT_CODE);
+        } else if (createError instanceof Error) {
+          error(`Unexpected error: ${createError.message}`);
+          console.error(createError.stack);
+          process.exit(ERROR_EXIT_CODE);
         } else {
-          logger.error("An unknown error occurred");
-          process.exit(1);
+          error("An unknown error occurred");
+          process.exit(ERROR_EXIT_CODE);
         }
       }
     });
@@ -153,115 +432,151 @@ export function createCommand(): Command {
 export async function executeCreate(
   branchName: string,
   options: CreateCommandOptions,
+  deps: CreateCommandDependencies = {},
 ): Promise<void> {
-  // 1. Resolve invocation context and load configuration
-  const context = await resolveCreateInvocationContext();
-
-  let loadedConfig: config.LoadedConfig;
-  try {
-    loadedConfig = await config.loadConfigWithFallback(context.workspaceRoot, {
-      bareRepoPath: context.repositoryType === "bare" ? context.executionPath : undefined,
+  const resolveInvocationContext =
+    deps.resolveCreateInvocationContext ?? resolveCreateInvocationContext;
+  const loadWorkspaceConfig = deps.loadConfigWithFallback ?? loadConfigWithFallback;
+  const discoverWorkspaceRepositories = deps.discoverRepositories ?? discoverRepositories;
+  const detectGitRepository = deps.isGitRepository ?? isGitRepository;
+  const resolveCurrentBranch =
+    deps.resolveCurrentBranch ??
+    (async (path: string): Promise<string> => {
+      const result = await exec(["symbolic-ref", "--short", "HEAD"], path);
+      return result.stdout.trim();
     });
-  } catch (error) {
-    if (error instanceof config.ConfigNotFoundError) {
+  const filterRepositories = deps.applyRepositoryFilter ?? applyRepositoryFilter;
+  const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
+
+  // 1. Resolve invocation context and load configuration
+  const context = await resolveInvocationContext();
+
+  const loadedConfig = await loadWorkspaceConfig(context.workspaceRoot, {
+    bareRepoPath: context.repositoryType === "bare" ? context.executionPath : undefined,
+  }).catch((loadError): never => {
+    if (loadError instanceof ConfigNotFoundError) {
       throw new CreateSetupError(
         'Workspace configuration not found. Run "arashi init" from a checked-out worktree and retry.',
       );
     }
-    throw error;
-  }
+
+    throw loadError;
+  });
 
   const arashiConfig = loadedConfig.config;
 
-  // 2. Discover repositories (child repos in repos_dir)
-  // Convert repos_dir to absolute path since it may be relative (e.g., "./repos")
+  // 2. Discover repositories (child repos in reposDir)
+  // Convert reposDir to absolute path since it may be relative (e.g., "./repos")
   const currentDir = context.executionPath;
-  const reposDirAbsolute = resolve(currentDir, arashiConfig.repos_dir);
-  const discoveryResult = await discoverRepositories(reposDirAbsolute);
+  const createDefaults = resolveCreateDefaults(options, arashiConfig);
+  const reposDirAbsolute = resolve(currentDir, arashiConfig.reposDir);
+  const discoveryResult = await discoverWorkspaceRepositories(reposDirAbsolute);
 
   // 3. Include the meta-repo itself in the repository list
   // The meta-repo needs to have its worktree created first, then child repos are nested inside it
   const allRepositories = [...discoveryResult.repositories];
 
   // Check if current directory is a git repository (meta-repo)
-  if (await isGitRepository(currentDir)) {
+  if (await detectGitRepository(currentDir)) {
     // Meta-repo detected - add it at the beginning so it's processed first
 
     // Detect default branch
     let defaultBranch = "main";
     try {
-      const result = await git.exec(["symbolic-ref", "--short", "HEAD"], currentDir);
-      defaultBranch = result.stdout.trim();
+      defaultBranch = await resolveCurrentBranch(currentDir);
     } catch {
       // Fallback to 'main' if detection fails
     }
 
     const metaRepo = {
-      name: basename(currentDir),
-      path: currentDir,
       defaultBranch,
       hasSetupScript: false,
+      name: basename(currentDir),
+      path: currentDir,
     };
 
     allRepositories.unshift(metaRepo);
   }
 
   if (allRepositories.length === 0) {
-    logger.error("No repositories found in configuration");
-    logger.info('Run "arashi add <path>" to add repositories');
-    process.exit(1);
+    error("No repositories found in configuration");
+    info('Run "arashi add <path>" to add repositories');
+    process.exit(ERROR_EXIT_CODE);
   }
 
   if (context.repositoryType === "bare" && loadedConfig.source === "repository-content") {
-    logger.info("Loaded workspace configuration from repository content");
+    info("Loaded workspace configuration from repository content");
   }
 
-  logger.info(
-    `Found ${allRepositories.length} ${allRepositories.length === 1 ? "repository" : "repositories"}`,
-  );
+  let repositoryLabel = "repositories";
+  if (allRepositories.length === ONE) {
+    repositoryLabel = "repository";
+  }
+  info(`Found ${allRepositories.length} ${repositoryLabel}`);
 
   // 4. Apply repository filter
+  let filterMode: RepositoryFilter["mode"] = "all";
+  if (options.interactive) {
+    filterMode = "interactive";
+  } else if (options.only) {
+    filterMode = "explicit";
+  }
+
   const filter: RepositoryFilter = {
-    mode: options.interactive ? "interactive" : options.only ? "explicit" : "all",
     explicitList: options.only ? options.only.split(",").map((s) => s.trim()) : [],
+    mode: filterMode,
     selectedRepositories: null,
   };
 
-  const selectedRepos = await applyRepositoryFilter(filter, allRepositories);
+  const selectedRepos = await filterRepositories(filter, allRepositories);
 
-  if (selectedRepos.length === 0) {
-    logger.warn("No repositories selected for worktree creation");
-    process.exit(0);
+  if (selectedRepos.length === ZERO) {
+    warn("No repositories selected for worktree creation");
+    process.exit(ZERO);
   }
 
   const actionLabel = options.dryRun ? "Planning" : "Creating";
-  logger.info(
-    `${actionLabel} worktrees in ${selectedRepos.length} ${selectedRepos.length === 1 ? "repository" : "repositories"}...`,
-  );
+  let selectedRepositoryLabel = "repositories";
+  if (selectedRepos.length === ONE) {
+    selectedRepositoryLabel = "repository";
+  }
+  info(`${actionLabel} worktrees in ${selectedRepos.length} ${selectedRepositoryLabel}...`);
+
+  const hooksEnabled = resolveEnabledFlag({
+    negative: options.noHooks,
+    positive: options.hooks,
+  });
+  const progressEnabled = resolveEnabledFlag({
+    negative: options.noProgress,
+    positive: options.progress,
+  });
 
   // 5. Build options for worktree orchestration
   const worktreeOptions: WorktreeOperationOptions = {
-    executeHooks: !options.noHooks,
-    showProgress: !options.noProgress,
-    interactive: options.interactive || false,
     conflictResolution: options.conflict || null,
     dryRun: options.dryRun || false,
+    executeHooks: hooksEnabled,
+    hookTimeout: arashiConfig.hooks?.timeout,
+    interactive: options.interactive || false,
+    resolvedConfig: arashiConfig,
+    showProgress: progressEnabled,
+    workspaceRoot: context.workspaceRoot,
   };
 
   // 6. Execute coordinated worktree creation
-  const summary = await createCoordinatedWorktrees(branchName, selectedRepos, worktreeOptions);
+  const summary = await runCreate(branchName, selectedRepos, worktreeOptions);
 
   // 7. Display results
   console.log("");
   if (options.dryRun) {
     if (!summary.dryRunOutcome) {
-      logger.error("Dry-run did not produce a plan");
-      process.exit(1);
+      error("Dry-run did not produce a plan");
+      process.exit(ERROR_EXIT_CODE);
     }
 
     const { plannedWorktrees, conflicts, overallStatus, summaryCounts } = summary.dryRunOutcome;
 
-    logger.info("Dry-run plan:");
+    info("Dry-run plan:");
     for (const planned of plannedWorktrees) {
       const pathLabel = planned.worktreePath ?? "(unresolved)";
       const statusLabel = planned.planStatus === "blocked" ? "BLOCKED" : "OK";
@@ -272,7 +587,7 @@ export async function executeCreate(
 
     if (conflicts.length > 0) {
       console.log("");
-      logger.warn("Conflicts:");
+      warn("Conflicts:");
       for (const conflict of conflicts) {
         const blockingLabel = conflict.blocking ? "blocking" : "non-blocking";
         console.log(`  • ${conflict.repositoryName}: ${conflict.message} (${blockingLabel})`);
@@ -283,36 +598,48 @@ export async function executeCreate(
     const statusLabel = overallStatus === "actionable" ? "ACTIONABLE" : "BLOCKED";
     const summaryLabel = `${summaryCounts.plannedTotal} planned, ${summaryCounts.conflictTotal} conflicts`;
     if (overallStatus === "actionable") {
-      logger.success(`Plan status: ${statusLabel} (${summaryLabel})`);
-      logger.info(`Total duration: ${(summary.totalDuration / 1000).toFixed(2)}s`);
-      process.exit(0);
+      success(`Plan status: ${statusLabel} (${summaryLabel})`);
+      info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
+      process.exit(ZERO);
     }
 
-    logger.error(`Plan status: ${statusLabel} (${summaryLabel})`);
-    logger.info(`Total duration: ${(summary.totalDuration / 1000).toFixed(2)}s`);
-    process.exit(1);
+    error(`Plan status: ${statusLabel} (${summaryLabel})`);
+    info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
+    process.exit(ERROR_EXIT_CODE);
   }
 
   if (summary.rolledBack) {
-    const conflictError = summary.errorSummary?.toLowerCase().includes("branch conflict");
-    if (conflictError) {
-      logger.error("Create aborted due to branch/worktree conflicts.");
-      logger.info(
-        "Next step: retry with --conflict REUSE_EXISTING or choose a different branch name.",
-      );
-      process.exit(2);
+    if (summary.hookOutcomes.length > 0) {
+      console.log("");
+      printHookResults(summary.hookOutcomes);
     }
 
-    logger.error("Operation failed and was rolled back");
-    logger.error(summary.errorSummary || "Unknown error");
-    process.exit(1);
+    const conflictError = summary.errorSummary?.toLowerCase().includes("branch conflict");
+    if (conflictError) {
+      error("Create aborted due to branch/worktree conflicts.");
+      info("Next step: retry with --conflict REUSE_EXISTING or choose a different branch name.");
+      process.exit(CANCELLED_EXIT_CODE);
+    }
+
+    error("Operation failed and was rolled back");
+    error(summary.errorSummary || "Unknown error");
+    if (summary.nextSteps.length > 0) {
+      console.log("");
+      printNextSteps(summary.nextSteps);
+    }
+    process.exit(ERROR_EXIT_CODE);
   }
 
-  logger.success(`Successfully created worktrees in ${summary.successCount} repositories`);
+  success(`Successfully created worktrees in ${summary.successCount} repositories`);
+
+  if (summary.hookOutcomes.length > 0) {
+    console.log("");
+    printHookResults(summary.hookOutcomes);
+  }
 
   // Display worktree paths
   console.log("");
-  logger.info("Worktree locations:");
+  info("Worktree locations:");
   for (const result of summary.repositoryResults) {
     if (result.status === "success" && result.worktreePath) {
       console.log(`  • ${result.repository.name}: ${result.worktreePath}`);
@@ -320,15 +647,17 @@ export async function executeCreate(
   }
 
   // Display warnings if any
-  const warnings = summary.repositoryResults.flatMap((r) => r.warnings);
+  const warnings = summary.repositoryResults.flatMap((result) => result.warnings);
   if (warnings.length > 0) {
     console.log("");
-    logger.warn("Warnings:");
+    warn("Warnings:");
     for (const warning of warnings) {
       console.log(`  • ${warning}`);
     }
   }
 
+  await applyPostCreateDefaults({ context, defaults: createDefaults, deps, summary });
+
   console.log("");
-  logger.info(`Total duration: ${(summary.totalDuration / 1000).toFixed(2)}s`);
+  info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
 }

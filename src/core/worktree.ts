@@ -11,13 +11,99 @@
  * Feature: 001-worktree-orchestration
  */
 
-import type { Repository } from "./repository.ts";
-import { basename, sep, join, parse, resolve } from "path";
-import { existsSync } from "fs";
-import type { Config as ArashiConfig } from "../lib/config.ts";
-import { loadConfig, ConfigNotFoundError } from "../lib/config.ts";
-import { isBareRepo } from "../lib/git.ts";
+import { ConfigNotFoundError, loadConfig } from "../lib/config.ts";
 import type { DirtyStatus, WorktreeEntry, WorktreeInfo } from "../types/remove.ts";
+import {
+  GLOBAL_HOOKS,
+  buildHookOperationData,
+  executeHook,
+  findHook,
+  getRepoSpecificHookName,
+  mapHookExecutionResult,
+  mapHookSkippedOutcome,
+  validateHook,
+} from "../lib/hooks.ts";
+import { basename, join, parse, resolve, sep } from "path";
+import { exec, isBareRepo } from "../lib/git.ts";
+import { multiSelect, select } from "../lib/prompts.ts";
+import { spinner, warn } from "../lib/logger.ts";
+import { OperationLog } from "./rollback.ts";
+import type { Repository } from "./repository.ts";
+import { existsSync } from "fs";
+import { resolveWorktreesBasePath } from "../lib/worktree-location.ts";
+
+type ArashiConfig = Awaited<ReturnType<typeof loadConfig>>;
+
+interface Choice<T> {
+  value: T;
+  name: string;
+  description?: string;
+}
+
+type HookOutcomeStatus = "success" | "failure" | "skipped";
+type HookOutcomeReasonCode =
+  | "none"
+  | "not_found"
+  | "disabled"
+  | "timeout"
+  | "exit_non_zero"
+  | "not_applicable";
+
+interface HookOutcomeMapping {
+  hookStatus: HookOutcomeStatus;
+  reasonCode: HookOutcomeReasonCode;
+  message: string;
+  durationMs?: number;
+}
+
+const ZERO = 0;
+const ONE = 1;
+const DEFAULT_HOOK_TIMEOUT = 60_000;
+const PARENT_PATH_OFFSET = 2;
+const GRANDPARENT_PATH_OFFSET = 3;
+const LOCK_VALIDATION_EXIT_CODE = -1;
+const NULL_PATH: string | null = null;
+const NULL_SUMMARY: string | null = null;
+const NULL_RESULT_ERROR: Error | null = null;
+const NULL_HOOK_ERROR: HookExecutionError | null = null;
+const NULL_CONFLICT_STRATEGY: ConflictResolutionStrategy | null = null;
+
+const describeConflictLocation = (existsLocally: boolean, existsRemotely: boolean): string => {
+  if (existsLocally && existsRemotely) {
+    return "locally and remotely";
+  }
+
+  if (existsLocally) {
+    return "locally";
+  }
+
+  return "remotely";
+};
+
+const fallbackConfig = (): ArashiConfig => ({
+  repos: {},
+  reposDir: "./repos",
+  version: "1.0.0",
+});
+
+const loadResolvedConfig = async (
+  mainRepoPath: string,
+  resolvedConfig?: ArashiConfig,
+): Promise<ArashiConfig> => {
+  if (resolvedConfig) {
+    return resolvedConfig;
+  }
+
+  try {
+    return await loadConfig(mainRepoPath);
+  } catch (error) {
+    if (error instanceof ConfigNotFoundError) {
+      return fallbackConfig();
+    }
+
+    throw error;
+  }
+};
 
 // ============================================================================
 // Core Types (T005)
@@ -108,6 +194,21 @@ export interface WorktreeOperationOptions {
 
   /** Whether to simulate operation without making changes (default: false) */
   dryRun?: boolean;
+
+  /** Canonical workspace root for hook lookup and execution context */
+  workspaceRoot?: string;
+
+  /** Pre-resolved workspace configuration from command layer */
+  resolvedConfig?: ArashiConfig;
+}
+
+interface NormalizedWorktreeOptions {
+  executeHooks: boolean;
+  hookTimeout: number;
+  interactive: boolean;
+  conflictResolution: ConflictResolutionStrategy | null;
+  showProgress: boolean;
+  dryRun: boolean;
 }
 
 // ==========================================================================
@@ -200,6 +301,15 @@ export interface ConflictCheckResult {
   nonConflictingRepositories: Repository[];
 }
 
+export interface HookOutcomeRecord {
+  repositoryId: string;
+  hookName: string;
+  hookStatus: HookOutcomeStatus;
+  reasonCode: HookOutcomeReasonCode;
+  message: string;
+  durationMs?: number;
+}
+
 // ============================================================================
 // Repository Result (T009)
 // ============================================================================
@@ -228,6 +338,9 @@ export interface RepositoryResult {
 
   /** Time taken to process this repository in milliseconds */
   duration: number;
+
+  /** Hook outcomes recorded while processing this repository */
+  hookOutcomes: HookOutcomeRecord[];
 }
 
 // ============================================================================
@@ -261,6 +374,12 @@ export interface OperationSummary {
 
   /** Human-readable error summary if operation failed */
   errorSummary: string | null;
+
+  /** Flattened hook outcomes across all processed repositories */
+  hookOutcomes: HookOutcomeRecord[];
+
+  /** Actionable next steps for failed outcomes */
+  nextSteps: string[];
 
   /** Dry-run planning details (present only for dry-run) */
   dryRunOutcome?: DryRunOutcome;
@@ -299,6 +418,58 @@ export interface HookExecutionContext {
   timeout: number;
 }
 
+interface GitOperationErrorOptions {
+  message: string;
+  operation: string;
+  repository: Repository;
+  originalError: Error;
+}
+
+interface HookExecutionErrorOptions {
+  message: string;
+  hookType: HookType;
+  repository: Repository;
+  exitCode: number;
+  stderr: string;
+}
+
+interface CalculateWorktreePathOptions {
+  repo: Repository;
+  branchName: string;
+  config: ArashiConfig;
+  knownType?: RepositoryTypeInfo;
+}
+
+type CalculateWorktreePathArgs =
+  | [repo: Repository, branchName: string, config: ArashiConfig, knownType?: RepositoryTypeInfo]
+  | [options: CalculateWorktreePathOptions];
+
+interface BuildDryRunOutcomeOptions {
+  branchName: string;
+  repositories: Repository[];
+  conflictCheck: ConflictCheckResult;
+  options: NormalizedWorktreeOptions;
+  config: ArashiConfig;
+}
+
+interface ProcessRepositoryOptions {
+  repo: Repository;
+  branchName: string;
+  operationLog: OperationLog;
+  options: NormalizedWorktreeOptions;
+  config: ArashiConfig;
+  mainRepoPath: string;
+  conflicts?: BranchConflict[];
+  strategy?: ConflictResolutionStrategy | null;
+}
+
+interface ShouldReuseBranchOptions {
+  repo: Repository;
+  branchName: string;
+  conflicts: BranchConflict[];
+  strategy: ConflictResolutionStrategy;
+}
+
 // ============================================================================
 // Error Classes (T012)
 // ============================================================================
@@ -321,13 +492,15 @@ export class RepositoryValidationError extends Error {
  * Error thrown when git operation fails
  */
 export class GitOperationError extends Error {
-  constructor(
-    message: string,
-    public readonly operation: string,
-    public readonly repository: Repository,
-    public readonly originalError: Error,
-  ) {
-    super(message);
+  public readonly operation: string;
+  public readonly repository: Repository;
+  public readonly originalError: Error;
+
+  constructor(options: GitOperationErrorOptions) {
+    super(options.message);
+    this.operation = options.operation;
+    this.repository = options.repository;
+    this.originalError = options.originalError;
     this.name = "GitOperationError";
   }
 }
@@ -336,14 +509,17 @@ export class GitOperationError extends Error {
  * Error thrown when hook execution fails
  */
 export class HookExecutionError extends Error {
-  constructor(
-    message: string,
-    public readonly hookType: HookType,
-    public readonly repository: Repository,
-    public readonly exitCode: number,
-    public readonly stderr: string,
-  ) {
-    super(message);
+  public readonly hookType: HookType;
+  public readonly repository: Repository;
+  public readonly exitCode: number;
+  public readonly stderr: string;
+
+  constructor(options: HookExecutionErrorOptions) {
+    super(options.message);
+    this.hookType = options.hookType;
+    this.repository = options.repository;
+    this.exitCode = options.exitCode;
+    this.stderr = options.stderr;
     this.name = "HookExecutionError";
   }
 }
@@ -399,7 +575,25 @@ export class InsufficientPermissionsError extends Error {
   }
 }
 
-async function runHookIfPresent(options: {
+interface HookExecutionRunResult {
+  outcome: HookOutcomeRecord;
+  error: HookExecutionError | null;
+}
+
+const toHookOutcomeRecord = (
+  repositoryId: string,
+  hookName: string,
+  mapping: HookOutcomeMapping,
+): HookOutcomeRecord => ({
+  durationMs: mapping.durationMs,
+  hookName,
+  hookStatus: mapping.hookStatus,
+  message: mapping.message,
+  reasonCode: mapping.reasonCode,
+  repositoryId,
+});
+
+const runHookIfPresent = async (options: {
   hookName: string;
   hookType: HookType;
   hookRootPath: string;
@@ -407,44 +601,71 @@ async function runHookIfPresent(options: {
   operationData: Record<string, string>;
   timeout: number;
   repository: Repository;
-}): Promise<void> {
-  const hookPath = await hooks.findHook(options.hookName, options.hookRootPath);
+}): Promise<HookExecutionRunResult> => {
+  const hookPath = await findHook(options.hookName, options.hookRootPath);
   if (!hookPath) {
-    return;
+    return {
+      error: NULL_HOOK_ERROR,
+      outcome: toHookOutcomeRecord(
+        options.repository.name,
+        options.hookName,
+        mapHookSkippedOutcome("not_found", "Hook script not found"),
+      ),
+    };
   }
 
-  const validation = await hooks.validateHook(hookPath);
+  const validation = await validateHook(hookPath);
   if (!validation.valid) {
-    throw new HookExecutionError(
-      `Hook validation failed for ${options.hookName}: ${validation.error}`,
-      options.hookType,
-      options.repository,
-      -1,
-      validation.error ?? "Hook validation failed",
-    );
+    const error = new HookExecutionError({
+      exitCode: LOCK_VALIDATION_EXIT_CODE,
+      hookType: options.hookType,
+      message: `Hook validation failed for ${options.hookName}: ${validation.error}`,
+      repository: options.repository,
+      stderr: validation.error ?? "Hook validation failed",
+    });
+    return {
+      error,
+      outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
+        hookStatus: "failure",
+        message: validation.error ?? "Hook validation failed",
+        reasonCode: "exit_non_zero",
+      }),
+    };
   }
 
-  const result = await hooks.executeHook({
-    hookName: options.hookName,
-    scriptPath: hookPath,
+  const result = await executeHook({
     context: {
       hookName: options.hookName,
-      repoPath: options.repoContextPath,
       operationData: options.operationData,
+      repoPath: options.repoContextPath,
     },
+    hookName: options.hookName,
+    scriptPath: hookPath,
     timeout: options.timeout,
   });
 
-  if (!result.success) {
-    throw new HookExecutionError(
-      `Hook execution failed for ${options.hookName}`,
-      options.hookType,
-      options.repository,
-      result.exitCode,
-      result.stderr,
-    );
+  const mapping = mapHookExecutionResult(result);
+  if (mapping.hookStatus === "failure") {
+    return {
+      error: new HookExecutionError({
+        exitCode: result.exitCode,
+        hookType: options.hookType,
+        message: `Hook execution failed for ${options.hookName}`,
+        repository: options.repository,
+        stderr: result.stderr,
+      }),
+      outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
+        ...mapping,
+        message: result.stderr.trim().length > ZERO ? result.stderr.trim() : mapping.message,
+      }),
+    };
   }
-}
+
+  return {
+    error: NULL_HOOK_ERROR,
+    outcome: toHookOutcomeRecord(options.repository.name, options.hookName, mapping),
+  };
+};
 
 // ============================================================================
 // Repository Type Detection (001-nested-worktree-paths)
@@ -458,10 +679,10 @@ async function runHookIfPresent(options: {
  * @param config - Arashi configuration (null if not in meta-repo context)
  * @returns Repository type information with classification reason
  */
-export async function detectRepositoryType(
+export const detectRepositoryType = async (
   repo: Repository,
   config: ArashiConfig | null,
-): Promise<RepositoryTypeInfo> {
+): Promise<RepositoryTypeInfo> => {
   // Check if repository has .arashi/config.json → meta-repo
   const configPath = join(repo.path, ".arashi", "config.json");
   try {
@@ -469,8 +690,8 @@ export async function detectRepositoryType(
     const exists = await configFile.exists();
     if (exists) {
       return {
-        type: "meta-repo",
         reason: "Contains .arashi/config.json",
+        type: "meta-repo",
       };
     }
   } catch {
@@ -478,14 +699,16 @@ export async function detectRepositoryType(
   }
 
   // Check if this is a child repository
-  // A child repo must be directly inside a repos_dir/ folder, and that repos_dir
-  // must be inside a meta-repo (has .arashi/config.json)
+  // A child repo must be directly inside a reposDir/ folder, and that reposDir
+  // Must be inside a meta-repo (has .arashi/config.json)
   if (config) {
-    const reposDir = basename(config.repos_dir);
+    const reposDir = basename(
+      config.reposDir ?? (config as { repos_dir?: string }).repos_dir ?? "./repos",
+    );
     const pathParts = repo.path.split(sep);
 
-    // Check if the immediate parent directory is the repos_dir
-    const parentDir = pathParts[pathParts.length - 2];
+    // Check if the immediate parent directory is the reposDir
+    const parentDir = pathParts.at(pathParts.length - PARENT_PATH_OFFSET);
     if (parentDir === reposDir) {
       // Check if grandparent has .arashi/config.json (is a meta-repo)
       const grandparentPath = join(repo.path, "..", "..");
@@ -496,12 +719,12 @@ export async function detectRepositoryType(
         const metaExists = await metaConfigFile.exists();
 
         if (metaExists) {
-          const parentName = pathParts[pathParts.length - 3];
+          const parentName = pathParts.at(pathParts.length - GRANDPARENT_PATH_OFFSET);
           return {
-            type: "child",
             parentName,
-            reposDir,
             reason: `Located in ${reposDir}/ folder of parent repository '${parentName}'`,
+            reposDir,
+            type: "child",
           };
         }
       } catch {
@@ -512,10 +735,10 @@ export async function detectRepositoryType(
 
   // Default → standalone
   return {
-    type: "standalone",
     reason: "Not a meta-repo and not in repos/ folder",
+    type: "standalone",
   };
-}
+};
 
 /**
  * Calculate nested worktree path for child repositories
@@ -526,15 +749,11 @@ export async function detectRepositoryType(
  * @param reposDir - Name of repos directory (e.g., "repos")
  * @returns Absolute path to nested worktree
  */
-export function calculateChildWorktreePath(
+export const calculateChildWorktreePath = (
   repo: Repository,
   parentWorktreeName: string,
   reposDir: string,
-): string {
-  // Navigate up from child repo to workspace level: ../../../
-  // Then append parent worktree path and child location
-  return join(repo.path, "..", "..", "..", parentWorktreeName, reposDir, repo.name);
-}
+): string => join(repo.path, "..", "..", "..", parentWorktreeName, reposDir, repo.name);
 
 /**
  * Calculate destination path for a new worktree based on repository type
@@ -546,19 +765,48 @@ export function calculateChildWorktreePath(
  * @param knownType - Optional pre-computed repository type (optimization)
  * @returns Worktree path result with metadata
  */
-export async function calculateWorktreePath(
-  repo: Repository,
-  branchName: string,
-  config: ArashiConfig,
-  knownType?: RepositoryTypeInfo,
+const normalizeCalculateWorktreePathArgs = (
+  ...args: CalculateWorktreePathArgs
+): CalculateWorktreePathOptions => {
+  const [firstArg, branchName, config, knownType] = args;
+  if (
+    typeof firstArg === "object" &&
+    firstArg !== null &&
+    "repo" in firstArg &&
+    "branchName" in firstArg &&
+    "config" in firstArg
+  ) {
+    return firstArg as CalculateWorktreePathOptions;
+  }
+
+  return {
+    branchName: branchName as string,
+    config: config as ArashiConfig,
+    knownType,
+    repo: firstArg as Repository,
+  };
+};
+
+export const calculateWorktreePath = async (
+  ...args: CalculateWorktreePathArgs
 ): Promise<{
   path: string;
   repositoryType: RepositoryType;
   strategy: "sibling" | "nested";
   parentWorktreePath?: string;
-}> {
+}> => {
+  const { branchName, config, knownType, repo } = normalizeCalculateWorktreePathArgs(...args);
   // Detect repository type (or use provided type)
-  const typeInfo = knownType ?? (await detectRepositoryType(repo, config));
+  let typeInfo = knownType;
+  if (!typeInfo) {
+    typeInfo = await detectRepositoryType(repo, config);
+  }
+
+  let workspaceRoot = resolve(repo.path);
+  if (typeInfo.type === "child") {
+    workspaceRoot = join(repo.path, "..", "..");
+  }
+  const worktreeBasePath = resolveWorktreesBasePath(workspaceRoot, config.worktreesDir);
 
   // Apply appropriate path calculation strategy
   if (typeInfo.type === "child") {
@@ -568,162 +816,157 @@ export async function calculateWorktreePath(
     }
 
     // Determine parent repository path (navigate up from child: ../../../)
-    const parentRepoPath = join(repo.path, "..", "..");
+    const parentRepoPath = workspaceRoot;
 
     // Check if parent is bare to determine worktree naming
     const parentIsBare = await isBareRepo(parentRepoPath);
 
     // Bare parent: Use branch name only
     // Non-bare parent: Combine parent name + branch
-    const parentWorktreeName = parentIsBare ? branchName : `${typeInfo.parentName}-${branchName}`;
+    let parentWorktreeName = branchName;
+    if (!parentIsBare) {
+      parentWorktreeName = `${typeInfo.parentName}-${branchName}`;
+    }
 
-    const worktreePath = calculateChildWorktreePath(repo, parentWorktreeName, typeInfo.reposDir);
-
-    const parentWorktreePath = join(repo.path, "..", "..", "..", parentWorktreeName);
+    const parentWorktreePath = join(worktreeBasePath, parentWorktreeName);
+    const worktreePath = join(parentWorktreePath, typeInfo.reposDir, repo.name);
 
     return {
+      parentWorktreePath,
       path: worktreePath,
       repositoryType: "child",
       strategy: "nested",
-      parentWorktreePath,
-    };
-  } else {
-    // Sibling strategy for meta-repo and standalone
-    // Check if repository is bare to determine naming convention
-    const isBare = await isBareRepo(repo.path);
-
-    // Bare repos: Use branch name only (e.g., 'feature-branch/')
-    // Non-bare repos: Combine folder name + branch (e.g., 'my-repo-feature-branch/')
-    const worktreeName = isBare ? branchName : `${repo.name}-${branchName}`;
-    const worktreePath = join(repo.path, "..", worktreeName);
-
-    return {
-      path: worktreePath,
-      repositoryType: typeInfo.type,
-      strategy: "sibling",
     };
   }
-}
+  // Sibling strategy for meta-repo and standalone
+  // Check if repository is bare to determine naming convention
+  const isBare = await isBareRepo(repo.path);
+
+  // Bare repos: Use branch name only (e.g., 'feature-branch/')
+  // Non-bare repos: Combine folder name + branch (e.g., 'my-repo-feature-branch/')
+  let worktreeName = branchName;
+  if (!isBare) {
+    worktreeName = `${repo.name}-${branchName}`;
+  }
+  const worktreePath = join(worktreeBasePath, worktreeName);
+
+  return {
+    path: worktreePath,
+    repositoryType: typeInfo.type,
+    strategy: "sibling",
+  };
+};
 
 // ============================================================================
 // Worktree Entry Utilities (Remove workflow)
 // ============================================================================
 
-function resolveParentPathForChild(
+const resolveParentPathForChild = (
   worktreePath: string,
   reposDirName: string,
   repoName: string,
-): string | null {
+): string | null => {
   const normalized = resolve(worktreePath);
   const parsed = parse(normalized);
   const parts = normalized
     .slice(parsed.root.length)
     .split(sep)
-    .filter((part) => part.length > 0);
+    .filter((part) => part.length > ZERO);
 
-  for (let i = 0; i < parts.length - 1; i += 1) {
-    if (parts[i] !== reposDirName) {
-      continue;
+  for (let partIndex = ZERO; partIndex < parts.length - ONE; partIndex += ONE) {
+    if (parts[partIndex] === reposDirName && parts[partIndex + ONE] === repoName) {
+      const parentParts = parts.slice(ZERO, partIndex);
+      return join(parsed.root, ...parentParts);
     }
-    if (parts[i + 1] !== repoName) {
-      continue;
-    }
-    const parentParts = parts.slice(0, i);
-    return join(parsed.root, ...parentParts);
   }
 
-  return null;
-}
+  return NULL_PATH;
+};
 
-export function attachWorktreeRelationships(
+export const attachWorktreeRelationships = (
   entries: WorktreeEntry[],
   options: {
     reposDirName: string;
     childRepoNames: Set<string>;
   },
-): void {
+): void => {
   const normalizedMap = new Map<string, WorktreeEntry>();
 
   for (const entry of entries) {
-    entry.parentPath = null;
+    entry.parentPath = NULL_PATH;
     entry.childrenPaths = [];
     normalizedMap.set(resolve(entry.path), entry);
   }
 
   for (const entry of entries) {
-    if (!options.childRepoNames.has(entry.repository)) {
-      continue;
+    if (options.childRepoNames.has(entry.repository)) {
+      const parentPath = resolveParentPathForChild(
+        entry.path,
+        options.reposDirName,
+        entry.repository,
+      );
+      entry.parentPath = parentPath;
     }
-
-    const parentPath = resolveParentPathForChild(
-      entry.path,
-      options.reposDirName,
-      entry.repository,
-    );
-    entry.parentPath = parentPath;
   }
 
   for (const entry of entries) {
-    if (!entry.parentPath) {
-      continue;
+    if (entry.parentPath) {
+      const parent = normalizedMap.get(resolve(entry.parentPath));
+      if (parent) {
+        parent.childrenPaths.push(entry.path);
+      }
     }
-    const parent = normalizedMap.get(resolve(entry.parentPath));
-    if (!parent) {
-      continue;
-    }
-    parent.childrenPaths.push(entry.path);
   }
-}
+};
 
-export async function getWorktreeDirtyStatus(worktreePath: string): Promise<DirtyStatus> {
+export const getWorktreeDirtyStatus = async (worktreePath: string): Promise<DirtyStatus> => {
   try {
-    const result = await git.exec(["status", "--porcelain"], worktreePath);
+    const result = await exec(["status", "--porcelain"], worktreePath);
     const lines = result.stdout
       .trim()
       .split("\n")
-      .filter((line) => line.length > 0);
-    let modifiedFiles = 0;
-    let untrackedFiles = 0;
-    let stagedFiles = 0;
+      .filter((line: string) => line.length > ZERO);
+    let modifiedFiles = ZERO;
+    let untrackedFiles = ZERO;
+    let stagedFiles = ZERO;
 
     for (const line of lines) {
       if (line.startsWith("??")) {
-        untrackedFiles += 1;
-        continue;
-      }
+        untrackedFiles += ONE;
+      } else {
+        const indexStatus = line[ZERO];
+        const worktreeStatus = line[ONE];
 
-      const indexStatus = line[0];
-      const worktreeStatus = line[1];
+        if (indexStatus !== " " && indexStatus !== "?") {
+          stagedFiles += ONE;
+        }
 
-      if (indexStatus !== " " && indexStatus !== "?") {
-        stagedFiles += 1;
-      }
-
-      if (worktreeStatus !== " " && worktreeStatus !== "?") {
-        modifiedFiles += 1;
+        if (worktreeStatus !== " " && worktreeStatus !== "?") {
+          modifiedFiles += ONE;
+        }
       }
     }
 
     return {
-      isDirty: lines.length > 0,
+      isDirty: lines.length > ZERO,
       modifiedFiles,
-      untrackedFiles,
       stagedFiles,
+      untrackedFiles,
     };
   } catch {
     return {
       isDirty: true,
-      modifiedFiles: 0,
-      untrackedFiles: 0,
-      stagedFiles: 0,
+      modifiedFiles: ZERO,
+      stagedFiles: ZERO,
+      untrackedFiles: ZERO,
     };
   }
-}
+};
 
-export async function resolveWorktreeStatuses(
+export const resolveWorktreeStatuses = async (
   entries: WorktreeEntry[],
   includeDirtyDetails: boolean,
-): Promise<void> {
+): Promise<void> => {
   await Promise.all(
     entries.map(async (entry) => {
       if (!existsSync(entry.path)) {
@@ -743,34 +986,38 @@ export async function resolveWorktreeStatuses(
       const status = await getWorktreeDirtyStatus(entry.path);
       entry.isDirty = status.isDirty;
       entry.dirtyDetails = status;
-      entry.status = status.isDirty ? "dirty" : "present";
+      if (status.isDirty) {
+        entry.status = "dirty";
+      } else {
+        entry.status = "present";
+      }
     }),
   );
-}
+};
 
-export async function buildWorktreeEntries(
+export const buildWorktreeEntries = async (
   worktrees: WorktreeInfo[],
   options: {
     reposDirName: string;
     childRepoNames: Set<string>;
     includeDirtyDetails: boolean;
   },
-): Promise<WorktreeEntry[]> {
+): Promise<WorktreeEntry[]> => {
   const entries: WorktreeEntry[] = worktrees.map((worktree) => ({
     ...worktree,
-    status: "present",
-    parentPath: null,
     childrenPaths: [],
+    parentPath: NULL_PATH,
+    status: "present",
   }));
 
   attachWorktreeRelationships(entries, {
-    reposDirName: options.reposDirName,
     childRepoNames: options.childRepoNames,
+    reposDirName: options.reposDirName,
   });
   await resolveWorktreeStatuses(entries, options.includeDirtyDetails);
 
   return entries;
-}
+};
 
 // ============================================================================
 // Helper Functions (T013)
@@ -790,8 +1037,8 @@ export async function buildWorktreeEntries(
  * @param branchName - Branch name to validate
  * @returns true if valid, false otherwise
  */
-export function isValidBranchName(branchName: string): boolean {
-  if (!branchName || branchName.length === 0) {
+export const isValidBranchName = (branchName: string): boolean => {
+  if (!branchName || branchName.length === ZERO) {
     return false;
   }
 
@@ -832,25 +1079,19 @@ export function isValidBranchName(branchName: string): boolean {
   }
 
   return true;
-}
+};
 
 // ============================================================================
 // Main Orchestration Functions (T018-T024)
 // ============================================================================
 
-import { OperationLog } from "./rollback.ts";
-import * as git from "../lib/git.ts";
-import * as logger from "../lib/logger.ts";
-import * as hooks from "../lib/hooks.ts";
-import * as prompts from "../lib/prompts.ts";
-
-async function buildDryRunOutcome(
-  branchName: string,
-  repositories: Repository[],
-  conflictCheck: ConflictCheckResult,
-  options: Required<WorktreeOperationOptions>,
-  config: ArashiConfig,
-): Promise<DryRunOutcome> {
+const buildDryRunOutcome = async ({
+  branchName,
+  config,
+  conflictCheck,
+  options,
+  repositories,
+}: BuildDryRunOutcomeOptions): Promise<DryRunOutcome> => {
   const plannedWorktrees: PlannedWorktree[] = [];
   const conflicts: DryRunConflict[] = [];
   const conflictByRepo = new Map<string, BranchConflict>();
@@ -860,53 +1101,51 @@ async function buildDryRunOutcome(
   }
 
   for (const repo of repositories) {
-    let worktreePath: string | null = null;
+    let worktreePath: string | null = NULL_PATH;
     let planStatus: DryRunPlanStatus = "actionable";
 
     try {
-      const pathResult = await calculateWorktreePath(repo, branchName, config);
+      const pathResult = await calculateWorktreePath({ branchName, config, repo });
       worktreePath = pathResult.path;
 
       if (existsSync(worktreePath)) {
         conflicts.push({
+          blocking: true,
+          conflictType: "path_exists",
+          message: `Worktree path already exists: ${worktreePath}`,
           repository: repo,
           repositoryName: repo.name,
-          conflictType: "path_exists",
           scope: `${repo.name}:${worktreePath}`,
-          message: `Worktree path already exists: ${worktreePath}`,
-          blocking: true,
         });
         planStatus = "blocked";
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       conflicts.push({
+        blocking: true,
+        conflictType: "invalid_configuration",
+        message: `Unable to calculate worktree path: ${message}`,
         repository: repo,
         repositoryName: repo.name,
-        conflictType: "invalid_configuration",
         scope: repo.name,
-        message: `Unable to calculate worktree path: ${message}`,
-        blocking: true,
       });
       planStatus = "blocked";
     }
 
     const branchConflict = conflictByRepo.get(repo.name);
     if (branchConflict) {
-      const location =
-        branchConflict.existsLocally && branchConflict.existsRemotely
-          ? "locally and remotely"
-          : branchConflict.existsLocally
-            ? "locally"
-            : "remotely";
+      const location = describeConflictLocation(
+        branchConflict.existsLocally,
+        branchConflict.existsRemotely,
+      );
       const blocking = options.conflictResolution !== "REUSE_EXISTING";
       conflicts.push({
+        blocking,
+        conflictType: "branch_exists",
+        message: `Branch '${branchConflict.branchName}' already exists ${location}`,
         repository: repo,
         repositoryName: repo.name,
-        conflictType: "branch_exists",
         scope: `${repo.name}:${branchConflict.branchName}`,
-        message: `Branch '${branchConflict.branchName}' already exists ${location}`,
-        blocking,
       });
       if (blocking) {
         planStatus = "blocked";
@@ -914,28 +1153,64 @@ async function buildDryRunOutcome(
     }
 
     plannedWorktrees.push({
+      branchName,
+      planStatus,
       repository: repo,
       repositoryName: repo.name,
       worktreePath,
-      branchName,
-      planStatus,
     });
   }
 
   const blockingTotal = conflicts.filter((conflict) => conflict.blocking).length;
-  const overallStatus: DryRunPlanStatus = blockingTotal > 0 ? "blocked" : "actionable";
+  let overallStatus: DryRunPlanStatus = "actionable";
+  if (blockingTotal > ZERO) {
+    overallStatus = "blocked";
+  }
 
   return {
+    conflicts,
     overallStatus,
     plannedWorktrees,
-    conflicts,
     summaryCounts: {
-      plannedTotal: plannedWorktrees.length,
-      conflictTotal: conflicts.length,
       blockingTotal,
+      conflictTotal: conflicts.length,
+      plannedTotal: plannedWorktrees.length,
     },
   };
-}
+};
+
+const collectSortedHookOutcomes = (results: RepositoryResult[]): HookOutcomeRecord[] => {
+  const hookOutcomes = results.flatMap((result) => result.hookOutcomes);
+  hookOutcomes.sort((left: HookOutcomeRecord, right: HookOutcomeRecord) => {
+    const repositoryCompare = left.repositoryId.localeCompare(right.repositoryId);
+    if (repositoryCompare !== ZERO) {
+      return repositoryCompare;
+    }
+    return left.hookName.localeCompare(right.hookName);
+  });
+
+  return hookOutcomes;
+};
+
+const buildHookRecoveryGuidance = (hookOutcomes: HookOutcomeRecord[]): string[] => {
+  const guidance = new Set<string>();
+
+  for (const outcome of hookOutcomes) {
+    if (outcome.hookStatus === "failure") {
+      if (outcome.reasonCode === "timeout") {
+        guidance.add(
+          `Hook timed out for ${outcome.repositoryId} (${outcome.hookName}); increase hook timeout or optimize the script, then rerun create.`,
+        );
+      } else {
+        guidance.add(
+          `Inspect hook output for ${outcome.repositoryId} (${outcome.hookName}) and rerun create after fixing the script.`,
+        );
+      }
+    }
+  }
+
+  return [...guidance];
+};
 
 /**
  * Create coordinated worktrees across multiple repositories (T018)
@@ -952,47 +1227,28 @@ async function buildDryRunOutcome(
  * @throws InvalidBranchNameError if branch name is invalid
  * @throws GitOperationError if git operations fail (triggers rollback)
  */
-export async function createCoordinatedWorktrees(
+export const createCoordinatedWorktrees = async (
   branchName: string,
   repositories: Repository[],
   options: WorktreeOperationOptions = {},
-): Promise<OperationSummary> {
+): Promise<OperationSummary> => {
   const startTime = Date.now();
   const operationLog = new OperationLog();
   const results: RepositoryResult[] = [];
-  const mainRepoPath = resolve(".");
+  const mainRepoPath = resolve(options.workspaceRoot ?? ".");
 
   // Set default options
-  const opts: Required<WorktreeOperationOptions> = {
-    executeHooks: options.executeHooks ?? true,
-    hookTimeout: options.hookTimeout ?? 60000,
-    interactive: options.interactive ?? false,
-    conflictResolution: options.conflictResolution ?? null,
-    showProgress: options.showProgress ?? true,
+  const opts: NormalizedWorktreeOptions = {
+    conflictResolution: options.conflictResolution ?? NULL_CONFLICT_STRATEGY,
     dryRun: options.dryRun ?? false,
+    executeHooks: options.executeHooks ?? true,
+    hookTimeout: options.hookTimeout ?? DEFAULT_HOOK_TIMEOUT,
+    interactive: options.interactive ?? false,
+    showProgress: options.showProgress ?? true,
   };
 
   try {
-    // 1. Load Arashi configuration (T012)
-    // Try to load config, but provide default if not found (for standalone repos or tests)
-    let config: ArashiConfig;
-    try {
-      config = await loadConfig(".");
-    } catch (error) {
-      if (error instanceof ConfigNotFoundError) {
-        // No config found - use minimal default for standalone repos
-        config = {
-          version: "1.0.0",
-          repos_dir: "./repos",
-          auto_setup: false,
-          discovered_repos: {},
-        };
-      } else {
-        throw error; // Re-throw other config errors
-      }
-    }
-
-    // 2. Validate branch name (T018)
+    // 1. Validate branch name (T018)
     if (!isValidBranchName(branchName)) {
       throw new InvalidBranchNameError(
         `Invalid branch name: ${branchName}`,
@@ -1002,38 +1258,45 @@ export async function createCoordinatedWorktrees(
     }
 
     // 2. Validate we have repositories
-    if (!repositories || repositories.length === 0) {
+    if (!repositories || repositories.length === ZERO) {
       throw new RepositoryValidationError("No repositories provided for worktree creation", "");
     }
 
-    // 3. T039: Pre-flight conflict check
+    // 3. Load canonical workspace configuration
+    const config = await loadResolvedConfig(mainRepoPath, options.resolvedConfig);
+
+    // 4. T039: Pre-flight conflict check
     const conflictCheck = await checkBranchConflicts(branchName, repositories);
-    let resolvedStrategy: ConflictResolutionStrategy | null = null;
+    let resolvedStrategy: ConflictResolutionStrategy | null = NULL_CONFLICT_STRATEGY;
     let conflictsToHandle: BranchConflict[] = [];
 
     if (opts.dryRun) {
-      const dryRunOutcome = await buildDryRunOutcome(
+      const dryRunOutcome = await buildDryRunOutcome({
         branchName,
-        repositories,
-        conflictCheck,
-        opts,
         config,
-      );
+        conflictCheck,
+        options: opts,
+        repositories,
+      });
+
+      let errorSummary: string | null = NULL_SUMMARY;
+      if (dryRunOutcome.overallStatus === "blocked") {
+        errorSummary = "Blocking conflicts detected during dry-run";
+      }
 
       return {
-        totalRepositories: repositories.length,
-        successCount: 0,
-        failureCount: 0,
-        skippedCount: repositories.length,
+        dryRunOutcome,
+        errorSummary,
+        failureCount: ZERO,
+        hookOutcomes: [],
+        isDryRun: true,
+        nextSteps: [],
         repositoryResults: [],
         rolledBack: false,
+        skippedCount: repositories.length,
+        successCount: ZERO,
         totalDuration: Date.now() - startTime,
-        errorSummary:
-          dryRunOutcome.overallStatus === "blocked"
-            ? "Blocking conflicts detected during dry-run"
-            : null,
-        dryRunOutcome,
-        isDryRun: true,
+        totalRepositories: repositories.length,
       };
     }
 
@@ -1043,70 +1306,83 @@ export async function createCoordinatedWorktrees(
       conflictsToHandle = conflictCheck.conflicts;
     }
 
-    // 4. Execute global pre-create hook (once)
+    // 5. Execute global pre-create hook (once)
     if (opts.executeHooks) {
-      await runHookIfPresent({
-        hookName: hooks.GLOBAL_HOOKS.preCreate,
-        hookType: "pre-create",
+      const preHookResult = await runHookIfPresent({
+        hookName: GLOBAL_HOOKS.preCreate,
         hookRootPath: mainRepoPath,
-        repoContextPath: mainRepoPath,
-        operationData: hooks.buildHookOperationData({
+        hookType: "pre-create",
+        operationData: buildHookOperationData({
           branchName,
           mainRepoPath,
           parentRepoPath: mainRepoPath,
         }),
+        repoContextPath: mainRepoPath,
+        repository: repositories[ZERO],
         timeout: opts.hookTimeout,
-        repository: repositories[0],
       });
+
+      if (preHookResult.error) {
+        throw preHookResult.error;
+      }
     }
 
-    // 5. Process each repository sequentially (T019-T023, T041)
+    // 6. Process each repository sequentially (T019-T023, T041)
     for (const repo of repositories) {
-      const repoResult = await processRepository(
-        repo,
+      const repoResult = await processRepository({
         branchName,
-        operationLog,
-        opts,
         config,
-        conflictsToHandle,
-        resolvedStrategy,
+        conflicts: conflictsToHandle,
         mainRepoPath,
-      );
+        operationLog,
+        options: opts,
+        repo,
+        strategy: resolvedStrategy,
+      });
       results.push(repoResult);
 
       // If repository processing failed, trigger rollback
       if (repoResult.status === "failed") {
-        throw repoResult.error;
+        throw repoResult.error ?? new Error(`Repository processing failed for ${repo.name}`);
       }
     }
 
-    // 6. Execute global post-create hook (once)
+    // 7. Execute global post-create hook (once)
     if (opts.executeHooks) {
-      await runHookIfPresent({
-        hookName: hooks.GLOBAL_HOOKS.postCreate,
-        hookType: "post-create",
+      const postHookResult = await runHookIfPresent({
+        hookName: GLOBAL_HOOKS.postCreate,
         hookRootPath: mainRepoPath,
-        repoContextPath: mainRepoPath,
-        operationData: hooks.buildHookOperationData({
+        hookType: "post-create",
+        operationData: buildHookOperationData({
           branchName,
           mainRepoPath,
           parentRepoPath: mainRepoPath,
         }),
+        repoContextPath: mainRepoPath,
+        repository: repositories[ZERO],
         timeout: opts.hookTimeout,
-        repository: repositories[0],
       });
+
+      if (postHookResult.error) {
+        throw postHookResult.error;
+      }
     }
 
-    // 7. Build successful operation summary (T024)
+    const hookOutcomes = collectSortedHookOutcomes(results);
+
+    // 8. Build successful operation summary (T024)
     return {
-      totalRepositories: repositories.length,
-      successCount: results.filter((r) => r.status === "success").length,
-      failureCount: 0,
-      skippedCount: 0,
+      errorSummary: NULL_SUMMARY,
+      failureCount: ZERO,
+      hookOutcomes,
+      nextSteps: buildHookRecoveryGuidance(hookOutcomes),
       repositoryResults: results,
       rolledBack: false,
+      skippedCount: ZERO,
+      successCount: results.filter((repositoryResult) => repositoryResult.status === "success")
+        .length,
       totalDuration: Date.now() - startTime,
-      errorSummary: null,
+      totalRepositories: repositories.length,
     };
   } catch (error) {
     // Automatic rollback on any error (T023)
@@ -1116,36 +1392,47 @@ export async function createCoordinatedWorktrees(
       .map((result) => `${result.repository.name}:${result.worktreePath}`);
 
     let rollbackNote = "";
-    if (rollbackResult.failureCount > 0) {
+    if (rollbackResult.failureCount > ZERO) {
       rollbackNote = ` Rollback encountered ${rollbackResult.failureCount} cleanup failures.`;
     }
-    if (residualWorktrees.length > 0) {
+    if (residualWorktrees.length > ZERO) {
       rollbackNote += ` Residual worktrees detected: ${residualWorktrees.join(", ")}.`;
     }
 
+    const hookOutcomes = collectSortedHookOutcomes(results);
+    let errorMessage = String(error);
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    }
+
     return {
-      totalRepositories: repositories.length,
-      successCount: 0,
-      failureCount: 1,
-      skippedCount: 0,
+      errorSummary: `${errorMessage}${rollbackNote}`,
+      failureCount: ONE,
+      hookOutcomes,
+      nextSteps: buildHookRecoveryGuidance(hookOutcomes),
       repositoryResults: results,
       rolledBack: true,
+      skippedCount: ZERO,
+      successCount: ZERO,
       totalDuration: Date.now() - startTime,
-      errorSummary: `${error instanceof Error ? error.message : String(error)}${rollbackNote}`,
+      totalRepositories: repositories.length,
     };
   }
-}
+};
 
-async function refExists(repoPath: string, ref: string): Promise<boolean> {
+const refExists = async (repoPath: string, ref: string): Promise<boolean> => {
   try {
-    await git.exec(["show-ref", "--verify", ref], repoPath);
+    await exec(["show-ref", "--verify", ref], repoPath);
     return true;
   } catch {
     return false;
   }
-}
+};
 
-async function resolveBranchStartPoint(repoPath: string, defaultBranch: string): Promise<string> {
+const resolveBranchStartPoint = async (
+  repoPath: string,
+  defaultBranch: string,
+): Promise<string> => {
   const normalizedBranch = defaultBranch.replace(/^origin\//, "");
   const candidates = [`refs/heads/${normalizedBranch}`, `refs/remotes/origin/${normalizedBranch}`];
 
@@ -1155,18 +1442,18 @@ async function resolveBranchStartPoint(repoPath: string, defaultBranch: string):
     }
   }
 
-  const localRefs = await git.exec(["for-each-ref", "--format=%(refname)", "refs/heads"], repoPath);
+  const localRefs = await exec(["for-each-ref", "--format=%(refname)", "refs/heads"], repoPath);
   const firstLocalRef = localRefs.stdout
     .split("\n")
-    .map((value) => value.trim())
-    .find((value) => value.length > 0);
+    .map((value: string) => value.trim())
+    .find((value: string) => value.length > ZERO);
 
   if (firstLocalRef) {
     return firstLocalRef;
   }
 
   return defaultBranch;
-}
+};
 
 /**
  * Process a single repository - create branch and worktree (T019)
@@ -1187,165 +1474,189 @@ async function resolveBranchStartPoint(repoPath: string, defaultBranch: string):
  * @param strategy - Resolved conflict strategy
  * @returns RepositoryResult with status and details
  */
-async function processRepository(
-  repo: Repository,
-  branchName: string,
-  operationLog: OperationLog,
-  options: Required<WorktreeOperationOptions>,
-  config: ArashiConfig,
-  conflicts: BranchConflict[] = [],
-  strategy: ConflictResolutionStrategy | null = null,
-  mainRepoPath: string,
-): Promise<RepositoryResult> {
+const processRepository = async ({
+  branchName,
+  config,
+  conflicts = [],
+  mainRepoPath,
+  operationLog,
+  options,
+  repo,
+  strategy = NULL_CONFLICT_STRATEGY,
+}: ProcessRepositoryOptions): Promise<RepositoryResult> => {
   const startTime = Date.now();
+  const hookOutcomes: HookOutcomeRecord[] = [];
 
   // Create spinner if progress is enabled
-  const spinner = options.showProgress ? logger.spinner(`Processing ${repo.name}...`) : null;
+  let spinnerInstance = null;
+  if (options.showProgress) {
+    spinnerInstance = spinner(`Processing ${repo.name}...`);
+  }
 
-  if (spinner) {
-    spinner.start();
+  if (spinnerInstance) {
+    spinnerInstance.start();
   }
 
   try {
     // T041: Check if we should reuse existing branch
-    const shouldReuse = shouldReuseBranch(repo, branchName, conflicts, strategy || "ABORT");
+    const shouldReuse = shouldReuseBranch({
+      branchName,
+      conflicts,
+      repo,
+      strategy: strategy || "ABORT",
+    });
 
-    if (!shouldReuse) {
+    if (shouldReuse) {
+      if (spinnerInstance) {
+        spinnerInstance.text = `Reusing existing branch '${branchName}' in ${repo.name}...`;
+      }
+    } else {
       // T020: Create branch from default branch
-      if (spinner) {
-        spinner.text = `Creating branch '${branchName}' in ${repo.name}...`;
+      if (spinnerInstance) {
+        spinnerInstance.text = `Creating branch '${branchName}' in ${repo.name}...`;
       }
 
       try {
         const startPoint = await resolveBranchStartPoint(repo.path, repo.defaultBranch);
-        await git.exec(["branch", branchName, startPoint], repo.path);
+        await exec(["branch", branchName, startPoint], repo.path);
       } catch (error) {
-        if (spinner) {
-          spinner.fail(`Failed to create branch '${branchName}' in ${repo.name}`);
+        if (spinnerInstance) {
+          spinnerInstance.fail(`Failed to create branch '${branchName}' in ${repo.name}`);
         }
-        throw new GitOperationError(
-          `Failed to create branch '${branchName}' in ${repo.name}`,
-          "branch_create",
-          repo,
-          error as Error,
-        );
+        throw new GitOperationError({
+          message: `Failed to create branch '${branchName}' in ${repo.name}`,
+          operation: "branch_create",
+          originalError: error as Error,
+          repository: repo,
+        });
       }
 
       // T022: Log branch creation for rollback
       operationLog.add({
-        type: "branch_created",
-        timestamp: Date.now(),
         data: {
-          repositoryPath: repo.path,
           branchName,
+          repositoryPath: repo.path,
         },
+        timestamp: Date.now(),
+        type: "branch_created",
       });
-    } else {
-      if (spinner) {
-        spinner.text = `Reusing existing branch '${branchName}' in ${repo.name}...`;
-      }
     }
 
     // T021: Create worktree for the branch (whether new or existing)
-    if (spinner) {
-      spinner.text = `Creating worktree for ${repo.name}...`;
+    if (spinnerInstance) {
+      spinnerInstance.text = `Creating worktree for ${repo.name}...`;
     }
 
-    const pathResult = await calculateWorktreePath(repo, branchName, config);
+    const pathResult = await calculateWorktreePath({ branchName, config, repo });
     const worktreePath = pathResult.path;
     try {
-      await git.exec(["worktree", "add", worktreePath, branchName], repo.path);
+      await exec(["worktree", "add", worktreePath, branchName], repo.path);
     } catch (error) {
-      if (spinner) {
-        spinner.fail(`Failed to create worktree in ${repo.name}`);
+      if (spinnerInstance) {
+        spinnerInstance.fail(`Failed to create worktree in ${repo.name}`);
       }
-      throw new GitOperationError(
-        `Failed to create worktree in ${repo.name}`,
-        "worktree_create",
-        repo,
-        error as Error,
-      );
+      throw new GitOperationError({
+        message: `Failed to create worktree in ${repo.name}`,
+        operation: "worktree_create",
+        originalError: error as Error,
+        repository: repo,
+      });
     }
 
     // T022: Log worktree creation for rollback
     operationLog.add({
-      type: "worktree_created",
-      timestamp: Date.now(),
       data: {
+        branchName,
         repositoryPath: repo.path,
         worktreePath,
-        branchName,
       },
+      timestamp: Date.now(),
+      type: "worktree_created",
     });
 
     // Execute repo-specific hooks if enabled
     if (options.executeHooks) {
       const parentRepoPath = pathResult.parentWorktreePath ?? mainRepoPath;
-      const repoOperationData = hooks.buildHookOperationData({
+      const repoOperationData = buildHookOperationData({
         branchName,
-        repoName: repo.name,
-        worktreePath,
         mainRepoPath,
         parentRepoPath,
+        repoName: repo.name,
+        worktreePath,
       });
 
-      if (spinner) {
-        spinner.text = `Running repo-specific pre-create hook for ${repo.name}...`;
+      if (spinnerInstance) {
+        spinnerInstance.text = `Running repo-specific pre-create hook for ${repo.name}...`;
       }
 
-      await runHookIfPresent({
-        hookName: hooks.getRepoSpecificHookName("pre-create", repo.name),
+      const preHookResult = await runHookIfPresent({
+        hookName: getRepoSpecificHookName("pre-create", repo.name),
+        hookRootPath: mainRepoPath,
         hookType: "pre-create",
-        hookRootPath: mainRepoPath,
-        repoContextPath: worktreePath,
         operationData: repoOperationData,
-        timeout: options.hookTimeout,
+        repoContextPath: worktreePath,
         repository: repo,
+        timeout: options.hookTimeout,
       });
-
-      if (spinner) {
-        spinner.text = `Running repo-specific post-create hook for ${repo.name}...`;
+      hookOutcomes.push(preHookResult.outcome);
+      if (preHookResult.error) {
+        throw preHookResult.error;
       }
 
-      await runHookIfPresent({
-        hookName: hooks.getRepoSpecificHookName("post-create", repo.name),
-        hookType: "post-create",
+      if (spinnerInstance) {
+        spinnerInstance.text = `Running repo-specific post-create hook for ${repo.name}...`;
+      }
+
+      const postHookResult = await runHookIfPresent({
+        hookName: getRepoSpecificHookName("post-create", repo.name),
         hookRootPath: mainRepoPath,
-        repoContextPath: worktreePath,
+        hookType: "post-create",
         operationData: repoOperationData,
-        timeout: options.hookTimeout,
+        repoContextPath: worktreePath,
         repository: repo,
+        timeout: options.hookTimeout,
       });
+      hookOutcomes.push(postHookResult.outcome);
+      if (postHookResult.error) {
+        throw postHookResult.error;
+      }
     }
 
     // Success!
-    if (spinner) {
-      spinner.succeed(`${repo.name} - worktree created at ${worktreePath}`);
+    if (spinnerInstance) {
+      spinnerInstance.succeed(`${repo.name} - worktree created at ${worktreePath}`);
     }
 
     // T024: Return success result
+    let warnings: string[] = [];
+    if (shouldReuse) {
+      warnings = [`Reused existing branch '${branchName}'`];
+    }
+
     return {
+      branchName,
+      duration: Date.now() - startTime,
+      error: NULL_RESULT_ERROR,
+      hookOutcomes,
       repository: repo,
       status: "success",
+      warnings,
       worktreePath,
-      branchName,
-      error: null,
-      warnings: shouldReuse ? [`Reused existing branch '${branchName}'`] : [],
-      duration: Date.now() - startTime,
     };
   } catch (error) {
     // T023: Return failure result (will trigger rollback in caller)
     return {
+      branchName,
+      duration: Date.now() - startTime,
+      error: error as Error,
+      hookOutcomes,
       repository: repo,
       status: "failed",
-      worktreePath: null,
-      branchName,
-      error: error as Error,
       warnings: [],
-      duration: Date.now() - startTime,
+      worktreePath: NULL_PATH,
     };
   }
-}
+};
 
 // ============================================================================
 // Conflict Detection and Resolution (T035-T041)
@@ -1361,10 +1672,10 @@ async function processRepository(
  * @param repositories - Repositories to check
  * @returns Promise resolving to conflict check result
  */
-export async function checkBranchConflicts(
+export const checkBranchConflicts = async (
   branchName: string,
   repositories: Repository[],
-): Promise<ConflictCheckResult> {
+): Promise<ConflictCheckResult> => {
   const conflicts: BranchConflict[] = [];
   const nonConflicting: Repository[] = [];
 
@@ -1372,17 +1683,14 @@ export async function checkBranchConflicts(
   const checks = repositories.map(async (repo) => {
     try {
       // Check local branches
-      const localResult = await git.exec(["branch", "--list", branchName], repo.path);
-      const existsLocally = localResult.stdout.trim().length > 0;
+      const localResult = await exec(["branch", "--list", branchName], repo.path);
+      const existsLocally = localResult.stdout.trim().length > ZERO;
 
       // Check remote branches (check if origin exists first)
       let existsRemotely = false;
       try {
-        const remoteResult = await git.exec(
-          ["ls-remote", "--heads", "origin", branchName],
-          repo.path,
-        );
-        existsRemotely = remoteResult.stdout.trim().length > 0;
+        const remoteResult = await exec(["ls-remote", "--heads", "origin", branchName], repo.path);
+        existsRemotely = remoteResult.stdout.trim().length > ZERO;
       } catch {
         // Remote doesn't exist or not accessible, that's OK
         existsRemotely = false;
@@ -1390,18 +1698,17 @@ export async function checkBranchConflicts(
 
       if (existsLocally || existsRemotely) {
         return {
-          hasConflict: true,
           conflict: {
-            repository: repo,
             branchName,
             existsLocally,
             existsRemotely,
-            resolution: null,
+            repository: repo,
+            resolution: NULL_CONFLICT_STRATEGY,
           } as BranchConflict,
+          hasConflict: true,
         };
-      } else {
-        return { hasConflict: false, repo };
       }
+      return { hasConflict: false, repo };
     } catch {
       // If we can't check, assume no conflict and let later operations handle errors
       return { hasConflict: false, repo };
@@ -1416,19 +1723,17 @@ export async function checkBranchConflicts(
       if (result.conflict) {
         conflicts.push(result.conflict);
       }
-    } else {
-      if (result.repo) {
-        nonConflicting.push(result.repo);
-      }
+    } else if (result.repo) {
+      nonConflicting.push(result.repo);
     }
   }
 
   return {
-    hasConflicts: conflicts.length > 0,
     conflicts,
+    hasConflicts: conflicts.length > ZERO,
     nonConflictingRepositories: nonConflicting,
   };
-}
+};
 
 /**
  * Resolve branch conflicts with user interaction or pre-selected strategy (T037)
@@ -1441,10 +1746,10 @@ export async function checkBranchConflicts(
  * @returns Promise resolving to chosen conflict resolution strategy
  * @throws ConflictAbortedError if user chooses to abort
  */
-export async function resolveConflicts(
+export const resolveConflicts = async (
   conflicts: BranchConflict[],
   options: WorktreeOperationOptions = {},
-): Promise<ConflictResolutionStrategy> {
+): Promise<ConflictResolutionStrategy> => {
   // If strategy pre-selected in options, use it
   if (options.conflictResolution) {
     // T040: Handle ABORT strategy
@@ -1456,44 +1761,39 @@ export async function resolveConflicts(
 
   // T038: Build conflict resolution dialog message
   const conflictList = conflicts
-    .map((c) => {
-      const location =
-        c.existsLocally && c.existsRemotely
-          ? "locally and remotely"
-          : c.existsLocally
-            ? "locally"
-            : "remotely";
-      return `  • ${c.repository.name} (${location})`;
+    .map((conflict) => {
+      const location = describeConflictLocation(conflict.existsLocally, conflict.existsRemotely);
+      return `  • ${conflict.repository.name} (${location})`;
     })
     .join("\n");
 
-  logger.warn(
-    `Branch "${conflicts[0].branchName}" already exists in ${conflicts.length} repositories:`,
+  warn(
+    `Branch "${conflicts[ZERO].branchName}" already exists in ${conflicts.length} repositories:`,
   );
   console.log(conflictList);
   console.log("");
 
   // T037: Interactive conflict resolution with prompt
-  const choices: prompts.Choice<ConflictResolutionStrategy>[] = [
+  const choices: Choice<ConflictResolutionStrategy>[] = [
     {
-      value: "REUSE_EXISTING",
-      name: "Reuse existing branches",
       description: "Create worktrees using the existing branches without creating new ones",
+      name: "Reuse existing branches",
+      value: "REUSE_EXISTING",
     },
     {
-      value: "ABORT",
-      name: "Abort operation",
       description: "Cancel the operation and do not create any worktrees",
+      name: "Abort operation",
+      value: "ABORT",
     },
     // Future: CREATE_ALTERNATE not yet implemented
     // {
-    //   value: 'CREATE_ALTERNATE',
-    //   name: 'Create alternate branch names',
-    //   description: 'Create new branches with alternate names (e.g., feature-1, feature-2)',
+    //   Value: 'CREATE_ALTERNATE',
+    //   Name: 'Create alternate branch names',
+    //   Description: 'Create new branches with alternate names (e.g., feature-1, feature-2)',
     // },
   ];
 
-  const strategy = await prompts.select<ConflictResolutionStrategy>(
+  const strategy = await select<ConflictResolutionStrategy>(
     "How would you like to proceed?",
     choices,
   );
@@ -1511,26 +1811,21 @@ export async function resolveConflicts(
   }
 
   return strategy.value;
-}
+};
 
 /**
  * Determine if we should reuse an existing branch (T041)
  * Helper function called during repository processing
  */
-function shouldReuseBranch(
-  repo: Repository,
-  branchName: string,
-  conflicts: BranchConflict[],
-  strategy: ConflictResolutionStrategy,
-): boolean {
+const shouldReuseBranch = ({ conflicts, repo, strategy }: ShouldReuseBranchOptions): boolean => {
   if (strategy !== "REUSE_EXISTING") {
     return false;
   }
 
   // Check if this repo has a conflict
-  const conflict = conflicts.find((c) => c.repository.name === repo.name);
+  const conflict = conflicts.find((branchConflict) => branchConflict.repository.name === repo.name);
   return conflict !== undefined && conflict.existsLocally;
-}
+};
 
 // ============================================================================
 // Repository Filtering (T047-T053)
@@ -1549,21 +1844,22 @@ function shouldReuseBranch(
  * @returns Promise resolving to filtered repository list
  * @throws RepositoryValidationError if explicit names don't match any repositories
  */
-export async function applyRepositoryFilter(
+export const applyRepositoryFilter = async (
   filter: RepositoryFilter,
   allRepositories: Repository[],
-): Promise<Repository[]> {
+): Promise<Repository[]> => {
   switch (filter.mode) {
-    case "all":
+    case "all": {
       // T048: Return all repositories
       return allRepositories;
+    }
 
-    case "explicit":
+    case "explicit": {
       // T049: Validate names and return matching repositories
       const selected: Repository[] = [];
 
       for (const name of filter.explicitList) {
-        const repo = allRepositories.find((r) => r.name === name);
+        const repo = allRepositories.find((repository) => repository.name === name);
         if (!repo) {
           throw new RepositoryValidationError(`Repository not found: ${name}`, name);
         }
@@ -1571,21 +1867,22 @@ export async function applyRepositoryFilter(
       }
 
       // T053: Validate non-empty result
-      if (selected.length === 0) {
+      if (selected.length === ZERO) {
         throw new RepositoryValidationError("Explicit filter resulted in no repositories", "");
       }
 
       return selected;
+    }
 
-    case "interactive":
+    case "interactive": {
       // T050: Interactive mode - prompt user to select repositories
       const choices = allRepositories.map((repo) => ({
-        value: repo,
-        name: repo.name,
         description: repo.path,
+        name: repo.name,
+        value: repo,
       }));
 
-      const selectedRepos = await prompts.multiSelect<Repository>(
+      const selectedRepos = await multiSelect<Repository>(
         "Select repositories to create worktrees in:",
         choices,
       );
@@ -1595,13 +1892,15 @@ export async function applyRepositoryFilter(
       }
 
       // T053: Validate non-empty result
-      if (selectedRepos.value.length === 0) {
+      if (selectedRepos.value.length === ZERO) {
         throw new RepositoryValidationError("No repositories selected", "");
       }
 
       return selectedRepos.value;
+    }
 
-    default:
+    default: {
       throw new Error(`Unknown filter mode: ${String((filter as { mode?: unknown }).mode)}`);
+    }
   }
-}
+};

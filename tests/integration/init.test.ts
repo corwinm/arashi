@@ -5,13 +5,14 @@
  * git validation, error handling, and rollback behavior.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir, chmod } from "fs/promises";
-import { tmpdir } from "os";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { fileExists, readTextFile, writeTextFile } from "../../src/lib/filesystem";
+import { getConfigPath, loadConfig, saveConfig } from "../../src/lib/config";
+import { executeInit } from "../../src/commands/init.ts";
 import { join } from "path";
 import { spawn } from "bun";
-import * as config from "../../src/lib/config";
-import * as filesystem from "../../src/lib/filesystem";
+import { tmpdir } from "os";
 
 /**
  * Helper to create a temporary git repository for testing
@@ -22,8 +23,8 @@ async function createTempGitRepo(): Promise<string> {
   // Initialize git repository
   const gitInit = spawn(["git", "init"], {
     cwd: testDir,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
   await gitInit.exited;
 
@@ -45,7 +46,7 @@ async function createTempDir(): Promise<string> {
  * Helper to clean up test directory
  */
 async function cleanup(testDir: string): Promise<void> {
-  await rm(testDir, { recursive: true, force: true });
+  await rm(testDir, { force: true, recursive: true });
 }
 
 /**
@@ -66,15 +67,15 @@ async function runInitCommand(
 
   const proc = spawn(["bun", arashiBin, "init", ...args], {
     cwd,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
 
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;
 
-  return { exitCode, stdout, stderr };
+  return { exitCode, stderr, stdout };
 }
 
 describe("init command - success cases", () => {
@@ -98,36 +99,38 @@ describe("init command - success cases", () => {
     expect(result.stdout).toContain("Initialized Arashi workspace");
 
     // Verify .arashi directory created
-    expect(await filesystem.fileExists(join(testDir, ".arashi"))).toBe(true);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(true);
 
     // Verify config file created
-    const configPath = config.getConfigPath(testDir);
-    expect(await filesystem.fileExists(configPath)).toBe(true);
+    const configPath = getConfigPath(testDir);
+    expect(await fileExists(configPath)).toBe(true);
 
     // Verify config content
-    const loadedConfig = await config.loadConfig(testDir);
+    const loadedConfig = await loadConfig(testDir);
     expect(loadedConfig.version).toBe("1.0.0");
-    expect(loadedConfig.repos_dir).toBe("./repos");
-    expect(loadedConfig.auto_setup).toBe(true);
-    expect(loadedConfig.discovered_repos).toEqual({});
+    expect(loadedConfig.reposDir).toBe("./repos");
+    expect(loadedConfig.repos).toEqual({});
 
     // Verify hooks directory created
     const hooksDir = join(testDir, ".arashi", "hooks");
-    expect(await filesystem.fileExists(hooksDir)).toBe(true);
+    expect(await fileExists(hooksDir)).toBe(true);
 
     // Verify hook templates created
-    expect(await filesystem.fileExists(join(hooksDir, "pre-create.sh.example"))).toBe(true);
-    expect(await filesystem.fileExists(join(hooksDir, "post-create.sh.example"))).toBe(true);
-    expect(await filesystem.fileExists(join(hooksDir, "setup.sh.example"))).toBe(true);
+    expect(await fileExists(join(hooksDir, "pre-create.sh.example"))).toBe(true);
+    expect(await fileExists(join(hooksDir, "post-create.sh.example"))).toBe(true);
+    expect(await fileExists(join(hooksDir, "pre-remove.sh.example"))).toBe(true);
+    expect(await fileExists(join(hooksDir, "post-remove.sh.example"))).toBe(true);
+    expect(await fileExists(join(hooksDir, "setup.sh.example"))).toBe(true);
 
     // Verify repos directory created
-    expect(await filesystem.fileExists(join(testDir, "repos"))).toBe(true);
+    expect(await fileExists(join(testDir, "repos"))).toBe(true);
 
     // Verify .gitignore updated
     const gitignorePath = join(testDir, ".gitignore");
-    expect(await filesystem.fileExists(gitignorePath)).toBe(true);
-    const gitignoreContent = await filesystem.readTextFile(gitignorePath);
+    expect(await fileExists(gitignorePath)).toBe(true);
+    const gitignoreContent = await readTextFile(gitignorePath);
     expect(gitignoreContent).toContain("repos/");
+    expect(gitignoreContent).toContain(".arashi/worktrees/");
   });
 
   test("init with custom repos directory", async () => {
@@ -136,15 +139,61 @@ describe("init command - success cases", () => {
     expect(result.exitCode).toBe(0);
 
     // Verify custom directory created
-    expect(await filesystem.fileExists(join(testDir, "custom-repos"))).toBe(true);
+    expect(await fileExists(join(testDir, "custom-repos"))).toBe(true);
 
     // Verify config uses custom path
-    const loadedConfig = await config.loadConfig(testDir);
-    expect(loadedConfig.repos_dir).toBe("./custom-repos");
+    const loadedConfig = await loadConfig(testDir);
+    expect(loadedConfig.reposDir).toBe("./custom-repos");
 
     // Verify .gitignore updated with custom path
-    const gitignoreContent = await filesystem.readTextFile(join(testDir, ".gitignore"));
+    const gitignoreContent = await readTextFile(join(testDir, ".gitignore"));
     expect(gitignoreContent).toContain("custom-repos/");
+    expect(gitignoreContent).toContain(".arashi/worktrees/");
+  });
+
+  test("init with custom managed subdirectory adds normalized worktrees ignore entry", async () => {
+    const result = await runInitCommand(testDir, ["--worktrees-dir", "./workspace-worktrees/"]);
+
+    expect(result.exitCode).toBe(0);
+
+    const loadedConfig = await loadConfig(testDir);
+    expect(loadedConfig.worktreesDir).toBe("workspace-worktrees");
+
+    const gitignoreContent = await readTextFile(join(testDir, ".gitignore"));
+    expect(gitignoreContent).toContain("repos/");
+    expect(gitignoreContent).toContain("workspace-worktrees/");
+    expect(gitignoreContent).not.toContain(".arashi/worktrees/");
+    expect(result.stdout).toContain("workspace-worktrees/");
+  });
+
+  test("init with parent worktrees directory does not auto-ignore unsafe path", async () => {
+    const result = await runInitCommand(testDir, ["--worktrees-dir", "../workspace-worktrees"]);
+
+    expect(result.exitCode).toBe(0);
+
+    const loadedConfig = await loadConfig(testDir);
+    expect(loadedConfig.worktreesDir).toBe("../workspace-worktrees");
+
+    const gitignoreContent = await readTextFile(join(testDir, ".gitignore"));
+    expect(gitignoreContent).toContain("repos/");
+    expect(gitignoreContent).not.toContain("../workspace-worktrees/");
+    expect(gitignoreContent).not.toContain(".arashi/worktrees/");
+  });
+
+  test("init with dot worktrees directory does not auto-ignore workspace root", async () => {
+    const result = await runInitCommand(testDir, ["--worktrees-dir", "."]);
+
+    expect(result.exitCode).toBe(0);
+
+    const loadedConfig = await loadConfig(testDir);
+    expect(loadedConfig.worktreesDir).toBe(".");
+
+    const gitignoreContent = await readTextFile(join(testDir, ".gitignore"));
+    const gitignoreLines = gitignoreContent.split("\n").map((line) => line.trim());
+    expect(gitignoreContent).toContain("repos/");
+    expect(gitignoreLines).not.toContain(".");
+    expect(gitignoreLines).not.toContain("./");
+    expect(gitignoreContent).not.toContain(".arashi/worktrees/");
   });
 
   test("init with --no-discover skips repository discovery", async () => {
@@ -155,21 +204,11 @@ describe("init command - success cases", () => {
 
     expect(result.exitCode).toBe(0);
     // When --no-discover is used, output should not show repository discovery
-    // but should indicate discovery was skipped or show 0 repositories
+    // But should indicate discovery was skipped or show 0 repositories
 
     // Verify no repositories discovered in config
-    const loadedConfig = await config.loadConfig(testDir);
-    expect(Object.keys(loadedConfig.discovered_repos)).toHaveLength(0);
-  });
-
-  test("init with --no-auto-setup disables auto setup", async () => {
-    const result = await runInitCommand(testDir, ["--no-auto-setup"]);
-
-    expect(result.exitCode).toBe(0);
-
-    // Verify auto_setup is false
-    const loadedConfig = await config.loadConfig(testDir);
-    expect(loadedConfig.auto_setup).toBe(false);
+    const loadedConfig = await loadConfig(testDir);
+    expect(Object.keys(loadedConfig.repos)).toHaveLength(0);
   });
 
   test("init with --force overwrites existing configuration", async () => {
@@ -177,9 +216,9 @@ describe("init command - success cases", () => {
     await runInitCommand(testDir);
 
     // Modify config
-    let loadedConfig = await config.loadConfig(testDir);
-    loadedConfig.auto_setup = false;
-    await config.saveConfig(testDir, loadedConfig);
+    let loadedConfig = await loadConfig(testDir);
+    loadedConfig.reposDir = "./custom-repos";
+    await saveConfig(testDir, loadedConfig);
 
     // Reinitialize with --force
     const result = await runInitCommand(testDir, ["--force"]);
@@ -189,8 +228,8 @@ describe("init command - success cases", () => {
     expect(result.stdout + result.stderr).toContain("backed up");
 
     // Verify config reset to defaults
-    loadedConfig = await config.loadConfig(testDir);
-    expect(loadedConfig.auto_setup).toBe(true);
+    loadedConfig = await loadConfig(testDir);
+    expect(loadedConfig.reposDir).toBe("./repos");
 
     // Verify backup created
     const backupFiles = await Array.fromAsync(
@@ -203,8 +242,10 @@ describe("init command - success cases", () => {
     // First init
     await runInitCommand(testDir);
 
-    const gitignoreContent1 = await filesystem.readTextFile(join(testDir, ".gitignore"));
+    const gitignoreContent1 = await readTextFile(join(testDir, ".gitignore"));
     const reposLineCount1 = (gitignoreContent1.match(/repos\//g) || []).length;
+    const worktreesLineCount1 = (gitignoreContent1.match(/\.arashi\/worktrees\//g) || []).length;
+    expect(gitignoreContent1).toContain(".arashi/worktrees/");
 
     // Delete config to allow re-init
     await rm(join(testDir, ".arashi"), { recursive: true });
@@ -212,11 +253,35 @@ describe("init command - success cases", () => {
     // Second init
     await runInitCommand(testDir);
 
-    const gitignoreContent2 = await filesystem.readTextFile(join(testDir, ".gitignore"));
+    const gitignoreContent2 = await readTextFile(join(testDir, ".gitignore"));
     const reposLineCount2 = (gitignoreContent2.match(/repos\//g) || []).length;
+    const worktreesLineCount2 = (gitignoreContent2.match(/\.arashi\/worktrees\//g) || []).length;
+    expect(gitignoreContent2).toContain(".arashi/worktrees/");
 
     // Verify repos/ pattern appears same number of times
     expect(reposLineCount2).toBe(reposLineCount1);
+    expect(worktreesLineCount2).toBe(worktreesLineCount1);
+  });
+
+  test(".gitignore update is idempotent with configured worktrees directory", async () => {
+    await runInitCommand(testDir, ["--worktrees-dir", "workspace-worktrees"]);
+
+    const gitignoreContent1 = await readTextFile(join(testDir, ".gitignore"));
+    const reposLineCount1 = (gitignoreContent1.match(/repos\//g) || []).length;
+    const customWorktreesLineCount1 = (gitignoreContent1.match(/workspace-worktrees\//g) || [])
+      .length;
+
+    await rm(join(testDir, ".arashi"), { recursive: true });
+
+    await runInitCommand(testDir, ["--worktrees-dir", "./workspace-worktrees/"]);
+
+    const gitignoreContent2 = await readTextFile(join(testDir, ".gitignore"));
+    const reposLineCount2 = (gitignoreContent2.match(/repos\//g) || []).length;
+    const customWorktreesLineCount2 = (gitignoreContent2.match(/workspace-worktrees\//g) || [])
+      .length;
+
+    expect(reposLineCount2).toBe(reposLineCount1);
+    expect(customWorktreesLineCount2).toBe(customWorktreesLineCount1);
   });
 
   test("hook templates are not overwritten if they exist", async () => {
@@ -225,7 +290,7 @@ describe("init command - success cases", () => {
 
     // Modify a template
     const templatePath = join(testDir, ".arashi", "hooks", "pre-create.sh.example");
-    await filesystem.writeTextFile(templatePath, '#!/bin/bash\necho "custom"');
+    await writeTextFile(templatePath, '#!/bin/bash\necho "custom"');
 
     // Delete config to allow re-init
     await rm(join(testDir, ".arashi", "config.json"));
@@ -234,7 +299,7 @@ describe("init command - success cases", () => {
     await runInitCommand(testDir);
 
     // Verify custom template preserved
-    const templateContent = await filesystem.readTextFile(templatePath);
+    const templateContent = await readTextFile(templatePath);
     expect(templateContent).toContain("custom");
     expect(templateContent).not.toContain("Pre-Create Hook Example");
   });
@@ -251,10 +316,10 @@ describe("init command - error cases", () => {
     expect(result.exitCode).toBe(1); // NOT_GIT_REPOSITORY
     // Error message is in stderr, help text is in stdout
     expect(result.stderr).toContain("Not a git repository");
-    expect(result.stdout).toContain("git init");
+    expect(result.stdout).toContain("interactive terminal");
 
     // Verify no files created
-    expect(await filesystem.fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
 
     await cleanup(testDir);
   });
@@ -301,6 +366,104 @@ describe("init command - error cases", () => {
   });
 });
 
+describe("init command - repository bootstrap", () => {
+  let testDir: string;
+
+  afterEach(async () => {
+    if (testDir) {
+      await cleanup(testDir);
+    }
+  });
+
+  test("exits without creating files when bootstrap is declined", async () => {
+    testDir = await createTempDir();
+
+    const result = await executeInit(
+      {},
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: false }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(8);
+    expect(await fileExists(join(testDir, ".git"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, "repos"))).toBe(false);
+  });
+
+  test("bootstraps the current directory when target is '.'", async () => {
+    testDir = await createTempDir();
+
+    const result = await executeInit(
+      {},
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: true }),
+        promptInput: async () => ({ status: "ok", value: "." }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.workspaceRoot).toBe(testDir);
+    expect(await fileExists(join(testDir, ".git"))).toBe(true);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(true);
+    expect(await fileExists(join(testDir, "repos"))).toBe(true);
+
+    const loadedConfig = await loadConfig(testDir);
+    expect(loadedConfig.reposDir).toBe("./repos");
+  });
+
+  test("bootstraps a child directory when given a child repository name", async () => {
+    testDir = await createTempDir();
+    const childRepoPath = join(testDir, "my-arashi-repo");
+
+    const result = await executeInit(
+      {},
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: true }),
+        promptInput: async () => ({ status: "ok", value: "my-arashi-repo" }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.workspaceRoot).toBe(childRepoPath);
+    expect(await fileExists(join(childRepoPath, ".git"))).toBe(true);
+    expect(await fileExists(join(childRepoPath, ".arashi"))).toBe(true);
+    expect(await fileExists(join(childRepoPath, "repos"))).toBe(true);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+
+    const loadedConfig = await loadConfig(childRepoPath);
+    expect(loadedConfig.reposDir).toBe("./repos");
+  });
+
+  test("rejects unsupported bootstrap targets", async () => {
+    testDir = await createTempDir();
+
+    const result = await executeInit(
+      {},
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: true }),
+        promptInput: async () => ({ status: "ok", value: "foo/bar" }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(5);
+    expect(result.error).toContain("Invalid bootstrap target");
+    expect(await fileExists(join(testDir, ".git"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, "foo"))).toBe(false);
+  });
+});
+
 describe("init command - rollback behavior", () => {
   let testDir: string;
 
@@ -326,7 +489,7 @@ describe("init command - rollback behavior", () => {
     expect(result.stdout).toContain("Rolling back");
 
     // Verify .arashi directory removed
-    expect(await filesystem.fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
   });
 
   test("rolls back when config write fails due to permissions", async () => {
@@ -389,10 +552,10 @@ describe("init command - repository discovery", () => {
     expect(result.stdout).toContain("Discovered 2 repositories");
 
     // Verify discovered repos in config
-    const loadedConfig = await config.loadConfig(testDir);
-    expect(Object.keys(loadedConfig.discovered_repos)).toHaveLength(2);
-    expect(loadedConfig.discovered_repos["repo1"]).toBeDefined();
-    expect(loadedConfig.discovered_repos["repo2"]).toBeDefined();
+    const loadedConfig = await loadConfig(testDir);
+    expect(Object.keys(loadedConfig.repos)).toHaveLength(2);
+    expect(loadedConfig.repos["repo1"]).toBeDefined();
+    expect(loadedConfig.repos["repo2"]).toBeDefined();
   });
 
   test("handles empty repos directory", async () => {
@@ -404,8 +567,8 @@ describe("init command - repository discovery", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Discovered 0 repositories");
 
-    const loadedConfig = await config.loadConfig(testDir);
-    expect(Object.keys(loadedConfig.discovered_repos)).toHaveLength(0);
+    const loadedConfig = await loadConfig(testDir);
+    expect(Object.keys(loadedConfig.repos)).toHaveLength(0);
   });
 });
 
@@ -417,7 +580,7 @@ describe("init command - edge cases", () => {
 
     // Ensure .gitignore doesn't exist
     const gitignorePath = join(testDir, ".gitignore");
-    if (await filesystem.fileExists(gitignorePath)) {
+    if (await fileExists(gitignorePath)) {
       await rm(gitignorePath);
     }
 
@@ -426,9 +589,10 @@ describe("init command - edge cases", () => {
     expect(result.exitCode).toBe(0);
 
     // Verify .gitignore created
-    expect(await filesystem.fileExists(gitignorePath)).toBe(true);
-    const content = await filesystem.readTextFile(gitignorePath);
+    expect(await fileExists(gitignorePath)).toBe(true);
+    const content = await readTextFile(gitignorePath);
     expect(content).toContain("repos/");
+    expect(content).toContain(".arashi/worktrees/");
 
     await cleanup(testDir);
   });
@@ -444,9 +608,26 @@ describe("init command - edge cases", () => {
     expect(result.exitCode).toBe(0);
 
     // Verify repos/ added on new line
-    const content = await filesystem.readTextFile(join(testDir, ".gitignore"));
+    const content = await readTextFile(join(testDir, ".gitignore"));
     expect(content).toContain("node_modules/\n");
     expect(content).toContain("repos/");
+    expect(content).toContain(".arashi/worktrees/");
+
+    await cleanup(testDir);
+  });
+
+  test("preserves existing default worktrees ignore entry without rewriting it", async () => {
+    testDir = await createTempGitRepo();
+
+    const existingContent = "repos/\n.arashi/worktrees/\nnode_modules/\n";
+    await writeFile(join(testDir, ".gitignore"), existingContent);
+
+    const result = await runInitCommand(testDir);
+
+    expect(result.exitCode).toBe(0);
+
+    const content = await readTextFile(join(testDir, ".gitignore"));
+    expect(content).toBe(existingContent);
 
     await cleanup(testDir);
   });
@@ -463,7 +644,7 @@ describe("init command - edge cases", () => {
     expect(result.exitCode).toBe(0);
 
     // Verify existing content preserved
-    expect(await filesystem.fileExists(join(testDir, "repos", "README.md"))).toBe(true);
+    expect(await fileExists(join(testDir, "repos", "README.md"))).toBe(true);
 
     await cleanup(testDir);
   });
@@ -477,11 +658,11 @@ describe("init command - edge cases", () => {
     expect(result.exitCode).toBe(0);
 
     // Verify directory created at absolute path
-    expect(await filesystem.fileExists(absolutePath)).toBe(true);
+    expect(await fileExists(absolutePath)).toBe(true);
 
     // Verify config stores absolute path
-    const loadedConfig = await config.loadConfig(testDir);
-    expect(loadedConfig.repos_dir).toBe(absolutePath);
+    const loadedConfig = await loadConfig(testDir);
+    expect(loadedConfig.reposDir).toBe(absolutePath);
 
     await cleanup(testDir);
   });
@@ -494,7 +675,7 @@ describe("init command - edge cases", () => {
     expect(result.exitCode).toBe(0);
 
     // Verify directory created
-    expect(await filesystem.fileExists(join(testDir, "my repos"))).toBe(true);
+    expect(await fileExists(join(testDir, "my repos"))).toBe(true);
 
     await cleanup(testDir);
   });
@@ -543,7 +724,7 @@ describe("init command - output format", () => {
     expect(result.exitCode).toBe(1);
     // Error message is in stderr, help text is in stdout
     expect(result.stderr).toContain("Not a git repository");
-    expect(result.stdout).toContain("git init");
+    expect(result.stdout).toContain("interactive terminal");
 
     await cleanup(nonGitDir);
   });
@@ -569,14 +750,14 @@ describe("init command - dry-run mode", () => {
     expect(result.stdout).toContain("Configuration preview:");
 
     // Verify NO files or directories created
-    expect(await filesystem.fileExists(join(testDir, ".arashi"))).toBe(false);
-    expect(await filesystem.fileExists(join(testDir, "repos"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, "repos"))).toBe(false);
 
     // Verify .gitignore not modified (should not exist in fresh git repo)
     const gitignorePath = join(testDir, ".gitignore");
-    const gitignoreExists = await filesystem.fileExists(gitignorePath);
+    const gitignoreExists = await fileExists(gitignorePath);
     if (gitignoreExists) {
-      const content = await filesystem.readTextFile(gitignorePath);
+      const content = await readTextFile(gitignorePath);
       expect(content).not.toContain("repos/");
     }
   });
@@ -587,8 +768,7 @@ describe("init command - dry-run mode", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Configuration preview:");
     expect(result.stdout).toContain('"version": "1.0.0"');
-    expect(result.stdout).toContain('"repos_dir": "./repos"');
-    expect(result.stdout).toContain('"auto_setup": true');
+    expect(result.stdout).toContain('"reposDir": "./repos"');
   });
 
   test("--dry-run works with --repos-dir option", async () => {
@@ -596,18 +776,37 @@ describe("init command - dry-run mode", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[DRY RUN]");
-    expect(result.stdout).toContain('"repos_dir": "./custom"');
+    expect(result.stdout).toContain('"reposDir": "./custom"');
 
     // Verify custom directory NOT created
-    expect(await filesystem.fileExists(join(testDir, "custom"))).toBe(false);
+    expect(await fileExists(join(testDir, "custom"))).toBe(false);
   });
 
-  test("--dry-run works with --no-auto-setup option", async () => {
-    const result = await runInitCommand(testDir, ["--dry-run", "--no-auto-setup"]);
+  test("--dry-run with custom worktrees directory previews managed ignore entry", async () => {
+    const result = await runInitCommand(testDir, [
+      "--dry-run",
+      "--worktrees-dir",
+      "./workspace-worktrees/",
+    ]);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("[DRY RUN]");
-    expect(result.stdout).toContain('"auto_setup": false');
+    expect(result.stdout).toContain("[DRY RUN] UPDATE_FILE:");
+    expect(result.stdout).toContain("workspace-worktrees/");
+    expect(result.stdout).not.toContain(".arashi/worktrees/");
+  });
+
+  test("--dry-run with unsafe parent worktrees directory skips worktree ignore preview", async () => {
+    const result = await runInitCommand(testDir, [
+      "--dry-run",
+      "--worktrees-dir",
+      "../workspace-worktrees",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("[DRY RUN] UPDATE_FILE:");
+    expect(result.stdout).toContain("add: repos/");
+    expect(result.stdout).not.toContain("../workspace-worktrees/");
+    expect(result.stdout).not.toContain(".arashi/worktrees/");
   });
 
   test("--dry-run works with --no-discover option", async () => {
@@ -663,6 +862,8 @@ describe("init command - dry-run mode", () => {
     expect(result.stdout).toContain("[DRY RUN] WRITE_FILE:");
     expect(result.stdout).toContain("pre-create.sh.example");
     expect(result.stdout).toContain("post-create.sh.example");
+    expect(result.stdout).toContain("pre-remove.sh.example");
+    expect(result.stdout).toContain("post-remove.sh.example");
     expect(result.stdout).toContain("setup.sh.example");
   });
 
@@ -715,7 +916,7 @@ describe("init command - verbose mode", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[VERBOSE]");
-    expect(result.stdout).toContain("Writing 3 hook templates");
+    expect(result.stdout).toContain("Writing 5 hook templates");
     expect(result.stdout).toContain("✓ Hook templates written");
   });
 
@@ -789,8 +990,8 @@ describe("init command - dry-run and verbose together", () => {
     expect(result.stdout).toContain("Configuration preview:");
 
     // Verify no files created
-    expect(await filesystem.fileExists(join(testDir, ".arashi"))).toBe(false);
-    expect(await filesystem.fileExists(join(testDir, "repos"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, "repos"))).toBe(false);
   });
 
   test("--dry-run --verbose works with all options", async () => {
@@ -803,18 +1004,16 @@ describe("init command - dry-run and verbose together", () => {
       "--verbose",
       "--repos-dir",
       "./custom",
-      "--no-auto-setup",
     ]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[DRY RUN]");
     expect(result.stdout).toContain("[VERBOSE]");
-    expect(result.stdout).toContain('"repos_dir": "./custom"');
-    expect(result.stdout).toContain('"auto_setup": false');
+    expect(result.stdout).toContain('"reposDir": "./custom"');
 
     // Verify nothing created (except the custom directory we created for the test)
-    expect(await filesystem.fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
     // The custom directory was created by us for the test, so it exists
-    // but the .arashi structure inside testDir should not exist
+    // But the .arashi structure inside testDir should not exist
   });
 });

@@ -1,9 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { ConfigNotFoundError, loadConfigWithFallback } from "../../src/lib/config.ts";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../helpers/create-bare-create-workspace.ts";
+import { afterEach, describe, expect, test } from "bun:test";
+import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
+type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
 
@@ -23,7 +21,7 @@ describe("config resolution in bare contexts", () => {
     const loaded = await loadConfigWithFallback(workspace.worktreePath);
 
     expect(loaded.source).toBe("local-file");
-    expect(loaded.config.repos_dir).toBe("./repos");
+    expect(loaded.config.reposDir).toBe("./repos");
   });
 
   test("falls back to repository content for bare invocation", async () => {
@@ -34,7 +32,7 @@ describe("config resolution in bare contexts", () => {
     });
 
     expect(loaded.source).toBe("repository-content");
-    expect(loaded.config.repos_dir).toBe("./repos");
+    expect(loaded.config.reposDir).toBe("./repos");
   });
 
   test("throws clear error when config does not exist", async () => {

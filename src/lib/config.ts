@@ -7,25 +7,21 @@
  * @module config
  */
 
-import { join, dirname, basename, resolve } from "path";
+import {
+  DEFAULT_WORKTREES_DIR,
+  WorktreeLocationValidationError,
+  normalizeWorktreesDir,
+} from "./worktree-location.ts";
+import { basename, dirname, join, resolve } from "path";
+import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
 import { mkdir } from "fs/promises";
-import { readTrackedFileFromDefaultBranch } from "./git.ts";
+
+const ZERO = 0;
+const TWO = 2;
 
 // ============================================================================
 // Data Types
 // ============================================================================
-
-/**
- * Hook configuration for lifecycle events
- */
-export interface HookConfig {
-  /** Path to script executed before worktree creation */
-  pre_create?: string;
-  /** Path to script executed after worktree creation */
-  post_create?: string;
-  /** Path to script executed during repository setup */
-  setup?: string;
-}
 
 /**
  * Information about a single git worktree
@@ -36,7 +32,7 @@ export interface WorktreeInfo {
   /** Filesystem path to the worktree */
   path: string;
   /** ISO 8601 timestamp when worktree was created */
-  created_at: string;
+  createdAt: string;
   /** Optional user-defined metadata */
   metadata?: Record<string, unknown>;
 }
@@ -47,39 +43,84 @@ export interface WorktreeInfo {
 export interface RepoConfig {
   /** Path to the repository (relative or absolute) */
   path: string;
-  /** Name of the default branch (auto-detected if omitted) */
-  default_branch?: string;
-  /** Whether the repository is bare (auto-detected if omitted) */
-  is_bare?: boolean;
-  /** List of active worktrees for this repository */
-  worktrees?: WorktreeInfo[];
-  /** Custom hook configuration for this repository */
-  hooks?: HookConfig;
+  /** Canonical git URL for cloning the repository */
+  gitUrl?: string;
 }
+
+export const CURRENT_CONFIG_VERSION = "1.0.0" as const;
+export type ConfigVersion = typeof CURRENT_CONFIG_VERSION;
 
 /**
  * Root configuration object for Arashi
  */
 export interface Config {
+  /** JSON Schema URL for editor validation/autocomplete */
+  $schema?: string;
   /** Configuration schema version for migrations */
-  version: string;
+  version: ConfigVersion;
   /** Directory where repositories are located */
-  repos_dir: string;
-  /** Whether to automatically run setup hooks */
-  auto_setup: boolean;
+  reposDir: string;
+  /** Base directory where worktrees are created (workspace-relative) */
+  worktreesDir?: string;
   /** Optional workspace-level hooks settings */
   hooks?: {
     /** Timeout in milliseconds for long-running operations */
     timeout?: number;
   };
+  /** Optional sync command settings */
+  sync?: {
+    /** Sync timeout in seconds */
+    timeoutSeconds?: number;
+  };
+  /** Optional command-scoped defaults for create and switch */
+  defaults?: CommandDefaultsConfig;
   /** Map of repository names to their configurations */
-  discovered_repos: Record<string, RepoConfig>;
+  repos: Record<string, RepoConfig>;
 }
 
-type ConfigErrorContext = {
+export type LaunchMode = "auto" | "sesh";
+export type SwitchMode = "launch" | "cd" | "auto";
+export type CreateDefaultsEditorHost = "vscode" | "cursor" | "kiro";
+
+export interface CreateCommandDefaults {
+  /** Default to switching to the new worktree after create */
+  switch?: boolean;
+  /** Default to launching a terminal/editor context after create */
+  launch?: boolean;
+  /** Preferred launch mode for create-triggered launch */
+  launchMode?: LaunchMode;
+}
+
+export interface SwitchCommandDefaults {
+  /** Preferred switch behavior when running switch */
+  mode?: SwitchMode;
+  /** Preferred launch mode when running switch */
+  launchMode?: LaunchMode;
+}
+
+export interface EditorCommandDefaults {
+  /** Editor-scoped create defaults */
+  create?: CreateCommandDefaults;
+}
+
+export interface EditorDefaultsConfig {
+  vscode?: EditorCommandDefaults;
+  cursor?: EditorCommandDefaults;
+  kiro?: EditorCommandDefaults;
+}
+
+export interface CommandDefaultsConfig {
+  create?: CreateCommandDefaults;
+  editors?: EditorDefaultsConfig;
+  switch?: SwitchCommandDefaults;
+}
+
+export const DEFAULT_CONFIG_SCHEMA_URL = "https://unpkg.com/arashi/schema/config.schema.json";
+
+interface ConfigErrorContext {
   errors: string[];
   [key: string]: unknown;
-};
+}
 
 /**
  * Resolved repository information from workspace configuration.
@@ -89,8 +130,8 @@ export interface WorkspaceRepository {
   name: string;
   /** Absolute path to repository root */
   path: string;
-  /** Default branch from config, if present */
-  defaultBranch?: string;
+  /** Canonical git URL from configuration, if available */
+  gitUrl?: string;
 }
 
 export type ConfigSourceType = "local-file" | "repository-content";
@@ -160,11 +201,25 @@ export class ConfigParseError extends ConfigError {
 export class ConfigValidationError extends ConfigError {
   constructor(errors: string[]) {
     super(
-      `Configuration validation failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`,
+      `Configuration validation failed:\n${errors.map((errorMessage) => `  - ${errorMessage}`).join("\n")}`,
       undefined,
       { errors },
     );
     this.name = "ConfigValidationError";
+  }
+}
+
+/**
+ * Error thrown when configuration version is not supported by this CLI release.
+ */
+export class UnsupportedConfigVersionError extends ConfigError {
+  constructor(version: string, supportedVersion: ConfigVersion) {
+    super(
+      `Unsupported configuration version "${version}". This version of arashi supports "${supportedVersion}".`,
+      undefined,
+      { supportedVersion, version },
+    );
+    this.name = "UnsupportedConfigVersionError";
   }
 }
 
@@ -184,9 +239,7 @@ export class ConfigValidationError extends ConfigError {
  * // Returns: /path/to/repo/.arashi/config.json
  * ```
  */
-export function getConfigPath(repoPath: string): string {
-  return join(repoPath, ".arashi", "config.json");
-}
+export const getConfigPath = (repoPath: string): string => join(repoPath, ".arashi", "config.json");
 
 /**
  * Check if configuration file exists
@@ -201,11 +254,11 @@ export function getConfigPath(repoPath: string): string {
  * }
  * ```
  */
-export async function configExists(repoPath: string): Promise<boolean> {
+export const configExists = async (repoPath: string): Promise<boolean> => {
   const configPath = getConfigPath(repoPath);
   const file = Bun.file(configPath);
   return await file.exists();
-}
+};
 
 /**
  * Find the workspace root by walking up the directory tree
@@ -225,7 +278,7 @@ export async function configExists(repoPath: string): Promise<boolean> {
  * // Returns: /workspace
  * ```
  */
-export async function findWorkspaceRoot(startPath: string = process.cwd()): Promise<string> {
+export const findWorkspaceRoot = async (startPath: string = process.cwd()): Promise<string> => {
   const { dirname, resolve, parse } = await import("path");
 
   let currentPath = resolve(startPath);
@@ -253,16 +306,16 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
 
     currentPath = parentPath;
   }
-}
+};
 
 /**
  * Generate default configuration
  *
  * Creates a minimal valid configuration with sensible defaults:
- * - version: "1.0.0"
- * - repos_dir: "./repos"
- * - auto_setup: true
- * - discovered_repos: {}
+ * - $schema: "https://unpkg.com/arashi/schema/config.schema.json"
+ * - version: CURRENT_CONFIG_VERSION
+ * - reposDir: "./repos"
+ * - repos: {}
  *
  * @returns Default configuration object
  *
@@ -272,26 +325,507 @@ export async function findWorkspaceRoot(startPath: string = process.cwd()): Prom
  * await saveConfig('/path/to/repo', defaultConfig);
  * ```
  */
-export function generateDefaultConfig(): Config {
-  return {
-    version: "1.0.0",
-    repos_dir: "./repos",
-    auto_setup: true,
-    discovered_repos: {},
-  };
-}
+export const generateDefaultConfig = (): Config => ({
+  $schema: DEFAULT_CONFIG_SCHEMA_URL,
+  repos: {},
+  reposDir: "./repos",
+  version: CURRENT_CONFIG_VERSION,
+  worktreesDir: DEFAULT_WORKTREES_DIR,
+});
 
 // ============================================================================
 // Validation Functions
 // ============================================================================
 
+const ROOT_ALLOWED_KEYS = new Set([
+  "$schema",
+  "version",
+  "reposDir",
+  "repos_dir",
+  "worktreesDir",
+  "worktrees_dir",
+  "repos",
+  "discoveredRepos",
+  "discovered_repos",
+  "hooks",
+  "sync",
+  "defaults",
+]);
+
+const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout"]);
+const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
+const VERSION_ALIASES = new Map<string, ConfigVersion>([["1", CURRENT_CONFIG_VERSION]]);
+
+const REPO_ALLOWED_KEYS = new Set([
+  "path",
+  "gitUrl",
+  "git_url",
+  "defaultBranch",
+  "default_branch",
+  "isBare",
+  "is_bare",
+  "worktrees",
+]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && Boolean(value) && !Array.isArray(value);
+
+const getFirstDefined = <ValueType>(
+  ...values: (ValueType | undefined)[]
+): ValueType | undefined => {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+};
+
+interface ValidateNoUnknownKeysOptions {
+  allowedKeys: Set<string>;
+  errors: string[];
+  prefix: string;
+  value: Record<string, unknown>;
+}
+
+const validateNoUnknownKeys = ({
+  allowedKeys,
+  errors,
+  prefix,
+  value,
+}: ValidateNoUnknownKeysOptions): void => {
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      let label = key;
+      if (prefix) {
+        label = `${prefix}.${key}`;
+      }
+      errors.push(`${label}: unknown property`);
+    }
+  }
+};
+
+const resolveConfigVersion = (
+  rawVersion: unknown,
+  errors: string[],
+): {
+  version: ConfigVersion;
+  migratedFromVersion?: string;
+} => {
+  if (typeof rawVersion !== "string" || rawVersion.trim() === "") {
+    errors.push("version: must be a non-empty string");
+    return { version: CURRENT_CONFIG_VERSION };
+  }
+
+  const version = rawVersion.trim();
+  const canonicalVersion = VERSION_ALIASES.get(version) ?? version;
+
+  if (canonicalVersion !== CURRENT_CONFIG_VERSION) {
+    throw new UnsupportedConfigVersionError(version, CURRENT_CONFIG_VERSION);
+  }
+
+  if (canonicalVersion !== version) {
+    return {
+      migratedFromVersion: version,
+      version: canonicalVersion,
+    };
+  }
+
+  return {
+    version: CURRENT_CONFIG_VERSION,
+  };
+};
+
+const normalizeRepoConfig = (
+  repoName: string,
+  value: unknown,
+  errors: string[],
+): RepoConfig | undefined => {
+  const prefix = `repos.${repoName}`;
+
+  if (!isRecord(value)) {
+    errors.push(`${prefix}: must be an object`);
+    return undefined;
+  }
+
+  validateNoUnknownKeys({ allowedKeys: REPO_ALLOWED_KEYS, errors, prefix, value });
+
+  const { path } = value;
+  const gitUrl = getFirstDefined(
+    value.gitUrl as string | undefined,
+    value.git_url as string | undefined,
+  );
+
+  if (typeof path !== "string" || path.trim() === "") {
+    errors.push(`${prefix}.path: must be a non-empty string`);
+    return undefined;
+  }
+
+  const normalized: RepoConfig = { path };
+
+  if (gitUrl !== undefined) {
+    if (typeof gitUrl !== "string" || gitUrl.trim() === "") {
+      errors.push(`${prefix}.gitUrl: must be a non-empty string if present`);
+    } else {
+      normalized.gitUrl = gitUrl;
+    }
+  }
+
+  return normalized;
+};
+
+const normalizeWorkspaceHooks = (
+  value: unknown,
+  prefix: string,
+  errors: string[],
+): Config["hooks"] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    errors.push(`${prefix}: must be an object if present`);
+    return undefined;
+  }
+
+  validateNoUnknownKeys({ allowedKeys: ROOT_HOOKS_ALLOWED_KEYS, errors, prefix, value });
+
+  const { timeout } = value;
+  if (timeout === undefined) {
+    return undefined;
+  }
+
+  if (typeof timeout !== "number" || !Number.isFinite(timeout) || timeout <= 0) {
+    errors.push(`${prefix}.timeout: must be a positive number if present`);
+    return undefined;
+  }
+
+  return { timeout };
+};
+
+const normalizeSyncConfig = (
+  value: unknown,
+  prefix: string,
+  errors: string[],
+): Config["sync"] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    errors.push(`${prefix}: must be an object if present`);
+    return undefined;
+  }
+
+  validateNoUnknownKeys({ allowedKeys: ROOT_SYNC_ALLOWED_KEYS, errors, prefix, value });
+
+  const timeoutSeconds = getFirstDefined(
+    value.timeoutSeconds as number | undefined,
+    value.timeout_seconds as number | undefined,
+  );
+
+  if (timeoutSeconds === undefined) {
+    return undefined;
+  }
+
+  if (
+    typeof timeoutSeconds !== "number" ||
+    !Number.isFinite(timeoutSeconds) ||
+    timeoutSeconds < 0
+  ) {
+    errors.push(`${prefix}.timeoutSeconds: must be a non-negative number if present`);
+    return undefined;
+  }
+
+  return {
+    timeoutSeconds,
+  };
+};
+
+const normalizeLaunchMode = (value: unknown): LaunchMode | undefined => {
+  if (value === "auto" || value === "sesh") {
+    return value;
+  }
+
+  return undefined;
+};
+
+const normalizeSwitchMode = (value: unknown): SwitchMode | undefined => {
+  if (value === "launch" || value === "cd" || value === "auto") {
+    return value;
+  }
+
+  return undefined;
+};
+
+const normalizeCreateCommandDefaults = (value: unknown): CreateCommandDefaults | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const normalized: CreateCommandDefaults = {};
+
+  if (typeof value.switch === "boolean") {
+    normalized.switch = value.switch;
+  }
+
+  if (typeof value.launch === "boolean") {
+    normalized.launch = value.launch;
+  }
+
+  const launchMode = normalizeLaunchMode(
+    getFirstDefined(value.launchMode as unknown, value.launch_mode as unknown),
+  );
+  if (launchMode !== undefined) {
+    normalized.launchMode = launchMode;
+    if (normalized.launch === undefined) {
+      normalized.launch = true;
+    }
+  }
+
+  if (normalized.launch === false) {
+    delete normalized.launchMode;
+  }
+
+  if (Object.keys(normalized).length > ZERO) {
+    return normalized;
+  }
+
+  return undefined;
+};
+
+const normalizeSwitchCommandDefaults = (value: unknown): SwitchCommandDefaults | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const mode = normalizeSwitchMode(value.mode as unknown);
+  const launchMode = normalizeLaunchMode(
+    getFirstDefined(value.launchMode as unknown, value.launch_mode as unknown),
+  );
+
+  if (mode === undefined && launchMode === undefined) {
+    return undefined;
+  }
+
+  const normalized: SwitchCommandDefaults = {};
+  if (mode !== undefined) {
+    normalized.mode = mode;
+  }
+  if (launchMode !== undefined) {
+    normalized.launchMode = launchMode;
+  }
+
+  return normalized;
+};
+
+const normalizeEditorCommandDefaults = (value: unknown): EditorCommandDefaults | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const createDefaults = normalizeCreateCommandDefaults(value.create);
+  if (!createDefaults) {
+    return undefined;
+  }
+
+  return {
+    create: createDefaults,
+  };
+};
+
+const normalizeEditorDefaultsConfig = (value: unknown): EditorDefaultsConfig | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const normalized: EditorDefaultsConfig = {};
+
+  const vscodeDefaults = normalizeEditorCommandDefaults(value.vscode);
+  if (vscodeDefaults) {
+    normalized.vscode = vscodeDefaults;
+  }
+
+  const cursorDefaults = normalizeEditorCommandDefaults(value.cursor);
+  if (cursorDefaults) {
+    normalized.cursor = cursorDefaults;
+  }
+
+  const kiroDefaults = normalizeEditorCommandDefaults(value.kiro);
+  if (kiroDefaults) {
+    normalized.kiro = kiroDefaults;
+  }
+
+  if (Object.keys(normalized).length > ZERO) {
+    return normalized;
+  }
+
+  return undefined;
+};
+
+const normalizeCommandDefaults = (value: unknown): CommandDefaultsConfig | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const createDefaults = normalizeCreateCommandDefaults(value.create);
+  const editorDefaults = normalizeEditorDefaultsConfig(value.editors);
+  const switchDefaults = normalizeSwitchCommandDefaults(value.switch);
+
+  const normalized: CommandDefaultsConfig = {};
+
+  if (createDefaults) {
+    normalized.create = createDefaults;
+  }
+
+  if (editorDefaults) {
+    normalized.editors = editorDefaults;
+  }
+
+  if (switchDefaults) {
+    normalized.switch = switchDefaults;
+  }
+
+  if (Object.keys(normalized).length > ZERO) {
+    return normalized;
+  }
+
+  return undefined;
+};
+
+const normalizeWorktreesDirConfig = (value: unknown, errors: string[]): string => {
+  if (value === undefined) {
+    return DEFAULT_WORKTREES_DIR;
+  }
+
+  if (typeof value !== "string") {
+    errors.push("worktreesDir: must be a string if present");
+    return DEFAULT_WORKTREES_DIR;
+  }
+
+  try {
+    return normalizeWorktreesDir(value);
+  } catch (error) {
+    if (error instanceof WorktreeLocationValidationError) {
+      errors.push(`worktreesDir: ${error.message}`);
+      return DEFAULT_WORKTREES_DIR;
+    }
+
+    throw error;
+  }
+};
+
+/**
+ * Normalize legacy/snake_case config keys to canonical camelCase format.
+ *
+ * Accepted legacy aliases:
+ * - repos_dir -> reposDir
+ * - discovered_repos / discoveredRepos -> repos
+ * - git_url -> gitUrl
+ *
+ * Legacy repository metadata keys (`defaultBranch`, `isBare`, `worktrees`) are
+ * accepted for backward compatibility but intentionally dropped from the
+ * normalized result.
+ */
+const normalizeConfigInternal = (
+  config: unknown,
+): {
+  config: Config;
+  migratedFromVersion?: string;
+} => {
+  const errors: string[] = [];
+
+  if (!isRecord(config)) {
+    throw new ConfigValidationError(["Config must be an object"]);
+  }
+
+  validateNoUnknownKeys({ allowedKeys: ROOT_ALLOWED_KEYS, errors, prefix: "", value: config });
+
+  const schema = config.$schema;
+  const versionInfo = resolveConfigVersion(config.version, errors);
+  const reposDir = getFirstDefined(
+    config.reposDir as string | undefined,
+    config.repos_dir as string | undefined,
+  );
+  const worktreesDirRaw = getFirstDefined(
+    config.worktreesDir as string | undefined,
+    config.worktrees_dir as string | undefined,
+  );
+  const reposRaw = getFirstDefined(
+    config.repos as Record<string, unknown> | undefined,
+    config.discoveredRepos as Record<string, unknown> | undefined,
+    config.discovered_repos as Record<string, unknown> | undefined,
+  );
+  const worktreesDir = normalizeWorktreesDirConfig(worktreesDirRaw, errors);
+  const hooks = normalizeWorkspaceHooks(config.hooks, "hooks", errors);
+  const sync = normalizeSyncConfig(config.sync, "sync", errors);
+  const defaults = normalizeCommandDefaults(config.defaults);
+
+  if (schema !== undefined && (typeof schema !== "string" || schema.trim() === "")) {
+    errors.push("$schema: must be a non-empty string if present");
+  }
+
+  if (typeof reposDir !== "string" || reposDir.trim() === "") {
+    errors.push("reposDir: must be a non-empty string");
+  }
+
+  const normalizedRepos: Record<string, RepoConfig> = {};
+  if (isRecord(reposRaw)) {
+    for (const [repoName, repoConfig] of Object.entries(reposRaw)) {
+      const normalized = normalizeRepoConfig(repoName, repoConfig, errors);
+      if (normalized) {
+        normalizedRepos[repoName] = normalized;
+      }
+    }
+  } else {
+    errors.push("repos: must be an object");
+  }
+
+  if (errors.length > 0) {
+    throw new ConfigValidationError(errors);
+  }
+
+  const normalizedVersion = versionInfo.version;
+  const normalizedReposDir = reposDir as string;
+
+  const normalizedConfig: Config = {
+    repos: normalizedRepos,
+    reposDir: normalizedReposDir,
+    version: normalizedVersion,
+    worktreesDir,
+  };
+
+  if (typeof schema === "string") {
+    normalizedConfig.$schema = schema;
+  }
+
+  if (hooks) {
+    normalizedConfig.hooks = hooks;
+  }
+
+  if (sync) {
+    normalizedConfig.sync = sync;
+  }
+
+  if (defaults) {
+    normalizedConfig.defaults = defaults;
+  }
+
+  return {
+    config: normalizedConfig,
+    migratedFromVersion: versionInfo.migratedFromVersion,
+  };
+};
+
+export const normalizeConfig = (config: unknown): Config => normalizeConfigInternal(config).config;
+
 /**
  * Validate configuration structure and required fields
  *
  * Checks:
- * - All required fields present (version, repos_dir, auto_setup, discovered_repos)
+ * - All required fields present (version, reposDir, repos)
  * - Field types are correct
- * - Nested structures valid (RepoConfig, WorktreeInfo, HookConfig)
+ * - Nested structures valid (RepoConfig and workspace-level hooks/sync objects)
  *
  * Does NOT check:
  * - File system paths exist
@@ -312,177 +846,9 @@ export function generateDefaultConfig(): Config {
  * }
  * ```
  */
-export function validateConfig(config: unknown): asserts config is Config {
-  const errors: string[] = [];
-  const cfg = config as Record<string, unknown>;
-
-  // Validate root level fields
-  if (typeof config !== "object" || config === null) {
-    throw new ConfigValidationError(["Config must be an object"]);
-  }
-
-  if (typeof cfg.version !== "string" || cfg.version === "") {
-    errors.push("version: must be a non-empty string");
-  }
-
-  if (typeof cfg.repos_dir !== "string" || cfg.repos_dir === "") {
-    errors.push("repos_dir: must be a non-empty string");
-  }
-
-  if (typeof cfg.auto_setup !== "boolean") {
-    errors.push("auto_setup: must be a boolean");
-  }
-
-  if (
-    typeof cfg.discovered_repos !== "object" ||
-    cfg.discovered_repos === null ||
-    Array.isArray(cfg.discovered_repos)
-  ) {
-    errors.push("discovered_repos: must be an object");
-  } else {
-    // Validate each repository configuration
-    for (const [repoName, repoConfig] of Object.entries(
-      cfg.discovered_repos as Record<string, unknown>,
-    )) {
-      validateRepoConfig(repoName, repoConfig, errors);
-    }
-  }
-
-  if (errors.length > 0) {
-    throw new ConfigValidationError(errors);
-  }
-}
-
-/**
- * Validate a single repository configuration
- *
- * @param repoName - Name of the repository (for error messages)
- * @param repoConfig - Repository configuration to validate
- * @param errors - Array to accumulate validation errors
- */
-function validateRepoConfig(repoName: string, repoConfig: unknown, errors: string[]): void {
-  const prefix = `discovered_repos.${repoName}`;
-  const repo = repoConfig as Record<string, unknown>;
-
-  if (typeof repoConfig !== "object" || repoConfig === null) {
-    errors.push(`${prefix}: must be an object`);
-    return;
-  }
-
-  // Required field: path
-  if (typeof repo.path !== "string" || repo.path === "") {
-    errors.push(`${prefix}.path: must be a non-empty string`);
-  }
-
-  // Optional field: default_branch
-  if (repo.default_branch !== undefined) {
-    if (typeof repo.default_branch !== "string" || repo.default_branch === "") {
-      errors.push(`${prefix}.default_branch: must be a non-empty string if present`);
-    }
-  }
-
-  // Optional field: is_bare
-  if (repo.is_bare !== undefined) {
-    if (typeof repo.is_bare !== "boolean") {
-      errors.push(`${prefix}.is_bare: must be a boolean if present`);
-    }
-  }
-
-  // Optional field: worktrees
-  if (repo.worktrees !== undefined) {
-    if (!Array.isArray(repo.worktrees)) {
-      errors.push(`${prefix}.worktrees: must be an array if present`);
-    } else {
-      repo.worktrees.forEach((worktree, index: number) => {
-        validateWorktreeInfo(`${prefix}.worktrees[${index}]`, worktree, errors);
-      });
-    }
-  }
-
-  // Optional field: hooks
-  if (repo.hooks !== undefined) {
-    validateHookConfig(`${prefix}.hooks`, repo.hooks, errors);
-  }
-}
-
-/**
- * Validate a single worktree configuration
- *
- * @param prefix - Path prefix for error messages
- * @param worktree - Worktree info to validate
- * @param errors - Array to accumulate validation errors
- */
-function validateWorktreeInfo(prefix: string, worktree: unknown, errors: string[]): void {
-  const wt = worktree as Record<string, unknown>;
-  if (typeof worktree !== "object" || worktree === null) {
-    errors.push(`${prefix}: must be an object`);
-    return;
-  }
-
-  // Required field: branch
-  if (typeof wt.branch !== "string" || wt.branch === "") {
-    errors.push(`${prefix}.branch: must be a non-empty string`);
-  }
-
-  // Required field: path
-  if (typeof wt.path !== "string" || wt.path === "") {
-    errors.push(`${prefix}.path: must be a non-empty string`);
-  }
-
-  // Required field: created_at
-  if (typeof wt.created_at !== "string" || wt.created_at === "") {
-    errors.push(`${prefix}.created_at: must be a non-empty string`);
-  } else {
-    // Validate ISO 8601 format
-    const date = new Date(wt.created_at);
-    if (isNaN(date.getTime())) {
-      errors.push(`${prefix}.created_at: must be a valid ISO 8601 date string`);
-    }
-  }
-
-  // Optional field: metadata
-  if (wt.metadata !== undefined) {
-    if (typeof wt.metadata !== "object" || wt.metadata === null || Array.isArray(wt.metadata)) {
-      errors.push(`${prefix}.metadata: must be an object if present`);
-    }
-  }
-}
-
-/**
- * Validate hook configuration
- *
- * @param prefix - Path prefix for error messages
- * @param hooks - Hook config to validate
- * @param errors - Array to accumulate validation errors
- */
-function validateHookConfig(prefix: string, hooks: unknown, errors: string[]): void {
-  const hookConfig = hooks as Record<string, unknown>;
-  if (typeof hooks !== "object" || hooks === null) {
-    errors.push(`${prefix}: must be an object`);
-    return;
-  }
-
-  // Optional field: pre_create
-  if (hookConfig.pre_create !== undefined) {
-    if (typeof hookConfig.pre_create !== "string" || hookConfig.pre_create === "") {
-      errors.push(`${prefix}.pre_create: must be a non-empty string if present`);
-    }
-  }
-
-  // Optional field: post_create
-  if (hookConfig.post_create !== undefined) {
-    if (typeof hookConfig.post_create !== "string" || hookConfig.post_create === "") {
-      errors.push(`${prefix}.post_create: must be a non-empty string if present`);
-    }
-  }
-
-  // Optional field: setup
-  if (hookConfig.setup !== undefined) {
-    if (typeof hookConfig.setup !== "string" || hookConfig.setup === "") {
-      errors.push(`${prefix}.setup: must be a non-empty string if present`);
-    }
-  }
-}
+export const validateConfig = (config: unknown): asserts config is Config => {
+  normalizeConfig(config);
+};
 
 // ============================================================================
 // Core Functions (TO BE IMPLEMENTED)
@@ -500,19 +866,20 @@ function validateHookConfig(prefix: string, hooks: unknown, errors: string[]): v
  * @example
  * ```typescript
  * const config = await loadConfig('/path/to/repo');
- * console.log(config.repos_dir); // "./repos"
+ * console.log(config.reposDir); // "./repos"
  * ```
  */
-export async function loadConfig(repoPath: string): Promise<Config> {
+export const loadConfig = async (repoPath: string): Promise<Config> => {
   const configPath = getConfigPath(repoPath);
 
   // Check if file exists
-  if (!(await configExists(repoPath))) {
+  const hasConfig = await configExists(repoPath);
+  if (!hasConfig) {
     throw new ConfigNotFoundError(configPath);
   }
 
   // Read file
-  let text: string;
+  let text = "";
   try {
     const file = Bun.file(configPath);
     text = await file.text();
@@ -523,48 +890,50 @@ export async function loadConfig(repoPath: string): Promise<Config> {
   }
 
   // Parse JSON
-  let data: unknown;
+  let data: unknown = undefined;
   try {
     data = JSON.parse(text);
   } catch (error) {
     throw new ConfigParseError(configPath, error as Error);
   }
 
-  // Validate structure
-  validateConfig(data);
+  const normalized = normalizeConfigInternal(data);
 
-  return data;
-}
+  if (normalized.migratedFromVersion) {
+    await saveConfig(repoPath, normalized.config);
+  }
 
-function parseAndValidateConfig(text: string, configPath: string): Config {
-  let data: unknown;
+  return normalized.config;
+};
+
+const parseAndValidateConfig = (text: string, configPath: string): Config => {
+  let data: unknown = undefined;
   try {
     data = JSON.parse(text);
   } catch (error) {
     throw new ConfigParseError(configPath, error as Error);
   }
 
-  validateConfig(data);
-  return data;
-}
+  return normalizeConfigInternal(data).config;
+};
 
 /**
  * Load configuration from local filesystem first, then optionally from tracked
  * repository content in the default branch.
  */
-export async function loadConfigWithFallback(
+export const loadConfigWithFallback = async (
   workspaceRoot: string,
   options: {
     bareRepoPath?: string;
   } = {},
-): Promise<LoadedConfig> {
+): Promise<LoadedConfig> => {
   const localPath = getConfigPath(workspaceRoot);
 
   try {
     return {
       config: await loadConfig(workspaceRoot),
-      source: "local-file",
       configPath: localPath,
+      source: "local-file",
     };
   } catch (error) {
     if (!(error instanceof ConfigNotFoundError) || !options.bareRepoPath) {
@@ -583,8 +952,8 @@ export async function loadConfigWithFallback(
     const text = await readTrackedFileFromDefaultBranch(barePath, repoConfigPath);
     return {
       config: parseAndValidateConfig(text, `${barePath}:${repoConfigPath}`),
-      source: "repository-content",
       configPath: `${barePath}:${repoConfigPath}`,
+      source: "repository-content",
     };
   } catch (error) {
     if (error instanceof ConfigError) {
@@ -593,7 +962,49 @@ export async function loadConfigWithFallback(
 
     throw new ConfigNotFoundError(localPath);
   }
-}
+};
+
+const normalizePersistedRepoConfig = (repoConfig: RepoConfig): RepoConfig => {
+  const normalized: RepoConfig = {
+    path: repoConfig.path,
+  };
+
+  if (repoConfig.gitUrl && repoConfig.gitUrl.trim().length > 0) {
+    normalized.gitUrl = repoConfig.gitUrl;
+  }
+
+  return normalized;
+};
+
+const normalizePersistedConfig = (config: Config): Config => {
+  const repos: Record<string, RepoConfig> = {};
+
+  for (const [name, repoConfig] of Object.entries(config.repos)) {
+    repos[name] = normalizePersistedRepoConfig(repoConfig);
+  }
+
+  const persisted: Config = {
+    $schema: config.$schema ?? DEFAULT_CONFIG_SCHEMA_URL,
+    repos,
+    reposDir: config.reposDir,
+    version: config.version,
+    worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+  };
+
+  if (config.hooks) {
+    persisted.hooks = config.hooks;
+  }
+
+  if (config.sync) {
+    persisted.sync = config.sync;
+  }
+
+  if (config.defaults) {
+    persisted.defaults = config.defaults;
+  }
+
+  return persisted;
+};
 
 /**
  * Save configuration to .arashi/config.json
@@ -608,20 +1019,23 @@ export async function loadConfigWithFallback(
  * @example
  * ```typescript
  * const config = await loadConfig('/path/to/repo');
- * config.auto_setup = false;
+ * config.reposDir = "./repos";
  * await saveConfig('/path/to/repo', config);
  * ```
  */
-export async function saveConfig(repoPath: string, config: Config): Promise<void> {
+export const saveConfig = async (repoPath: string, config: Config): Promise<void> => {
   const configPath = getConfigPath(repoPath);
   const configDir = dirname(configPath);
 
   try {
+    const normalized = normalizeConfig(config);
+    const persistedConfig = normalizePersistedConfig(normalized);
+
     // Ensure .arashi directory exists
     await mkdir(configDir, { recursive: true });
 
     // Write pretty-printed JSON (2-space indentation)
-    const json = JSON.stringify(config, null, 2);
+    const json = JSON.stringify(persistedConfig, null, TWO);
     await Bun.write(configPath, json);
   } catch (error) {
     throw new ConfigError(
@@ -630,7 +1044,7 @@ export async function saveConfig(repoPath: string, config: Config): Promise<void
       { path: configPath },
     );
   }
-}
+};
 
 /**
  * Add a repository to the configuration
@@ -644,33 +1058,32 @@ export async function saveConfig(repoPath: string, config: Config): Promise<void
  * ```typescript
  * await addRepo('/path/to/main-repo', 'my-app', {
  *   path: './repos/my-app',
- *   default_branch: 'main',
- *   is_bare: false
+ *   gitUrl: 'git@github.com:team/my-app.git'
  * });
  * ```
  */
-export async function addRepo(
+export const addRepo = async (
   repoPath: string,
   name: string,
   repoConfig: RepoConfig,
-): Promise<void> {
+): Promise<void> => {
   const config = await loadConfig(repoPath);
 
   // Check if repository name already exists
-  if (config.discovered_repos[name] !== undefined) {
+  if (config.repos[name] !== undefined) {
     throw new ConfigError(
-      `Repository "${name}" already exists in configuration. Use a different name or remove the existing repository first.`,
+      `Repository "${name}" already exists in configuration. Use "arashi clone" to materialize missing local repositories.`,
       undefined,
-      { name, existingConfig: config.discovered_repos[name] },
+      { existingConfig: config.repos[name], name },
     );
   }
 
   // Add repository
-  config.discovered_repos[name] = repoConfig;
+  config.repos[name] = repoConfig;
 
   // Save updated configuration
   await saveConfig(repoPath, config);
-}
+};
 
 /**
  * Remove a repository from the configuration
@@ -683,24 +1096,24 @@ export async function addRepo(
  * await removeRepo('/path/to/main-repo', 'my-app');
  * ```
  */
-export async function removeRepo(repoPath: string, name: string): Promise<void> {
+export const removeRepo = async (repoPath: string, name: string): Promise<void> => {
   const config = await loadConfig(repoPath);
 
   // Remove repository (idempotent - no error if doesn't exist)
-  delete config.discovered_repos[name];
+  delete config.repos[name];
 
   // Save updated configuration
   await saveConfig(repoPath, config);
-}
+};
 
 /**
  * Load workspace configuration and build absolute repository list.
  *
  * Includes the workspace root repository plus discovered repositories.
  */
-export async function loadWorkspaceRepositories(
+export const loadWorkspaceRepositories = async (
   workspaceRoot: string,
-): Promise<{ config: Config; repositories: WorkspaceRepository[] }> {
+): Promise<{ config: Config; repositories: WorkspaceRepository[] }> => {
   const config = await loadConfig(workspaceRoot);
   const repositories: WorkspaceRepository[] = [];
   const mainName = basename(workspaceRoot);
@@ -710,13 +1123,71 @@ export async function loadWorkspaceRepositories(
     path: resolve(workspaceRoot),
   });
 
-  for (const [name, repoConfig] of Object.entries(config.discovered_repos)) {
+  for (const [name, repoConfig] of Object.entries(config.repos)) {
     repositories.push({
+      gitUrl: repoConfig.gitUrl,
       name,
       path: resolve(workspaceRoot, repoConfig.path),
-      defaultBranch: repoConfig.default_branch,
     });
   }
 
   return { config, repositories };
+};
+
+export interface GitUrlRepairResult {
+  updated: boolean;
+  repaired: string[];
+  unresolved: string[];
 }
+
+/**
+ * Attempt to fill missing repository git URLs from local clone remotes.
+ *
+ * This provides backward-compatible repair behavior for existing workspaces
+ * where `repos` entries were created before `gitUrl` tracking.
+ */
+export const repairRepositoryGitUrls = async (
+  workspaceRoot: string,
+  config: Config,
+): Promise<GitUrlRepairResult> => {
+  const repaired: string[] = [];
+  const unresolved: string[] = [];
+
+  for (const [name, repoConfig] of Object.entries(config.repos)) {
+    if (!repoConfig.gitUrl || repoConfig.gitUrl.trim().length === ZERO) {
+      const repoPath = resolve(workspaceRoot, repoConfig.path);
+      const gitUrl = await resolveOriginRemoteUrl(repoPath);
+      if (gitUrl) {
+        repoConfig.gitUrl = gitUrl;
+        repaired.push(name);
+      } else {
+        unresolved.push(name);
+      }
+    }
+  }
+
+  let updated = false;
+  if (repaired.length > ZERO) {
+    updated = true;
+  }
+
+  return {
+    repaired,
+    unresolved,
+    updated,
+  };
+};
+
+const resolveOriginRemoteUrl = async (repoPath: string): Promise<string | undefined> => {
+  try {
+    const result = await exec(["remote", "get-url", "origin"], repoPath);
+    const remoteUrl = result.stdout.trim();
+    if (remoteUrl.length > ZERO) {
+      return remoteUrl;
+    }
+
+    return undefined;
+  } catch {
+    return undefined;
+  }
+};

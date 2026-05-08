@@ -1,8 +1,8 @@
 import {
-  confirm as inquirerConfirm,
-  select as inquirerSelect,
   checkbox as inquirerCheckbox,
+  confirm as inquirerConfirm,
   input as inquirerInput,
+  select as inquirerSelect,
 } from "@inquirer/prompts";
 import readline from "readline";
 
@@ -13,15 +13,22 @@ import readline from "readline";
 /**
  * Choice type for select and multiSelect prompts
  */
-export type Choice<T> = {
+export interface Choice<T> {
   value: T;
   name: string;
   description?: string;
-};
+}
 
 export type PromptOutcome<T> =
   | { status: "ok"; value: T }
   | { status: "cancelled"; reason: "exit" | "abort" };
+
+interface PromptKey {
+  name?: string;
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+}
 
 // ============================================================================
 // Prompt Outcome Wrapper
@@ -48,10 +55,24 @@ async function withPromptOutcome<T>(promptFn: () => Promise<T>): Promise<PromptO
       promptError?.message?.includes("User force closed")
     ) {
       const reason = promptError?.name === "AbortPromptError" ? "abort" : "exit";
-      return { status: "cancelled", reason };
+      return { reason, status: "cancelled" };
     }
     // Re-throw other errors
     throw error;
+  }
+}
+
+function handleVimNavigationKeypress(_str: string, key: PromptKey): void {
+  if (!key || key.ctrl || key.meta) {
+    return;
+  }
+
+  if (key.name === "j") {
+    process.stdin.emit("keypress", "", { ctrl: false, meta: false, name: "down", shift: false });
+  }
+
+  if (key.name === "k") {
+    process.stdin.emit("keypress", "", { ctrl: false, meta: false, name: "up", shift: false });
   }
 }
 
@@ -63,24 +84,9 @@ function withVimNavigation<T>(
   }
 
   readline.emitKeypressEvents(process.stdin);
-  const handler = (
-    _str: string,
-    key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean },
-  ) => {
-    if (!key || key.ctrl || key.meta) {
-      return;
-    }
-    if (key.name === "j") {
-      process.stdin.emit("keypress", "", { name: "down", ctrl: false, meta: false, shift: false });
-    }
-    if (key.name === "k") {
-      process.stdin.emit("keypress", "", { name: "up", ctrl: false, meta: false, shift: false });
-    }
-  };
-
-  process.stdin.on("keypress", handler);
+  process.stdin.on("keypress", handleVimNavigationKeypress);
   return promptFn().finally(() => {
-    process.stdin.off("keypress", handler);
+    process.stdin.off("keypress", handleVimNavigationKeypress);
   });
 }
 
@@ -105,16 +111,13 @@ function withVimNavigation<T>(
  *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function confirm(
-  message: string,
-  defaultValue?: boolean,
-): Promise<PromptOutcome<boolean>> {
-  return withPromptOutcome(async () => {
-    return await inquirerConfirm({
-      message,
+export function confirm(message: string, defaultValue?: boolean): Promise<PromptOutcome<boolean>> {
+  return withPromptOutcome(() =>
+    inquirerConfirm({
       default: defaultValue,
-    });
-  });
+      message,
+    }),
+  );
 }
 
 // ============================================================================
@@ -139,18 +142,18 @@ export async function confirm(
  *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function select<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T>> {
+export function select<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T>> {
   if (choices.length === 0) {
-    throw new Error("Cannot display select prompt with empty choices array");
+    return Promise.reject(new Error("Cannot display select prompt with empty choices array"));
   }
 
   return withVimNavigation(() =>
-    withPromptOutcome(async () => {
-      return await inquirerSelect({
-        message,
+    withPromptOutcome(() =>
+      inquirerSelect({
         choices,
-      });
-    }),
+        message,
+      }),
+    ),
   );
 }
 
@@ -177,17 +180,14 @@ export async function select<T>(message: string, choices: Choice<T>[]): Promise<
  *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function multiSelect<T>(
-  message: string,
-  choices: Choice<T>[],
-): Promise<PromptOutcome<T[]>> {
+export function multiSelect<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T[]>> {
   return withVimNavigation(() =>
-    withPromptOutcome(async () => {
-      return await inquirerCheckbox({
-        message,
+    withPromptOutcome(() =>
+      inquirerCheckbox({
         choices,
-      });
-    }),
+        message,
+      }),
+    ),
   );
 }
 
@@ -210,14 +210,11 @@ export async function multiSelect<T>(
  *
  * **Ctrl+C**: Exits process with code 2
  */
-export async function input(
-  message: string,
-  defaultValue?: string,
-): Promise<PromptOutcome<string>> {
-  return withPromptOutcome(async () => {
-    return await inquirerInput({
-      message,
+export function input(message: string, defaultValue?: string): Promise<PromptOutcome<string>> {
+  return withPromptOutcome(() =>
+    inquirerInput({
       default: defaultValue,
-    });
-  });
+      message,
+    }),
+  );
 }

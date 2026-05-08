@@ -1,6 +1,6 @@
 import { mkdir, rm } from "fs/promises";
-import { tmpdir } from "os";
 import { join } from "path";
+import { tmpdir } from "os";
 
 export interface BareCreateWorkspace {
   rootPath: string;
@@ -12,6 +12,7 @@ export interface BareCreateWorkspace {
 export interface BareCreateWorkspaceOptions {
   includeConfig?: boolean;
   configReposDir?: string;
+  configWorktreesDir?: string;
 }
 
 export async function createBareCreateWorkspace(
@@ -19,6 +20,7 @@ export async function createBareCreateWorkspace(
 ): Promise<BareCreateWorkspace> {
   const includeConfig = options.includeConfig ?? true;
   const configReposDir = options.configReposDir ?? "./repos";
+  const configWorktreesDir = options.configWorktreesDir ?? ".arashi/worktrees";
   const rootPath = join(
     tmpdir(),
     `arashi-bare-create-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -43,10 +45,10 @@ export async function createBareCreateWorkspace(
       join(seedPath, ".arashi", "config.json"),
       JSON.stringify(
         {
+          repos: {},
+          reposDir: configReposDir,
           version: "1.0.0",
-          repos_dir: configReposDir,
-          auto_setup: true,
-          discovered_repos: {},
+          worktreesDir: configWorktreesDir,
         },
         null,
         2,
@@ -62,20 +64,20 @@ export async function createBareCreateWorkspace(
   await execGit(["worktree", "add", worktreePath, "main"], bareRepoPath);
 
   return {
-    rootPath,
     bareRepoPath,
-    worktreePath,
     cleanup: async () => {
-      await rm(rootPath, { recursive: true, force: true });
+      await rm(rootPath, { force: true, recursive: true });
     },
+    rootPath,
+    worktreePath,
   };
 }
 
 async function execGit(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
 
   const exitCode = await proc.exited;

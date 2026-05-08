@@ -1,5 +1,6 @@
-import { exec } from "./git.ts";
 import { isAbsolute, resolve } from "path";
+import { exec } from "./git.ts";
+import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 
 export interface PullExecutionOptions {
   timeoutMs?: number;
@@ -25,19 +26,19 @@ export async function runPullWithRollback(
 
   if (pullResult.exitCode === 0) {
     return {
-      status: "updated",
       output: pullResult.output,
+      status: "updated",
     };
   }
 
   const rollbackSucceeded = await rollbackPull(repoPath, originalHead, wasClean);
   const status = pullResult.timedOut ? "failed" : "manual-update";
   return {
-    status,
-    output: pullResult.output,
     errorMessage: rollbackSucceeded
       ? pullResult.error || "Pull failed and was rolled back"
       : `${pullResult.error || "Pull failed"} (rollback failed)`,
+    output: pullResult.output,
+    status,
   };
 }
 
@@ -115,9 +116,9 @@ async function runGitCommand(
 ): Promise<{ exitCode: number; output: string; error?: string; timedOut?: boolean }> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    stdout: "pipe",
+    env: normalizeSpawnEnvironment(process.env),
     stderr: "pipe",
-    env: process.env as Record<string, string>,
+    stdout: "pipe",
   });
 
   const stdoutPromise = new Response(proc.stdout).text();
@@ -150,16 +151,16 @@ async function runGitCommand(
   if (exitCode !== 0) {
     if (exitCode === -1 && timeoutMs) {
       return {
+        error: `Timed out after ${timeoutMs}ms`,
         exitCode,
         output,
-        error: `Timed out after ${timeoutMs}ms`,
         timedOut: true,
       };
     }
     return {
+      error: stderr.trim() || stdout.trim() || "Git command failed",
       exitCode,
       output,
-      error: stderr.trim() || stdout.trim() || "Git command failed",
     };
   }
 

@@ -5,26 +5,47 @@
  * directories, finding git repositories, and handling various edge cases.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { rm, mkdir } from "fs/promises";
+import {
+  CloneErrorCode,
+  CloneStatus,
+  cloneRepository,
+  detectDefaultBranch,
+  detectSetupScript,
+  discoverRepositories,
+  validateWorkspace,
+} from "../../../src/core/repository.js";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, rm, stat } from "fs/promises";
 import { join } from "path";
 import { spawn } from "child_process";
-import { stat } from "fs/promises";
-import {
-  discoverRepositories,
-  type RepositoryDiscoveryResult,
-  validateWorkspace,
-  type WorkspaceConfiguration,
-  type ValidationResult,
-  cloneRepository,
-  type CloneOperation,
-  CloneStatus,
-  type CloneProgress,
-  CloneErrorCode,
-} from "../../../src/core/repository.js";
+
+type CloneOperation = Awaited<ReturnType<typeof cloneRepository>>;
+type CloneProgress = Parameters<
+  NonNullable<NonNullable<Parameters<typeof cloneRepository>[2]>["onProgress"]>
+>[0];
+type RepositoryDiscoveryResult = Awaited<ReturnType<typeof discoverRepositories>>;
+type ValidationResult = Awaited<ReturnType<typeof validateWorkspace>>;
+type WorkspaceConfiguration = Parameters<typeof validateWorkspace>[0];
 
 // Test workspace directory
 const TEST_WORKSPACE = join(import.meta.dir, "../temp-test-workspace");
+
+function sortStringArray(values: string[]): string[] {
+  const sortedValues = [...values];
+  for (let index = 1; index < sortedValues.length; index += 1) {
+    const currentValue = sortedValues[index];
+    let insertIndex = index - 1;
+
+    while (insertIndex >= 0 && sortedValues[insertIndex].localeCompare(currentValue) > 0) {
+      sortedValues[insertIndex + 1] = sortedValues[insertIndex];
+      insertIndex -= 1;
+    }
+
+    sortedValues[insertIndex + 1] = currentValue;
+  }
+
+  return sortedValues;
+}
 
 /**
  * Helper to execute git commands
@@ -63,13 +84,13 @@ async function createGitRepo(path: string): Promise<void> {
 describe("Repository Discovery (US1)", () => {
   beforeEach(async () => {
     // Clean up test workspace before each test
-    await rm(TEST_WORKSPACE, { recursive: true, force: true });
+    await rm(TEST_WORKSPACE, { force: true, recursive: true });
     await mkdir(TEST_WORKSPACE, { recursive: true });
   });
 
   afterEach(async () => {
     // Clean up after tests
-    await rm(TEST_WORKSPACE, { recursive: true, force: true });
+    await rm(TEST_WORKSPACE, { force: true, recursive: true });
   });
 
   // T012: Unit test for discoverRepositories() with multiple repositories
@@ -84,7 +105,11 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: All 3 repositories found
     expect(result.repositories).toHaveLength(3);
-    expect(result.repositories.map((r) => r.name).sort()).toEqual(["repo1", "repo2", "repo3"]);
+    expect(sortStringArray(result.repositories.map((r) => r.name))).toEqual([
+      "repo1",
+      "repo2",
+      "repo3",
+    ]);
     expect(result.errors).toHaveLength(0);
     expect(result.workspacePath).toBe(TEST_WORKSPACE);
   });
@@ -102,7 +127,7 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: Only actual repositories found
     expect(result.repositories).toHaveLength(2);
-    expect(result.repositories.map((r) => r.name).sort()).toEqual(["repo1", "repo2"]);
+    expect(sortStringArray(result.repositories.map((r) => r.name))).toEqual(["repo1", "repo2"]);
   });
 
   // T014: Unit test for discoverRepositories() respecting maxDepth option
@@ -120,7 +145,7 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: Only repos within depth 2 found
     expect(result1.repositories).toHaveLength(2);
-    expect(result1.repositories.map((r) => r.name).sort()).toEqual(["level1", "level2"]);
+    expect(sortStringArray(result1.repositories.map((r) => r.name))).toEqual(["level1", "level2"]);
 
     // Act: Discovery with maxDepth 4
     const result2: RepositoryDiscoveryResult = await discoverRepositories(TEST_WORKSPACE, {
@@ -143,7 +168,8 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: Only parent repo found, subdirectories not scanned
     expect(result.repositories).toHaveLength(1);
-    expect(result.repositories[0].name).toBe("parent-repo");
+    const [firstRepository] = result.repositories;
+    expect(firstRepository.name).toBe("parent-repo");
     // Should not have scanned deep into repository subdirectories
     expect(result.scannedDirectories).toBeLessThan(5);
   });
@@ -163,7 +189,7 @@ describe("Repository Discovery (US1)", () => {
 
     // Assert: Only non-excluded repos found
     expect(result.repositories).toHaveLength(2);
-    expect(result.repositories.map((r) => r.name).sort()).toEqual(["repo1", "repo2"]);
+    expect(sortStringArray(result.repositories.map((r) => r.name))).toEqual(["repo1", "repo2"]);
   });
 
   // T017: Unit test for discoverRepositories() handling permission errors gracefully
@@ -183,9 +209,10 @@ describe("Repository Discovery (US1)", () => {
 
       // Assert: Should continue despite permission error
       expect(result.repositories).toHaveLength(1);
-      expect(result.repositories[0].name).toBe("repo1");
+      const [firstRepository] = result.repositories;
+      expect(firstRepository.name).toBe("repo1");
       // May have recorded a permission error
-      // expect(result.errors.length).toBeGreaterThan(0);
+      // Expect(result.errors.length).toBeGreaterThan(0);
 
       // Cleanup: Restore permissions
       await exec("chmod 755 restricted", TEST_WORKSPACE);
@@ -218,16 +245,14 @@ describe("Repository Discovery (US1)", () => {
 // User Story 2: Default Branch Detection (T029-T034)
 // ============================================================================
 
-import { detectDefaultBranch, detectSetupScript } from "../../../src/core/repository.js";
-
 describe("Default Branch Detection (US2)", () => {
   beforeEach(async () => {
-    await rm(TEST_WORKSPACE, { recursive: true, force: true });
+    await rm(TEST_WORKSPACE, { force: true, recursive: true });
     await mkdir(TEST_WORKSPACE, { recursive: true });
   });
 
   afterEach(async () => {
-    await rm(TEST_WORKSPACE, { recursive: true, force: true });
+    await rm(TEST_WORKSPACE, { force: true, recursive: true });
   });
 
   // T029: Unit test for detectDefaultBranch() with 'main' as default
@@ -449,8 +474,8 @@ describe("User Story 5: validateWorkspace()", () => {
 
     // Configuration expecting these 3 repos
     const config: WorkspaceConfiguration = {
-      workspacePath,
       repositories: [{ name: "repo-1" }, { name: "repo-2" }, { name: "repo-3" }],
+      workspacePath,
     };
 
     // Act
@@ -476,14 +501,14 @@ describe("User Story 5: validateWorkspace()", () => {
 
     // Configuration expecting 5 repos
     const config: WorkspaceConfiguration = {
-      workspacePath,
       repositories: [
         { name: "repo-1" },
         { name: "repo-2" },
-        { name: "repo-3" }, // missing
-        { name: "repo-4" }, // missing
-        { name: "repo-5" }, // missing
+        { name: "repo-3" }, // Missing
+        { name: "repo-4" }, // Missing
+        { name: "repo-5" }, // Missing
       ],
+      workspacePath,
     };
 
     // Act
@@ -510,8 +535,8 @@ describe("User Story 5: validateWorkspace()", () => {
 
     // Configuration expecting only 2 repos
     const config: WorkspaceConfiguration = {
-      workspacePath,
       repositories: [{ name: "repo-1" }, { name: "repo-2" }],
+      workspacePath,
     };
 
     // Act
@@ -522,7 +547,11 @@ describe("User Story 5: validateWorkspace()", () => {
     expect(result.present).toHaveLength(2);
     expect(result.missing).toHaveLength(0);
     expect(result.extra).toHaveLength(3);
-    expect(result.extra.map((r) => r.name).sort()).toEqual(["extra-1", "extra-2", "extra-3"]);
+    expect(sortStringArray(result.extra.map((r) => r.name))).toEqual([
+      "extra-1",
+      "extra-2",
+      "extra-3",
+    ]);
   });
 
   // T063: Unit test for validateWorkspace() reporting missing repo details
@@ -535,7 +564,6 @@ describe("User Story 5: validateWorkspace()", () => {
 
     // Configuration with detailed info for missing repos
     const config: WorkspaceConfiguration = {
-      workspacePath,
       repositories: [
         { name: "present-repo" },
         {
@@ -545,6 +573,7 @@ describe("User Story 5: validateWorkspace()", () => {
         },
         { name: "missing-repo-2", url: "https://github.com/example/repo2.git" },
       ],
+      workspacePath,
     };
 
     // Act
@@ -573,12 +602,12 @@ describe("User Story 4: cloneRepository()", () => {
   const CLONE_TEST_WORKSPACE = join(TEST_WORKSPACE, "clone-tests");
 
   beforeEach(async () => {
-    await rm(CLONE_TEST_WORKSPACE, { recursive: true, force: true });
+    await rm(CLONE_TEST_WORKSPACE, { force: true, recursive: true });
     await mkdir(CLONE_TEST_WORKSPACE, { recursive: true });
   });
 
   afterEach(async () => {
-    await rm(CLONE_TEST_WORKSPACE, { recursive: true, force: true });
+    await rm(CLONE_TEST_WORKSPACE, { force: true, recursive: true });
   });
 
   // T077: Unit test for cloneRepository() successful clone
@@ -611,7 +640,7 @@ describe("User Story 4: cloneRepository()", () => {
     expect(await readmeFile.exists()).toBe(true);
     const readmeContent = await readmeFile.text();
     expect(readmeContent).toBe("# Test Repo");
-  }, 10000);
+  }, 10_000);
 
   // T078: Unit test for cloneRepository() with target already exists error
   test("T078: fails when target path already exists", async () => {
@@ -649,7 +678,7 @@ describe("User Story 4: cloneRepository()", () => {
     expect(result.error).toBeDefined();
     // Error could be NETWORK_ERROR or INVALID_URL depending on failure mode
     expect(["NETWORK_ERROR", "INVALID_URL", "UNKNOWN"]).toContain(result.error!.code);
-  }, 10000);
+  }, 10_000);
 
   // T080: Unit test for cloneRepository() with progress callbacks
   test("T080: reports progress during clone", async () => {
@@ -682,10 +711,10 @@ describe("User Story 4: cloneRepository()", () => {
 
     // Verify progress updates have expected structure
     if (progressUpdates.length > 0) {
-      const firstProgress = progressUpdates[0];
+      const [firstProgress] = progressUpdates;
       expect(firstProgress).toHaveProperty("phase");
       expect(firstProgress).toHaveProperty("percentage");
       expect(firstProgress).toHaveProperty("message");
     }
-  }, 10000);
+  }, 10_000);
 });

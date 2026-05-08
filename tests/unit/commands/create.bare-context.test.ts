@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createBareCreateWorkspace } from "../../helpers/create-bare-create-workspace.ts";
+import { join } from "path";
+import { mkdir } from "fs/promises";
 import { resolveCreateInvocationContext } from "../../../src/commands/create.ts";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../../helpers/create-bare-create-workspace.ts";
+type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
 
@@ -33,6 +33,19 @@ describe("create command bare context resolver", () => {
     const context = await resolveCreateInvocationContext(workspace.worktreePath);
 
     expect(context.repositoryType).toBe("non-bare");
+    expect(context.workspaceRoot).toBe(workspace.worktreePath);
+    expect(context.executionPath).toBe(workspace.worktreePath);
+  });
+
+  test("normalizes nested non-bare invocation to workspace root", async () => {
+    workspace = await createBareCreateWorkspace();
+    const nestedPath = join(workspace.worktreePath, "nested", "path", "inside");
+    await mkdir(nestedPath, { recursive: true });
+
+    const context = await resolveCreateInvocationContext(nestedPath);
+
+    expect(context.repositoryType).toBe("non-bare");
+    expect(context.invocationPath).toBe(nestedPath);
     expect(context.workspaceRoot).toBe(workspace.worktreePath);
     expect(context.executionPath).toBe(workspace.worktreePath);
   });

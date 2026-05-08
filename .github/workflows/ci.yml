@@ -1,5 +1,11 @@
 name: CI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Bun 1.3.12 produced macOS compiled binaries that exit 137 immediately on launch.
+  # Pin release and CI builds to a known-good compiler until a later Bun version is verified.
+  BUN_VERSION: "1.3.10"
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -27,7 +33,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Cache Bun install
         uses: actions/cache@v4
@@ -39,6 +45,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Validate generated config schema
+        run: bun run schema:check
 
       - name: Validate README documentation link target
         run: |
@@ -78,7 +87,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Cache Bun install
         uses: actions/cache@v4
@@ -125,7 +134,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Cache Bun install
         uses: actions/cache@v4

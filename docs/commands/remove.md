@@ -43,3 +43,24 @@ arashi remove feature-login --json
 - The command skips main worktrees automatically.
 - Dirty worktrees require explicit confirmation unless `--no-check-dirty` is set.
 - Use `--keep-worktrees` or `--keep-branches` for selective removal. Using both performs no operations.
+
+## Remove Lifecycle Hooks
+
+Remove hooks can be defined at three scopes:
+
+- Repository scope: `repos/<repo>/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
+- Workspace-root scope: `.arashi/hooks/pre-remove.sh` and `post-remove.sh`
+- Global scope:
+  - repository-targeted: `~/.arashi/hooks/<repo>/pre-remove.sh` and `post-remove.sh`
+  - shared: `~/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
+
+Behavior:
+
+- For each targeted repository, hooks run in order: repository -> workspace-root -> global targeted -> global shared.
+- `pre-remove.sh` runs after confirmation and before destructive operations.
+- If any discovered `pre-remove` hook fails, remove operations are aborted.
+- `post-remove.sh` runs after remove operations are attempted, including partial-failure runs.
+- If any discovered `post-remove` hook fails, the command reports hook errors and exits non-zero.
+- Hook scope metadata is available via `ARASHI_HOOK_SCOPE` and `ARASHI_HOOK_SOURCE_PATH`.
+
+Common use cases include session teardown (for example tmux cleanup), external cache cleanup, and follow-up notifications.

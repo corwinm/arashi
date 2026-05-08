@@ -1,5 +1,5 @@
-import type { WorkspaceRepository } from "./config.ts";
 import type { SetupScopeType, SetupTarget } from "./setup-types.ts";
+import type { WorkspaceRepository } from "./config.ts";
 import { join } from "path";
 
 const DEFAULT_SETUP_PATTERNS = ["setup.sh", "setup.bash", ".arashi/setup.sh"];
@@ -24,7 +24,7 @@ export async function discoverSetupTargets(
     const setupScriptPath = selected ? await detectSetupScript(repository.path) : undefined;
     const hasSetupTask = selected ? Boolean(setupScriptPath) : false;
 
-    let skipReason: string | undefined;
+    let skipReason: string | undefined = undefined;
     if (!selected) {
       skipReason = "excluded by --only filter";
     } else if (!hasSetupTask) {
@@ -33,15 +33,15 @@ export async function discoverSetupTargets(
 
     targets.push({
       ...repository,
+      hasSetupTask,
       scopeType: index === 0 ? "main" : "sub",
       selected,
-      hasSetupTask,
       setupScriptPath,
       skipReason,
     });
   }
 
-  return { targets, missing };
+  return { missing, targets };
 }
 
 export function orderSetupTargets(targets: SetupTarget[]): SetupTarget[] {
@@ -55,7 +55,7 @@ function normalizeOnly(only: string[] | undefined): string[] {
     return [];
   }
 
-  return Array.from(new Set(only.map((name) => name.trim()).filter(Boolean)));
+  return [...new Set(only.map((name) => name.trim()).filter(Boolean))];
 }
 
 function findMissingRepositories(repositories: WorkspaceRepository[], only: string[]): string[] {

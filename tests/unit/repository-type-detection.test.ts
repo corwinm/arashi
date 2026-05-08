@@ -6,14 +6,12 @@
  * as meta-repo, child, or standalone based on configuration and location.
  */
 
-import { test, expect, beforeEach, afterEach, describe } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { join } from "path";
-
-// Import the function we're testing (will be implemented in T009)
-import { detectRepositoryType } from "../../src/core/worktree.ts";
+import type { Config as ArashiConfig } from "../../src/lib/config.ts";
 import type { Repository } from "../../src/core/repository.ts";
-import type { ArashiConfig } from "../../src/types.ts";
+import { detectRepositoryType } from "../../src/core/worktree.ts";
+import { join } from "path";
 
 describe("detectRepositoryType", () => {
   const testDir = join(import.meta.dir, "temp-test-workspace");
@@ -23,7 +21,7 @@ describe("detectRepositoryType", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   describe("US1: Meta-repo Detection", () => {
@@ -36,10 +34,10 @@ describe("detectRepositoryType", () => {
       await writeFile(arashiConfigPath, JSON.stringify({ version: "1.0.0" }));
 
       const repo: Repository = {
-        name: "meta-repo",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "meta-repo",
+        path: metaRepoPath,
       };
 
       const result = await detectRepositoryType(repo, null);
@@ -59,18 +57,16 @@ describe("detectRepositoryType", () => {
       await writeFile(arashiConfigPath, JSON.stringify({ version: "1.0.0" }));
 
       const repo: Repository = {
-        name: "meta-repo",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "meta-repo",
+        path: metaRepoPath,
       };
 
       const config: ArashiConfig = {
+        repos: {},
+        reposDir: "./repos",
         version: "1.0.0",
-        repos_dir: "./repos",
-        auto_setup: true,
-        worktree_strategy: "same_branch",
-        discovered_repos: {},
       };
 
       const result = await detectRepositoryType(repo, config);

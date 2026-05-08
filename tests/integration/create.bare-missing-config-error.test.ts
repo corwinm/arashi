@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../helpers/create-bare-create-workspace.ts";
+import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { join } from "path";
+type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
@@ -23,8 +21,8 @@ describe("create missing config guidance from bare root", () => {
 
     const proc = Bun.spawn(["bun", CLI_ENTRY, "create", "feature-no-config"], {
       cwd: workspace.bareRepoPath,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const stdout = await new Response(proc.stdout).text();

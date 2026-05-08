@@ -3,8 +3,15 @@
  * Preserves full diagnostic context from git commands
  */
 
-import type { GitErrorContext } from "../types/git.js";
 import { GitErrorCode } from "../types/git.js";
+
+interface GitErrorContext {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  args: string[];
+  cwd?: string;
+}
 
 export class ArashiError extends Error {
   /** Error name (always 'ArashiError') */
@@ -72,16 +79,16 @@ export class ArashiError extends Error {
    */
   toJSON(): object {
     return {
-      name: this.name,
-      message: this.message,
       code: this.code,
       context: {
-        stdout: this.context.stdout,
-        stderr: this.context.stderr,
-        exitCode: this.context.exitCode,
         args: this.context.args,
         cwd: this.context.cwd,
+        exitCode: this.context.exitCode,
+        stderr: this.context.stderr,
+        stdout: this.context.stdout,
       },
+      message: this.message,
+      name: this.name,
       stack: this.stack,
     };
   }
@@ -128,10 +135,10 @@ export class AddCommandError extends Error {
    */
   toJSON(): object {
     return {
-      name: this.name,
-      message: this.message,
       code: this.code,
       context: this.context,
+      message: this.message,
+      name: this.name,
       stack: this.stack,
     };
   }
@@ -175,10 +182,10 @@ export class RemoveCommandError extends Error {
 
   toJSON(): object {
     return {
-      name: this.name,
-      message: this.message,
       code: this.code,
       context: this.context,
+      message: this.message,
+      name: this.name,
       stack: this.stack,
     };
   }

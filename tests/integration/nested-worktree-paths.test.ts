@@ -6,14 +6,12 @@
  * within the full worktree creation flow for all repository types.
  */
 
-import { test, expect, beforeEach, afterEach, describe } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
+import type { Repository } from "../../src/core/repository.ts";
+import { createCoordinatedWorktrees } from "../../src/core/worktree.ts";
 import { join } from "path";
 import { spawn } from "bun";
-
-// Will test the full flow through createCoordinatedWorktrees
-import { createCoordinatedWorktrees } from "../../src/core/worktree.ts";
-import type { Repository } from "../../src/core/repository.ts";
 
 describe("Nested Worktree Paths Integration", () => {
   const testDir = join(import.meta.dir, "../temp-integration-workspace");
@@ -23,7 +21,7 @@ describe("Nested Worktree Paths Integration", () => {
   });
 
   afterEach(async () => {
-    await rm(testDir, { recursive: true, force: true });
+    await rm(testDir, { force: true, recursive: true });
   });
 
   async function initGitRepo(path: string) {
@@ -45,38 +43,36 @@ describe("Nested Worktree Paths Integration", () => {
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
         JSON.stringify({
+          repos: {},
+          reposDir: "./repos",
           version: "1.0.0",
-          repos_dir: "./repos",
-          auto_setup: false,
           worktree_strategy: "same_branch",
-          discovered_repos: {},
         }),
       );
 
       await initGitRepo(metaRepoPath);
 
       const repo: Repository = {
-        name: "parent-repo",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "parent-repo",
+        path: metaRepoPath,
       };
 
       // Create worktree
       const result = await createCoordinatedWorktrees("feature", [repo], {
-        showProgress: false,
         executeHooks: false,
+        showProgress: false,
       });
 
       // Verify worktree was created as sibling
       expect(result.successCount).toBe(1);
       expect(result.failureCount).toBe(0);
 
-      const worktreePath = join(testDir, "parent-repo-feature");
+      const worktreePath = join(metaRepoPath, ".arashi", "worktrees", "parent-repo-feature");
       const worktreeExists = await Bun.file(join(worktreePath, "README.md")).exists();
       expect(worktreeExists).toBe(true);
 
-      // Verify directory structure: parent-repo/ and parent-repo-feature/ at same level
       const parentExists = await Bun.file(join(metaRepoPath, "README.md")).exists();
       expect(parentExists).toBe(true);
     });
@@ -88,33 +84,31 @@ describe("Nested Worktree Paths Integration", () => {
       await writeFile(
         join(metaRepoPath, ".arashi", "config.json"),
         JSON.stringify({
+          repos: {},
+          reposDir: "./repos",
           version: "1.0.0",
-          repos_dir: "./repos",
-          auto_setup: false,
           worktree_strategy: "same_branch",
-          discovered_repos: {},
         }),
       );
 
       await initGitRepo(metaRepoPath);
 
       const repo: Repository = {
-        name: "existing-repo",
-        path: metaRepoPath,
         defaultBranch: "main",
         hasSetupScript: false,
+        name: "existing-repo",
+        path: metaRepoPath,
       };
 
       // Create worktree with different branch name
       const result = await createCoordinatedWorktrees("bugfix-123", [repo], {
-        showProgress: false,
         executeHooks: false,
+        showProgress: false,
       });
 
       expect(result.successCount).toBe(1);
 
-      // Verify sibling creation with correct naming
-      const worktreePath = join(testDir, "existing-repo-bugfix-123");
+      const worktreePath = join(metaRepoPath, ".arashi", "worktrees", "existing-repo-bugfix-123");
       const worktreeExists = await Bun.file(join(worktreePath, "README.md")).exists();
       expect(worktreeExists).toBe(true);
     });

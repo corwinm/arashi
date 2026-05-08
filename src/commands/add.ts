@@ -8,13 +8,75 @@
  * @module commands/add
  */
 
-import { Command } from "commander";
-import { join, basename } from "path";
-import { spinner, success, error as logError, info } from "../lib/logger.ts";
-import { clone, getDefaultBranch } from "../lib/git.ts";
-import { loadConfig, saveConfig, getConfigPath, configExists } from "../lib/config.ts";
 import { AddCommandError, AddCommandErrorCode } from "../lib/errors.ts";
-import type { RepoConfig } from "../lib/config.ts";
+import { basename, join } from "path";
+import { clone, getDefaultBranch } from "../lib/git.ts";
+import { configExists, getConfigPath, loadConfig, saveConfig } from "../lib/config.ts";
+import { info, error as logError, spinner, success } from "../lib/logger.ts";
+import { Command } from "commander";
+import { executeClone } from "./clone.ts";
+import { confirm as promptConfirm } from "../lib/prompts.ts";
+
+type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
+
+const ZERO = 0;
+const JSON_INDENT = 2;
+const ERROR_EXIT_CODE = 1;
+const CANCELLED_EXIT_CODE = 2;
+
+const detectDefaultBranchOrThrow = async (clonePath: string, gitUrl: string): Promise<string> => {
+  try {
+    return await getDefaultBranch(clonePath);
+  } catch {
+    throw new AddCommandError(
+      "Unable to detect default branch: repository has no remote branches",
+      AddCommandErrorCode.BRANCH_DETECTION_FAILED,
+      { repositoryPath: clonePath, url: gitUrl },
+    );
+  }
+};
+
+const hasMakefileSetupTarget = async (file: Bun.BunFile): Promise<boolean> => {
+  try {
+    const content = await file.text();
+    return /^(setup|install):/m.test(content);
+  } catch {
+    return false;
+  }
+};
+
+const maybeRunCloneFallback = async (error: AddCommandError): Promise<void> => {
+  if (
+    error.code !== AddCommandErrorCode.DUPLICATE_NAME ||
+    !process.stdin.isTTY ||
+    !process.stdout.isTTY
+  ) {
+    return;
+  }
+
+  const fallback = await promptConfirm(
+    "Repository is already configured. Run `arashi clone` now?",
+    true,
+  );
+  if (fallback.status === "ok" && fallback.value) {
+    const cloneResult = await executeClone({}, { workspaceRoot: process.cwd() });
+    if (cloneResult.status === "cancelled") {
+      process.exit(ZERO);
+    }
+
+    process.exit(cloneResult.failed.length > ZERO ? ERROR_EXIT_CODE : ZERO);
+  }
+};
+
+const getLastPathSegment = (pathParts: string[]): string => {
+  const filteredParts = pathParts.filter((part) => part.length > ZERO);
+  const lastPart = filteredParts.at(-1);
+  if (!lastPart) {
+    throw new Error("Unable to determine repository name from path");
+  }
+
+  return lastPart;
+};
 
 // ============================================================================
 // Type Definitions
@@ -92,11 +154,11 @@ interface RollbackOperation {
  * Git URL validation patterns for different protocols
  */
 const GIT_URL_PATTERNS = {
-  https: /^https:\/\/[^/]+\/.+/,
-  ssh: /^(ssh:\/\/[^@]+@[^/]+\/|git@[^:]+:)[^/].+/,
-  git: /^git:\/\/[^/]+\/.+/,
   file: /^(file:\/\/)?\/[^/].+/,
+  git: /^git:\/\/[^/]+\/.+/,
+  https: /^https:\/\/[^/]+\/.+/,
   scp: /^[^@]+@[^:]+:[^/].+/,
+  ssh: /^(ssh:\/\/[^@]+@[^/]+\/|git@[^:]+:)[^/].+/,
 };
 
 /**
@@ -134,14 +196,14 @@ export function isValidGitUrl(url: string): boolean {
  */
 export function deriveRepoName(gitUrl: string): string {
   // Remove trailing slashes and .git suffix
-  let url = gitUrl
+  const url = gitUrl
     .trim()
     .replace(/\/+$/, "")
     .replace(/\.git$/, "");
 
   // Extract last path segment
   const parts = url.split(/[/:]/);
-  let name = parts[parts.length - 1];
+  const name = getLastPathSegment(parts);
 
   // Validate name contains safe characters
   if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
@@ -172,80 +234,76 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
   }
 
   const trimmedUrl = gitUrl.trim();
-  let protocol: GitUrlInfo["protocol"];
+  let protocol: GitUrlInfo["protocol"] = "scp";
   let host: string | null = null;
   let owner: string | null = null;
-  let repository: string;
+  let repository = deriveRepoName(trimmedUrl);
 
   // Determine protocol
   if (GIT_URL_PATTERNS.https.test(trimmedUrl)) {
     protocol = "https";
     const match = trimmedUrl.match(/^https:\/\/([^/]+)\/(.+)/);
     if (match) {
-      host = match[1];
-      const path = match[2].replace(/\.git$/, "");
+      const [, matchedHost, matchedPath] = match;
+      host = matchedHost;
+      const path = matchedPath.replace(/\.git\/?$/, "").replace(/\/+$/, "");
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
-        owner = pathParts[0];
-        repository = pathParts[pathParts.length - 1];
-      } else {
-        repository = pathParts[pathParts.length - 1];
+        const [pathOwner] = pathParts;
+        owner = pathOwner;
       }
-    } else {
-      repository = deriveRepoName(trimmedUrl);
+      repository = getLastPathSegment(pathParts);
     }
   } else if (GIT_URL_PATTERNS.ssh.test(trimmedUrl) || GIT_URL_PATTERNS.scp.test(trimmedUrl)) {
     protocol = "ssh";
     // Match patterns like git@github.com:user/repo.git or ssh://git@github.com/user/repo.git
     const sshMatch = trimmedUrl.match(/^(?:ssh:\/\/)?([^@]+)@([^:/]+):?(.+)/);
     if (sshMatch) {
-      host = sshMatch[2];
-      const path = sshMatch[3].replace(/^\//, "").replace(/\.git$/, "");
+      const [_fullMatch, _gitUser, matchedHost, matchedPath] = sshMatch;
+      host = matchedHost;
+      const path = matchedPath
+        .replace(/^\//, "")
+        .replace(/\.git\/?$/, "")
+        .replace(/\/+$/, "");
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
-        owner = pathParts[0];
-        repository = pathParts[pathParts.length - 1];
-      } else {
-        repository = pathParts[pathParts.length - 1];
+        const [pathOwner] = pathParts;
+        owner = pathOwner;
       }
-    } else {
-      repository = deriveRepoName(trimmedUrl);
+      repository = getLastPathSegment(pathParts);
     }
   } else if (GIT_URL_PATTERNS.git.test(trimmedUrl)) {
     protocol = "git";
     const match = trimmedUrl.match(/^git:\/\/([^/]+)\/(.+)/);
     if (match) {
-      host = match[1];
-      const path = match[2].replace(/\.git$/, "");
+      const [, matchedHost, matchedPath] = match;
+      host = matchedHost;
+      const path = matchedPath.replace(/\.git\/?$/, "").replace(/\/+$/, "");
       const pathParts = path.split("/");
       if (pathParts.length >= 2) {
-        owner = pathParts[0];
-        repository = pathParts[pathParts.length - 1];
-      } else {
-        repository = pathParts[pathParts.length - 1];
+        const [pathOwner] = pathParts;
+        owner = pathOwner;
       }
-    } else {
-      repository = deriveRepoName(trimmedUrl);
+      repository = getLastPathSegment(pathParts);
     }
   } else if (GIT_URL_PATTERNS.file.test(trimmedUrl)) {
     protocol = "file";
-    const path = trimmedUrl.replace(/^file:\/\//, "").replace(/\.git$/, "");
+    const path = trimmedUrl
+      .replace(/^file:\/\//, "")
+      .replace(/\.git\/?$/, "")
+      .replace(/\/+$/, "");
     repository = basename(path);
-  } else {
-    // Fallback - shouldn't reach here if isValidGitUrl passed
-    protocol = "scp";
-    repository = deriveRepoName(trimmedUrl);
   }
 
   const derivedName = deriveRepoName(trimmedUrl);
 
   return {
-    url: trimmedUrl,
-    protocol,
+    derivedName,
     host,
     owner,
+    protocol,
     repository,
-    derivedName,
+    url: trimmedUrl,
   };
 }
 
@@ -291,14 +349,8 @@ export async function detectSetupScript(repoPath: string): Promise<string | null
     if (await file.exists()) {
       // For Makefile, verify it has setup/install target
       if (scriptName === "Makefile") {
-        try {
-          const content = await file.text();
-          if (content.match(/^(setup|install):/m)) {
-            return scriptPath;
-          }
-        } catch {
-          // Ignore read errors, continue to next script
-          continue;
+        if (await hasMakefileSetupTarget(file)) {
+          return scriptPath;
         }
       } else {
         return scriptPath;
@@ -321,16 +373,17 @@ export async function detectSetupScript(repoPath: string): Promise<string | null
  * @param workspaceRoot - Root directory of the workspace
  * @returns Result of add operation
  */
-async function executeAdd(
+const executeAdd = async (
   gitUrl: string,
   options: AddCommandOptions,
   workspaceRoot: string,
-): Promise<AddCommandResult> {
+): Promise<AddCommandResult> => {
   const operations: RollbackOperation[] = [];
 
   try {
     // Step 1: Validate workspace is initialized
-    if (!(await configExists(workspaceRoot))) {
+    const hasConfig = await configExists(workspaceRoot);
+    if (!hasConfig) {
       throw new AddCommandError(
         'Workspace not initialized. Run "arashi init" first.',
         AddCommandErrorCode.CONFIG_UPDATE_FAILED,
@@ -348,51 +401,44 @@ async function executeAdd(
 
     // Step 4: Check for duplicate name
     const config = await loadConfig(workspaceRoot);
-    if (config.discovered_repos[repositoryName]) {
+    if (config.repos[repositoryName]) {
       throw new AddCommandError(
-        `Repository name "${repositoryName}" already exists at ${config.discovered_repos[repositoryName].path}`,
+        `Repository name "${repositoryName}" already exists at ${config.repos[repositoryName].path}`,
         AddCommandErrorCode.DUPLICATE_NAME,
         {
-          name: repositoryName,
-          existingPath: config.discovered_repos[repositoryName].path,
+          existingPath: config.repos[repositoryName].path,
           gitUrl,
+          name: repositoryName,
         },
       );
     }
 
     // Step 5: Prepare clone destination
-    const reposDir = join(workspaceRoot, config.repos_dir);
+    const reposDir = join(workspaceRoot, config.reposDir);
     const clonePath = join(reposDir, repositoryName);
 
     // Step 6: Clone repository
     const s2 = spinner(`Cloning repository from ${gitUrl}...`).start();
     try {
       await clone(gitUrl, clonePath);
-      operations.push({ type: "clone", path: clonePath, reversible: true });
+      operations.push({ path: clonePath, reversible: true, type: "clone" });
       s2.succeed("Repository cloned");
     } catch (error) {
       s2.fail("Clone failed");
       throw new AddCommandError(
         `Git clone operation failed: ${(error as Error).message}`,
         AddCommandErrorCode.CLONE_FAILED,
-        { url: gitUrl, error: (error as Error).message },
+        { error: (error as Error).message, url: gitUrl },
       );
     }
 
     // Step 7: Detect default branch
     const s3 = spinner("Detecting default branch...").start();
-    let defaultBranch: string;
-    try {
-      defaultBranch = await getDefaultBranch(clonePath);
-      s3.succeed(`Detected default branch: ${defaultBranch}`);
-    } catch {
+    const defaultBranch = await detectDefaultBranchOrThrow(clonePath, gitUrl).catch((error) => {
       s3.fail("Branch detection failed");
-      throw new AddCommandError(
-        "Unable to detect default branch: repository has no remote branches",
-        AddCommandErrorCode.BRANCH_DETECTION_FAILED,
-        { repositoryPath: clonePath, url: gitUrl },
-      );
-    }
+      throw error;
+    });
+    s3.succeed(`Detected default branch: ${defaultBranch}`);
 
     // Step 8: Detect setup script
     const s4 = spinner("Checking for setup script...").start();
@@ -407,19 +453,11 @@ async function executeAdd(
     const s5 = spinner("Updating configuration...").start();
     try {
       const repoConfig: RepoConfig = {
-        path: join(".", config.repos_dir, repositoryName),
-        default_branch: defaultBranch,
-        is_bare: false,
-        worktrees: [],
+        gitUrl: urlInfo.url,
+        path: join(".", config.reposDir, repositoryName),
       };
 
-      if (setupScript) {
-        repoConfig.hooks = {
-          setup: join(".", config.repos_dir, repositoryName, basename(setupScript)),
-        };
-      }
-
-      config.discovered_repos[repositoryName] = repoConfig;
+      config.repos[repositoryName] = repoConfig;
       await saveConfig(workspaceRoot, config);
       s5.succeed("Configuration updated");
     } catch (error) {
@@ -433,37 +471,38 @@ async function executeAdd(
 
     // Success!
     return {
-      repositoryName,
       clonePath,
       defaultBranch,
+      gitUrl,
+      repositoryName,
       setupScript,
       setupScriptCreated: false,
-      gitUrl,
     };
   } catch (error) {
     // Rollback operations in reverse order
-    for (const op of operations.reverse()) {
+    const rollbackOperations = [...operations];
+    rollbackOperations.reverse();
+
+    for (const operation of rollbackOperations) {
       try {
-        if (op.type === "clone") {
-          // Remove cloned directory
-          await Bun.$`rm -rf ${op.path}`;
+        if (operation.type === "clone") {
+          await Bun.$`rm -rf ${operation.path}`;
         }
       } catch (cleanupError) {
-        // Log warning but don't fail the error reporting
-        info(`Warning: Failed to clean up ${op.path}: ${(cleanupError as Error).message}`);
-        info(`Please manually remove: rm -rf ${op.path}`);
+        info(`Warning: Failed to clean up ${operation.path}: ${(cleanupError as Error).message}`);
+        info(`Please manually remove: rm -rf ${operation.path}`);
       }
     }
 
     // Re-throw original error
     throw error;
   }
-}
+};
 
 /**
  * Display success message in human-readable format
  */
-function displaySuccess(result: AddCommandResult, workspaceRoot: string): void {
+const displaySuccess = (result: AddCommandResult, workspaceRoot: string): void => {
   success("\nRepository added successfully:");
   console.log(`  Name:     ${result.repositoryName}`);
   console.log(`  Location: ${result.clonePath.replace(workspaceRoot, ".")}`);
@@ -480,12 +519,12 @@ function displaySuccess(result: AddCommandResult, workspaceRoot: string): void {
     console.log("\nNext steps:");
     console.log(`  Create worktree: arashi create my-branch`);
   }
-}
+};
 
 /**
  * Display error message in human-readable format
  */
-function displayError(error: AddCommandError): void {
+const displayError = (error: AddCommandError): void => {
   logError(`\n✗ ${error.message}\n`);
 
   if (error.code === AddCommandErrorCode.INVALID_URL) {
@@ -497,10 +536,8 @@ function displayError(error: AddCommandError): void {
     console.log("  - SCP:   user@host:repo.git");
   } else if (error.code === AddCommandErrorCode.DUPLICATE_NAME) {
     console.log("Solutions:");
-    console.log(
-      `  1. Use a different name: arashi add ${error.context?.gitUrl} --name ${error.context?.name}-2`,
-    );
-    console.log(`  2. Remove existing repo: arashi remove ${error.context?.name}`);
+    console.log("  1. Clone the configured repository if it is missing locally: arashi clone");
+    console.log("  2. Inspect current workspace status: arashi status");
   } else if (error.code === AddCommandErrorCode.CLONE_FAILED) {
     console.log("Common causes:");
     console.log("  - Network connectivity issues");
@@ -508,7 +545,7 @@ function displayError(error: AddCommandError): void {
     console.log("  - Authentication required (use SSH with configured keys)");
     console.log("  - Insufficient disk space");
   }
-}
+};
 
 /**
  * Create the add command for Commander.js
@@ -534,17 +571,17 @@ export function createCommand(): Command {
           console.log(
             JSON.stringify(
               {
-                success: true,
                 repository: {
+                  defaultBranch: result.defaultBranch,
+                  gitUrl: result.gitUrl,
                   name: result.repositoryName,
                   path: result.clonePath.replace(workspaceRoot, "."),
-                  gitUrl: result.gitUrl,
-                  defaultBranch: result.defaultBranch,
                   setupScript: result.setupScript
                     ? result.setupScript.replace(workspaceRoot, ".")
                     : null,
                   setupScriptCreated: result.setupScriptCreated,
                 },
+                success: true,
               },
               null,
               2,
@@ -561,39 +598,40 @@ export function createCommand(): Command {
             console.log(
               JSON.stringify(
                 {
-                  success: false,
                   error: {
                     code: error.code,
-                    message: error.message,
                     details: error.context,
+                    message: error.message,
                   },
+                  success: false,
                 },
                 null,
-                2,
+                JSON_INDENT,
               ),
             );
           } else {
             displayError(error);
+            await maybeRunCloneFallback(error);
           }
-          process.exit(2);
+          process.exit(CANCELLED_EXIT_CODE);
         } else {
           logError(`\nUnexpected error: ${(error as Error).message}`);
           if (options.json) {
             console.log(
               JSON.stringify(
                 {
-                  success: false,
                   error: {
                     code: "UNKNOWN_ERROR",
                     message: (error as Error).message,
                   },
+                  success: false,
                 },
                 null,
-                2,
+                JSON_INDENT,
               ),
             );
           }
-          process.exit(1);
+          process.exit(ERROR_EXIT_CODE);
         }
       }
     });

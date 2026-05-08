@@ -14,8 +14,8 @@ export function detectTerminalContext(output: TerminalOutput = process.stdout): 
   const envColumns = normalizeColumns(parseEnvColumns(process.env.COLUMNS));
 
   return {
-    isInteractive,
     columns: streamColumns ?? envColumns,
+    isInteractive,
   };
 }
 

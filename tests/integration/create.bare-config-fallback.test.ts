@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../helpers/create-bare-create-workspace.ts";
+import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { join } from "path";
+type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
@@ -25,8 +23,8 @@ describe("create config fallback in bare repository", () => {
       ["bun", CLI_ENTRY, "create", "feature-config-fallback", "--no-hooks", "--no-progress"],
       {
         cwd: workspace.bareRepoPath,
-        stdout: "pipe",
         stderr: "pipe",
+        stdout: "pipe",
       },
     );
 

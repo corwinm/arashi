@@ -1,4 +1,6 @@
-import { runWithTimeout, type RunWithTimeoutResult } from "../process/run-with-timeout.ts";
+import { runWithTimeout } from "../process/run-with-timeout.ts";
+
+type RunWithTimeoutResult = Awaited<ReturnType<typeof runWithTimeout>>;
 
 export interface SyncBranchOutcome {
   status: "success" | "failure" | "timeout";
@@ -13,6 +15,20 @@ interface GitCommandOutcome {
   remainingMs: number;
 }
 
+interface TimedGitOptions {
+  repoPath: string;
+  startTime: number;
+  timeoutMs: number;
+}
+
+interface RunGitOptions extends TimedGitOptions {
+  args: string[];
+}
+
+interface BranchExistsOptions extends TimedGitOptions {
+  branchName: string;
+}
+
 export async function alignRepositoryBranch(options: {
   repoPath: string;
   targetBranch: string;
@@ -21,7 +37,7 @@ export async function alignRepositoryBranch(options: {
   const startTime = Date.now();
   const { repoPath, targetBranch, timeoutMs } = options;
 
-  const currentBranchOutcome = await getCurrentBranch(repoPath, startTime, timeoutMs);
+  const currentBranchOutcome = await getCurrentBranch({ repoPath, startTime, timeoutMs });
   if (currentBranchOutcome.status === "timeout") {
     return currentBranchOutcome;
   }
@@ -31,7 +47,12 @@ export async function alignRepositoryBranch(options: {
 
   const previousBranch = currentBranchOutcome.currentBranch;
 
-  const existsOutcome = await branchExists(repoPath, targetBranch, startTime, timeoutMs);
+  const existsOutcome = await branchExists({
+    branchName: targetBranch,
+    repoPath,
+    startTime,
+    timeoutMs,
+  });
   if (existsOutcome.status === "timeout") {
     return existsOutcome;
   }
@@ -42,19 +63,19 @@ export async function alignRepositoryBranch(options: {
   if (existsOutcome.exists) {
     if (previousBranch === targetBranch) {
       return {
-        status: "success",
         createdBranch: false,
-        previousBranch,
         currentBranch: targetBranch,
+        previousBranch,
+        status: "success",
       };
     }
 
-    const checkoutOutcome = await runGit(
+    const checkoutOutcome = await runGit({
+      args: ["checkout", targetBranch],
       repoPath,
-      ["checkout", targetBranch],
       startTime,
       timeoutMs,
-    );
+    });
 
     if (checkoutOutcome.result.timedOut) {
       return buildTimeoutOutcome(previousBranch);
@@ -69,19 +90,19 @@ export async function alignRepositoryBranch(options: {
     }
 
     return {
-      status: "success",
       createdBranch: false,
-      previousBranch,
       currentBranch: targetBranch,
+      previousBranch,
+      status: "success",
     };
   }
 
-  const createOutcome = await runGit(
+  const createOutcome = await runGit({
+    args: ["checkout", "-b", targetBranch],
     repoPath,
-    ["checkout", "-b", targetBranch],
     startTime,
     timeoutMs,
-  );
+  });
 
   if (createOutcome.result.timedOut) {
     return buildTimeoutOutcome(previousBranch);
@@ -92,24 +113,24 @@ export async function alignRepositoryBranch(options: {
   }
 
   return {
-    status: "success",
     createdBranch: true,
-    previousBranch,
     currentBranch: targetBranch,
+    previousBranch,
+    status: "success",
   };
 }
 
-async function getCurrentBranch(
-  repoPath: string,
-  startTime: number,
-  timeoutMs: number,
-): Promise<SyncBranchOutcome> {
-  const outcome = await runGit(
+async function getCurrentBranch({
+  repoPath,
+  startTime,
+  timeoutMs,
+}: TimedGitOptions): Promise<SyncBranchOutcome> {
+  const outcome = await runGit({
+    args: ["rev-parse", "--abbrev-ref", "HEAD"],
     repoPath,
-    ["rev-parse", "--abbrev-ref", "HEAD"],
     startTime,
     timeoutMs,
-  );
+  });
 
   if (outcome.result.timedOut) {
     return buildTimeoutOutcome(null);
@@ -123,25 +144,25 @@ async function getCurrentBranch(
   const currentBranch = branch === "HEAD" ? null : branch;
 
   return {
-    status: "success",
     createdBranch: false,
-    previousBranch: currentBranch,
     currentBranch,
+    previousBranch: currentBranch,
+    status: "success",
   };
 }
 
-async function branchExists(
-  repoPath: string,
-  branchName: string,
-  startTime: number,
-  timeoutMs: number,
-): Promise<SyncBranchOutcome & { exists?: boolean }> {
-  const outcome = await runGit(
+async function branchExists({
+  branchName,
+  repoPath,
+  startTime,
+  timeoutMs,
+}: BranchExistsOptions): Promise<SyncBranchOutcome & { exists?: boolean }> {
+  const outcome = await runGit({
+    args: ["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`],
     repoPath,
-    ["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`],
     startTime,
     timeoutMs,
-  );
+  });
 
   if (outcome.result.timedOut) {
     return buildTimeoutOutcome(null);
@@ -149,11 +170,11 @@ async function branchExists(
 
   if (outcome.result.exitCode === 0) {
     return {
-      status: "success",
       createdBranch: false,
-      previousBranch: null,
       currentBranch: null,
       exists: true,
+      previousBranch: null,
+      status: "success",
     };
   }
 
@@ -162,26 +183,26 @@ async function branchExists(
   }
 
   return {
-    status: "success",
     createdBranch: false,
-    previousBranch: null,
     currentBranch: null,
     exists: false,
+    previousBranch: null,
+    status: "success",
   };
 }
 
-async function runGit(
-  repoPath: string,
-  args: string[],
-  startTime: number,
-  timeoutMs: number,
-): Promise<GitCommandOutcome> {
+async function runGit({
+  args,
+  repoPath,
+  startTime,
+  timeoutMs,
+}: RunGitOptions): Promise<GitCommandOutcome> {
   const elapsed = Date.now() - startTime;
   const remainingMs = timeoutMs - elapsed;
   if (remainingMs <= 0) {
     return {
-      result: createImmediateTimeoutResult(),
       remainingMs,
+      result: createImmediateTimeoutResult(),
     };
   }
 
@@ -190,16 +211,16 @@ async function runGit(
     timeoutMs: remainingMs,
   });
 
-  return { result, remainingMs };
+  return { remainingMs, result };
 }
 
 function buildTimeoutOutcome(previousBranch: string | null): SyncBranchOutcome {
   return {
-    status: "timeout",
     createdBranch: false,
-    previousBranch,
     currentBranch: previousBranch,
     errorMessage: "Repository operation timed out",
+    previousBranch,
+    status: "timeout",
   };
 }
 
@@ -213,11 +234,11 @@ function buildFailureOutcome(
   const detail = stderr || stdout || "Unknown error";
 
   return {
-    status: "failure",
     createdBranch: false,
-    previousBranch,
     currentBranch: previousBranch,
     errorMessage: `git ${commandDescription} failed: ${detail}`,
+    previousBranch,
+    status: "failure",
   };
 }
 
@@ -228,12 +249,12 @@ function isNotRepositoryError(stderr: string): boolean {
 
 function createImmediateTimeoutResult(): RunWithTimeoutResult {
   return {
-    stdout: "",
-    stderr: "",
-    exitCode: -1,
-    timedOut: true,
     durationMs: 0,
-    signalCode: null,
+    exitCode: -1,
     killed: false,
+    signalCode: null,
+    stderr: "",
+    stdout: "",
+    timedOut: true,
   };
 }

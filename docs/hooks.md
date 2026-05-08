@@ -1,35 +1,94 @@
 # Hooks
 
-Arashi supports lifecycle hooks to customize worktree creation workflows.
+Arashi supports lifecycle hooks to customize create and remove workflows.
 
 ## Hook Locations
 
-Place hook scripts under `.arashi/hooks/` in the main repository:
+### `arashi create`
+
+Create hooks are discovered from the workspace root `.arashi/hooks/` directory:
 
 - `pre-create.sh` runs once before any worktrees are created.
-- `post-create.sh` runs once after all worktrees and other hooks complete.
-- `pre-create.<child-repo>.sh` runs after the child worktree exists and before the repo-specific post-create hook.
-- `post-create.<child-repo>.sh` runs after the repo-specific pre-create hook.
+- `post-create.sh` runs once after create processing completes.
+- `pre-create.<child-repo>.sh` runs for a specific child repository.
+- `post-create.<child-repo>.sh` runs for a specific child repository.
+
+### `arashi remove`
+
+Remove hooks are discovered per target repository from scoped locations:
+
+1. Repository scope: `<workspace>/repos/<repo>/.arashi/hooks/<lifecycle>.sh`
+2. Workspace-root scope: `<workspace>/.arashi/hooks/<lifecycle>.sh`
+3. Global scope (repository-targeted): `~/.arashi/hooks/<repo>/<lifecycle>.sh`
+4. Global scope (shared): `~/.arashi/hooks/<lifecycle>.sh`
+
+Supported remove lifecycles:
+
+- `pre-remove.sh`
+- `post-remove.sh`
 
 ## Execution Order
+
+### `arashi create`
 
 1. Global `pre-create.sh`
 2. Repo-specific `pre-create.<child-repo>.sh`
 3. Repo-specific `post-create.<child-repo>.sh`
 4. Global `post-create.sh`
 
+### `arashi remove`
+
+For each targeted repository, hooks run in this order:
+
+1. Repository scope
+2. Workspace-root scope
+3. Global repository-targeted scope
+4. Global shared scope
+
+Lifecycle timing:
+
+1. Confirmation (unless `--force`)
+2. All discovered `pre-remove` hooks in scope order
+3. Worktree removals and branch deletions
+4. All discovered `post-remove` hooks in scope order
+
 ## Failure Behavior
 
-- If any hook fails, the create operation stops immediately and the global post-create hook does not run.
+- If any create hook fails, create stops and `post-create.sh` does not run.
+- If any discovered `pre-remove` hook fails or times out, remove operations are aborted before destructive actions.
+- `post-remove` hooks run after remove attempts complete, including partial-failure runs.
+- If any discovered `post-remove` hook fails or times out, `arashi remove` exits non-zero.
+- Missing hooks are reported as `skipped (not_found)`.
 
 ## Context and Environment
 
-Repo-specific hooks run with the working directory set to the new child worktree and receive these environment variables:
+Hooks run with `ARASHI_*` environment variables.
 
-- `ARASHI_BRANCH_NAME`
-- `ARASHI_REPO_NAME`
-- `ARASHI_WORKTREE_PATH`
+Common variables:
+
+- `ARASHI_HOOK_NAME`
+- `ARASHI_REPO_PATH`
 - `ARASHI_MAIN_REPO_PATH`
-- `ARASHI_PARENT_REPO_PATH`
 
-Global hooks run in the main repo context.
+Remove hooks additionally receive aggregate targets:
+
+- `ARASHI_OPERATION` (`remove`)
+- `ARASHI_REMOVE_TARGET_BRANCHES`
+- `ARASHI_REMOVE_TARGET_WORKTREES`
+- `ARASHI_REMOVE_TARGET_REPOSITORIES`
+- `ARASHI_REMOVE_TOTAL_BRANCHES`
+- `ARASHI_REMOVE_TOTAL_WORKTREES`
+- `ARASHI_REMOVE_TOTAL_REPOSITORIES`
+
+Scoped remove hooks also receive:
+
+- `ARASHI_HOOK_SCOPE` (`repository`, `workspace`, `global-repository`, `global-shared`)
+- `ARASHI_HOOK_SOURCE_PATH`
+- `ARASHI_HOOK_TARGET_REPOSITORY`
+- `ARASHI_HOOK_TARGET_REPO_PATH`
+
+Working directory rules for remove hooks:
+
+- Repository scope hooks run in the child repository path.
+- Workspace-root scope hooks run in the workspace root path.
+- Global hooks run in the target repository path.

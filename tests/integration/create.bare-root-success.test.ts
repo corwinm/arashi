@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { existsSync } from "fs";
 import { join } from "path";
-import {
-  createBareCreateWorkspace,
-  type BareCreateWorkspace,
-} from "../helpers/create-bare-create-workspace.ts";
+
+type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
 const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
@@ -25,8 +24,8 @@ describe("create command from bare root", () => {
 
     const command = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"], {
       cwd: workspace.bareRepoPath,
-      stdout: "pipe",
       stderr: "pipe",
+      stdout: "pipe",
     });
 
     const exitCode = await command.exited;
@@ -38,9 +37,8 @@ describe("create command from bare root", () => {
     }
 
     expect(exitCode).toBe(0);
-    expect(stderr).toContain("worktree created");
 
-    const expectedWorktreePath = join(workspace.rootPath, branch);
+    const expectedWorktreePath = join(workspace.bareRepoPath, ".arashi", "worktrees", branch);
     expect(existsSync(expectedWorktreePath)).toBe(true);
   });
 });

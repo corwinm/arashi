@@ -35,10 +35,10 @@ export function recordCreatedBranch(tracker: RollbackTracker, record: CreatedBra
 export async function rollbackCreatedBranches(tracker: RollbackTracker): Promise<RollbackResult> {
   const operations: RollbackOperation[] = [];
 
-  for (const record of [...tracker.createdBranches].reverse()) {
+  for (const record of [...tracker.createdBranches].toReversed()) {
     const operation: RollbackOperation = {
-      repositoryName: record.repositoryName,
       branchName: record.branchName,
+      repositoryName: record.repositoryName,
       status: "success",
     };
 
@@ -62,8 +62,8 @@ export async function rollbackCreatedBranches(tracker: RollbackTracker): Promise
   const failureCount = operations.length - successCount;
 
   return {
-    successCount,
     failureCount,
     operations,
+    successCount,
   };
 }

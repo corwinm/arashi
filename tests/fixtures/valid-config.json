@@ -1,7 +1,6 @@
 {
   "version": "1.0.0",
   "repos_dir": "./repos",
-  "auto_setup": true,
   "discovered_repos": {
     "example-repo": {
       "path": "./repos/example-repo",
@@ -16,10 +15,7 @@
             "jira_ticket": "PROJ-123"
           }
         }
-      ],
-      "hooks": {
-        "post_create": "./.arashi/hooks/post-create.sh"
-      }
+      ]
     }
   }
 }

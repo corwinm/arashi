@@ -1,15 +1,13 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { spawn } from "bun";
-import { join } from "path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFile, writeFile } from "fs/promises";
-import {
-  createRemoveWorkspace,
-  type RemoveTestWorkspace,
-} from "../helpers/remove-test-workspace.ts";
+import { createRemoveWorkspace } from "../helpers/remove-test-workspace.ts";
 import { executeSync } from "../../src/commands/sync.ts";
+import { join } from "path";
+import { spawn } from "bun";
+type RemoveTestWorkspace = Awaited<ReturnType<typeof createRemoveWorkspace>>;
 
 type SyncConfig = {
-  discovered_repos: Record<string, { path: string } & Record<string, unknown>>;
+  repos: Record<string, { path: string } & Record<string, unknown>>;
   sync?: {
     timeoutSeconds?: number;
   };
@@ -87,14 +85,12 @@ describe("sync command - integration", () => {
   test("reports timeout per repository and continues", async () => {
     await ensureBranchCheckedOut(workspace.rootPath, "feature-timeout");
 
-    await updateConfig(workspace.rootPath, (config) => {
-      return {
-        ...config,
-        sync: {
-          timeoutSeconds: 0,
-        },
-      };
-    });
+    await updateConfig(workspace.rootPath, (config) => ({
+      ...config,
+      sync: {
+        timeoutSeconds: 0,
+      },
+    }));
 
     const summary = await runSync(workspace.rootPath);
 
@@ -149,18 +145,16 @@ describe("sync command - integration", () => {
   test("reports summary counts when failures occur", async () => {
     await ensureBranchCheckedOut(workspace.rootPath, "feature-summary");
 
-    await updateConfig(workspace.rootPath, (config) => {
-      return {
-        ...config,
-        discovered_repos: {
-          ...config.discovered_repos,
-          "repo-b": {
-            ...config.discovered_repos["repo-b"],
-            path: "./repos/missing-repo",
-          },
+    await updateConfig(workspace.rootPath, (config) => ({
+      ...config,
+      repos: {
+        ...config.repos,
+        "repo-b": {
+          ...config.repos["repo-b"],
+          path: "./repos/missing-repo",
         },
-      };
-    });
+      },
+    }));
 
     const summary = await runSync(workspace.rootPath);
 
@@ -205,8 +199,8 @@ async function ensureBranch(repoPath: string, branchName: string): Promise<void>
 async function branchExists(repoPath: string, branchName: string): Promise<boolean> {
   const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
     cwd: repoPath,
-    stdout: "ignore",
     stderr: "ignore",
+    stdout: "ignore",
   });
   const exitCode = await proc.exited;
   return exitCode === 0;
@@ -215,8 +209,8 @@ async function branchExists(repoPath: string, branchName: string): Promise<boole
 async function getCurrentBranch(repoPath: string): Promise<string> {
   const proc = spawn(["git", "rev-parse", "--abbrev-ref", "HEAD"], {
     cwd: repoPath,
-    stdout: "pipe",
     stderr: "pipe",
+    stdout: "pipe",
   });
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
@@ -227,7 +221,7 @@ async function getCurrentBranch(repoPath: string): Promise<string> {
 }
 
 async function execGit(args: string[], cwd: string): Promise<void> {
-  const proc = spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const proc = spawn(["git", ...args], { cwd, stderr: "pipe", stdout: "pipe" });
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
     const stderr = await new Response(proc.stderr).text();

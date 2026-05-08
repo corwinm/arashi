@@ -2,14 +2,14 @@
  * Integration test: User Story 4 - keep worktrees
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync } from "fs";
-import { spawn } from "bun";
-import { executeRemove } from "../../src/commands/remove.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
 } from "../helpers/remove-test-workspace.ts";
+import { executeRemove } from "../../src/commands/remove.ts";
+import { existsSync } from "fs";
+import { spawn } from "bun";
 
 describe("remove command - US4 keep worktrees", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
@@ -30,7 +30,7 @@ describe("remove command - US4 keep worktrees", () => {
     process.chdir(workspace.rootPath);
 
     try {
-      const exitCode = await executeRemove(branchName, { keepWorktrees: true, force: true });
+      const exitCode = await executeRemove(branchName, { force: true, keepWorktrees: true });
       expect(exitCode).toBe(0);
     } finally {
       process.chdir(originalCwd);
@@ -44,8 +44,8 @@ describe("remove command - US4 keep worktrees", () => {
     for (const repoPath of reposToCheck) {
       const proc = spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], {
         cwd: repoPath,
-        stdout: "ignore",
         stderr: "ignore",
+        stdout: "ignore",
       });
       const exitCode = await proc.exited;
       expect(exitCode).not.toBe(0);

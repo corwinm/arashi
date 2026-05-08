@@ -3,8 +3,8 @@
  */
 
 import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
+import { tmpdir } from "os";
 
 /**
  * Creates a temporary directory for test git repositories
@@ -18,7 +18,7 @@ export function createTempDir(): string {
  */
 export function removeTempDir(path: string): void {
   try {
-    rmSync(path, { recursive: true, force: true });
+    rmSync(path, { force: true, recursive: true });
   } catch (error) {
     // Ignore errors during cleanup
     console.warn(`Failed to remove temp dir ${path}:`, error);
@@ -29,16 +29,16 @@ export function removeTempDir(path: string): void {
  * Initializes a git repository in the specified directory
  */
 export function initGitRepo(repoPath: string): void {
-  Bun.spawnSync(["git", "init"], { cwd: repoPath, stdout: "ignore", stderr: "ignore" });
+  Bun.spawnSync(["git", "init"], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
   Bun.spawnSync(["git", "config", "user.email", "test@example.com"], {
     cwd: repoPath,
-    stdout: "ignore",
     stderr: "ignore",
+    stdout: "ignore",
   });
   Bun.spawnSync(["git", "config", "user.name", "Test User"], {
     cwd: repoPath,
-    stdout: "ignore",
     stderr: "ignore",
+    stdout: "ignore",
   });
 }
 
@@ -46,7 +46,7 @@ export function initGitRepo(repoPath: string): void {
  * Initializes a bare git repository in the specified directory
  */
 export function initBareGitRepo(repoPath: string): void {
-  Bun.spawnSync(["git", "init", "--bare"], { cwd: repoPath, stdout: "ignore", stderr: "ignore" });
+  Bun.spawnSync(["git", "init", "--bare"], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
 }
 
 /**
@@ -56,11 +56,11 @@ export async function createInitialCommit(repoPath: string): Promise<void> {
   const filePath = join(repoPath, "README.md");
   await Bun.write(filePath, "# Test Repository\n");
 
-  Bun.spawnSync(["git", "add", "."], { cwd: repoPath, stdout: "ignore", stderr: "ignore" });
+  Bun.spawnSync(["git", "add", "."], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
   Bun.spawnSync(["git", "commit", "-m", "Initial commit"], {
     cwd: repoPath,
-    stdout: "ignore",
     stderr: "ignore",
+    stdout: "ignore",
   });
 }
 
@@ -80,11 +80,11 @@ export async function createFile(
  * Stages and commits changes in a repository
  */
 export function commitChanges(repoPath: string, message: string): void {
-  Bun.spawnSync(["git", "add", "."], { cwd: repoPath, stdout: "ignore", stderr: "ignore" });
+  Bun.spawnSync(["git", "add", "."], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
   Bun.spawnSync(["git", "commit", "-m", message], {
     cwd: repoPath,
-    stdout: "ignore",
     stderr: "ignore",
+    stdout: "ignore",
   });
 }
 
@@ -96,7 +96,7 @@ export function createTestBranch(repoPath: string, branchName: string, fromBranc
   if (fromBranch) {
     args.push(fromBranch);
   }
-  Bun.spawnSync(["git", ...args], { cwd: repoPath, stdout: "ignore", stderr: "ignore" });
+  Bun.spawnSync(["git", ...args], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
 }
 
 /**
@@ -105,8 +105,8 @@ export function createTestBranch(repoPath: string, branchName: string, fromBranc
 export function checkoutBranch(repoPath: string, branchName: string): void {
   Bun.spawnSync(["git", "checkout", branchName], {
     cwd: repoPath,
-    stdout: "ignore",
     stderr: "ignore",
+    stdout: "ignore",
   });
 }
 
@@ -140,7 +140,7 @@ export class GitTestRepo {
   /**
    * Create a file
    */
-  async addFile(filename: string, content: string = ""): Promise<this> {
+  async addFile(filename: string, content = ""): Promise<this> {
     await createFile(this.path, filename, content);
     return this;
   }

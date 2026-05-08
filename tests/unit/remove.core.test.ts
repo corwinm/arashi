@@ -2,17 +2,17 @@
  * Unit tests for remove core helpers
  */
 
-import { describe, test, expect } from "bun:test";
-import { mkdtemp, rm } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
-import { spawn } from "bun";
 import {
-  parseWorktreeList,
   createRemovalSummary,
   formatRemovalSummaryHuman,
+  parseWorktreeList,
 } from "../../src/core/remove.ts";
+import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "fs/promises";
 import { getWorktreeDirtyStatus } from "../../src/core/worktree.ts";
+import { join } from "path";
+import { spawn } from "bun";
+import { tmpdir } from "os";
 
 describe("remove core helpers", () => {
   test("parseWorktreeList parses porcelain output", () => {
@@ -49,7 +49,7 @@ describe("remove core helpers", () => {
     expect(status.isDirty).toBe(true);
     expect(status.untrackedFiles).toBeGreaterThan(0);
 
-    await rm(repoPath, { recursive: true, force: true });
+    await rm(repoPath, { force: true, recursive: true });
   });
 
   test("formatRemovalSummaryHuman includes success message", () => {
@@ -57,17 +57,17 @@ describe("remove core helpers", () => {
     summary.successfulWorktrees = 1;
     summary.successfulBranches = 1;
     summary.operations.push({
-      type: "worktree_remove",
-      repository: "main",
       branchName: "feature",
-      worktreePath: "/repo/feature",
+      repository: "main",
       status: "success",
+      type: "worktree_remove",
+      worktreePath: "/repo/feature",
     });
     summary.operations.push({
-      type: "branch_delete",
-      repository: "main",
       branchName: "feature",
+      repository: "main",
       status: "success",
+      type: "branch_delete",
     });
 
     const output = formatRemovalSummaryHuman(summary);

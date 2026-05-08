@@ -1,4 +1,6 @@
-import { hasMinimumColumns, type TerminalContext } from "./terminal-context.ts";
+import { hasMinimumColumns } from "./terminal-context.ts";
+
+type TerminalContext = Parameters<typeof hasMinimumColumns>[0];
 
 export const FULL_LOGO_TEXT = [
   "◢▲◣  ▓█▀█  ▓█▀▄  ▓█▀█  ▓█▀▀  ▓█░█  ▓█",
@@ -11,15 +13,15 @@ export const COMPACT_LOGO_TEXT = ["◢▲◣", "◥▲◤"].join("\n");
 export const PLAIN_LOGO_TEXT = "arashi";
 
 export const LOGO_FAMILY_RULES = {
-  full: {
-    maxColumns: 52,
-    maxLines: 3,
-    minTerminalColumns: 100,
-  },
   compact: {
     maxColumns: 12,
     maxLines: 2,
     minTerminalColumns: 60,
+  },
+  full: {
+    maxColumns: 52,
+    maxLines: 3,
+    minTerminalColumns: 100,
   },
 } as const;
 
@@ -43,12 +45,15 @@ export function selectHelpBannerVariant(context: TerminalContext): HelpBannerVar
 
 export function getLogoText(variant: HelpBannerVariant): string {
   switch (variant) {
-    case "full":
+    case "full": {
       return FULL_LOGO_TEXT;
-    case "compact":
+    }
+    case "compact": {
       return COMPACT_LOGO_TEXT;
-    case "plain":
+    }
+    case "plain": {
       return PLAIN_LOGO_TEXT;
+    }
   }
 }
 

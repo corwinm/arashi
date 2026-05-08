@@ -2,14 +2,14 @@
  * Integration test: User Story 3 - dirty warning confirmation
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync } from "fs";
-import { executeRemove } from "../../src/commands/remove.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
   markWorktreeDirty,
 } from "../helpers/remove-test-workspace.ts";
+import { executeRemove } from "../../src/commands/remove.ts";
+import { existsSync } from "fs";
 
 describe("remove command - US3 dirty warning", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
@@ -36,11 +36,11 @@ describe("remove command - US3 dirty warning", () => {
         branchName,
         { force: false },
         {
-          multiSelect: async () => ({ status: "ok", value: [branchName] }),
           confirm: async () => {
             confirmCalls += 1;
             return { status: "ok", value: true };
           },
+          multiSelect: async () => ({ status: "ok", value: [branchName] }),
         },
       );
       expect(exitCode).toBe(0);

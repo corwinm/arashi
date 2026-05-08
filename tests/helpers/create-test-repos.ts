@@ -2,8 +2,8 @@
  * Test helper for creating temporary git repositories for testing
  */
 
-import { mkdir } from "fs/promises";
 import { join } from "path";
+import { mkdir } from "fs/promises";
 import { spawn } from "child_process";
 
 export interface TestRepoOptions {
@@ -85,45 +85,45 @@ export async function createStandardTestRepos(basePath: string): Promise<{
   noRemoteRepo: string;
 }> {
   const mainRepo = await createTestRepo(basePath, {
-    name: "main-repo",
     defaultBranch: "main",
     hasRemote: true,
+    name: "main-repo",
     remoteUrl: "https://github.com/test/main-repo.git",
   });
 
   const masterRepo = await createTestRepo(basePath, {
-    name: "master-repo",
     defaultBranch: "master",
     hasRemote: true,
+    name: "master-repo",
     remoteUrl: "https://github.com/test/master-repo.git",
   });
 
   const developRepo = await createTestRepo(basePath, {
-    name: "develop-repo",
     defaultBranch: "develop",
     hasRemote: true,
+    name: "develop-repo",
     remoteUrl: "https://github.com/test/develop-repo.git",
   });
 
   const withSetupRepo = await createTestRepo(basePath, {
-    name: "with-setup-repo",
     defaultBranch: "main",
-    hasSetupScript: true,
     hasRemote: true,
+    hasSetupScript: true,
+    name: "with-setup-repo",
     remoteUrl: "https://github.com/test/with-setup-repo.git",
   });
 
   const noRemoteRepo = await createTestRepo(basePath, {
-    name: "no-remote-repo",
     defaultBranch: "main",
     hasRemote: false,
+    name: "no-remote-repo",
   });
 
   return {
+    developRepo,
     mainRepo,
     masterRepo,
-    developRepo,
-    withSetupRepo,
     noRemoteRepo,
+    withSetupRepo,
   };
 }

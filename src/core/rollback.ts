@@ -162,19 +162,27 @@ export class InvalidLogEntryError extends Error {
  * @returns true if valid, false otherwise
  */
 export function isValidLogEntry(entry: unknown): entry is LogEntry {
-  if (!entry || typeof entry !== "object") return false;
+  if (!entry || typeof entry !== "object") {
+    return false;
+  }
   const candidate = entry as { timestamp?: unknown; type?: unknown; data?: unknown };
-  if (typeof candidate.timestamp !== "number" || candidate.timestamp <= 0) return false;
+  if (typeof candidate.timestamp !== "number" || candidate.timestamp <= 0) {
+    return false;
+  }
 
   switch (candidate.type) {
-    case "worktree_created":
+    case "worktree_created": {
       return isValidWorktreeCreatedData(candidate.data);
-    case "branch_created":
+    }
+    case "branch_created": {
       return isValidBranchCreatedData(candidate.data);
-    case "directory_created":
+    }
+    case "directory_created": {
       return isValidDirectoryCreatedData(candidate.data);
-    default:
+    }
+    default: {
       return false;
+    }
   }
 }
 
@@ -191,7 +199,7 @@ export function isValidWorktreeCreatedData(data: unknown): boolean {
     branchName?: unknown;
   };
   return (
-    !!candidate &&
+    Boolean(candidate) &&
     typeof candidate.repositoryPath === "string" &&
     typeof candidate.worktreePath === "string" &&
     typeof candidate.branchName === "string"
@@ -207,7 +215,7 @@ export function isValidWorktreeCreatedData(data: unknown): boolean {
 export function isValidBranchCreatedData(data: unknown): boolean {
   const candidate = data as { repositoryPath?: unknown; branchName?: unknown };
   return (
-    !!candidate &&
+    Boolean(candidate) &&
     typeof candidate.repositoryPath === "string" &&
     typeof candidate.branchName === "string"
   );
@@ -221,7 +229,7 @@ export function isValidBranchCreatedData(data: unknown): boolean {
  */
 export function isValidDirectoryCreatedData(data: unknown): boolean {
   const candidate = data as { directoryPath?: unknown };
-  return !!candidate && typeof candidate.directoryPath === "string";
+  return Boolean(candidate) && typeof candidate.directoryPath === "string";
 }
 
 // ============================================================================
@@ -295,7 +303,8 @@ export class OperationLog {
 
     try {
       // Reverse array for LIFO processing
-      const reversedEntries = [...this.entries].reverse();
+      const reversedEntries = [...this.entries];
+      reversedEntries.reverse();
 
       for (let i = 0; i < reversedEntries.length; i++) {
         const entry = reversedEntries[i];
@@ -313,11 +322,11 @@ export class OperationLog {
       }
 
       return {
-        totalOperations: this.entries.length,
-        successCount: this.entries.length - failures.length,
+        duration: Date.now() - startTime,
         failureCount: failures.length,
         failures,
-        duration: Date.now() - startTime,
+        successCount: this.entries.length - failures.length,
+        totalOperations: this.entries.length,
       };
     } finally {
       this.isRollingBack = false;
@@ -364,14 +373,17 @@ export class OperationLog {
  *
  * @param entry - Log entry to rollback
  */
-async function rollbackOperation(entry: LogEntry): Promise<void> {
+function rollbackOperation(entry: LogEntry): Promise<void> {
   switch (entry.type) {
-    case "worktree_created":
+    case "worktree_created": {
       return rollbackWorktreeCreated(entry);
-    case "branch_created":
+    }
+    case "branch_created": {
       return rollbackBranchCreated(entry);
-    case "directory_created":
+    }
+    case "directory_created": {
       return rollbackDirectoryCreated(entry);
+    }
   }
 }
 
@@ -450,6 +462,6 @@ export async function rollbackBranchCreated(entry: BranchCreatedEntry): Promise<
 export async function rollbackDirectoryCreated(entry: DirectoryCreatedEntry): Promise<void> {
   const { directoryPath } = entry.data;
 
-  // removeDir() is already idempotent - returns without error if directory doesn't exist
+  // RemoveDir() is already idempotent - returns without error if directory doesn't exist
   await removeDir(directoryPath);
 }

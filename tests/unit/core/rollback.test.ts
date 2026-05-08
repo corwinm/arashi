@@ -9,14 +9,35 @@
  * - Chronological ordering
  */
 
-import { describe, expect, test, beforeEach } from "bun:test";
-import {
-  OperationLog,
-  WorktreeCreatedEntry,
-  BranchCreatedEntry,
-  DirectoryCreatedEntry,
-  InvalidLogEntryError,
-} from "../../../src/core/rollback";
+import { InvalidLogEntryError, OperationLog } from "../../../src/core/rollback";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+interface WorktreeCreatedEntry {
+  type: "worktree_created";
+  timestamp: number;
+  data: {
+    repositoryPath: string;
+    worktreePath: string;
+    branchName: string;
+  };
+}
+
+interface BranchCreatedEntry {
+  type: "branch_created";
+  timestamp: number;
+  data: {
+    repositoryPath: string;
+    branchName: string;
+  };
+}
+
+interface DirectoryCreatedEntry {
+  type: "directory_created";
+  timestamp: number;
+  data: {
+    directoryPath: string;
+  };
+}
 
 describe("OperationLog - User Story 2: Operation Logging", () => {
   let log: OperationLog;
@@ -32,13 +53,13 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
   describe("add() with valid entries", () => {
     test("should add valid worktree_created entry", () => {
       const entry: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       };
 
       expect(() => log.add(entry)).not.toThrow();
@@ -47,12 +68,12 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should add valid branch_created entry", () => {
       const entry: BranchCreatedEntry = {
-        type: "branch_created",
-        timestamp: Date.now(),
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "feature-branch",
+          repositoryPath: "/path/to/repo",
         },
+        timestamp: Date.now(),
+        type: "branch_created",
       };
 
       expect(() => log.add(entry)).not.toThrow();
@@ -61,11 +82,11 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should add valid directory_created entry", () => {
       const entry: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: {
           directoryPath: "/path/to/directory",
         },
+        timestamp: Date.now(),
+        type: "directory_created",
       };
 
       expect(() => log.add(entry)).not.toThrow();
@@ -74,22 +95,22 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should add multiple entries", () => {
       const entry1: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       };
 
       const entry2: BranchCreatedEntry = {
-        type: "branch_created",
-        timestamp: Date.now(),
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "another-branch",
+          repositoryPath: "/path/to/repo",
         },
+        timestamp: Date.now(),
+        type: "branch_created",
       };
 
       log.add(entry1);
@@ -105,8 +126,8 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
   describe("add() with invalid entries", () => {
     test("should throw InvalidLogEntryError for missing type", () => {
       const invalidEntry = {
-        timestamp: Date.now(),
         data: { repositoryPath: "/path" },
+        timestamp: Date.now(),
       } as unknown as WorktreeCreatedEntry;
 
       expect(() => log.add(invalidEntry)).toThrow(InvalidLogEntryError);
@@ -114,9 +135,9 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should throw InvalidLogEntryError for invalid type", () => {
       const invalidEntry = {
-        type: "invalid_type",
-        timestamp: Date.now(),
         data: {},
+        timestamp: Date.now(),
+        type: "invalid_type",
       } as unknown as WorktreeCreatedEntry;
 
       expect(() => log.add(invalidEntry)).toThrow(InvalidLogEntryError);
@@ -124,12 +145,12 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should throw InvalidLogEntryError for missing timestamp", () => {
       const invalidEntry = {
-        type: "worktree_created",
         data: {
+          branchName: "branch",
           repositoryPath: "/path",
           worktreePath: "/worktree",
-          branchName: "branch",
         },
+        type: "worktree_created",
       } as unknown as WorktreeCreatedEntry;
 
       expect(() => log.add(invalidEntry)).toThrow(InvalidLogEntryError);
@@ -137,13 +158,13 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should throw InvalidLogEntryError for invalid timestamp", () => {
       const invalidEntry = {
-        type: "worktree_created",
-        timestamp: -100,
         data: {
+          branchName: "branch",
           repositoryPath: "/path",
           worktreePath: "/worktree",
-          branchName: "branch",
         },
+        timestamp: -100,
+        type: "worktree_created",
       } as unknown as WorktreeCreatedEntry;
 
       expect(() => log.add(invalidEntry)).toThrow(InvalidLogEntryError);
@@ -151,12 +172,12 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should throw InvalidLogEntryError for missing worktree data fields", () => {
       const invalidEntry = {
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
           repositoryPath: "/path",
           // Missing worktreePath and branchName
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       } as unknown as WorktreeCreatedEntry;
 
       expect(() => log.add(invalidEntry)).toThrow(InvalidLogEntryError);
@@ -164,11 +185,11 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should throw InvalidLogEntryError for missing branch data fields", () => {
       const invalidEntry = {
-        type: "branch_created",
-        timestamp: Date.now(),
         data: {
           // Missing repositoryPath and branchName
         },
+        timestamp: Date.now(),
+        type: "branch_created",
       } as unknown as BranchCreatedEntry;
 
       expect(() => log.add(invalidEntry)).toThrow(InvalidLogEntryError);
@@ -176,11 +197,11 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should throw InvalidLogEntryError for missing directory data fields", () => {
       const invalidEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: {
           // Missing directoryPath
         },
+        timestamp: Date.now(),
+        type: "directory_created",
       } as unknown as DirectoryCreatedEntry;
 
       expect(() => log.add(invalidEntry)).toThrow(InvalidLogEntryError);
@@ -196,13 +217,13 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
       // Manually set the rollback flag to simulate rollback in progress
       // We can't use actual rollback() because the stub functions throw errors
       const entry: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       };
 
       // Add an entry first
@@ -210,10 +231,10 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
       // Access the private isRollingBack flag via isRollbackInProgress() check
       // Since rollback functions are stubs, we'll test the logic directly
-      // by checking that add() throws when isRollbackInProgress() would return true
+      // By checking that add() throws when isRollbackInProgress() would return true
 
       // For this test, we verify the error would be thrown by checking
-      // the condition in the add() method
+      // The condition in the add() method
       expect(() => {
         // This simulates what would happen if rollback was in progress
         if (log.isRollbackInProgress()) {
@@ -236,30 +257,30 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
     test("should return correct count after adding entries", () => {
       const entry1: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       };
 
       const entry2: BranchCreatedEntry = {
-        type: "branch_created",
-        timestamp: Date.now(),
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "another-branch",
+          repositoryPath: "/path/to/repo",
         },
+        timestamp: Date.now(),
+        type: "branch_created",
       };
 
       const entry3: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: {
           directoryPath: "/path/to/directory",
         },
+        timestamp: Date.now(),
+        type: "directory_created",
       };
 
       log.add(entry1);
@@ -284,30 +305,30 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
       const timestamp3 = timestamp2 + 100;
 
       const entry1: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: timestamp1,
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
+        timestamp: timestamp1,
+        type: "worktree_created",
       };
 
       const entry2: BranchCreatedEntry = {
-        type: "branch_created",
-        timestamp: timestamp2,
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "another-branch",
+          repositoryPath: "/path/to/repo",
         },
+        timestamp: timestamp2,
+        type: "branch_created",
       };
 
       const entry3: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: timestamp3,
         data: {
           directoryPath: "/path/to/directory",
         },
+        timestamp: timestamp3,
+        type: "directory_created",
       };
 
       log.add(entry1);
@@ -323,22 +344,22 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
     test("should preserve insertion order regardless of timestamps", () => {
       // Add entries with out-of-order timestamps
       const entry1: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: 3000,
         data: {
+          branchName: "feature-branch",
           repositoryPath: "/path/to/repo",
           worktreePath: "/path/to/worktree",
-          branchName: "feature-branch",
         },
+        timestamp: 3000,
+        type: "worktree_created",
       };
 
       const entry2: BranchCreatedEntry = {
-        type: "branch_created",
-        timestamp: 1000,
         data: {
-          repositoryPath: "/path/to/repo",
           branchName: "another-branch",
+          repositoryPath: "/path/to/repo",
         },
+        timestamp: 1000,
+        type: "branch_created",
       };
 
       log.add(entry1);
@@ -357,15 +378,15 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 
 describe("Type-Specific Rollback Functions - User Story 3", () => {
   // These tests will use mocks to verify the rollback functions call the correct
-  // git and filesystem operations without actually performing them
+  // Git and filesystem operations without actually performing them
   // Note: For full integration tests with real git repositories and directories,
-  // see tests/integration/rollback-integration.test.ts
+  // See tests/integration/rollback-integration.test.ts
   // T025: Unit test for rollbackWorktreeCreated() with mock
   // T026: Unit test for rollbackWorktreeCreated() when worktree doesn't exist (idempotent)
   // Note: Type-specific rollback functions (rollbackWorktreeCreated, rollbackBranchCreated,
-  // rollbackDirectoryCreated) are tested via integration tests in the rollback orchestration
-  // tests below. Mock-based unit tests are not necessary as the integration tests provide
-  // sufficient coverage of the actual behavior.
+  // RollbackDirectoryCreated) are tested via integration tests in the rollback orchestration
+  // Tests below. Mock-based unit tests are not necessary as the integration tests provide
+  // Sufficient coverage of the actual behavior.
 });
 
 // ============================================================================
@@ -406,7 +427,7 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
   describe("rollback() with LIFO ordering", () => {
     test("should process operations in reverse order", async () => {
       // Note: Since we can't actually execute rollback without real git repos,
-      // we'll verify LIFO by checking the implementation behavior
+      // We'll verify LIFO by checking the implementation behavior
       // The integration tests (rollback-integration.test.ts) verify actual LIFO execution
 
       const timestamp1 = Date.now();
@@ -414,21 +435,21 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
       const timestamp3 = timestamp2 + 100;
 
       const entry1: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: timestamp1,
         data: { directoryPath: "/first" },
+        timestamp: timestamp1,
+        type: "directory_created",
       };
 
       const entry2: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: timestamp2,
         data: { directoryPath: "/second" },
+        timestamp: timestamp2,
+        type: "directory_created",
       };
 
       const entry3: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: timestamp3,
         data: { directoryPath: "/third" },
+        timestamp: timestamp3,
+        type: "directory_created",
       };
 
       log.add(entry1);
@@ -453,9 +474,9 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
     test("should throw ConcurrentRollbackError if rollback already in progress", async () => {
       // Add a dummy entry so rollback has something to process
       const entry: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: { directoryPath: "/test" },
+        timestamp: Date.now(),
+        type: "directory_created",
       };
       log.add(entry);
 
@@ -473,9 +494,9 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
 
     test("should allow rollback after previous rollback completes", async () => {
       const entry: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: { directoryPath: "/test" },
+        timestamp: Date.now(),
+        type: "directory_created",
       };
       log.add(entry);
 
@@ -487,9 +508,9 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
 
       // Add another entry
       log.add({
-        type: "directory_created",
-        timestamp: Date.now(),
         data: { directoryPath: "/test2" },
+        timestamp: Date.now(),
+        type: "directory_created",
       });
 
       // Second rollback should work
@@ -504,21 +525,21 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
   describe("rollback() result counts", () => {
     test("should report correct totalOperations count", async () => {
       const entry1: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: { directoryPath: "/test1" },
+        timestamp: Date.now(),
+        type: "directory_created",
       };
 
       const entry2: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now() + 100,
         data: { directoryPath: "/test2" },
+        timestamp: Date.now() + 100,
+        type: "directory_created",
       };
 
       const entry3: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now() + 200,
         data: { directoryPath: "/test3" },
+        timestamp: Date.now() + 200,
+        type: "directory_created",
       };
 
       log.add(entry1);
@@ -534,15 +555,15 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
     test("should track success and failure counts correctly", async () => {
       // Add entries that will fail (non-existent directories)
       const entry1: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: { directoryPath: "/nonexistent1" },
+        timestamp: Date.now(),
+        type: "directory_created",
       };
 
       const entry2: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now() + 100,
         data: { directoryPath: "/nonexistent2" },
+        timestamp: Date.now() + 100,
+        type: "directory_created",
       };
 
       log.add(entry1);
@@ -558,9 +579,9 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
 
     test("should include duration in milliseconds", async () => {
       const entry: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now(),
         data: { directoryPath: "/test" },
+        timestamp: Date.now(),
+        type: "directory_created",
       };
 
       log.add(entry);
@@ -579,30 +600,30 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
   describe("rollback() with mixed operation types", () => {
     test("should handle different operation types in same log", async () => {
       const worktreeEntry: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
+          branchName: "feature",
           repositoryPath: "/repo",
           worktreePath: "/worktree",
-          branchName: "feature",
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       };
 
       const branchEntry: BranchCreatedEntry = {
-        type: "branch_created",
-        timestamp: Date.now() + 100,
         data: {
-          repositoryPath: "/repo",
           branchName: "feature",
+          repositoryPath: "/repo",
         },
+        timestamp: Date.now() + 100,
+        type: "branch_created",
       };
 
       const dirEntry: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now() + 200,
         data: {
           directoryPath: "/testdir",
         },
+        timestamp: Date.now() + 200,
+        type: "directory_created",
       };
 
       log.add(worktreeEntry);
@@ -619,29 +640,29 @@ describe("OperationLog.rollback() - User Story 1: Rollback Orchestration", () =>
     test("should continue rollback despite individual failures", async () => {
       // Add 3 entries - all will fail but rollback should process all of them
       const entry1: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: Date.now(),
         data: {
+          branchName: "test1",
           repositoryPath: "/nonexistent",
           worktreePath: "/worktree1",
-          branchName: "test1",
         },
+        timestamp: Date.now(),
+        type: "worktree_created",
       };
 
       const entry2: DirectoryCreatedEntry = {
-        type: "directory_created",
-        timestamp: Date.now() + 100,
         data: { directoryPath: "/test" },
+        timestamp: Date.now() + 100,
+        type: "directory_created",
       };
 
       const entry3: WorktreeCreatedEntry = {
-        type: "worktree_created",
-        timestamp: Date.now() + 200,
         data: {
+          branchName: "test2",
           repositoryPath: "/nonexistent",
           worktreePath: "/worktree2",
-          branchName: "test2",
         },
+        timestamp: Date.now() + 200,
+        type: "worktree_created",
       };
 
       log.add(entry1);

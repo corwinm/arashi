@@ -5,6 +5,40 @@
  * workspace validation, cloning, and metadata gathering capabilities.
  */
 
+import { basename, join, resolve } from "path";
+import { spinner as createSpinner, warn } from "../lib/logger.js";
+import { readdir, rm, stat } from "fs/promises";
+import { exec as execGit } from "../lib/git.js";
+import { fileExists } from "../lib/filesystem.js";
+
+const ZERO = 0;
+const ONE = 1;
+const SECOND_CAPTURE = 2;
+const THIRD_CAPTURE = 3;
+const DECIMAL_RADIX = 10;
+const DEFAULT_SCAN_DEPTH = 3;
+const CLONE_COMPLETE_PERCENTAGE = 100;
+const DEFAULT_EXCLUDE_PATTERNS = ["node_modules", ".git"];
+const COMMON_BRANCHES = ["main", "master", "develop", "trunk"];
+
+const scanSymlinkDirectory = async (options: {
+  dirPath: string;
+  entryName: string;
+  errors: DiscoveryError[];
+  scanDirectory: (dirPath: string, depth: number) => Promise<void>;
+  depth: number;
+}): Promise<void> => {
+  try {
+    const subPath = resolve(options.dirPath, options.entryName);
+    const stats = await stat(subPath);
+    if (stats.isDirectory()) {
+      await options.scanDirectory(subPath, options.depth + ONE);
+    }
+  } catch (symlinkError) {
+    options.errors.push(classifyError(join(options.dirPath, options.entryName), symlinkError));
+  }
+};
+
 // ============================================================================
 // Enums and Error Codes (T006)
 // ============================================================================
@@ -308,16 +342,6 @@ export class RepositoryMetadataError extends RepositoryError {
 }
 
 // ============================================================================
-// Implementation Functions
-// ============================================================================
-
-import { readdir, stat, rm } from "fs/promises";
-import { join, basename, resolve } from "path";
-import { fileExists } from "../lib/filesystem.js";
-import { spinner as createSpinner, warn } from "../lib/logger.js";
-import * as git from "../lib/git.js";
-
-// ============================================================================
 // User Story 1: Repository Discovery (T019-T028)
 // ============================================================================
 
@@ -327,147 +351,132 @@ import * as git from "../lib/git.js";
  * Recursively scans the workspace directory up to the specified depth,
  * identifying valid git repositories and gathering basic information.
  */
-export async function discoverRepositories(
+export const discoverRepositories = async (
   workspacePath: string,
   options: DiscoveryOptions = {},
-): Promise<RepositoryDiscoveryResult> {
+): Promise<RepositoryDiscoveryResult> => {
   const startTime = Date.now();
   const repositories: Repository[] = [];
   const errors: DiscoveryError[] = [];
-  let scannedDirectories = 0;
+  let scannedDirectories = ZERO;
 
-  const maxDepth = options.maxDepth ?? 3;
+  const maxDepth = options.maxDepth ?? DEFAULT_SCAN_DEPTH;
   const followSymlinks = options.followSymlinks ?? false;
-  const excludePatterns = options.excludePatterns ?? ["node_modules", ".git"];
+  const excludePatterns = options.excludePatterns ?? DEFAULT_EXCLUDE_PATTERNS;
 
   // T027: Add progress spinner
-  const s = createSpinner("Discovering repositories...");
-  s.start();
+  const discoverySpinner = createSpinner("Discovering repositories...");
+  discoverySpinner.start();
 
-  try {
-    // T020: Implement recursive scanDirectory
-    await scanDirectory(workspacePath, 0);
-
-    s.succeed(
-      `Found ${repositories.length} ${repositories.length === 1 ? "repository" : "repositories"}`,
-    );
-
-    // T028: Return RepositoryDiscoveryResult
-    return {
-      repositories,
-      workspacePath,
-      scanDepth: maxDepth,
-      scannedDirectories,
-      errors,
-      duration: Date.now() - startTime,
-    };
-  } catch (error) {
-    s.fail("Discovery failed");
-    throw error;
-  }
-
-  /**
-   * Recursively scan a directory for git repositories (T020)
-   */
-  async function scanDirectory(dirPath: string, depth: number): Promise<void> {
-    // T023: Implement maxDepth limit
+  const scanDirectory = async (dirPath: string, depth: number): Promise<void> => {
     if (depth > maxDepth) {
       return;
     }
 
-    scannedDirectories++;
+    scannedDirectories += ONE;
 
     try {
-      // T021: Implement .git directory detection
       const gitDir = join(dirPath, ".git");
       const hasGit = await fileExists(gitDir);
 
       if (hasGit) {
-        // T022: Early termination when .git found
-        // Found a repository - don't scan subdirectories
-        const repo = await createRepositoryInfo(dirPath);
-        repositories.push(repo);
+        const repository = await createRepositoryInfo(dirPath);
+        repositories.push(repository);
         return;
       }
 
-      // Not a repo - scan subdirectories
       const entries = await readdir(dirPath, { withFileTypes: true });
 
       for (const entry of entries) {
-        // T024: Implement excludePatterns filtering
-        if (excludePatterns.some((pattern) => entry.name.includes(pattern))) {
-          continue;
-        }
+        if (!excludePatterns.some((pattern) => entry.name.includes(pattern))) {
+          if (entry.isDirectory()) {
+            const subPath = join(dirPath, entry.name);
+            await scanDirectory(subPath, depth + ONE);
+          }
 
-        // Handle directories
-        if (entry.isDirectory()) {
-          const subPath = join(dirPath, entry.name);
-          await scanDirectory(subPath, depth + 1);
-        }
-
-        // Handle symlinks if configured
-        if (entry.isSymbolicLink() && followSymlinks) {
-          try {
-            const subPath = resolve(dirPath, entry.name);
-            const stats = await stat(subPath);
-            if (stats.isDirectory()) {
-              await scanDirectory(subPath, depth + 1);
-            }
-          } catch (symlinkError) {
-            // T025: Collect non-fatal errors
-            errors.push(classifyError(join(dirPath, entry.name), symlinkError));
+          if (entry.isSymbolicLink() && followSymlinks) {
+            await scanSymlinkDirectory({
+              depth,
+              dirPath,
+              entryName: entry.name,
+              errors,
+              scanDirectory,
+            });
           }
         }
       }
     } catch (error: unknown) {
-      // T025: Implement error collection for non-fatal errors
       errors.push(classifyError(dirPath, error));
     }
+  };
+
+  try {
+    await scanDirectory(workspacePath, ZERO);
+
+    let repositoryLabel = "repositories";
+    if (repositories.length === ONE) {
+      repositoryLabel = "repository";
+    }
+
+    discoverySpinner.succeed(`Found ${repositories.length} ${repositoryLabel}`);
+
+    return {
+      duration: Date.now() - startTime,
+      errors,
+      repositories,
+      scanDepth: maxDepth,
+      scannedDirectories,
+      workspacePath,
+    };
+  } catch (error) {
+    discoverySpinner.fail("Discovery failed");
+    throw error;
   }
-}
+};
 
 /**
  * Create Repository info object (T026, updated T040, T055)
  *
  * Now includes default branch detection (US2) and setup script detection (US3).
  */
-async function createRepositoryInfo(repoPath: string): Promise<Repository> {
+const createRepositoryInfo = async (repoPath: string): Promise<Repository> => {
   const name = basename(repoPath);
 
-  // T040: Integrate detectDefaultBranch()
-  let defaultBranch = "main"; // fallback
+  let defaultBranch = "main";
   try {
     defaultBranch = await detectDefaultBranch(repoPath);
   } catch (error) {
-    // T041: Add warning logging when detection fails
-    warn(
-      `Could not detect default branch for ${name}: ${error instanceof Error ? error.message : "unknown error"}`,
-    );
+    let errorMessage = "unknown error";
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    }
+
+    warn(`Could not detect default branch for ${name}: ${errorMessage}`);
   }
 
-  // T055: Integrate detectSetupScript()
   const setupResult = await detectSetupScript(repoPath);
 
   return {
-    name,
-    path: repoPath,
     defaultBranch,
     hasSetupScript: setupResult.hasSetupScript,
-    setupScriptPath: setupResult.setupScriptPath,
+    name,
+    path: repoPath,
     remoteUrl: undefined,
+    setupScriptPath: setupResult.setupScriptPath,
   };
-}
+};
 
 /**
  * Classify an error into an ErrorCode
  */
-function classifyError(path: string, error: unknown): DiscoveryError {
-  const candidate =
-    typeof error === "object" && error !== null
-      ? (error as { code?: unknown; message?: unknown })
-      : {};
-  let code: ErrorCode;
-  let message: string;
+const classifyError = (path: string, error: unknown): DiscoveryError => {
+  let candidate: { code?: unknown; message?: unknown } = {};
+  if (typeof error === "object" && error) {
+    candidate = error as { code?: unknown; message?: unknown };
+  }
+
+  let code = ErrorCode.IO_ERROR;
+  let message = "I/O error";
 
   if (candidate.code === "EACCES" || candidate.code === "EPERM") {
     code = ErrorCode.PERMISSION_DENIED;
@@ -479,17 +488,23 @@ function classifyError(path: string, error: unknown): DiscoveryError {
     code = ErrorCode.SYMLINK_LOOP;
     message = "Symbolic link loop detected";
   } else {
-    code = ErrorCode.IO_ERROR;
-    message = typeof candidate.message === "string" ? candidate.message : "I/O error";
+    if (typeof candidate.message === "string") {
+      ({ message } = candidate);
+    }
+  }
+
+  let cause: Error | undefined = undefined;
+  if (error instanceof Error) {
+    cause = error;
   }
 
   return {
-    path,
-    message,
+    cause,
     code,
-    cause: error instanceof Error ? error : undefined,
+    message,
+    path,
   };
-}
+};
 
 // ============================================================================
 // User Story 2: Default Branch Detection (T035-T041)
@@ -505,48 +520,34 @@ function classifyError(path: string, error: unknown): DiscoveryError {
  * @returns Default branch name (e.g., "main", "master", "develop")
  * @throws {RepositoryInvalidError} If default branch cannot be determined
  */
-export async function detectDefaultBranch(repositoryPath: string): Promise<string> {
+export const detectDefaultBranch = async (repositoryPath: string): Promise<string> => {
   try {
-    // T036: Implement primary method - git symbolic-ref
-    const result = await git.exec(["symbolic-ref", "refs/remotes/origin/HEAD"], repositoryPath);
+    const result = await execGit(["symbolic-ref", "refs/remotes/origin/HEAD"], repositoryPath);
 
-    // Parse output format: "refs/remotes/origin/main"
     const match = result.stdout.trim().match(/refs\/remotes\/origin\/(.+)/);
-    if (match && match[1]) {
-      return match[1].trim();
+    if (match && match[ONE]) {
+      return match[ONE].trim();
     }
-  } catch {
-    // Fall through to fallback methods
-  }
+  } catch {}
 
-  // T037: Implement fallback 1 - Check common branch names
-  const commonBranches = ["main", "master", "develop", "trunk"];
-  for (const branch of commonBranches) {
+  for (const branch of COMMON_BRANCHES) {
     try {
-      await git.exec(["rev-parse", "--verify", `refs/heads/${branch}`], repositoryPath);
-
-      // Branch exists
+      await execGit(["rev-parse", "--verify", `refs/heads/${branch}`], repositoryPath);
       return branch;
-    } catch {
-      // Branch doesn't exist, try next
-    }
+    } catch {}
   }
 
-  // T038: Implement fallback 2 - Get current branch from HEAD
   try {
-    const result = await git.exec(["rev-parse", "--abbrev-ref", "HEAD"], repositoryPath);
+    const result = await execGit(["rev-parse", "--abbrev-ref", "HEAD"], repositoryPath);
 
     const currentBranch = result.stdout.trim();
     if (currentBranch && currentBranch !== "HEAD") {
       return currentBranch;
     }
-  } catch {
-    // Fall through to error
-  }
+  } catch {}
 
-  // T039: Add error handling
   throw new RepositoryInvalidError(repositoryPath, new Error("Could not determine default branch"));
-}
+};
 
 // ============================================================================
 // User Story 3: Setup Script Detection (T050-T055)
@@ -577,39 +578,31 @@ const DEFAULT_SETUP_PATTERNS = ["setup.sh", "setup.bash", ".arashi/setup.sh"];
  * @param patterns - Optional custom script patterns to look for
  * @returns Object with hasSetupScript flag and setupScriptPath if found
  */
-export async function detectSetupScript(
+export const detectSetupScript = async (
   repositoryPath: string,
   patterns: string[] = DEFAULT_SETUP_PATTERNS,
-): Promise<SetupScriptResult> {
-  // T051: Implement file existence check for setup.sh in repository root
-  // T052: Support configurable script patterns
+): Promise<SetupScriptResult> => {
   for (const pattern of patterns) {
     const scriptPath = join(repositoryPath, pattern);
 
     try {
-      // Check if file exists
       const file = Bun.file(scriptPath);
       const exists = await file.exists();
 
       if (exists) {
-        // T054: Return object with hasSetupScript flag and setupScriptPath
         return {
           hasSetupScript: true,
           setupScriptPath: scriptPath,
         };
       }
-    } catch {
-      // File doesn't exist or can't be accessed, continue to next pattern
-      continue;
-    }
+    } catch {}
   }
 
-  // No setup script found
   return {
     hasSetupScript: false,
     setupScriptPath: undefined,
   };
-}
+};
 
 // ============================================================================
 // User Story 5: Workspace Validation (T064-T069)
@@ -625,11 +618,10 @@ export async function detectSetupScript(
  * @param options - Optional validation options
  * @returns Validation result with categorized repositories
  */
-export async function validateWorkspace(
+export const validateWorkspace = async (
   config: WorkspaceConfiguration,
   options: ValidationOptions = {},
-): Promise<ValidationResult> {
-  // T065: Run discoverRepositories() to get actual repositories
+): Promise<ValidationResult> => {
   const discoveryResult = await discoverRepositories(
     config.workspacePath,
     options.discoveryOptions,
@@ -643,44 +635,37 @@ export async function validateWorkspace(
   const missing: RepositoryConfig[] = [];
   const extra: Repository[] = [];
 
-  // T066: Parse WorkspaceConfiguration to get expected repositories
-  // Create a map of expected repos by name for quick lookup
   const expectedMap = new Map<string, RepositoryConfig>();
   for (const expectedRepo of expectedRepos) {
     expectedMap.set(expectedRepo.name, expectedRepo);
   }
 
-  // Create a set of actual repo names for quick lookup
-  const actualNames = new Set(actualRepos.map((r) => r.name));
+  const actualNames = new Set(actualRepos.map((repository) => repository.name));
 
-  // Find present repositories (in both expected and actual)
   for (const actualRepo of actualRepos) {
     if (expectedMap.has(actualRepo.name)) {
       present.push(actualRepo);
     } else {
-      // Repository exists but not in config
       extra.push(actualRepo);
     }
   }
 
-  // Find missing repositories (in expected but not in actual)
   for (const expectedRepo of expectedRepos) {
     if (!actualNames.has(expectedRepo.name)) {
       missing.push(expectedRepo);
     }
   }
 
-  // T068, T069: Build ValidationResult with categorized repositories and isValid flag
-  const isValid = missing.length === 0 && discoveryResult.errors.length === 0;
+  const isValid = missing.length === ZERO && discoveryResult.errors.length === ZERO;
 
   return {
-    isValid,
-    present,
-    missing,
-    extra,
     errors: discoveryResult.errors,
+    extra,
+    isValid,
+    missing,
+    present,
   };
-}
+};
 
 // ============================================================================
 // User Story 4: Repository Cloning (T082-T092)
@@ -697,28 +682,25 @@ export async function validateWorkspace(
  * @param options - Optional clone options
  * @returns CloneOperation with status and progress information
  */
-export async function cloneRepository(
+export const cloneRepository = async (
   url: string,
   targetPath: string,
   options: CloneOptions = {},
-): Promise<CloneOperation> {
-  // T084: Create CloneOperation object with unique ID and PENDING status
+): Promise<CloneOperation> => {
   const operation: CloneOperation = {
     id: crypto.randomUUID(),
-    url,
-    targetPath,
-    status: CloneStatus.PENDING,
     startTime: new Date(),
+    status: CloneStatus.PENDING,
+    targetPath,
+    url,
   };
 
   try {
-    // T083: Implement pre-flight check: verify target path doesn't exist
     let targetExists = false;
     try {
       await stat(targetPath);
       targetExists = true;
     } catch {
-      // Target doesn't exist, which is what we want
       targetExists = false;
     }
 
@@ -733,18 +715,14 @@ export async function cloneRepository(
       return operation;
     }
 
-    // Clean up if force mode and target exists
     if (targetExists && options.force) {
-      await rm(targetPath, { recursive: true, force: true });
+      await rm(targetPath, { force: true, recursive: true });
     }
 
-    // T085: Execute git clone command using git utilities spawn
     operation.status = CloneStatus.IN_PROGRESS;
 
-    // Build git clone arguments
     const args = ["clone"];
 
-    // T091: Support CloneOptions: depth, branch, timeout
     if (options.depth) {
       args.push("--depth", options.depth.toString());
     }
@@ -753,11 +731,10 @@ export async function cloneRepository(
       args.push("--branch", options.branch);
     }
 
-    args.push("--progress"); // Enable progress output
+    args.push("--progress");
     args.push(url);
     args.push(targetPath);
 
-    // T086, T087, T088: Implement progress parsing and callbacks
     const updateProgress = (progress: CloneProgress) => {
       operation.progress = progress;
       if (options.onProgress) {
@@ -766,21 +743,18 @@ export async function cloneRepository(
     };
 
     updateProgress({
-      phase: ClonePhase.CLONING,
-      percentage: 0,
       message: "Cloning repository...",
+      percentage: ZERO,
+      phase: ClonePhase.CLONING,
     });
 
-    // Execute git clone
     try {
-      const result = await git.exec(args, process.cwd());
+      const result = await execGit(args, process.cwd());
 
-      // T086: Parse progress from stderr (git outputs progress to stderr)
       if (result.stderr) {
         parseCloneProgress(result.stderr, updateProgress);
       }
 
-      // T089: Handle clone success: verify .git directory, update status to COMPLETED
       let gitDirExists = false;
       try {
         const gitDirStat = await stat(join(targetPath, ".git"));
@@ -795,76 +769,74 @@ export async function cloneRepository(
 
       operation.status = CloneStatus.COMPLETED;
       operation.progress = {
-        phase: ClonePhase.COMPLETED,
-        percentage: 100,
         message: "Clone completed successfully",
+        percentage: CLONE_COMPLETE_PERCENTAGE,
+        phase: ClonePhase.COMPLETED,
       };
     } catch (error: unknown) {
-      // T090: Handle clone failure: categorize error, cleanup partial clone, update status to FAILED
       await handleCloneFailure(operation, error, targetPath);
     }
   } catch (error: unknown) {
-    // T090: Handle unexpected errors
     await handleCloneFailure(operation, error, targetPath);
   }
 
-  // Calculate duration
   operation.endTime = new Date();
   operation.duration = operation.endTime.getTime() - operation.startTime.getTime();
 
   return operation;
-}
+};
 
 /**
  * Parse git clone progress output (T086-T087)
  */
-function parseCloneProgress(output: string, callback: (progress: CloneProgress) => void): void {
+const parseCloneProgress = (output: string, callback: (progress: CloneProgress) => void): void => {
   const lines = output.split("\n");
 
   for (const line of lines) {
-    // Parse "Receiving objects: XX% (X/Y)"
     const receivingMatch = line.match(/Receiving objects:\s+(\d+)%\s+\((\d+)\/(\d+)\)/);
     if (receivingMatch) {
       callback({
+        message: `Receiving objects: ${receivingMatch[ONE]}%`,
+        objectsReceived: Number.parseInt(receivingMatch[SECOND_CAPTURE], DECIMAL_RADIX),
+        objectsTotal: Number.parseInt(receivingMatch[THIRD_CAPTURE], DECIMAL_RADIX),
+        percentage: Number.parseInt(receivingMatch[ONE], DECIMAL_RADIX),
         phase: ClonePhase.RECEIVING,
-        percentage: parseInt(receivingMatch[1]),
-        objectsReceived: parseInt(receivingMatch[2]),
-        objectsTotal: parseInt(receivingMatch[3]),
-        message: `Receiving objects: ${receivingMatch[1]}%`,
       });
-      continue;
-    }
-
-    // Parse "Resolving deltas: XX% (X/Y)"
-    const resolvingMatch = line.match(/Resolving deltas:\s+(\d+)%\s+\((\d+)\/(\d+)\)/);
-    if (resolvingMatch) {
-      callback({
-        phase: ClonePhase.RESOLVING,
-        percentage: parseInt(resolvingMatch[1]),
-        deltasResolved: parseInt(resolvingMatch[2]),
-        deltasTotal: parseInt(resolvingMatch[3]),
-        message: `Resolving deltas: ${resolvingMatch[1]}%`,
-      });
-      continue;
+    } else {
+      const resolvingMatch = line.match(/Resolving deltas:\s+(\d+)%\s+\((\d+)\/(\d+)\)/);
+      if (resolvingMatch) {
+        callback({
+          deltasResolved: Number.parseInt(resolvingMatch[SECOND_CAPTURE], DECIMAL_RADIX),
+          deltasTotal: Number.parseInt(resolvingMatch[THIRD_CAPTURE], DECIMAL_RADIX),
+          message: `Resolving deltas: ${resolvingMatch[ONE]}%`,
+          percentage: Number.parseInt(resolvingMatch[ONE], DECIMAL_RADIX),
+          phase: ClonePhase.RESOLVING,
+        });
+      }
     }
   }
-}
+};
 
 /**
  * Handle clone failure with proper error categorization and cleanup (T090)
  */
-async function handleCloneFailure(
+const handleCloneFailure = async (
   operation: CloneOperation,
   error: unknown,
   targetPath: string,
-): Promise<void> {
-  const candidate =
-    typeof error === "object" && error !== null ? (error as { message?: unknown }) : {};
-  const errorText = typeof candidate.message === "string" ? candidate.message : "Clone failed";
+): Promise<void> => {
+  let candidate: { message?: unknown } = {};
+  if (typeof error === "object" && error) {
+    candidate = error as { message?: unknown };
+  }
+
+  let errorText = "Clone failed";
+  if (typeof candidate.message === "string") {
+    errorText = candidate.message;
+  }
 
   operation.status = CloneStatus.FAILED;
 
-  // Categorize error
   let errorCode = CloneErrorCode.UNKNOWN;
   let errorMessage = errorText;
 
@@ -885,13 +857,17 @@ async function handleCloneFailure(
     errorMessage = "Insufficient disk space";
   }
 
+  let cause: Error | undefined = undefined;
+  if (error instanceof Error) {
+    cause = error;
+  }
+
   operation.error = {
+    cause,
     code: errorCode,
     message: errorMessage,
-    cause: error instanceof Error ? error : undefined,
   };
 
-  // Cleanup partial clone
   try {
     let targetExists = false;
     try {
@@ -902,11 +878,9 @@ async function handleCloneFailure(
     }
 
     if (targetExists) {
-      await rm(targetPath, { recursive: true, force: true });
+      await rm(targetPath, { force: true, recursive: true });
     }
-  } catch {
-    // Ignore cleanup errors
-  }
-}
+  } catch {}
+};
 
 // User Story 6: Metadata Gathering (Phase 9) - To be implemented

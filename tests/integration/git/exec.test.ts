@@ -5,11 +5,11 @@
  * in various repository scenarios.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { exec } from "../../../src/lib/git";
+import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-utils";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ArashiError } from "../../../src/lib/errors";
-import { GitTestRepo, createFile, commitChanges } from "../../helpers/git-test-utils";
 import { GitErrorCode } from "../../../src/types/git";
+import { exec } from "../../../src/lib/git";
 
 describe("exec() - Integration Tests", () => {
   let testRepo: GitTestRepo;
@@ -38,7 +38,7 @@ describe("exec() - Integration Tests", () => {
 
   test("should fail with NOT_A_REPOSITORY error in invalid directory", async () => {
     try {
-      await exec(["status"], "/tmp/not-a-git-repo-" + Date.now());
+      await exec(["status"], `/tmp/not-a-git-repo-${Date.now()}`);
       expect.unreachable("Should have thrown ArashiError");
     } catch (error) {
       expect(error).toBeInstanceOf(ArashiError);
@@ -58,7 +58,7 @@ describe("exec() - Integration Tests", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(defaultBranch);
-    // stderr might contain warnings but command succeeds
+    // Stderr might contain warnings but command succeeds
   });
 
   test("should execute git log and return commit history", async () => {
@@ -171,7 +171,7 @@ describe("exec() - Integration Tests", () => {
     // This test is platform-dependent and might need adjustment
     // We'll test with a path that's likely to fail
     try {
-      await exec(["status"], "/root/.private-dir-" + Date.now());
+      await exec(["status"], `/root/.private-dir-${Date.now()}`);
       // If it doesn't throw, that's ok - path might not exist
     } catch (error) {
       if (error instanceof ArashiError) {
