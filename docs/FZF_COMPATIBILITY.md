@@ -6,7 +6,7 @@ When piping `arashi list` to `fzf`, the interactive interface would not respond 
 
 ## Solution
 
-We use a shell wrapper that closes stdin when piping `arashi list` output:
+On Unix-like shells, we use a shell wrapper that closes stdin when piping `arashi list` output:
 
 ```bash
 #!/bin/bash
@@ -38,8 +38,12 @@ chmod +x ~/.local/bin/arashi
 
 1. **Root Cause**: Bun's compiled executables keep stdin open even when `process.stdin.destroy()` or `fs.closeSync(0)` is called
 2. **Impact**: When stdin is open, fzf cannot exclusively access `/dev/tty` for keyboard input
-3. **Fix**: The shell wrapper closes stdin at the OS level before the binary runs
+3. **Fix**: The Unix shell wrapper closes stdin at the OS level before the binary runs
 4. **Result**: fzf can properly open `/dev/tty` and receive keyboard input while interactive commands keep stdin
+
+## Windows Note
+
+Windows launchers should not close stdin unconditionally. Doing so makes commands like `arashi switch` appear non-interactive and prevents the built-in picker from opening.
 
 ## Testing
 

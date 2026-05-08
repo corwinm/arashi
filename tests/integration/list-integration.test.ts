@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { listCommand } from "../../src/core/list";
+import { realpathSync } from "fs";
 import { spawn } from "bun";
 import { tmpdir } from "os";
 
@@ -26,6 +27,11 @@ interface JsonWorktree {
   path: string;
   subRepositories?: JsonSubRepository[];
 }
+
+const normalizePathSeparators = (value: string): string => value.replaceAll("\\", "/");
+
+const toComparablePath = (value: string): string =>
+  normalizePathSeparators(realpathSync.native(value)).toLowerCase();
 
 /**
  * Helper to create a temporary git repository for testing
@@ -222,8 +228,9 @@ describe("list command - basic functionality", () => {
     expect(output).not.toContain("BRANCH");
     expect(output).not.toContain("Legend");
     // Should contain full paths (not truncated)
-    expect(output).toContain(testDir);
     const lines = output.trim().split("\n");
+    const comparablePaths = lines.map((line) => toComparablePath(line.trim()));
+    expect(comparablePaths).toContain(toComparablePath(testDir));
     expect(lines.length).toBe(3); // Main + 2 worktrees
 
     // Cleanup worktrees
@@ -317,12 +324,10 @@ describe("list command - JSON output", () => {
 
     expect(parsed).toHaveLength(3);
 
-    // Use realpath for comparison
-    const { realpathSync } = await import("fs");
-    const paths = parsed.map((wt) => realpathSync(wt.path));
-    expect(paths).toContain(realpathSync(testDir));
-    expect(paths).toContain(realpathSync(wt1Path));
-    expect(paths).toContain(realpathSync(wt2Path));
+    const paths = parsed.map((wt) => toComparablePath(wt.path));
+    expect(paths).toContain(toComparablePath(testDir));
+    expect(paths).toContain(toComparablePath(wt1Path));
+    expect(paths).toContain(toComparablePath(wt2Path));
 
     // Cleanup
     await spawn(["git", "worktree", "remove", wt1Path], { cwd: testDir }).exited;
@@ -375,9 +380,10 @@ describe("list command - verbose mode", () => {
     const wtPath = await createUniqueWorktree(testDir, "verbose-sub");
 
     const { output } = await runListCommand(testDir, { verbose: true });
+    const normalizedOutput = normalizePathSeparators(output);
 
-    expect(output).toContain("SUB-REPOSITORIES:");
-    expect(output).toContain("repos/nested-repo");
+    expect(normalizedOutput).toContain("SUB-REPOSITORIES:");
+    expect(normalizedOutput).toContain("repos/nested-repo");
 
     // Cleanup
     await spawn(["git", "worktree", "remove", wtPath], { cwd: testDir }).exited;
@@ -393,9 +399,10 @@ describe("list command - verbose mode", () => {
     const wtPath = await createUniqueWorktree(testDir, "verbose-status");
 
     const { output } = await runListCommand(testDir, { verbose: true });
+    const normalizedOutput = normalizePathSeparators(output);
 
-    expect(output).toContain("repos/nested-repo");
-    expect(output).toContain("modified");
+    expect(normalizedOutput).toContain("repos/nested-repo");
+    expect(normalizedOutput).toContain("modified");
 
     // Cleanup
     await spawn(["git", "worktree", "remove", wtPath], { cwd: testDir }).exited;
@@ -428,10 +435,11 @@ describe("list command - verbose mode", () => {
 
     // With maxDepth = 2, should find level1/repo1 but not deep-repo
     const { output } = await runListCommand(testDir, { maxDepth: 2, verbose: true });
+    const normalizedOutput = normalizePathSeparators(output);
 
-    expect(output).toContain("level1/repo1");
+    expect(normalizedOutput).toContain("level1/repo1");
     // Deep repo should not be found
-    expect(output).not.toContain("deep-repo");
+    expect(normalizedOutput).not.toContain("deep-repo");
 
     // Cleanup
     await spawn(["git", "worktree", "remove", wtPath], { cwd: testDir }).exited;
@@ -539,10 +547,8 @@ describe("list command - locked worktrees", () => {
     const { output } = await runListCommand(testDir, { json: true });
     const parsed = JSON.parse(output) as JsonWorktree[];
 
-    // Use realpath for comparison
-    const { realpathSync } = await import("fs");
-    const canonicalWtPath = realpathSync(wtPath);
-    const lockedWorktree = parsed.find((wt) => realpathSync(wt.path) === canonicalWtPath);
+    const canonicalWtPath = toComparablePath(wtPath);
+    const lockedWorktree = parsed.find((wt) => toComparablePath(wt.path) === canonicalWtPath);
     if (!lockedWorktree) {
       throw new Error("Expected to find locked worktree in JSON output");
     }
@@ -609,10 +615,8 @@ describe("list command - detached HEAD", () => {
     const { output } = await runListCommand(testDir, { json: true });
     const parsed = JSON.parse(output) as JsonWorktree[];
 
-    // Find the detached worktree - use realpath for comparison
-    const { realpathSync } = await import("fs");
-    const canonicalWtPath = realpathSync(wtPath);
-    const detachedWorktree = parsed.find((wt) => realpathSync(wt.path) === canonicalWtPath);
+    const canonicalWtPath = toComparablePath(wtPath);
+    const detachedWorktree = parsed.find((wt) => toComparablePath(wt.path) === canonicalWtPath);
     if (!detachedWorktree) {
       throw new Error("Expected to find detached worktree in JSON output");
     }

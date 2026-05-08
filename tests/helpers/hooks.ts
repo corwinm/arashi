@@ -1,6 +1,11 @@
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import type { HookContext } from "../../src/lib/hooks";
+import { tmpdir } from "os";
+
+function createTempPath(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
 
 /**
  * Creates a temporary hook script for testing.
@@ -9,9 +14,12 @@ import type { HookContext } from "../../src/lib/hooks";
  * @returns Absolute path to the created hook script
  */
 export function createMockHook(script: string): string {
-  const tempPath = `/tmp/test-hook-${Date.now()}-${Math.random()}.sh`;
+  const tempDir = createTempPath("arashi-hook-");
+  const tempPath = join(tempDir, "test-hook.sh");
   writeFileSync(tempPath, `#!/bin/sh\n${script}`);
-  chmodSync(tempPath, 0o755);
+  if (process.platform !== "win32") {
+    chmodSync(tempPath, 0o755);
+  }
   return tempPath;
 }
 
@@ -23,7 +31,7 @@ export function createMockHook(script: string): string {
  */
 export function createTestContext(overrides?: Partial<HookContext>): HookContext {
   // Create the test repo directory if it doesn't exist
-  const testRepoPath = overrides?.repoPath || "/tmp/test-repo";
+  const testRepoPath = overrides?.repoPath || createTempPath("arashi-hook-context-");
   try {
     mkdirSync(testRepoPath, { recursive: true });
   } catch {
@@ -44,7 +52,7 @@ export function createTestContext(overrides?: Partial<HookContext>): HookContext
  * @returns Absolute path to the test repository
  */
 export function createTestRepo(): string {
-  const repoPath = `/tmp/test-repo-${Date.now()}-${Math.random()}`;
+  const repoPath = createTempPath("arashi-hook-repo-");
   const hooksDir = join(repoPath, ".arashi", "hooks");
   mkdirSync(hooksDir, { recursive: true });
   return repoPath;

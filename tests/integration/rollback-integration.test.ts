@@ -6,6 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { join, resolve } from "path";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import {
   rollbackBranchCreated,
@@ -13,8 +14,26 @@ import {
   rollbackWorktreeCreated,
 } from "../../src/core/rollback";
 import { exec as gitExec } from "../../src/lib/git";
-import { join } from "path";
+import { realpathSync } from "fs";
 import { tmpdir } from "os";
+
+const normalizePathSeparators = (value: string): string => value.replaceAll("\\", "/");
+
+const toComparablePath = (value: string): string => {
+  try {
+    return normalizePathSeparators(realpathSync.native(value)).toLowerCase();
+  } catch {
+    return normalizePathSeparators(resolve(value)).toLowerCase();
+  }
+};
+
+const parseWorktreeListPaths = (value: string): string[] =>
+  value
+    .trim()
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => line.trim().split(/\s+/)[0])
+    .map((path) => toComparablePath(path));
 
 interface WorktreeCreatedEntry {
   type: "worktree_created";
@@ -89,7 +108,7 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Verify worktree exists
       const listResult = await gitExec(["worktree", "list"], repoPath);
-      expect(listResult.stdout).toContain(worktreePath);
+      expect(parseWorktreeListPaths(listResult.stdout)).toContain(toComparablePath(worktreePath));
 
       // Create rollback entry
       const entry: WorktreeCreatedEntry = {
@@ -107,7 +126,9 @@ describe("Rollback Integration Tests - User Story 3", () => {
 
       // Verify worktree is removed
       const listAfter = await gitExec(["worktree", "list"], repoPath);
-      expect(listAfter.stdout).not.toContain(worktreePath);
+      expect(parseWorktreeListPaths(listAfter.stdout)).not.toContain(
+        toComparablePath(worktreePath),
+      );
     });
 
     test("should be idempotent when worktree does not exist", async () => {
@@ -284,7 +305,7 @@ describe("Rollback Integration Tests - User Story 3", () => {
       expect(branchList.stdout).toContain(branchName);
 
       const worktreeList = await gitExec(["worktree", "list"], repoPath);
-      expect(worktreeList.stdout).toContain(worktreePath);
+      expect(parseWorktreeListPaths(worktreeList.stdout)).toContain(toComparablePath(worktreePath));
 
       const fs = await import("fs/promises");
       try {

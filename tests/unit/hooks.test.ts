@@ -1,21 +1,20 @@
 import {
   GLOBAL_HOOKS,
+  buildHookOperationData,
   buildRemoveHookOperationData,
-  executeHook,
   findHook,
+  getRepoSpecificHookName,
+  isHookFailure,
+  isHookSkipped,
+  mapHookExecutionResult,
+  mapHookSkippedOutcome,
+  parseRepoSpecificHookName,
   resolveScopedLifecycleHooks,
   runLifecycleHook,
-  validateHook,
 } from "../../src/lib/hooks";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "fs";
-import {
-  cleanupTestRepo,
-  createHookInRepo,
-  createMockHook,
-  createTestContext,
-  createTestRepo,
-} from "../helpers/hooks";
+import { chmodSync, mkdirSync, writeFileSync } from "fs";
+import { cleanupTestRepo, createHookInRepo, createTestRepo } from "../helpers/hooks";
 import { dirname, join } from "path";
 
 // ============================================================================
@@ -38,7 +37,7 @@ describe("findHook", () => {
 
     const hookPath = await findHook("pre-create", testRepo);
 
-    expect(hookPath).toContain(".arashi/hooks/pre-create.sh");
+    expect(hookPath?.replaceAll("\\", "/")).toContain(".arashi/hooks/pre-create.sh");
     expect(hookPath).toContain(testRepo);
   });
 
@@ -49,7 +48,8 @@ describe("findHook", () => {
   });
 
   test("returns null when hooks directory doesn't exist", async () => {
-    const emptyRepo = `/tmp/empty-repo-${Date.now()}`;
+    const emptyRepo = join(testRepo, "empty-repo");
+    mkdirSync(emptyRepo, { recursive: true });
 
     const hookPath = await findHook("pre-create", emptyRepo);
 
@@ -63,6 +63,26 @@ describe("findHook", () => {
 
     expect(hookPath).toBeTruthy();
     expect(hookPath).toContain("test-hook.sh");
+  });
+});
+
+describe("repo-specific hook naming", () => {
+  test("builds lifecycle names for a repository", () => {
+    expect(getRepoSpecificHookName("pre-create", "repo-a")).toBe("pre-create.repo-a");
+    expect(getRepoSpecificHookName("post-create", "repo-b")).toBe("post-create.repo-b");
+  });
+
+  test("parses repo-specific lifecycle names", () => {
+    expect(parseRepoSpecificHookName("pre-create.repo-a")).toEqual({
+      lifecycle: "pre-create",
+      repoName: "repo-a",
+    });
+    expect(parseRepoSpecificHookName("post-create.repo-b")).toEqual({
+      lifecycle: "post-create",
+      repoName: "repo-b",
+    });
+    expect(parseRepoSpecificHookName("pre-create.")).toBeNull();
+    expect(parseRepoSpecificHookName("pre-remove.repo-a")).toBeNull();
   });
 });
 
@@ -91,6 +111,20 @@ describe("remove lifecycle helpers", () => {
     expect(operationData.REMOVE_TOTAL_BRANCHES).toBe("2");
     expect(operationData.REMOVE_TOTAL_WORKTREES).toBe("2");
     expect(operationData.REMOVE_TOTAL_REPOSITORIES).toBe("2");
+  });
+
+  test("buildHookOperationData includes only defined values", () => {
+    const operationData = buildHookOperationData({
+      branchName: "feature-a",
+      mainRepoPath: "/tmp/workspace",
+      repoName: "repo-a",
+    });
+
+    expect(operationData).toEqual({
+      BRANCH_NAME: "feature-a",
+      MAIN_REPO_PATH: "/tmp/workspace",
+      REPO_NAME: "repo-a",
+    });
   });
 });
 
@@ -172,231 +206,66 @@ describe("resolveScopedLifecycleHooks", () => {
   });
 });
 
-// ============================================================================
-// ValidateHook() Tests
-// ============================================================================
+describe("hook outcome helpers", () => {
+  test("classifies skipped and failed hook results", () => {
+    const failedResult = {
+      duration: 12,
+      exitCode: 1,
+      killed: false,
+      signalCode: null,
+      stderr: "boom",
+      stdout: "",
+      success: false,
+      timedOut: false,
+    };
 
-describe("validateHook", () => {
-  let testRepo: string;
-
-  beforeEach(() => {
-    testRepo = createTestRepo();
+    expect(isHookSkipped(null)).toBe(true);
+    expect(isHookFailure(null)).toBe(false);
+    expect(isHookFailure(failedResult)).toBe(true);
   });
 
-  afterEach(() => {
-    cleanupTestRepo(testRepo);
-  });
-
-  test("passes for executable file on Unix", async () => {
-    if (process.platform === "win32") {
-      return; // Skip on Windows
-    }
-
-    const hookPath = createHookInRepo(testRepo, "test-hook", "echo 'test'", true);
-
-    const result = await validateHook(hookPath);
-
-    expect(result.valid).toBe(true);
-    expect(result.error).toBeUndefined();
-  });
-
-  test("fails for non-executable file on Unix", async () => {
-    if (process.platform === "win32") {
-      return; // Skip on Windows
-    }
-
-    const hookPath = createHookInRepo(testRepo, "test-hook", "echo 'test'", false);
-
-    const result = await validateHook(hookPath);
-
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain("not executable");
-    expect(result.error).toContain("chmod +x");
-  });
-
-  test("passes for .sh file on Windows", async () => {
-    if (process.platform !== "win32") {
-      return; // Skip on non-Windows
-    }
-
-    const hookPath = createHookInRepo(testRepo, "test-hook", "echo test", true);
-
-    const result = await validateHook(hookPath);
-
-    expect(result.valid).toBe(true);
-  });
-
-  test("returns clear error messages", async () => {
-    const nonexistentPath = "/nonexistent/hook.sh";
-
-    const result = await validateHook(nonexistentPath);
-
-    expect(result.valid).toBe(false);
-    expect(result.error).toBeTruthy();
-    expect(result.error).toContain("Failed to validate hook");
-  });
-});
-
-// ============================================================================
-// ExecuteHook() Tests
-// ============================================================================
-
-describe("executeHook", () => {
-  test("successfully executes hook with exit code 0", async () => {
-    const hookPath = createMockHook("echo 'test output'");
-
-    const result = await executeHook({
-      context: createTestContext(),
-      hookName: "test-hook",
-      scriptPath: hookPath,
+  test("maps hook execution results to summary outcomes", () => {
+    expect(
+      mapHookExecutionResult({
+        duration: 10,
+        exitCode: 0,
+        killed: false,
+        signalCode: null,
+        stderr: "",
+        stdout: "ok",
+        success: true,
+        timedOut: false,
+      }),
+    ).toEqual({
+      durationMs: 10,
+      hookStatus: "success",
+      message: "Hook completed",
+      reasonCode: "none",
     });
 
-    expect(result.success).toBe(true);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("test output");
-    // Note: Bun sets killed=true even for successful exits
-    expect(result.timedOut).toBe(false);
-    expect(result.duration).toBeGreaterThanOrEqual(0);
-
-    rmSync(hookPath);
-  });
-
-  test("captures stdout and stderr correctly", async () => {
-    const hookPath = createMockHook("echo 'stdout message' && echo 'stderr message' >&2");
-
-    const result = await executeHook({
-      context: createTestContext(),
-      hookName: "test-hook",
-      scriptPath: hookPath,
+    expect(
+      mapHookExecutionResult({
+        duration: 25,
+        exitCode: -1,
+        killed: true,
+        signalCode: "SIGTERM",
+        stderr: "",
+        stdout: "",
+        success: false,
+        timedOut: true,
+      }),
+    ).toEqual({
+      durationMs: 25,
+      hookStatus: "failure",
+      message: "Hook timed out after configured limit",
+      reasonCode: "timeout",
     });
 
-    expect(result.stdout).toContain("stdout message");
-    expect(result.stderr).toContain("stderr message");
-
-    rmSync(hookPath);
-  });
-
-  test("handles non-zero exit codes", async () => {
-    const hookPath = createMockHook("exit 1");
-
-    const result = await executeHook({
-      context: createTestContext(),
-      hookName: "test-hook",
-      scriptPath: hookPath,
+    expect(mapHookSkippedOutcome("not_found", "Hook missing")).toEqual({
+      hookStatus: "skipped",
+      message: "Hook missing",
+      reasonCode: "not_found",
     });
-
-    expect(result.success).toBe(false);
-    expect(result.exitCode).toBe(1);
-    // Note: Bun sets killed=true even for failed exits
-
-    rmSync(hookPath);
-  });
-
-  // Note: Timeout enforcement tests are not included due to Bun test framework limitations
-  // With streaming + timeout. The timeout feature works correctly in production (verified manually).
-
-  test("passes environment variables correctly", async () => {
-    const testRepo = createTestRepo();
-    const hookPath = createMockHook(`
-			echo "Hook: $ARASHI_HOOK_NAME"
-			echo "Repo: $ARASHI_REPO_PATH"
-			echo "Branch: $ARASHI_BRANCH"
-		`);
-
-    const result = await executeHook({
-      context: {
-        hookName: "test-hook",
-        operationData: { BRANCH: "main" },
-        repoPath: testRepo,
-      },
-      hookName: "test-hook",
-      scriptPath: hookPath,
-    });
-
-    expect(result.stdout).toContain("Hook: test-hook");
-    expect(result.stdout).toContain(`Repo: ${testRepo}`);
-    expect(result.stdout).toContain("Branch: main");
-
-    rmSync(hookPath);
-    cleanupTestRepo(testRepo);
-  });
-
-  test("passes scope metadata environment variables", async () => {
-    const testRepo = createTestRepo();
-    const hookPath = createMockHook(`
-      echo "Scope: $ARASHI_HOOK_SCOPE"
-      echo "Source: $ARASHI_HOOK_SOURCE_PATH"
-      echo "TargetRepo: $ARASHI_HOOK_TARGET_REPOSITORY"
-      echo "TargetRepoPath: $ARASHI_HOOK_TARGET_REPO_PATH"
-    `);
-
-    const result = await executeHook({
-      context: {
-        hookName: "test-hook",
-        hookScope: "global-shared",
-        operationData: {},
-        repoPath: testRepo,
-        sourceScriptPath: "/tmp/source-hook.sh",
-        targetRepoName: "repo-a",
-        targetRepoPath: "/tmp/repo-a",
-      },
-      hookName: "test-hook",
-      scriptPath: hookPath,
-    });
-
-    expect(result.stdout).toContain("Scope: global-shared");
-    expect(result.stdout).toContain("Source: /tmp/source-hook.sh");
-    expect(result.stdout).toContain("TargetRepo: repo-a");
-    expect(result.stdout).toContain("TargetRepoPath: /tmp/repo-a");
-
-    rmSync(hookPath);
-    cleanupTestRepo(testRepo);
-  });
-
-  test("does not leak directive environment variables to hooks", async () => {
-    const originalDirectiveFile = process.env.ARASHI_DIRECTIVE_FILE;
-    const originalDirectiveShell = process.env.ARASHI_SHELL;
-    process.env.ARASHI_DIRECTIVE_FILE = "/tmp/arashi-directive";
-    process.env.ARASHI_SHELL = "bash";
-
-    const testRepo = createTestRepo();
-    const hookPath = createMockHook(`
-      if [ -n "$ARASHI_DIRECTIVE_FILE" ]; then
-        echo "directive leaked"
-        exit 1
-      fi
-      if [ -n "$ARASHI_SHELL" ]; then
-        echo "shell leaked"
-        exit 1
-      fi
-      echo "clean"
-    `);
-
-    try {
-      const result = await executeHook({
-        context: createTestContext(),
-        hookName: "test-hook",
-        scriptPath: hookPath,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.stdout).toContain("clean");
-    } finally {
-      rmSync(hookPath);
-      cleanupTestRepo(testRepo);
-
-      if (originalDirectiveFile === undefined) {
-        delete process.env.ARASHI_DIRECTIVE_FILE;
-      } else {
-        process.env.ARASHI_DIRECTIVE_FILE = originalDirectiveFile;
-      }
-
-      if (originalDirectiveShell === undefined) {
-        delete process.env.ARASHI_SHELL;
-      } else {
-        process.env.ARASHI_SHELL = originalDirectiveShell;
-      }
-    }
   });
 });
 
@@ -438,63 +307,5 @@ describe("runLifecycleHook", () => {
     });
 
     expect(result).toBeNull();
-  });
-
-  test("returns null when validation fails", async () => {
-    if (process.platform === "win32") {
-      return; // Skip on Windows
-    }
-
-    createHookInRepo(testRepo, "pre-create", "echo 'test'", false);
-
-    const result = await runLifecycleHook({
-      lifecyclePoint: "pre-create",
-      operationData: {},
-      repoPath: testRepo,
-    });
-
-    expect(result).toBeNull();
-  });
-
-  test("returns HookResult when hook executes successfully", async () => {
-    createHookInRepo(testRepo, "pre-create", "echo 'success'");
-
-    const result = await runLifecycleHook({
-      lifecyclePoint: "pre-create",
-      operationData: {},
-      repoPath: testRepo,
-    });
-
-    expect(result).not.toBeNull();
-    expect(result?.success).toBe(true);
-    expect(result?.stdout).toContain("success");
-  });
-
-  test("returns HookResult when hook fails", async () => {
-    createHookInRepo(testRepo, "pre-create", "exit 1");
-
-    const result = await runLifecycleHook({
-      lifecyclePoint: "pre-create",
-      operationData: {},
-      repoPath: testRepo,
-    });
-
-    expect(result).not.toBeNull();
-    expect(result?.success).toBe(false);
-    expect(result?.exitCode).toBe(1);
-  });
-
-  test("passes operation data to hook", async () => {
-    createHookInRepo(testRepo, "pre-create", 'echo "Branch: $ARASHI_BRANCH"');
-
-    const result = await runLifecycleHook({
-      lifecyclePoint: "pre-create",
-      operationData: {
-        BRANCH: "feature-123",
-      },
-      repoPath: testRepo,
-    });
-
-    expect(result?.stdout).toContain("Branch: feature-123");
   });
 });

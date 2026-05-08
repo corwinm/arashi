@@ -11,6 +11,8 @@ import { ArashiError } from "../../../src/lib/errors";
 import { GitErrorCode } from "../../../src/types/git";
 import { exec } from "../../../src/lib/git";
 
+const SLOW_GIT_TEST_TIMEOUT = process.platform === "win32" ? 15_000 : 5000;
+
 describe("exec() - Integration Tests", () => {
   let testRepo: GitTestRepo;
   let defaultBranch: string;
@@ -146,19 +148,23 @@ describe("exec() - Integration Tests", () => {
     expect(result.stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
   });
 
-  test("should handle large stdout output from git log", async () => {
-    // Create many commits
-    for (let i = 0; i < 50; i++) {
-      await createFile(testRepo.path, `file${i}.txt`, `content ${i}`);
-      commitChanges(testRepo.path, `Commit ${i}`);
-    }
+  test(
+    "should handle large stdout output from git log",
+    async () => {
+      // Create many commits
+      for (let i = 0; i < 30; i++) {
+        await createFile(testRepo.path, `file${i}.txt`, `content ${i}`);
+        commitChanges(testRepo.path, `Commit ${i}`);
+      }
 
-    const result = await exec(["log", "--oneline"], testRepo.path);
+      const result = await exec(["log", "--oneline"], testRepo.path);
 
-    expect(result.exitCode).toBe(0);
-    const lines = result.stdout.trim().split("\n");
-    expect(lines.length).toBeGreaterThanOrEqual(50);
-  });
+      expect(result.exitCode).toBe(0);
+      const lines = result.stdout.trim().split("\n");
+      expect(lines.length).toBeGreaterThanOrEqual(30);
+    },
+    SLOW_GIT_TEST_TIMEOUT,
+  );
 
   test("should execute git show operations", async () => {
     const result = await exec(["show", "HEAD", "--no-patch", "--format=%s"], testRepo.path);

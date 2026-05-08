@@ -17,5 +17,5 @@ This repository contains the Arashi CLI implementation.
 ## Validation
 
 - `bun run lint`
-- `bun test`
+- `bun run test`
 - `bun run build`

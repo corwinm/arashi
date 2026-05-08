@@ -54,8 +54,9 @@ const STATUS_WIDTH = 15;
 const JSON_INDENT = 2;
 const DETACHED_LABEL = "detached";
 const EMPTY_SHA = "0000000";
-const ROOT_PATH = "/";
 const SKIPPED_DIRECTORY_NAMES = new Set([".arashi", "node_modules"]);
+
+const normalizeRelativeDisplayPath = (path: string): string => path.replaceAll("\\", "/");
 
 const tryAddGitRepository = async (gitRepos: string[], repoPath: string): Promise<void> => {
   try {
@@ -129,15 +130,16 @@ const handleDirectoryEntry = async (options: {
  * console.log(parent); // null
  * ```
  */
-const findParentRepo = async (currentPath: string): Promise<string | null> => {
-  const { resolve, dirname, relative, isAbsolute } = await import("path");
+export const findParentRepo = async (currentPath: string): Promise<string | null> => {
+  const { resolve, dirname, relative, isAbsolute, parse } = await import("path");
   const { access, constants } = await import("fs/promises");
 
-  let searchPath = resolve(currentPath);
-  const root = ROOT_PATH;
+  const resolvedCurrentPath = resolve(currentPath);
+  let searchPath = resolvedCurrentPath;
+  const { root } = parse(searchPath);
 
   // Walk up directory tree looking for .arashi/config.json
-  while (searchPath !== root) {
+  while (true) {
     const configPath = resolve(searchPath, ".arashi", "config.json");
 
     try {
@@ -150,7 +152,7 @@ const findParentRepo = async (currentPath: string): Promise<string | null> => {
         const reposDirAbs = resolve(searchPath, cfg.reposDir);
 
         // Check if current path is within reposDir
-        const rel = relative(reposDirAbs, currentPath);
+        const rel = relative(reposDirAbs, resolvedCurrentPath);
         if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
           // We're inside reposDir of this config - this is the parent repo
           return searchPath;
@@ -166,8 +168,17 @@ const findParentRepo = async (currentPath: string): Promise<string | null> => {
       // No config at this level - continue searching
     }
 
+    if (searchPath === root) {
+      break;
+    }
+
     // Move up one directory
-    searchPath = dirname(searchPath);
+    const parentPath = dirname(searchPath);
+    if (parentPath === searchPath) {
+      break;
+    }
+
+    searchPath = parentPath;
   }
 
   // No parent config found
@@ -726,7 +737,7 @@ export const discoverSubRepositories = async (
       const hasChanges = await hasUncommittedChanges(repoPath);
 
       // Get relative path
-      const relativePath = relative(worktreePath, repoPath);
+      const relativePath = normalizeRelativeDisplayPath(relative(worktreePath, repoPath));
 
       subRepos.push({
         branch,

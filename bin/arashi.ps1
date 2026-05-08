@@ -1,5 +1,5 @@
-# PowerShell wrapper for arashi.exe to support piping to tools like fzf
-# This closes stdin before executing the binary
+# PowerShell wrapper for arashi.exe on Windows
+# Preserve stdin so interactive commands like `arashi switch` can prompt
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Binary = Join-Path $ScriptDir "arashi.bin.exe"
@@ -15,7 +15,10 @@ if (-not (Test-Path $Binary)) {
     exit 1
 }
 
-# PowerShell way to close stdin and execute
-# We redirect stdin from $null which effectively closes it
-$process = Start-Process -FilePath $Binary -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardInput $null
-exit $process.ExitCode
+# Execute with inherited stdio so prompts remain interactive
+& $Binary @args
+if ($LASTEXITCODE -ne $null) {
+    exit $LASTEXITCODE
+}
+
+exit 0

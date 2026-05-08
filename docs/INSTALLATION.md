@@ -168,10 +168,6 @@ arashi remove -f "$(arashi list | fzf)"  # ✓ Pick a worktree via fzf
 
 ## Windows Support
 
-Windows requires a different approach since `.bat` and `.ps1` files can't use `exec` or close stdin in the same way. Options:
+On Windows, the npm entrypoint launches the packaged `.exe` directly and keeps stdin attached so interactive commands such as `arashi switch` can render prompt pickers normally.
 
-1. Use WSL (works with Linux binary)
-2. Create a PowerShell wrapper (requires research)
-3. Document the limitation
-
-Currently, Windows support is marked as "coming soon" in the README.
+The Unix shell wrapper's stdin-closing behavior is only needed for shell pipelines like `arashi list | fzf`; Windows launchers do not force stdin closed for every command because that breaks interactive prompts.
