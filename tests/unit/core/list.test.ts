@@ -22,6 +22,7 @@ import {
 import { mkdir, mkdtemp, rename, rm, writeFile } from "fs/promises";
 import { ListCommandError } from "../../../src/types/list";
 import { join } from "path";
+import { realpathSync } from "fs";
 import { tmpdir } from "os";
 
 interface SubRepositoryInfo {
@@ -30,6 +31,9 @@ interface SubRepositoryInfo {
   commit: string;
   hasChanges: boolean;
 }
+
+const toComparablePath = (value: string): string =>
+  realpathSync.native(value).replaceAll("\\", "/").toLowerCase();
 
 interface WorktreeListItem {
   path: string;
@@ -859,9 +863,7 @@ describe("gatherWorktreeData()", () => {
     const worktrees = await gatherWorktreeData(testRepo.path);
 
     expect(worktrees).toHaveLength(1);
-    // Use realpath to handle /private/var vs /var on macOS
-    const { realpathSync } = await import("fs");
-    expect(realpathSync(worktrees[0].path)).toBe(realpathSync(testRepo.path));
+    expect(toComparablePath(worktrees[0].path)).toBe(toComparablePath(testRepo.path));
     expect(worktrees[0].isMain).toBe(true);
     expect(worktrees[0].hasChanges).toBe(false);
   });
