@@ -894,7 +894,7 @@ describe("switch command integration", () => {
       "/c",
       "code",
       "--new-window",
-      "C:\\workspace\\feature-switch-command",
+      String.raw`C:\workspace\feature-switch-command`,
     ]);
   });
 
@@ -948,7 +948,7 @@ describe("switch command integration", () => {
       "/c",
       "code",
       "--new-window",
-      "C:\\workspace\\.arashi\\worktrees\\workspace-test\\new",
+      String.raw`C:\workspace\.arashi\worktrees\workspace-test\new`,
     ]);
   });
 

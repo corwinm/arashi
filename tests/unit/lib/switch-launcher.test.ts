@@ -138,7 +138,7 @@ describe("launchSwitchTarget", () => {
       "/c",
       "code",
       "--new-window",
-      "C:\\workspace\\feature-auth",
+      String.raw`C:\workspace\feature-auth`,
     ]);
   });
 
@@ -184,7 +184,7 @@ describe("launchSwitchTarget", () => {
       "/c",
       "code",
       "--new-window",
-      "C:\\workspace\\.arashi\\worktrees\\workspace-test\\new",
+      String.raw`C:\workspace\.arashi\worktrees\workspace-test\new`,
     ]);
   });
 

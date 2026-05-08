@@ -134,7 +134,7 @@ export const findParentRepo = async (currentPath: string): Promise<string | null
 
   const resolvedCurrentPath = resolve(currentPath);
   let searchPath = resolvedCurrentPath;
-  const root = parse(searchPath).root;
+  const { root } = parse(searchPath);
 
   // Walk up directory tree looking for .arashi/config.json
   while (true) {

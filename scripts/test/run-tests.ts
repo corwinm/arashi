@@ -98,9 +98,9 @@ async function main(): Promise<void> {
 
   const proc = Bun.spawn(["bun", "test", ...selectedFiles], {
     cwd: workspaceRoot,
+    stderr: "inherit",
     stdin: "inherit",
     stdout: "inherit",
-    stderr: "inherit",
   });
 
   process.exit(await proc.exited);

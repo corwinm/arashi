@@ -9,8 +9,8 @@ import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-u
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   discoverSubRepositories,
-  findParentRepo,
   findGitRepositories,
+  findParentRepo,
   formatAsJson,
   formatAsTable,
   gatherWorktreeData,
@@ -19,7 +19,7 @@ import {
   validateListCommandOutput,
   validateWorktreeListItem,
 } from "../../../src/core/list";
-import { mkdtemp, mkdir, rename, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "fs/promises";
 import { ListCommandError } from "../../../src/types/list";
 import { join } from "path";
 import { tmpdir } from "os";
