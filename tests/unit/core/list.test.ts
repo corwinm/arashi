@@ -9,6 +9,7 @@ import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-u
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   discoverSubRepositories,
+  findParentRepo,
   findGitRepositories,
   formatAsJson,
   formatAsTable,
@@ -18,9 +19,10 @@ import {
   validateListCommandOutput,
   validateWorktreeListItem,
 } from "../../../src/core/list";
-import { mkdir, rename, writeFile } from "fs/promises";
+import { mkdtemp, mkdir, rename, rm, writeFile } from "fs/promises";
 import { ListCommandError } from "../../../src/types/list";
 import { join } from "path";
+import { tmpdir } from "os";
 
 interface SubRepositoryInfo {
   relativePath: string;
@@ -137,6 +139,47 @@ describe("hasUncommittedChanges()", () => {
     await expect(async () => {
       await hasUncommittedChanges("/nonexistent/path");
     }).toThrow(ListCommandError);
+  });
+});
+
+describe("findParentRepo()", () => {
+  let testRoot: string;
+
+  beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), "arashi-list-parent-"));
+  });
+
+  afterEach(async () => {
+    await rm(testRoot, { force: true, recursive: true });
+  });
+
+  test("returns null when no Arashi config exists in the ancestor chain", async () => {
+    const nestedPath = join(testRoot, "deep", "nested", "repo");
+    await mkdir(nestedPath, { recursive: true });
+
+    await expect(findParentRepo(nestedPath)).resolves.toBeNull();
+  });
+
+  test("returns the parent repo when current path is inside reposDir", async () => {
+    const parentRepoPath = join(testRoot, "workspace");
+    const childRepoPath = join(parentRepoPath, "repos", "child-repo");
+
+    await mkdir(join(parentRepoPath, ".arashi"), { recursive: true });
+    await mkdir(childRepoPath, { recursive: true });
+    await writeFile(
+      join(parentRepoPath, ".arashi", "config.json"),
+      JSON.stringify(
+        {
+          repos: {},
+          reposDir: "./repos",
+          version: "1.0.0",
+        },
+        null,
+        2,
+      ),
+    );
+
+    await expect(findParentRepo(childRepoPath)).resolves.toBe(parentRepoPath);
   });
 });
 

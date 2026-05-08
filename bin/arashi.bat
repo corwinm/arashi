@@ -1,6 +1,6 @@
 @echo off
-REM Wrapper for arashi.exe to support piping to tools like fzf on Windows
-REM This closes stdin before executing the binary
+REM Wrapper for arashi.exe on Windows
+REM Preserve stdin so interactive commands like `arashi switch` can prompt
 
 REM Get the directory where this script is located
 set "SCRIPT_DIR=%~dp0"
@@ -17,6 +17,5 @@ if not exist "%BINARY%" (
     exit /b 1
 )
 
-REM Execute the binary with stdin closed
-REM In Windows, we use <NUL to close/redirect stdin
-"%BINARY%" %* <NUL
+REM Execute the binary with inherited stdio
+"%BINARY%" %*

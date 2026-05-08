@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "fs/promises";
 import type { SwitchCandidate } from "../../src/core/switch.ts";
 import type { SwitchProcessRunner } from "../../src/lib/switch-launcher.ts";
 import type { WorkspaceRepository } from "../../src/lib/config.ts";
-import { join } from "path";
+import { join, resolve } from "path";
 import { tmpdir } from "os";
 
 const candidate: SwitchCandidate = {
@@ -12,6 +12,8 @@ const candidate: SwitchCandidate = {
   repoName: "workspace",
   worktreePath: "/workspace/feature-switch-command",
 };
+
+const resolvedPath = (path: string): string => resolve(path);
 
 describe("switch command integration", () => {
   test("registers switch command with --sesh option", () => {
@@ -163,8 +165,7 @@ describe("switch command integration", () => {
       ),
     ).rejects.toMatchObject({
       code: "NO_MATCHES",
-      message:
-        "No worktree exists at exact path `/workspace/missing`. Run `arashi list` to see available worktree paths.",
+      message: `No worktree exists at exact path \`${resolvedPath("/workspace/missing")}\`. Run \`arashi list\` to see available worktree paths.`,
     });
   });
 
@@ -840,6 +841,115 @@ describe("switch command integration", () => {
     expect(result.launchMode).toBe("vscode");
     expect(invocations[0]).toEqual(["which", "code"]);
     expect(invocations[1]).toEqual(["code", "--new-window", "/workspace/feature-switch-command"]);
+  });
+
+  test("uses cmd.exe to launch VS Code in Windows terminals", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      branchName: "feature/switch-command",
+      repoName: "workspace",
+      worktreePath: "C:\\workspace\\feature-switch-command",
+    };
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "where" && command[1] === "code") {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: "C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd\r\n",
+        };
+      }
+
+      if (command[0] === "cmd.exe") {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        discoverSwitchCandidates: async () => ({
+          candidates: [windowsCandidate],
+          skippedCount: 0,
+        }),
+        env: { TERM_PROGRAM: "vscode" },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        platform: "win32",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("vscode");
+    expect(invocations[0]).toEqual(["where", "code"]);
+    expect(invocations[1]).toEqual([
+      "cmd.exe",
+      "/d",
+      "/c",
+      "code",
+      "--new-window",
+      "C:\\workspace\\feature-switch-command",
+    ]);
+  });
+
+  test("preserves nested worktree paths for Windows VS Code launches", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      branchName: "test/new",
+      repoName: "workspace",
+      worktreePath: "C:\\workspace\\.arashi\\worktrees\\workspace-test\\new",
+    };
+    const invocations: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      invocations.push(command);
+
+      if (command[0] === "where" && command[1] === "code") {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: "C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd\r\n",
+        };
+      }
+
+      if (command[0] === "cmd.exe") {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+
+      return { exitCode: 1, stderr: "unexpected command", stdout: "" };
+    };
+
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        discoverSwitchCandidates: async () => ({
+          candidates: [windowsCandidate],
+          skippedCount: 0,
+        }),
+        env: { TERM_PROGRAM: "vscode" },
+        findWorkspaceRoot: async () => "/workspace",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        platform: "win32",
+        runProcess,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("vscode");
+    expect(invocations[1]).toEqual([
+      "cmd.exe",
+      "/d",
+      "/c",
+      "code",
+      "--new-window",
+      "C:\\workspace\\.arashi\\worktrees\\workspace-test\\new",
+    ]);
   });
 
   test("falls back to platform launcher when VS Code CLI is unavailable", async () => {

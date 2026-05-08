@@ -4,6 +4,7 @@ import {
   selectSwitchCandidate,
 } from "../../../src/core/switch.ts";
 import { describe, expect, test } from "bun:test";
+import { resolve } from "path";
 import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
 import type { WorktreeInfo } from "../../../src/types/remove.ts";
 type SwitchCandidate = ReturnType<typeof buildSwitchCandidates>["candidates"][number];
@@ -37,7 +38,7 @@ describe("buildSwitchCandidates", () => {
     expect(result.candidates[0]).toEqual({
       branchName: "feature/auth",
       repoName: "workspace",
-      worktreePath: "/tmp/workspace-feature",
+      worktreePath: resolve("/tmp/workspace-feature"),
     });
     expect(result.skippedCount).toBe(2);
   });

@@ -95,6 +95,99 @@ describe("launchSwitchTarget", () => {
     expect(commands[1]).toEqual(["code", "--new-window", "/workspace/feature-auth"]);
   });
 
+  test("uses cmd.exe for VS Code launcher on Windows", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      branchName: "feature/auth",
+      repoName: "workspace",
+      worktreePath: "C:\\workspace\\feature-auth",
+    };
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+
+      if (command[0] === "where" && command[1] === "code") {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: "C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd\r\n",
+        };
+      }
+
+      if (command[0] === "cmd.exe") {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
+    };
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: { TERM_PROGRAM: "vscode" },
+        platform: "win32",
+        runProcess,
+      },
+    );
+
+    expect(result.mode).toBe("vscode");
+    expect(commands[0]).toEqual(["where", "code"]);
+    expect(commands[1]).toEqual([
+      "cmd.exe",
+      "/d",
+      "/c",
+      "code",
+      "--new-window",
+      "C:\\workspace\\feature-auth",
+    ]);
+  });
+
+  test("preserves nested Windows worktree segments when launching VS Code", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      branchName: "test/new",
+      repoName: "workspace",
+      worktreePath: "C:\\workspace\\.arashi\\worktrees\\workspace-test\\new",
+    };
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+
+      if (command[0] === "where" && command[1] === "code") {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: "C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd\r\n",
+        };
+      }
+
+      if (command[0] === "cmd.exe") {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+
+      return { exitCode: 1, stderr: "unexpected", stdout: "" };
+    };
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: { TERM_PROGRAM: "vscode" },
+        platform: "win32",
+        runProcess,
+      },
+    );
+
+    expect(result.mode).toBe("vscode");
+    expect(commands[1]).toEqual([
+      "cmd.exe",
+      "/d",
+      "/c",
+      "code",
+      "--new-window",
+      "C:\\workspace\\.arashi\\worktrees\\workspace-test\\new",
+    ]);
+  });
+
   test("uses Cursor launcher when explicitly requested", async () => {
     const commands: string[][] = [];
     const envs: Record<string, string | undefined>[] = [];

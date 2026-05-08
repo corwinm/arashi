@@ -11,6 +11,8 @@ const IDE_COMMANDS: Record<SupportedIde, string> = {
   vscode: "code",
 };
 
+const WINDOWS_SHELL = "cmd.exe";
+
 export interface SwitchProcessResult {
   exitCode: number;
   stdout: string;
@@ -369,7 +371,7 @@ async function launchWithPreferredIde(
     );
   }
 
-  const ideCommand = [commandName, "--new-window", candidate.worktreePath];
+  const ideCommand = buildIdeCommand(commandName, candidate.worktreePath, deps.platform);
   const ideResult = await deps.runProcess(ideCommand, {
     cwd: candidate.worktreePath,
     env: deps.env,
@@ -383,6 +385,18 @@ async function launchWithPreferredIde(
     command: ideCommand,
     mode: ide,
   };
+}
+
+function buildIdeCommand(
+  commandName: string,
+  worktreePath: string,
+  platform: NodeJS.Platform,
+): string[] {
+  if (platform !== "win32") {
+    return [commandName, "--new-window", worktreePath];
+  }
+
+  return [WINDOWS_SHELL, "/d", "/c", commandName, "--new-window", worktreePath];
 }
 
 async function launchWithDetectedTerminalApp(
