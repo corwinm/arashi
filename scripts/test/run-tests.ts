@@ -7,16 +7,17 @@ const currentDir = dirname(currentFilePath);
 const workspaceRoot = dirname(dirname(currentDir));
 
 const windowsExcludedTests = new Set([
-  "tests/unit/core/repository.test.ts",
-  "tests/unit/hooks.test.ts",
   "tests/integration/create.child-hooks-failure.test.ts",
   "tests/integration/create.child-hooks-parity.test.ts",
   "tests/integration/create.child-hooks-success.test.ts",
   "tests/integration/create.non-bare-parity.test.ts",
+  "tests/integration/hook-execution.test.ts",
   "tests/integration/hooks-integration.test.ts",
   "tests/integration/remove.hooks.test.ts",
+  "tests/integration/repository-management.test.ts",
   "tests/integration/repository-integration.test.ts",
   "tests/integration/setup.test.ts",
+  "tests/integration/worktree-path-calculation.test.ts",
 ]);
 
 const windowsShellExecutionPatterns = [
