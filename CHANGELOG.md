@@ -1,3 +1,9 @@
+## [1.11.2](https://github.com/corwinm/arashi/compare/v1.11.1...v1.11.2) (2026-05-09)
+
+### Bug Fixes
+
+- windows cli improvements ([#59](https://github.com/corwinm/arashi/issues/59)) ([baaf56c](https://github.com/corwinm/arashi/commit/baaf56cd0914aef88f8fadfd68e7c083a3ce95f9))
+
 ## [1.11.1](https://github.com/corwinm/arashi/compare/v1.11.0...v1.11.1) (2026-04-19)
 
 ### Bug Fixes
