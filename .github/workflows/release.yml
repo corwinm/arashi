@@ -9,7 +9,7 @@
 # - Publishes wrapper scripts used by npm and curl installer paths
 # - Generates SHA-256 checksum manifest for release artifacts
 # - Creates GitHub release with wrappers, binaries, and checksum manifest
-# - Publishes package to npm registry (if NPM_TOKEN configured)
+# - Publishes package to npm registry using npm Trusted Publishing
 #
 # Trigger: Manual workflow dispatch from GitHub Actions UI
 # Target: Complete release in under 10 minutes from trigger to publication
@@ -43,6 +43,7 @@ permissions:
   contents: write # Create tags, commits, releases
   pull-requests: write # Comment on PRs (optional)
   issues: write # Comment on closed issues (optional)
+  id-token: write # npm Trusted Publishing (OIDC)
 
 jobs:
   release:
@@ -63,17 +64,6 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Check NPM token availability
-        id: npm_token_check
-        run: |
-          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
-            echo "npm_available=false" >> $GITHUB_OUTPUT
-            echo "⚠️ NPM_TOKEN not configured - npm publishing will be skipped"
-          else
-            echo "npm_available=true" >> $GITHUB_OUTPUT
-            echo "✓ NPM_TOKEN configured - package will be published to npm"
-          fi
-
       - name: Configure Git
         run: |
           git config --global user.name "github-actions[bot]"
@@ -93,7 +83,6 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_ENV: production
 
       - name: Release Summary
@@ -106,8 +95,8 @@ jobs:
           echo "- ✅ Multi-platform binaries built with correct version" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ SHA-256 checksum manifest generated for release artifacts" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ GitHub release created with wrappers, binaries, and checksum manifest" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.npm_token_check.outputs.npm_available }}" == "true" ] && [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
-            echo "- ✅ Package published to npm" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
+            echo "- ✅ Package published to npm via Trusted Publishing" >> $GITHUB_STEP_SUMMARY
           else
-            echo "- ⚠️ npm publishing skipped" >> $GITHUB_STEP_SUMMARY
+            echo "- ⚠️ npm publishing skipped (dry run)" >> $GITHUB_STEP_SUMMARY
           fi
