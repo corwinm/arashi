@@ -1,3 +1,12 @@
+## [1.11.3](https://github.com/corwinm/arashi/compare/v1.11.2...v1.11.3) (2026-05-20)
+
+### Bug Fixes
+
+- enable npm trusted publishing release plugin ([#63](https://github.com/corwinm/arashi/issues/63)) ([a417c35](https://github.com/corwinm/arashi/commit/a417c35c9ae39be5b485afab4651296d0505084e))
+- setup Node 24 for release ([#66](https://github.com/corwinm/arashi/issues/66)) ([c929255](https://github.com/corwinm/arashi/commit/c92925584d79b08fa0a0ee309d8920fc59cc6e1d))
+- upgrade semantic-release for trusted publishing ([#64](https://github.com/corwinm/arashi/issues/64)) ([26ea44a](https://github.com/corwinm/arashi/commit/26ea44a0f21f976a3e23f729d28e3ebcf11d5416))
+- use npm trusted publishing ([#62](https://github.com/corwinm/arashi/issues/62)) ([e02fdeb](https://github.com/corwinm/arashi/commit/e02fdeb0e2f67fcbe613b68e79967b3b078d4354))
+
 ## [1.11.2](https://github.com/corwinm/arashi/compare/v1.11.1...v1.11.2) (2026-05-09)
 
 ### Bug Fixes
