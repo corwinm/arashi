@@ -29,9 +29,9 @@
   "files": [
     "bin/arashi",
     "bin/arashi.js",
+    "bin/install-binary.js",
     "bin/arashi.bat",
     "bin/arashi.ps1",
-    "scripts/postinstall.js",
     "schema/config.schema.json",
     "README.md",
     "LICENSE"
@@ -65,7 +65,6 @@
     "format": "oxfmt --config .oxfmtrc.json --write .",
     "format:check": "oxfmt --config .oxfmtrc.json --check .",
     "quality:changed": "bun run scripts/quality/changed-files-quality.ts",
-    "postinstall": "node scripts/postinstall.js",
     "prepublishOnly": "bun run schema:publish",
     "prepare": "husky"
   },

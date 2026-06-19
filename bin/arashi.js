@@ -1,110 +1,149 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { formatInstallError, getPlatformInfo, installBinary } from "./install-binary.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const argv = process.argv.slice(2);
-const isWindows = process.platform === "win32";
+const currentPlatform = process.platform;
+const currentArch = process.arch;
+const isWindows = currentPlatform === "win32";
 
-const resolveBinaryPath = () => {
-  const defaultBinary = isWindows ? "arashi.bin.exe" : "arashi.bin";
-  const defaultBinaryPath = join(__dirname, defaultBinary);
+export function getDefaultBinaryName(platform = currentPlatform) {
+  return platform === "win32" ? "arashi.bin.exe" : "arashi.bin";
+}
 
-  if (existsSync(defaultBinaryPath)) {
+export function getWrapperName(platform = currentPlatform) {
+  return platform === "win32" ? "arashi.bat" : "arashi";
+}
+
+export function resolvePlatformBinaryName({ arch = currentArch, platform = currentPlatform } = {}) {
+  return getPlatformInfo({ arch, platform }).binaryName;
+}
+
+export function resolveBinaryPath(options = {}) {
+  const binDir = options.binDir ?? __dirname;
+  const platform = options.platform ?? currentPlatform;
+  const arch = options.arch ?? currentArch;
+  const exists = options.existsSyncImpl ?? existsSync;
+  const defaultBinaryPath = join(binDir, getDefaultBinaryName(platform));
+
+  if (exists(defaultBinaryPath)) {
     return defaultBinaryPath;
   }
 
-  if (isWindows) {
-    return join(__dirname, "arashi-windows-x64.exe");
+  try {
+    return join(binDir, resolvePlatformBinaryName({ arch, platform }));
+  } catch {
+    return defaultBinaryPath;
+  }
+}
+
+export function hasRunnableBinary(options = {}) {
+  const binDir = options.binDir ?? __dirname;
+  const platform = options.platform ?? currentPlatform;
+  const arch = options.arch ?? currentArch;
+  const exists = options.existsSyncImpl ?? existsSync;
+
+  if (exists(join(binDir, getDefaultBinaryName(platform)))) {
+    return true;
   }
 
-  if (process.platform === "darwin" && process.arch === "arm64") {
-    return join(__dirname, "arashi-macos-arm64");
-  }
-
-  if (process.platform === "linux" && process.arch === "x64") {
-    return join(__dirname, "arashi-linux-x64");
-  }
-
-  return defaultBinaryPath;
-};
-
-const ensureInstalled = () => {
-  const wrapper = isWindows ? "arashi.bat" : "arashi";
-  const wrapperPath = join(__dirname, wrapper);
-  const postinstallPath = join(__dirname, "..", "scripts", "postinstall.js");
-  const defaultBinary = isWindows ? "arashi.bin.exe" : "arashi.bin";
-  const defaultBinaryPath = join(__dirname, defaultBinary);
-  const platformBinary = (() => {
-    if (isWindows) {
-      return "arashi-windows-x64.exe";
-    }
-
-    if (process.platform === "darwin" && process.arch === "arm64") {
-      return "arashi-macos-arm64";
-    }
-
-    if (process.platform === "linux" && process.arch === "x64") {
-      return "arashi-linux-x64";
-    }
-
-    return null;
-  })();
-  const platformBinaryPath = platformBinary ? join(__dirname, platformBinary) : null;
-  const binaryExists = () => {
-    if (existsSync(defaultBinaryPath)) {
-      return true;
-    }
-
-    if (platformBinaryPath && existsSync(platformBinaryPath)) {
-      return true;
-    }
-
+  try {
+    return exists(join(binDir, resolvePlatformBinaryName({ arch, platform })));
+  } catch {
     return false;
-  };
+  }
+}
 
-  if (existsSync(wrapperPath) && binaryExists()) {
-    return;
+export async function ensureInstalled(options = {}) {
+  const binDir = options.binDir ?? __dirname;
+  const rootDir = options.rootDir ?? join(binDir, "..");
+  const platform = options.platform ?? currentPlatform;
+  const arch = options.arch ?? currentArch;
+  const log = options.log ?? console.log;
+  const installBinaryImpl = options.installBinaryImpl ?? installBinary;
+
+  if (hasRunnableBinary({ arch, binDir, existsSyncImpl: options.existsSyncImpl, platform })) {
+    return { status: "already-installed" };
   }
 
-  console.log("arashi binary missing; running postinstall to download.");
-  const result = spawnSync(process.execPath, [postinstallPath], { stdio: "inherit" });
+  log("arashi binary missing; installing the matching platform binary before continuing.");
+  return installBinaryImpl({ ...options, arch, binDir, log, platform, rootDir });
+}
 
-  if (result.error) {
-    console.error(`Failed to run postinstall. ${result.error.message}.`);
-    process.exit(1);
+export function isExplicitInstallCommand(argv) {
+  return argv[0] === "install";
+}
+
+async function runExplicitInstall(options) {
+  const binDir = options.binDir ?? __dirname;
+  const rootDir = options.rootDir ?? join(binDir, "..");
+  const installBinaryImpl = options.installBinaryImpl ?? installBinary;
+
+  await installBinaryImpl({ ...options, binDir, rootDir });
+}
+
+function spawnArashi(argv, options = {}) {
+  const binDir = options.binDir ?? __dirname;
+  const platform = options.platform ?? currentPlatform;
+  const windows = platform === "win32";
+  const spawnImpl = options.spawnImpl ?? spawn;
+  const wrapperPath = join(binDir, getWrapperName(platform));
+  const binaryPath = resolveBinaryPath({
+    arch: options.arch,
+    binDir,
+    existsSyncImpl: options.existsSyncImpl,
+    platform,
+  });
+
+  return new Promise((resolve) => {
+    const child = windows
+      ? spawnImpl(binaryPath, argv, {
+        stdio: "inherit",
+        windowsHide: false,
+      })
+      : spawnImpl(wrapperPath, argv, { stdio: "inherit" });
+
+    child.on("exit", (code, signal) => {
+      if (typeof code === "number") {
+        resolve(code);
+        return;
+      }
+
+      resolve(signal ? 1 : 0);
+    });
+
+    child.on("error", (error) => {
+      const errorLog = options.error ?? console.error;
+      errorLog(`Failed to start arashi. ${error.message}.`);
+      resolve(1);
+    });
+  });
+}
+
+export async function runEntrypoint(argv = process.argv.slice(2), options = {}) {
+  const errorLog = options.error ?? console.error;
+
+  try {
+    if (isExplicitInstallCommand(argv)) {
+      await runExplicitInstall(options);
+      return 0;
+    }
+
+    await ensureInstalled(options);
+  } catch (error) {
+    errorLog(formatInstallError(error));
+    return 1;
   }
 
-  if (typeof result.status === "number" && result.status !== 0) {
-    process.exit(result.status);
-  }
-};
+  return spawnArashi(argv, options);
+}
 
-ensureInstalled();
-const wrapper = isWindows ? "arashi.bat" : "arashi";
-const wrapperPath = join(__dirname, wrapper);
-const binaryPath = resolveBinaryPath();
-
-const child = isWindows
-  ? spawn(binaryPath, argv, {
-    stdio: "inherit",
-    windowsHide: false,
-  })
-  : spawn(wrapperPath, argv, { stdio: "inherit" });
-
-child.on("exit", (code, signal) => {
-  if (typeof code === "number") {
-    process.exit(code);
-  }
-
-  process.exit(signal ? 1 : 0);
-});
-
-child.on("error", (error) => {
-  console.error(`Failed to start arashi. ${error.message}.`);
-  process.exit(1);
-});
+const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === invokedPath) {
+  process.exitCode = await runEntrypoint();
+}
