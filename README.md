@@ -47,13 +47,21 @@ If curl installation fails, or if the smoke test reports a bad release artifact,
 npm install -g arashi
 ```
 
+The npm package is script-free: it does not require package-manager lifecycle scripts or `postinstall` approval. It installs the lightweight JavaScript entrypoint and wrapper files first, then downloads the matching platform binary on first use.
+
+To preinstall the binary explicitly, run:
+
+```bash
+arashi install
+```
+
 Verify install:
 
 ```bash
 arashi --version
 ```
 
-If npm is unavailable or fails, use the curl installer command above or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
+If npm is unavailable or binary installation fails, use the curl installer command above or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
 
 ### Manual install from GitHub Releases
 
@@ -94,6 +102,7 @@ bun run build
 Arashi currently provides these commands:
 
 - `arashi init`
+- `arashi install`
 - `arashi add <git-url>`
 - `arashi clone [--all]`
 - `arashi create <branch>`

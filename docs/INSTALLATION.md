@@ -2,10 +2,7 @@
 
 ## Overview
 
-Arashi uses a wrapper script approach to ensure compatibility with interactive tools like fzf. The distribution includes two files:
-
-- `arashi` - Shell wrapper script (the command users run)
-- `arashi.bin` - The compiled Bun executable
+Arashi uses a small JavaScript npm entrypoint plus wrapper scripts to ensure compatibility with interactive tools like fzf. Direct/curl distributions include a wrapper and compiled Bun executable; npm installs begin with lightweight JavaScript and wrapper files, then install the matching platform binary on first use or through `arashi install`.
 
 ## Official install methods
 
@@ -61,9 +58,11 @@ Checksum manifest expectations:
 ## npm troubleshooting and fallback guidance
 
 - `npm: command not found`: install Node.js/npm, then retry. If unavailable, use the curl installer.
-- Permission errors with global npm installs: configure user-level npm prefix or use curl with `ARASHI_INSTALL_DIR="$HOME/.local/bin"`.
-- Postinstall download failure: retry install once, then use curl/manual release assets.
-- Verification fails after npm install: run `arashi --version`; if it exits immediately or returns no output, reinstall with a pinned release or switch to curl/manual release flow.
+- Permission errors with global npm installs: configure a user-level npm prefix or use curl with `ARASHI_INSTALL_DIR="$HOME/.local/bin"`.
+- Lifecycle scripts are not required: the npm package does not define `postinstall`, so package managers that block install scripts can still install Arashi.
+- To preinstall the platform binary, run `arashi install` after npm install. This is safe to run more than once; if the matching binary already exists it exits successfully without downloading again.
+- First-use download failure: retry `arashi install` once, then use curl/manual release assets if the network or release asset remains unavailable.
+- Verification fails during `arashi install` or first use: partial downloads are removed automatically; switch to curl/manual release flow and report the bad release artifact.
 
 ## Why a Wrapper?
 
@@ -82,22 +81,15 @@ exec "$SCRIPT_DIR/arashi.bin" "$@"
 
 ### 1. npm Package (Recommended)
 
-The npm package automatically handles the wrapper:
-
-```json
-{
-  "bin": {
-    "arashi": "./bin/arashi"
-  },
-  "files": ["bin/"]
-}
-```
+The npm package intentionally avoids lifecycle scripts. Its package metadata points the npm `bin` entry to `./bin/arashi.js` and publishes the JavaScript entrypoint, wrapper files, and runtime installer module.
 
 When users run `npm install -g arashi`, npm:
 
-1. Installs both `bin/arashi` (wrapper) and `bin/arashi.bin` (binary)
-2. Creates a symlink in the global bin directory pointing to `bin/arashi`
-3. Everything works transparently
+1. Installs the JavaScript entrypoint (`bin/arashi.js`), wrapper files, and runtime installer module.
+2. Creates a symlink in the global bin directory pointing to `bin/arashi.js`.
+3. Downloads the matching platform binary when the user runs `arashi install` or the first normal `arashi <command>`.
+
+The installer resolves assets from the installed package version, for example `https://github.com/corwinm/arashi/releases/download/v<version>/arashi-linux-x64`, verifies the binary with `--version`, and removes partial downloads on failure.
 
 ### 2. Direct Binary Downloads (GitHub Releases)
 
