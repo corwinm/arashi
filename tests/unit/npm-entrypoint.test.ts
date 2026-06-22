@@ -44,7 +44,9 @@ describe("npm JavaScript entrypoint", () => {
 
     expect(exitCode).toBe(0);
     expect(installed).toEqual(["/package/bin"]);
-    expect(spawn.calls).toEqual([{ args: ["--version"], command: "/package/bin/arashi" }]);
+    expect(spawn.calls).toHaveLength(1);
+    expect(spawn.calls[0].args).toEqual(["--version"]);
+    expect(spawn.calls[0].command.replaceAll("\\", "/")).toBe("/package/bin/arashi");
   });
 
   test("explicit install downloads without spawning the native binary", async () => {
