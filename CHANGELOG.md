@@ -1,3 +1,9 @@
+## [1.12.0](https://github.com/corwinm/arashi/compare/v1.11.3...v1.12.0) (2026-06-22)
+
+### Features
+
+- install npm binary on first use ([#67](https://github.com/corwinm/arashi/issues/67)) ([639e0b2](https://github.com/corwinm/arashi/commit/639e0b2d743c1b182c81f61c7bba621bbe3d9510))
+
 ## [1.11.3](https://github.com/corwinm/arashi/compare/v1.11.2...v1.11.3) (2026-05-20)
 
 ### Bug Fixes
