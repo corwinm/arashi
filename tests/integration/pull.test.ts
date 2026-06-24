@@ -150,24 +150,28 @@ describe("pull command", () => {
     SLOW_PULL_TEST_TIMEOUT,
   );
 
-  test("reports manual-update and rolls back on conflicts or errors", async () => {
-    const { workspaceRoot, repoRemote, repoPath } = await createWorkspaceWithRepo(testDir);
+  test(
+    "reports manual-update and rolls back on conflicts or errors",
+    async () => {
+      const { workspaceRoot, repoRemote, repoPath } = await createWorkspaceWithRepo(testDir);
 
-    await writeFile(join(repoPath, "README.md"), "local change");
-    const headBefore = await runGit(repoPath, ["rev-parse", "HEAD"]);
+      await writeFile(join(repoPath, "README.md"), "local change");
+      const headBefore = await runGit(repoPath, ["rev-parse", "HEAD"]);
 
-    await createRemoteCommit(repoRemote, testDir, "repo-remote-update-2", "README.md");
+      await createRemoteCommit(repoRemote, testDir, "repo-remote-update-2", "README.md");
 
-    const result = await runPullCommand(workspaceRoot);
+      const result = await runPullCommand(workspaceRoot);
 
-    const headAfter = await runGit(repoPath, ["rev-parse", "HEAD"]);
-    const statusAfter = await runGit(repoPath, ["status", "--porcelain"]);
+      const headAfter = await runGit(repoPath, ["rev-parse", "HEAD"]);
+      const statusAfter = await runGit(repoPath, ["status", "--porcelain"]);
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout + result.stderr).toContain("manual-update");
-    expect(headAfter).toBe(headBefore);
-    expect(statusAfter).toContain("README.md");
-  });
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toContain("manual-update");
+      expect(headAfter).toBe(headBefore);
+      expect(statusAfter).toContain("README.md");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
 
   test(
     "respects --only repository filtering",
@@ -186,16 +190,25 @@ describe("pull command", () => {
     SLOW_PULL_TEST_TIMEOUT,
   );
 
-  test("includes verbose git output when --verbose is set", async () => {
-    const { workspaceRoot, repoRemote } = await createWorkspaceWithRepo(testDir);
+  test(
+    "includes verbose git output when --verbose is set",
+    async () => {
+      const { workspaceRoot, repoRemote } = await createWorkspaceWithRepo(testDir);
 
-    await createRemoteCommit(repoRemote, testDir, "repo-remote-update-verbose", "repo-verbose.txt");
+      await createRemoteCommit(
+        repoRemote,
+        testDir,
+        "repo-remote-update-verbose",
+        "repo-verbose.txt",
+      );
 
-    const result = await runPullCommand(workspaceRoot, ["--only", "repo-a", "--verbose"]);
+      const result = await runPullCommand(workspaceRoot, ["--only", "repo-a", "--verbose"]);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/Updating|Fast-forward/);
-  });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(/Updating|Fast-forward/);
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
 
   test(
     "reports per-repository timing output",
