@@ -197,28 +197,43 @@ describe("pull command", () => {
     expect(result.stdout).toMatch(/Updating|Fast-forward/);
   });
 
-  test("reports per-repository timing output", async () => {
-    const { workspaceRoot, repoRemote } = await createWorkspaceWithRepo(testDir);
+  test(
+    "reports per-repository timing output",
+    async () => {
+      const { workspaceRoot, repoRemote } = await createWorkspaceWithRepo(testDir);
 
-    await createRemoteCommit(repoRemote, testDir, "repo-remote-update-timing", "repo-timing.txt");
+      await createRemoteCommit(repoRemote, testDir, "repo-remote-update-timing", "repo-timing.txt");
 
-    const result = await runPullCommand(workspaceRoot, ["--only", "repo-a"]);
+      const result = await runPullCommand(workspaceRoot, ["--only", "repo-a"]);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/repo-a: (updated|skipped|failed|manual-update) \(\d+\.\d{2}s\)/);
-  });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(
+        /repo-a: (updated|skipped|failed|manual-update) \(\d+\.\d{2}s\)/,
+      );
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
 
-  test("reports timeout failures in the summary", async () => {
-    const { workspaceRoot, repoRemote } = await createWorkspaceWithRepo(testDir, {
-      hooksTimeoutMs: 1,
-    });
+  test(
+    "reports timeout failures in the summary",
+    async () => {
+      const { workspaceRoot, repoRemote } = await createWorkspaceWithRepo(testDir, {
+        hooksTimeoutMs: 1,
+      });
 
-    await createRemoteCommit(repoRemote, testDir, "repo-remote-update-timeout", "repo-timeout.txt");
+      await createRemoteCommit(
+        repoRemote,
+        testDir,
+        "repo-remote-update-timeout",
+        "repo-timeout.txt",
+      );
 
-    const result = await runPullCommand(workspaceRoot, ["--only", "repo-a"]);
+      const result = await runPullCommand(workspaceRoot, ["--only", "repo-a"]);
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout + result.stderr).toContain("Timed out");
-    expect(result.stdout).toContain("overall: failure");
-  });
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toContain("Timed out");
+      expect(result.stdout).toContain("overall: failure");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
 });

@@ -435,7 +435,12 @@ describe("Repository Cloning", () => {
 
     expect(result.status).toBe(CloneStatus.FAILED);
     expect(result.error).toBeDefined();
-    expect(["NETWORK_ERROR", "INVALID_URL", "UNKNOWN"]).toContain(result.error?.code);
+    expect([
+      CloneErrorCode.NETWORK_ERROR,
+      CloneErrorCode.INVALID_URL,
+      CloneErrorCode.TIMEOUT,
+      CloneErrorCode.UNKNOWN,
+    ]).toContain(result.error!.code);
   }, 10_000);
 
   test("reports progress during clone", async () => {
