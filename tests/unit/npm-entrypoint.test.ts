@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { ensureInstalled, isExplicitInstallCommand, runEntrypoint } from "../../bin/arashi.js";
+import {
+  ensureInstalled,
+  isExplicitInstallCommand,
+  isExplicitUpdateCommand,
+  runEntrypoint,
+} from "../../bin/arashi.js";
 
 function createSuccessfulSpawn() {
   const calls: { args: string[]; command: string }[] = [];
@@ -23,6 +28,11 @@ describe("npm JavaScript entrypoint", () => {
   test("recognizes explicit install as an entrypoint-level command", () => {
     expect(isExplicitInstallCommand(["install"])).toBe(true);
     expect(isExplicitInstallCommand(["--help"])).toBe(false);
+  });
+
+  test("recognizes explicit update as an entrypoint-level command", () => {
+    expect(isExplicitUpdateCommand(["update"])).toBe(true);
+    expect(isExplicitUpdateCommand(["install"])).toBe(false);
   });
 
   test("first-use fallback installs a missing binary before spawning arashi", async () => {
@@ -68,6 +78,31 @@ describe("npm JavaScript entrypoint", () => {
 
     expect(exitCode).toBe(0);
     expect(installed).toEqual(["/package/bin"]);
+    expect(spawn.calls).toEqual([]);
+  });
+
+  test("explicit update is handled without spawning the native binary", async () => {
+    const spawn = createSuccessfulSpawn();
+    let installed = false;
+
+    const exitCode = await runEntrypoint(["update", "--check"], {
+      arch: "x64",
+      binDir: "/package/bin",
+      existsSyncImpl: () => true,
+      installBinaryImpl: async () => {
+        installed = true;
+        return { status: "installed" };
+      },
+      latestVersion: "2.0.0",
+      log: () => {},
+      metadata: { name: "arashi", version: "1.0.0" },
+      platform: "linux",
+      rootDir: "/package",
+      spawnImpl: spawn.spawnImpl,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(installed).toBe(false);
     expect(spawn.calls).toEqual([]);
   });
 

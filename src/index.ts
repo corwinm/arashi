@@ -14,6 +14,7 @@ import { createCommand as createShellCommand } from "./commands/shell.ts";
 import { createCommand as createStatusCommand } from "./commands/status.ts";
 import { createCommand as createSwitchCommand } from "./commands/switch.ts";
 import { createCommand as createSyncCommand } from "./commands/sync.ts";
+import { createCommand as createUpdateCommand } from "./commands/update.ts";
 import { detectTerminalContext } from "./lib/terminal-context.ts";
 import pkg from "../package.json";
 import { renderHelpBanner } from "./lib/logo.ts";
@@ -70,5 +71,6 @@ program.addCommand(createSyncCommand());
 program.addCommand(createShellCommand());
 program.addCommand(createSetupCommand());
 program.addCommand(createSwitchCommand());
+program.addCommand(createUpdateCommand(pkg.version));
 
 program.parse();

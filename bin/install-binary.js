@@ -166,7 +166,7 @@ export async function installBinary(options = {}) {
   const binaryPath = join(binDir, binaryName);
   const downloadUrl = buildReleaseAssetUrl(version, binaryName, options.repo ?? GITHUB_REPO);
 
-  if (await isBinaryInstalled(binaryPath, { accessImpl })) {
+  if (!options.force && (await isBinaryInstalled(binaryPath, { accessImpl }))) {
     log(`✓ Binary already installed at ${binaryPath}`);
     return { binaryName, binaryPath, downloadUrl, status: "already-installed", version };
   }
