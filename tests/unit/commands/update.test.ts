@@ -1,4 +1,5 @@
 import {
+  buildInstallerUpdatePlan,
   compareVersions,
   createCommand,
   fetchLatestRelease,
@@ -53,13 +54,24 @@ describe("update command", () => {
     });
   });
 
-  test("prints direct-binary manual guidance without mutating", async () => {
+  test("builds installer update plan for curl-installed binaries", () => {
+    const plan = buildInstallerUpdatePlan("2.0.0", "/home/user/.arashi/bin/arashi");
+
+    expect(plan.command).toBe("bash");
+    expect(plan.args.join(" ")).toContain("https://arashi.haphazard.dev/install");
+    expect(plan.env.ARASHI_VERSION).toBe("2.0.0");
+    expect(plan.env.ARASHI_INSTALL_DIR).toBe("/home/user/.arashi/bin");
+    expect(plan.env.ARASHI_SHELL_INTEGRATION).toBe("no");
+  });
+
+  test("prints installer update plan without mutating", async () => {
     const logs: string[] = [];
 
     await runDirectUpdate(
       { dryRun: true },
       {
         currentVersion: "1.0.0",
+        execPath: "/home/user/.arashi/bin/arashi",
         fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
         log: (message) => logs.push(message),
       },
@@ -67,7 +79,34 @@ describe("update command", () => {
 
     const output = logs.join("\n");
     expect(output).toContain("Update available");
-    expect(output).toContain("Automatic update is not available");
+    expect(output).toContain("official curl installer");
+    expect(output).toContain("/home/user/.arashi/bin");
     expect(output).toContain("Dry run");
+  });
+
+  test("runs official installer when confirmed", async () => {
+    const logs: string[] = [];
+    const calls: { args: string[]; command: string; env?: NodeJS.ProcessEnv }[] = [];
+
+    await runDirectUpdate(
+      { yes: true },
+      {
+        currentVersion: "1.0.0",
+        execPath: "/home/user/.arashi/bin/arashi",
+        fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
+        log: (message) => logs.push(message),
+        spawnSyncImpl: ((command: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+          calls.push({ args, command, env: options.env });
+          return { status: 0 };
+        }) as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe("bash");
+    expect(calls[0].args.join(" ")).toContain("arashi.haphazard.dev/install");
+    expect(calls[0].env?.ARASHI_INSTALL_DIR).toBe("/home/user/.arashi/bin");
+    expect(calls[0].env?.ARASHI_VERSION).toBe("2.0.0");
+    expect(logs.join("\n")).toContain("Updated arashi to v2.0.0");
   });
 });

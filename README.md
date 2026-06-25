@@ -63,7 +63,7 @@ arashi update --dry-run
 arashi update --yes
 ```
 
-`arashi update` can update npm-managed installs when it can confidently detect the package manager. Direct binary/manual installs report the latest release asset to download instead of replacing files automatically.
+`arashi update` can update npm-managed installs when it can confidently detect the package manager. For official curl installer installs, `arashi update --yes` reruns the installer against the current binary directory.
 
 Verify install:
 

@@ -1,5 +1,7 @@
 import { info, error as logError } from "../lib/logger.ts";
 import { Command } from "commander";
+import { dirname } from "node:path";
+import { spawnSync } from "node:child_process";
 
 export const UPDATE_COMMAND_DESCRIPTION = "Check for and apply Arashi updates";
 const RELEASES_URL = "https://github.com/corwinm/arashi/releases";
@@ -8,6 +10,7 @@ const GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/corwinm/arashi/r
 interface UpdateOptions {
   check?: boolean;
   dryRun?: boolean;
+  yes?: boolean;
 }
 
 interface ReleaseInfo {
@@ -16,6 +19,42 @@ interface ReleaseInfo {
 }
 
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
+type SpawnSyncImpl = typeof spawnSync;
+
+const INSTALLER_URL = "https://arashi.haphazard.dev/install";
+
+interface DirectUpdateDeps {
+  currentVersion: string;
+  execPath?: string;
+  fetchImpl?: FetchImpl;
+  log?: (message: string) => void;
+  spawnSyncImpl?: SpawnSyncImpl;
+}
+
+export function buildInstallerUpdatePlan(
+  latestVersion: string,
+  execPath: string,
+): {
+  args: string[];
+  command: string;
+  env: Record<string, string>;
+  installDir: string;
+} {
+  const installDir = dirname(execPath);
+  return {
+    args: [
+      "-c",
+      `curl -fsSL ${INSTALLER_URL} | bash -s -- --no-shell-integration --no-modify-path`,
+    ],
+    command: "bash",
+    env: {
+      ARASHI_INSTALL_DIR: installDir,
+      ARASHI_SHELL_INTEGRATION: "no",
+      ARASHI_VERSION: latestVersion,
+    },
+    installDir,
+  };
+}
 
 function normalizeVersion(version: string): string {
   return version.trim().replace(/^v/, "").split("+")[0];
@@ -91,7 +130,7 @@ export async function fetchLatestRelease(fetchImpl: FetchImpl = fetch): Promise<
 
 export async function runDirectUpdate(
   options: UpdateOptions,
-  deps?: { currentVersion: string; fetchImpl?: FetchImpl; log?: (message: string) => void },
+  deps?: DirectUpdateDeps,
 ): Promise<void> {
   const { currentVersion = "", fetchImpl, log = info } = deps ?? { currentVersion: "" };
   const latest = await fetchLatestRelease(fetchImpl);
@@ -108,32 +147,51 @@ export async function runDirectUpdate(
   }
 
   const assetName = platformAssetName();
-  log("Automatic update is not available for direct-binary/manual installs.");
-  log(`Manual releases: ${latest.htmlUrl}`);
+  const execPath = deps?.execPath ?? process.execPath;
+  const plan = buildInstallerUpdatePlan(latest.version, execPath);
+  log("Update method: official curl installer");
+  log(`Installer URL: ${INSTALLER_URL}`);
+  log(`Install directory: ${plan.installDir}`);
   if (assetName) {
-    log(`Download asset for this platform: ${assetName}`);
+    log(`Platform asset: ${assetName}`);
   }
-  log(
-    "Replace the existing arashi binary with the downloaded asset and make it executable if needed.",
-  );
 
   if (options.check) {
     log("Check only: no changes made.");
+    return;
   }
   if (options.dryRun) {
     log("Dry run: no changes made.");
+    return;
   }
+  if (!options.yes) {
+    log("Update not applied. Rerun with --yes to reinstall Arashi with the official installer.");
+    return;
+  }
+
+  const spawnSyncImpl = deps?.spawnSyncImpl ?? spawnSync;
+  const result = spawnSyncImpl(plan.command, plan.args, {
+    encoding: "utf8",
+    env: { ...process.env, ...plan.env },
+    stdio: "inherit",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`installer exited with code ${result.status ?? "unknown"}`);
+  }
+
+  log(`✓ Updated arashi to v${latest.version}.`);
 }
 
 export function createCommand(currentVersion = ""): Command {
   return new Command("update")
     .description(UPDATE_COMMAND_DESCRIPTION)
     .option("--check", "check whether an update is available without changing files")
-    .option("--dry-run", "show the direct-binary update guidance without changing files")
-    .option(
-      "-y, --yes",
-      "accepted for npm-managed updates; direct binaries still require manual replacement",
-    )
+    .option("--dry-run", "show the installer update plan without changing files")
+    .option("-y, --yes", "apply the update without prompting")
     .action(async (options: UpdateOptions) => {
       try {
         await runDirectUpdate(options, { currentVersion });
