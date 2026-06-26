@@ -8,7 +8,29 @@ import {
 } from "../../bin/update.js";
 import { describe, expect, test } from "bun:test";
 
-function createResponse(body, ok = true) {
+interface MockPackageResponse {
+  json: () => Promise<unknown>;
+  ok: boolean;
+  status: number;
+  statusText: string;
+}
+
+interface InstallBinaryOptions {
+  force?: boolean;
+  version?: string;
+}
+
+interface SpawnOptions {
+  cwd?: string;
+}
+
+interface SpawnCall {
+  args: string[];
+  command: string;
+  cwd?: string;
+}
+
+function createResponse(body: unknown, ok = true): MockPackageResponse {
   return {
     json: () => Promise.resolve(body),
     ok,
@@ -26,7 +48,7 @@ describe("update helpers", () => {
 
   test("fetches latest npm package version with injectable fetch", async () => {
     const version = await fetchLatestPackageVersion({
-      fetchImpl: (url) => {
+      fetchImpl: (url: string) => {
         expect(url).toBe("https://registry.npmjs.org/arashi/latest");
         return Promise.resolve(createResponse({ version: "9.8.7" }));
       },
@@ -89,7 +111,7 @@ describe("update helpers", () => {
 
 describe("npm-managed update flow", () => {
   test("check mode reports available update without mutating", async () => {
-    const logs = [];
+    const logs: string[] = [];
     let spawned = false;
     let installed = false;
 
@@ -99,7 +121,7 @@ describe("npm-managed update flow", () => {
         return Promise.resolve({});
       },
       latestVersion: "2.0.0",
-      log: (line) => logs.push(line),
+      log: (line: string) => logs.push(line),
       metadata: { name: "arashi", version: "1.0.0" },
       rootDir: "/pkg",
       spawnSyncImpl: () => {
@@ -115,13 +137,13 @@ describe("npm-managed update flow", () => {
   });
 
   test("dry run prints selected command and skips mutation", async () => {
-    const logs = [];
+    const logs: string[] = [];
     let spawned = false;
 
     const exitCode = await runNpmManagedUpdate(["--dry-run"], {
       env: { npm_config_user_agent: "bun/1.2" },
       latestVersion: "2.0.0",
-      log: (line) => logs.push(line),
+      log: (line: string) => logs.push(line),
       metadata: { name: "arashi", version: "1.0.0" },
       rootDir: "/pkg",
       spawnSyncImpl: () => {
@@ -136,12 +158,12 @@ describe("npm-managed update flow", () => {
   });
 
   test("non-interactive mutation requires --yes", async () => {
-    const errors = [];
+    const errors: string[] = [];
     let spawned = false;
 
     const exitCode = await runNpmManagedUpdate([], {
       env: { npm_config_user_agent: "npm/10" },
-      error: (line) => errors.push(line),
+      error: (line: string) => errors.push(line),
       latestVersion: "2.0.0",
       log: () => {},
       metadata: { name: "arashi", version: "1.0.0" },
@@ -158,12 +180,12 @@ describe("npm-managed update flow", () => {
   });
 
   test("runs package manager and forces binary refresh with --yes", async () => {
-    const spawnCalls = [];
-    const installCalls = [];
+    const spawnCalls: SpawnCall[] = [];
+    const installCalls: InstallBinaryOptions[] = [];
 
     const exitCode = await runNpmManagedUpdate(["--yes"], {
       env: { npm_config_user_agent: "npm/10" },
-      installBinaryImpl: (options) => {
+      installBinaryImpl: (options: InstallBinaryOptions) => {
         installCalls.push(options);
         return Promise.resolve({ binaryPath: "/pkg/bin/arashi-linux-x64" });
       },
@@ -172,7 +194,7 @@ describe("npm-managed update flow", () => {
       metadata: { name: "arashi", version: "1.0.0" },
       readFileImpl: () => Promise.resolve(JSON.stringify({ name: "arashi", version: "2.0.0" })),
       rootDir: "/pkg",
-      spawnSyncImpl: (command, args, options) => {
+      spawnSyncImpl: (command: string, args: string[], options: SpawnOptions) => {
         spawnCalls.push({ args, command, cwd: options.cwd });
         return { status: 0 };
       },
