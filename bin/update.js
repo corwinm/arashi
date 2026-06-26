@@ -97,10 +97,19 @@ export async function fetchLatestGitHubRelease({ fetchImpl = fetch, repo = "corw
   };
 }
 
-export function selectPackageManagerCommand({ env = process.env } = {}) {
+export function selectPackageManagerCommand({ env = process.env, rootDir } = {}) {
   const userAgent = env.npm_config_user_agent ?? "";
   const execPath = env.npm_execpath ?? "";
   const combined = `${userAgent} ${execPath}`.toLowerCase();
+  const normalizedRootDir = String(rootDir ?? "").toLowerCase();
+  const looksLikeVitePlus =
+    combined.includes("vite-plus") ||
+    /(^|[\\/\s])vp(?:\.exe)?($|[\\/\s])/.test(combined) ||
+    /(^|[\\/])\.vite-plus([\\/]|$)/.test(normalizedRootDir);
+
+  if (looksLikeVitePlus) {
+    return { args: ["update", "-g", PACKAGE_NAME], command: "vp", label: "Vite+" };
+  }
 
   if (combined.includes("pnpm")) {
     return { args: ["add", "-g", `${PACKAGE_NAME}@latest`], command: "pnpm", label: "pnpm" };
@@ -144,6 +153,7 @@ export function formatSupportedPackageManagerGuidance() {
     `  pnpm add -g ${PACKAGE_NAME}@latest`,
     `  yarn global add ${PACKAGE_NAME}@latest`,
     `  bun add -g ${PACKAGE_NAME}@latest`,
+    `  vp update -g ${PACKAGE_NAME}`,
   ].join("\n");
 }
 

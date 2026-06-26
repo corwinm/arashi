@@ -62,6 +62,21 @@ describe("update helpers", () => {
       args: ["install", "-g", "arashi@latest"],
       command: "npm",
     });
+    expect(
+      selectPackageManagerCommand({ env: { npm_execpath: "/Users/corwin/.vite-plus/bin/vp" } }),
+    ).toMatchObject({
+      args: ["update", "-g", "arashi"],
+      command: "vp",
+    });
+    expect(
+      selectPackageManagerCommand({
+        env: { npm_config_user_agent: "npm/10 node/v22" },
+        rootDir: "/Users/corwin/.vite-plus/packages/arashi/current/package",
+      }),
+    ).toMatchObject({
+      args: ["update", "-g", "arashi"],
+      command: "vp",
+    });
     expect(selectPackageManagerCommand({ env: {} })).toBeNull();
   });
 
