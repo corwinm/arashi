@@ -13,6 +13,8 @@ type SyncConfig = {
   };
 } & Record<string, unknown>;
 
+const SYNC_TEST_TIMEOUT_MS = 15_000;
+
 describe("sync command - integration", () => {
   let workspace: RemoveTestWorkspace;
 
@@ -24,145 +26,173 @@ describe("sync command - integration", () => {
     await workspace.cleanup();
   });
 
-  test("aligns repositories to the parent branch", async () => {
-    await ensureBranchCheckedOut(workspace.rootPath, "feature-sync");
+  test(
+    "aligns repositories to the parent branch",
+    async () => {
+      await ensureBranchCheckedOut(workspace.rootPath, "feature-sync");
 
-    for (const repo of workspace.repos) {
-      await ensureBranch(repo.path, "feature-sync");
-    }
+      for (const repo of workspace.repos) {
+        await ensureBranch(repo.path, "feature-sync");
+      }
 
-    const summary = await runSync(workspace.rootPath);
+      const summary = await runSync(workspace.rootPath);
 
-    expect(summary.successCount).toBe(2);
-    expect(summary.failureCount).toBe(0);
+      expect(summary.successCount).toBe(2);
+      expect(summary.failureCount).toBe(0);
 
-    for (const repo of workspace.repos) {
-      const branch = await getCurrentBranch(repo.path);
-      expect(branch).toBe("feature-sync");
-    }
-  });
+      for (const repo of workspace.repos) {
+        const branch = await getCurrentBranch(repo.path);
+        expect(branch).toBe("feature-sync");
+      }
+    },
+    SYNC_TEST_TIMEOUT_MS,
+  );
 
-  test("creates missing branch from current branch", async () => {
-    await ensureBranchCheckedOut(workspace.rootPath, "feature-missing");
+  test(
+    "creates missing branch from current branch",
+    async () => {
+      await ensureBranchCheckedOut(workspace.rootPath, "feature-missing");
 
-    await ensureBranch(workspace.repos[0].path, "feature-missing");
+      await ensureBranch(workspace.repos[0].path, "feature-missing");
 
-    const summary = await runSync(workspace.rootPath);
+      const summary = await runSync(workspace.rootPath);
 
-    expect(summary.successCount).toBe(2);
-    expect(summary.failureCount).toBe(0);
+      expect(summary.successCount).toBe(2);
+      expect(summary.failureCount).toBe(0);
 
-    for (const repo of workspace.repos) {
-      const branch = await getCurrentBranch(repo.path);
-      expect(branch).toBe("feature-missing");
-    }
+      for (const repo of workspace.repos) {
+        const branch = await getCurrentBranch(repo.path);
+        expect(branch).toBe("feature-missing");
+      }
 
-    const createdExists = await branchExists(workspace.repos[1].path, "feature-missing");
-    expect(createdExists).toBe(true);
-  });
+      const createdExists = await branchExists(workspace.repos[1].path, "feature-missing");
+      expect(createdExists).toBe(true);
+    },
+    SYNC_TEST_TIMEOUT_MS,
+  );
 
-  test("fails fast on invalid configuration", async () => {
-    await ensureBranchCheckedOut(workspace.rootPath, "feature-invalid");
+  test(
+    "fails fast on invalid configuration",
+    async () => {
+      await ensureBranchCheckedOut(workspace.rootPath, "feature-invalid");
 
-    const configPath = join(workspace.rootPath, ".arashi", "config.json");
-    await writeFile(configPath, "{ this is not valid json }");
+      const configPath = join(workspace.rootPath, ".arashi", "config.json");
+      await writeFile(configPath, "{ this is not valid json }");
 
-    const originalCwd = process.cwd();
-    process.chdir(workspace.rootPath);
+      const originalCwd = process.cwd();
+      process.chdir(workspace.rootPath);
 
-    try {
-      await expect(executeSync({})).rejects.toBeDefined();
-    } finally {
-      process.chdir(originalCwd);
-    }
+      try {
+        await expect(executeSync({})).rejects.toBeDefined();
+      } finally {
+        process.chdir(originalCwd);
+      }
 
-    for (const repo of workspace.repos) {
-      const branch = await getCurrentBranch(repo.path);
-      expect(branch).toBe("main");
-    }
-  });
+      for (const repo of workspace.repos) {
+        const branch = await getCurrentBranch(repo.path);
+        expect(branch).toBe("main");
+      }
+    },
+    SYNC_TEST_TIMEOUT_MS,
+  );
 
-  test("reports timeout per repository and continues", async () => {
-    await ensureBranchCheckedOut(workspace.rootPath, "feature-timeout");
+  test(
+    "reports timeout per repository and continues",
+    async () => {
+      await ensureBranchCheckedOut(workspace.rootPath, "feature-timeout");
 
-    await updateConfig(workspace.rootPath, (config) => ({
-      ...config,
-      sync: {
-        timeoutSeconds: 0,
-      },
-    }));
-
-    const summary = await runSync(workspace.rootPath);
-
-    expect(summary.successCount).toBe(0);
-    expect(summary.failureCount).toBe(2);
-    expect(summary.results).toHaveLength(2);
-    expect(summary.results.every((result) => result.status === "timeout")).toBe(true);
-  });
-
-  test("syncs only the specified repositories", async () => {
-    await ensureBranchCheckedOut(workspace.rootPath, "feature-only");
-
-    for (const repo of workspace.repos) {
-      await ensureBranch(repo.path, "feature-only");
-    }
-
-    const summary = await runSync(workspace.rootPath, { only: "repo-a" });
-
-    expect(summary.successCount).toBe(1);
-    expect(summary.failureCount).toBe(0);
-    expect(summary.results).toHaveLength(1);
-    expect(summary.results[0].repositoryName).toBe("repo-a");
-
-    const repoABranch = await getCurrentBranch(workspace.repos[0].path);
-    const repoBBranch = await getCurrentBranch(workspace.repos[1].path);
-    expect(repoABranch).toBe("feature-only");
-    expect(repoBBranch).toBe("main");
-  });
-
-  test("prints verbose details when enabled", async () => {
-    await ensureBranchCheckedOut(workspace.rootPath, "feature-verbose");
-
-    for (const repo of workspace.repos) {
-      await ensureBranch(repo.path, "feature-verbose");
-    }
-
-    const originalLog = console.log;
-    let output = "";
-    console.log = (message: string) => {
-      output += `${message}\n`;
-    };
-
-    try {
-      await runSync(workspace.rootPath, { verbose: true });
-    } finally {
-      console.log = originalLog;
-    }
-
-    expect(output).toContain("branch=feature-verbose");
-  });
-
-  test("reports summary counts when failures occur", async () => {
-    await ensureBranchCheckedOut(workspace.rootPath, "feature-summary");
-
-    await updateConfig(workspace.rootPath, (config) => ({
-      ...config,
-      repos: {
-        ...config.repos,
-        "repo-b": {
-          ...config.repos["repo-b"],
-          path: "./repos/missing-repo",
+      await updateConfig(workspace.rootPath, (config) => ({
+        ...config,
+        sync: {
+          timeoutSeconds: 0,
         },
-      },
-    }));
+      }));
 
-    const summary = await runSync(workspace.rootPath);
+      const summary = await runSync(workspace.rootPath);
 
-    expect(summary.successCount).toBe(1);
-    expect(summary.failureCount).toBe(1);
-    expect(summary.results).toHaveLength(2);
-    expect(summary.results.some((result) => result.status === "failure")).toBe(true);
-  });
+      expect(summary.successCount).toBe(0);
+      expect(summary.failureCount).toBe(2);
+      expect(summary.results).toHaveLength(2);
+      expect(summary.results.every((result) => result.status === "timeout")).toBe(true);
+    },
+    SYNC_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "syncs only the specified repositories",
+    async () => {
+      await ensureBranchCheckedOut(workspace.rootPath, "feature-only");
+
+      for (const repo of workspace.repos) {
+        await ensureBranch(repo.path, "feature-only");
+      }
+
+      const summary = await runSync(workspace.rootPath, { only: "repo-a" });
+
+      expect(summary.successCount).toBe(1);
+      expect(summary.failureCount).toBe(0);
+      expect(summary.results).toHaveLength(1);
+      expect(summary.results[0].repositoryName).toBe("repo-a");
+
+      const repoABranch = await getCurrentBranch(workspace.repos[0].path);
+      const repoBBranch = await getCurrentBranch(workspace.repos[1].path);
+      expect(repoABranch).toBe("feature-only");
+      expect(repoBBranch).toBe("main");
+    },
+    SYNC_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "prints verbose details when enabled",
+    async () => {
+      await ensureBranchCheckedOut(workspace.rootPath, "feature-verbose");
+
+      for (const repo of workspace.repos) {
+        await ensureBranch(repo.path, "feature-verbose");
+      }
+
+      const originalLog = console.log;
+      let output = "";
+      console.log = (message: string) => {
+        output += `${message}\n`;
+      };
+
+      try {
+        await runSync(workspace.rootPath, { verbose: true });
+      } finally {
+        console.log = originalLog;
+      }
+
+      expect(output).toContain("branch=feature-verbose");
+    },
+    SYNC_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "reports summary counts when failures occur",
+    async () => {
+      await ensureBranchCheckedOut(workspace.rootPath, "feature-summary");
+
+      await updateConfig(workspace.rootPath, (config) => ({
+        ...config,
+        repos: {
+          ...config.repos,
+          "repo-b": {
+            ...config.repos["repo-b"],
+            path: "./repos/missing-repo",
+          },
+        },
+      }));
+
+      const summary = await runSync(workspace.rootPath);
+
+      expect(summary.successCount).toBe(1);
+      expect(summary.failureCount).toBe(1);
+      expect(summary.results).toHaveLength(2);
+      expect(summary.results.some((result) => result.status === "failure")).toBe(true);
+    },
+    SYNC_TEST_TIMEOUT_MS,
+  );
 });
 
 async function runSync(workspaceRoot: string, options?: { only?: string; verbose?: boolean }) {

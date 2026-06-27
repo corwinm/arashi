@@ -134,4 +134,28 @@ describe("installBinary", () => {
     expect(result.status).toBe("already-installed");
     expect(downloaded).toBe(false);
   });
+
+  test("force refresh replaces an existing binary for update flows", async () => {
+    const binaryPath = join(tempDir, "arashi-linux-x64");
+    await writeFile(binaryPath, "existing");
+    let downloaded = false;
+
+    const result = await installBinary({
+      arch: "x64",
+      binDir: tempDir,
+      chmodImpl: () => {},
+      downloadFileImpl: async (_url, dest) => {
+        downloaded = true;
+        await writeFile(String(dest), "new binary");
+      },
+      force: true,
+      log: () => {},
+      platform: "linux",
+      verifyBinaryImpl: () => {},
+      version: "2.0.0",
+    });
+
+    expect(result.status).toBe("installed");
+    expect(downloaded).toBe(true);
+  });
 });

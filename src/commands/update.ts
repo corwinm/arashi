@@ -1,0 +1,205 @@
+import { info, error as logError } from "../lib/logger.ts";
+import { Command } from "commander";
+import { dirname } from "node:path";
+import { spawnSync } from "node:child_process";
+
+export const UPDATE_COMMAND_DESCRIPTION = "Check for and apply Arashi updates";
+const RELEASES_URL = "https://github.com/corwinm/arashi/releases";
+const GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/corwinm/arashi/releases/latest";
+
+interface UpdateOptions {
+  check?: boolean;
+  dryRun?: boolean;
+  yes?: boolean;
+}
+
+interface ReleaseInfo {
+  htmlUrl: string;
+  version: string;
+}
+
+type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
+type SpawnSyncImpl = typeof spawnSync;
+
+const INSTALLER_URL = "https://arashi.haphazard.dev/install";
+
+interface DirectUpdateDeps {
+  currentVersion: string;
+  execPath?: string;
+  fetchImpl?: FetchImpl;
+  log?: (message: string) => void;
+  spawnSyncImpl?: SpawnSyncImpl;
+}
+
+export function buildInstallerUpdatePlan(
+  latestVersion: string,
+  execPath: string,
+): {
+  args: string[];
+  command: string;
+  env: Record<string, string>;
+  installDir: string;
+} {
+  const installDir = dirname(execPath);
+  return {
+    args: [
+      "-c",
+      `curl -fsSL ${INSTALLER_URL} | bash -s -- --no-shell-integration --no-modify-path`,
+    ],
+    command: "bash",
+    env: {
+      ARASHI_INSTALL_DIR: installDir,
+      ARASHI_SHELL_INTEGRATION: "no",
+      ARASHI_VERSION: latestVersion,
+    },
+    installDir,
+  };
+}
+
+function normalizeVersion(version: string): string {
+  return version.trim().replace(/^v/, "").split("+")[0];
+}
+
+export function compareVersions(a: string, b: string): number {
+  const left = normalizeVersion(a).split(/[.-]/);
+  const right = normalizeVersion(b).split(/[.-]/);
+  const length = Math.max(left.length, right.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = left[index] ?? "0";
+    const rightPart = right[index] ?? "0";
+    const leftNumber = Number(leftPart);
+    const rightNumber = Number(rightPart);
+
+    if (Number.isInteger(leftNumber) && Number.isInteger(rightNumber)) {
+      if (leftNumber > rightNumber) {
+        return 1;
+      }
+      if (leftNumber < rightNumber) {
+        return -1;
+      }
+      continue;
+    }
+
+    if (leftPart === rightPart) {
+      continue;
+    }
+    return leftPart > rightPart ? 1 : -1;
+  }
+
+  return 0;
+}
+
+function platformAssetName(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string | null {
+  if (platform === "darwin" && arch === "arm64") {
+    return "arashi-macos-arm64";
+  }
+  if (platform === "linux" && arch === "x64") {
+    return "arashi-linux-x64";
+  }
+  if (platform === "win32" && arch === "x64") {
+    return "arashi-windows-x64.exe";
+  }
+  return null;
+}
+
+export async function fetchLatestRelease(fetchImpl: FetchImpl = fetch): Promise<ReleaseInfo> {
+  const response = await fetchImpl(GITHUB_LATEST_RELEASE_API, {
+    headers: { accept: "application/vnd.github+json" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub releases returned ${response.status} ${response.statusText}`.trim());
+  }
+
+  const release = (await response.json()) as {
+    html_url?: string;
+    name?: string;
+    tag_name?: string;
+  };
+  const version = normalizeVersion(release.tag_name ?? release.name ?? "");
+  if (!version) {
+    throw new Error("GitHub release response did not include a tag");
+  }
+
+  return { htmlUrl: release.html_url ?? RELEASES_URL, version };
+}
+
+export async function runDirectUpdate(
+  options: UpdateOptions,
+  deps?: DirectUpdateDeps,
+): Promise<void> {
+  const { currentVersion = "", fetchImpl, log = info } = deps ?? { currentVersion: "" };
+  const latest = await fetchLatestRelease(fetchImpl);
+
+  if (currentVersion && compareVersions(currentVersion, latest.version) >= 0) {
+    log(`arashi direct binary is already current (v${currentVersion}).`);
+    return;
+  }
+
+  if (currentVersion) {
+    log(`Update available: arashi v${currentVersion} -> v${latest.version}`);
+  } else {
+    log(`Latest arashi release: v${latest.version}`);
+  }
+
+  const assetName = platformAssetName();
+  const execPath = deps?.execPath ?? process.execPath;
+  const plan = buildInstallerUpdatePlan(latest.version, execPath);
+  log("Update method: official curl installer");
+  log(`Installer URL: ${INSTALLER_URL}`);
+  log(`Install directory: ${plan.installDir}`);
+  if (assetName) {
+    log(`Platform asset: ${assetName}`);
+  }
+
+  if (options.check) {
+    log("Check only: no changes made.");
+    return;
+  }
+  if (options.dryRun) {
+    log("Dry run: no changes made.");
+    return;
+  }
+  if (!options.yes) {
+    log("Update not applied. Rerun with --yes to reinstall Arashi with the official installer.");
+    return;
+  }
+
+  const spawnSyncImpl = deps?.spawnSyncImpl ?? spawnSync;
+  const result = spawnSyncImpl(plan.command, plan.args, {
+    encoding: "utf8",
+    env: { ...process.env, ...plan.env },
+    stdio: "inherit",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`installer exited with code ${result.status ?? "unknown"}`);
+  }
+
+  log(`✓ Updated arashi to v${latest.version}.`);
+}
+
+export function createCommand(currentVersion = ""): Command {
+  return new Command("update")
+    .description(UPDATE_COMMAND_DESCRIPTION)
+    .option("--check", "check whether an update is available without changing files")
+    .option("--dry-run", "show the installer update plan without changing files")
+    .option("-y, --yes", "apply the update without prompting")
+    .action(async (options: UpdateOptions) => {
+      try {
+        await runDirectUpdate(options, { currentVersion });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logError(`Failed to check latest arashi release: ${message}`);
+        info(`Manual releases: ${RELEASES_URL}`);
+        process.exitCode = 1;
+      }
+    });
+}

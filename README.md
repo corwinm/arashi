@@ -55,6 +55,16 @@ To preinstall the binary explicitly, run:
 arashi install
 ```
 
+To check for package updates or refresh the matching platform binary, run:
+
+```bash
+arashi update --check
+arashi update --dry-run
+arashi update --yes
+```
+
+`arashi update` can update npm-managed installs when it can confidently detect the package manager, including npm, pnpm, Yarn, Bun, and Vite+ (`vp update -g arashi`). For official curl installer installs, `arashi update --yes` reruns the installer against the current binary directory.
+
 Verify install:
 
 ```bash
@@ -103,6 +113,7 @@ Arashi currently provides these commands:
 
 - `arashi init`
 - `arashi install`
+- `arashi update [--check] [--dry-run] [--yes]`
 - `arashi add <git-url>`
 - `arashi clone [--all]`
 - `arashi create <branch>`

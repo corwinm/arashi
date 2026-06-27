@@ -125,12 +125,20 @@ export async function markWorktreeDirty(worktreePath: string): Promise<void> {
 }
 
 async function initGitRepo(repoPath: string, branch: string): Promise<void> {
-  await spawn(["git", "init", "-b", branch], { cwd: repoPath }).exited;
-  await spawn(["git", "config", "user.email", "test@example.com"], { cwd: repoPath }).exited;
-  await spawn(["git", "config", "user.name", "Test User"], { cwd: repoPath }).exited;
+  await runGit(repoPath, ["init", "-b", branch]);
+  await runGit(repoPath, ["config", "user.email", "test@example.com"]);
+  await runGit(repoPath, ["config", "user.name", "Test User"]);
   await writeFile(join(repoPath, "README.md"), "# Test Repo");
-  await spawn(["git", "add", "."], { cwd: repoPath }).exited;
-  await spawn(["git", "commit", "-m", "Initial commit"], { cwd: repoPath }).exited;
+  await runGit(repoPath, ["add", "."]);
+  await runGit(repoPath, [
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "user.name=Test User",
+    "commit",
+    "-m",
+    "Initial commit",
+  ]);
 }
 
 async function ensureBranch(repoPath: string, branchName: string): Promise<void> {
@@ -141,6 +149,17 @@ async function ensureBranch(repoPath: string, branchName: string): Promise<void>
   });
   const exitCode = await check.exited;
   if (exitCode !== 0) {
-    await spawn(["git", "branch", branchName], { cwd: repoPath }).exited;
+    await runGit(repoPath, ["branch", branchName]);
+  }
+}
+
+async function runGit(repoPath: string, args: string[]): Promise<void> {
+  const proc = spawn(["git", ...args], { cwd: repoPath, stderr: "pipe", stdout: "pipe" });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    const stdout = await new Response(proc.stdout).text();
+    const detail = stderr.trim() || stdout.trim() || `exit code ${exitCode}`;
+    throw new Error(`git ${args.join(" ")} failed in ${repoPath}: ${detail}`);
   }
 }

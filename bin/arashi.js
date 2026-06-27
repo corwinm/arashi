@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { formatInstallError, getPlatformInfo, installBinary } from "./install-binary.js";
+import { runNpmManagedUpdate } from "./update.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -79,6 +80,10 @@ export function isExplicitInstallCommand(argv) {
   return argv[0] === "install";
 }
 
+export function isExplicitUpdateCommand(argv) {
+  return argv[0] === "update";
+}
+
 async function runExplicitInstall(options) {
   const binDir = options.binDir ?? __dirname;
   const rootDir = options.rootDir ?? join(binDir, "..");
@@ -132,6 +137,10 @@ export async function runEntrypoint(argv = process.argv.slice(2), options = {}) 
     if (isExplicitInstallCommand(argv)) {
       await runExplicitInstall(options);
       return 0;
+    }
+
+    if (isExplicitUpdateCommand(argv)) {
+      return runNpmManagedUpdate(argv.slice(1), options);
     }
 
     await ensureInstalled(options);
