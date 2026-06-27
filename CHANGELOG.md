@@ -1,3 +1,9 @@
+## [1.13.0](https://github.com/corwinm/arashi/compare/v1.12.0...v1.13.0) (2026-06-27)
+
+### Features
+
+- add arashi update command ([#70](https://github.com/corwinm/arashi/issues/70)) ([dc682bc](https://github.com/corwinm/arashi/commit/dc682bcf77e8b5f7726184a2a56baaac10e8c387))
+
 ## [1.12.0](https://github.com/corwinm/arashi/compare/v1.11.3...v1.12.0) (2026-06-22)
 
 ### Features
