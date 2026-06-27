@@ -11,6 +11,11 @@ import {
   ListCommandError,
   NotInRepositoryError,
 } from "../types/list.ts";
+import {
+  createJsonErrorEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import { Command } from "commander";
 import { listCommand } from "../core/list.ts";
 import { error as logError } from "../lib/logger.ts";
@@ -50,6 +55,10 @@ Examples:
       try {
         await executeList(options);
       } catch (error) {
+        if (options.json) {
+          writeJsonEnvelope(createJsonErrorEnvelope("list", mapListErrorToJsonError(error)));
+          process.exit(1);
+        }
         if (error instanceof NotInRepositoryError) {
           logError("Not in a git repository");
           logError("Run this command from a repository root.");
@@ -77,6 +86,42 @@ Examples:
 }
 
 export default createCommand;
+
+function asJsonDetails(details: unknown): Record<string, unknown> | undefined {
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    return details as Record<string, unknown>;
+  }
+
+  return undefined;
+}
+
+function mapListErrorToJsonError(error: unknown): ReturnType<typeof unknownErrorToJsonError> {
+  if (error instanceof NotInRepositoryError) {
+    return {
+      code: "NOT_IN_REPOSITORY",
+      details: asJsonDetails(error.context),
+      message: error.message,
+    };
+  }
+
+  if (error instanceof ConfigurationMissingError) {
+    return {
+      code: "CONFIGURATION_MISSING",
+      details: asJsonDetails(error.context),
+      message: error.message,
+    };
+  }
+
+  if (error instanceof ListCommandError) {
+    return {
+      code: "LIST_COMMAND_FAILED",
+      details: asJsonDetails(error.context),
+      message: error.message,
+    };
+  }
+
+  return unknownErrorToJsonError(error);
+}
 
 async function executeList(options: CliOptions): Promise<void> {
   const listOptions: ListCommandOptions = {

@@ -37,6 +37,12 @@ import {
   removeWorktree,
 } from "../core/remove.ts";
 import { buildWorktreeEntries, resolveWorktreeStatuses } from "../core/worktree.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
 import { info, error as logError, spinner, warn } from "../lib/logger.ts";
 import { confirm as promptConfirm, multiSelect as promptMultiSelect } from "../lib/prompts.ts";
@@ -178,7 +184,9 @@ export async function executeRemove(
     const summary = createRemovalSummary(ZERO, ZERO);
     summary.duration = Date.now() - startTime;
     if (options.json) {
-      console.log(formatRemovalSummaryJson(summary, {}));
+      writeJsonEnvelope(
+        createJsonSuccessEnvelope("remove", JSON.parse(formatRemovalSummaryJson(summary, {}))),
+      );
     } else {
       warn("Both --keep-worktrees and --keep-branches specified");
       info("No operations will be performed. At least one removal type must be enabled.");
@@ -410,7 +418,12 @@ export async function executeRemove(
     summary.errors.push(formatHookFailure(GLOBAL_HOOKS.preRemove, preRemoveOutcome));
     summary.duration = Date.now() - startTime;
     if (options.json) {
-      console.log(formatRemovalSummaryJson(summary, { missingBranches, skippedMain }));
+      writeJsonEnvelope(
+        createJsonSuccessEnvelope(
+          "remove",
+          JSON.parse(formatRemovalSummaryJson(summary, { missingBranches, skippedMain })),
+        ),
+      );
     } else {
       console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
     }
@@ -523,7 +536,12 @@ export async function executeRemove(
   summary.duration = Date.now() - startTime;
 
   if (options.json) {
-    console.log(formatRemovalSummaryJson(summary, { missingBranches, skippedMain }));
+    writeJsonEnvelope(
+      createJsonSuccessEnvelope(
+        "remove",
+        JSON.parse(formatRemovalSummaryJson(summary, { missingBranches, skippedMain })),
+      ),
+    );
   } else {
     console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
   }
@@ -780,19 +798,12 @@ const getWorkspaceRoot = async (): Promise<string> => {
 const handleError = (error: unknown, options: RemoveCommandOptions): void => {
   if (error instanceof RemoveCommandError) {
     if (options.json) {
-      console.log(
-        JSON.stringify(
-          {
-            error: {
-              code: error.code,
-              context: error.context,
-              message: error.message,
-            },
-            success: false,
-          },
-          null,
-          JSON_INDENT,
-        ),
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("remove", {
+          code: error.code,
+          details: error.context,
+          message: error.message,
+        }),
       );
     } else {
       logError(error.message);
@@ -821,19 +832,7 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
   }
 
   if (options.json) {
-    console.log(
-      JSON.stringify(
-        {
-          error: {
-            code: "UNKNOWN_ERROR",
-            message,
-          },
-          success: false,
-        },
-        null,
-        JSON_INDENT,
-      ),
-    );
+    writeJsonEnvelope(createJsonErrorEnvelope("remove", unknownErrorToJsonError(error)));
   } else {
     logError(`Unexpected error: ${message}`);
   }

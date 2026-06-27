@@ -28,10 +28,29 @@ interface JsonWorktree {
   subRepositories?: JsonSubRepository[];
 }
 
+interface JsonListEnvelope {
+  command: "list";
+  data: { worktrees: JsonWorktree[] };
+  ok: true;
+  schemaVersion: 1;
+  warnings: unknown[];
+}
+
 const normalizePathSeparators = (value: string): string => value.replaceAll("\\", "/");
 
 const toComparablePath = (value: string): string =>
   normalizePathSeparators(realpathSync.native(value)).toLowerCase();
+
+const parseListJsonOutput = (output: string): JsonWorktree[] => {
+  const envelope = JSON.parse(output) as JsonListEnvelope;
+  expect(envelope).toMatchObject({
+    command: "list",
+    ok: true,
+    schemaVersion: 1,
+    warnings: [],
+  });
+  return envelope.data.worktrees;
+};
 
 /**
  * Helper to create a temporary git repository for testing
@@ -293,18 +312,24 @@ describe("list command - JSON output", () => {
 
     expect(error).toBeUndefined();
 
-    // Should be valid JSON
-    let parsed;
+    // Should be exactly one valid JSON envelope
+    let parsed: JsonListEnvelope | undefined;
     expect(() => {
-      parsed = JSON.parse(output);
+      parsed = JSON.parse(output) as JsonListEnvelope;
     }).not.toThrow();
 
-    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed).toMatchObject({
+      command: "list",
+      ok: true,
+      schemaVersion: 1,
+      warnings: [],
+    });
+    expect(Array.isArray(parsed?.data.worktrees)).toBe(true);
   });
 
   test("JSON output contains all required fields", async () => {
     const { output } = await runListCommand(testDir, { json: true });
-    const parsed = JSON.parse(output) as JsonWorktree[];
+    const parsed = parseListJsonOutput(output);
 
     expect(parsed).toHaveLength(1);
     expect(parsed[0]).toHaveProperty("path");
@@ -320,7 +345,7 @@ describe("list command - JSON output", () => {
     const wt2Path = await createUniqueWorktree(testDir, "bugfix");
 
     const { output } = await runListCommand(testDir, { json: true });
-    const parsed = JSON.parse(output) as JsonWorktree[];
+    const parsed = parseListJsonOutput(output);
 
     expect(parsed).toHaveLength(3);
 
@@ -339,7 +364,7 @@ describe("list command - JSON output", () => {
     await writeFile(join(testDir, "changes.txt"), "content");
 
     const { output } = await runListCommand(testDir, { json: true });
-    const parsed = JSON.parse(output) as JsonWorktree[];
+    const parsed = parseListJsonOutput(output);
 
     expect(parsed[0].hasChanges).toBe(true);
   });
@@ -461,7 +486,7 @@ describe("list command - JSON + verbose mode", () => {
     await createNestedRepo(testDir, "repos/nested-repo");
 
     const { output } = await runListCommand(testDir, { json: true, verbose: true });
-    const parsed = JSON.parse(output) as JsonWorktree[];
+    const parsed = parseListJsonOutput(output);
 
     expect(parsed[0]).toHaveProperty("subRepositories");
     expect(Array.isArray(parsed[0].subRepositories)).toBe(true);
@@ -472,7 +497,7 @@ describe("list command - JSON + verbose mode", () => {
     await createNestedRepo(testDir, "repos/nested-repo");
 
     const { output } = await runListCommand(testDir, { json: true, verbose: true });
-    const parsed = JSON.parse(output) as JsonWorktree[];
+    const parsed = parseListJsonOutput(output);
 
     const subRepo = parsed[0]?.subRepositories?.[0];
     if (!subRepo) {
@@ -545,7 +570,7 @@ describe("list command - locked worktrees", () => {
     await spawn(["git", "worktree", "lock", wtPath], { cwd: testDir }).exited;
 
     const { output } = await runListCommand(testDir, { json: true });
-    const parsed = JSON.parse(output) as JsonWorktree[];
+    const parsed = parseListJsonOutput(output);
 
     const canonicalWtPath = toComparablePath(wtPath);
     const lockedWorktree = parsed.find((wt) => toComparablePath(wt.path) === canonicalWtPath);
@@ -613,7 +638,7 @@ describe("list command - detached HEAD", () => {
     }).exited;
 
     const { output } = await runListCommand(testDir, { json: true });
-    const parsed = JSON.parse(output) as JsonWorktree[];
+    const parsed = parseListJsonOutput(output);
 
     const canonicalWtPath = toComparablePath(wtPath);
     const detachedWorktree = parsed.find((wt) => toComparablePath(wt.path) === canonicalWtPath);
@@ -723,7 +748,7 @@ describe("list command - edge cases", () => {
     await writeFile(join(wtPath, ".arashi", "config.json"), JSON.stringify(testConfig, null, 2));
 
     const { output } = await runListCommand(wtPath, { json: true, verbose: true });
-    const parsed = JSON.parse(output);
+    const parsed = parseListJsonOutput(output);
 
     // Should have subRepositories as empty array or undefined
     if (parsed[0].subRepositories) {

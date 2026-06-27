@@ -5,7 +5,6 @@
  * Supports repository filtering, conflict resolution, progress tracking, and automatic rollback.
  */
 
-import { Command, Option } from "commander";
 import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
 import {
   ConflictAbortedError,
@@ -17,6 +16,8 @@ import {
 } from "../core/worktree.ts";
 import { basename, resolve } from "path";
 import { error, info, success, warn } from "../lib/logger.ts";
+import { unsupportedJsonModeError, writeJsonEnvelope } from "../lib/json-output.ts";
+import { Command, Option } from "commander";
 import type { SwitchCandidate } from "../core/switch.ts";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec } from "../lib/git.ts";
@@ -97,6 +98,7 @@ interface CreateCommandOptions {
   switch?: boolean;
 
   /** Launch terminal/editor context for newly created parent worktree */
+  json?: boolean;
   launch?: boolean;
 
   /** Force sesh launch mode when launching */
@@ -376,6 +378,7 @@ export function createCommand(): Command {
     .option("--no-hooks", "Disable hook execution")
     .option("--no-progress", "Hide progress indicators")
     .option("--dry-run", "Show what would be done without making changes")
+    .option("--json", "Return a structured unsupported-mode error")
     .addOption(editorHostOption)
     .addHelpText(
       "after",
@@ -389,6 +392,11 @@ Examples:
 `,
     )
     .action(async (branchName: string, options: CreateCommandOptions) => {
+      if (options.json) {
+        writeJsonEnvelope(unsupportedJsonModeError("create", "worktree-orchestration"));
+        process.exit(ERROR_EXIT_CODE);
+      }
+
       try {
         await executeCreate(branchName, options);
       } catch (createError) {

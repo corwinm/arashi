@@ -1,6 +1,12 @@
 import type { SyncResult, SyncSummary } from "../lib/git/sync-types.ts";
 import { createRollbackTracker, recordCreatedBranch } from "../lib/git/sync-rollback.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { alignRepositoryBranch } from "../lib/git/sync-branch.ts";
@@ -19,6 +25,7 @@ const DEFAULT_TIMEOUT_MS = 300_000;
 const DETACHED_HEAD = "HEAD";
 
 interface SyncCommandOptions {
+  json?: boolean;
   only?: string;
   verbose?: boolean;
 }
@@ -28,14 +35,22 @@ export function createCommand(): Command {
     .description("Align managed repositories to the parent branch")
     .option("--only <repos>", "Only sync specified repositories (comma-separated)")
     .option("-v, --verbose", "Show detailed output for each repository")
+    .option("--json", "Output result as JSON")
     .action(async (options: SyncCommandOptions) => {
       try {
         const summary = await executeSync(options);
+        if (options.json) {
+          writeJsonEnvelope(createJsonSuccessEnvelope("sync", { ...summary }));
+        }
         if (summary.failureCount > ZERO) {
           process.exit(ERROR_EXIT_CODE);
         }
       } catch (error) {
-        logError(error instanceof Error ? error.message : String(error));
+        if (options.json) {
+          writeJsonEnvelope(createJsonErrorEnvelope("sync", unknownErrorToJsonError(error)));
+        } else {
+          logError(error instanceof Error ? error.message : String(error));
+        }
         process.exit(USAGE_EXIT_CODE);
       }
     });
@@ -62,8 +77,8 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
 
   for (const repo of repositories) {
     const repoPath = resolve(workspaceRoot, repo.config.path);
-    const syncSpinner = spinner(`Syncing ${repo.name}...`);
-    syncSpinner.start();
+    const syncSpinner = options.json ? undefined : spinner(`Syncing ${repo.name}...`);
+    syncSpinner?.start();
 
     const startTime = Date.now();
     const defaultOutcome: SyncBranchOutcome = {
@@ -104,16 +119,16 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
 
     if (outcome.status === "success") {
       const createdSuffix = outcome.createdBranch ? " (created)" : "";
-      syncSpinner.succeed(
+      syncSpinner?.succeed(
         `${repo.name}: synced to ${parentBranch}${createdSuffix} (${formatDuration(durationMs)})`,
       );
     } else if (outcome.status === "timeout") {
-      syncSpinner.fail(`${repo.name}: timed out (${formatDuration(durationMs)})`);
+      syncSpinner?.fail(`${repo.name}: timed out (${formatDuration(durationMs)})`);
     } else {
-      syncSpinner.fail(`${repo.name}: failed (${formatDuration(durationMs)})`);
+      syncSpinner?.fail(`${repo.name}: failed (${formatDuration(durationMs)})`);
     }
 
-    if (options.verbose) {
+    if (options.verbose && !options.json) {
       printVerboseResult(result);
     }
 
@@ -132,7 +147,9 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
   const successCount = results.filter((result) => result.status === "success").length;
   const failureCount = results.length - successCount;
 
-  printSummary({ failureCount, results, successCount });
+  if (!options.json) {
+    printSummary({ failureCount, results, successCount });
+  }
 
   return {
     failureCount,

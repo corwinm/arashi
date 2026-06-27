@@ -29,6 +29,13 @@ import {
   writeTextFile,
 } from "../lib/filesystem.ts";
 import { confirm, input } from "../lib/prompts.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  unsupportedJsonModeError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
 import { isAbsolute, join, relative, resolve } from "path";
 import { Command } from "commander";
@@ -1177,7 +1184,8 @@ export function createCommand(): Command {
     .option("--no-discover", "Skip automatic repository discovery")
     .option("--dry-run", "Show what would be done without making changes")
     .option("--verbose", "Show detailed information during initialization")
-    .action(async (options: InitOptions & { discover?: boolean }) => {
+    .option("--json", "Output result as JSON")
+    .action(async (options: InitOptions & { discover?: boolean; json?: boolean }) => {
       // Commander converts --no-discover to discover: false
       const normalizedOptions: InitOptions = {
         dryRun: options.dryRun,
@@ -1188,15 +1196,38 @@ export function createCommand(): Command {
         worktreesDir: options.worktreesDir,
       };
 
-      const result = await executeInit(normalizedOptions);
+      if (options.json && options.dryRun) {
+        writeJsonEnvelope(unsupportedJsonModeError("init", "dry-run-preview"));
+        process.exit(ExitCode.UNKNOWN);
+      }
+
+      const result = await executeInit(normalizedOptions).catch((error): never => {
+        if (options.json) {
+          writeJsonEnvelope(createJsonErrorEnvelope("init", unknownErrorToJsonError(error)));
+          process.exit(ExitCode.UNKNOWN);
+        }
+        throw error;
+      });
 
       if (result.success) {
-        if (!options.dryRun) {
+        if (options.json) {
+          writeJsonEnvelope(createJsonSuccessEnvelope("init", { ...result }));
+        } else if (!options.dryRun) {
           displaySuccess(result, normalizedOptions);
         }
         process.exit(ExitCode.SUCCESS);
       } else {
-        displayError(result);
+        if (options.json) {
+          writeJsonEnvelope(
+            createJsonErrorEnvelope("init", {
+              code: `INIT_${result.exitCode}`,
+              details: { exitCode: result.exitCode, workspaceRoot: result.workspaceRoot },
+              message: result.error || "Unknown error",
+            }),
+          );
+        } else {
+          displayError(result);
+        }
         process.exit(result.exitCode);
       }
     });

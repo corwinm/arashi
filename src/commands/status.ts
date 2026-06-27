@@ -11,6 +11,12 @@ import {
   fetchRemoteTrackingTarget,
   resolveRemoteTrackingTarget,
 } from "../lib/git-remote.js";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
 import { getFullGitStatus, getGitStatus } from "../lib/git.js";
 import { info, error as logError, spinner } from "../lib/logger.js";
@@ -20,6 +26,7 @@ import { stat } from "fs/promises";
 
 type DefaultBranchComparison = Awaited<ReturnType<typeof compareCurrentBranchToDefaultBranch>>;
 type Config = Awaited<ReturnType<typeof loadConfig>>;
+type JsonWarning = NonNullable<Parameters<typeof createJsonSuccessEnvelope>[2]>[number];
 
 const ZERO = 0;
 const ONE = 1;
@@ -70,6 +77,8 @@ export interface StatusOptions {
   verbose?: boolean;
   /** Show one-line summary per repository */
   short?: boolean;
+  /** Output a structured JSON envelope */
+  json?: boolean;
 }
 
 /**
@@ -718,10 +727,40 @@ export const formatShortOutput = (statuses: RepoStatus[]): string => {
  *
  * @param options - Command options
  */
+const collectStatusWarnings = (statuses: RepoStatus[]): JsonWarning[] =>
+  statuses.flatMap((status) => {
+    const warnings: JsonWarning[] = [];
+    if (status.refreshWarning) {
+      warnings.push({
+        code: status.refreshWarning.kind.toUpperCase().replaceAll("-", "_"),
+        details: { repository: status.name },
+        message: status.refreshWarning.message,
+      });
+    }
+    if (status.defaultBranch?.state === "unavailable" && status.defaultBranch.error) {
+      warnings.push({
+        code: "DEFAULT_BRANCH_COMPARISON_UNAVAILABLE",
+        details: { repository: status.name },
+        message: status.defaultBranch.error,
+      });
+    }
+    return warnings;
+  });
+
 const statusCommand = async (options: StatusOptions): Promise<void> => {
   if (options.verbose && options.short) {
-    logError("Cannot use --verbose and --short together");
-    info("Use 'arashi status --help' for usage information");
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("status", {
+          code: "CONFLICTING_OPTIONS",
+          details: { options: ["--verbose", "--short"] },
+          message: "Cannot use --verbose and --short together",
+        }),
+      );
+    } else {
+      logError("Cannot use --verbose and --short together");
+      info("Use 'arashi status --help' for usage information");
+    }
     process.exit(USAGE_EXIT_CODE);
   }
 
@@ -729,8 +768,17 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
-    logError("Not in an arashi workspace");
-    info("Run 'arashi init' to initialize a workspace");
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("status", {
+          code: "NOT_IN_WORKSPACE",
+          message: "Not in an arashi workspace",
+        }),
+      );
+    } else {
+      logError("Not in an arashi workspace");
+      info("Run 'arashi init' to initialize a workspace");
+    }
     process.exit(USAGE_EXIT_CODE);
   }
 
@@ -738,32 +786,54 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
   try {
     config = await loadConfig(workspaceRoot);
   } catch (error) {
-    logError("Failed to load workspace configuration");
-    if (error instanceof Error) {
-      logError(error.message);
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("status", unknownErrorToJsonError(error, "CONFIG_LOAD_FAILED")),
+      );
     } else {
-      logError(String(error));
+      logError("Failed to load workspace configuration");
+      if (error instanceof Error) {
+        logError(error.message);
+      } else {
+        logError(String(error));
+      }
     }
     process.exit(USAGE_EXIT_CODE);
   }
 
-  const statusSpinner = spinner("Checking repository status...");
-  statusSpinner.start();
+  const statusSpinner = options.json ? null : spinner("Checking repository status...");
+  statusSpinner?.start();
 
   const statuses = await checkAllRepos(workspaceRoot, config, options.verbose || false);
 
-  statusSpinner.stop();
+  statusSpinner?.stop();
 
-  let output = formatDefaultOutput(statuses);
-  if (options.verbose) {
-    output = formatVerboseOutput(statuses);
-  } else if (options.short) {
-    output = formatShortOutput(statuses);
+  const summary = summarizeStatuses(statuses);
+  const hasErrors = statuses.some((status) => status.error !== null);
+
+  if (options.json) {
+    writeJsonEnvelope(
+      createJsonSuccessEnvelope(
+        "status",
+        {
+          repositories: statuses,
+          summary,
+          workspaceRoot,
+        },
+        collectStatusWarnings(statuses),
+      ),
+    );
+  } else {
+    let output = formatDefaultOutput(statuses);
+    if (options.verbose) {
+      output = formatVerboseOutput(statuses);
+    } else if (options.short) {
+      output = formatShortOutput(statuses);
+    }
+
+    console.log(output);
   }
 
-  console.log(output);
-
-  const hasErrors = statuses.some((status) => status.error !== null);
   if (hasErrors) {
     process.exit(ERROR_EXIT_CODE);
   }
@@ -786,6 +856,7 @@ export const createCommand = (): Command =>
     .description("Show status of all managed repositories")
     .option("-v, --verbose", "Show full git status output")
     .option("-s, --short", "Show one-line summary per repository")
+    .option("--json", "Output a structured JSON envelope")
     .addHelpText(
       "after",
       `

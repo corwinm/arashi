@@ -11,6 +11,13 @@ import {
   repairRepositoryGitUrls,
   saveConfig,
 } from "../lib/config.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  unsupportedJsonModeError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import { info, error as logError, spinner, success, warn } from "../lib/logger.ts";
 import {
   confirm as promptConfirm,
@@ -43,6 +50,7 @@ const PARTIAL_FAILURE_STATUS = "partial-failure" as const;
 
 export interface CloneCommandOptions {
   all?: boolean;
+  json?: boolean;
 }
 
 export interface CloneExecutionResult {
@@ -73,12 +81,24 @@ export function createCommand(): Command {
   return new Command("clone")
     .description("Clone missing configured repositories")
     .option("--all", "Clone all missing repositories without interactive selection")
+    .option("--json", "Output result as JSON; requires --all")
     .action(async (options: CloneCommandOptions) => {
+      if (options.json && !options.all) {
+        writeJsonEnvelope(unsupportedJsonModeError("clone", "interactive-selection"));
+        process.exit(ERROR_EXIT_CODE);
+      }
+
       try {
         const result = await executeClone(options);
 
+        if (options.json) {
+          writeJsonEnvelope(createJsonSuccessEnvelope("clone", { ...result }));
+        }
+
         if (result.status === CANCELLED_STATUS) {
-          info("Clone operation cancelled.");
+          if (!options.json) {
+            info("Clone operation cancelled.");
+          }
           process.exit(SUCCESS_EXIT_CODE);
         }
 
@@ -89,7 +109,11 @@ export function createCommand(): Command {
 
         process.exit(exitCode);
       } catch (error) {
-        logError(error instanceof Error ? error.message : String(error));
+        if (options.json) {
+          writeJsonEnvelope(createJsonErrorEnvelope("clone", unknownErrorToJsonError(error)));
+        } else {
+          logError(error instanceof Error ? error.message : String(error));
+        }
         process.exit(ERROR_EXIT_CODE);
       }
     });
@@ -121,7 +145,7 @@ export async function executeClone(
   const repairResult = await repairGitUrls(workspaceRoot, config);
   let configUpdated = repairResult.updated;
 
-  if (repairResult.repaired.length > 0) {
+  if (repairResult.repaired.length > 0 && !options.json) {
     info(`Recovered missing git URLs from local remotes: ${repairResult.repaired.join(", ")}`);
   }
 
@@ -138,6 +162,7 @@ export async function executeClone(
     confirm,
     deleteDirectory,
     interactive,
+    quiet: Boolean(options.json),
     unmanagedRepositories: discovery.unmanagedLocal,
     workspaceRoot,
   });
@@ -158,7 +183,9 @@ export async function executeClone(
   }
 
   if (discovery.configuredMissing.length === 0) {
-    success("All configured repositories are already present. Nothing to clone.");
+    if (!options.json) {
+      success("All configured repositories are already present. Nothing to clone.");
+    }
     return {
       cloned: [],
       failed: [],
@@ -201,7 +228,7 @@ export async function executeClone(
   const unresolvedMissingWithoutUrls = missingWithoutUrls
     .filter((repository) => !repository.config.gitUrl)
     .map((repository) => repository.name);
-  if (unresolvedMissingWithoutUrls.length > 0) {
+  if (unresolvedMissingWithoutUrls.length > 0 && !options.json) {
     warn(
       `Skipping repositories without configured gitUrl: ${unresolvedMissingWithoutUrls.join(", ")}`,
     );
@@ -249,7 +276,9 @@ export async function executeClone(
     );
 
     if (selectedRepositories.length === 0) {
-      info("No repositories selected for cloning.");
+      if (!options.json) {
+        info("No repositories selected for cloning.");
+      }
       return {
         cloned: [],
         failed: [],
@@ -273,11 +302,13 @@ export async function executeClone(
         cloneUrl = applyCloneProtocol(rawGitUrl, preferredProtocol);
       }
 
-      const cloneSpinner = spinner(`Cloning ${repository.name}...`).start();
+      const cloneSpinner = options.json
+        ? undefined
+        : spinner(`Cloning ${repository.name}...`).start();
 
       try {
         await runClone(cloneUrl, repository.path);
-        cloneSpinner.succeed(`Cloned ${repository.name}`);
+        cloneSpinner?.succeed(`Cloned ${repository.name}`);
         cloned.push(repository.name);
 
         if (repository.config.gitUrl !== cloneUrl) {
@@ -286,7 +317,7 @@ export async function executeClone(
         }
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        cloneSpinner.fail(`Failed to clone ${repository.name}`);
+        cloneSpinner?.fail(`Failed to clone ${repository.name}`);
         failed.push({
           name: repository.name,
           reason,
@@ -305,11 +336,13 @@ export async function executeClone(
   }
 
   if (failed.length > 0) {
-    warn(`Clone completed with failures (${failed.length}).`);
-    for (const failure of failed) {
-      info(`  - ${failure.name}: ${failure.reason}`);
+    if (!options.json) {
+      warn(`Clone completed with failures (${failed.length}).`);
+      for (const failure of failed) {
+        info(`  - ${failure.name}: ${failure.reason}`);
+      }
     }
-  } else {
+  } else if (!options.json) {
     success(`Clone completed for ${cloned.length} repositories.`);
   }
 
@@ -364,6 +397,7 @@ const reconcileUnmanagedRepositories = async (options: {
   interactive: boolean;
   workspaceRoot: string;
   config: Config;
+  quiet?: boolean;
   unmanagedRepositories: { name: string; path: string }[];
   confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
   askInput: (message: string, defaultValue?: string) => Promise<PromptOutcome<string>>;
@@ -375,9 +409,11 @@ const reconcileUnmanagedRepositories = async (options: {
   }
 
   if (!options.interactive) {
-    info(
-      `Ignoring ${options.unmanagedRepositories.length} unmanaged local repositories (interactive reconciliation required).`,
-    );
+    if (!options.quiet) {
+      info(
+        `Ignoring ${options.unmanagedRepositories.length} unmanaged local repositories (interactive reconciliation required).`,
+      );
+    }
     return { cancelled: false, updatedConfig: false };
   }
 

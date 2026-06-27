@@ -8,6 +8,7 @@
  */
 
 import { ListCommandError, NotInRepositoryError } from "../types/list.ts";
+import { createJsonSuccessEnvelope, stringifyJsonEnvelope } from "../lib/json-output.ts";
 import { isAbsolute, join, relative } from "path";
 import { spinner, warn } from "../lib/logger.ts";
 import chalk from "chalk";
@@ -308,7 +309,9 @@ export const listCommand = async (options?: ListCommandOptions): Promise<void> =
     // Format and display
     let output_str = formatAsSimpleList(output);
     if (opts.json) {
-      output_str = formatAsJson(output);
+      output_str = stringifyJsonEnvelope(
+        createJsonSuccessEnvelope("list", { worktrees: output.worktrees }),
+      );
     } else if (opts.table || opts.verbose) {
       // Table format when explicitly requested or in verbose mode
       output_str = formatAsTable(output, opts.verbose || false);

@@ -8,6 +8,7 @@ import {
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { getDirectiveContext, writeCdDirective } from "../lib/shell-directives.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
+import { unsupportedJsonModeError, writeJsonEnvelope } from "../lib/json-output.ts";
 import { Command } from "commander";
 import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
@@ -50,6 +51,7 @@ export interface SwitchCommandOptions {
   repos?: boolean;
   all?: boolean;
   defaultLaunch?: boolean;
+  json?: boolean;
 }
 
 interface LaunchResolution {
@@ -128,6 +130,10 @@ export function createCommand(): Command {
     .option("--no-default-launch", "Ignore configured default launch mode for this invocation")
     .option("--repos", "Use child repositories only")
     .option("--all", "Use both parent and child repositories")
+    .option(
+      "--json",
+      "Return a structured unsupported-mode error instead of launching or switching",
+    )
     .addHelpText(
       "after",
       `
@@ -144,6 +150,10 @@ Examples:
     )
     .action(async (filter: string | undefined, options: SwitchCommandOptions) => {
       try {
+        if (options.json) {
+          writeJsonEnvelope(unsupportedJsonModeError("switch", "launch"));
+          process.exit(USAGE_EXIT_CODE);
+        }
         await executeSwitch(filter, options);
         process.exit(SUCCESS_EXIT_CODE);
       } catch (error) {

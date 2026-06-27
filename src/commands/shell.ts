@@ -5,6 +5,7 @@ import {
   isSupportedShell,
 } from "../lib/shell-integration.ts";
 import { info, error as logError, success } from "../lib/logger.ts";
+import { unsupportedJsonModeError, writeJsonEnvelope } from "../lib/json-output.ts";
 import { Command } from "commander";
 
 const ERROR_EXIT_CODE = 1;
@@ -18,9 +19,19 @@ export function createCommand(): Command {
   shellCommand
     .command("init")
     .description("Print shell wrapper code")
-    .argument("<shell>", `Shell name (${SUPPORTED_SHELLS.join(", ")})`)
-    .action((shellName: string) => {
+    .argument("[shell]", `Shell name (${SUPPORTED_SHELLS.join(", ")})`)
+    .option("--json", "Return a structured unsupported-mode error instead of shell code")
+    .action((shellName: string | undefined, options: { json?: boolean }) => {
       try {
+        if (options.json) {
+          writeJsonEnvelope(unsupportedJsonModeError("shell", "init"));
+          process.exit(USAGE_EXIT_CODE);
+        }
+        if (!shellName) {
+          throw new Error(
+            `Missing required shell. Supported shells: ${SUPPORTED_SHELLS.join(", ")}.`,
+          );
+        }
         process.stdout.write(executeShellInit(shellName));
         process.exit(0);
       } catch (error) {

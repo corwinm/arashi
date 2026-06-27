@@ -12,58 +12,67 @@ import {
   formatSummary,
 } from "../lib/pull-output.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
-import { info, error as logError } from "../lib/logger.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
+import { info } from "../lib/logger.ts";
 import { Command } from "commander";
-import type { PullResult } from "../lib/pull-types.ts";
+import type { PullResult, PullSummary } from "../lib/pull-types.ts";
 import { checkRemoteChanges } from "../lib/git-remote.ts";
 import { filterRepositories } from "../lib/repo-filter.ts";
 import { runPullWithRollback } from "../lib/pull-runner.ts";
 
 const ZERO = 0;
 const ONE = 1;
-const SUCCESS_EXIT_CODE = 0;
 const ERROR_EXIT_CODE = 1;
 const USAGE_EXIT_CODE = 2;
 const MILLISECONDS_PER_SECOND = 1000;
 
+class CliUsageError extends Error {}
+
 export interface PullCommandOptions {
+  /** Output one JSON envelope to stdout */
+  json?: boolean;
   /** Only include specified repositories (repeatable flag) */
   only?: string[];
   /** Show full git output for each repository */
   verbose?: boolean;
 }
 
-const executePull = async (options: PullCommandOptions): Promise<void> => {
+const executePull = async (options: PullCommandOptions): Promise<PullSummary> => {
   let workspaceRoot = "";
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
-    logError("Not in an arashi workspace");
-    info('Run "arashi init" to initialize a workspace');
-    process.exit(USAGE_EXIT_CODE);
+    throw new CliUsageError(
+      'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
+    );
   }
 
   const repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch(
     (error): never => {
-      logError("Failed to load workspace configuration");
-      logError(error instanceof Error ? error.message : String(error));
-      process.exit(USAGE_EXIT_CODE);
+      throw new CliUsageError(
+        `Failed to load workspace configuration: ${error instanceof Error ? error.message : String(error)}`,
+      );
     },
   );
 
   const filterResult = filterRepositories(repositoriesResult.repositories, options.only);
   if (filterResult.missing.length > ZERO) {
-    logError("Unknown repositories in --only filter:");
-    for (const name of filterResult.missing) {
-      info(`  • ${name}`);
-    }
-    process.exit(USAGE_EXIT_CODE);
+    throw new CliUsageError(
+      `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
+    );
   }
 
   const repositories = filterResult.selected;
   if (repositories.length === ZERO) {
-    info("No repositories selected for pull");
-    process.exit(SUCCESS_EXIT_CODE);
+    if (!options.json) {
+      info("No repositories selected for pull");
+    }
+    return { overallStatus: "success", results: [] };
   }
 
   const results: PullResult[] = [];
@@ -72,7 +81,9 @@ const executePull = async (options: PullCommandOptions): Promise<void> => {
 
   for (let index = ZERO; index < repositories.length; index += ONE) {
     const repo = repositories[index];
-    info(formatProgress(repo.name, index + ONE, total));
+    if (!options.json) {
+      info(formatProgress(repo.name, index + ONE, total));
+    }
 
     const start = Date.now();
     const remoteStatus = await checkRemoteChanges(repo.name, repo.path);
@@ -85,7 +96,7 @@ const executePull = async (options: PullCommandOptions): Promise<void> => {
         status: "failed",
       });
       const lastResult = results.at(-ONE);
-      if (lastResult) {
+      if (lastResult && !options.json) {
         info(formatResultLine(lastResult));
       }
     } else if (remoteStatus.hasRemoteChanges) {
@@ -105,11 +116,13 @@ const executePull = async (options: PullCommandOptions): Promise<void> => {
       };
       results.push(result);
 
-      if (options.verbose && pullResult.output) {
+      if (options.verbose && pullResult.output && !options.json) {
         console.log(pullResult.output);
       }
 
-      info(formatResultLine(result));
+      if (!options.json) {
+        info(formatResultLine(result));
+      }
     } else {
       const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
       results.push({
@@ -118,23 +131,25 @@ const executePull = async (options: PullCommandOptions): Promise<void> => {
         status: "skipped",
       });
       const lastResult = results.at(-ONE);
-      if (lastResult) {
+      if (lastResult && !options.json) {
         info(formatResultLine(lastResult));
       }
     }
   }
 
   const summary = buildSummary(results);
-  console.log(formatSummary(summary));
+  if (!options.json) {
+    console.log(formatSummary(summary));
+  }
 
   const hasFailures = results.some(
     (result) => result.status === "failed" || result.status === "manual-update",
   );
   if (hasFailures) {
-    process.exit(ERROR_EXIT_CODE);
+    process.exitCode = ERROR_EXIT_CODE;
   }
 
-  process.exit(SUCCESS_EXIT_CODE);
+  return summary;
 };
 
 export function createCommand(): Command {
@@ -146,16 +161,25 @@ export function createCommand(): Command {
       (value, previous: string[] = []) => [...previous, value],
     )
     .option("-v, --verbose", "Show verbose git output")
+    .option("--json", "Output result as JSON")
     .action(async (options: PullCommandOptions) => {
       try {
-        await executePull(options);
-      } catch (error) {
-        if (error instanceof Error) {
-          console.error(error.message);
-        } else {
-          console.error("Unknown error");
+        const summary = await executePull(options);
+        if (options.json) {
+          writeJsonEnvelope(createJsonSuccessEnvelope("pull", { ...summary }));
         }
-        process.exit(ERROR_EXIT_CODE);
+      } catch (error) {
+        if (options.json) {
+          writeJsonEnvelope(createJsonErrorEnvelope("pull", unknownErrorToJsonError(error)));
+          process.exit(USAGE_EXIT_CODE);
+        } else {
+          if (error instanceof Error) {
+            console.error(error.message);
+          } else {
+            console.error("Unknown error");
+          }
+          process.exit(error instanceof CliUsageError ? USAGE_EXIT_CODE : ERROR_EXIT_CODE);
+        }
       }
     });
 }
