@@ -59,7 +59,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          # Keep semantic-release on Node 22 for GitHub asset uploads.
+          # Node 24/Undici can reject @semantic-release/github's content-length header
+          # when uploading release assets, leaving a draft release after npm publish.
+          node-version: 22
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
