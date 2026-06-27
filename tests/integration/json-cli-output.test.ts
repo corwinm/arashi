@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -35,6 +35,31 @@ const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> =>
   return { exitCode, stderr, stdout };
 };
 
+const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> => {
+  const proc = Bun.spawn(args, {
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  return { exitCode, stderr, stdout };
+};
+
+const runGit = async (cwd: string, args: string[]): Promise<string> => {
+  const result = await runCommand(cwd, ["git", ...args]);
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || result.stdout.trim() || "Git command failed");
+  }
+
+  return result.stdout.trim();
+};
+
 const parseSingleJsonDocument = (stdout: string): Record<string, unknown> => {
   expect(stdout.trim()).toBe(stdout.slice(0, -1));
   expect(stdout.endsWith("\n")).toBe(true);
@@ -43,11 +68,194 @@ const parseSingleJsonDocument = (stdout: string): Record<string, unknown> => {
   return parsed as Record<string, unknown>;
 };
 
+const jsonData = (parsed: Record<string, unknown>): Record<string, unknown> => {
+  expect(parsed.data).toBeDefined();
+  return parsed.data as Record<string, unknown>;
+};
+
+const jsonArray = (value: unknown): Record<string, unknown>[] => {
+  expect(Array.isArray(value)).toBe(true);
+  return value as Record<string, unknown>[];
+};
+
+const initializeGitRepository = async (repoPath: string): Promise<void> => {
+  await mkdir(repoPath, { recursive: true });
+  await runGit(repoPath, ["init", "-b", "main"]);
+  await runGit(repoPath, ["config", "user.email", "test@example.com"]);
+  await runGit(repoPath, ["config", "user.name", "Test User"]);
+  await writeFile(join(repoPath, "README.md"), `# ${repoPath}\n`);
+  await runGit(repoPath, ["add", "."]);
+  await runGit(repoPath, ["commit", "-m", "Initial commit"]);
+};
+
+const writeWorkspaceConfig = async (workspaceRoot: string): Promise<void> => {
+  await mkdir(join(workspaceRoot, ".arashi"), { recursive: true });
+  await writeFile(
+    join(workspaceRoot, ".arashi", "config.json"),
+    JSON.stringify(
+      {
+        repos: {
+          "repo-a": {
+            defaultBranch: "main",
+            isBare: false,
+            path: "./repos/repo-a",
+            worktrees: [],
+          },
+          "repo-b": {
+            defaultBranch: "main",
+            isBare: false,
+            path: "./repos/repo-b",
+            worktrees: [],
+          },
+        },
+        reposDir: "./repos",
+        version: "1.0.0",
+      },
+      null,
+      2,
+    ),
+  );
+};
+
+const createCommonWorkspace = async (): Promise<string> => {
+  const workspaceRoot = await makeTempDir();
+  await initializeGitRepository(workspaceRoot);
+  await initializeGitRepository(join(workspaceRoot, "repos", "repo-a"));
+  await initializeGitRepository(join(workspaceRoot, "repos", "repo-b"));
+  await writeWorkspaceConfig(workspaceRoot);
+  await writeFile(join(workspaceRoot, ".gitignore"), "repos/\n");
+  await runGit(workspaceRoot, ["add", ".arashi/config.json", ".gitignore"]);
+  await runGit(workspaceRoot, ["commit", "-m", "Add Arashi config"]);
+
+  return workspaceRoot;
+};
+
+const writeExecutableSetupScript = async (repoPath: string, content: string): Promise<void> => {
+  const scriptPath = join(repoPath, "setup.sh");
+  await writeFile(scriptPath, content);
+  await chmod(scriptPath, 0o755);
+};
+
+const createBareRemote = async (baseDir: string, name: string): Promise<string> => {
+  const remotePath = join(baseDir, `${name}.git`);
+  await runGit(baseDir, ["init", "--bare", remotePath]);
+  return remotePath;
+};
+
+const seedRemote = async (remotePath: string, baseDir: string, seedName: string): Promise<void> => {
+  const seedPath = join(baseDir, seedName);
+  await runGit(baseDir, ["clone", remotePath, seedPath]);
+  await runGit(seedPath, ["config", "user.email", "test@example.com"]);
+  await runGit(seedPath, ["config", "user.name", "Test User"]);
+  await writeFile(join(seedPath, "README.md"), `# ${seedName}\n`);
+  await runGit(seedPath, ["add", "."]);
+  await runGit(seedPath, ["commit", "-m", "Initial commit"]);
+  await runGit(seedPath, ["push", "origin", "HEAD:main"]);
+  await runGit(remotePath, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+};
+
+const createRemoteBackedWorkspace = async (): Promise<string> => {
+  const baseDir = await makeTempDir();
+  const mainRemote = await createBareRemote(baseDir, "main-remote");
+  const repoRemote = await createBareRemote(baseDir, "repo-a-remote");
+
+  await seedRemote(mainRemote, baseDir, "main-seed");
+  await seedRemote(repoRemote, baseDir, "repo-a-seed");
+
+  const workspaceRoot = join(baseDir, "workspace");
+  await runGit(baseDir, ["clone", mainRemote, workspaceRoot]);
+  await runGit(workspaceRoot, ["checkout", "-B", "main"]);
+  await runGit(workspaceRoot, ["config", "user.email", "test@example.com"]);
+  await runGit(workspaceRoot, ["config", "user.name", "Test User"]);
+  await mkdir(join(workspaceRoot, "repos"), { recursive: true });
+  await runGit(join(workspaceRoot, "repos"), ["clone", repoRemote, "repo-a"]);
+  await runGit(join(workspaceRoot, "repos", "repo-a"), ["checkout", "-B", "main"]);
+  await initializeGitRepository(join(workspaceRoot, "repos", "repo-b"));
+  await writeWorkspaceConfig(workspaceRoot);
+
+  return workspaceRoot;
+};
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
 describe("CLI JSON output contract", () => {
+  test("status --json covers a clean workspace with configured repositories", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+
+    const result = await runArashi(workspaceRoot, ["status", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = parseSingleJsonDocument(result.stdout);
+    expect(parsed).toMatchObject({
+      command: "status",
+      ok: true,
+      schemaVersion: 1,
+    });
+    const data = jsonData(parsed);
+    expect(data.workspaceRoot).toBe(await realpath(workspaceRoot));
+    expect(data.summary).toMatchObject({ cleanCount: 3, dirtyCount: 0, total: 3 });
+    const repositories = jsonArray(data.repositories);
+    expect(repositories.map((repo) => repo.name)).toEqual(["Main Repository", "repo-a", "repo-b"]);
+  });
+
+  test("setup --json covers common --only usage without progress noise", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    await writeExecutableSetupScript(
+      join(workspaceRoot, "repos", "repo-a"),
+      "#!/bin/sh\necho repo-a-json-setup > ../../setup-marker.txt\n",
+    );
+
+    const result = await runArashi(workspaceRoot, ["setup", "--only", "repo-a", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = parseSingleJsonDocument(result.stdout);
+    expect(parsed).toMatchObject({
+      command: "setup",
+      ok: true,
+      schemaVersion: 1,
+      warnings: [],
+    });
+    const data = jsonData(parsed);
+    expect(data).toMatchObject({
+      excludedCount: 2,
+      executedCount: 1,
+      overallStatus: "success",
+      selectedCount: 1,
+      successCount: 1,
+    });
+    const executions = jsonArray(data.executions);
+    expect(executions).toContainEqual(
+      expect.objectContaining({ repositoryName: "repo-a", status: "success" }),
+    );
+    expect(result.stdout).not.toContain("[1/1]");
+    expect(await Bun.file(join(workspaceRoot, "setup-marker.txt")).text()).toBe(
+      "repo-a-json-setup\n",
+    );
+  });
+
+  test("pull --json covers common --only usage with a skipped up-to-date repository", async () => {
+    const workspaceRoot = await createRemoteBackedWorkspace();
+
+    const result = await runArashi(workspaceRoot, ["pull", "--only", "repo-a", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = parseSingleJsonDocument(result.stdout);
+    expect(parsed).toMatchObject({
+      command: "pull",
+      ok: true,
+      schemaVersion: 1,
+      warnings: [],
+    });
+    const data = jsonData(parsed);
+    expect(data.overallStatus).toBe("success");
+    expect(jsonArray(data.results)).toEqual([
+      expect.objectContaining({ repositoryId: "repo-a", status: "skipped" }),
+    ]);
+    expect(result.stdout).not.toContain("[1/1]");
+  });
+
   test("status --json returns exactly one failure envelope outside a workspace", async () => {
     const cwd = await makeTempDir();
 
