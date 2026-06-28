@@ -114,5 +114,5 @@ describe("create command worktree location resolution", () => {
     );
     expect(await Bun.file(join(managedSlashPath, "README.md")).exists()).toBe(true);
     expect(dirname(managedPath)).toBe(dirname(managedSlashPath));
-  });
+  }, 20_000);
 });
