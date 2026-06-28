@@ -1,3 +1,9 @@
+## [1.14.0](https://github.com/corwinm/arashi/compare/v1.13.0...v1.14.0) (2026-06-28)
+
+### Features
+
+- add structured JSON CLI output ([#72](https://github.com/corwinm/arashi/issues/72)) ([6a383e4](https://github.com/corwinm/arashi/commit/6a383e484b119fc21f75cebbdee4c37cb2ad0f90))
+
 ## [1.13.0](https://github.com/corwinm/arashi/compare/v1.12.0...v1.13.0) (2026-06-27)
 
 ### Features
