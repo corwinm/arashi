@@ -10,7 +10,7 @@ interface CommandResult {
   stderr: string;
 }
 
-const SLOW_PULL_TEST_TIMEOUT = process.platform === "win32" ? 15_000 : 5000;
+const SLOW_PULL_TEST_TIMEOUT = process.platform === "win32" ? 30_000 : 5000;
 
 async function runCommand(cwd: string, args: string[]): Promise<CommandResult> {
   const proc = spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
