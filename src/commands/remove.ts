@@ -41,6 +41,7 @@ import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
   unknownErrorToJsonError,
+  unsupportedJsonModeError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
@@ -179,6 +180,11 @@ export async function executeRemove(
   },
 ): Promise<number> {
   const startTime = Date.now();
+
+  if (options.json && !branchArg) {
+    writeJsonEnvelope(unsupportedJsonModeError("remove", "interactive-selection"));
+    return ONE;
+  }
 
   if (options.keepBranches && options.keepWorktrees) {
     const summary = createRemovalSummary(ZERO, ZERO);
@@ -350,9 +356,11 @@ export async function executeRemove(
   }
 
   if (options.checkDirty !== false && worktreesToRemove.length > 0) {
-    const dirtyCheckSpinner = spinner("Checking for uncommitted changes...").start();
+    const dirtyCheckSpinner = options.json
+      ? undefined
+      : spinner("Checking for uncommitted changes...").start();
     await resolveWorktreeStatuses(worktreesToRemove, true);
-    dirtyCheckSpinner.succeed("Dirty check complete");
+    dirtyCheckSpinner?.succeed("Dirty check complete");
   }
 
   if (!options.force) {

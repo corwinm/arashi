@@ -1192,7 +1192,7 @@ export function createCommand(): Command {
         force: options.force,
         noDiscover: options.discover === false, // --no-discover sets discover: false
         reposDir: options.reposDir,
-        verbose: options.verbose,
+        verbose: options.json ? false : options.verbose,
         worktreesDir: options.worktreesDir,
       };
 

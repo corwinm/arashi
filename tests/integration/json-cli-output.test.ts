@@ -445,4 +445,40 @@ describe("CLI JSON output contract", () => {
       warnings: [],
     });
   });
+
+  test("init --json suppresses verbose human output", async () => {
+    const cwd = await makeTempDir();
+    await runGit(cwd, ["init", "-b", "main"]);
+
+    const result = await runArashi(cwd, ["init", "--json", "--verbose", "--no-discover"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = parseSingleJsonDocument(result.stdout);
+    expect(parsed).toMatchObject({
+      command: "init",
+      ok: true,
+      schemaVersion: 1,
+      warnings: [],
+    });
+    expect(result.stdout).not.toContain("[VERBOSE]");
+  });
+
+  test("remove --json rejects interactive selection mode with one envelope", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+
+    const result = await runArashi(workspaceRoot, ["remove", "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = parseSingleJsonDocument(result.stdout);
+    expect(parsed).toMatchObject({
+      command: "remove",
+      error: {
+        code: "JSON_UNSUPPORTED_FOR_MODE",
+        details: { mode: "interactive-selection" },
+      },
+      ok: false,
+      schemaVersion: 1,
+      warnings: [],
+    });
+  });
 });

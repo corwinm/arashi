@@ -136,7 +136,9 @@ export async function executeClone(
   const askSelect = deps.promptSelect ?? promptSelect;
 
   const interactive = Boolean(
-    (deps.stdinIsTTY ?? process.stdin.isTTY) && (deps.stdoutIsTTY ?? process.stdout.isTTY),
+    !options.json &&
+    (deps.stdinIsTTY ?? process.stdin.isTTY) &&
+    (deps.stdoutIsTTY ?? process.stdout.isTTY),
   );
 
   const workspaceRoot = deps.workspaceRoot ?? (await resolveWorkspaceRoot());
