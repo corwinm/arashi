@@ -16,7 +16,13 @@ import {
 } from "../core/worktree.ts";
 import { basename, resolve } from "path";
 import { error, info, success, warn } from "../lib/logger.ts";
-import { unsupportedJsonModeError, writeJsonEnvelope } from "../lib/json-output.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  unsupportedJsonModeError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import { Command, Option } from "commander";
 import type { SwitchCandidate } from "../core/switch.ts";
 import { discoverRepositories } from "../core/repository.ts";
@@ -75,6 +81,83 @@ const describeConflictScope = (existsLocally: boolean, existsRemotely: boolean):
 
 const formatDurationSeconds = (durationMs: number): string =>
   `${(durationMs / MILLISECONDS_PER_SECOND).toFixed(TWO)}s`;
+
+const createCommandErrorCode = (createError: unknown): string => {
+  if (createError instanceof InvalidBranchNameError) {
+    return "INVALID_BRANCH_NAME";
+  }
+  if (createError instanceof RepositoryValidationError) {
+    return "REPOSITORY_VALIDATION_ERROR";
+  }
+  if (createError instanceof CreateSetupError) {
+    return "WORKSPACE_CONFIG_NOT_FOUND";
+  }
+  if (createError instanceof ConflictAbortedError) {
+    return "BRANCH_CONFLICT";
+  }
+  if (createError instanceof UserAbortedError) {
+    return "USER_ABORTED";
+  }
+  if (createError instanceof Error && createError.message.includes("not a git repository")) {
+    return "NOT_IN_REPOSITORY";
+  }
+
+  return "UNKNOWN_ERROR";
+};
+
+const createCommandErrorDetails = (createError: unknown): Record<string, unknown> | undefined => {
+  if (createError instanceof InvalidBranchNameError) {
+    return { branchName: createError.branchName, reason: createError.reason };
+  }
+  if (createError instanceof ConflictAbortedError) {
+    return {
+      conflicts: createError.conflicts.map((conflict) => ({
+        branchName: conflict.branchName,
+        existsLocally: conflict.existsLocally,
+        existsRemotely: conflict.existsRemotely,
+        repositoryName: conflict.repository.name,
+      })),
+    };
+  }
+
+  return undefined;
+};
+
+const writeCreateJsonError = (createError: unknown): void => {
+  const jsonError = unknownErrorToJsonError(createError, createCommandErrorCode(createError));
+  const details = createCommandErrorDetails(createError);
+  writeJsonEnvelope(
+    createJsonErrorEnvelope("create", {
+      ...jsonError,
+      ...(details ? { details } : {}),
+    }),
+  );
+};
+
+const createSummaryJsonData = (branchName: string, summary: OperationSummary) => ({
+  branchName,
+  dryRun: summary.isDryRun === true,
+  errorSummary: summary.errorSummary,
+  failureCount: summary.failureCount,
+  hookOutcomes: summary.hookOutcomes,
+  nextSteps: summary.nextSteps,
+  repositories: summary.repositoryResults.map((result) => ({
+    branchName: result.branchName,
+    duration: result.duration,
+    error: result.error ? result.error.message : null,
+    hookOutcomes: result.hookOutcomes,
+    repositoryName: result.repository.name,
+    repositoryPath: result.repository.path,
+    status: result.status,
+    warnings: result.warnings,
+    worktreePath: result.worktreePath,
+  })),
+  rolledBack: summary.rolledBack,
+  skippedCount: summary.skippedCount,
+  successCount: summary.successCount,
+  totalDuration: summary.totalDuration,
+  totalRepositories: summary.totalRepositories,
+});
 
 interface CreateCommandOptions {
   /** Only create worktrees in specified repositories (comma-separated) */
@@ -378,28 +461,43 @@ export function createCommand(): Command {
     .option("--no-hooks", "Disable hook execution")
     .option("--no-progress", "Hide progress indicators")
     .option("--dry-run", "Show what would be done without making changes")
-    .option("--json", "Return a structured unsupported-mode error")
+    .option("--json", "Return structured JSON output for non-interactive create operations")
     .addOption(editorHostOption)
     .addHelpText(
       "after",
       `
 Examples:
-  $ arashi create feature-auth
-  $ arashi create feature-auth --switch
-  $ arashi create feature-auth --launch
-  $ arashi create feature-auth --sesh
-  $ arashi create feature-auth --no-switch --no-launch
+  $ arashi create feature-branch
+  $ arashi create feature-branch --only repo1,repo2
+  $ arashi create feature-branch --conflict REUSE_EXISTING
+  $ arashi create feature-branch --dry-run
+  $ arashi create feature-branch --no-launch --no-switch --json
 `,
     )
     .action(async (branchName: string, options: CreateCommandOptions) => {
-      if (options.json) {
-        writeJsonEnvelope(unsupportedJsonModeError("create", "worktree-orchestration"));
+      if (
+        options.json &&
+        (options.interactive || options.launch || options.sesh || options.switch)
+      ) {
+        writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
         process.exit(ERROR_EXIT_CODE);
       }
 
       try {
-        await executeCreate(branchName, options);
+        const exitCode = await executeCreate(branchName, options);
+        process.exit(exitCode);
       } catch (createError) {
+        if (options.json) {
+          writeCreateJsonError(createError);
+          if (
+            createError instanceof ConflictAbortedError ||
+            createError instanceof UserAbortedError
+          ) {
+            process.exit(CANCELLED_EXIT_CODE);
+          }
+          process.exit(ERROR_EXIT_CODE);
+        }
+
         if (createError instanceof InvalidBranchNameError) {
           error(`Invalid branch name: ${createError.branchName}`);
           error(createError.reason);
@@ -441,7 +539,7 @@ export async function executeCreate(
   branchName: string,
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
-): Promise<void> {
+): Promise<number> {
   const resolveInvocationContext =
     deps.resolveCreateInvocationContext ?? resolveCreateInvocationContext;
   const loadWorkspaceConfig = deps.loadConfigWithFallback ?? loadConfigWithFallback;
@@ -512,7 +610,11 @@ export async function executeCreate(
     process.exit(ERROR_EXIT_CODE);
   }
 
-  if (context.repositoryType === "bare" && loadedConfig.source === "repository-content") {
+  if (
+    context.repositoryType === "bare" &&
+    loadedConfig.source === "repository-content" &&
+    !options.json
+  ) {
     info("Loaded workspace configuration from repository content");
   }
 
@@ -520,7 +622,9 @@ export async function executeCreate(
   if (allRepositories.length === ONE) {
     repositoryLabel = "repository";
   }
-  info(`Found ${allRepositories.length} ${repositoryLabel}`);
+  if (!options.json) {
+    info(`Found ${allRepositories.length} ${repositoryLabel}`);
+  }
 
   // 4. Apply repository filter
   let filterMode: RepositoryFilter["mode"] = "all";
@@ -539,8 +643,22 @@ export async function executeCreate(
   const selectedRepos = await filterRepositories(filter, allRepositories);
 
   if (selectedRepos.length === ZERO) {
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonSuccessEnvelope("create", {
+          branchName,
+          dryRun: options.dryRun === true,
+          failureCount: ZERO,
+          repositories: [],
+          skippedCount: ZERO,
+          successCount: ZERO,
+          totalRepositories: ZERO,
+        }),
+      );
+      return ZERO;
+    }
     warn("No repositories selected for worktree creation");
-    process.exit(ZERO);
+    return ZERO;
   }
 
   const actionLabel = options.dryRun ? "Planning" : "Creating";
@@ -548,7 +666,9 @@ export async function executeCreate(
   if (selectedRepos.length === ONE) {
     selectedRepositoryLabel = "repository";
   }
-  info(`${actionLabel} worktrees in ${selectedRepos.length} ${selectedRepositoryLabel}...`);
+  if (!options.json) {
+    info(`${actionLabel} worktrees in ${selectedRepos.length} ${selectedRepositoryLabel}...`);
+  }
 
   const hooksEnabled = resolveEnabledFlag({
     negative: options.noHooks,
@@ -567,7 +687,7 @@ export async function executeCreate(
     hookTimeout: arashiConfig.hooks?.timeout,
     interactive: options.interactive || false,
     resolvedConfig: arashiConfig,
-    showProgress: progressEnabled,
+    showProgress: options.json ? false : progressEnabled,
     workspaceRoot: context.workspaceRoot,
   };
 
@@ -575,6 +695,16 @@ export async function executeCreate(
   const summary = await runCreate(branchName, selectedRepos, worktreeOptions);
 
   // 7. Display results
+  if (options.json) {
+    writeJsonEnvelope(
+      createJsonSuccessEnvelope("create", createSummaryJsonData(branchName, summary)),
+    );
+    if (summary.rolledBack || summary.failureCount > ZERO) {
+      return ERROR_EXIT_CODE;
+    }
+    return ZERO;
+  }
+
   console.log("");
   if (options.dryRun) {
     if (!summary.dryRunOutcome) {
@@ -668,4 +798,5 @@ export async function executeCreate(
 
   console.log("");
   info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
+  return ZERO;
 }

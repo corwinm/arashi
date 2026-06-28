@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -256,6 +256,76 @@ describe("CLI JSON output contract", () => {
     expect(result.stdout).not.toContain("[1/1]");
   });
 
+  test("agentic development workflow can create and remove coordinated worktrees with JSON", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    const branchName = "feat/agentic-json-loop";
+
+    const createResult = await runArashi(workspaceRoot, [
+      "create",
+      branchName,
+      "--no-launch",
+      "--no-switch",
+      "--json",
+    ]);
+
+    expect(createResult.exitCode).toBe(0);
+    const createParsed = parseSingleJsonDocument(createResult.stdout);
+    expect(createParsed).toMatchObject({
+      command: "create",
+      ok: true,
+      schemaVersion: 1,
+      warnings: [],
+    });
+    const createData = jsonData(createParsed);
+    expect(createData).toMatchObject({
+      branchName,
+      failureCount: 0,
+      successCount: 3,
+      totalRepositories: 3,
+    });
+    const createdRepositories = jsonArray(createData.repositories);
+    expect(createdRepositories.map((repo) => repo.repositoryName).toSorted()).toEqual(
+      ["repo-a", "repo-b", workspaceRoot.split("/").at(-1)].toSorted(),
+    );
+    for (const repo of createdRepositories) {
+      expect(repo).toMatchObject({ branchName, status: "success" });
+      expect(typeof repo.worktreePath).toBe("string");
+      expect((await stat(repo.worktreePath as string)).isDirectory()).toBe(true);
+    }
+    expect(createResult.stdout).not.toContain("[1/3]");
+    expect(createResult.stdout).not.toContain("Worktree locations");
+
+    const removeResult = await runArashi(workspaceRoot, [
+      "remove",
+      branchName,
+      "--force",
+      "--json",
+    ]);
+
+    expect(removeResult.exitCode).toBe(0);
+    const removeParsed = parseSingleJsonDocument(removeResult.stdout);
+    expect(removeParsed).toMatchObject({
+      command: "remove",
+      ok: true,
+      schemaVersion: 1,
+      warnings: [],
+    });
+    const removeData = jsonData(removeParsed);
+    expect(removeData).toMatchObject({
+      success: true,
+      summary: {
+        successfulBranches: 3,
+        successfulWorktrees: 3,
+        totalBranches: 3,
+        totalWorktrees: 3,
+      },
+    });
+    for (const repo of createdRepositories) {
+      expect(await Bun.file(repo.worktreePath as string).exists()).toBe(false);
+    }
+    expect(removeResult.stdout).not.toContain("Successfully removed");
+  });
+
   test("status --json returns exactly one failure envelope outside a workspace", async () => {
     const cwd = await makeTempDir();
 
@@ -334,7 +404,7 @@ describe("CLI JSON output contract", () => {
       { args: ["clone", "--json"], code: "JSON_UNSUPPORTED_FOR_MODE", command: "clone" },
       {
         args: ["create", "feature-json", "--json"],
-        code: "JSON_UNSUPPORTED_FOR_MODE",
+        code: "NOT_IN_REPOSITORY",
         command: "create",
       },
       { args: ["init", "--dry-run", "--json"], code: "JSON_UNSUPPORTED_FOR_MODE", command: "init" },
