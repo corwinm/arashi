@@ -1,3 +1,10 @@
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  unsupportedJsonModeError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import { info, error as logError } from "../lib/logger.ts";
 import { Command } from "commander";
 import { dirname } from "node:path";
@@ -10,6 +17,7 @@ const GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/corwinm/arashi/r
 interface UpdateOptions {
   check?: boolean;
   dryRun?: boolean;
+  json?: boolean;
   yes?: boolean;
 }
 
@@ -192,13 +200,33 @@ export function createCommand(currentVersion = ""): Command {
     .option("--check", "check whether an update is available without changing files")
     .option("--dry-run", "show the installer update plan without changing files")
     .option("-y, --yes", "apply the update without prompting")
+    .option("--json", "Output result as JSON")
     .action(async (options: UpdateOptions) => {
+      if (options.json && options.yes) {
+        writeJsonEnvelope(unsupportedJsonModeError("update", "installer-apply"));
+        process.exitCode = 1;
+        return;
+      }
+
       try {
-        await runDirectUpdate(options, { currentVersion });
+        if (options.json) {
+          const messages: string[] = [];
+          await runDirectUpdate(options, {
+            currentVersion,
+            log: (message) => messages.push(message),
+          });
+          writeJsonEnvelope(createJsonSuccessEnvelope("update", { messages }));
+        } else {
+          await runDirectUpdate(options, { currentVersion });
+        }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logError(`Failed to check latest arashi release: ${message}`);
-        info(`Manual releases: ${RELEASES_URL}`);
+        if (options.json) {
+          writeJsonEnvelope(createJsonErrorEnvelope("update", unknownErrorToJsonError(error)));
+        } else {
+          const message = error instanceof Error ? error.message : String(error);
+          logError(`Failed to check latest arashi release: ${message}`);
+          info(`Manual releases: ${RELEASES_URL}`);
+        }
         process.exitCode = 1;
       }
     });

@@ -10,48 +10,54 @@ import {
   orderSetupTargets,
 } from "../lib/setup-targets.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 import { info, error as logError } from "../lib/logger.ts";
 import { Command } from "commander";
-import type { SetupExecutionResult } from "../lib/setup-types.ts";
+import type { SetupExecutionResult, SetupRunSummary } from "../lib/setup-types.ts";
 import { runSetupTarget } from "../lib/setup-runner.ts";
 
 const ZERO = 0;
 const ONE = 1;
-const SUCCESS_EXIT_CODE = 0;
 const ERROR_EXIT_CODE = 1;
 const USAGE_EXIT_CODE = 2;
 const DEFAULT_TIMEOUT_MS = 300_000;
 
+class CliUsageError extends Error {}
+
 export interface SetupCommandOptions {
+  json?: boolean;
   only?: string[];
   verbose?: boolean;
 }
 
-const executeSetup = async (options: SetupCommandOptions): Promise<void> => {
+const executeSetup = async (options: SetupCommandOptions): Promise<SetupRunSummary> => {
   let workspaceRoot = "";
   try {
     workspaceRoot = await findWorkspaceRoot();
   } catch {
-    logError("Not in an arashi workspace");
-    info('Run "arashi init" to initialize a workspace');
-    process.exit(USAGE_EXIT_CODE);
+    throw new CliUsageError(
+      'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
+    );
   }
 
   const repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch(
     (error): never => {
-      logError("Failed to load workspace configuration");
-      logError(error instanceof Error ? error.message : String(error));
-      process.exit(USAGE_EXIT_CODE);
+      throw new CliUsageError(
+        `Failed to load workspace configuration: ${error instanceof Error ? error.message : String(error)}`,
+      );
     },
   );
 
   const discovery = await discoverSetupTargets(repositoriesResult.repositories, options.only);
   if (discovery.missing.length > ZERO) {
-    logError("Unknown repositories in --only filter:");
-    for (const name of discovery.missing) {
-      info(`  - ${name}`);
-    }
-    process.exit(USAGE_EXIT_CODE);
+    throw new CliUsageError(
+      `Unknown repositories in --only filter: ${discovery.missing.join(", ")}`,
+    );
   }
 
   const orderedTargets = orderSetupTargets(discovery.targets);
@@ -63,15 +69,19 @@ const executeSetup = async (options: SetupCommandOptions): Promise<void> => {
   for (const target of orderedTargets) {
     if (isExecutableTarget(target)) {
       executionIndex += ONE;
-      info(formatProgress(target.name, executionIndex, executableTargets.length));
+      if (!options.json) {
+        info(formatProgress(target.name, executionIndex, executableTargets.length));
+      }
       const result = await runSetupTarget(target, { timeoutMs });
       executions.push(result);
 
-      if (options.verbose && result.output) {
+      if (options.verbose && result.output && !options.json) {
         console.log(result.output);
       }
 
-      info(formatResultLine(result));
+      if (!options.json) {
+        info(formatResultLine(result));
+      }
     } else {
       const skippedResult: SetupExecutionResult = {
         detail: target.skipReason,
@@ -80,20 +90,24 @@ const executeSetup = async (options: SetupCommandOptions): Promise<void> => {
         status: "skipped",
       };
       executions.push(skippedResult);
-      info(formatResultLine(skippedResult));
+      if (!options.json) {
+        info(formatResultLine(skippedResult));
+      }
     }
   }
 
   const filteredRun = Boolean(options.only && options.only.length > ZERO);
   const summary = buildSummary(orderedTargets, executions);
-  console.log(formatSummary(summary, filteredRun));
+  if (!options.json) {
+    console.log(formatSummary(summary, filteredRun));
+  }
 
   const hasFailures = summary.failedCount > ZERO || summary.timedOutCount > ZERO;
   if (hasFailures) {
-    process.exit(ERROR_EXIT_CODE);
+    process.exitCode = ERROR_EXIT_CODE;
   }
 
-  process.exit(SUCCESS_EXIT_CODE);
+  return summary;
 };
 
 export function createCommand(): Command {
@@ -105,12 +119,21 @@ export function createCommand(): Command {
       (value, previous: string[] = []) => [...previous, value],
     )
     .option("-v, --verbose", "Show full setup script output")
+    .option("--json", "Output result as JSON")
     .action(async (options: SetupCommandOptions) => {
       try {
-        await executeSetup(options);
+        const summary = await executeSetup(options);
+        if (options.json) {
+          writeJsonEnvelope(createJsonSuccessEnvelope("setup", { ...summary }));
+        }
       } catch (error) {
-        logError(error instanceof Error ? error.message : String(error));
-        process.exit(ERROR_EXIT_CODE);
+        if (options.json) {
+          writeJsonEnvelope(createJsonErrorEnvelope("setup", unknownErrorToJsonError(error)));
+          process.exit(USAGE_EXIT_CODE);
+        } else {
+          logError(error instanceof Error ? error.message : String(error));
+          process.exit(error instanceof CliUsageError ? USAGE_EXIT_CODE : ERROR_EXIT_CODE);
+        }
       }
     });
 }

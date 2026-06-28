@@ -163,4 +163,45 @@ describe("clone command", () => {
     expect(result.failed).toHaveLength(1);
     expect(result.failed[0]?.name).toBe("repo-a");
   });
+
+  test("does not prompt for unmanaged repositories in JSON mode", async () => {
+    await mkdir(join(workspaceRoot, "repos", "extra-repo"), { recursive: true });
+    await writeFile(
+      join(workspaceRoot, "repos", "extra-repo", ".git"),
+      "gitdir: ./.git/worktrees/main\n",
+    );
+
+    const config: Config = {
+      repos: {
+        "repo-a": {
+          gitUrl: "https://github.com/team/repo-a.git",
+          path: "./repos/repo-a",
+        },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true, json: true },
+      {
+        cloneRepository: async (_gitUrl, destinationPath) => {
+          await mkdir(destinationPath, { recursive: true });
+          await writeFile(join(destinationPath, ".git"), "gitdir: ./.git/worktrees/main\n");
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        loadConfig: async () => config,
+        promptSelect: async () => {
+          throw new Error("JSON clone should not prompt for unmanaged repositories");
+        },
+        saveConfig: async () => {},
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        workspaceRoot,
+      },
+    );
+
+    expect(result.status).toBe("success");
+    expect(result.cloned).toEqual(["repo-a"]);
+  });
 });
