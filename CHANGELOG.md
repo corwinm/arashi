@@ -1,3 +1,10 @@
+## [1.15.0](https://github.com/corwinm/arashi/compare/v1.14.0...v1.15.0) (2026-06-30)
+
+### Features
+
+- complete partial coordinated worktrees ([#73](https://github.com/corwinm/arashi/issues/73)) ([21c2215](https://github.com/corwinm/arashi/commit/21c2215f71fbbd880d5caeae2eb90d53e6874bef))
+- move uncommitted changes between worktrees ([#74](https://github.com/corwinm/arashi/issues/74)) ([239f216](https://github.com/corwinm/arashi/commit/239f21647a3c3a5a4657c45c791acb054cbd3414))
+
 ## [1.14.0](https://github.com/corwinm/arashi/compare/v1.13.0...v1.14.0) (2026-06-28)
 
 ### Features
