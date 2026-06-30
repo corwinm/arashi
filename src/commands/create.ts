@@ -15,6 +15,16 @@ import {
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
 import { basename, resolve } from "path";
+import {
+  buildDirtyGuidance,
+  buildMovePlan,
+  buildRepositoryTargets,
+  executeMovePlan,
+  findWorkspaceByPath,
+  resolveWorkspaceReference,
+  type MoveSummary,
+  type WorkspaceSelection,
+} from "../core/move.ts";
 import { error, info, success, warn } from "../lib/logger.ts";
 import {
   createJsonErrorEnvelope,
@@ -49,6 +59,7 @@ interface RepositoryFilter {
   mode: "all" | "explicit" | "interactive";
   explicitList: string[];
   selectedRepositories: Parameters<typeof createCoordinatedWorktrees>[1] | null;
+  requiredRepositories?: Parameters<typeof createCoordinatedWorktrees>[1];
 }
 
 interface ApplyPostCreateDefaultsOptions {
@@ -134,8 +145,15 @@ const writeCreateJsonError = (createError: unknown): void => {
   );
 };
 
-const createSummaryJsonData = (branchName: string, summary: OperationSummary) => ({
+const createSummaryJsonData = (
+  branchName: string,
+  summary: OperationSummary,
+  dirtyWorkspaceGuidance?: ReturnType<typeof buildDirtyGuidance>,
+  moveSummary?: MoveSummary | null,
+) => ({
   branchName,
+  dirtyWorkspaceGuidance,
+  moveSummary,
   dryRun: summary.isDryRun === true,
   errorSummary: summary.errorSummary,
   failureCount: summary.failureCount,
@@ -189,6 +207,9 @@ interface CreateCommandOptions {
 
   /** Internal editor-host context for create default resolution */
   editorHost?: CreateDefaultsEditorHost;
+
+  /** Move compatible uncommitted changes from the current workspace after create */
+  moveChanges?: boolean;
 
   /** Dry run - show what would be done without making changes */
   dryRun?: boolean;
@@ -389,6 +410,31 @@ const selectPrimaryCreateResult = (
   return primary ?? successfulResults[0] ?? null;
 };
 
+interface DirtyGuidanceContext {
+  guidance: ReturnType<typeof buildDirtyGuidance>;
+  source: WorkspaceSelection;
+  target: WorkspaceSelection;
+}
+
+const resolvePostCreateDirtyGuidance = async (
+  context: CreateInvocationContext,
+  config: Config,
+  branchName: string,
+): Promise<DirtyGuidanceContext | null> => {
+  const repositories = buildRepositoryTargets(context.workspaceRoot, config.repos);
+  const source = await findWorkspaceByPath(repositories, context.executionPath);
+  if (!source || source.dirtyRepositories.length === ZERO) {
+    return null;
+  }
+
+  try {
+    const target = await resolveWorkspaceReference(repositories, branchName);
+    return { guidance: buildDirtyGuidance(source, target), source, target };
+  } catch {
+    return null;
+  }
+};
+
 const applyPostCreateDefaults = async ({
   context,
   defaults,
@@ -461,6 +507,10 @@ export function createCommand(): Command {
     .option("--no-hooks", "Disable hook execution")
     .option("--no-progress", "Hide progress indicators")
     .option("--dry-run", "Show what would be done without making changes")
+    .option(
+      "--move-changes",
+      "Move compatible uncommitted changes from the current workspace after create",
+    )
     .option("--json", "Return structured JSON output for non-interactive create operations")
     .addOption(editorHostOption)
     .addHelpText(
@@ -696,11 +746,24 @@ export async function executeCreate(
 
   // 6. Execute coordinated worktree creation
   const summary = await runCreate(branchName, selectedRepos, worktreeOptions);
+  const dirtyGuidanceContext = options.dryRun
+    ? null
+    : await resolvePostCreateDirtyGuidance(context, arashiConfig, branchName);
+  const moveSummary =
+    options.moveChanges && dirtyGuidanceContext
+      ? await executeMovePlan(
+          buildMovePlan(dirtyGuidanceContext.source, dirtyGuidanceContext.target),
+        )
+      : null;
+  const dirtyWorkspaceGuidance = moveSummary ? null : (dirtyGuidanceContext?.guidance ?? null);
 
   // 7. Display results
   if (options.json) {
     writeJsonEnvelope(
-      createJsonSuccessEnvelope("create", createSummaryJsonData(branchName, summary)),
+      createJsonSuccessEnvelope(
+        "create",
+        createSummaryJsonData(branchName, summary, dirtyWorkspaceGuidance, moveSummary),
+      ),
     );
     if (summary.rolledBack || summary.failureCount > ZERO) {
       return ERROR_EXIT_CODE;
@@ -794,6 +857,33 @@ export async function executeCreate(
     warn("Warnings:");
     for (const warning of warnings) {
       console.log(`  • ${warning}`);
+    }
+  }
+
+  if (moveSummary) {
+    console.log("");
+    if (moveSummary.failedCount > ZERO) {
+      warn(
+        `Moved changes in ${moveSummary.movedCount} repositories with ${moveSummary.failedCount} failures`,
+      );
+    } else {
+      success(`Moved changes in ${moveSummary.movedCount} repositories`);
+    }
+    for (const result of moveSummary.results) {
+      console.log(`  • ${result.repositoryName}: ${result.message}`);
+      if (result.recoveryCommand) {
+        console.log(`    recovery: ${result.recoveryCommand}`);
+      }
+    }
+  }
+
+  if (dirtyWorkspaceGuidance) {
+    console.log("");
+    warn("Uncommitted changes remain in the source workspace.");
+    info("Move them when ready:");
+    console.log(`  ${dirtyWorkspaceGuidance.command}`);
+    for (const repository of dirtyWorkspaceGuidance.changedRepositories) {
+      console.log(`  • ${repository.repositoryName}: ${repository.summary}`);
     }
   }
 
