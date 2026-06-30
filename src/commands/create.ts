@@ -581,6 +581,7 @@ export async function executeCreate(
   // 3. Include the meta-repo itself in the repository list
   // The meta-repo needs to have its worktree created first, then child repos are nested inside it
   const allRepositories = [...discoveryResult.repositories];
+  let parentRepository: (typeof allRepositories)[number] | null = null;
 
   // Check if current directory is a git repository (meta-repo)
   if (await detectGitRepository(currentDir)) {
@@ -601,6 +602,7 @@ export async function executeCreate(
       path: currentDir,
     };
 
+    parentRepository = metaRepo;
     allRepositories.unshift(metaRepo);
   }
 
@@ -637,6 +639,7 @@ export async function executeCreate(
   const filter: RepositoryFilter = {
     explicitList: options.only ? options.only.split(",").map((s) => s.trim()) : [],
     mode: filterMode,
+    requiredRepositories: options.interactive && parentRepository ? [parentRepository] : undefined,
     selectedRepositories: null,
   };
 

@@ -26,8 +26,9 @@ import {
   select as promptSelect,
 } from "../lib/prompts.ts";
 import { Command } from "commander";
-import { join } from "path";
+import { join, resolve } from "path";
 import { removeDir } from "../lib/filesystem.ts";
+import { stat } from "fs/promises";
 
 interface Choice<T> {
   value: T;
@@ -68,6 +69,14 @@ interface CloneCommandDependencies {
   repairRepositoryGitUrls?: typeof repairRepositoryGitUrls;
   discoverCloneRepositories?: typeof discoverCloneRepositories;
   cloneRepository?: typeof cloneRepository;
+  addWorktree?: (
+    sourceRepositoryPath: string,
+    destinationPath: string,
+    branchName: string,
+  ) => Promise<unknown>;
+  resolveCurrentBranch?: (workspaceRoot: string) => Promise<string | null>;
+  resolveSourceWorkspaceRoot?: (workspaceRoot: string) => string | null;
+  pathExists?: (path: string) => Promise<boolean>;
   removeDir?: typeof removeDir;
   promptConfirm?: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
   promptInput?: (message: string, defaultValue?: string) => Promise<PromptOutcome<string>>;
@@ -129,6 +138,11 @@ export async function executeClone(
   const repairGitUrls = deps.repairRepositoryGitUrls ?? repairRepositoryGitUrls;
   const discoverRepositories = deps.discoverCloneRepositories ?? discoverCloneRepositories;
   const runClone = deps.cloneRepository ?? cloneRepository;
+  const runAddWorktree = deps.addWorktree ?? addRepositoryWorktree;
+  const resolveBranch = deps.resolveCurrentBranch ?? resolveWorkspaceBranch;
+  const resolveSourceRoot =
+    deps.resolveSourceWorkspaceRoot ?? resolveCoordinatedSourceWorkspaceRoot;
+  const exists = deps.pathExists ?? pathExists;
   const deleteDirectory = deps.removeDir ?? removeDir;
   const confirm = deps.promptConfirm ?? promptConfirm;
   const askInput = deps.promptInput ?? promptInput;
@@ -142,6 +156,8 @@ export async function executeClone(
   );
 
   const workspaceRoot = deps.workspaceRoot ?? (await resolveWorkspaceRoot());
+  const sourceWorkspaceRoot = resolveSourceRoot(workspaceRoot);
+  const currentBranch = sourceWorkspaceRoot ? await resolveBranch(workspaceRoot) : null;
   const config = normalizeConfig(await readConfig(workspaceRoot));
 
   const repairResult = await repairGitUrls(workspaceRoot, config);
@@ -299,24 +315,31 @@ export async function executeClone(
   for (const repository of selectedRepositories) {
     const rawGitUrl = repository.config.gitUrl;
     if (rawGitUrl) {
-      let cloneUrl = rawGitUrl;
-      if (preferredProtocol) {
-        cloneUrl = applyCloneProtocol(rawGitUrl, preferredProtocol);
-      }
+      const sourceRepositoryPath = sourceWorkspaceRoot
+        ? resolve(sourceWorkspaceRoot, repository.config.path)
+        : null;
+      const canCompleteAsWorktree = Boolean(
+        sourceRepositoryPath && currentBranch && (await exists(sourceRepositoryPath)),
+      );
+      const cloneUrl = preferredProtocol
+        ? applyCloneProtocol(rawGitUrl, preferredProtocol)
+        : rawGitUrl;
 
       const cloneSpinner = options.json
         ? undefined
         : spinner(`Cloning ${repository.name}...`).start();
 
       try {
-        await runClone(cloneUrl, repository.path);
+        if (canCompleteAsWorktree && sourceRepositoryPath && currentBranch) {
+          await runAddWorktree(sourceRepositoryPath, repository.path, currentBranch);
+        } else {
+          await runClone(cloneUrl, repository.path);
+          configUpdated = configUpdated || repository.config.gitUrl !== cloneUrl;
+          repository.config.gitUrl = cloneUrl;
+        }
+
         cloneSpinner?.succeed(`Cloned ${repository.name}`);
         cloned.push(repository.name);
-
-        if (repository.config.gitUrl !== cloneUrl) {
-          repository.config.gitUrl = cloneUrl;
-          configUpdated = true;
-        }
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         cloneSpinner?.fail(`Failed to clone ${repository.name}`);
@@ -359,6 +382,44 @@ export async function executeClone(
     skipped,
     status,
   };
+}
+
+export function resolveCoordinatedSourceWorkspaceRoot(workspaceRoot: string): string | null {
+  const marker = ".arashi/worktrees/";
+  const normalizedRoot = workspaceRoot.replaceAll("\\", "/");
+  const markerIndex = normalizedRoot.indexOf(marker);
+  if (markerIndex === -1) {
+    return null;
+  }
+
+  return normalizedRoot.slice(0, markerIndex);
+}
+
+async function resolveWorkspaceBranch(workspaceRoot: string): Promise<string | null> {
+  try {
+    const result = await exec(["symbolic-ref", "--short", "HEAD"], workspaceRoot);
+    const branch = result.stdout.trim();
+    return branch.length > ZERO ? branch : null;
+  } catch {
+    return null;
+  }
+}
+
+function addRepositoryWorktree(
+  sourceRepositoryPath: string,
+  destinationPath: string,
+  branchName: string,
+): Promise<unknown> {
+  return exec(["worktree", "add", destinationPath, branchName], sourceRepositoryPath);
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const resolveProtocolPreference = async (options: {

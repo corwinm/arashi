@@ -6,7 +6,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { isValidBranchName, resolveWorktreeStatuses } from "../../../src/core/worktree.ts";
+import {
+  applyRepositoryFilter,
+  isValidBranchName,
+  resolveWorktreeStatuses,
+} from "../../../src/core/worktree.ts";
 import { mapHookExecutionResult, mapHookSkippedOutcome } from "../../../src/lib/hooks.ts";
 import type { Repository } from "../../../src/core/repository.ts";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
@@ -58,6 +62,28 @@ const mockRepositories: Repository[] = [
     path: "/test/repos/repo-5",
   },
 ];
+
+// ============================================================================
+// Interactive repository filtering
+// ============================================================================
+
+describe("Repository Filtering", () => {
+  test("returns required parent repository when no optional repositories exist", async () => {
+    const [parent] = mockRepositories;
+
+    const selected = await applyRepositoryFilter(
+      {
+        explicitList: [],
+        mode: "interactive",
+        requiredRepositories: [parent],
+        selectedRepositories: null,
+      },
+      [parent],
+    );
+
+    expect(selected).toEqual([parent]);
+  });
+});
 
 // ============================================================================
 // T014: Unit test for branch name validation
