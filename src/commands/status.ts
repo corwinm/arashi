@@ -573,6 +573,20 @@ export const formatSummary = (statuses: RepoStatus[]): string => {
   return `\n${"─".repeat(SUMMARY_WIDTH)}\n${bold(`Summary: ${cleanCount} clean, ${dirtyCount} dirty (${total} total)`)}\n`;
 };
 
+export const isMissingRepositoryStatus = (status: RepoStatus): boolean =>
+  status.error?.includes("arashi clone") === true && status.files.length === ZERO;
+
+export const filterHumanVisibleStatuses = (
+  statuses: RepoStatus[],
+  options: StatusOptions,
+): RepoStatus[] => {
+  if (options.verbose || options.json) {
+    return statuses;
+  }
+
+  return statuses.filter((status) => !isMissingRepositoryStatus(status));
+};
+
 /**
  * Format default output showing all repository statuses
  *
@@ -805,11 +819,13 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
   statusSpinner?.start();
 
   const statuses = await checkAllRepos(workspaceRoot, config, options.verbose || false);
+  const visibleStatuses = filterHumanVisibleStatuses(statuses, options);
 
   statusSpinner?.stop();
 
-  const summary = summarizeStatuses(statuses);
-  const hasErrors = statuses.some((status) => status.error !== null);
+  const summary = summarizeStatuses(options.json ? statuses : visibleStatuses);
+  const statusesForExit = options.json ? statuses : visibleStatuses;
+  const hasErrors = statusesForExit.some((status) => status.error !== null);
 
   if (options.json) {
     writeJsonEnvelope(
@@ -824,11 +840,11 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
       ),
     );
   } else {
-    let output = formatDefaultOutput(statuses);
+    let output = formatDefaultOutput(visibleStatuses);
     if (options.verbose) {
-      output = formatVerboseOutput(statuses);
+      output = formatVerboseOutput(visibleStatuses);
     } else if (options.short) {
-      output = formatShortOutput(statuses);
+      output = formatShortOutput(visibleStatuses);
     }
 
     console.log(output);

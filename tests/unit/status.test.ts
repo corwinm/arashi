@@ -6,8 +6,11 @@
 
 import {
   checkRepoStatus,
+  filterHumanVisibleStatuses,
+  formatDefaultOutput,
   formatRepoSection,
   formatShortLine,
+  formatShortOutput,
   formatVerboseOutput,
   parseBranchLine,
   parseGitStatus,
@@ -546,5 +549,64 @@ describe("formatShortLine", () => {
     });
 
     expect(line).toContain("default unavailable");
+  });
+});
+
+describe("partial worktree status presentation", () => {
+  const presentStatus = {
+    branch: {
+      ahead: 0,
+      behind: 0,
+      isDetached: false,
+      localBranch: "feat/example",
+      remoteBranch: null,
+    },
+    defaultBranch: null,
+    error: null,
+    files: [],
+    name: "present-repo",
+    path: "/tmp/present-repo",
+  };
+
+  const missingStatus = {
+    branch: {
+      ahead: 0,
+      behind: 0,
+      isDetached: true,
+      localBranch: "",
+      remoteBranch: null,
+    },
+    defaultBranch: null,
+    error:
+      "Repository is missing at /tmp/missing-repo. Run `arashi clone` to clone missing repositories.",
+    files: [],
+    name: "missing-repo",
+    path: "/tmp/missing-repo",
+  };
+
+  test("hides missing repositories from default and short human output", () => {
+    const visible = filterHumanVisibleStatuses([presentStatus, missingStatus], {});
+    const defaultOutput = formatDefaultOutput(visible);
+    const shortOutput = formatShortOutput(visible);
+
+    expect(defaultOutput).toContain("present-repo");
+    expect(defaultOutput).not.toContain("missing-repo");
+    expect(defaultOutput).toContain("Summary: 1 clean, 0 dirty (1 total)");
+    expect(shortOutput).toContain("present-repo");
+    expect(shortOutput).not.toContain("missing-repo");
+    expect(shortOutput).toContain("Summary: 1 clean, 0 dirty");
+  });
+
+  test("keeps missing repositories in verbose and JSON views", () => {
+    expect(
+      filterHumanVisibleStatuses([presentStatus, missingStatus], { verbose: true }).map(
+        (status) => status.name,
+      ),
+    ).toEqual(["present-repo", "missing-repo"]);
+    expect(
+      filterHumanVisibleStatuses([presentStatus, missingStatus], { json: true }).map(
+        (status) => status.name,
+      ),
+    ).toEqual(["present-repo", "missing-repo"]);
   });
 });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import type { Config } from "../../src/lib/config.ts";
-import { executeClone } from "../../src/commands/clone.ts";
+import { executeClone, resolveCoordinatedSourceWorkspaceRoot } from "../../src/commands/clone.ts";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -122,6 +122,68 @@ describe("clone command", () => {
 
     expect(result.cloned).toEqual(["repo-a", "repo-b"]);
     expect(clonedDestinations).toHaveLength(2);
+  });
+
+  test("completes missing repositories in coordinated worktrees using current branch", async () => {
+    const coordinatedRoot = join(workspaceRoot, ".arashi", "worktrees", "meta-feat-demo");
+    await mkdir(join(workspaceRoot, "repos", "repo-a"), { recursive: true });
+    await mkdir(join(coordinatedRoot, "repos"), { recursive: true });
+
+    const config: Config = {
+      repos: {
+        "repo-a": {
+          gitUrl: "https://github.com/team/repo-a.git",
+          path: "./repos/repo-a",
+        },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const addedWorktrees: {
+      branchName: string;
+      destinationPath: string;
+      sourceRepositoryPath: string;
+    }[] = [];
+    let cloneCalled = false;
+
+    const result = await executeClone(
+      { all: true },
+      {
+        addWorktree: async (sourceRepositoryPath, destinationPath, branchName) => {
+          addedWorktrees.push({ branchName, destinationPath, sourceRepositoryPath });
+          await mkdir(destinationPath, { recursive: true });
+        },
+        cloneRepository: async () => {
+          cloneCalled = true;
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        loadConfig: async () => config,
+        pathExists: async (path) => path === join(workspaceRoot, "repos", "repo-a"),
+        resolveCurrentBranch: async () => "feat/demo",
+        saveConfig: async () => {},
+        workspaceRoot: coordinatedRoot,
+      },
+    );
+
+    expect(result.cloned).toEqual(["repo-a"]);
+    expect(cloneCalled).toBe(false);
+    expect(addedWorktrees).toEqual([
+      {
+        branchName: "feat/demo",
+        destinationPath: join(coordinatedRoot, "repos", "repo-a"),
+        sourceRepositoryPath: join(workspaceRoot, "repos", "repo-a"),
+      },
+    ]);
+  });
+
+  test("resolves coordinated worktree source root", () => {
+    expect(
+      resolveCoordinatedSourceWorkspaceRoot(
+        "/workspace/arashi-arashi/.arashi/worktrees/arashi-arashi-feat-demo",
+      ),
+    ).toBe("/workspace/arashi-arashi/");
+    expect(resolveCoordinatedSourceWorkspaceRoot("/workspace/arashi-arashi")).toBeNull();
   });
 
   test("continues cloning after partial failures", async () => {

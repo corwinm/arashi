@@ -261,6 +261,9 @@ export interface RepositoryFilter {
 
   /** Resolved repositories after filtering (populated after filter application) */
   selectedRepositories: Repository[] | null;
+
+  /** Repositories that must be included even when interactive selection is used */
+  requiredRepositories?: Repository[];
 }
 
 // ============================================================================
@@ -1875,15 +1878,25 @@ export const applyRepositoryFilter = async (
     }
 
     case "interactive": {
-      // T050: Interactive mode - prompt user to select repositories
-      const choices = allRepositories.map((repo) => ({
+      // T050: Interactive mode - prompt user to select optional repositories
+      const requiredRepositories = filter.requiredRepositories ?? [];
+      const requiredNames = new Set(requiredRepositories.map((repo) => repo.name));
+      const selectableRepositories = allRepositories.filter(
+        (repo) => !requiredNames.has(repo.name),
+      );
+
+      if (selectableRepositories.length === ZERO) {
+        return requiredRepositories;
+      }
+
+      const choices = selectableRepositories.map((repo) => ({
         description: repo.path,
         name: repo.name,
         value: repo,
       }));
 
       const selectedRepos = await multiSelect<Repository>(
-        "Select repositories to create worktrees in:",
+        "Select child repositories to create worktrees in:",
         choices,
       );
 
@@ -1891,12 +1904,14 @@ export const applyRepositoryFilter = async (
         throw new UserAbortedError("Repository selection cancelled by user");
       }
 
+      const selection = [...requiredRepositories, ...selectedRepos.value];
+
       // T053: Validate non-empty result
-      if (selectedRepos.value.length === ZERO) {
+      if (selection.length === ZERO) {
         throw new RepositoryValidationError("No repositories selected", "");
       }
 
-      return selectedRepos.value;
+      return selection;
     }
 
     default: {
