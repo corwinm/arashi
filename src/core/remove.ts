@@ -35,6 +35,15 @@ export interface RepositoryTarget {
   path: string;
 }
 
+export interface PruneRepositoryResult {
+  name: string;
+  path: string;
+  prunable: WorktreeInfo[];
+  prunedCount: number;
+  status: "pruned" | "skipped" | "failed";
+  error?: string;
+}
+
 export const parseWorktreeList = (
   output: string,
   repoName: string,
@@ -44,6 +53,7 @@ export const parseWorktreeList = (
   const lines = output.trim().split("\n");
   let current: Partial<WorktreeInfo> = {};
   let isBare = false;
+  let pruneReason: string | undefined = undefined;
   const canonicalRepoPath = toComparablePath(repoPath);
 
   const pushCurrent = () => {
@@ -56,6 +66,7 @@ export const parseWorktreeList = (
       branch: current.branch || "",
       isMain,
       path: current.path,
+      pruneReason,
       repository: repoName,
     });
   };
@@ -65,6 +76,7 @@ export const parseWorktreeList = (
       pushCurrent();
       current = {};
       isBare = false;
+      pruneReason = undefined;
     } else if (line.startsWith("worktree ")) {
       current.path = line.slice("worktree ".length);
       current.repository = repoName;
@@ -75,6 +87,8 @@ export const parseWorktreeList = (
       current.branch = ref.replace("refs/heads/", "");
     } else if (line.startsWith("detached")) {
       current.branch = "";
+    } else if (line.startsWith("prunable")) {
+      pruneReason = line.slice("prunable".length).trim() || "stale worktree metadata";
     }
   }
 
@@ -136,6 +150,44 @@ export const discoverAllWorktrees = async (
   }
 
   return results;
+};
+
+export const discoverPrunableWorktrees = async (
+  repositories: RepositoryTarget[],
+): Promise<PruneRepositoryResult[]> => {
+  const results: PruneRepositoryResult[] = [];
+
+  for (const repo of repositories) {
+    try {
+      const result = await exec(["worktree", "list", "--porcelain"], repo.path);
+      const prunable = parseWorktreeList(result.stdout, repo.name, repo.path).filter(
+        (worktree) => worktree.pruneReason,
+      );
+      results.push({
+        name: repo.name,
+        path: repo.path,
+        prunable,
+        prunedCount: 0,
+        status: prunable.length > ZERO ? "pruned" : "skipped",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      results.push({
+        error: message,
+        name: repo.name,
+        path: repo.path,
+        prunable: [],
+        prunedCount: 0,
+        status: "failed",
+      });
+    }
+  }
+
+  return results;
+};
+
+export const pruneRepositoryWorktrees = async (repoPath: string, expire: string): Promise<void> => {
+  await exec(["worktree", "prune", "--expire", expire], repoPath);
 };
 
 const normalizePath = (pathInput: string): string => {

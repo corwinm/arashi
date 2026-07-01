@@ -326,6 +326,58 @@ describe("CLI JSON output contract", () => {
     expect(removeResult.stdout).not.toContain("Successfully removed");
   });
 
+  test("prune --json reports and removes stale worktree metadata", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    const stalePath = join(workspaceRoot, "../stale-worktree");
+    await runGit(workspaceRoot, ["worktree", "add", stalePath, "-b", "feat/stale-prune"]);
+    await rm(stalePath, { force: true, recursive: true });
+
+    const dryRunResult = await runArashi(workspaceRoot, ["prune", "--dry-run", "--json"]);
+
+    expect(dryRunResult.exitCode).toBe(0);
+    const dryRunParsed = parseSingleJsonDocument(dryRunResult.stdout);
+    expect(dryRunParsed).toMatchObject({ command: "prune", ok: true, schemaVersion: 1 });
+    const dryRunData = jsonData(dryRunParsed);
+    expect(dryRunData).toMatchObject({ dryRun: true, totalPrunable: 1, totalPruned: 0 });
+    expect(JSON.stringify(dryRunData)).toContain(stalePath);
+    expect(dryRunResult.stdout).not.toContain("Prunable worktree metadata");
+
+    const pruneResult = await runArashi(workspaceRoot, ["prune", "--json"]);
+
+    expect(pruneResult.exitCode).toBe(0);
+    const pruneParsed = parseSingleJsonDocument(pruneResult.stdout);
+    expect(pruneParsed).toMatchObject({ command: "prune", ok: true, schemaVersion: 1 });
+    const pruneData = jsonData(pruneParsed);
+    expect(pruneData).toMatchObject({ dryRun: false, totalPrunable: 1, totalPruned: 1 });
+    const listOutput = await runGit(workspaceRoot, ["worktree", "list", "--porcelain"]);
+    expect(listOutput).not.toContain(stalePath);
+  });
+
+  test("remove --json directs stale worktree metadata to prune", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    const stalePath = join(workspaceRoot, "../stale-remove-target");
+    await runGit(workspaceRoot, ["worktree", "add", stalePath, "-b", "feat/stale-remove"]);
+    await rm(stalePath, { force: true, recursive: true });
+
+    const result = await runArashi(workspaceRoot, [
+      "remove",
+      "feat/stale-remove",
+      "--force",
+      "--json",
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = parseSingleJsonDocument(result.stdout);
+    expect(parsed).toMatchObject({
+      command: "remove",
+      error: { code: "BRANCH_NOT_FOUND" },
+      ok: false,
+      schemaVersion: 1,
+      warnings: [],
+    });
+    expect(JSON.stringify(parsed)).toContain("arashi prune");
+  });
+
   test("status --json returns exactly one failure envelope outside a workspace", async () => {
     const cwd = await makeTempDir();
 
@@ -408,6 +460,7 @@ describe("CLI JSON output contract", () => {
         command: "create",
       },
       { args: ["init", "--dry-run", "--json"], code: "JSON_UNSUPPORTED_FOR_MODE", command: "init" },
+      { args: ["prune", "--json"], code: "NOT_IN_WORKSPACE", command: "prune" },
       { args: ["pull", "--json"], code: "UNKNOWN_ERROR", command: "pull" },
       { args: ["setup", "--json"], code: "UNKNOWN_ERROR", command: "setup" },
       { args: ["sync", "--json"], code: "UNKNOWN_ERROR", command: "sync" },

@@ -972,6 +972,13 @@ export const resolveWorktreeStatuses = async (
 ): Promise<void> => {
   await Promise.all(
     entries.map(async (entry) => {
+      if (entry.pruneReason) {
+        entry.status = "prunable";
+        entry.isDirty = false;
+        entry.dirtyDetails = undefined;
+        return;
+      }
+
       if (!existsSync(entry.path)) {
         entry.status = "prunable";
         entry.isDirty = false;
@@ -1010,7 +1017,7 @@ export const buildWorktreeEntries = async (
     ...worktree,
     childrenPaths: [],
     parentPath: NULL_PATH,
-    status: "present",
+    status: worktree.pruneReason ? "prunable" : "present",
   }));
 
   attachWorktreeRelationships(entries, {

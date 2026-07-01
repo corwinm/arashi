@@ -120,6 +120,7 @@ Arashi currently provides these commands:
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
+- `arashi prune [--dry-run]` - clean stale Git worktree metadata
 - `arashi switch [filter] [--repos|--all] [--cd|--no-cd] [--sesh] [--no-default-launch]`
 - `arashi shell init <bash|zsh|fish>`
 - `arashi shell install`

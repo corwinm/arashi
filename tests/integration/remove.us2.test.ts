@@ -67,7 +67,7 @@ describe("remove command - US2 multi-select", () => {
     }
   });
 
-  test("marks missing worktree directories as prunable", async () => {
+  test("excludes missing worktree directories from remove choices", async () => {
     const branchName = "feature-missing";
     const worktrees = await createWorktreesForBranch(workspace, branchName, true);
     const missingPath = worktrees["repo-a"];
@@ -98,7 +98,8 @@ describe("remove command - US2 multi-select", () => {
     const prunableChoice = observedChoiceNames.find(
       (name) => name.includes(branchName) && name.includes("prunable"),
     );
-    expect(prunableChoice).toBeDefined();
+    expect(prunableChoice).toBeUndefined();
+    expect(observedChoiceNames.some((name) => name.includes(branchName))).toBe(true);
   });
 
   test("exits cleanly when no branches are selected", async () => {
