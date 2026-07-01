@@ -24,6 +24,8 @@ export interface WorktreeInfo {
   repository: string;
   /** True if this is the main worktree */
   isMain: boolean;
+  /** Git-provided reason when this worktree metadata is prunable */
+  pruneReason?: string;
   /** Dirty status (if checked) */
   isDirty?: boolean;
   /** Optional detailed dirty status */

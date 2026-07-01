@@ -36,6 +36,30 @@ describe("remove core helpers", () => {
     expect(worktrees[1].isMain).toBe(false);
   });
 
+  test("parseWorktreeList preserves Git prunable reasons", () => {
+    const repoPath = "/repo/main";
+    const output = [
+      "worktree /repo/main",
+      "HEAD abc123",
+      "branch refs/heads/main",
+      "",
+      "worktree /repo/stale",
+      "HEAD def456",
+      "branch refs/heads/feature-stale",
+      "prunable gitdir file points to non-existent location",
+      "",
+    ].join("\n");
+
+    const worktrees = parseWorktreeList(output, "main-repo", repoPath);
+    expect(worktrees).toHaveLength(2);
+    expect(worktrees[1]).toMatchObject({
+      branch: "feature-stale",
+      isMain: false,
+      path: "/repo/stale",
+      pruneReason: "gitdir file points to non-existent location",
+    });
+  });
+
   test("getWorktreeDirtyStatus detects untracked files", async () => {
     const repoPath = await mkdtemp(join(tmpdir(), "arashi-remove-dirty-"));
     await spawn(["git", "init", "-b", "main"], { cwd: repoPath }).exited;

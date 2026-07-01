@@ -114,6 +114,9 @@ const loadWorkspaceConfig = async (workspaceRoot: string): Promise<Config> => {
   }
 };
 
+const formatPrunableTargetMessage = (target: string): string =>
+  `Target '${target}' is stale/prunable worktree metadata. Run 'arashi prune' to clean it up.`;
+
 const formatDirtyDetailsText = (worktree: WorktreeEntry): string => {
   const details = worktree.dirtyDetails;
   if (!details) {
@@ -229,7 +232,16 @@ export async function executeRemove(
         includeDirtyDetails: options.checkDirty !== false,
         reposDirName,
       });
-      pathWorktrees.push(...enriched);
+      const prunable = enriched.filter((wt) => wt.status === "prunable");
+      const normal = enriched.filter((wt) => wt.status !== "prunable");
+      if (normal.length === ZERO && prunable.length > ZERO) {
+        throw new RemoveCommandError(
+          formatPrunableTargetMessage(branchArg),
+          RemoveCommandErrorCode.BRANCH_NOT_FOUND,
+          { path: branchArg, prunable: prunable.map((wt) => wt.path) },
+        );
+      }
+      pathWorktrees.push(...normal);
     } else if (options.path) {
       throw new RemoveCommandError(
         `Worktree path not found: ${branchArg}`,
@@ -241,15 +253,20 @@ export async function executeRemove(
     }
   } else {
     const allWorktrees = await discoverAllWorktrees(repositories);
-    const entries = await buildWorktreeEntries(allWorktrees, {
+    const discoveredEntries = await buildWorktreeEntries(allWorktrees, {
       childRepoNames,
       includeDirtyDetails: options.checkDirty !== false,
       reposDirName,
     });
+    const prunableEntries = discoveredEntries.filter((wt) => wt.status === "prunable");
+    const entries = discoveredEntries.filter((wt) => wt.status !== "prunable");
     const selectable = entries.filter((wt) => !wt.isMain && wt.branch);
 
     if (selectable.length === 0) {
       info("No worktrees found to remove");
+      if (prunableEntries.length > ZERO) {
+        info("Stale worktree metadata found; run 'arashi prune' to clean it up");
+      }
       return ZERO;
     }
 
@@ -309,8 +326,17 @@ export async function executeRemove(
         includeDirtyDetails: options.checkDirty !== false,
         reposDirName,
       });
-      const mainWorktrees = enriched.filter((wt) => wt.isMain);
-      const removable = enriched.filter((wt) => !wt.isMain);
+      const prunable = enriched.filter((wt) => wt.status === "prunable");
+      const normal = enriched.filter((wt) => wt.status !== "prunable");
+      const mainWorktrees = normal.filter((wt) => wt.isMain);
+      const removable = normal.filter((wt) => !wt.isMain);
+      if (removable.length === ZERO && mainWorktrees.length === ZERO && prunable.length > ZERO) {
+        throw new RemoveCommandError(
+          formatPrunableTargetMessage(branch),
+          RemoveCommandErrorCode.BRANCH_NOT_FOUND,
+          { branch, prunable: prunable.map((wt) => wt.path) },
+        );
+      }
 
       if (mainWorktrees.length > 0) {
         skippedMain.push(...mainWorktrees);
@@ -467,10 +493,7 @@ export async function executeRemove(
       };
 
       try {
-        const forceRemove =
-          options.checkDirty === false ||
-          worktree.isDirty === true ||
-          worktree.status === "prunable";
+        const forceRemove = options.checkDirty === false || worktree.isDirty === true;
         await removeWorktree(
           worktree,
           getRepoPath(repositories, worktree.repository),
