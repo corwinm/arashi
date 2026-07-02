@@ -54,14 +54,34 @@ describe("update command", () => {
     });
   });
 
-  test("builds installer update plan for curl-installed binaries", () => {
-    const plan = buildInstallerUpdatePlan("2.0.0", "/home/user/.arashi/bin/arashi");
+  test("builds installer update plan for POSIX direct binaries", () => {
+    const plan = buildInstallerUpdatePlan("2.0.0", "/home/user/.arashi/bin/arashi", "linux");
 
     expect(plan.command).toBe("bash");
     expect(plan.args.join(" ")).toContain("https://arashi.haphazard.dev/install");
     expect(plan.env.ARASHI_VERSION).toBe("2.0.0");
     expect(plan.env.ARASHI_INSTALL_DIR).toBe("/home/user/.arashi/bin");
     expect(plan.env.ARASHI_SHELL_INTEGRATION).toBe("no");
+    expect(plan.label).toContain("POSIX");
+  });
+
+  test("builds installer update plan for Windows PowerShell direct binaries", () => {
+    const plan = buildInstallerUpdatePlan(
+      "2.0.0",
+      String.raw`C:\Users\me\.arashi\bin\arashi.bin.exe`,
+      "win32",
+    );
+
+    expect(plan.command).toBe("powershell");
+    expect(plan.args).toEqual([
+      "-NoProfile",
+      "-c",
+      "irm https://arashi.haphazard.dev/install.ps1 | iex",
+    ]);
+    expect(plan.env.ARASHI_VERSION).toBe("2.0.0");
+    expect(plan.env.ARASHI_INSTALL_DIR).toBe(String.raw`C:\Users\me\.arashi\bin`);
+    expect(plan.env.ARASHI_NO_MODIFY_PATH).toBe("1");
+    expect(plan.label).toContain("PowerShell");
   });
 
   test("prints installer update plan without mutating", async () => {
@@ -79,7 +99,7 @@ describe("update command", () => {
 
     const output = logs.join("\n");
     expect(output).toContain("Update available");
-    expect(output).toContain("official curl installer");
+    expect(output).toContain("official POSIX installer");
     expect(output).toContain("/home/user/.arashi/bin");
     expect(output).toContain("Dry run");
   });

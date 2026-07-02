@@ -29,30 +29,65 @@ interface ReleaseInfo {
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 type SpawnSyncImpl = typeof spawnSync;
 
-const INSTALLER_URL = "https://arashi.haphazard.dev/install";
+const POSIX_INSTALLER_URL = "https://arashi.haphazard.dev/install";
+const WINDOWS_INSTALLER_URL = "https://arashi.haphazard.dev/install.ps1";
 
 interface DirectUpdateDeps {
   currentVersion: string;
   execPath?: string;
   fetchImpl?: FetchImpl;
   log?: (message: string) => void;
+  platform?: NodeJS.Platform;
   spawnSyncImpl?: SpawnSyncImpl;
+}
+
+function installerDirname(execPath: string, platform: NodeJS.Platform): string {
+  if (platform !== "win32") {
+    return dirname(execPath);
+  }
+
+  const trimmedPath = execPath.replace(/[\\/]+$/, "");
+  const separatorIndex = Math.max(trimmedPath.lastIndexOf("\\"), trimmedPath.lastIndexOf("/"));
+  if (separatorIndex <= 0) {
+    return ".";
+  }
+
+  return trimmedPath.slice(0, separatorIndex);
 }
 
 export function buildInstallerUpdatePlan(
   latestVersion: string,
   execPath: string,
+  platform: NodeJS.Platform = process.platform,
 ): {
   args: string[];
   command: string;
   env: Record<string, string>;
   installDir: string;
+  label: string;
+  url: string;
 } {
-  const installDir = dirname(execPath);
+  const installDir = installerDirname(execPath, platform);
+
+  if (platform === "win32") {
+    return {
+      args: ["-NoProfile", "-c", `irm ${WINDOWS_INSTALLER_URL} | iex`],
+      command: "powershell",
+      env: {
+        ARASHI_INSTALL_DIR: installDir,
+        ARASHI_NO_MODIFY_PATH: "1",
+        ARASHI_VERSION: latestVersion,
+      },
+      installDir,
+      label: "official PowerShell installer",
+      url: WINDOWS_INSTALLER_URL,
+    };
+  }
+
   return {
     args: [
       "-c",
-      `curl -fsSL ${INSTALLER_URL} | bash -s -- --no-shell-integration --no-modify-path`,
+      `curl -fsSL ${POSIX_INSTALLER_URL} | bash -s -- --no-shell-integration --no-modify-path`,
     ],
     command: "bash",
     env: {
@@ -61,6 +96,8 @@ export function buildInstallerUpdatePlan(
       ARASHI_VERSION: latestVersion,
     },
     installDir,
+    label: "official POSIX installer",
+    url: POSIX_INSTALLER_URL,
   };
 }
 
@@ -156,9 +193,9 @@ export async function runDirectUpdate(
 
   const assetName = platformAssetName();
   const execPath = deps?.execPath ?? process.execPath;
-  const plan = buildInstallerUpdatePlan(latest.version, execPath);
-  log("Update method: official curl installer");
-  log(`Installer URL: ${INSTALLER_URL}`);
+  const plan = buildInstallerUpdatePlan(latest.version, execPath, deps?.platform);
+  log(`Update method: ${plan.label}`);
+  log(`Installer URL: ${plan.url}`);
   log(`Install directory: ${plan.installDir}`);
   if (assetName) {
     log(`Platform asset: ${assetName}`);
