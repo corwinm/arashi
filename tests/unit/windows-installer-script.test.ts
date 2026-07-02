@@ -15,9 +15,7 @@ function functionBody(name: string): string {
 
 describe("Windows PowerShell installer", () => {
   test("documents the hosted one-line PowerShell install command", () => {
-    expect(script).toContain(
-      'powershell -ExecutionPolicy Bypass -c "irm https://arashi.haphazard.dev/install.ps1 | iex"',
-    );
+    expect(script).toContain('powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"');
   });
 
   test("supports environment variables and parameters for version and install directory", () => {
@@ -80,10 +78,12 @@ describe("Windows PowerShell installer", () => {
     expect(body).toContain("Open a new terminal for the updated PATH to take effect.");
   });
 
-  test("runs an installed wrapper version smoke test and prints fallback guidance on failures", () => {
+  test("runs an installed binary version smoke test and prints fallback guidance on failures", () => {
     const body = functionBody("Invoke-ArashiSmokeTest");
 
-    expect(body).toContain("& $WrapperPath --version");
+    expect(body).toContain("& $BinaryPath --version");
+    expect(script).toContain("Join-Path $targetInstallDir $InstalledBinaryName");
+    expect(script).toContain("Invoke-ArashiSmokeTest -BinaryPath $installedBinary");
     expect(body).toContain("Smoke test failed");
     expect(script).toContain(
       "Manual fallback: download $WindowsBinaryAsset, $PowerShellWrapperAsset, and $CmdWrapperAsset",

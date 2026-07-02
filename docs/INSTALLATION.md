@@ -17,7 +17,7 @@ curl -fsSL https://arashi.haphazard.dev/install | bash
 Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
+powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 ```
 
 npm:
@@ -69,7 +69,7 @@ The Windows PowerShell installer (`scripts/install.ps1`) is also bound to GitHub
   - `arashi.bat`
 - The installer adds the install directory to the persistent user PATH by default, avoids duplicate PATH entries, and tells the user to open a new terminal.
 - Use `ARASHI_NO_MODIFY_PATH=1` or `-NoModifyPath` to skip PATH modification.
-- Runtime verification: after installing the wrapper and binary, the installer runs `arashi.ps1 --version` as a smoke test.
+- Runtime verification: after installing the wrapper and binary, the installer runs `arashi.bin.exe --version` as a smoke test so the default install path does not depend on PowerShell execution policy.
 
 Examples:
 
@@ -78,7 +78,7 @@ Examples:
 irm https://arashi.haphazard.dev/install.ps1
 
 # Install latest
-powershell -ExecutionPolicy Bypass -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
+powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 
 # Pin a version when invoking a downloaded script
 .\install.ps1 -Version 1.16.0
@@ -105,7 +105,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://arashi.haphazard.dev/install.
 
 ## Windows PowerShell troubleshooting and fallback guidance
 
-- Execution policy blocks the command: rerun the documented command with `-ExecutionPolicy Bypass`, inspect `install.ps1` first, or use manual release assets.
+- Execution policy blocks local `.ps1` execution: inspect `install.ps1` first, add `-ExecutionPolicy Bypass` to the `powershell` invocation for this one process, or use manual release assets.
 - Permission denied writing install location: rerun with `-InstallDir` or `ARASHI_INSTALL_DIR` pointing to a user-writable directory.
 - Download/network errors: retry the command; if failures persist, use npm installation or manual releases.
 - Checksum mismatch: treat as a blocked install, retry once, then fall back to npm/manual and report the issue.
@@ -169,7 +169,7 @@ The installer resolves assets from the installed package version, for example `h
 For users who do not use npm, Arashi publishes platform-specific release assets and hosted installer scripts:
 
 - macOS/Linux: `curl -fsSL https://arashi.haphazard.dev/install | bash`
-- Windows: `powershell -ExecutionPolicy Bypass -c "irm https://arashi.haphazard.dev/install.ps1 | iex"`
+- Windows: `powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"`
 - Manual release assets: <https://github.com/corwinm/arashi/releases/latest>
 
 ## Build Process

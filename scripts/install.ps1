@@ -4,10 +4,10 @@
 Install Arashi for Windows from GitHub Releases.
 
 .EXAMPLE
-powershell -ExecutionPolicy Bypass -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
+powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 
 .EXAMPLE
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Version 1.16.0 -InstallDir C:\Tools\Arashi -NoModifyPath
+.\install.ps1 -Version 1.16.0 -InstallDir C:\Tools\Arashi -NoModifyPath
 #>
 
 [CmdletBinding()]
@@ -210,16 +210,16 @@ public static class NativeMethods {
 }
 
 function Invoke-ArashiSmokeTest {
-    param([Parameter(Mandatory = $true)][string]$WrapperPath)
+    param([Parameter(Mandatory = $true)][string]$BinaryPath)
 
     Write-Step "Running post-install smoke test"
-    $output = & $WrapperPath --version 2>&1
+    $output = & $BinaryPath --version 2>&1
     $exitCode = $LASTEXITCODE
     if ($null -eq $exitCode) {
         $exitCode = 0
     }
     if ($exitCode -ne 0) {
-        Fail-Install "Smoke test failed: $WrapperPath --version exited with $exitCode. Output: $output"
+        Fail-Install "Smoke test failed: $BinaryPath --version exited with $exitCode. Output: $output"
     }
     if ([string]::IsNullOrWhiteSpace(($output | Out-String))) {
         Fail-Install "Smoke test succeeded but did not print an Arashi version."
@@ -260,8 +260,8 @@ function Install-Arashi {
         Install-ArashiStagedAsset -SourcePath (Join-Path $stagingDir $CmdWrapperAsset) -DestinationPath (Join-Path $targetInstallDir $CmdWrapperAsset)
         Write-Step "Installed Arashi files"
 
-        $installedWrapper = Join-Path $targetInstallDir $PowerShellWrapperAsset
-        Invoke-ArashiSmokeTest -WrapperPath $installedWrapper
+        $installedBinary = Join-Path $targetInstallDir $InstalledBinaryName
+        Invoke-ArashiSmokeTest -BinaryPath $installedBinary
 
         if ($skipPathModification) {
             Write-WarningMessage "PATH modification disabled. Add this directory to your user PATH: $targetInstallDir"
