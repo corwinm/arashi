@@ -29,38 +29,93 @@ interface ReleaseInfo {
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 type SpawnSyncImpl = typeof spawnSync;
 
-const INSTALLER_URL = "https://arashi.haphazard.dev/install";
+const POSIX_INSTALLER_URL = "https://arashi.haphazard.dev/install";
+const WINDOWS_INSTALLER_URL = "https://arashi.haphazard.dev/install.ps1";
 
 interface DirectUpdateDeps {
-  currentVersion: string;
+  currentVersion?: string;
   execPath?: string;
   fetchImpl?: FetchImpl;
   log?: (message: string) => void;
+  platform?: NodeJS.Platform;
   spawnSyncImpl?: SpawnSyncImpl;
+}
+
+interface InstallerUpdatePlanOptions {
+  parentProcessId?: number;
+  platform?: NodeJS.Platform;
+}
+
+function installerDirname(execPath: string, platform: NodeJS.Platform): string {
+  if (platform !== "win32") {
+    return dirname(execPath);
+  }
+
+  const trimmedPath = execPath.replace(/[\\/]+$/, "");
+  const separatorIndex = Math.max(trimmedPath.lastIndexOf("\\"), trimmedPath.lastIndexOf("/"));
+  if (separatorIndex <= 0) {
+    return ".";
+  }
+
+  return trimmedPath.slice(0, separatorIndex);
 }
 
 export function buildInstallerUpdatePlan(
   latestVersion: string,
   execPath: string,
+  options: InstallerUpdatePlanOptions = {},
 ): {
   args: string[];
   command: string;
+  deferred: boolean;
   env: Record<string, string>;
   installDir: string;
+  label: string;
+  url: string;
 } {
-  const installDir = dirname(execPath);
+  const platform = options.platform ?? process.platform;
+  const parentProcessId = options.parentProcessId ?? process.pid;
+  const installDir = installerDirname(execPath, platform);
+
+  if (platform === "win32") {
+    const installCommand = `irm ${WINDOWS_INSTALLER_URL} | iex`;
+    const escapedInstallCommand = installCommand.replaceAll("'", "''");
+
+    return {
+      args: [
+        "-NoProfile",
+        "-c",
+        `Start-Process -FilePath powershell -ArgumentList @('-NoProfile', '-c', '${escapedInstallCommand}') -NoNewWindow`,
+      ],
+      command: "powershell",
+      deferred: true,
+      env: {
+        ARASHI_INSTALL_DIR: installDir,
+        ARASHI_NO_MODIFY_PATH: "1",
+        ARASHI_VERSION: latestVersion,
+        ARASHI_WAIT_FOR_PID: String(parentProcessId),
+      },
+      installDir,
+      label: "official PowerShell installer",
+      url: WINDOWS_INSTALLER_URL,
+    };
+  }
+
   return {
     args: [
       "-c",
-      `curl -fsSL ${INSTALLER_URL} | bash -s -- --no-shell-integration --no-modify-path`,
+      `curl -fsSL ${POSIX_INSTALLER_URL} | bash -s -- --no-shell-integration --no-modify-path`,
     ],
     command: "bash",
+    deferred: false,
     env: {
       ARASHI_INSTALL_DIR: installDir,
       ARASHI_SHELL_INTEGRATION: "no",
       ARASHI_VERSION: latestVersion,
     },
     installDir,
+    label: "official POSIX installer",
+    url: POSIX_INSTALLER_URL,
   };
 }
 
@@ -154,11 +209,15 @@ export async function runDirectUpdate(
     log(`Latest arashi release: v${latest.version}`);
   }
 
-  const assetName = platformAssetName();
+  const platform = deps?.platform ?? process.platform;
+  const assetName = platformAssetName(platform);
   const execPath = deps?.execPath ?? process.execPath;
-  const plan = buildInstallerUpdatePlan(latest.version, execPath);
-  log("Update method: official curl installer");
-  log(`Installer URL: ${INSTALLER_URL}`);
+  const plan = buildInstallerUpdatePlan(latest.version, execPath, {
+    parentProcessId: process.pid,
+    platform,
+  });
+  log(`Update method: ${plan.label}`);
+  log(`Installer URL: ${plan.url}`);
   log(`Install directory: ${plan.installDir}`);
   if (assetName) {
     log(`Platform asset: ${assetName}`);
@@ -189,6 +248,13 @@ export async function runDirectUpdate(
   }
   if (result.status !== 0) {
     throw new Error(`installer exited with code ${result.status ?? "unknown"}`);
+  }
+
+  if (plan.deferred) {
+    log(
+      `✓ Scheduled arashi update to v${latest.version}. The installer will continue after this process exits; keep the terminal open until it finishes.`,
+    );
+    return;
   }
 
   log(`✓ Updated arashi to v${latest.version}.`);
