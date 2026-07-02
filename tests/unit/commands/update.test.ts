@@ -26,6 +26,9 @@ function createResponse(version: string): MockResponse {
   };
 }
 
+const windowsInstallDir = ["C:", "Users", "me", ".arashi", "bin"].join("\\");
+const windowsExecPath = [windowsInstallDir, "arashi.bin.exe"].join("\\");
+
 describe("update command", () => {
   test("registers visible options", () => {
     const command = createCommand("1.0.0");
@@ -55,10 +58,13 @@ describe("update command", () => {
   });
 
   test("builds installer update plan for POSIX direct binaries", () => {
-    const plan = buildInstallerUpdatePlan("2.0.0", "/home/user/.arashi/bin/arashi", "linux");
+    const plan = buildInstallerUpdatePlan("2.0.0", "/home/user/.arashi/bin/arashi", {
+      platform: "linux",
+    });
 
     expect(plan.command).toBe("bash");
     expect(plan.args.join(" ")).toContain("https://arashi.haphazard.dev/install");
+    expect(plan.deferred).toBe(false);
     expect(plan.env.ARASHI_VERSION).toBe("2.0.0");
     expect(plan.env.ARASHI_INSTALL_DIR).toBe("/home/user/.arashi/bin");
     expect(plan.env.ARASHI_SHELL_INTEGRATION).toBe("no");
@@ -66,21 +72,22 @@ describe("update command", () => {
   });
 
   test("builds installer update plan for Windows PowerShell direct binaries", () => {
-    const plan = buildInstallerUpdatePlan(
-      "2.0.0",
-      String.raw`C:\Users\me\.arashi\bin\arashi.bin.exe`,
-      "win32",
-    );
+    const plan = buildInstallerUpdatePlan("2.0.0", windowsExecPath, {
+      parentProcessId: 1234,
+      platform: "win32",
+    });
 
     expect(plan.command).toBe("powershell");
     expect(plan.args).toEqual([
       "-NoProfile",
       "-c",
-      "irm https://arashi.haphazard.dev/install.ps1 | iex",
+      "Start-Process -FilePath powershell -ArgumentList @('-NoProfile', '-c', 'irm https://arashi.haphazard.dev/install.ps1 | iex') -NoNewWindow",
     ]);
+    expect(plan.deferred).toBe(true);
     expect(plan.env.ARASHI_VERSION).toBe("2.0.0");
-    expect(plan.env.ARASHI_INSTALL_DIR).toBe(String.raw`C:\Users\me\.arashi\bin`);
+    expect(plan.env.ARASHI_INSTALL_DIR).toBe(windowsInstallDir);
     expect(plan.env.ARASHI_NO_MODIFY_PATH).toBe("1");
+    expect(plan.env.ARASHI_WAIT_FOR_PID).toBe("1234");
     expect(plan.label).toContain("PowerShell");
   });
 
@@ -94,6 +101,7 @@ describe("update command", () => {
         execPath: "/home/user/.arashi/bin/arashi",
         fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
         log: (message) => logs.push(message),
+        platform: "linux",
       },
     );
 
@@ -115,6 +123,7 @@ describe("update command", () => {
         execPath: "/home/user/.arashi/bin/arashi",
         fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
         log: (message) => logs.push(message),
+        platform: "linux",
         spawnSyncImpl: ((command: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
           calls.push({ args, command, env: options.env });
           return { status: 0 };
@@ -128,5 +137,35 @@ describe("update command", () => {
     expect(calls[0].env?.ARASHI_INSTALL_DIR).toBe("/home/user/.arashi/bin");
     expect(calls[0].env?.ARASHI_VERSION).toBe("2.0.0");
     expect(logs.join("\n")).toContain("Updated arashi to v2.0.0");
+  });
+
+  test("schedules Windows PowerShell installer when confirmed", async () => {
+    const logs: string[] = [];
+    const calls: { args: string[]; command: string; env?: NodeJS.ProcessEnv }[] = [];
+
+    await runDirectUpdate(
+      { yes: true },
+      {
+        currentVersion: "1.0.0",
+        execPath: windowsExecPath,
+        fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
+        log: (message) => logs.push(message),
+        platform: "win32",
+        spawnSyncImpl: ((command: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+          calls.push({ args, command, env: options.env });
+          return { status: 0 };
+        }) as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe("powershell");
+    expect(calls[0].args.join(" ")).toContain("Start-Process");
+    expect(calls[0].args.join(" ")).toContain("install.ps1");
+    expect(calls[0].env?.ARASHI_INSTALL_DIR).toBe(windowsInstallDir);
+    expect(calls[0].env?.ARASHI_NO_MODIFY_PATH).toBe("1");
+    expect(calls[0].env?.ARASHI_VERSION).toBe("2.0.0");
+    expect(calls[0].env?.ARASHI_WAIT_FOR_PID).toBeTruthy();
+    expect(logs.join("\n")).toContain("Scheduled arashi update to v2.0.0");
   });
 });

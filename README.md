@@ -63,7 +63,7 @@ arashi update --dry-run
 arashi update --yes
 ```
 
-`arashi update` can update npm-managed installs when it can confidently detect the package manager, including npm, pnpm, Yarn, Bun, and Vite+ (`vp update -g arashi`). For official direct-installer installs, `arashi update --yes` reruns the platform installer against the current binary directory: the POSIX curl installer on macOS/Linux and the PowerShell installer on Windows.
+`arashi update` can update npm-managed installs when it can confidently detect the package manager, including npm, pnpm, Yarn, Bun, and Vite+ (`vp update -g arashi`). For official direct-installer installs, `arashi update --yes` reruns the platform installer against the current binary directory: the POSIX curl installer on macOS/Linux and a deferred PowerShell installer on Windows after the current Arashi process exits.
 
 Verify install:
 

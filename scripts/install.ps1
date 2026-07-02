@@ -111,6 +111,28 @@ function Test-ArashiNoModifyPath {
     return $env:ARASHI_NO_MODIFY_PATH -in @("1", "true", "TRUE", "yes", "YES")
 }
 
+function Wait-ArashiParentProcess {
+    param([AllowNull()][string]$ParentProcessId)
+
+    if ([string]::IsNullOrWhiteSpace($ParentProcessId)) {
+        return
+    }
+
+    $parsedProcessId = 0
+    if (-not [int]::TryParse($ParentProcessId, [ref]$parsedProcessId) -or $parsedProcessId -le 0) {
+        return
+    }
+
+    Write-Step "Waiting for current Arashi process to exit before replacing files"
+    try {
+        Wait-Process -Id $parsedProcessId -Timeout 120 -ErrorAction Stop
+    } catch [System.TimeoutException] {
+        Fail-Install "Timed out waiting for Arashi process $parsedProcessId to exit. Close running Arashi processes and rerun the installer."
+    } catch {
+        # The parent process may already be gone by the time the deferred installer starts.
+    }
+}
+
 function Invoke-ArashiDownload {
     param(
         [Parameter(Mandatory = $true)][string]$Url,
@@ -230,6 +252,7 @@ function Invoke-ArashiSmokeTest {
 
 function Install-Arashi {
     $null = Test-ArashiSupportedWindowsPlatform
+    Wait-ArashiParentProcess -ParentProcessId $env:ARASHI_WAIT_FOR_PID
     $selectedVersion = Normalize-ArashiVersion -InputVersion $Version
     $releaseBaseUrl = Get-ArashiReleaseBaseUrl -InputVersion $selectedVersion
     $targetInstallDir = Resolve-ArashiInstallDir -InputInstallDir $InstallDir

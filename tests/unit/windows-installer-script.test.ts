@@ -22,6 +22,7 @@ describe("Windows PowerShell installer", () => {
     expect(script).toContain("[string]$Version = $env:ARASHI_VERSION");
     expect(script).toContain("[string]$InstallDir = $env:ARASHI_INSTALL_DIR");
     expect(script).toContain('ARASHI_NO_MODIFY_PATH -in @("1", "true", "TRUE", "yes", "YES")');
+    expect(script).toContain("Wait-ArashiParentProcess -ParentProcessId $env:ARASHI_WAIT_FOR_PID");
   });
 
   test("constructs latest and pinned GitHub release asset URLs", () => {
