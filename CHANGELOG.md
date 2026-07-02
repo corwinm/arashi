@@ -1,3 +1,9 @@
+## [1.16.0](https://github.com/corwinm/arashi/compare/v1.15.0...v1.16.0) (2026-07-02)
+
+### Features
+
+- add prune command ([#75](https://github.com/corwinm/arashi/issues/75)) ([e858344](https://github.com/corwinm/arashi/commit/e858344b9460c13c72964ae167a47d3d9929a00a))
+
 ## [1.15.0](https://github.com/corwinm/arashi/compare/v1.14.0...v1.15.0) (2026-06-30)
 
 ### Features
