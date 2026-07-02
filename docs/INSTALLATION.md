@@ -2,29 +2,40 @@
 
 ## Overview
 
-Arashi uses a small JavaScript npm entrypoint plus wrapper scripts to ensure compatibility with interactive tools like fzf. Direct/curl distributions include a wrapper and compiled Bun executable; npm installs begin with lightweight JavaScript and wrapper files, then install the matching platform binary on first use or through `arashi install`.
+Arashi uses a small JavaScript npm entrypoint plus wrapper scripts to ensure compatibility with interactive tools like fzf. Direct installer distributions include wrapper scripts and compiled Bun executables; npm installs begin with lightweight JavaScript and wrapper files, then install the matching platform binary on first use or through `arashi install`.
 
 ## Official install methods
 
-Use either of these official commands:
+Use the installer for your platform, or install through npm when you already have Node.js/npm.
+
+macOS/Linux:
 
 ```bash
 curl -fsSL https://arashi.haphazard.dev/install | bash
 ```
 
-```bash
-npm install -g arashi
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 ```
 
-Verify either method with:
+npm:
+
+```bash
+npm install -g arashi
+arashi install
+```
+
+Verify any method with:
 
 ```bash
 arashi --version
 ```
 
-## Curl installer behavior and release binding
+## POSIX curl installer behavior and release binding
 
-The curl installer (`scripts/install.sh`) is bound to GitHub Releases artifacts:
+The POSIX curl installer (`scripts/install.sh`) is bound to GitHub Releases artifacts:
 
 - Default behavior installs the latest stable release from `releases/latest/download`.
 - `ARASHI_VERSION=<version>` pins to `releases/download/v<version>` for reproducible installs.
@@ -39,13 +50,50 @@ The curl installer (`scripts/install.sh`) is bound to GitHub Releases artifacts:
 - For unattended installs, set `ARASHI_SHELL_INTEGRATION=yes` to enable shell integration without prompting or `ARASHI_SHELL_INTEGRATION=no` to skip it.
 - Install placement uses staged temp files and atomic moves to `arashi` (wrapper) and `arashi.bin` (platform binary).
 
-Checksum manifest expectations:
+## Windows PowerShell installer behavior and release binding
+
+The Windows PowerShell installer (`scripts/install.ps1`) is also bound to GitHub Releases artifacts:
+
+- Default behavior installs the latest stable release from `releases/latest/download`.
+- `ARASHI_VERSION=<version>` or `-Version <version>` pins to `releases/download/v<version>` for reproducible installs.
+- Platform mapping:
+  - Windows x64 -> `arashi-windows-x64.exe`
+- Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies these assets with `Get-FileHash -Algorithm SHA256` before install:
+  - `arashi-windows-x64.exe`
+  - `arashi.ps1`
+  - `arashi.bat`
+- Default install placement is `%USERPROFILE%\.arashi\bin` unless overridden with `ARASHI_INSTALL_DIR` or `-InstallDir`.
+- Install placement uses staged downloads and installs files together as:
+  - `arashi.bin.exe`
+  - `arashi.ps1`
+  - `arashi.bat`
+- The installer adds the install directory to the persistent user PATH by default, avoids duplicate PATH entries, and tells the user to open a new terminal.
+- Use `ARASHI_NO_MODIFY_PATH=1` or `-NoModifyPath` to skip PATH modification.
+- Runtime verification: after installing the wrapper and binary, the installer runs `arashi.ps1 --version` as a smoke test.
+
+Examples:
+
+```powershell
+# Inspect before running
+irm https://arashi.haphazard.dev/install.ps1
+
+# Install latest
+powershell -ExecutionPolicy Bypass -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
+
+# Pin a version when invoking a downloaded script
+.\install.ps1 -Version 1.16.0
+
+# Custom user-writable install directory without changing PATH
+.\install.ps1 -InstallDir C:\Tools\Arashi -NoModifyPath
+```
+
+## Checksum manifest expectations
 
 - Release workflow must generate `bin/arashi-checksums.txt` from built artifacts.
 - The release must publish wrapper scripts, platform binaries, and the checksum manifest together.
-- If checksum validation fails, installer exits without replacing an existing binary.
+- If checksum validation fails, installers exit without replacing an existing binary.
 
-## Curl troubleshooting and fallback guidance
+## POSIX curl troubleshooting and fallback guidance
 
 - Missing prerequisite (`curl`, `bash`, checksum tool): install missing dependency, then rerun installer.
 - Permission denied writing install location: rerun with `ARASHI_INSTALL_DIR="$HOME/.local/bin"` or another writable path.
@@ -55,20 +103,45 @@ Checksum manifest expectations:
 - Unsupported platform: use npm (`npm install -g arashi`) when available, otherwise use manual release assets.
 - If you skip shell integration during install, run `arashi shell install` later.
 
+## Windows PowerShell troubleshooting and fallback guidance
+
+- Execution policy blocks the command: rerun the documented command with `-ExecutionPolicy Bypass`, inspect `install.ps1` first, or use manual release assets.
+- Permission denied writing install location: rerun with `-InstallDir` or `ARASHI_INSTALL_DIR` pointing to a user-writable directory.
+- Download/network errors: retry the command; if failures persist, use npm installation or manual releases.
+- Checksum mismatch: treat as a blocked install, retry once, then fall back to npm/manual and report the issue.
+- PATH changes do not appear in the current shell: open a new terminal, or add `%USERPROFILE%\.arashi\bin` to PATH manually when using no-modify-PATH mode.
+- Smoke test failure: rerun with a pinned release using `ARASHI_VERSION=<version>` or `-Version <version>`, then use npm/manual release assets while reporting the bad release artifact.
+- Unsupported Windows architecture: use npm when available, or wait for a matching release asset.
+
 ## npm troubleshooting and fallback guidance
 
-- `npm: command not found`: install Node.js/npm, then retry. If unavailable, use the curl installer.
-- Permission errors with global npm installs: configure a user-level npm prefix or use curl with `ARASHI_INSTALL_DIR="$HOME/.local/bin"`.
+- `npm: command not found`: install Node.js/npm, then retry. If unavailable, use the platform installer for macOS/Linux or Windows PowerShell.
+- Permission errors with global npm installs: configure a user-level npm prefix or use a direct installer with a custom user-writable install directory.
 - Lifecycle scripts are not required: the npm package does not define `postinstall`, so package managers that block install scripts can still install Arashi.
 - To preinstall the platform binary, run `arashi install` after npm install. This is safe to run more than once; if the matching binary already exists it exits successfully without downloading again.
-- First-use download failure: retry `arashi install` once, then use curl/manual release assets if the network or release asset remains unavailable.
-- Verification fails during `arashi install` or first use: partial downloads are removed automatically; switch to curl/manual release flow and report the bad release artifact.
+- First-use download failure: retry `arashi install` once, then use direct/manual release assets if the network or release asset remains unavailable.
+- Verification fails during `arashi install` or first use: partial downloads are removed automatically; switch to direct/manual release flow and report the bad release artifact.
+
+## Manual Windows release fallback
+
+If you do not want to pipe a remote script into PowerShell or the installer fails:
+
+1. Open <https://github.com/corwinm/arashi/releases/latest>.
+2. Download these assets from the same release:
+   - `arashi-windows-x64.exe`
+   - `arashi.ps1`
+   - `arashi.bat`
+   - `arashi-checksums.txt`
+3. Verify each downloaded asset against `arashi-checksums.txt` with `Get-FileHash -Algorithm SHA256`.
+4. Put the files in one directory on PATH.
+5. Rename `arashi-windows-x64.exe` to `arashi.bin.exe` so both wrappers find the binary.
+6. Open a new terminal and run `arashi --version`.
 
 ## Why a Wrapper?
 
 Bun's compiled executables have a limitation where stdin (file descriptor 0) remains open even after calling `process.stdin.destroy()` or `fs.closeSync(0)`. This prevents tools like fzf from exclusively accessing `/dev/tty` for keyboard input.
 
-The wrapper solves this by closing stdin when piping `arashi list` output:
+The POSIX wrapper solves this by closing stdin when piping `arashi list` output:
 
 ```bash
 if [ "$command" = "list" ] && [ ! -t 1 ]; then
@@ -79,7 +152,7 @@ exec "$SCRIPT_DIR/arashi.bin" "$@"
 
 ## Distribution Methods
 
-### 1. npm Package (Recommended)
+### 1. npm Package (Recommended when Node/npm is available)
 
 The npm package intentionally avoids lifecycle scripts. Its package metadata points the npm `bin` entry to `./bin/arashi.js` and publishes the JavaScript entrypoint, wrapper files, and runtime installer module.
 
@@ -91,27 +164,13 @@ When users run `npm install -g arashi`, npm:
 
 The installer resolves assets from the installed package version, for example `https://github.com/corwinm/arashi/releases/download/v<version>/arashi-linux-x64`, verifies the binary with `--version`, and removes partial downloads on failure.
 
-### 2. Direct Binary Downloads (GitHub Releases)
+### 2. Direct Binary Downloads and Installers
 
-For users who don't use npm, we distribute platform-specific `.tar.gz` archives that include both files:
+For users who do not use npm, Arashi publishes platform-specific release assets and hosted installer scripts:
 
-```
-arashi-macos-arm64.tar.gz
-├── arashi          # Wrapper script
-└── arashi.bin      # Compiled binary
-
-arashi-linux-x64.tar.gz
-├── arashi          # Wrapper script
-└── arashi.bin      # Compiled binary
-```
-
-Users extract and install both files:
-
-```bash
-tar xzf arashi-macos-arm64.tar.gz
-cd arashi-macos-arm64
-sudo cp arashi arashi.bin /usr/local/bin/
-```
+- macOS/Linux: `curl -fsSL https://arashi.haphazard.dev/install | bash`
+- Windows: `powershell -ExecutionPolicy Bypass -c "irm https://arashi.haphazard.dev/install.ps1 | iex"`
+- Manual release assets: <https://github.com/corwinm/arashi/releases/latest>
 
 ## Build Process
 
@@ -127,22 +186,14 @@ bun run build:all
 # Output: bin/arashi-macos-arm64, bin/arashi-linux-x64, bin/arashi-windows-x64.exe
 ```
 
-The wrapper (`bin/arashi`) is maintained as a source file and included in all distributions.
+The POSIX wrapper (`bin/arashi`) and Windows wrappers (`bin/arashi.ps1`, `bin/arashi.bat`) are maintained as source files and included in distributions.
 
 ## Creating Releases
 
-Use the packaging script to create release archives:
+Semantic Release builds and uploads the release assets listed in `.releaserc.json`, including platform binaries, wrappers, and `arashi-checksums.txt`. The docs site exposes the installer scripts at:
 
-```bash
-./scripts/package-releases.sh 0.1.0
-```
-
-This creates:
-
-- `releases/arashi-0.1.0-macos-arm64.tar.gz`
-- `releases/arashi-0.1.0-linux-x64.tar.gz`
-
-Upload these to GitHub Releases.
+- `https://arashi.haphazard.dev/install`
+- `https://arashi.haphazard.dev/install.ps1`
 
 ## User Experience
 
@@ -160,6 +211,6 @@ arashi remove -f "$(arashi list | fzf)"  # ✓ Pick a worktree via fzf
 
 ## Windows Support
 
-On Windows, the npm entrypoint launches the packaged `.exe` directly and keeps stdin attached so interactive commands such as `arashi switch` can render prompt pickers normally.
+On Windows, the npm entrypoint and Windows wrappers launch the packaged `.exe` directly and keep stdin attached so interactive commands such as `arashi switch` can render prompt pickers normally.
 
 The Unix shell wrapper's stdin-closing behavior is only needed for shell pipelines like `arashi list | fzf`; Windows launchers do not force stdin closed for every command because that breaks interactive prompts.
