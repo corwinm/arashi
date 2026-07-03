@@ -20,11 +20,11 @@ describe("sync command - integration", () => {
 
   beforeEach(async () => {
     workspace = await createRemoveWorkspace(["repo-a", "repo-b"]);
-  });
+  }, SYNC_TEST_TIMEOUT_MS);
 
   afterEach(async () => {
     await workspace.cleanup();
-  });
+  }, SYNC_TEST_TIMEOUT_MS);
 
   test(
     "aligns repositories to the parent branch",

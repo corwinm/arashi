@@ -112,6 +112,92 @@ describe("update command", () => {
     expect(output).toContain("Dry run");
   });
 
+  test("prompts before running official installer in interactive direct-binary updates", async () => {
+    const logs: string[] = [];
+    const calls: { args: string[]; command: string; env?: NodeJS.ProcessEnv }[] = [];
+    const prompts: string[] = [];
+
+    await runDirectUpdate(
+      {},
+      {
+        confirmImpl: async (message) => {
+          prompts.push(message);
+          return { status: "ok", value: true };
+        },
+        currentVersion: "1.0.0",
+        execPath: "/home/user/.arashi/bin/arashi",
+        fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
+        isInteractive: true,
+        log: (message) => logs.push(message),
+        platform: "linux",
+        spawnSyncImpl: ((command: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+          calls.push({ args, command, env: options.env });
+          return { status: 0 };
+        }) as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(prompts).toEqual(["Apply arashi update to v2.0.0?"]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe("bash");
+    expect(logs.join("\n")).toContain("Updated arashi to v2.0.0");
+  });
+
+  test("skips direct-binary update when interactive confirmation is declined", async () => {
+    const logs: string[] = [];
+    const calls: { args: string[]; command: string }[] = [];
+
+    await runDirectUpdate(
+      {},
+      {
+        confirmImpl: async () => ({ status: "ok", value: false }),
+        currentVersion: "1.0.0",
+        execPath: "/home/user/.arashi/bin/arashi",
+        fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
+        isInteractive: true,
+        log: (message) => logs.push(message),
+        platform: "linux",
+        spawnSyncImpl: ((command: string, args: string[]) => {
+          calls.push({ args, command });
+          return { status: 0 };
+        }) as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(calls).toHaveLength(0);
+    expect(logs.join("\n")).toContain("Update skipped");
+  });
+
+  test("keeps non-interactive direct-binary updates opt-in with --yes", async () => {
+    const logs: string[] = [];
+    const calls: { args: string[]; command: string }[] = [];
+    const prompts: string[] = [];
+
+    await runDirectUpdate(
+      {},
+      {
+        confirmImpl: async (message) => {
+          prompts.push(message);
+          return { status: "ok", value: true };
+        },
+        currentVersion: "1.0.0",
+        execPath: "/home/user/.arashi/bin/arashi",
+        fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
+        isInteractive: false,
+        log: (message) => logs.push(message),
+        platform: "linux",
+        spawnSyncImpl: ((command: string, args: string[]) => {
+          calls.push({ args, command });
+          return { status: 0 };
+        }) as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(prompts).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+    expect(logs.join("\n")).toContain("Rerun with --yes");
+  });
+
   test("runs official installer when confirmed", async () => {
     const logs: string[] = [];
     const calls: { args: string[]; command: string; env?: NodeJS.ProcessEnv }[] = [];
