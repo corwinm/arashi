@@ -6,6 +6,8 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { info, error as logError } from "../lib/logger.ts";
+import { confirm as promptConfirm } from "../lib/prompts.ts";
+import type { PromptOutcome } from "../lib/prompts.ts";
 import { Command } from "commander";
 import { dirname } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -28,14 +30,17 @@ interface ReleaseInfo {
 
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 type SpawnSyncImpl = typeof spawnSync;
+type ConfirmImpl = (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
 
 const POSIX_INSTALLER_URL = "https://arashi.haphazard.dev/install";
 const WINDOWS_INSTALLER_URL = "https://arashi.haphazard.dev/install.ps1";
 
 interface DirectUpdateDeps {
+  confirmImpl?: ConfirmImpl;
   currentVersion?: string;
   execPath?: string;
   fetchImpl?: FetchImpl;
+  isInteractive?: boolean;
   log?: (message: string) => void;
   platform?: NodeJS.Platform;
   spawnSyncImpl?: SpawnSyncImpl;
@@ -232,8 +237,24 @@ export async function runDirectUpdate(
     return;
   }
   if (!options.yes) {
-    log("Update not applied. Rerun with --yes to reinstall Arashi with the official installer.");
-    return;
+    const isInteractive = deps?.isInteractive ?? process.stdin.isTTY;
+    if (!isInteractive) {
+      log("Update not applied. Rerun with --yes to reinstall Arashi with the official installer.");
+      return;
+    }
+
+    const confirmImpl = deps?.confirmImpl ?? promptConfirm;
+    const confirmation = await confirmImpl(`Apply arashi update to v${latest.version}?`, false);
+    if (confirmation.status === "cancelled") {
+      log("Update cancelled.");
+      return;
+    }
+    if (!confirmation.value) {
+      log(
+        "Update skipped. Rerun with --yes for non-interactive updates or use --dry-run to inspect the plan.",
+      );
+      return;
+    }
   }
 
   const spawnSyncImpl = deps?.spawnSyncImpl ?? spawnSync;
