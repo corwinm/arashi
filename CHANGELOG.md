@@ -1,3 +1,13 @@
+## [1.17.0](https://github.com/corwinm/arashi/compare/v1.16.0...v1.17.0) (2026-07-03)
+
+### Features
+
+- add Windows PowerShell installer ([#76](https://github.com/corwinm/arashi/issues/76)) ([8319be3](https://github.com/corwinm/arashi/commit/8319be374f5aba71c8780a52d92591ee42b2f51f))
+
+### Bug Fixes
+
+- prompt before direct binary update ([#77](https://github.com/corwinm/arashi/issues/77)) ([a2e1922](https://github.com/corwinm/arashi/commit/a2e192249bc16bd7521644c3c7ff5d73a5d92610))
+
 ## [1.16.0](https://github.com/corwinm/arashi/compare/v1.15.0...v1.16.0) (2026-07-02)
 
 ### Features
