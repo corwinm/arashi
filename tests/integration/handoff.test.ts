@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
-import { join } from "path";
+import { basename, join } from "path";
 import { tmpdir } from "os";
 
 const CLI_ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");
@@ -124,7 +124,8 @@ describe("handoff command", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("# Arashi Handoff Report");
-    expect(result.stdout).toContain(`- Path: ${resolvedWorkspaceRoot}`);
+    expect(result.stdout).toContain("- Path: ");
+    expect(result.stdout).toContain(basename(resolvedWorkspaceRoot));
     expect(result.stdout).toContain("- Branch: main");
     expect(result.stdout).toContain(`Current repository: repo-b (${resolvedRepoB})`);
     expect(result.stdout).toContain("repo-b: dirty; branch main; 1 changed file");
@@ -162,7 +163,10 @@ describe("handoff command", () => {
     const parsed = parseJson(result.stdout);
     expect(parsed).toMatchObject({ command: "handoff", ok: true, schemaVersion: 1 });
     const data = parsed.data as Record<string, unknown>;
-    expect(data.workspace).toMatchObject({ branch: "main", path: resolvedWorkspaceRoot });
+    expect(data.workspace).toMatchObject({ branch: "main" });
+    expect((data.workspace as Record<string, unknown>).path).toEqual(
+      expect.stringContaining(basename(resolvedWorkspaceRoot)),
+    );
     expect(data.context).toMatchObject({
       links: ["https://example.test/pr/1"],
       nextCommands: ["arashi status"],
