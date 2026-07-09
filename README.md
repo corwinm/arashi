@@ -125,6 +125,7 @@ Arashi currently provides these commands:
 - `arashi shell init <bash|zsh|fish>`
 - `arashi shell install`
 - `arashi pull`
+- `arashi push [--set-upstream] [--dry-run] [--only <repo>] [--json]`
 - `arashi sync`
 - `arashi setup [--only <repo>] [--verbose]`
 
@@ -321,6 +322,7 @@ Arashi also ships a dedicated `skills.sh` integration package for guided install
 - Setup command details: [`docs/commands/setup.md`](./docs/commands/setup.md)
 - Switch command details: [`docs/commands/switch.md`](./docs/commands/switch.md)
 - Remove command details: [`docs/commands/remove.md`](./docs/commands/remove.md)
+- Push command details: [`docs/commands/push.md`](./docs/commands/push.md)
 - FZF integration: [`docs/FZF_COMPATIBILITY.md`](./docs/FZF_COMPATIBILITY.md)
 
 ## Contributing
