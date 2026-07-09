@@ -6,8 +6,8 @@ import {
   createWorktreesForBranch,
   markWorktreeDirty,
 } from "../helpers/remove-test-workspace.ts";
+import { existsSync, realpathSync } from "fs";
 import { executeRemove } from "../../src/commands/remove.ts";
-import { existsSync } from "fs";
 import { spawn } from "bun";
 
 describe("remove command - dry-run preview", () => {
@@ -81,11 +81,15 @@ describe("remove command - dry-run preview", () => {
     const branchName = "feature-dry-run-path-target";
     const worktrees = await createWorktreesForBranch(workspace, branchName, false);
 
-    const result = await runRemoveInWorkspace(workspace.rootPath, worktrees["repo-a"], {
-      dryRun: true,
-      json: true,
-      path: true,
-    });
+    const result = await runRemoveInWorkspace(
+      workspace.rootPath,
+      realpathSync.native(worktrees["repo-a"]),
+      {
+        dryRun: true,
+        json: true,
+        path: true,
+      },
+    );
 
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
