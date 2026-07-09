@@ -14,6 +14,7 @@ arashi remove [branch] [options]
 - `--keep-worktrees` Delete branches but keep worktree directories
 - `--keep-branches` Remove worktrees but keep git branches
 - `-f, --force` Skip confirmation prompts
+- `--dry-run` Preview planned removals without changing worktrees, branches, or hooks
 - `--json` Output results as JSON
 
 ## Examples
@@ -34,6 +35,12 @@ arashi remove feature-login --keep-worktrees
 # Keep git branches
 arashi remove feature-login --keep-branches
 
+# Preview cleanup before deleting anything
+arashi remove feature-login --dry-run
+
+# Machine-readable preview for automation
+arashi remove feature-login --dry-run --json
+
 # Machine-readable output
 arashi remove feature-login --json
 ```
@@ -42,6 +49,8 @@ arashi remove feature-login --json
 
 - The command skips main worktrees automatically.
 - Dirty worktrees require explicit confirmation unless `--no-check-dirty` is set.
+- Use `--dry-run` when you want to see planned worktree removals, branch deletions, dirty blockers, skipped/missing repositories, and hook context before mutation.
+- `--dry-run` never removes worktrees, deletes branches, detaches kept worktrees, or executes remove hooks.
 - Use `--keep-worktrees` or `--keep-branches` for selective removal. Using both performs no operations.
 
 ## Remove Lifecycle Hooks
@@ -58,6 +67,7 @@ Behavior:
 
 - For each targeted repository, hooks run in order: repository -> workspace-root -> global targeted -> global shared.
 - `pre-remove.sh` runs after confirmation and before destructive operations.
+- `--dry-run` reports configured remove hooks that would be considered, but does not execute hook scripts.
 - If any discovered `pre-remove` hook fails, remove operations are aborted.
 - `post-remove.sh` runs after remove operations are attempted, including partial-failure runs.
 - If any discovered `post-remove` hook fails, the command reports hook errors and exits non-zero.

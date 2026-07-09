@@ -70,6 +70,21 @@ export interface RemovalOperation {
   error?: string;
 }
 
+export interface RemoveHookPreview {
+  /** Lifecycle hook name */
+  hookName: "pre-remove" | "post-remove";
+  /** Target repository name */
+  repository: string;
+  /** Hook discovery scope */
+  scope: string;
+  /** Hook script path */
+  scriptPath: string;
+  /** Whether the hook would be valid for a real run */
+  valid: boolean;
+  /** Validation error, if any */
+  error?: string;
+}
+
 export interface RemovalSummary {
   /** Total worktrees targeted for removal */
   totalWorktrees: number;
@@ -85,6 +100,19 @@ export interface RemovalSummary {
   errors: string[];
   /** Total duration in milliseconds */
   duration: number;
+  /** True when this summary represents a non-mutating preview */
+  dryRun?: boolean;
+  /** Effective options that shaped the removal plan */
+  effectiveOptions?: {
+    checkDirty: boolean;
+    keepWorktrees: boolean;
+    keepBranches: boolean;
+    force: boolean;
+  };
+  /** Dirty worktrees discovered while planning */
+  dirtyWorktrees?: WorktreeEntry[];
+  /** Lifecycle hooks that would be considered by a real remove */
+  hookPreviews?: RemoveHookPreview[];
 }
 
 export interface RemoveCommandOptions {
@@ -100,4 +128,6 @@ export interface RemoveCommandOptions {
   path?: boolean;
   /** Output JSON */
   json?: boolean;
+  /** Preview planned removals without mutating repositories */
+  dryRun?: boolean;
 }

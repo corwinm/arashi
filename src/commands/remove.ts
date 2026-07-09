@@ -16,6 +16,7 @@ import {
 import type {
   RemovalOperation,
   RemoveCommandOptions,
+  RemoveHookPreview,
   WorktreeEntry,
   WorktreeGrouping,
 } from "../types/remove.ts";
@@ -95,6 +96,7 @@ interface CliOptions {
   force?: boolean;
   path?: boolean;
   json?: boolean;
+  dryRun?: boolean;
 }
 
 const loadWorkspaceConfig = async (workspaceRoot: string): Promise<Config> => {
@@ -164,6 +166,7 @@ export function createCommand(): Command {
     .option("-f, --force", "Skip confirmation prompts")
     .option("--path", "Treat argument as worktree path")
     .option("--json", "Output results as JSON")
+    .option("--dry-run", "Preview planned removals without mutating worktrees or branches")
     .action(async (branch?: string, options?: CliOptions) => {
       try {
         const exitCode = await executeRemove(branch, options || {});
@@ -192,10 +195,19 @@ export async function executeRemove(
   if (options.keepBranches && options.keepWorktrees) {
     const summary = createRemovalSummary(ZERO, ZERO);
     summary.duration = Date.now() - startTime;
+    summary.dryRun = options.dryRun === true;
+    summary.effectiveOptions = {
+      checkDirty: options.checkDirty !== false,
+      force: options.force === true,
+      keepBranches: options.keepBranches === true,
+      keepWorktrees: options.keepWorktrees === true,
+    };
     if (options.json) {
       writeJsonEnvelope(
         createJsonSuccessEnvelope("remove", JSON.parse(formatRemovalSummaryJson(summary, {}))),
       );
+    } else if (options.dryRun) {
+      console.log(formatRemovalSummaryHuman(summary, {}));
     } else {
       warn("Both --keep-worktrees and --keep-branches specified");
       info("No operations will be performed. At least one removal type must be enabled.");
@@ -389,7 +401,7 @@ export async function executeRemove(
     dirtyCheckSpinner?.succeed("Dirty check complete");
   }
 
-  if (!options.force) {
+  if (!options.force && !options.dryRun) {
     ensureInteractive(allowNonInteractive);
     const confirmation = await promptConfirmation({
       branchPresence,
@@ -441,6 +453,61 @@ export async function executeRemove(
     repositoryNames: targetRepositoryNames,
     worktreePaths: worktreesToRemove.map((worktree) => worktree.path),
   });
+
+  if (options.dryRun) {
+    summary.dryRun = true;
+    summary.effectiveOptions = {
+      checkDirty: options.checkDirty !== false,
+      force: options.force === true,
+      keepBranches: options.keepBranches === true,
+      keepWorktrees: options.keepWorktrees === true,
+    };
+    summary.dirtyWorktrees = worktreesToRemove.filter((worktree) => worktree.isDirty === true);
+
+    if (!options.keepWorktrees) {
+      for (const worktree of worktreesToRemove) {
+        summary.operations.push({
+          branchName: worktree.branch,
+          repository: worktree.repository,
+          status: "pending",
+          type: "worktree_remove",
+          worktreePath: worktree.path,
+        });
+      }
+    }
+
+    if (!options.keepBranches && targetBranches.length > ZERO) {
+      for (const branch of targetBranches) {
+        for (const repoName of branchPresence[branch] ?? []) {
+          summary.operations.push({
+            branchName: branch,
+            repository: repoName,
+            status: "pending",
+            type: "branch_delete",
+          });
+        }
+      }
+    }
+
+    summary.hookPreviews = await previewRemoveLifecycleHooks({
+      targetRepositories: removeHookTargets,
+      workspaceRoot,
+    });
+    summary.duration = Date.now() - startTime;
+
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonSuccessEnvelope(
+          "remove",
+          JSON.parse(formatRemovalSummaryJson(summary, { missingBranches, skippedMain })),
+        ),
+      );
+    } else {
+      console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
+    }
+
+    return ZERO;
+  }
 
   const preRemoveOutcome = await runRemoveLifecycleHook({
     hookName: GLOBAL_HOOKS.preRemove,
@@ -939,6 +1006,32 @@ const formatBranchDeletionError = (error: unknown): string => {
   }
 
   return message;
+};
+
+const previewRemoveLifecycleHooks = async (options: {
+  workspaceRoot: string;
+  targetRepositories: HookTargetRepository[];
+}): Promise<RemoveHookPreview[]> => {
+  const previews: RemoveHookPreview[] = [];
+  for (const hookName of [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove] as const) {
+    const resolvedHooks = await resolveScopedLifecycleHooks({
+      hookName,
+      targetRepositories: options.targetRepositories,
+      workspaceRoot: options.workspaceRoot,
+    });
+    for (const resolvedHook of resolvedHooks) {
+      const validation = await validateHook(resolvedHook.scriptPath);
+      previews.push({
+        error: validation.error,
+        hookName,
+        repository: resolvedHook.targetRepositoryName,
+        scope: resolvedHook.scope,
+        scriptPath: resolvedHook.scriptPath,
+        valid: validation.valid,
+      });
+    }
+  }
+  return previews;
 };
 
 const runRemoveLifecycleHook = async (options: {

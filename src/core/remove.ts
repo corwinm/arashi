@@ -352,7 +352,12 @@ export const formatRemovalSummaryHuman = (
   const lines: string[] = [];
   const hasErrors = summary.errors.length > ZERO;
 
-  if (hasErrors) {
+  if (summary.dryRun) {
+    lines.push(chalk.cyan("Dry run preview: no worktrees or branches were removed"));
+    lines.push(
+      `Would remove ${summary.totalWorktrees} worktrees and delete ${summary.totalBranches} branches`,
+    );
+  } else if (hasErrors) {
     lines.push(chalk.red(`✗ Partial removal completed with ${summary.errors.length} errors`));
   } else {
     lines.push(
@@ -362,23 +367,60 @@ export const formatRemovalSummaryHuman = (
     );
   }
 
-  if (summary.successfulWorktrees > ZERO) {
+  const worktreeStatus = summary.dryRun ? "pending" : "success";
+  const branchStatus = summary.dryRun ? "pending" : "success";
+
+  if (summary.effectiveOptions?.keepWorktrees) {
     lines.push("");
-    lines.push("Removed worktrees:");
+    lines.push("Option effect: --keep-worktrees would keep worktree directories.");
+  }
+
+  if (summary.effectiveOptions?.keepBranches) {
+    lines.push("");
+    lines.push("Option effect: --keep-branches would keep local branches.");
+  }
+
+  if (summary.totalWorktrees === ZERO && summary.totalBranches === ZERO && summary.dryRun) {
+    lines.push("");
+    lines.push("No destructive operations would be performed.");
+  }
+
+  if (
+    summary.operations.some((op) => op.type === "worktree_remove" && op.status === worktreeStatus)
+  ) {
+    lines.push("");
+    lines.push(summary.dryRun ? "Planned worktree removals:" : "Removed worktrees:");
     for (const op of summary.operations) {
-      if (op.type === "worktree_remove" && op.status === "success") {
+      if (op.type === "worktree_remove" && op.status === worktreeStatus) {
         lines.push(`  • ${op.repository}: ${op.worktreePath}`);
       }
     }
   }
 
-  if (summary.successfulBranches > ZERO) {
+  if (summary.operations.some((op) => op.type === "branch_delete" && op.status === branchStatus)) {
     lines.push("");
-    lines.push("Deleted branches:");
+    lines.push(summary.dryRun ? "Planned branch deletions:" : "Deleted branches:");
     for (const op of summary.operations) {
-      if (op.type === "branch_delete" && op.status === "success") {
+      if (op.type === "branch_delete" && op.status === branchStatus) {
         lines.push(`  • ${op.repository}: ${op.branchName}`);
       }
+    }
+  }
+
+  if (summary.dirtyWorktrees && summary.dirtyWorktrees.length > ZERO) {
+    lines.push("");
+    lines.push("Dirty worktrees / blockers:");
+    for (const wt of summary.dirtyWorktrees) {
+      lines.push(`  • ${wt.repository}: ${wt.path}`);
+    }
+  }
+
+  if (summary.hookPreviews && summary.hookPreviews.length > ZERO) {
+    lines.push("");
+    lines.push("Remove hooks that would be considered:");
+    for (const hook of summary.hookPreviews) {
+      const validity = hook.valid ? "valid" : `invalid: ${hook.error ?? "unknown"}`;
+      lines.push(`  • ${hook.repository}: ${hook.hookName} (${hook.scope}) - ${validity}`);
     }
   }
 
@@ -421,6 +463,7 @@ export const formatRemovalSummaryJson = (
   },
 ): string => {
   const payload: Record<string, unknown> = {
+    dryRun: summary.dryRun === true,
     errors: summary.errors,
     operations: summary.operations,
     success: summary.errors.length === ZERO,
@@ -432,6 +475,24 @@ export const formatRemovalSummaryJson = (
       totalWorktrees: summary.totalWorktrees,
     },
   };
+
+  if (summary.effectiveOptions) {
+    payload.effectiveOptions = summary.effectiveOptions;
+  }
+
+  if (summary.dirtyWorktrees && summary.dirtyWorktrees.length > ZERO) {
+    payload.blockers = summary.dirtyWorktrees.map((wt) => ({
+      branchName: wt.branch,
+      dirtyDetails: wt.dirtyDetails,
+      path: wt.path,
+      repository: wt.repository,
+      type: "dirty_worktree",
+    }));
+  }
+
+  if (summary.hookPreviews) {
+    payload.hooks = summary.hookPreviews;
+  }
 
   if (extras?.skippedMain && extras.skippedMain.length > ZERO) {
     payload.skippedMain = extras.skippedMain.map((wt) => ({
