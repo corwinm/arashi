@@ -25,6 +25,7 @@ const DEFAULT_TIMEOUT_MS = 300_000;
 const DETACHED_HEAD = "HEAD";
 
 interface SyncCommandOptions {
+  group?: string;
   json?: boolean;
   only?: string;
   verbose?: boolean;
@@ -34,6 +35,7 @@ export function createCommand(): Command {
   return new Command("sync")
     .description("Align managed repositories to the parent branch")
     .option("--only <repos>", "Only sync specified repositories (comma-separated)")
+    .option("--group <groups>", "Only sync repositories in the requested group (comma-separated)")
     .option("-v, --verbose", "Show detailed output for each repository")
     .option("--json", "Output result as JSON")
     .action(async (options: SyncCommandOptions) => {
@@ -61,9 +63,19 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
   const config = await loadConfig(workspaceRoot);
   const parentBranch = await getParentBranch(workspaceRoot);
 
-  const { repositories, missing } = filterRepositories(config.repos, options.only);
+  const { repositories, missing, unknownGroups, emptyIntersection } = filterRepositories(
+    config.repos,
+    options.only,
+    options.group,
+  );
   if (missing.length > 0) {
     throw new Error(`Repositories not found: ${missing.join(", ")}`);
+  }
+  if (unknownGroups.length > 0) {
+    throw new Error(`Unknown repository groups: ${unknownGroups.join(", ")}`);
+  }
+  if (emptyIntersection) {
+    throw new Error("No repositories matched the combined --only/--group filters");
   }
 
   if (repositories.length === ZERO) {

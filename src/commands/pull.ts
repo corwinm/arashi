@@ -34,6 +34,8 @@ const MILLISECONDS_PER_SECOND = 1000;
 class CliUsageError extends Error {}
 
 export interface PullCommandOptions {
+  /** Only include repositories in specified groups (repeatable flag) */
+  group?: string[];
   /** Output one JSON envelope to stdout */
   json?: boolean;
   /** Only include specified repositories (repeatable flag) */
@@ -60,11 +62,23 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
     },
   );
 
-  const filterResult = filterRepositories(repositoriesResult.repositories, options.only);
+  const filterResult = filterRepositories(
+    repositoriesResult.repositories,
+    options.only,
+    options.group,
+  );
   if (filterResult.missing.length > ZERO) {
     throw new CliUsageError(
       `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
     );
+  }
+  if (filterResult.unknownGroups.length > ZERO) {
+    throw new CliUsageError(
+      `Unknown repository groups in --group filter: ${filterResult.unknownGroups.join(", ")}`,
+    );
+  }
+  if (filterResult.emptyIntersection) {
+    throw new CliUsageError("No repositories matched the combined --only/--group filters");
   }
 
   const repositories = filterResult.selected;
@@ -158,6 +172,11 @@ export function createCommand(): Command {
     .option(
       "--only <repo>",
       "Only include a specific repository (repeatable)",
+      (value, previous: string[] = []) => [...previous, value],
+    )
+    .option(
+      "--group <group>",
+      "Only include repositories in the requested group (repeatable)",
       (value, previous: string[] = []) => [...previous, value],
     )
     .option("-v, --verbose", "Show verbose git output")

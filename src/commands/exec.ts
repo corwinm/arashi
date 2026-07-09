@@ -32,6 +32,7 @@ interface ExecRepository {
 export interface ExecCommandOptions {
   dirty?: boolean;
   failFast?: boolean;
+  group?: string[];
   jobs?: string;
   json?: boolean;
   only?: string[];
@@ -57,6 +58,7 @@ export interface ExecSummary {
     jobs: number;
     json: boolean;
     only: string[];
+    groups?: string[];
   };
   selectedRepositories: { name: string; path: string }[];
   total: number;
@@ -289,11 +291,20 @@ const executeExec = async (
   const filterResult = filterRepositories(
     repositoriesResult.repositories,
     onlyFilters.length > ZERO ? onlyFilters : undefined,
+    options.group,
   );
   if (filterResult.missing.length > ZERO) {
     throw new CliUsageError(
       `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
     );
+  }
+  if (filterResult.unknownGroups.length > ZERO) {
+    throw new CliUsageError(
+      `Unknown repository groups in --group filter: ${filterResult.unknownGroups.join(", ")}`,
+    );
+  }
+  if (filterResult.emptyIntersection) {
+    throw new CliUsageError("No repositories matched the combined --only/--group filters");
   }
 
   let repositories = filterResult.selected;
@@ -316,6 +327,7 @@ const executeExec = async (
         jobs,
         json: options.json === true,
         only: onlyFilters,
+        groups: filterResult.filters.groups,
       },
       repositories,
       results: [],
@@ -340,6 +352,7 @@ const executeExec = async (
       jobs,
       json: options.json === true,
       only: onlyFilters,
+      groups: filterResult.filters.groups,
     },
     repositories,
     results,
@@ -368,6 +381,11 @@ export function createCommand(): Command {
     .option(
       "--only <repo>",
       "Only include a specific repository (repeatable)",
+      (value, previous: string[] = []) => [...previous, value],
+    )
+    .option(
+      "--group <group>",
+      "Only include repositories in the requested group (repeatable)",
       (value, previous: string[] = []) => [...previous, value],
     )
     .option("--dirty", "Only include repositories with uncommitted changes")

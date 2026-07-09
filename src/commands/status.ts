@@ -18,6 +18,7 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
+import { filterRepositories } from "../lib/config/filter-repos.ts";
 import { getFullGitStatus, getGitStatus } from "../lib/git.js";
 import { info, error as logError, spinner } from "../lib/logger.js";
 import { Command } from "commander";
@@ -73,6 +74,8 @@ const summarizeStatuses = (statuses: RepoStatus[]) => {
  * Command-line options for the status command
  */
 export interface StatusOptions {
+  /** Filter to repositories in specified groups */
+  group?: string[];
   /** Show full git status output for each repository */
   verbose?: boolean;
   /** Show one-line summary per repository */
@@ -816,9 +819,52 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
   }
 
   const statusSpinner = options.json ? null : spinner("Checking repository status...");
+  const filterResult = filterRepositories(config.repos, undefined, options.group);
+  if (filterResult.unknownGroups.length > ZERO) {
+    const message = `Unknown repository groups in --group filter: ${filterResult.unknownGroups.join(", ")}`;
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("status", {
+          code: "UNKNOWN_REPOSITORY_GROUPS",
+          details: {
+            groups: filterResult.filters.groups,
+            unknownGroups: filterResult.unknownGroups,
+          },
+          message,
+        }),
+      );
+    } else {
+      logError(message);
+    }
+    process.exit(USAGE_EXIT_CODE);
+  }
+  if (filterResult.emptyIntersection) {
+    const message = "No repositories matched the combined --only/--group filters";
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("status", {
+          code: "EMPTY_REPOSITORY_SELECTION",
+          details: { filters: filterResult.filters },
+          message,
+        }),
+      );
+    } else {
+      logError(message);
+    }
+    process.exit(USAGE_EXIT_CODE);
+  }
+
+  const configForStatus: Config = {
+    ...config,
+    repos:
+      filterResult.filters.groups.length > ZERO
+        ? Object.fromEntries(filterResult.repositories.map((repo) => [repo.name, repo.config]))
+        : config.repos,
+  };
+
   statusSpinner?.start();
 
-  const statuses = await checkAllRepos(workspaceRoot, config, options.verbose || false);
+  const statuses = await checkAllRepos(workspaceRoot, configForStatus, options.verbose || false);
   const visibleStatuses = filterHumanVisibleStatuses(statuses, options);
 
   statusSpinner?.stop();
@@ -832,6 +878,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
       createJsonSuccessEnvelope(
         "status",
         {
+          filters: filterResult.filters,
           repositories: statuses,
           summary,
           workspaceRoot,
@@ -872,6 +919,11 @@ export const createCommand = (): Command =>
     .description("Show status of all managed repositories")
     .option("-v, --verbose", "Show full git status output")
     .option("-s, --short", "Show one-line summary per repository")
+    .option(
+      "--group <group>",
+      "Only include repositories in the requested group (repeatable)",
+      (value, previous: string[] = []) => [...previous, value],
+    )
     .option("--json", "Output a structured JSON envelope")
     .addHelpText(
       "after",
@@ -880,6 +932,7 @@ Examples:
   $ arashi status                    # Default output with colors
   $ arashi status --verbose          # Full git status for each repo
   $ arashi status --short            # One line per repository
+  $ arashi status --group docs       # Only check repositories in a group
       `,
     )
     .action(statusCommand);

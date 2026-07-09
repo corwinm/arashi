@@ -39,6 +39,7 @@ import { discoverRepositories } from "../core/repository.ts";
 import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
+import { filterRepositories as filterWorkspaceRepositories } from "../lib/repo-filter.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
@@ -180,6 +181,9 @@ const createSummaryJsonData = (
 interface CreateCommandOptions {
   /** Only create worktrees in specified repositories (comma-separated) */
   only?: string;
+
+  /** Only create worktrees in repositories belonging to requested groups */
+  group?: string;
 
   /** Interactively select repositories */
   interactive?: boolean;
@@ -494,6 +498,7 @@ export function createCommand(): Command {
     .description("Create coordinated worktrees across multiple repositories")
     .argument("<branch>", "Branch name to create across repositories")
     .option("--only <repos>", "Only create in specified repositories (comma-separated)")
+    .option("--group <groups>", "Only create in repositories in requested groups (comma-separated)")
     .option("-i, --interactive", "Interactively select repositories")
     .option("--switch", "Switch to the created parent worktree after create")
     .option("--no-switch", "Disable configured create switch defaults for this invocation")
@@ -518,6 +523,7 @@ export function createCommand(): Command {
       `
 Examples:
   $ arashi create feature-branch
+  $ arashi create feature-branch --group docs
   $ arashi create feature-branch --only repo1,repo2
   $ arashi create feature-branch --conflict REUSE_EXISTING
   $ arashi create feature-branch --dry-run
@@ -647,6 +653,7 @@ export async function executeCreate(
 
     const metaRepo = {
       defaultBranch,
+      groups: arashiConfig.repos[basename(currentDir)]?.groups,
       hasSetupScript: false,
       name: basename(currentDir),
       path: currentDir,
@@ -654,6 +661,13 @@ export async function executeCreate(
 
     parentRepository = metaRepo;
     allRepositories.unshift(metaRepo);
+  }
+
+  for (const repository of allRepositories) {
+    const configuredRepo = arashiConfig.repos[repository.name];
+    if (configuredRepo?.groups) {
+      repository.groups = configuredRepo.groups;
+    }
   }
 
   if (allRepositories.length === 0) {
@@ -678,22 +692,46 @@ export async function executeCreate(
     info(`Found ${allRepositories.length} ${repositoryLabel}`);
   }
 
-  // 4. Apply repository filter
+  // 4. Apply repository filters. Group filters are shared with other repo-selecting commands;
+  // interactive mode then prompts from the narrowed repository set.
+  const groupFilterResult = filterWorkspaceRepositories(
+    allRepositories,
+    options.only,
+    options.group,
+  );
+  if (groupFilterResult.missing.length > ZERO) {
+    throw new RepositoryValidationError(
+      `Unknown repositories in --only filter: ${groupFilterResult.missing.join(", ")}`,
+      groupFilterResult.missing[ZERO] ?? "",
+    );
+  }
+  if (groupFilterResult.unknownGroups.length > ZERO) {
+    throw new RepositoryValidationError(
+      `Unknown repository groups in --group filter: ${groupFilterResult.unknownGroups.join(", ")}`,
+      groupFilterResult.unknownGroups[ZERO] ?? "",
+    );
+  }
+  if (groupFilterResult.emptyIntersection) {
+    throw new RepositoryValidationError(
+      "No repositories matched the combined --only/--group filters",
+      "",
+    );
+  }
+
+  const filteredRepositories = groupFilterResult.selected;
   let filterMode: RepositoryFilter["mode"] = "all";
   if (options.interactive) {
     filterMode = "interactive";
-  } else if (options.only) {
-    filterMode = "explicit";
   }
 
   const filter: RepositoryFilter = {
-    explicitList: options.only ? options.only.split(",").map((s) => s.trim()) : [],
+    explicitList: [],
     mode: filterMode,
     requiredRepositories: options.interactive && parentRepository ? [parentRepository] : undefined,
     selectedRepositories: null,
   };
 
-  const selectedRepos = await filterRepositories(filter, allRepositories);
+  const selectedRepos = await filterRepositories(filter, filteredRepositories);
 
   if (selectedRepos.length === ZERO) {
     if (options.json) {
