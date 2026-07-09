@@ -397,6 +397,45 @@ describe("validateConfig - RepoConfig validation", () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
+  test("accepts and trims repository groups", () => {
+    const normalized = normalizeConfig({
+      repos: {
+        "my-repo": {
+          groups: [" core ", "docs"],
+          path: "./repos/my-repo",
+        },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    });
+
+    expect(normalized.repos["my-repo"].groups).toEqual(["core", "docs"]);
+  });
+
+  test("rejects invalid repository group definitions", () => {
+    const config = {
+      repos: {
+        duplicate: { groups: ["core", "CORE"], path: "./repos/duplicate" },
+        invalid: { groups: ["", 123], path: "./repos/invalid" },
+        notArray: { groups: "core", path: "./repos/not-array" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
+    expect(() => validateConfig(config)).toThrow("repos.notArray.groups: must be an array");
+    expect(() => validateConfig(config)).toThrow(
+      'repos.duplicate.groups[1]: duplicate group "CORE"',
+    );
+    expect(() => validateConfig(config)).toThrow(
+      "repos.invalid.groups[0]: must be a non-empty string",
+    );
+    expect(() => validateConfig(config)).toThrow(
+      "repos.invalid.groups[1]: must be a non-empty string",
+    );
+  });
+
   test("catches invalid gitUrl type", () => {
     const config = {
       repos: {

@@ -17,6 +17,7 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { info, error as logError } from "../lib/logger.ts";
+import { filterRepositories } from "../lib/repo-filter.ts";
 import { Command } from "commander";
 import type { SetupExecutionResult, SetupRunSummary } from "../lib/setup-types.ts";
 import { runSetupTarget } from "../lib/setup-runner.ts";
@@ -30,6 +31,7 @@ const DEFAULT_TIMEOUT_MS = 300_000;
 class CliUsageError extends Error {}
 
 export interface SetupCommandOptions {
+  group?: string[];
   json?: boolean;
   only?: string[];
   verbose?: boolean;
@@ -53,12 +55,30 @@ const executeSetup = async (options: SetupCommandOptions): Promise<SetupRunSumma
     },
   );
 
-  const discovery = await discoverSetupTargets(repositoriesResult.repositories, options.only);
-  if (discovery.missing.length > ZERO) {
+  const filterResult = filterRepositories(
+    repositoriesResult.repositories,
+    options.only,
+    options.group,
+  );
+  if (filterResult.missing.length > ZERO) {
     throw new CliUsageError(
-      `Unknown repositories in --only filter: ${discovery.missing.join(", ")}`,
+      `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
     );
   }
+  if (filterResult.unknownGroups.length > ZERO) {
+    throw new CliUsageError(
+      `Unknown repository groups in --group filter: ${filterResult.unknownGroups.join(", ")}`,
+    );
+  }
+  if (filterResult.emptyIntersection) {
+    throw new CliUsageError("No repositories matched the combined --only/--group filters");
+  }
+
+  const selectedNames =
+    filterResult.filters.only.length > ZERO || filterResult.filters.groups.length > ZERO
+      ? filterResult.selected.map((repository) => repository.name)
+      : undefined;
+  const discovery = await discoverSetupTargets(repositoriesResult.repositories, selectedNames);
 
   const orderedTargets = orderSetupTargets(discovery.targets);
   const executableTargets = orderedTargets.filter((target) => isExecutableTarget(target));
@@ -96,7 +116,9 @@ const executeSetup = async (options: SetupCommandOptions): Promise<SetupRunSumma
     }
   }
 
-  const filteredRun = Boolean(options.only && options.only.length > ZERO);
+  const filteredRun = Boolean(
+    (options.only && options.only.length > ZERO) || (options.group && options.group.length > ZERO),
+  );
   const summary = buildSummary(orderedTargets, executions);
   if (!options.json) {
     console.log(formatSummary(summary, filteredRun));
@@ -116,6 +138,11 @@ export function createCommand(): Command {
     .option(
       "--only <repo>",
       "Only include a specific repository (repeatable)",
+      (value, previous: string[] = []) => [...previous, value],
+    )
+    .option(
+      "--group <group>",
+      "Only include repositories in the requested group (repeatable)",
       (value, previous: string[] = []) => [...previous, value],
     )
     .option("-v, --verbose", "Show full setup script output")

@@ -80,6 +80,7 @@ async function createWorkspaceWithRepo(baseDir: string): Promise<{
         repos: {
           "repo-a": {
             defaultBranch: "main",
+            groups: ["children"],
             isBare: false,
             path: "./repos/repo-a",
             worktrees: [],
@@ -168,6 +169,34 @@ describe("push command", () => {
       expect(envelope.data.results[0].repositoryId).toBe("repo-a");
       expect(await runGit(repoRemote, ["rev-parse", "refs/heads/feature/json"])).not.toBe("");
       expect(result.stdout.trim().split("\n")[0]).toBe("{");
+    },
+    PUSH_TEST_TIMEOUT,
+  );
+
+  test(
+    "respects --group filtering",
+    async () => {
+      const { workspaceRoot, repoPath, repoRemote } = await createWorkspaceWithRepo(testDir);
+      await runGit(workspaceRoot, ["checkout", "-b", "feature/group"]);
+      await runGit(repoPath, ["checkout", "-b", "feature/group"]);
+      await commitFile(workspaceRoot, "main-group.txt", "main change");
+      await commitFile(repoPath, "child-group.txt", "child change");
+
+      const result = await runPushCommand(workspaceRoot, [
+        "--group",
+        "children",
+        "--set-upstream",
+        "--json",
+      ]);
+
+      expect(result.exitCode).toBe(0);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.ok).toBe(true);
+      expect(envelope.data.totals.pushed).toBe(1);
+      expect(
+        envelope.data.results.map((entry: { repositoryId: string }) => entry.repositoryId),
+      ).toEqual(["repo-a"]);
+      expect(await runGit(repoRemote, ["rev-parse", "refs/heads/feature/group"])).not.toBe("");
     },
     PUSH_TEST_TIMEOUT,
   );

@@ -74,6 +74,8 @@ export interface Repository {
   setupScriptPath?: string;
   /** Primary remote URL (usually origin) */
   remoteUrl?: string;
+  /** Optional semantic groups this repository belongs to */
+  groups?: string[];
 }
 
 /**

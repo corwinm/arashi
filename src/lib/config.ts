@@ -45,6 +45,8 @@ export interface RepoConfig {
   path: string;
   /** Canonical git URL for cloning the repository */
   gitUrl?: string;
+  /** Optional semantic groups this repository belongs to */
+  groups?: string[];
 }
 
 export const CURRENT_CONFIG_VERSION = "1.0.0" as const;
@@ -132,6 +134,8 @@ export interface WorkspaceRepository {
   path: string;
   /** Canonical git URL from configuration, if available */
   gitUrl?: string;
+  /** Optional semantic groups this repository belongs to */
+  groups?: string[];
 }
 
 export type ConfigSourceType = "local-file" | "repository-content";
@@ -365,6 +369,7 @@ const REPO_ALLOWED_KEYS = new Set([
   "isBare",
   "is_bare",
   "worktrees",
+  "groups",
 ]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -468,6 +473,30 @@ const normalizeRepoConfig = (
       errors.push(`${prefix}.gitUrl: must be a non-empty string if present`);
     } else {
       normalized.gitUrl = gitUrl;
+    }
+  }
+
+  if (value.groups !== undefined) {
+    if (!Array.isArray(value.groups)) {
+      errors.push(`${prefix}.groups: must be an array of non-empty strings if present`);
+    } else {
+      const seenGroups = new Set<string>();
+      const groups: string[] = [];
+      for (const [index, rawGroup] of value.groups.entries()) {
+        if (typeof rawGroup !== "string" || rawGroup.trim() === "") {
+          errors.push(`${prefix}.groups[${index}]: must be a non-empty string`);
+          continue;
+        }
+        const group = rawGroup.trim();
+        const normalizedGroup = group.toLowerCase();
+        if (seenGroups.has(normalizedGroup)) {
+          errors.push(`${prefix}.groups[${index}]: duplicate group "${group}"`);
+          continue;
+        }
+        seenGroups.add(normalizedGroup);
+        groups.push(group);
+      }
+      normalized.groups = groups;
     }
   }
 
@@ -1126,6 +1155,7 @@ export const loadWorkspaceRepositories = async (
   for (const [name, repoConfig] of Object.entries(config.repos)) {
     repositories.push({
       gitUrl: repoConfig.gitUrl,
+      groups: repoConfig.groups,
       name,
       path: resolve(workspaceRoot, repoConfig.path),
     });

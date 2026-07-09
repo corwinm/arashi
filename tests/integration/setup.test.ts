@@ -49,18 +49,26 @@ async function createWorkspace(
     hooks?: { timeout: number };
     repos: Record<
       string,
-      { path: string; defaultBranch: string; isBare: boolean; worktrees: never[] }
+      {
+        path: string;
+        defaultBranch: string;
+        groups?: string[];
+        isBare: boolean;
+        worktrees: never[];
+      }
     >;
   } = {
     repos: {
       "repo-a": {
         defaultBranch: "main",
+        groups: ["core", "shared"],
         isBare: false,
         path: "./repos/repo-a",
         worktrees: [],
       },
       "repo-b": {
         defaultBranch: "main",
+        groups: ["docs", "shared"],
         isBare: false,
         path: "./repos/repo-b",
         worktrees: [],
@@ -141,6 +149,22 @@ describe("setup command", () => {
     });
 
     const result = await runSetup(workspaceRoot, ["--only", "repo-a"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("repo-a: success");
+    expect(result.stdout).toContain("workspace: skipped");
+    expect(result.stdout).toContain("repo-b: skipped");
+    expect(result.stdout).toContain("excluded: 2");
+  });
+
+  test("executes only repositories selected by --group", async () => {
+    const { workspaceRoot } = await createWorkspace(testDir, {
+      mainSetup: "#!/bin/sh\necho main\n",
+      repoASetup: "#!/bin/sh\necho repo-a\n",
+      repoBSetup: "#!/bin/sh\necho repo-b\n",
+    });
+
+    const result = await runSetup(workspaceRoot, ["--group", "core"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("repo-a: success");

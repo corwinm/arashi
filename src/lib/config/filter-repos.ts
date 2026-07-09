@@ -1,4 +1,5 @@
 import type { RepoConfig } from "../config.ts";
+import { normalizeFilterList } from "../repo-filter.ts";
 
 export interface FilteredRepository {
   name: string;
@@ -8,58 +9,70 @@ export interface FilteredRepository {
 export interface FilterReposResult {
   repositories: FilteredRepository[];
   missing: string[];
+  unknownGroups: string[];
+  emptyIntersection: boolean;
+  filters: {
+    only: string[];
+    groups: string[];
+  };
 }
 
 export function normalizeOnlyList(only?: string | string[]): string[] {
-  if (!only) {
-    return [];
-  }
-
-  const raw = Array.isArray(only) ? only : only.split(",");
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  for (const value of raw) {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      continue;
-    }
-    if (!seen.has(trimmed)) {
-      seen.add(trimmed);
-      result.push(trimmed);
-    }
-  }
-
-  return result;
+  return normalizeFilterList(only);
 }
+
+const repoMatchesAnyGroup = (repo: RepoConfig, groups: string[]): boolean => {
+  if (groups.length === 0) {
+    return true;
+  }
+  const repoGroups = new Set((repo.groups ?? []).map((group) => group.toLowerCase()));
+  return groups.some((group) => repoGroups.has(group.toLowerCase()));
+};
 
 export function filterRepositories(
   repos: Record<string, RepoConfig>,
   only?: string | string[],
+  groups?: string | string[],
 ): FilterReposResult {
   const onlyList = normalizeOnlyList(only);
+  const groupList = normalizeFilterList(groups);
+  const configuredGroups = new Set(
+    Object.values(repos)
+      .flatMap((repo) => repo.groups ?? [])
+      .map((group) => group.toLowerCase()),
+  );
+  const unknownGroups = groupList.filter((group) => !configuredGroups.has(group.toLowerCase()));
 
-  if (onlyList.length === 0) {
-    return {
-      missing: [],
-      repositories: Object.entries(repos).map(([name, config]) => ({
-        config,
-        name,
-      })),
-    };
-  }
-
-  const repositories: FilteredRepository[] = [];
+  const candidates: FilteredRepository[] = [];
   const missing: string[] = [];
 
-  for (const name of onlyList) {
-    const config = repos[name];
-    if (!config) {
-      missing.push(name);
-      continue;
+  if (onlyList.length === 0) {
+    candidates.push(...Object.entries(repos).map(([name, config]) => ({ config, name })));
+  } else {
+    for (const name of onlyList) {
+      const config = repos[name];
+      if (!config) {
+        missing.push(name);
+        continue;
+      }
+      candidates.push({ config, name });
     }
-    repositories.push({ config, name });
   }
 
-  return { missing, repositories };
+  const repositories =
+    unknownGroups.length > 0
+      ? []
+      : candidates.filter((repo) => repoMatchesAnyGroup(repo.config, groupList));
+
+  return {
+    emptyIntersection:
+      missing.length === 0 &&
+      unknownGroups.length === 0 &&
+      (onlyList.length > 0 || groupList.length > 0) &&
+      repositories.length === 0,
+    filters: { groups: groupList, only: onlyList },
+    missing,
+    repositories,
+    unknownGroups,
+  };
 }

@@ -133,6 +133,13 @@
           "description": "Canonical git URL for cloning the repository",
           "type": "string"
         },
+        "groups": {
+          "description": "Optional semantic groups this repository belongs to",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "path": {
           "description": "Path to the repository (relative or absolute)",
           "type": "string"

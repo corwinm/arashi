@@ -82,6 +82,7 @@ async function createWorkspaceWithRepo(
     repos: {
       "repo-a": {
         defaultBranch: "main",
+        groups: ["children"],
         isBare: false,
         path: "./repos/repo-a",
         worktrees: [],
@@ -182,6 +183,23 @@ describe("pull command", () => {
       await createRemoteCommit(repoRemote, testDir, "repo-remote-update-only", "repo-only.txt");
 
       const result = await runPullCommand(workspaceRoot, ["--only", "repo-a"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("repo-a");
+      expect(result.stdout).not.toContain("workspace");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
+
+  test(
+    "respects --group repository filtering",
+    async () => {
+      const { workspaceRoot, mainRemote, repoRemote } = await createWorkspaceWithRepo(testDir);
+
+      await createRemoteCommit(mainRemote, testDir, "main-remote-update-group", "main-group.txt");
+      await createRemoteCommit(repoRemote, testDir, "repo-remote-update-group", "repo-group.txt");
+
+      const result = await runPullCommand(workspaceRoot, ["--group", "children"]);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("repo-a");
