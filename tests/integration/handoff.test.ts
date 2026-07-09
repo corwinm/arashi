@@ -1,0 +1,195 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
+
+const CLI_ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");
+
+interface CommandResult {
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+}
+
+const tempDirs: string[] = [];
+
+const makeTempDir = async (): Promise<string> => {
+  const path = await mkdtemp(join(tmpdir(), "arashi-handoff-"));
+  tempDirs.push(path);
+  return path;
+};
+
+const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> => {
+  const proc = Bun.spawn(args, {
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  return { exitCode, stderr, stdout };
+};
+
+const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> =>
+  await runCommand(cwd, ["bun", CLI_ENTRY, ...args]);
+
+const runGit = async (cwd: string, args: string[]): Promise<string> => {
+  const result = await runCommand(cwd, ["git", ...args]);
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || result.stdout.trim() || "Git command failed");
+  }
+
+  return result.stdout.trim();
+};
+
+const initializeGitRepository = async (repoPath: string): Promise<void> => {
+  await mkdir(repoPath, { recursive: true });
+  await runGit(repoPath, ["init", "-b", "main"]);
+  await runGit(repoPath, ["config", "user.email", "test@example.com"]);
+  await runGit(repoPath, ["config", "user.name", "Test User"]);
+  await writeFile(join(repoPath, "README.md"), `# ${repoPath}\n`);
+  await runGit(repoPath, ["add", "."]);
+  await runGit(repoPath, ["commit", "-m", "Initial commit"]);
+};
+
+const writeWorkspaceConfig = async (workspaceRoot: string): Promise<void> => {
+  await mkdir(join(workspaceRoot, ".arashi"), { recursive: true });
+  await writeFile(
+    join(workspaceRoot, ".arashi", "config.json"),
+    JSON.stringify(
+      {
+        repos: {
+          "repo-a": { path: "./repos/repo-a" },
+          "repo-b": { path: "./repos/repo-b" },
+        },
+        reposDir: "./repos",
+        version: "1.0.0",
+      },
+      null,
+      2,
+    ),
+  );
+};
+
+const createWorkspace = async (): Promise<string> => {
+  const workspaceRoot = await makeTempDir();
+  await initializeGitRepository(workspaceRoot);
+  await initializeGitRepository(join(workspaceRoot, "repos", "repo-a"));
+  await initializeGitRepository(join(workspaceRoot, "repos", "repo-b"));
+  await writeWorkspaceConfig(workspaceRoot);
+  await writeFile(join(workspaceRoot, ".gitignore"), "repos/\n");
+  await runGit(workspaceRoot, ["add", ".arashi/config.json", ".gitignore"]);
+  await runGit(workspaceRoot, ["commit", "-m", "Add Arashi config"]);
+
+  return workspaceRoot;
+};
+
+const parseJson = (stdout: string): Record<string, unknown> => {
+  expect(stdout.endsWith("\n")).toBe(true);
+  const parsed = JSON.parse(stdout) as Record<string, unknown>;
+  expect(`${JSON.stringify(parsed, null, 2)}\n`).toBe(stdout);
+  return parsed;
+};
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((path) => rm(path, { force: true, recursive: true })));
+});
+
+describe("handoff command", () => {
+  test("generates a Markdown workspace handoff report with supplied context", async () => {
+    const workspaceRoot = await createWorkspace();
+    const resolvedWorkspaceRoot = await realpath(workspaceRoot);
+    const resolvedRepoB = await realpath(join(workspaceRoot, "repos", "repo-b"));
+    await writeFile(join(workspaceRoot, "repos", "repo-b", "dirty.txt"), "dirty\n");
+
+    const result = await runArashi(join(workspaceRoot, "repos", "repo-b"), [
+      "handoff",
+      "--link",
+      "https://github.com/corwinm/arashi-arashi/issues/186",
+      "--validation",
+      "bun run test — passed",
+      "--todo",
+      "watch CI",
+      "--risk",
+      "Windows CI pending",
+      "--next-command",
+      "gh pr checks 123 --repo corwinm/arashi",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("# Arashi Handoff Report");
+    expect(result.stdout).toContain(`- Path: ${resolvedWorkspaceRoot}`);
+    expect(result.stdout).toContain("- Branch: main");
+    expect(result.stdout).toContain(`Current repository: repo-b (${resolvedRepoB})`);
+    expect(result.stdout).toContain("repo-b: dirty; branch main; 1 changed file");
+    expect(result.stdout).toContain("https://github.com/corwinm/arashi-arashi/issues/186");
+    expect(result.stdout).toContain("bun run test — passed");
+    expect(result.stdout).toContain("- [ ] watch CI");
+    expect(result.stdout).toContain("Windows CI pending");
+    expect(result.stdout).toContain("`gh pr checks 123 --repo corwinm/arashi`");
+    expect(result.stdout).toContain("`arashi status --verbose`");
+  });
+
+  test("emits one JSON envelope preserving supplied context and status data", async () => {
+    const workspaceRoot = await createWorkspace();
+    const resolvedWorkspaceRoot = await realpath(workspaceRoot);
+    await writeFile(join(workspaceRoot, "repos", "repo-a", "dirty.txt"), "dirty\n");
+
+    const result = await runArashi(workspaceRoot, [
+      "handoff",
+      "--json",
+      "--link",
+      "https://example.test/pr/1",
+      "--validation",
+      "openspec validate add-agent-handoff-report — passed",
+      "--todo",
+      "finish docs",
+      "--risk",
+      "deploy preview pending",
+      "--next-command",
+      "arashi status",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).not.toContain("# Arashi Handoff Report");
+    const parsed = parseJson(result.stdout);
+    expect(parsed).toMatchObject({ command: "handoff", ok: true, schemaVersion: 1 });
+    const data = parsed.data as Record<string, unknown>;
+    expect(data.workspace).toMatchObject({ branch: "main", path: resolvedWorkspaceRoot });
+    expect(data.context).toMatchObject({
+      links: ["https://example.test/pr/1"],
+      nextCommands: ["arashi status"],
+      risks: ["deploy preview pending"],
+      todos: ["finish docs"],
+      validations: ["openspec validate add-agent-handoff-report — passed"],
+    });
+    expect(data.summary).toMatchObject({ cleanCount: 2, dirtyCount: 1, total: 3, touchedCount: 1 });
+    const repositories = data.repositories as Record<string, unknown>[];
+    expect(repositories.find((repo) => repo.name === "repo-a")).toMatchObject({
+      changeCount: 1,
+      state: "dirty",
+    });
+  });
+
+  test("returns a structured JSON error outside a workspace", async () => {
+    const outside = await makeTempDir();
+
+    const result = await runArashi(outside, ["handoff", "--json"]);
+
+    expect(result.exitCode).toBe(2);
+    const parsed = parseJson(result.stdout);
+    expect(parsed).toMatchObject({
+      command: "handoff",
+      error: { code: "NOT_IN_WORKSPACE" },
+      ok: false,
+      schemaVersion: 1,
+    });
+  });
+});

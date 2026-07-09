@@ -57,7 +57,7 @@ const countRepoChanges = (status: RepoStatus) => {
   return { modifiedCount, stagedCount, untrackedCount };
 };
 
-const summarizeStatuses = (statuses: RepoStatus[]) => {
+export const summarizeStatuses = (statuses: RepoStatus[]) => {
   const cleanCount = statuses.filter(
     (status) => status.files.length === ZERO && !status.error,
   ).length;
@@ -744,7 +744,7 @@ export const formatShortOutput = (statuses: RepoStatus[]): string => {
  *
  * @param options - Command options
  */
-const collectStatusWarnings = (statuses: RepoStatus[]): JsonWarning[] =>
+export const collectStatusWarnings = (statuses: RepoStatus[]): JsonWarning[] =>
   statuses.flatMap((status) => {
     const warnings: JsonWarning[] = [];
     if (status.refreshWarning) {

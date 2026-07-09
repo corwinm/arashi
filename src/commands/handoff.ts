@@ -1,0 +1,383 @@
+/**
+ * CLI Command: Handoff
+ *
+ * Generates a non-mutating Markdown or JSON handoff report for the current
+ * coordinated Arashi workspace.
+ */
+
+import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
+import type { JsonWarning } from "../lib/json-output.ts";
+import type { RepoStatus } from "./status.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
+import { checkAllRepos, collectStatusWarnings, summarizeStatuses } from "./status.ts";
+import { Command } from "commander";
+import { info, error as logError } from "../lib/logger.js";
+import { relative, resolve } from "path";
+
+const ZERO = 0;
+const USAGE_EXIT_CODE = 2;
+const ERROR_EXIT_CODE = 1;
+
+export interface HandoffOptions {
+  json?: boolean;
+  link?: string[];
+  nextCommand?: string[];
+  risk?: string[];
+  todo?: string[];
+  validation?: string[];
+}
+
+interface HandoffContext {
+  links: string[];
+  nextCommands: string[];
+  risks: string[];
+  todos: string[];
+  validations: string[];
+}
+
+interface HandoffRepositorySummary {
+  branch: RepoStatus["branch"];
+  changeCount: number;
+  defaultBranch: RepoStatus["defaultBranch"];
+  error: string | null;
+  files: RepoStatus["files"];
+  name: string;
+  path: string;
+  refreshWarning: RepoStatus["refreshWarning"];
+  state: "clean" | "dirty" | "error";
+}
+
+interface HandoffData {
+  context: HandoffContext;
+  currentRepository: { name: string; path: string } | null;
+  effectiveOptions: {
+    format: "json" | "markdown";
+  };
+  generatedNextCommands: string[];
+  repositories: HandoffRepositorySummary[];
+  summary: ReturnType<typeof summarizeStatuses> & {
+    touchedCount: number;
+  };
+  workspace: {
+    branch: string;
+    path: string;
+  };
+}
+
+const normalizeArray = (value: string[] | undefined): string[] => value ?? [];
+
+const isInsidePath = (candidate: string, parent: string): boolean => {
+  const rel = relative(parent, candidate);
+  return rel === "" || (!rel.startsWith("..") && !resolve(rel).startsWith(".."));
+};
+
+const detectCurrentRepository = (
+  cwd: string,
+  statuses: RepoStatus[],
+): { name: string; path: string } | null => {
+  const current = statuses.reduce<RepoStatus | null>((best, status) => {
+    if (!isInsidePath(cwd, status.path)) {
+      return best;
+    }
+    if (!best || status.path.length > best.path.length) {
+      return status;
+    }
+    return best;
+  }, null);
+  if (!current) {
+    return null;
+  }
+
+  return { name: current.name, path: current.path };
+};
+
+const formatBranch = (status: RepoStatus): string => {
+  if (status.branch.isDetached) {
+    return "detached HEAD";
+  }
+
+  let value = status.branch.localBranch || "unknown";
+  if (status.refreshWarning?.kind === "missing-remote-ref") {
+    return `${value} (${status.refreshWarning.message})`;
+  }
+  if (status.branch.remoteBranch) {
+    value += ` → ${status.branch.remoteBranch}`;
+  }
+
+  const drift: string[] = [];
+  if (status.branch.ahead > ZERO) {
+    drift.push(`ahead ${status.branch.ahead}`);
+  }
+  if (status.branch.behind > ZERO) {
+    drift.push(`behind ${status.branch.behind}`);
+  }
+  if (drift.length > ZERO) {
+    value += ` (${drift.join(", ")})`;
+  }
+
+  return value;
+};
+
+const statusState = (status: RepoStatus): HandoffRepositorySummary["state"] => {
+  if (status.error) {
+    return "error";
+  }
+  if (status.files.length > ZERO) {
+    return "dirty";
+  }
+  return "clean";
+};
+
+const summarizeRepo = (status: RepoStatus): HandoffRepositorySummary => ({
+  branch: status.branch,
+  changeCount: status.files.length,
+  defaultBranch: status.defaultBranch,
+  error: status.error,
+  files: status.files,
+  name: status.name,
+  path: status.path,
+  refreshWarning: status.refreshWarning,
+  state: statusState(status),
+});
+
+const collectGeneratedNextCommands = (statuses: RepoStatus[]): string[] => {
+  const commands = ["arashi status"];
+  if (
+    statuses.some(
+      (status) =>
+        status.error ||
+        status.files.length > ZERO ||
+        status.branch.ahead > ZERO ||
+        status.branch.behind > ZERO ||
+        status.refreshWarning,
+    )
+  ) {
+    commands.push("arashi status --verbose");
+  }
+  return commands;
+};
+
+const buildHandoffData = (
+  workspaceRoot: string,
+  cwd: string,
+  statuses: RepoStatus[],
+  options: HandoffOptions,
+): HandoffData => {
+  const summary = summarizeStatuses(statuses);
+  const touchedCount = statuses.filter(
+    (status) => status.files.length > ZERO || status.error,
+  ).length;
+  const mainRepository =
+    statuses.find((status) => status.name === "Main Repository") ?? statuses[ZERO];
+
+  return {
+    context: {
+      links: normalizeArray(options.link),
+      nextCommands: normalizeArray(options.nextCommand),
+      risks: normalizeArray(options.risk),
+      todos: normalizeArray(options.todo),
+      validations: normalizeArray(options.validation),
+    },
+    currentRepository: detectCurrentRepository(cwd, statuses),
+    effectiveOptions: {
+      format: options.json ? "json" : "markdown",
+    },
+    generatedNextCommands: collectGeneratedNextCommands(statuses),
+    repositories: statuses.map((status) => summarizeRepo(status)),
+    summary: {
+      ...summary,
+      touchedCount,
+    },
+    workspace: {
+      branch: mainRepository?.branch.localBranch || "unknown",
+      path: workspaceRoot,
+    },
+  };
+};
+
+const markdownList = (items: string[], emptyText: string): string => {
+  if (items.length === ZERO) {
+    return `- ${emptyText}\n`;
+  }
+  return `${items.map((item) => `- ${item}`).join("\n")}\n`;
+};
+
+const markdownChecklist = (items: string[], emptyText: string): string => {
+  if (items.length === ZERO) {
+    return `- [ ] ${emptyText}\n`;
+  }
+  return `${items.map((item) => `- [ ] ${item}`).join("\n")}\n`;
+};
+
+const formatRepositoryLine = (repo: HandoffRepositorySummary): string => {
+  const stateLabel = repo.state === "clean" ? "clean" : repo.state;
+  const parts = [`${repo.name}: ${stateLabel}`, `branch ${formatBranch(repo as RepoStatus)}`];
+  if (repo.changeCount > ZERO) {
+    parts.push(`${repo.changeCount} changed file${repo.changeCount === 1 ? "" : "s"}`);
+  }
+  if (repo.error) {
+    parts.push(repo.error);
+  }
+  if (repo.refreshWarning && repo.refreshWarning.kind !== "missing-remote-ref") {
+    parts.push(repo.refreshWarning.message);
+  }
+  if (repo.defaultBranch?.state === "available" && repo.defaultBranch.behind > ZERO) {
+    parts.push(`default ${repo.defaultBranch.branch} behind by ${repo.defaultBranch.behind}`);
+  }
+  if (repo.defaultBranch?.state === "unavailable") {
+    parts.push(`default ${repo.defaultBranch.branch} unavailable`);
+  }
+  return `- ${parts.join("; ")}`;
+};
+
+export const renderMarkdownReport = (data: HandoffData): string => {
+  const touchedRepos = data.repositories.filter((repo) => repo.state !== "clean");
+  const repoLines = data.repositories.map(formatRepositoryLine).join("\n");
+  const touchedLines =
+    touchedRepos.length > ZERO
+      ? `${touchedRepos.map((repo) => formatRepositoryLine(repo)).join("\n")}\n`
+      : "- All managed repositories are clean.\n";
+  const userNextCommands = data.context.nextCommands;
+  const generatedNextCommands = data.generatedNextCommands.filter(
+    (command) => !userNextCommands.includes(command),
+  );
+  const commandBlock = [...userNextCommands, ...generatedNextCommands]
+    .map((command) => `\`${command}\``)
+    .join("\n");
+
+  return `# Arashi Handoff Report
+
+## Workspace
+
+- Path: ${data.workspace.path}
+- Branch: ${data.workspace.branch}
+- Current repository: ${data.currentRepository ? `${data.currentRepository.name} (${data.currentRepository.path})` : "not resolved"}
+
+## Summary
+
+- Repositories: ${data.summary.total} total, ${data.summary.cleanCount} clean, ${data.summary.dirtyCount} dirty/error
+- Touched repositories: ${data.summary.touchedCount}
+
+## Repository Status
+
+${repoLines}
+
+## Repositories Needing Attention
+
+${touchedLines}
+## Related Links
+
+${markdownList(data.context.links, "No related links supplied.")}
+## Validation Evidence
+
+${markdownList(data.context.validations, "No validation evidence supplied. Add commands/results before relying on this report for merge readiness.")}
+## Remaining Work
+
+${markdownChecklist(data.context.todos, "No remaining work supplied.")}
+## Risks / Blockers
+
+${markdownList(data.context.risks, "No risks or blockers supplied.")}
+## Suggested Next Commands
+
+${commandBlock ? `${commandBlock}\n` : "- No next commands suggested.\n"}
+`;
+};
+
+const runHandoff = async (options: HandoffOptions): Promise<void> => {
+  let workspaceRoot = "";
+  try {
+    workspaceRoot = await findWorkspaceRoot();
+  } catch {
+    const message = "Not in an arashi workspace";
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("handoff", {
+          code: "NOT_IN_WORKSPACE",
+          message,
+        }),
+      );
+    } else {
+      logError(message);
+      info("Run 'arashi init' to initialize a workspace before creating a handoff report");
+    }
+    process.exit(USAGE_EXIT_CODE);
+  }
+
+  try {
+    const config = await loadConfig(workspaceRoot);
+    const statuses = await checkAllRepos(workspaceRoot, config, false);
+    const data = buildHandoffData(workspaceRoot, process.cwd(), statuses, options);
+    const warnings: JsonWarning[] = collectStatusWarnings(statuses);
+
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonSuccessEnvelope<Record<string, unknown>>(
+          "handoff",
+          data as unknown as Record<string, unknown>,
+          warnings,
+        ),
+      );
+    } else {
+      process.stdout.write(renderMarkdownReport(data));
+    }
+
+    if (statuses.some((status) => status.error !== null)) {
+      process.exit(ERROR_EXIT_CODE);
+    }
+  } catch (error) {
+    if (options.json) {
+      writeJsonEnvelope(createJsonErrorEnvelope("handoff", unknownErrorToJsonError(error)));
+    } else {
+      logError(error instanceof Error ? error.message : String(error));
+    }
+    process.exit(ERROR_EXIT_CODE);
+  }
+};
+
+const collectRepeated = (value: string, previous: string[] = []): string[] => [...previous, value];
+
+export const createCommand = (): Command =>
+  new Command("handoff")
+    .description("Generate a Markdown or JSON handoff report for the current workspace")
+    .option("--json", "Output a structured JSON envelope instead of Markdown")
+    .option("--markdown", "Output Markdown (default)")
+    .option(
+      "--link <link>",
+      "Related issue, PR, spec, or reference link (repeatable)",
+      collectRepeated,
+    )
+    .option(
+      "--validation <entry>",
+      "Validation command and result evidence, e.g. 'bun run test — passed' (repeatable)",
+      collectRepeated,
+    )
+    .option(
+      "--todo <item>",
+      "Remaining work item to include as a checklist entry (repeatable)",
+      collectRepeated,
+    )
+    .option(
+      "--risk <item>",
+      "Known risk or blocker to include in the report (repeatable)",
+      collectRepeated,
+    )
+    .option(
+      "--next-command <command>",
+      "Suggested next command, not executed (repeatable)",
+      collectRepeated,
+    )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ arashi handoff --link https://github.com/corwinm/arashi-arashi/issues/186
+  $ arashi handoff --validation "bun run test — passed" --todo "watch CI"
+  $ arashi handoff --json --next-command "arashi status --verbose"
+      `,
+    )
+    .action(runHandoff);
