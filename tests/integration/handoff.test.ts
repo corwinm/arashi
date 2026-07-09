@@ -127,7 +127,10 @@ describe("handoff command", () => {
     expect(result.stdout).toContain("- Path: ");
     expect(result.stdout).toContain(basename(resolvedWorkspaceRoot));
     expect(result.stdout).toContain("- Branch: main");
-    expect(result.stdout).toContain(`Current repository: repo-b (${resolvedRepoB})`);
+    expect(result.stdout).toContain("Current repository: repo-b (");
+    expect(result.stdout).toContain(
+      `${basename(resolvedWorkspaceRoot)}${/^[A-Za-z]:/.test(resolvedRepoB) ? "\\\\" : "/"}repos${/^[A-Za-z]:/.test(resolvedRepoB) ? "\\\\" : "/"}repo-b`,
+    );
     expect(result.stdout).toContain("repo-b: dirty; branch main; 1 changed file");
     expect(result.stdout).toContain("https://github.com/corwinm/arashi-arashi/issues/186");
     expect(result.stdout).toContain("bun run test — passed");
