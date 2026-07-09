@@ -1,3 +1,13 @@
+## [1.18.0](https://github.com/corwinm/arashi/compare/v1.17.0...v1.18.0) (2026-07-09)
+
+### Features
+
+- add arashi exec command ([#79](https://github.com/corwinm/arashi/issues/79)) ([c0ea19f](https://github.com/corwinm/arashi/commit/c0ea19ff2ca3f465b7613a222a827eb4ba516135))
+- add coordinated push command ([#80](https://github.com/corwinm/arashi/issues/80)) ([1570c1c](https://github.com/corwinm/arashi/commit/1570c1c9c8af1ce64d1b3b3e2d40c200faf87064))
+- add remove dry-run preview ([#78](https://github.com/corwinm/arashi/issues/78)) ([c510924](https://github.com/corwinm/arashi/commit/c5109249a7e287add4d2c1547264c98f938d4677))
+- add repository group selection ([#82](https://github.com/corwinm/arashi/issues/82)) ([530d729](https://github.com/corwinm/arashi/commit/530d729c092a8be7c8b75dfd7ef20010d6ca6515))
+- add workspace doctor diagnostics ([#81](https://github.com/corwinm/arashi/issues/81)) ([8cc6383](https://github.com/corwinm/arashi/commit/8cc638307724774e559d6b7be90d014235c42a3b))
+
 ## [1.17.0](https://github.com/corwinm/arashi/compare/v1.16.0...v1.17.0) (2026-07-03)
 
 ### Features
