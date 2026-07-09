@@ -104,7 +104,6 @@ describe("handoff command", () => {
   test("generates a Markdown workspace handoff report with supplied context", async () => {
     const workspaceRoot = await createWorkspace();
     const resolvedWorkspaceRoot = await realpath(workspaceRoot);
-    const resolvedRepoB = await realpath(join(workspaceRoot, "repos", "repo-b"));
     await writeFile(join(workspaceRoot, "repos", "repo-b", "dirty.txt"), "dirty\n");
 
     const result = await runArashi(join(workspaceRoot, "repos", "repo-b"), [

@@ -6,8 +6,7 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { info, error as logError } from "../lib/logger.ts";
-import { confirm as promptConfirm } from "../lib/prompts.ts";
-import type { PromptOutcome } from "../lib/prompts.ts";
+import { confirm as promptConfirm, type PromptOutcome } from "../lib/prompts.ts";
 import { Command } from "commander";
 import { dirname } from "node:path";
 import { spawnSync } from "node:child_process";

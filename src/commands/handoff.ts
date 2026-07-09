@@ -5,19 +5,23 @@
  * coordinated Arashi workspace.
  */
 
+import { Command } from "commander";
+import { relative, resolve } from "path";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
-import type { JsonWarning } from "../lib/json-output.ts";
-import type { RepoStatus } from "./status.ts";
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
+  type JsonWarning,
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { checkAllRepos, collectStatusWarnings, summarizeStatuses } from "./status.ts";
-import { Command } from "commander";
 import { info, error as logError } from "../lib/logger.js";
-import { relative, resolve } from "path";
+import {
+  checkAllRepos,
+  collectStatusWarnings,
+  type RepoStatus,
+  summarizeStatuses,
+} from "./status.ts";
 
 const ZERO = 0;
 const USAGE_EXIT_CODE = 2;
@@ -67,6 +71,13 @@ interface HandoffData {
     branch: string;
     path: string;
   };
+}
+
+interface BuildHandoffDataInput {
+  cwd: string;
+  options: HandoffOptions;
+  statuses: RepoStatus[];
+  workspaceRoot: string;
 }
 
 const normalizeArray = (value: string[] | undefined): string[] => value ?? [];
@@ -162,12 +173,12 @@ const collectGeneratedNextCommands = (statuses: RepoStatus[]): string[] => {
   return commands;
 };
 
-const buildHandoffData = (
-  workspaceRoot: string,
-  cwd: string,
-  statuses: RepoStatus[],
-  options: HandoffOptions,
-): HandoffData => {
+const buildHandoffData = ({
+  cwd,
+  options,
+  statuses,
+  workspaceRoot,
+}: BuildHandoffDataInput): HandoffData => {
   const summary = summarizeStatuses(statuses);
   const touchedCount = statuses.filter(
     (status) => status.files.length > ZERO || status.error,
@@ -311,7 +322,12 @@ const runHandoff = async (options: HandoffOptions): Promise<void> => {
   try {
     const config = await loadConfig(workspaceRoot);
     const statuses = await checkAllRepos(workspaceRoot, config, false);
-    const data = buildHandoffData(workspaceRoot, process.cwd(), statuses, options);
+    const data = buildHandoffData({
+      cwd: process.cwd(),
+      options,
+      statuses,
+      workspaceRoot,
+    });
     const warnings: JsonWarning[] = collectStatusWarnings(statuses);
 
     if (options.json) {
