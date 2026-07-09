@@ -143,6 +143,39 @@ describe("sync command - integration", () => {
   );
 
   test(
+    "syncs only repositories selected by group",
+    async () => {
+      await ensureBranchCheckedOut(workspace.rootPath, "feature-group");
+
+      await updateConfig(workspace.rootPath, (config) => ({
+        ...config,
+        repos: {
+          ...config.repos,
+          "repo-a": { ...config.repos["repo-a"], groups: ["core"] },
+          "repo-b": { ...config.repos["repo-b"], groups: ["docs"] },
+        },
+      }));
+
+      for (const repo of workspace.repos) {
+        await ensureBranch(repo.path, "feature-group");
+      }
+
+      const summary = await runSync(workspace.rootPath, { group: "core" });
+
+      expect(summary.successCount).toBe(1);
+      expect(summary.failureCount).toBe(0);
+      expect(summary.results).toHaveLength(1);
+      expect(summary.results[0].repositoryName).toBe("repo-a");
+
+      const repoABranch = await getCurrentBranch(workspace.repos[0].path);
+      const repoBBranch = await getCurrentBranch(workspace.repos[1].path);
+      expect(repoABranch).toBe("feature-group");
+      expect(repoBBranch).toBe("main");
+    },
+    SYNC_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "prints verbose details when enabled",
     async () => {
       await ensureBranchCheckedOut(workspace.rootPath, "feature-verbose");
@@ -195,12 +228,16 @@ describe("sync command - integration", () => {
   );
 });
 
-async function runSync(workspaceRoot: string, options?: { only?: string; verbose?: boolean }) {
+async function runSync(
+  workspaceRoot: string,
+  options?: { group?: string; only?: string; verbose?: boolean },
+) {
   const originalCwd = process.cwd();
   process.chdir(workspaceRoot);
 
   try {
     return await executeSync({
+      group: options?.group,
       only: options?.only,
       verbose: options?.verbose,
     });
