@@ -5,6 +5,7 @@
  * Supports repository filtering, conflict resolution, progress tracking, and automatic rollback.
  */
 
+import { Command, Option } from "commander";
 import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
 import {
   ConflictAbortedError,
@@ -22,10 +23,7 @@ import {
   executeMovePlan,
   findWorkspaceByPath,
   resolveWorkspaceReference,
-  type MoveSummary,
-  type WorkspaceSelection,
 } from "../core/move.ts";
-import { error, info, success, warn } from "../lib/logger.ts";
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
@@ -33,16 +31,18 @@ import {
   unsupportedJsonModeError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { Command, Option } from "commander";
+import { error, info, success, warn } from "../lib/logger.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec } from "../lib/git.ts";
+import { filterRepositories as filterWorkspaceRepositories } from "../lib/repo-filter.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
-import { filterRepositories as filterWorkspaceRepositories } from "../lib/repo-filter.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
+type MoveSummary = Awaited<ReturnType<typeof executeMovePlan>>;
+type WorkspaceSelection = Awaited<ReturnType<typeof resolveWorkspaceReference>>;
 type ConflictResolutionStrategy = "ABORT" | "REUSE_EXISTING" | "CREATE_ALTERNATE";
 type HookOutcomeRecord = Awaited<
   ReturnType<typeof createCoordinatedWorktrees>
@@ -146,19 +146,26 @@ const writeCreateJsonError = (createError: unknown): void => {
   );
 };
 
-const createSummaryJsonData = (
-  branchName: string,
-  summary: OperationSummary,
-  dirtyWorkspaceGuidance?: ReturnType<typeof buildDirtyGuidance>,
-  moveSummary?: MoveSummary | null,
-) => ({
+interface CreateSummaryJsonOptions {
+  branchName: string;
+  dirtyWorkspaceGuidance?: ReturnType<typeof buildDirtyGuidance>;
+  moveSummary?: MoveSummary | null;
+  summary: OperationSummary;
+}
+
+const createSummaryJsonData = ({
   branchName,
   dirtyWorkspaceGuidance,
   moveSummary,
+  summary,
+}: CreateSummaryJsonOptions) => ({
+  branchName,
+  dirtyWorkspaceGuidance,
   dryRun: summary.isDryRun === true,
   errorSummary: summary.errorSummary,
   failureCount: summary.failureCount,
   hookOutcomes: summary.hookOutcomes,
+  moveSummary,
   nextSteps: summary.nextSteps,
   repositories: summary.repositoryResults.map((result) => ({
     branchName: result.branchName,
@@ -693,7 +700,7 @@ export async function executeCreate(
   }
 
   // 4. Apply repository filters. Group filters are shared with other repo-selecting commands;
-  // interactive mode then prompts from the narrowed repository set.
+  // Interactive mode then prompts from the narrowed repository set.
   const groupFilterResult = filterWorkspaceRepositories(
     allRepositories,
     options.only,
@@ -800,7 +807,7 @@ export async function executeCreate(
     writeJsonEnvelope(
       createJsonSuccessEnvelope(
         "create",
-        createSummaryJsonData(branchName, summary, dirtyWorkspaceGuidance, moveSummary),
+        createSummaryJsonData({ branchName, dirtyWorkspaceGuidance, moveSummary, summary }),
       ),
     );
     if (summary.rolledBack || summary.failureCount > ZERO) {

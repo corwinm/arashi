@@ -392,7 +392,7 @@ export const executeMovePlan = async (plan: MovePlan): Promise<MoveSummary> => {
   const results: MoveRepositoryResult[] = [];
 
   for (const item of plan.items) {
-    let stashRef: string | undefined;
+    let stashRef: string | undefined = undefined;
     try {
       await exec(
         ["stash", "push", "--include-untracked", "-m", makeStashMessage(item.repositoryName)],
@@ -415,8 +415,8 @@ export const executeMovePlan = async (plan: MovePlan): Promise<MoveSummary> => {
           await exec(["stash", "apply", "--index", stashRef], item.sourcePath);
           results.push({
             message: `Target apply failed; source changes were restored. ${message}`,
-            repositoryName: item.repositoryName,
             recoveryCommand: `git -C ${JSON.stringify(item.sourcePath)} stash apply --index ${stashRef}`,
+            repositoryName: item.repositoryName,
             sourcePath: item.sourcePath,
             stashRef,
             status: "restored",
@@ -425,8 +425,8 @@ export const executeMovePlan = async (plan: MovePlan): Promise<MoveSummary> => {
         } catch {
           results.push({
             message: `Move failed; recovery stash was preserved. ${message}`,
-            repositoryName: item.repositoryName,
             recoveryCommand: `git -C ${JSON.stringify(item.sourcePath)} stash apply --index ${stashRef}`,
+            repositoryName: item.repositoryName,
             sourcePath: item.sourcePath,
             stashRef,
             status: "manual-recovery",
@@ -471,7 +471,7 @@ export const buildDirtyGuidance = (
   source: WorkspaceSelection,
   target: WorkspaceSelection,
 ): null | {
-  changedRepositories: Array<{ repositoryName: string; path: string; summary: string }>;
+  changedRepositories: { repositoryName: string; path: string; summary: string }[];
   command: string;
   target: string;
 } => {

@@ -5,12 +5,12 @@
  * Tests cover coordinated worktree creation, conflict detection, filtering, and hooks
  */
 
-import { describe, expect, test } from "bun:test";
 import {
   applyRepositoryFilter,
   isValidBranchName,
   resolveWorktreeStatuses,
 } from "../../../src/core/worktree.ts";
+import { describe, expect, test } from "bun:test";
 import { mapHookExecutionResult, mapHookSkippedOutcome } from "../../../src/lib/hooks.ts";
 import type { Repository } from "../../../src/core/repository.ts";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";

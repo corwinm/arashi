@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { basename, join } from "path";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 
 const CLI_ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");

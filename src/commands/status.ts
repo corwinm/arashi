@@ -18,10 +18,10 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
-import { filterRepositories } from "../lib/config/filter-repos.ts";
 import { getFullGitStatus, getGitStatus } from "../lib/git.js";
 import { info, error as logError, spinner } from "../lib/logger.js";
 import { Command } from "commander";
+import { filterRepositories } from "../lib/config/filter-repos.ts";
 import { resolve } from "path";
 import { stat } from "fs/promises";
 

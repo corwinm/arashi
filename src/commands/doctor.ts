@@ -1,19 +1,18 @@
-import { Command } from "commander";
-import chalk from "chalk";
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import {
-  runDoctor,
-  type DoctorFinding,
-  type DoctorResult,
-  type DoctorSeverity,
-} from "../lib/doctor.ts";
+import { Command } from "commander";
+import chalk from "chalk";
+import { runDoctor } from "../lib/doctor.ts";
 
 const ZERO = 0;
 const ERROR_EXIT_CODE = 1;
+
+type DoctorResult = Awaited<ReturnType<typeof runDoctor>>;
+type DoctorFinding = DoctorResult["findings"][number];
+type DoctorSeverity = DoctorFinding["severity"];
 
 export interface DoctorOptions {
   json?: boolean;
@@ -46,8 +45,7 @@ const groupBySeverity = (findings: DoctorFinding[]): Record<DoctorSeverity, Doct
 });
 
 export const formatDoctorHumanOutput = (result: DoctorResult): string => {
-  const lines: string[] = [];
-  lines.push(chalk.bold("Arashi workspace doctor"));
+  const lines: string[] = [chalk.bold("Arashi workspace doctor")];
   if (result.workspaceRoot) {
     lines.push(`Workspace: ${result.workspaceRoot}`);
   }

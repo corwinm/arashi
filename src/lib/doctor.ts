@@ -1,16 +1,20 @@
-import { discoverPrunableWorktrees, type RepositoryTarget } from "../core/remove.ts";
 import {
   GLOBAL_HOOKS,
   getRepoSpecificHookName,
   resolveScopedLifecycleHooks,
   validateHook,
 } from "./hooks.ts";
-import { findWorkspaceRoot, getConfigPath, loadConfig, type Config } from "./config.ts";
-import { checkAllRepos, isMissingRepositoryStatus, type RepoStatus } from "../commands/status.ts";
-import { readdir } from "fs/promises";
 import { basename, join, resolve } from "path";
+import { checkAllRepos, isMissingRepositoryStatus } from "../commands/status.ts";
+import { findWorkspaceRoot, getConfigPath, loadConfig } from "./config.ts";
+import { discoverPrunableWorktrees } from "../core/remove.ts";
+import { readdir } from "fs/promises";
 
 const ZERO = 0;
+
+type Config = Awaited<ReturnType<typeof loadConfig>>;
+type RepoStatus = Awaited<ReturnType<typeof checkAllRepos>>[number];
+type RepositoryTarget = Parameters<typeof discoverPrunableWorktrees>[0][number];
 
 export type DoctorSeverity = "error" | "warning" | "info";
 export type DoctorCategory =
@@ -446,11 +450,7 @@ const collectHookFindings = async (
   return findings;
 };
 
-const collectShellAndInstallHints = (): DoctorFinding[] => {
-  // Keep environment checks conservative: unknown shell/install state should not
-  // create noise or failures unless a future safe detector can prove a condition.
-  return [];
-};
+const collectShellAndInstallHints = (): DoctorFinding[] => [];
 
 export const runDoctor = async (): Promise<DoctorResult> => {
   const findings: DoctorFinding[] = [];
@@ -478,7 +478,7 @@ export const runDoctor = async (): Promise<DoctorResult> => {
     };
   }
 
-  let config: Config;
+  let config: Config | undefined = undefined;
   try {
     config = await loadConfig(workspaceRoot);
   } catch (error) {

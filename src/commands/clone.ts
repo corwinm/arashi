@@ -5,20 +5,21 @@ import {
 } from "../lib/clone-discovery.ts";
 import { clone as cloneRepository, exec } from "../lib/git.ts";
 import {
-  findWorkspaceRoot,
-  loadConfig,
-  normalizeConfig,
-  repairRepositoryGitUrls,
-  saveConfig,
-} from "../lib/config.ts";
-import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
   unknownErrorToJsonError,
   unsupportedJsonModeError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
+import {
+  findWorkspaceRoot,
+  loadConfig,
+  normalizeConfig,
+  repairRepositoryGitUrls,
+  saveConfig,
+} from "../lib/config.ts";
 import { info, error as logError, spinner, success, warn } from "../lib/logger.ts";
+import { join, resolve } from "path";
 import {
   confirm as promptConfirm,
   input as promptInput,
@@ -26,7 +27,6 @@ import {
   select as promptSelect,
 } from "../lib/prompts.ts";
 import { Command } from "commander";
-import { join, resolve } from "path";
 import { removeDir } from "../lib/filesystem.ts";
 import { stat } from "fs/promises";
 

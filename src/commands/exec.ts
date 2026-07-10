@@ -324,10 +324,10 @@ const executeExec = async (
       options: {
         dirty: options.dirty === true,
         failFast: options.failFast === true,
+        groups: filterResult.filters.groups,
         jobs,
         json: options.json === true,
         only: onlyFilters,
-        groups: filterResult.filters.groups,
       },
       repositories,
       results: [],
@@ -349,10 +349,10 @@ const executeExec = async (
     options: {
       dirty: options.dirty === true,
       failFast: options.failFast === true,
+      groups: filterResult.filters.groups,
       jobs,
       json: options.json === true,
       only: onlyFilters,
-      groups: filterResult.filters.groups,
     },
     repositories,
     results,

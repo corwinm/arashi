@@ -1,3 +1,4 @@
+import type { SetupExecutionResult, SetupRunSummary } from "../lib/setup-types.ts";
 import {
   buildSummary,
   formatProgress,
@@ -5,21 +6,20 @@ import {
   formatSummary,
 } from "../lib/setup-output.ts";
 import {
-  discoverSetupTargets,
-  isExecutableTarget,
-  orderSetupTargets,
-} from "../lib/setup-targets.ts";
-import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
-import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
+import {
+  discoverSetupTargets,
+  isExecutableTarget,
+  orderSetupTargets,
+} from "../lib/setup-targets.ts";
+import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { info, error as logError } from "../lib/logger.ts";
-import { filterRepositories } from "../lib/repo-filter.ts";
 import { Command } from "commander";
-import type { SetupExecutionResult, SetupRunSummary } from "../lib/setup-types.ts";
+import { filterRepositories } from "../lib/repo-filter.ts";
 import { runSetupTarget } from "../lib/setup-runner.ts";
 
 const ZERO = 0;

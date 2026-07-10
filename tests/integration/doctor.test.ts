@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
-import { repositoryStatusToDoctorFindings } from "../../src/lib/doctor.ts";
 import type { RepoStatus } from "../../src/commands/status.ts";
+import { join } from "path";
+import { repositoryStatusToDoctorFindings } from "../../src/lib/doctor.ts";
+import { tmpdir } from "os";
 
 const CLI_ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");
 

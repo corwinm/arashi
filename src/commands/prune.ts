@@ -4,27 +4,24 @@
  * Cleans stale Git worktree metadata across an Arashi workspace.
  */
 
-// eslint-disable-next-line import/consistent-type-specifier-style
-import {
-  type PruneRepositoryResult,
-  type RepositoryTarget,
-  discoverPrunableWorktrees,
-  pruneRepositoryWorktrees,
-} from "../core/remove.ts";
-import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import { basename, resolve } from "path";
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
+import { discoverPrunableWorktrees, pruneRepositoryWorktrees } from "../core/remove.ts";
+import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
 import { info, error as logError } from "../lib/logger.ts";
-import { basename, resolve } from "path";
 import { Command } from "commander";
 
 const ZERO = 0;
 const ONE = 1;
 const USAGE_EXIT_CODE = 2;
+
+type PruneRepositoryResult = Awaited<ReturnType<typeof discoverPrunableWorktrees>>[number];
+type RepositoryTarget = Parameters<typeof discoverPrunableWorktrees>[0][number];
 
 interface PruneOptions {
   dryRun?: boolean;

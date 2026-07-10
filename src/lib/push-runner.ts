@@ -1,6 +1,6 @@
-import { exec as gitExec } from "./git.ts";
-import type { WorkspaceRepository } from "./config.ts";
 import type { PushResult } from "./push-types.ts";
+import type { WorkspaceRepository } from "./config.ts";
+import { exec as gitExec } from "./git.ts";
 
 const ZERO = 0;
 const MILLISECONDS_PER_SECOND = 1000;
@@ -216,8 +216,8 @@ export const executePushPlan = async (plan: PushPlan): Promise<PushResult> => {
   return {
     ...plan.result,
     elapsedSeconds,
+    status: "pushed",
     stderr: outcome.stderr,
     stdout: outcome.stdout,
-    status: "pushed",
   };
 };

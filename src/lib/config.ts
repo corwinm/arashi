@@ -477,9 +477,7 @@ const normalizeRepoConfig = (
   }
 
   if (value.groups !== undefined) {
-    if (!Array.isArray(value.groups)) {
-      errors.push(`${prefix}.groups: must be an array of non-empty strings if present`);
-    } else {
+    if (Array.isArray(value.groups)) {
       const seenGroups = new Set<string>();
       const groups: string[] = [];
       for (const [index, rawGroup] of value.groups.entries()) {
@@ -497,6 +495,8 @@ const normalizeRepoConfig = (
         groups.push(group);
       }
       normalized.groups = groups;
+    } else {
+      errors.push(`${prefix}.groups: must be an array of non-empty strings if present`);
     }
   }
 

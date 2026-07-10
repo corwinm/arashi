@@ -5,23 +5,20 @@
  * coordinated Arashi workspace.
  */
 
-import { Command } from "commander";
-import { relative, resolve } from "path";
-import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
+import { checkAllRepos, collectStatusWarnings, summarizeStatuses } from "./status.ts";
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
-  type JsonWarning,
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
+import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
 import { info, error as logError } from "../lib/logger.js";
-import {
-  checkAllRepos,
-  collectStatusWarnings,
-  type RepoStatus,
-  summarizeStatuses,
-} from "./status.ts";
+import { relative, resolve } from "path";
+import { Command } from "commander";
+
+type JsonWarning = NonNullable<Parameters<typeof createJsonSuccessEnvelope>[2]>[number];
+type RepoStatus = Awaited<ReturnType<typeof checkAllRepos>>[number];
 
 const ZERO = 0;
 const USAGE_EXIT_CODE = 2;
