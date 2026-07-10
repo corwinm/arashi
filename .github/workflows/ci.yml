@@ -49,6 +49,9 @@ jobs:
       - name: Validate generated config schema
         run: bun run schema:check
 
+      - name: Validate CLI command contract
+        run: bun run contract:check
+
       - name: Validate README documentation link target
         run: |
           if grep -qF "arashi-docs.netlify.app" README.md; then

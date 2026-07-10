@@ -63,6 +63,8 @@
     "schema:generate": "ts-json-schema-generator --tsconfig tsconfig.schema.json --path src/lib/config.ts --type Config --expose export --jsDoc extended --out schema/config.schema.json",
     "schema:publish": "bun run schema:generate && oxfmt --config .oxfmtrc.json --write schema/config.schema.json",
     "schema:check": "bun run schema:publish && git diff --exit-code -- schema/config.schema.json",
+    "contract:generate": "bun run scripts/contracts/cli-commands.ts",
+    "contract:check": "bun run scripts/contracts/cli-commands.ts --check",
     "format": "oxfmt --config .oxfmtrc.json --write .",
     "format:check": "oxfmt --config .oxfmtrc.json --check .",
     "quality:changed": "bun run scripts/quality/changed-files-quality.ts",
