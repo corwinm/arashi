@@ -1,11 +1,12 @@
-import { describe, expect, test } from "bun:test";
 import {
   MovePlanningError,
   buildDirtyGuidance,
   buildMovePlan,
   emptyDirtyDetails,
-  type WorkspaceSelection,
 } from "../../../src/core/move.ts";
+import { describe, expect, test } from "bun:test";
+
+type WorkspaceSelection = Parameters<typeof buildMovePlan>[1];
 
 const dirtyDetails = {
   deletedFiles: 0,

@@ -12,8 +12,6 @@ import {
   executeMovePlan,
   findWorkspaceByPath,
   resolveWorkspaceReference,
-  type MoveSummary,
-  type WorkspaceSelection,
 } from "../core/move.ts";
 import {
   createJsonErrorEnvelope,
@@ -22,10 +20,10 @@ import {
   unsupportedJsonModeError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { Command } from "commander";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
-import { info, success, warn, error as logError } from "../lib/logger.ts";
-import { select as promptSelect, type Choice, type PromptOutcome } from "../lib/prompts.ts";
+import { info, error as logError, success, warn } from "../lib/logger.ts";
+import { Command } from "commander";
+import { select as promptSelect } from "../lib/prompts.ts";
 import { resolve } from "path";
 
 interface MoveCommandOptions {
@@ -33,6 +31,17 @@ interface MoveCommandOptions {
   to?: string;
   json?: boolean;
 }
+
+type MoveSummary = Awaited<ReturnType<typeof executeMovePlan>>;
+type WorkspaceSelection = Awaited<ReturnType<typeof resolveWorkspaceReference>>;
+
+interface Choice<Value> {
+  description?: string;
+  name: string;
+  value: Value;
+}
+
+type PromptOutcome<Value> = Awaited<ReturnType<typeof promptSelect<Value>>>;
 
 interface MovePromptHandlers {
   select: (
@@ -45,6 +54,7 @@ const ZERO = 0;
 const ONE = 1;
 
 const toPromptOutcome = promptSelect;
+const DEFAULT_PROMPT_HANDLERS: MovePromptHandlers = { select: toPromptOutcome };
 
 const formatWorkspaceDescription = (workspace: WorkspaceSelection): string => {
   const dirtyCount = workspace.dirtyRepositories.length;
@@ -87,7 +97,12 @@ const printSummary = (summary: MoveSummary): void => {
   info(`Target: ${summary.target.label} (${summary.target.primaryPath})`);
 
   for (const result of summary.results) {
-    const prefix = result.status === "moved" ? "✓" : result.status === "skipped" ? "-" : "!";
+    let prefix = "!";
+    if (result.status === "moved") {
+      prefix = "✓";
+    } else if (result.status === "skipped") {
+      prefix = "-";
+    }
     console.log(`  ${prefix} ${result.repositoryName}: ${result.message}`);
     if (result.recoveryCommand) {
       console.log(`    recovery: ${result.recoveryCommand}`);
@@ -131,7 +146,7 @@ Examples:
 
 export async function executeMove(
   options: MoveCommandOptions,
-  promptHandlers: MovePromptHandlers = { select: toPromptOutcome },
+  promptHandlers: MovePromptHandlers = DEFAULT_PROMPT_HANDLERS,
 ): Promise<number> {
   const invocationPath = resolve(".");
   const workspaceRoot = await findWorkspaceRoot(invocationPath);

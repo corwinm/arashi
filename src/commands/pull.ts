@@ -5,24 +5,24 @@
  * rollback on conflict/error, and a non-zero exit on failures.
  */
 
+import type { PullResult, PullSummary } from "../lib/pull-types.ts";
 import {
   buildSummary,
   formatProgress,
   formatResultLine,
   formatSummary,
 } from "../lib/pull-output.ts";
-import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { info } from "../lib/logger.ts";
+import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { Command } from "commander";
-import type { PullResult, PullSummary } from "../lib/pull-types.ts";
 import { checkRemoteChanges } from "../lib/git-remote.ts";
 import { filterRepositories } from "../lib/repo-filter.ts";
+import { info } from "../lib/logger.ts";
 import { runPullWithRollback } from "../lib/pull-runner.ts";
 
 const ZERO = 0;

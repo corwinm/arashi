@@ -6,10 +6,9 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { info, error as logError } from "../lib/logger.ts";
-import { confirm as promptConfirm } from "../lib/prompts.ts";
-import type { PromptOutcome } from "../lib/prompts.ts";
 import { Command } from "commander";
 import { dirname } from "node:path";
+import { confirm as promptConfirm } from "../lib/prompts.ts";
 import { spawnSync } from "node:child_process";
 
 export const UPDATE_COMMAND_DESCRIPTION = "Check for and apply Arashi updates";
@@ -30,7 +29,7 @@ interface ReleaseInfo {
 
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 type SpawnSyncImpl = typeof spawnSync;
-type ConfirmImpl = (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
+type ConfirmImpl = typeof promptConfirm;
 
 const POSIX_INSTALLER_URL = "https://arashi.haphazard.dev/install";
 const WINDOWS_INSTALLER_URL = "https://arashi.haphazard.dev/install.ps1";

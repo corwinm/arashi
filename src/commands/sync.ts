@@ -1,12 +1,12 @@
 import type { SyncResult, SyncSummary } from "../lib/git/sync-types.ts";
-import { createRollbackTracker, recordCreatedBranch } from "../lib/git/sync-rollback.ts";
-import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
+import { createRollbackTracker, recordCreatedBranch } from "../lib/git/sync-rollback.ts";
+import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
 import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { alignRepositoryBranch } from "../lib/git/sync-branch.ts";
