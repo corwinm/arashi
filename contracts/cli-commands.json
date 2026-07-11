@@ -1,0 +1,1252 @@
+{
+  "schemaVersion": 1,
+  "cliVersion": "1.18.0",
+  "commands": [
+    {
+      "path": "add",
+      "description": "Add a Git repository to the workspace",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [
+        {
+          "name": "git-url",
+          "required": true,
+          "variadic": false,
+          "description": "Git repository URL (HTTPS, SSH, Git, File, or SCP format)"
+        }
+      ],
+      "options": [
+        {
+          "flags": "--create-setup",
+          "description": "Create setup.sh template if no setup script found",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output result as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-f, --force",
+          "description": "Skip confirmation prompts",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-n, --name <name>",
+          "description": "Custom repository name",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "clone",
+      "description": "Clone missing configured repositories",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--all",
+          "description": "Clone all missing repositories without interactive selection",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output result as JSON; requires --all",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "This interactive command has no machine-readable output mode."
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "create",
+      "description": "Create coordinated worktrees across multiple repositories",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [
+        {
+          "name": "branch",
+          "required": true,
+          "variadic": false,
+          "description": "Branch name to create across repositories"
+        }
+      ],
+      "options": [
+        {
+          "flags": "--conflict <strategy>",
+          "description": "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--dry-run",
+          "description": "Show what would be done without making changes",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--editor-host <host>",
+          "description": "Internal editor host context for create default resolution",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--group <groups>",
+          "description": "Only create in repositories in requested groups (comma-separated)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Return structured JSON output for non-interactive create operations",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--launch",
+          "description": "Launch terminal/editor context after create",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--move-changes",
+          "description": "Move compatible uncommitted changes from the current workspace after create",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--no-hooks",
+          "description": "Disable hook execution",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--no-launch",
+          "description": "Disable configured create launch defaults for this invocation",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--no-progress",
+          "description": "Hide progress indicators",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--no-switch",
+          "description": "Disable configured create switch defaults for this invocation",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--only <repos>",
+          "description": "Only create in specified repositories (comma-separated)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--sesh",
+          "description": "Launch using sesh mode (implies --launch)",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--switch",
+          "description": "Switch to the created parent worktree after create",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-i, --interactive",
+          "description": "Interactively select repositories",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "conditional",
+          "reason": "JSON is available only for non-interactive create operations."
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "doctor",
+      "description": "Run non-mutating Arashi workspace diagnostics",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--json",
+          "description": "Output a structured JSON envelope",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Diagnostics remain a terminal-focused maintenance workflow."
+        }
+      }
+    },
+    {
+      "path": "exec",
+      "description": "Run a command once per selected managed repository",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [
+        {
+          "name": "command",
+          "required": false,
+          "variadic": true,
+          "description": "Command to run after --"
+        }
+      ],
+      "options": [
+        {
+          "flags": "--dirty",
+          "description": "Only include repositories with uncommitted changes",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--fail-fast",
+          "description": "Stop starting new commands after the first failure",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--group <group>",
+          "description": "Only include repositories in the requested group (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--jobs <positive-int>",
+          "description": "Maximum repositories to run concurrently",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output result as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--only <repo>",
+          "description": "Only include a specific repository (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Arbitrary cross-repository process execution is intentionally terminal-only."
+        }
+      }
+    },
+    {
+      "path": "handoff",
+      "description": "Generate a Markdown or JSON handoff report for the current workspace",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--json",
+          "description": "Output a structured JSON envelope instead of Markdown",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--link <link>",
+          "description": "Related issue, PR, spec, or reference link (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--markdown",
+          "description": "Output Markdown (default)",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--next-command <command>",
+          "description": "Suggested next command, not executed (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--risk <item>",
+          "description": "Known risk or blocker to include in the report (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--todo <item>",
+          "description": "Remaining work item to include as a checklist entry (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--validation <entry>",
+          "description": "Validation command and result evidence, e.g. 'bun run test — passed' (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Agent handoff generation is intentionally terminal-only."
+        }
+      }
+    },
+    {
+      "path": "init",
+      "description": "Initialize Arashi workspace in the current repository or bootstrap a new one",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--dry-run",
+          "description": "Show what would be done without making changes",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--force",
+          "description": "Overwrite existing configuration if present",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output result as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--no-discover",
+          "description": "Skip automatic repository discovery",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--repos-dir <path>",
+          "description": "Custom location for managed repositories",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--verbose",
+          "description": "Show detailed information during initialization",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--worktrees-dir <path>",
+          "description": "Custom base location for managed worktrees",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "install",
+      "description": "Install the npm-managed Arashi platform binary",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--json",
+          "description": "Output result as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "excluded",
+          "reason": "The install command is an npm bootstrap implementation detail; user installation guidance lives on the website."
+        },
+        "skills": {
+          "expectation": "excluded",
+          "reason": "The skill assumes Arashi is already installed; bootstrap guidance belongs in installation docs."
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "list",
+      "description": "List all worktrees and their status",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--max-depth <depth>",
+          "description": "Maximum depth for sub-repo discovery (default: 3)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-j, --json",
+          "description": "Output in JSON format",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-t, --table",
+          "description": "Show table format with headers (default: simple list)",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-v, --verbose",
+          "description": "Show detailed sub-repository information",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "represented",
+          "reason": "The worktree panel represents the CLI list workflow."
+        }
+      }
+    },
+    {
+      "path": "move",
+      "description": "Move uncommitted changes between coordinated worktrees",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--from <workspace>",
+          "description": "Source branch, worktree name, or path",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Return structured JSON output",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--to <workspace>",
+          "description": "Target branch, worktree name, or path",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "prune",
+      "description": "Clean stale Git worktree metadata across the workspace",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--dry-run",
+          "description": "Report stale worktree metadata without pruning",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--expire <time>",
+          "description": "Git worktree prune expiry time",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output a structured JSON envelope",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "pull",
+      "description": "Pull remote changes across eligible repositories",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--group <group>",
+          "description": "Only include repositories in the requested group (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output result as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--only <repo>",
+          "description": "Only include a specific repository (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-v, --verbose",
+          "description": "Show verbose git output",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "push",
+      "description": "Push coordinated branches across eligible repositories",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--dry-run",
+          "description": "Preview push operations without mutating remotes",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--group <group>",
+          "description": "Only include repositories in the requested group (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output result as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--only <repo>",
+          "description": "Only include a specific repository (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--set-upstream",
+          "description": "Set upstream tracking when publishing new branches",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Push remains explicit terminal source-control behavior."
+        }
+      }
+    },
+    {
+      "path": "remove",
+      "description": "Remove worktrees and delete branches",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [
+        {
+          "name": "target",
+          "required": false,
+          "variadic": false,
+          "description": "Branch name or worktree path to remove (optional - prompts if omitted)"
+        }
+      ],
+      "options": [
+        {
+          "flags": "--dry-run",
+          "description": "Preview planned removals without mutating worktrees or branches",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output results as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--keep-branches",
+          "description": "Remove worktrees but keep git branches",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--keep-worktrees",
+          "description": "Delete branches but keep worktree directories",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--no-check-dirty",
+          "description": "Skip uncommitted changes check",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--path",
+          "description": "Treat argument as worktree path",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-f, --force",
+          "description": "Skip confirmation prompts",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "conditional",
+          "reason": "JSON mode requires an explicit branch and is non-interactive."
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "setup",
+      "description": "Run setup scripts across workspace repositories",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--group <group>",
+          "description": "Only include repositories in the requested group (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output result as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--only <repo>",
+          "description": "Only include a specific repository (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-v, --verbose",
+          "description": "Show full setup script output",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "shell",
+      "description": "Manage shell integration for parent-shell switching",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "Shell integration emits shell code rather than JSON."
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "shell init",
+      "description": "Print shell wrapper code",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [
+        {
+          "name": "shell",
+          "required": false,
+          "variadic": false,
+          "description": "Shell name (bash, zsh, fish)"
+        }
+      ],
+      "options": [
+        {
+          "flags": "--json",
+          "description": "Return a structured unsupported-mode error instead of shell code",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "Shell initialization emits shell code; --json only returns an unsupported-mode error."
+        },
+        "docs": {
+          "expectation": "excluded",
+          "reason": "This subcommand is documented on the parent shell command page."
+        },
+        "skills": {
+          "expectation": "represented",
+          "reason": "Shell initialization is covered as part of the shell workflow."
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Shell initialization configures terminals and is not an editor command."
+        }
+      }
+    },
+    {
+      "path": "shell install",
+      "description": "Install shell integration into the active shell startup file",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "Shell installation mutates shell configuration and has no JSON mode."
+        },
+        "docs": {
+          "expectation": "excluded",
+          "reason": "This subcommand is documented on the parent shell command page."
+        },
+        "skills": {
+          "expectation": "represented",
+          "reason": "Shell installation is covered as part of the shell workflow."
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Shell configuration installation is outside extension scope."
+        }
+      }
+    },
+    {
+      "path": "status",
+      "description": "Show status of all managed repositories",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--group <group>",
+          "description": "Only include repositories in the requested group (repeatable)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output a structured JSON envelope",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-s, --short",
+          "description": "Show one-line summary per repository",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-v, --verbose",
+          "description": "Show full git status output",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "switch",
+      "description": "Open a terminal context for an existing worktree",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [
+        {
+          "name": "filter",
+          "required": false,
+          "variadic": false,
+          "description": "Filter targets by branch name or worktree path"
+        }
+      ],
+      "options": [
+        {
+          "flags": "--all",
+          "description": "Use both parent and child repositories",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--cd",
+          "description": "Change the current shell directory when shell integration is active",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--cursor",
+          "description": "Open the selected worktree in Cursor",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Return a structured unsupported-mode error instead of launching or switching",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--kiro",
+          "description": "Open the selected worktree in Kiro",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--no-cd",
+          "description": "Disable parent-shell directory switching for this invocation",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--no-default-launch",
+          "description": "Ignore configured default launch mode for this invocation",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--path",
+          "description": "Treat argument as exact worktree path",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--repos",
+          "description": "Use child repositories only",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--sesh",
+          "description": "Use sesh in tmux mode",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--vscode",
+          "description": "Open the selected worktree in VS Code",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "Switch launches a shell; --json only returns an unsupported-mode error."
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "sync",
+      "description": "Align managed repositories to the parent branch",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--group <groups>",
+          "description": "Only sync repositories in the requested group (comma-separated)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output result as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--only <repos>",
+          "description": "Only sync specified repositories (comma-separated)",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-v, --verbose",
+          "description": "Show detailed output for each repository",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "update",
+      "description": "Check for and apply Arashi updates",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--check",
+          "description": "check whether an update is available without changing files",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--dry-run",
+          "description": "show the installer update plan without changing files",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--json",
+          "description": "Output result as JSON",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "-y, --yes",
+          "description": "apply the update without prompting",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "conditional",
+          "reason": "JSON cannot be combined with interactive confirmation options."
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "vscode": {
+          "expectation": "required"
+        }
+      }
+    }
+  ]
+}
