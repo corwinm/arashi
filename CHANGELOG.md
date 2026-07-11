@@ -1,3 +1,10 @@
+## [1.19.0](https://github.com/corwinm/arashi/compare/v1.18.0...v1.19.0) (2026-07-11)
+
+### Features
+
+- add agent handoff reports ([#83](https://github.com/corwinm/arashi/issues/83)) ([67f7036](https://github.com/corwinm/arashi/commit/67f7036bb82e10d5bf0d89fb27bb63764da56fcf))
+- add generated CLI command contract ([#84](https://github.com/corwinm/arashi/issues/84)) ([e6175b3](https://github.com/corwinm/arashi/commit/e6175b36acc4907cba739662c3cac3a1f4e55c60))
+
 ## [1.18.0](https://github.com/corwinm/arashi/compare/v1.17.0...v1.18.0) (2026-07-09)
 
 ### Features
