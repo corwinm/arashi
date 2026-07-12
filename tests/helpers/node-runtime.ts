@@ -13,17 +13,16 @@ const windowsAbsolutePathPattern = /^[A-Za-z]:[\\/]/;
 
 export const resolveTestCommand = (command: string[], platform = process.platform): string[] => {
   const resolved = command.map((argument, index) => {
-    if (argument === "tsx" && command[index - 1] === "--import") {
-      return tsxImport;
-    }
+    const candidate =
+      argument === "tsx" && command[index - 1] === "--import" ? tsxImport : argument;
     if (
       platform === "win32" &&
-      windowsAbsolutePathPattern.test(argument) &&
-      argument.endsWith(".ts")
+      windowsAbsolutePathPattern.test(candidate) &&
+      /\.(?:[cm]?js|ts)$/.test(candidate)
     ) {
-      return new URL(`file:///${argument.replaceAll("\\", "/")}`).href;
+      return new URL(`file:///${candidate.replaceAll("\\", "/")}`).href;
     }
-    return argument;
+    return candidate;
   });
   return resolved[0] === "git" && resolved[1] === "commit"
     ? ["git", "-c", "commit.gpgsign=false", ...resolved.slice(1)]
