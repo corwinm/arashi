@@ -21,7 +21,14 @@ describe("create missing config guidance from bare root", () => {
     workspace = await createBareCreateWorkspace({ includeConfig: false });
 
     const proc = runtime.spawn(
-      [process.execPath, "--import", "tsx", CLI_ENTRY, "create", "feature-no-config"],
+      [
+        process.execPath,
+        "--no-warnings",
+        "--experimental-transform-types",
+        CLI_ENTRY,
+        "create",
+        "feature-no-config",
+      ],
       {
         cwd: workspace.bareRepoPath,
         stderr: "pipe",

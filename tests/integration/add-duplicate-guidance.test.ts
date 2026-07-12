@@ -34,8 +34,9 @@ describe("add command duplicate guidance", () => {
     const proc = spawn(
       [
         process.execPath,
-        "--import",
-        "tsx",
+        "--no-warnings",
+        "--experimental-transform-types",
+
         entrypoint,
         "add",
         "git@github.com:corwinm/arashi-docs.git",

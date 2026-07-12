@@ -39,7 +39,15 @@ describe("create command child-repo hook success flows", () => {
     }
 
     const proc = runtime.spawn(
-      [process.execPath, "--import", "tsx", CLI_ENTRY, "create", branch, "--no-progress"],
+      [
+        process.execPath,
+        "--no-warnings",
+        "--experimental-transform-types",
+        CLI_ENTRY,
+        "create",
+        branch,
+        "--no-progress",
+      ],
       {
         cwd: workspace.childInvocationPath,
         stderr: "pipe",
@@ -91,7 +99,15 @@ describe("create command child-repo hook success flows", () => {
     }
 
     const proc = runtime.spawn(
-      [process.execPath, "--import", "tsx", CLI_ENTRY, "create", branch, "--no-progress"],
+      [
+        process.execPath,
+        "--no-warnings",
+        "--experimental-transform-types",
+        CLI_ENTRY,
+        "create",
+        branch,
+        "--no-progress",
+      ],
       {
         cwd: workspace.nestedChildInvocationPath,
         stderr: "pipe",

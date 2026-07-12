@@ -121,8 +121,9 @@ async function runPullCommand(workspaceRoot: string, args: string[] = []): Promi
   const arashiBin = join(arashiRoot, "src", "index.ts");
   return runCommand(workspaceRoot, [
     process.execPath,
-    "--import",
-    "tsx",
+    "--no-warnings",
+    "--experimental-transform-types",
+
     arashiBin,
     "pull",
     ...args,

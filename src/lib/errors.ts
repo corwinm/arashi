@@ -3,7 +3,7 @@
  * Preserves full diagnostic context from git commands
  */
 
-import { GitErrorCode } from "../types/git.js";
+import { GitErrorCode } from "../types/git.ts";
 
 interface GitErrorContext {
   stdout: string;

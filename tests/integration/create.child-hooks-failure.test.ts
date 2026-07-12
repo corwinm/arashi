@@ -32,7 +32,15 @@ exit 19`,
     );
 
     const proc = runtime.spawn(
-      [process.execPath, "--import", "tsx", CLI_ENTRY, "create", branch, "--no-progress"],
+      [
+        process.execPath,
+        "--no-warnings",
+        "--experimental-transform-types",
+        CLI_ENTRY,
+        "create",
+        branch,
+        "--no-progress",
+      ],
       {
         cwd: workspace.childInvocationPath,
         stderr: "pipe",
@@ -63,7 +71,15 @@ exit 19`,
     createRepoSpecificHookInRepo(workspace.hookRootPath, "post-create", timeoutRepo, "sleep 1");
 
     const proc = runtime.spawn(
-      [process.execPath, "--import", "tsx", CLI_ENTRY, "create", branch, "--no-progress"],
+      [
+        process.execPath,
+        "--no-warnings",
+        "--experimental-transform-types",
+        CLI_ENTRY,
+        "create",
+        branch,
+        "--no-progress",
+      ],
       {
         cwd: workspace.childInvocationPath,
         stderr: "pipe",

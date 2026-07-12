@@ -14,8 +14,8 @@
  * @module core/rollback
  */
 
-import { exec as gitExec } from "../lib/git";
-import { removeDir } from "../lib/filesystem";
+import { exec as gitExec } from "../lib/git.ts";
+import { removeDir } from "../lib/filesystem.ts";
 
 // ============================================================================
 // Core Types

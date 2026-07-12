@@ -7,10 +7,10 @@ import { runtime } from "#runtime";
  */
 
 import { basename, join, resolve } from "path";
-import { spinner as createSpinner, warn } from "../lib/logger.js";
+import { spinner as createSpinner, warn } from "../lib/logger.ts";
 import { readdir, rm, stat } from "fs/promises";
-import { exec as execGit } from "../lib/git.js";
-import { fileExists } from "../lib/filesystem.js";
+import { exec as execGit } from "../lib/git.ts";
+import { fileExists } from "../lib/filesystem.ts";
 
 const ZERO = 0;
 const ONE = 1;

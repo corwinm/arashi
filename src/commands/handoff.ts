@@ -12,8 +12,8 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
-import { info, error as logError } from "../lib/logger.js";
+import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import { info, error as logError } from "../lib/logger.ts";
 import { relative, resolve } from "path";
 import { Command } from "commander";
 

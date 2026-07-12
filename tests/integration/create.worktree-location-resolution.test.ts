@@ -45,8 +45,9 @@ async function runCreate(branch: string): Promise<void> {
   const proc = runtime.spawn(
     [
       process.execPath,
-      "--import",
-      "tsx",
+      "--no-warnings",
+      "--experimental-transform-types",
+
       CLI_ENTRY,
       "create",
       branch,

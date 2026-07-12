@@ -24,8 +24,9 @@ describe("create conflict guidance from bare root", () => {
     const firstRun = runtime.spawn(
       [
         process.execPath,
-        "--import",
-        "tsx",
+        "--no-warnings",
+        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         branch,
@@ -52,8 +53,9 @@ describe("create conflict guidance from bare root", () => {
     const secondRun = runtime.spawn(
       [
         process.execPath,
-        "--import",
-        "tsx",
+        "--no-warnings",
+        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         branch,

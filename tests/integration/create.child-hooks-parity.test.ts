@@ -43,7 +43,15 @@ describe("create command hook parity between root and child invocation", () => {
     const childBranch = "feature-hook-parity-child";
 
     const rootRun = runtime.spawn(
-      [process.execPath, "--import", "tsx", CLI_ENTRY, "create", rootBranch, "--no-progress"],
+      [
+        process.execPath,
+        "--no-warnings",
+        "--experimental-transform-types",
+        CLI_ENTRY,
+        "create",
+        rootBranch,
+        "--no-progress",
+      ],
       {
         cwd: workspace.workspacePath,
         stderr: "pipe",
@@ -56,7 +64,15 @@ describe("create command hook parity between root and child invocation", () => {
     expect(rootExitCode).toBe(0);
 
     const childRun = runtime.spawn(
-      [process.execPath, "--import", "tsx", CLI_ENTRY, "create", childBranch, "--no-progress"],
+      [
+        process.execPath,
+        "--no-warnings",
+        "--experimental-transform-types",
+        CLI_ENTRY,
+        "create",
+        childBranch,
+        "--no-progress",
+      ],
       {
         cwd: workspace.childInvocationPath,
         stderr: "pipe",

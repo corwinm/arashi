@@ -26,8 +26,9 @@ describe("create command from bare root", () => {
     const command = runtime.spawn(
       [
         process.execPath,
-        "--import",
-        "tsx",
+        "--no-warnings",
+        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         branch,

@@ -102,8 +102,9 @@ async function runSetup(workspaceRoot: string, args: string[] = []): Promise<Com
   const entrypoint = join(arashiRoot, "src", "index.ts");
   return runCommand(workspaceRoot, [
     process.execPath,
-    "--import",
-    "tsx",
+    "--no-warnings",
+    "--experimental-transform-types",
+
     entrypoint,
     "setup",
     ...args,

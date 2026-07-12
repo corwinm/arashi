@@ -37,7 +37,13 @@ const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> =
 };
 
 const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> =>
-  await runCommand(cwd, [process.execPath, "--import", "tsx", CLI_ENTRY, ...args]);
+  await runCommand(cwd, [
+    process.execPath,
+    "--no-warnings",
+    "--experimental-transform-types",
+    CLI_ENTRY,
+    ...args,
+  ]);
 
 const runGit = async (cwd: string, args: string[]): Promise<string> => {
   const result = await runCommand(cwd, ["git", ...args]);

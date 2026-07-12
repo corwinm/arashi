@@ -65,11 +65,21 @@ async function runInitCommand(
   const arashiRoot = join(testFileDir, "..", "..");
   const arashiBin = join(arashiRoot, "src", "index.ts");
 
-  const proc = spawn([process.execPath, "--import", "tsx", arashiBin, "init", ...args], {
-    cwd,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+  const proc = spawn(
+    [
+      process.execPath,
+      "--no-warnings",
+      "--experimental-transform-types",
+      arashiBin,
+      "init",
+      ...args,
+    ],
+    {
+      cwd,
+      stderr: "pipe",
+      stdout: "pipe",
+    },
+  );
 
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();

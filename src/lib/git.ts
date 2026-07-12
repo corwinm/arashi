@@ -9,8 +9,8 @@ import { runtime } from "#runtime";
  */
 
 import { basename, dirname } from "path";
-import { ArashiError } from "./errors";
-import type { CommandResult } from "../types/git";
+import { ArashiError } from "./errors.ts";
+import type { CommandResult } from "../types/git.ts";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 
 /**

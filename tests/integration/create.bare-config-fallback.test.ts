@@ -23,8 +23,9 @@ describe("create config fallback in bare repository", () => {
     const proc = runtime.spawn(
       [
         process.execPath,
-        "--import",
-        "tsx",
+        "--no-warnings",
+        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         "feature-config-fallback",

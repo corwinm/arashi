@@ -1,5 +1,4 @@
 import { glob } from "node:fs/promises";
-import { createRequire } from "node:module";
 import {
   file,
   spawn as baseSpawn,
@@ -7,27 +6,10 @@ import {
   runtime as baseRuntime,
 } from "../../src/lib/runtime.ts";
 
-const tsxImport = createRequire(import.meta.url).resolve("tsx");
-
-const windowsAbsolutePathPattern = /^[A-Za-z]:[\\/]/;
-
-export const resolveTestCommand = (command: string[], platform = process.platform): string[] => {
-  const resolved = command.map((argument, index) => {
-    const candidate =
-      argument === "tsx" && command[index - 1] === "--import" ? tsxImport : argument;
-    if (
-      platform === "win32" &&
-      windowsAbsolutePathPattern.test(candidate) &&
-      /\.(?:[cm]?js|ts)$/.test(candidate)
-    ) {
-      return new URL(`file:///${candidate.replaceAll("\\", "/")}`).href;
-    }
-    return candidate;
-  });
-  return resolved[0] === "git" && resolved[1] === "commit"
-    ? ["git", "-c", "commit.gpgsign=false", ...resolved.slice(1)]
-    : resolved;
-};
+export const resolveTestCommand = (command: string[]): string[] =>
+  command[0] === "git" && command[1] === "commit"
+    ? ["git", "-c", "commit.gpgsign=false", ...command.slice(1)]
+    : command;
 
 export const spawn: typeof baseSpawn = (command, options) =>
   baseSpawn(resolveTestCommand(command), options);
