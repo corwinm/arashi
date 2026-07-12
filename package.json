@@ -91,9 +91,6 @@
     "ts-json-schema-generator": "2.4.0",
     "typescript": "^5.9.3"
   },
-  "overrides": {
-    "@semantic-release/github": "^12.0.9"
-  },
   "lint-staged": {
     "*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}": "oxfmt --config .oxfmtrc.json --write"
   },
