@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "#test-runtime";
+import { afterEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
-const CLI_ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
 
 interface CommandResult {
   exitCode: number;
@@ -20,7 +21,7 @@ const makeTempDir = async (): Promise<string> => {
 };
 
 const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> => {
-  const proc = Bun.spawn(args, {
+  const proc = runtime.spawn(args, {
     cwd,
     stderr: "pipe",
     stdout: "pipe",
@@ -36,7 +37,7 @@ const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> =
 };
 
 const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> =>
-  await runCommand(cwd, ["bun", CLI_ENTRY, ...args]);
+  await runCommand(cwd, [process.execPath, "--import", "tsx", CLI_ENTRY, ...args]);
 
 const runGit = async (cwd: string, args: string[]): Promise<string> => {
   const result = await runCommand(cwd, ["git", ...args]);

@@ -2,7 +2,7 @@
  * Integration test: User Story 1 - remove single branch
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   createNestedWorktrees,
   createRemoveWorkspace,
@@ -10,7 +10,6 @@ import {
 } from "../helpers/remove-test-workspace.ts";
 import { executeRemove } from "../../src/commands/remove.ts";
 import { existsSync } from "fs";
-import { spawn } from "bun";
 
 describe("remove command - US1 single branch", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
@@ -97,3 +96,4 @@ describe("remove command - US1 single branch", () => {
     expect(parentChoice?.name).toContain("repo-b=child-b");
   });
 });
+import { spawn } from "#test-runtime";

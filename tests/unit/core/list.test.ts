@@ -6,7 +6,7 @@
  */
 
 import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-utils";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   discoverSubRepositories,
   findGitRepositories,
@@ -75,9 +75,7 @@ describe("getShortCommitSha()", () => {
   });
 
   test("throws ListCommandError for invalid repository path", async () => {
-    await expect(async () => {
-      await getShortCommitSha("/nonexistent/path");
-    }).toThrow(ListCommandError);
+    await expect(getShortCommitSha("/nonexistent/path")).rejects.toThrow(ListCommandError);
   });
 
   test("returns consistent SHA for same commit", async () => {
@@ -140,9 +138,7 @@ describe("hasUncommittedChanges()", () => {
   });
 
   test("throws ListCommandError for invalid repository path", async () => {
-    await expect(async () => {
-      await hasUncommittedChanges("/nonexistent/path");
-    }).toThrow(ListCommandError);
+    await expect(hasUncommittedChanges("/nonexistent/path")).rejects.toThrow(ListCommandError);
   });
 });
 
@@ -740,7 +736,7 @@ describe("findGitRepositories()", () => {
     const nestedRepoPath = join(testRepo.path, "nested-repo");
     await mkdir(nestedRepoPath, { recursive: true });
 
-    const { spawn } = await import("bun");
+    const { spawn } = await import("#test-runtime");
     await spawn(["git", "init"], { cwd: nestedRepoPath }).exited;
     await spawn(["git", "config", "user.email", "test@example.com"], { cwd: nestedRepoPath })
       .exited;
@@ -755,7 +751,7 @@ describe("findGitRepositories()", () => {
     const nestedRepoPath = join(testRepo.path, "linked-repo");
     await mkdir(nestedRepoPath, { recursive: true });
 
-    const { spawn } = await import("bun");
+    const { spawn } = await import("#test-runtime");
     await spawn(["git", "init"], { cwd: nestedRepoPath }).exited;
     await spawn(["git", "config", "user.email", "test@example.com"], { cwd: nestedRepoPath })
       .exited;
@@ -776,7 +772,7 @@ describe("findGitRepositories()", () => {
 
     await mkdir(depth3, { recursive: true });
 
-    const { spawn } = await import("bun");
+    const { spawn } = await import("#test-runtime");
 
     // Initialize git repos at each level
     for (const path of [depth1, depth2, depth3]) {
@@ -815,7 +811,7 @@ describe("findGitRepositories()", () => {
     const nodeModulesRepo = join(testRepo.path, "node_modules", "some-package");
     await mkdir(nodeModulesRepo, { recursive: true });
 
-    const { spawn } = await import("bun");
+    const { spawn } = await import("#test-runtime");
     await spawn(["git", "init"], { cwd: nodeModulesRepo }).exited;
 
     const repos = await findGitRepositories(testRepo.path, 5, true);
@@ -828,7 +824,7 @@ describe("findGitRepositories()", () => {
     const arashiRepo = join(testRepo.path, ".arashi", "some-repo");
     await mkdir(arashiRepo, { recursive: true });
 
-    const { spawn } = await import("bun");
+    const { spawn } = await import("#test-runtime");
     await spawn(["git", "init"], { cwd: arashiRepo }).exited;
 
     const repos = await findGitRepositories(testRepo.path, 5, true);
@@ -908,7 +904,7 @@ describe("discoverSubRepositories()", () => {
     const nestedPath = join(testRepo.path, "repos", "nested");
     await mkdir(nestedPath, { recursive: true });
 
-    const { spawn } = await import("bun");
+    const { spawn } = await import("#test-runtime");
     await spawn(["git", "init"], { cwd: nestedPath }).exited;
     await spawn(["git", "config", "user.email", "test@example.com"], { cwd: nestedPath }).exited;
     await spawn(["git", "config", "user.name", "Test"], { cwd: nestedPath }).exited;
@@ -928,7 +924,7 @@ describe("discoverSubRepositories()", () => {
     const nestedPath = join(testRepo.path, "repos", "nested");
     await mkdir(nestedPath, { recursive: true });
 
-    const { spawn } = await import("bun");
+    const { spawn } = await import("#test-runtime");
     await spawn(["git", "init"], { cwd: nestedPath }).exited;
     await spawn(["git", "config", "user.email", "test@example.com"], { cwd: nestedPath }).exited;
     await spawn(["git", "config", "user.name", "Test"], { cwd: nestedPath }).exited;
@@ -949,7 +945,7 @@ describe("discoverSubRepositories()", () => {
     const nestedPath = join(testRepo.path, "repos", "linked-nested");
     await mkdir(nestedPath, { recursive: true });
 
-    const { spawn } = await import("bun");
+    const { spawn } = await import("#test-runtime");
     await spawn(["git", "init"], { cwd: nestedPath }).exited;
     await spawn(["git", "config", "user.email", "test@example.com"], { cwd: nestedPath }).exited;
     await spawn(["git", "config", "user.name", "Test"], { cwd: nestedPath }).exited;

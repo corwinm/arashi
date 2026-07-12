@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { executeClone, resolveCoordinatedSourceWorkspaceRoot } from "../../src/commands/clone.ts";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import type { Config } from "../../src/lib/config.ts";

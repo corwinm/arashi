@@ -1,3 +1,4 @@
+import { runtime } from "#runtime";
 import type { SupportedShell } from "./shell-integration.ts";
 
 export const ARASHI_DIRECTIVE_FILE_ENV = "ARASHI_DIRECTIVE_FILE";
@@ -59,7 +60,7 @@ export async function writeCdDirective(
   context: DirectiveContext,
   worktreePath: string,
 ): Promise<void> {
-  await Bun.write(context.filePath, buildCdDirective(worktreePath, context.shell));
+  await runtime.write(context.filePath, buildCdDirective(worktreePath, context.shell));
 }
 
 function escapeDoubleQuotedPath(value: string): string {

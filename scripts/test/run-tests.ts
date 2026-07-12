@@ -1,5 +1,6 @@
 import { dirname, join, relative } from "path";
 import { readFileSync, readdirSync } from "fs";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "url";
 
 const currentFilePath = fileURLToPath(import.meta.url);
@@ -120,14 +121,19 @@ async function main(): Promise<void> {
     throw new Error("No test files matched the current platform.");
   }
 
-  const proc = Bun.spawn(["bun", "test", ...selectedFiles], {
-    cwd: workspaceRoot,
-    stderr: "inherit",
-    stdin: "inherit",
-    stdout: "inherit",
+  const proc = spawn(
+    process.execPath,
+    [join(workspaceRoot, "node_modules", "vitest", "vitest.mjs"), "run", ...selectedFiles],
+    {
+      cwd: workspaceRoot,
+      stdio: "inherit",
+    },
+  );
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    proc.once("error", reject);
+    proc.once("exit", (code) => resolve(code ?? 1));
   });
-
-  process.exit(await proc.exited);
+  process.exit(exitCode);
 }
 
 await main();

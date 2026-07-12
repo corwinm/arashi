@@ -1,3 +1,4 @@
+import { runtime } from "#runtime";
 /**
  * Repository Management - Core Module
  *
@@ -389,8 +390,12 @@ export const discoverRepositories = async (
 
       const entries = await readdir(dirPath, { withFileTypes: true });
 
-      for (const entry of entries) {
-        if (!excludePatterns.some((pattern) => entry.name.includes(pattern))) {
+      await Promise.all(
+        entries.map(async (entry) => {
+          if (excludePatterns.some((pattern) => entry.name.includes(pattern))) {
+            return;
+          }
+
           if (entry.isDirectory()) {
             const subPath = join(dirPath, entry.name);
             await scanDirectory(subPath, depth + ONE);
@@ -405,8 +410,8 @@ export const discoverRepositories = async (
               scanDirectory,
             });
           }
-        }
-      }
+        }),
+      );
     } catch (error: unknown) {
       errors.push(classifyError(dirPath, error));
     }
@@ -523,26 +528,38 @@ const classifyError = (path: string, error: unknown): DiscoveryError => {
  * @throws {RepositoryInvalidError} If default branch cannot be determined
  */
 export const detectDefaultBranch = async (repositoryPath: string): Promise<string> => {
-  try {
-    const result = await execGit(["symbolic-ref", "refs/remotes/origin/HEAD"], repositoryPath);
-
-    const match = result.stdout.trim().match(/refs\/remotes\/origin\/(.+)/);
-    if (match && match[ONE]) {
-      return match[ONE].trim();
-    }
-  } catch {}
-
-  for (const branch of COMMON_BRANCHES) {
+  const remoteHeadPath = join(repositoryPath, ".git", "refs", "remotes", "origin", "HEAD");
+  if (await fileExists(remoteHeadPath)) {
     try {
-      await execGit(["rev-parse", "--verify", `refs/heads/${branch}`], repositoryPath);
-      return branch;
+      const result = await execGit(["symbolic-ref", "refs/remotes/origin/HEAD"], repositoryPath);
+
+      const match = result.stdout.trim().match(/refs\/remotes\/origin\/(.+)/);
+      if (match && match[ONE]) {
+        return match[ONE].trim();
+      }
     } catch {}
   }
 
   try {
-    const result = await execGit(["rev-parse", "--abbrev-ref", "HEAD"], repositoryPath);
+    const result = await execGit(
+      ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+      repositoryPath,
+    );
+    const branches = new Set(
+      result.stdout
+        .split("\n")
+        .map((branch) => branch.trim())
+        .filter(Boolean),
+    );
 
-    const currentBranch = result.stdout.trim();
+    for (const branch of COMMON_BRANCHES) {
+      if (branches.has(branch)) {
+        return branch;
+      }
+    }
+
+    const result2 = await execGit(["rev-parse", "--abbrev-ref", "HEAD"], repositoryPath);
+    const currentBranch = result2.stdout.trim();
     if (currentBranch && currentBranch !== "HEAD") {
       return currentBranch;
     }
@@ -588,7 +605,7 @@ export const detectSetupScript = async (
     const scriptPath = join(repositoryPath, pattern);
 
     try {
-      const file = Bun.file(scriptPath);
+      const file = runtime.file(scriptPath);
       const exists = await file.exists();
 
       if (exists) {

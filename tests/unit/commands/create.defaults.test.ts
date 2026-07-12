@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { Config } from "../../../src/lib/config.ts";
 import { resolveCreateDefaults } from "../../../src/commands/create.ts";
 

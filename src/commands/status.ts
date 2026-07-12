@@ -754,11 +754,11 @@ export const collectStatusWarnings = (statuses: RepoStatus[]): JsonWarning[] =>
         message: status.refreshWarning.message,
       });
     }
-    if (status.defaultBranch?.state === "unavailable" && status.defaultBranch.error) {
+    if (status.defaultBranch?.state === "unavailable" && status.defaultBranch.message) {
       warnings.push({
         code: "DEFAULT_BRANCH_COMPARISON_UNAVAILABLE",
         details: { repository: status.name },
-        message: status.defaultBranch.error,
+        message: status.defaultBranch.message,
       });
     }
     return warnings;

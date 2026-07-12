@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import type { PushResult } from "../../src/lib/push-types.ts";
 import type { WorkspaceRepository } from "../../src/lib/config.ts";

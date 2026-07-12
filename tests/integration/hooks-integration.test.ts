@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { cleanupTestRepo, createHookInRepo, createTestRepo } from "../helpers/hooks";
 import { runLifecycleHook } from "../../src/lib/hooks";
 

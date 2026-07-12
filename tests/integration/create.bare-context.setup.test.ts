@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "#test-runtime";
+import { afterEach, describe, expect, test } from "vitest";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
@@ -17,12 +18,12 @@ describe("bare create integration harness", () => {
   test("creates reusable bare + worktree fixture", async () => {
     workspace = await createBareCreateWorkspace();
 
-    const bareCheck = Bun.spawnSync(["git", "rev-parse", "--is-bare-repository"], {
+    const bareCheck = runtime.spawnSync(["git", "rev-parse", "--is-bare-repository"], {
       cwd: workspace.bareRepoPath,
     });
     const bareValue = new TextDecoder().decode(bareCheck.stdout).trim();
 
-    const worktreeCheck = Bun.spawnSync(["git", "rev-parse", "--is-bare-repository"], {
+    const worktreeCheck = runtime.spawnSync(["git", "rev-parse", "--is-bare-repository"], {
       cwd: workspace.worktreePath,
     });
     const worktreeValue = new TextDecoder().decode(worktreeCheck.stdout).trim();

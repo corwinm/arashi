@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { Repository } from "../../src/core/repository.ts";
 import { calculateChildWorktreePath } from "../../src/core/worktree.ts";
 import { join } from "path";

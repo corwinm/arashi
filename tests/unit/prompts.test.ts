@@ -1,18 +1,18 @@
-import { beforeAll, describe, expect, mock, test } from "bun:test";
+import { beforeAll, describe, expect, vi, test } from "vitest";
 import type { Choice } from "../../src/lib/prompts";
 
 // Mock @inquirer/prompts
-const mockConfirm = mock(() => Promise.resolve(true));
-const mockSelect = mock(() => Promise.resolve("main"));
-const mockCheckbox = mock((options?: { choices?: unknown[] }) => {
+const mockConfirm = vi.fn(() => Promise.resolve(true));
+const mockSelect = vi.fn(() => Promise.resolve("main"));
+const mockCheckbox = vi.fn((options?: { choices?: unknown[] }) => {
   if (!options || !options.choices || options.choices.length === 0) {
     return Promise.reject(new Error("No choices provided"));
   }
   return Promise.resolve(["opt1"]);
 });
-const mockInput = mock(() => Promise.resolve("test input"));
+const mockInput = vi.fn(() => Promise.resolve("test input"));
 
-mock.module("@inquirer/prompts", () => ({
+vi.mock("@inquirer/prompts", () => ({
   checkbox: mockCheckbox,
   confirm: mockConfirm,
   input: mockInput,

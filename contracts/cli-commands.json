@@ -389,7 +389,7 @@
         },
         {
           "flags": "--validation <entry>",
-          "description": "Validation command and result evidence, e.g. 'bun run test — passed' (repeatable)",
+          "description": "Validation command and result evidence, e.g. 'pnpm run test — passed' (repeatable)",
           "required": true,
           "optional": false,
           "variadic": false

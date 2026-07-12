@@ -1,3 +1,4 @@
+import { runtime } from "#runtime";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { basename, resolve, sep } from "path";
 import {
@@ -469,7 +470,7 @@ const augmentAllScopeCandidates = async (
         childRepository.name,
       );
 
-      if (!(await Bun.file(resolve(childWorktreePath, ".git")).exists())) {
+      if (!(await runtime.file(resolve(childWorktreePath, ".git")).exists())) {
         continue;
       }
 

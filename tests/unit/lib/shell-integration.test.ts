@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "#test-runtime";
+import { afterEach, describe, expect, test } from "vitest";
 import {
   buildShellInitScript,
   buildShellInstallBlock,
@@ -61,12 +62,12 @@ describe("shell integration", () => {
     const firstInstall = await installShellIntegration({
       env: { HOME: home, SHELL: "/bin/bash" },
     });
-    const once = await Bun.file(bashrcPath).text();
+    const once = await runtime.file(bashrcPath).text();
 
     const secondInstall = await installShellIntegration({
       env: { HOME: home, SHELL: "/bin/bash" },
     });
-    const twice = await Bun.file(bashrcPath).text();
+    const twice = await runtime.file(bashrcPath).text();
 
     expect(firstInstall.shell).toBe("bash");
     expect(firstInstall.startupFilePath).toBe(bashrcPath);

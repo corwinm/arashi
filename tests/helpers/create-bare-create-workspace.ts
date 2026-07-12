@@ -1,3 +1,4 @@
+import { runtime } from "#test-runtime";
 import { mkdir, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -37,11 +38,12 @@ export async function createBareCreateWorkspace(
   await execGit(["init", "-b", "main"], seedPath);
   await execGit(["config", "user.name", "Test User"], seedPath);
   await execGit(["config", "user.email", "test@example.com"], seedPath);
+  await execGit(["config", "commit.gpgsign", "false"], seedPath);
 
-  await Bun.write(join(seedPath, "README.md"), "# Bare Create Test\n");
+  await runtime.write(join(seedPath, "README.md"), "# Bare Create Test\n");
   if (includeConfig) {
     await mkdir(join(seedPath, ".arashi"), { recursive: true });
-    await Bun.write(
+    await runtime.write(
       join(seedPath, ".arashi", "config.json"),
       JSON.stringify(
         {
@@ -74,7 +76,7 @@ export async function createBareCreateWorkspace(
 }
 
 async function execGit(args: string[], cwd: string): Promise<void> {
-  const proc = Bun.spawnSync(["git", ...args], {
+  const proc = runtime.spawnSync(["git", ...args], {
     cwd,
     stderr: "pipe",
     stdout: "pipe",

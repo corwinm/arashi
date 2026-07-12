@@ -1,3 +1,4 @@
+import { runtime } from "#test-runtime";
 /**
  * Test helper for creating temporary git repositories for testing
  */
@@ -30,6 +31,7 @@ export async function createTestRepo(basePath: string, options: TestRepoOptions)
   // Configure git user for commits
   await exec('git config user.name "Test User"', repoPath);
   await exec('git config user.email "test@example.com"', repoPath);
+  await exec("git config commit.gpgsign false", repoPath);
 
   // Create initial commit
   await exec('git commit --allow-empty -m "Initial commit"', repoPath);
@@ -44,7 +46,7 @@ export async function createTestRepo(basePath: string, options: TestRepoOptions)
   // Create setup script if specified
   if (options.hasSetupScript) {
     const setupPath = join(repoPath, "setup.sh");
-    await Bun.write(setupPath, "#!/bin/bash\necho 'Setup script'\n");
+    await runtime.write(setupPath, "#!/bin/bash\necho 'Setup script'\n");
     await exec("chmod +x setup.sh", repoPath);
   }
 

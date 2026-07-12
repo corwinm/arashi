@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { runtime, spawn } from "#test-runtime";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import {
   createRemoveWorkspace,
@@ -7,7 +8,6 @@ import {
 import { executeRemove } from "../../src/commands/remove.ts";
 import { existsSync } from "fs";
 import { join } from "path";
-import { spawn } from "bun";
 import { tmpdir } from "os";
 
 describe("remove command - lifecycle hooks", () => {
@@ -71,7 +71,7 @@ echo "post:$ARASHI_REPO_NAME" >> "$ARASHI_MAIN_REPO_PATH/.arashi/remove-hooks-or
     }
 
     expect(existsSync(worktrees["repo-a"])).toBe(false);
-    const orderLog = (await Bun.file(orderLogPath).text()).trim();
+    const orderLog = (await runtime.file(orderLogPath).text()).trim();
     expect(orderLog).toBe("pre:repo-a\npre:repo-b\npost:repo-a\npost:repo-b");
   });
 
@@ -121,7 +121,7 @@ echo "post:$ARASHI_REPO_NAME" >> "$ARASHI_MAIN_REPO_PATH/.arashi/remove-hooks-or
       process.chdir(originalCwd);
     }
 
-    const scopeLog = (await Bun.file(scopeLogPath).text()).trim();
+    const scopeLog = (await runtime.file(scopeLogPath).text()).trim();
     expect(scopeLog).toBe(
       "repository:repo-a\nworkspace:repo-a\nglobal-repository:repo-a\nglobal-shared:repo-a",
     );
@@ -167,7 +167,7 @@ echo "post:$ARASHI_REPO_NAME" >> "$ARASHI_MAIN_REPO_PATH/.arashi/remove-hooks-or
       process.chdir(originalCwd);
     }
 
-    const globalLog = (await Bun.file(globalLogPath).text()).trim();
+    const globalLog = (await runtime.file(globalLogPath).text()).trim();
     expect(globalLog).toBe("targeted:repo-a\nshared:repo-a");
   });
 
@@ -244,7 +244,7 @@ exit 5`,
     expect(exitCode).toBe(1);
     expect(await gitBranchExists(workspace.repos[0].path, branchName)).toBe(true);
     expect(await gitBranchExists(workspace.repos[1].path, branchName)).toBe(false);
-    const orderLog = (await Bun.file(orderLogPath).text()).trim();
+    const orderLog = (await runtime.file(orderLogPath).text()).trim();
     expect(orderLog).toBe("pre:repo-a\npre:repo-b\npost:repo-a\npost:repo-b");
   });
 

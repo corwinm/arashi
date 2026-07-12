@@ -1,5 +1,6 @@
+import { runtime } from "#test-runtime";
 import { createCommand, executeSwitch } from "../../src/commands/switch.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { join, resolve } from "path";
 import { mkdtemp, rm } from "fs/promises";
 import type { SwitchCandidate } from "../../src/core/switch.ts";
@@ -551,7 +552,7 @@ describe("switch command integration", () => {
       );
 
       expect(result.launchMode).toBe("cd");
-      expect(await Bun.file(directivePath).text()).toBe(
+      expect(await runtime.file(directivePath).text()).toBe(
         "cd -- '/workspace/feature-switch-command'\n",
       );
       expect(launchCalled).toBe(false);
@@ -597,7 +598,7 @@ describe("switch command integration", () => {
       );
 
       expect(result.launchMode).toBe("cd");
-      expect(await Bun.file(directivePath).text()).toBe(
+      expect(await runtime.file(directivePath).text()).toBe(
         "cd -- '/workspace/feature-switch-command'\n",
       );
     } finally {

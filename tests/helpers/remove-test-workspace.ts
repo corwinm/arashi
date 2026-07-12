@@ -4,7 +4,6 @@
 
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { spawn } from "bun";
 import { tmpdir } from "os";
 
 export interface RemoveTestRepository {
@@ -163,3 +162,4 @@ async function runGit(repoPath: string, args: string[]): Promise<void> {
     throw new Error(`git ${args.join(" ")} failed in ${repoPath}: ${detail}`);
   }
 }
+import { spawn } from "#test-runtime";

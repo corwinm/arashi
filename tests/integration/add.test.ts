@@ -1,3 +1,4 @@
+import { runtime } from "#test-runtime";
 /**
  * Integration tests for the add command
  *
@@ -10,7 +11,7 @@
  * - Error handling and rollback
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   deriveRepoName,
   detectSetupScript,
@@ -23,7 +24,7 @@ import { existsSync } from "fs";
 import { join } from "path";
 
 // Test workspace directory
-const TEST_WORKSPACE = join(import.meta.dir, "../temp-integration-workspace");
+const TEST_WORKSPACE = join(import.meta.dirname, "../temp-integration-workspace");
 
 describe("Add Command - URL Validation", () => {
   test("validates HTTPS URLs correctly", () => {
@@ -163,7 +164,7 @@ describe("Add Command - Setup Script Detection", () => {
 
   test("detects setup.sh", async () => {
     const setupPath = join(testRepoPath, "setup.sh");
-    await Bun.write(setupPath, '#!/bin/bash\necho "Setup"\n');
+    await runtime.write(setupPath, '#!/bin/bash\necho "Setup"\n');
 
     const detected = await detectSetupScript(testRepoPath);
     expect(detected).toBe(setupPath);
@@ -171,7 +172,7 @@ describe("Add Command - Setup Script Detection", () => {
 
   test("detects setup.bash", async () => {
     const setupPath = join(testRepoPath, "setup.bash");
-    await Bun.write(setupPath, '#!/bin/bash\necho "Setup"\n');
+    await runtime.write(setupPath, '#!/bin/bash\necho "Setup"\n');
 
     const detected = await detectSetupScript(testRepoPath);
     expect(detected).toBe(setupPath);
@@ -179,7 +180,7 @@ describe("Add Command - Setup Script Detection", () => {
 
   test("detects install.sh", async () => {
     const setupPath = join(testRepoPath, "install.sh");
-    await Bun.write(setupPath, '#!/bin/bash\necho "Install"\n');
+    await runtime.write(setupPath, '#!/bin/bash\necho "Install"\n');
 
     const detected = await detectSetupScript(testRepoPath);
     expect(detected).toBe(setupPath);
@@ -187,7 +188,7 @@ describe("Add Command - Setup Script Detection", () => {
 
   test("detects bootstrap.sh", async () => {
     const setupPath = join(testRepoPath, "bootstrap.sh");
-    await Bun.write(setupPath, '#!/bin/bash\necho "Bootstrap"\n');
+    await runtime.write(setupPath, '#!/bin/bash\necho "Bootstrap"\n');
 
     const detected = await detectSetupScript(testRepoPath);
     expect(detected).toBe(setupPath);
@@ -195,7 +196,7 @@ describe("Add Command - Setup Script Detection", () => {
 
   test("detects Makefile with setup target", async () => {
     const makefilePath = join(testRepoPath, "Makefile");
-    await Bun.write(makefilePath, 'setup:\n\t@echo "Running setup"\n');
+    await runtime.write(makefilePath, 'setup:\n\t@echo "Running setup"\n');
 
     const detected = await detectSetupScript(testRepoPath);
     expect(detected).toBe(makefilePath);
@@ -203,7 +204,7 @@ describe("Add Command - Setup Script Detection", () => {
 
   test("detects Makefile with install target", async () => {
     const makefilePath = join(testRepoPath, "Makefile");
-    await Bun.write(makefilePath, 'install:\n\t@echo "Installing"\n');
+    await runtime.write(makefilePath, 'install:\n\t@echo "Installing"\n');
 
     const detected = await detectSetupScript(testRepoPath);
     expect(detected).toBe(makefilePath);
@@ -216,16 +217,16 @@ describe("Add Command - Setup Script Detection", () => {
 
   test("returns null for Makefile without setup/install target", async () => {
     const makefilePath = join(testRepoPath, "Makefile");
-    await Bun.write(makefilePath, 'build:\n\t@echo "Building"\n');
+    await runtime.write(makefilePath, 'build:\n\t@echo "Building"\n');
 
     const detected = await detectSetupScript(testRepoPath);
     expect(detected).toBeNull();
   });
 
   test("prioritizes setup.sh over other scripts", async () => {
-    await Bun.write(join(testRepoPath, "setup.sh"), "#!/bin/bash\n");
-    await Bun.write(join(testRepoPath, "install.sh"), "#!/bin/bash\n");
-    await Bun.write(join(testRepoPath, "bootstrap.sh"), "#!/bin/bash\n");
+    await runtime.write(join(testRepoPath, "setup.sh"), "#!/bin/bash\n");
+    await runtime.write(join(testRepoPath, "install.sh"), "#!/bin/bash\n");
+    await runtime.write(join(testRepoPath, "bootstrap.sh"), "#!/bin/bash\n");
 
     const detected = await detectSetupScript(testRepoPath);
     expect(detected).toBe(join(testRepoPath, "setup.sh"));

@@ -1,3 +1,4 @@
+import { runtime, spawn } from "#test-runtime";
 /**
  * Integration Tests for Init Command
  *
@@ -5,13 +6,12 @@
  * git validation, error handling, and rollback behavior.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { fileExists, readTextFile, writeTextFile } from "../../src/lib/filesystem";
 import { getConfigPath, loadConfig, saveConfig } from "../../src/lib/config";
 import { executeInit } from "../../src/commands/init.ts";
 import { join } from "path";
-import { spawn } from "bun";
 import { tmpdir } from "os";
 
 /**
@@ -61,11 +61,11 @@ async function runInitCommand(
   stderr: string;
 }> {
   // Find arashi binary - start from test file and go up to find repos/arashi
-  const testFileDir = import.meta.dir;
+  const testFileDir = import.meta.dirname;
   const arashiRoot = join(testFileDir, "..", "..");
   const arashiBin = join(arashiRoot, "src", "index.ts");
 
-  const proc = spawn(["bun", arashiBin, "init", ...args], {
+  const proc = spawn([process.execPath, "--import", "tsx", arashiBin, "init", ...args], {
     cwd,
     stderr: "pipe",
     stdout: "pipe",
@@ -233,7 +233,7 @@ describe("init command - success cases", () => {
 
     // Verify backup created
     const backupFiles = await Array.fromAsync(
-      new Bun.Glob("*.backup-*").scan({ cwd: join(testDir, ".arashi") }),
+      new runtime.Glob("*.backup-*").scan({ cwd: join(testDir, ".arashi") }),
     );
     expect(backupFiles.length).toBeGreaterThan(0);
   });
@@ -849,7 +849,7 @@ describe("init command - dry-run mode", () => {
 
     // Verify config NOT backed up (dry-run)
     const backupFiles = await Array.fromAsync(
-      new Bun.Glob("*.backup-*").scan({ cwd: join(testDir, ".arashi") }),
+      new runtime.Glob("*.backup-*").scan({ cwd: join(testDir, ".arashi") }),
     );
     expect(backupFiles).toHaveLength(0);
   });

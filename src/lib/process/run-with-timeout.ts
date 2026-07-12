@@ -1,3 +1,4 @@
+import { runtime } from "#runtime";
 import { normalizeSpawnEnvironment } from "../shell-directives.ts";
 
 export interface RunWithTimeoutResult {
@@ -35,7 +36,7 @@ export async function runWithTimeout(
   const startTime = Date.now();
 
   try {
-    const proc = Bun.spawn(command, {
+    const proc = runtime.spawn(command, {
       cwd: options.cwd,
       env: normalizeSpawnEnvironment(
         (options.env ?? (process.env as Record<string, string>)) as Record<

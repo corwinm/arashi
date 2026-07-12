@@ -1,8 +1,9 @@
+import { runtime } from "#runtime";
 /**
  * Git Utility Library
  *
  * Core git operations for the Arashi worktree manager.
- * All functions use Bun.spawn() for git command execution.
+ * All functions use runtime.spawn() for git command execution.
  *
  * @module git
  */
@@ -35,10 +36,10 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
     throw new Error("Working directory (cwd) must be a non-empty string");
   }
 
-  // T010: Execute git command using Bun.spawn()
-  let proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | undefined = undefined;
+  // T010: Execute git command using runtime.spawn()
+  let proc: ReturnType<typeof runtime.spawn> | undefined;
   try {
-    proc = Bun.spawn(["git", ...args], {
+    proc = runtime.spawn(["git", ...args], {
       cwd,
       env: normalizeSpawnEnvironment(process.env),
       stderr: "pipe",
@@ -55,13 +56,38 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
     });
   }
 
+  if (proc.spawnError) {
+    throw new ArashiError(`Failed to spawn git command: ${proc.spawnError.message}`, {
+      args,
+      cwd,
+      exitCode: -1,
+      stderr: proc.spawnError.message,
+      stdout: "",
+    });
+  }
+
   // Capture stdout and stderr
   if (!proc) {
     throw new Error("Failed to spawn git process");
   }
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
+  let stdout: string;
+  let stderr: string;
+  let exitCode: number;
+  try {
+    [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+  } catch (error) {
+    throw new ArashiError(`Failed to spawn git command: ${(error as Error).message}`, {
+      args,
+      cwd,
+      exitCode: -1,
+      stderr: (error as Error).message,
+      stdout: "",
+    });
+  }
 
   // T011: Error handling - throw ArashiError on non-zero exit code
   if (exitCode !== 0) {
@@ -169,7 +195,7 @@ export async function clone(gitUrl: string, destPath: string): Promise<CommandRe
   const repoName = basename(destPath);
 
   try {
-    const proc = Bun.spawn(["git", "clone", gitUrl, repoName], {
+    const proc = runtime.spawn(["git", "clone", gitUrl, repoName], {
       cwd: parentDir,
       env: normalizeSpawnEnvironment(process.env),
       stderr: "pipe",

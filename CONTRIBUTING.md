@@ -15,11 +15,11 @@ That guide defines the Arashi CLI worktree flow, spec-kit process in OpenCode, a
 For code changes in this repository, run:
 
 ```bash
-bun run lint
-bun run format:check
-bun test
-bun run build
-bun run contract:check
+pnpm run lint
+pnpm run format:check
+pnpm test
+pnpm run build
+pnpm run contract:check
 ```
 
 ## CLI Command Contract
@@ -30,8 +30,8 @@ removing, or changing a command or option, update its semantic metadata (includi
 conditional JSON support, representations, and exclusions), then run:
 
 ```bash
-bun run contract:generate
-bun run contract:check
+pnpm run contract:generate
+pnpm run contract:check
 ```
 
 Commit the generated artifact with the source change. The freshness check is side-effect-free and
@@ -40,5 +40,5 @@ runs in CLI CI without requiring docs, skills, or VS Code sibling repositories.
 Optional fast path during active edits:
 
 ```bash
-bun run quality:changed
+pnpm run quality:changed
 ```

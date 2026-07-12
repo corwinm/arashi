@@ -1,6 +1,6 @@
 import type { SetupExecutionResult, SetupTarget } from "../../src/lib/setup-types.ts";
 import { buildSummary, formatResultLine, formatSummary } from "../../src/lib/setup-output.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 function createTarget(name: string, selected = true): SetupTarget {
   return {

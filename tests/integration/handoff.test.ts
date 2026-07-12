@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "#test-runtime";
+import { afterEach, describe, expect, test } from "vitest";
 import { basename, join } from "path";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 
-const CLI_ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
 
 interface CommandResult {
   exitCode: number;
@@ -20,7 +21,7 @@ const makeTempDir = async (): Promise<string> => {
 };
 
 const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> => {
-  const proc = Bun.spawn(args, {
+  const proc = runtime.spawn(args, {
     cwd,
     stderr: "pipe",
     stdout: "pipe",
@@ -36,7 +37,7 @@ const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> =
 };
 
 const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> =>
-  await runCommand(cwd, ["bun", CLI_ENTRY, ...args]);
+  await runCommand(cwd, [process.execPath, "--import", "tsx", CLI_ENTRY, ...args]);
 
 const runGit = async (cwd: string, args: string[]): Promise<string> => {
   const result = await runCommand(cwd, ["git", ...args]);
@@ -111,7 +112,7 @@ describe("handoff command", () => {
       "--link",
       "https://github.com/corwinm/arashi-arashi/issues/186",
       "--validation",
-      "bun run test — passed",
+      "pnpm run test — passed",
       "--todo",
       "watch CI",
       "--risk",
@@ -132,7 +133,7 @@ describe("handoff command", () => {
     );
     expect(result.stdout).toContain("repo-b: dirty; branch main; 1 changed file");
     expect(result.stdout).toContain("https://github.com/corwinm/arashi-arashi/issues/186");
-    expect(result.stdout).toContain("bun run test — passed");
+    expect(result.stdout).toContain("pnpm run test — passed");
     expect(result.stdout).toContain("- [ ] watch CI");
     expect(result.stdout).toContain("Windows CI pending");
     expect(result.stdout).toContain("`gh pr checks 123 --repo corwinm/arashi`");

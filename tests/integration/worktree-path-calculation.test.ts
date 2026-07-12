@@ -3,7 +3,7 @@
  * Feature: 001-nested-worktree-paths
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, rm, writeFile } from "fs/promises";
 import type { Config as ArashiConfig } from "../../src/lib/config.ts";
 import type { Repository } from "../../src/core/repository.ts";
@@ -44,7 +44,7 @@ async function createGitRepo(path: string, bare = false): Promise<void> {
 }
 
 describe("calculateWorktreePath integration", () => {
-  const testDir = join(import.meta.dir, "..", "temp-integration-workspace", "worktree-paths");
+  const testDir = join(import.meta.dirname, "..", "temp-integration-workspace", "worktree-paths");
 
   beforeEach(async () => {
     await mkdir(testDir, { recursive: true });

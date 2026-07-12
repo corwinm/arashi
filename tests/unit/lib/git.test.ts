@@ -1,3 +1,4 @@
+import { runtime } from "#test-runtime";
 /**
  * Unit tests for git.ts core functions
  *
@@ -14,7 +15,7 @@ import {
   initBareGitRepo,
   removeTempDir,
 } from "../../helpers/git-test-utils";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   exec,
   getDefaultBranch,
@@ -60,9 +61,7 @@ describe("exec()", () => {
   });
 
   test("should throw ArashiError on git command failure", async () => {
-    expect(async () => {
-      await exec(["status"], "/nonexistent/directory");
-    }).toThrow(ArashiError);
+    await expect(exec(["status"], "/nonexistent/directory")).rejects.toThrow(ArashiError);
   });
 
   test("should capture stderr in ArashiError when command fails", async () => {
@@ -123,15 +122,11 @@ describe("exec()", () => {
   });
 
   test("should handle empty argument array by throwing validation error", async () => {
-    expect(async () => {
-      await exec([], testRepo.path);
-    }).toThrow();
+    await expect(exec([], testRepo.path)).rejects.toThrow();
   });
 
   test("should validate cwd parameter exists", async () => {
-    expect(async () => {
-      await exec(["status"], "");
-    }).toThrow();
+    await expect(exec(["status"], "")).rejects.toThrow();
   });
 
   test("should handle git commands with no output", async () => {
@@ -224,29 +219,34 @@ describe("isBareRepo()", () => {
       const tempRepoPath = createTempDir();
       let branchName = "main";
       try {
-        Bun.spawnSync(["git", "init"], { cwd: tempRepoPath });
-        Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: tempRepoPath });
-        Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: tempRepoPath });
+        runtime.spawnSync(["git", "init"], { cwd: tempRepoPath });
+        runtime.spawnSync(["git", "config", "user.email", "test@example.com"], {
+          cwd: tempRepoPath,
+        });
+        runtime.spawnSync(["git", "config", "user.name", "Test User"], { cwd: tempRepoPath });
         await createInitialCommit(tempRepoPath);
 
         // Get the actual branch name (might be master or main depending on git config)
-        const branchResult = Bun.spawnSync(["git", "branch", "--show-current"], {
+        const branchResult = runtime.spawnSync(["git", "branch", "--show-current"], {
           cwd: tempRepoPath,
         });
         branchName = new TextDecoder().decode(branchResult.stdout).trim();
 
         // Push to bare repo
-        Bun.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: tempRepoPath });
-        Bun.spawnSync(["git", "push", "-u", "origin", branchName], { cwd: tempRepoPath });
+        runtime.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: tempRepoPath });
+        runtime.spawnSync(["git", "push", "-u", "origin", branchName], { cwd: tempRepoPath });
       } finally {
         removeTempDir(tempRepoPath);
       }
 
       // Create a worktree from the bare repository using the actual branch name
       // Git worktree add will create the worktreePath directory
-      const worktreeResult = Bun.spawnSync(["git", "worktree", "add", worktreePath, branchName], {
-        cwd: bareRepoPath,
-      });
+      const worktreeResult = runtime.spawnSync(
+        ["git", "worktree", "add", worktreePath, branchName],
+        {
+          cwd: bareRepoPath,
+        },
+      );
 
       // Ensure worktree was created successfully
       if (worktreeResult.exitCode !== 0) {
@@ -269,7 +269,7 @@ describe("isBareRepo()", () => {
 
     try {
       // Create a worktree from the regular (non-bare) repository
-      Bun.spawnSync(["git", "worktree", "add", worktreePath, "-b", "feature-branch"], {
+      runtime.spawnSync(["git", "worktree", "add", worktreePath, "-b", "feature-branch"], {
         cwd: testRepo.path,
       });
 
@@ -278,7 +278,9 @@ describe("isBareRepo()", () => {
       expect(result).toBe(false);
     } finally {
       // Clean up worktree
-      Bun.spawnSync(["git", "worktree", "remove", worktreePath, "--force"], { cwd: testRepo.path });
+      runtime.spawnSync(["git", "worktree", "remove", worktreePath, "--force"], {
+        cwd: testRepo.path,
+      });
       removeTempDir(worktreePath);
     }
   });
@@ -292,15 +294,15 @@ describe("getDefaultBranch()", () => {
     try {
       initBareGitRepo(bareRepoPath);
 
-      Bun.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
-      Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
-      Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
+      runtime.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
+      runtime.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
+      runtime.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
 
-      await Bun.write(join(seedPath, "README.md"), "# test\n");
-      Bun.spawnSync(["git", "add", "README.md"], { cwd: seedPath });
-      Bun.spawnSync(["git", "commit", "-m", "seed"], { cwd: seedPath });
-      Bun.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
-      Bun.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
+      await runtime.write(join(seedPath, "README.md"), "# test\n");
+      runtime.spawnSync(["git", "add", "README.md"], { cwd: seedPath });
+      runtime.spawnSync(["git", "commit", "-m", "seed"], { cwd: seedPath });
+      runtime.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
+      runtime.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
 
       const branch = await getDefaultBranch(bareRepoPath);
       expect(branch).toBe("main");
@@ -319,15 +321,15 @@ describe("readTrackedFileFromDefaultBranch()", () => {
     try {
       initBareGitRepo(bareRepoPath);
 
-      Bun.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
-      Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
-      Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
+      runtime.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
+      runtime.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
+      runtime.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
 
-      await Bun.write(join(seedPath, "tracked.txt"), "tracked-value\n");
-      Bun.spawnSync(["git", "add", "tracked.txt"], { cwd: seedPath });
-      Bun.spawnSync(["git", "commit", "-m", "add tracked file"], { cwd: seedPath });
-      Bun.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
-      Bun.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
+      await runtime.write(join(seedPath, "tracked.txt"), "tracked-value\n");
+      runtime.spawnSync(["git", "add", "tracked.txt"], { cwd: seedPath });
+      runtime.spawnSync(["git", "commit", "-m", "add tracked file"], { cwd: seedPath });
+      runtime.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
+      runtime.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
 
       const content = await readTrackedFileFromDefaultBranch(bareRepoPath, "tracked.txt");
       expect(content).toBe("tracked-value\n");
@@ -345,15 +347,15 @@ describe("readTrackedFileFromDefaultBranch()", () => {
       // Bare repo defaults HEAD to master on many CI systems.
       initBareGitRepo(bareRepoPath);
 
-      Bun.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
-      Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
-      Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
+      runtime.spawnSync(["git", "init", "-b", "main"], { cwd: seedPath });
+      runtime.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: seedPath });
+      runtime.spawnSync(["git", "config", "user.name", "Test User"], { cwd: seedPath });
 
-      await Bun.write(join(seedPath, "tracked.txt"), "from-main-only\n");
-      Bun.spawnSync(["git", "add", "tracked.txt"], { cwd: seedPath });
-      Bun.spawnSync(["git", "commit", "-m", "add tracked file"], { cwd: seedPath });
-      Bun.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
-      Bun.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
+      await runtime.write(join(seedPath, "tracked.txt"), "from-main-only\n");
+      runtime.spawnSync(["git", "add", "tracked.txt"], { cwd: seedPath });
+      runtime.spawnSync(["git", "commit", "-m", "add tracked file"], { cwd: seedPath });
+      runtime.spawnSync(["git", "remote", "add", "origin", bareRepoPath], { cwd: seedPath });
+      runtime.spawnSync(["git", "push", "origin", "main"], { cwd: seedPath });
 
       const content = await readTrackedFileFromDefaultBranch(bareRepoPath, "tracked.txt");
       expect(content).toBe("from-main-only\n");

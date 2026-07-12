@@ -1,3 +1,4 @@
+import { runtime } from "#runtime";
 import { basename, dirname, join } from "path";
 import { homedir } from "os";
 import { mkdir } from "fs/promises";
@@ -97,14 +98,14 @@ export async function installShellIntegration(
     );
   }
 
-  const startupFile = Bun.file(startupFilePath);
+  const startupFile = runtime.file(startupFilePath);
   const existed = await startupFile.exists();
   const currentContents = existed ? await startupFile.text() : "";
   const block = buildShellInstallBlock(shell);
   const nextContents = upsertManagedBlock(currentContents, block);
 
   await mkdir(dirname(startupFilePath), { recursive: true });
-  await Bun.write(startupFilePath, nextContents);
+  await runtime.write(startupFilePath, nextContents);
 
   return {
     created: !existed,
@@ -126,7 +127,7 @@ export async function resolveStartupFilePath(
   const candidates = getStartupFileCandidates(home, shell);
 
   for (const candidate of candidates) {
-    if (await Bun.file(candidate).exists()) {
+    if (await runtime.file(candidate).exists()) {
       return candidate;
     }
   }

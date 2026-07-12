@@ -4,7 +4,7 @@ import {
   buildMovePlan,
   emptyDirtyDetails,
 } from "../../../src/core/move.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 type WorkspaceSelection = Parameters<typeof buildMovePlan>[1];
 

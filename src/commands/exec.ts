@@ -1,3 +1,4 @@
+import { runtime } from "#runtime";
 /**
  * CLI Command: Exec
  *
@@ -111,7 +112,7 @@ const createNotStartedResult = (repo: ExecRepository, command: string[]): ExecRe
 });
 
 const isRepoDirty = async (repoPath: string): Promise<boolean> => {
-  const proc = Bun.spawn(["git", "status", "--porcelain=v1"], {
+  const proc = runtime.spawn(["git", "status", "--porcelain=v1"], {
     cwd: repoPath,
     env: normalizeSpawnEnvironment(process.env),
     stderr: "pipe",
@@ -127,7 +128,7 @@ const runChildCommand = async (repo: ExecRepository, command: string[]): Promise
   const startedAt = Date.now();
 
   try {
-    const proc = Bun.spawn(command, {
+    const proc = runtime.spawn(command, {
       cwd: repo.path,
       env: normalizeSpawnEnvironment(process.env),
       stderr: "pipe",
@@ -216,7 +217,14 @@ const runWithConcurrency = async ({
 
 interface BuildSummaryInput {
   command: string[];
-  options: { dirty: boolean; failFast: boolean; jobs: number; json: boolean; only: string[] };
+  options: {
+    dirty: boolean;
+    failFast: boolean;
+    groups: string[];
+    jobs: number;
+    json: boolean;
+    only: string[];
+  };
   repositories: ExecRepository[];
   results: ExecResult[];
 }

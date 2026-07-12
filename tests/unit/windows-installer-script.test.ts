@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 
-const scriptPath = join(import.meta.dir, "../../scripts/install.ps1");
+const scriptPath = join(import.meta.dirname, "../../scripts/install.ps1");
 const script = readFileSync(scriptPath, "utf8");
 
 function functionBody(name: string): string {

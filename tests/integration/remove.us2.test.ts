@@ -2,7 +2,7 @@
  * Integration test: User Story 2 - interactive multi-select
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
@@ -10,7 +10,6 @@ import {
 import { executeRemove } from "../../src/commands/remove.ts";
 import { existsSync } from "fs";
 import { rm } from "fs/promises";
-import { spawn } from "bun";
 
 describe("remove command - US2 multi-select", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
@@ -135,3 +134,4 @@ describe("remove command - US2 multi-select", () => {
     }
   });
 });
+import { spawn } from "#test-runtime";

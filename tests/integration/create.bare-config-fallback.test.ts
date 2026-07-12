@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "#test-runtime";
+import { afterEach, describe, expect, test } from "vitest";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { join } from "path";
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
-const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
 
 afterEach(async () => {
   if (!workspace) {
@@ -19,8 +20,17 @@ describe("create config fallback in bare repository", () => {
   test("loads config from tracked repository content", async () => {
     workspace = await createBareCreateWorkspace();
 
-    const proc = Bun.spawn(
-      ["bun", CLI_ENTRY, "create", "feature-config-fallback", "--no-hooks", "--no-progress"],
+    const proc = runtime.spawn(
+      [
+        process.execPath,
+        "--import",
+        "tsx",
+        CLI_ENTRY,
+        "create",
+        "feature-config-fallback",
+        "--no-hooks",
+        "--no-progress",
+      ],
       {
         cwd: workspace.bareRepoPath,
         stderr: "pipe",

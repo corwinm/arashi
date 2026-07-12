@@ -4,7 +4,7 @@ import {
   normalizeSpawnEnvironment,
   stripDirectiveEnvironment,
 } from "../../../src/lib/shell-directives.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 describe("shell directives", () => {
   test("detects active directive context for supported shells", () => {

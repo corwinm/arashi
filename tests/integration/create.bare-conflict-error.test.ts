@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "#test-runtime";
+import { afterEach, describe, expect, test } from "vitest";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { join } from "path";
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
-const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
 
 afterEach(async () => {
   if (!workspace) {
@@ -20,8 +21,17 @@ describe("create conflict guidance from bare root", () => {
     workspace = await createBareCreateWorkspace();
     const branch = "feature-conflict";
 
-    const firstRun = Bun.spawn(
-      ["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"],
+    const firstRun = runtime.spawn(
+      [
+        process.execPath,
+        "--import",
+        "tsx",
+        CLI_ENTRY,
+        "create",
+        branch,
+        "--no-hooks",
+        "--no-progress",
+      ],
       {
         cwd: workspace.bareRepoPath,
         stderr: "pipe",
@@ -39,8 +49,19 @@ describe("create conflict guidance from bare root", () => {
     }
     expect(firstExit).toBe(0);
 
-    const secondRun = Bun.spawn(
-      ["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress", "--conflict", "ABORT"],
+    const secondRun = runtime.spawn(
+      [
+        process.execPath,
+        "--import",
+        "tsx",
+        CLI_ENTRY,
+        "create",
+        branch,
+        "--no-hooks",
+        "--no-progress",
+        "--conflict",
+        "ABORT",
+      ],
       {
         cwd: workspace.bareRepoPath,
         stderr: "pipe",

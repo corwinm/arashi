@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { spawn } from "bun";
 import { tmpdir } from "os";
 
 interface CommandResult {
@@ -104,9 +103,16 @@ async function commitFile(repoPath: string, fileName: string, content: string): 
 }
 
 async function runPushCommand(workspaceRoot: string, args: string[] = []): Promise<CommandResult> {
-  const arashiRoot = join(import.meta.dir, "..", "..");
+  const arashiRoot = join(import.meta.dirname, "..", "..");
   const arashiBin = join(arashiRoot, "src", "index.ts");
-  return runCommand(workspaceRoot, ["bun", arashiBin, "push", ...args]);
+  return runCommand(workspaceRoot, [
+    process.execPath,
+    "--import",
+    "tsx",
+    arashiBin,
+    "push",
+    ...args,
+  ]);
 }
 
 describe("push command", () => {
@@ -232,3 +238,4 @@ describe("push command", () => {
     PUSH_TEST_TIMEOUT,
   );
 });
+import { spawn } from "#test-runtime";

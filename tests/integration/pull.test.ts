@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { spawn } from "bun";
 import { tmpdir } from "os";
 
 interface CommandResult {
@@ -10,7 +9,7 @@ interface CommandResult {
   stderr: string;
 }
 
-const SLOW_PULL_TEST_TIMEOUT = process.platform === "win32" ? 30_000 : 5000;
+const SLOW_PULL_TEST_TIMEOUT = 30_000;
 
 async function runCommand(cwd: string, args: string[]): Promise<CommandResult> {
   const proc = spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
@@ -117,10 +116,17 @@ async function createRemoteCommit(
 }
 
 async function runPullCommand(workspaceRoot: string, args: string[] = []): Promise<CommandResult> {
-  const testFileDir = import.meta.dir;
+  const testFileDir = import.meta.dirname;
   const arashiRoot = join(testFileDir, "..", "..");
   const arashiBin = join(arashiRoot, "src", "index.ts");
-  return runCommand(workspaceRoot, ["bun", arashiBin, "pull", ...args]);
+  return runCommand(workspaceRoot, [
+    process.execPath,
+    "--import",
+    "tsx",
+    arashiBin,
+    "pull",
+    ...args,
+  ]);
 }
 
 describe("pull command", () => {
@@ -268,3 +274,4 @@ describe("pull command", () => {
     SLOW_PULL_TEST_TIMEOUT,
   );
 });
+import { spawn } from "#test-runtime";

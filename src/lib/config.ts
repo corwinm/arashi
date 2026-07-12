@@ -1,3 +1,4 @@
+import { runtime } from "#runtime";
 /**
  * Configuration Management Module
  *
@@ -260,7 +261,7 @@ export const getConfigPath = (repoPath: string): string => join(repoPath, ".aras
  */
 export const configExists = async (repoPath: string): Promise<boolean> => {
   const configPath = getConfigPath(repoPath);
-  const file = Bun.file(configPath);
+  const file = runtime.file(configPath);
   return await file.exists();
 };
 
@@ -910,7 +911,7 @@ export const loadConfig = async (repoPath: string): Promise<Config> => {
   // Read file
   let text = "";
   try {
-    const file = Bun.file(configPath);
+    const file = runtime.file(configPath);
     text = await file.text();
   } catch (error) {
     throw new ConfigError(`Failed to read configuration file at ${configPath}`, error as Error, {
@@ -1065,7 +1066,7 @@ export const saveConfig = async (repoPath: string, config: Config): Promise<void
 
     // Write pretty-printed JSON (2-space indentation)
     const json = JSON.stringify(persistedConfig, null, TWO);
-    await Bun.write(configPath, json);
+    await runtime.write(configPath, json);
   } catch (error) {
     throw new ConfigError(
       `Failed to save configuration to ${configPath}: ${(error as Error).message}`,

@@ -1,14 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { runtime } from "#test-runtime";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { basename, dirname, join, resolve } from "path";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 
-const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
 
 let workspacePath = "";
 
 async function runGit(args: string[], cwd: string): Promise<void> {
-  const proc = Bun.spawn(["git", ...args], {
+  const proc = runtime.spawn(["git", ...args], {
     cwd,
     stderr: "pipe",
     stdout: "pipe",
@@ -25,7 +26,7 @@ async function runGit(args: string[], cwd: string): Promise<void> {
 
 async function writeWorkspaceConfig(worktreesDir: string): Promise<void> {
   await mkdir(join(workspacePath, ".arashi"), { recursive: true });
-  await Bun.write(
+  await runtime.write(
     join(workspacePath, ".arashi", "config.json"),
     JSON.stringify(
       {
@@ -41,11 +42,23 @@ async function writeWorkspaceConfig(worktreesDir: string): Promise<void> {
 }
 
 async function runCreate(branch: string): Promise<void> {
-  const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"], {
-    cwd: workspacePath,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+  const proc = runtime.spawn(
+    [
+      process.execPath,
+      "--import",
+      "tsx",
+      CLI_ENTRY,
+      "create",
+      branch,
+      "--no-hooks",
+      "--no-progress",
+    ],
+    {
+      cwd: workspacePath,
+      stderr: "pipe",
+      stdout: "pipe",
+    },
+  );
 
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
@@ -81,17 +94,17 @@ describe("create command worktree location resolution", () => {
     await writeWorkspaceConfig("../");
     await runCreate("feature-parent");
     const parentPath = resolve(workspacePath, "..", `${repoName}-feature-parent`);
-    expect(await Bun.file(join(parentPath, "README.md")).exists()).toBe(true);
+    expect(await runtime.file(join(parentPath, "README.md")).exists()).toBe(true);
 
     await writeWorkspaceConfig(".");
     await runCreate("feature-dot");
     const dotPath = resolve(workspacePath, `${repoName}-feature-dot`);
-    expect(await Bun.file(join(dotPath, "README.md")).exists()).toBe(true);
+    expect(await runtime.file(join(dotPath, "README.md")).exists()).toBe(true);
 
     await writeWorkspaceConfig("./");
     await runCreate("feature-dot-slash");
     const dotSlashPath = resolve(workspacePath, `${repoName}-feature-dot-slash`);
-    expect(await Bun.file(join(dotSlashPath, "README.md")).exists()).toBe(true);
+    expect(await runtime.file(join(dotSlashPath, "README.md")).exists()).toBe(true);
     expect(dirname(dotPath)).toBe(dirname(dotSlashPath));
 
     await writeWorkspaceConfig(".arashi/worktrees");
@@ -102,7 +115,7 @@ describe("create command worktree location resolution", () => {
       "worktrees",
       `${repoName}-feature-managed`,
     );
-    expect(await Bun.file(join(managedPath, "README.md")).exists()).toBe(true);
+    expect(await runtime.file(join(managedPath, "README.md")).exists()).toBe(true);
 
     await writeWorkspaceConfig(".arashi/worktrees/");
     await runCreate("feature-managed-slash");
@@ -112,7 +125,7 @@ describe("create command worktree location resolution", () => {
       "worktrees",
       `${repoName}-feature-managed-slash`,
     );
-    expect(await Bun.file(join(managedSlashPath, "README.md")).exists()).toBe(true);
+    expect(await runtime.file(join(managedSlashPath, "README.md")).exists()).toBe(true);
     expect(dirname(managedPath)).toBe(dirname(managedSlashPath));
   }, 20_000);
 });

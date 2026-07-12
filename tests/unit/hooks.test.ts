@@ -12,7 +12,7 @@ import {
   resolveScopedLifecycleHooks,
   runLifecycleHook,
 } from "../../src/lib/hooks";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { chmodSync, mkdirSync, writeFileSync } from "fs";
 import { cleanupTestRepo, createHookInRepo, createTestRepo } from "../helpers/hooks";
 import { dirname, join } from "path";

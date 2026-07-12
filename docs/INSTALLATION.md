@@ -178,11 +178,11 @@ The build process creates binaries in the `bin/` directory:
 
 ```bash
 # Build for current platform
-bun run build
+pnpm run build
 # Output: bin/arashi.bin
 
 # Build for all platforms
-bun run build:all
+pnpm run build:all
 # Output: bin/arashi-macos-arm64, bin/arashi-linux-x64, bin/arashi-windows-x64.exe
 ```
 

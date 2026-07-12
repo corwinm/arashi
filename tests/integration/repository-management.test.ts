@@ -1,3 +1,4 @@
+import { runtime } from "#test-runtime";
 /**
  * Integration Tests: Repository Discovery and Management
  *
@@ -12,7 +13,7 @@ import {
   discoverRepositories,
   validateWorkspace,
 } from "../../src/core/repository.js";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, rm, stat } from "fs/promises";
 import { join } from "path";
 import { spawn } from "child_process";
@@ -25,7 +26,7 @@ type RepositoryDiscoveryResult = Awaited<ReturnType<typeof discoverRepositories>
 type ValidationResult = Awaited<ReturnType<typeof validateWorkspace>>;
 type WorkspaceConfiguration = Parameters<typeof validateWorkspace>[0];
 
-const TEST_WORKSPACE = join(import.meta.dir, "..", "temp-integration-workspace", "repository");
+const TEST_WORKSPACE = join(import.meta.dirname, "..", "temp-integration-workspace", "repository");
 
 function sortStringArray(values: string[]): string[] {
   const sortedValues = [...values];
@@ -393,7 +394,7 @@ describe("Repository Cloning", () => {
   test("successfully clones a repository from URL", async () => {
     const sourceRepo = join(cloneWorkspace, "source");
     await createGitRepo(sourceRepo);
-    await Bun.write(join(sourceRepo, "README.md"), "# Test Repo");
+    await runtime.write(join(sourceRepo, "README.md"), "# Test Repo");
     await exec("git add .", sourceRepo);
     await exec("git commit -m 'Add README'", sourceRepo);
 
@@ -407,7 +408,7 @@ describe("Repository Cloning", () => {
 
     const gitDirStats = await stat(join(targetPath, ".git"));
     expect(gitDirStats.isDirectory()).toBe(true);
-    expect(await Bun.file(join(targetPath, "README.md")).text()).toBe("# Test Repo");
+    expect(await runtime.file(join(targetPath, "README.md")).text()).toBe("# Test Repo");
   }, 10_000);
 
   test("fails when target path already exists", async () => {
@@ -416,7 +417,7 @@ describe("Repository Cloning", () => {
 
     const targetPath = join(cloneWorkspace, "existing");
     await mkdir(targetPath, { recursive: true });
-    await Bun.write(join(targetPath, "file.txt"), "existing content");
+    await runtime.write(join(targetPath, "file.txt"), "existing content");
 
     const result = await cloneRepository(sourceRepo, targetPath);
 
@@ -448,7 +449,7 @@ describe("Repository Cloning", () => {
     await createGitRepo(sourceRepo);
 
     for (let index = 1; index <= 5; index += 1) {
-      await Bun.write(join(sourceRepo, `file${index}.txt`), `Content ${index}`);
+      await runtime.write(join(sourceRepo, `file${index}.txt`), `Content ${index}`);
       await exec("git add .", sourceRepo);
       await exec(`git commit -m 'Add file ${index}'`, sourceRepo);
     }

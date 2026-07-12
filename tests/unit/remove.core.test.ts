@@ -1,3 +1,4 @@
+import { runtime, spawn } from "#test-runtime";
 /**
  * Unit tests for remove core helpers
  */
@@ -7,11 +8,10 @@ import {
   formatRemovalSummaryHuman,
   parseWorktreeList,
 } from "../../src/core/remove.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "fs/promises";
 import { getWorktreeDirtyStatus } from "../../src/core/worktree.ts";
 import { join } from "path";
-import { spawn } from "bun";
 import { tmpdir } from "os";
 
 describe("remove core helpers", () => {
@@ -67,7 +67,7 @@ describe("remove core helpers", () => {
     await spawn(["git", "config", "user.name", "Test User"], { cwd: repoPath }).exited;
     await spawn(["git", "commit", "--allow-empty", "-m", "Initial"], { cwd: repoPath }).exited;
 
-    await Bun.write(join(repoPath, "dirty.txt"), "dirty");
+    await runtime.write(join(repoPath, "dirty.txt"), "dirty");
 
     const status = await getWorktreeDirtyStatus(repoPath);
     expect(status.isDirty).toBe(true);

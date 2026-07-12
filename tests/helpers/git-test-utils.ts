@@ -1,3 +1,4 @@
+import { runtime } from "#test-runtime";
 /**
  * Test helper utilities for creating and managing temporary git repositories
  */
@@ -29,13 +30,18 @@ export function removeTempDir(path: string): void {
  * Initializes a git repository in the specified directory
  */
 export function initGitRepo(repoPath: string): void {
-  Bun.spawnSync(["git", "init"], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
-  Bun.spawnSync(["git", "config", "user.email", "test@example.com"], {
+  runtime.spawnSync(["git", "init"], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
+  runtime.spawnSync(["git", "config", "user.email", "test@example.com"], {
     cwd: repoPath,
     stderr: "ignore",
     stdout: "ignore",
   });
-  Bun.spawnSync(["git", "config", "user.name", "Test User"], {
+  runtime.spawnSync(["git", "config", "user.name", "Test User"], {
+    cwd: repoPath,
+    stderr: "ignore",
+    stdout: "ignore",
+  });
+  runtime.spawnSync(["git", "config", "commit.gpgsign", "false"], {
     cwd: repoPath,
     stderr: "ignore",
     stdout: "ignore",
@@ -46,7 +52,11 @@ export function initGitRepo(repoPath: string): void {
  * Initializes a bare git repository in the specified directory
  */
 export function initBareGitRepo(repoPath: string): void {
-  Bun.spawnSync(["git", "init", "--bare"], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
+  runtime.spawnSync(["git", "init", "--bare"], {
+    cwd: repoPath,
+    stderr: "ignore",
+    stdout: "ignore",
+  });
 }
 
 /**
@@ -54,10 +64,15 @@ export function initBareGitRepo(repoPath: string): void {
  */
 export async function createInitialCommit(repoPath: string): Promise<void> {
   const filePath = join(repoPath, "README.md");
-  await Bun.write(filePath, "# Test Repository\n");
+  await runtime.write(filePath, "# Test Repository\n");
 
-  Bun.spawnSync(["git", "add", "."], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
-  Bun.spawnSync(["git", "commit", "-m", "Initial commit"], {
+  runtime.spawnSync(["git", "config", "commit.gpgsign", "false"], {
+    cwd: repoPath,
+    stderr: "ignore",
+    stdout: "ignore",
+  });
+  runtime.spawnSync(["git", "add", "."], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
+  runtime.spawnSync(["git", "commit", "-m", "Initial commit"], {
     cwd: repoPath,
     stderr: "ignore",
     stdout: "ignore",
@@ -73,15 +88,15 @@ export async function createFile(
   content: string,
 ): Promise<void> {
   const filePath = join(repoPath, filename);
-  await Bun.write(filePath, content);
+  await runtime.write(filePath, content);
 }
 
 /**
  * Stages and commits changes in a repository
  */
 export function commitChanges(repoPath: string, message: string): void {
-  Bun.spawnSync(["git", "add", "."], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
-  Bun.spawnSync(["git", "commit", "-m", message], {
+  runtime.spawnSync(["git", "add", "."], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
+  runtime.spawnSync(["git", "commit", "-m", message], {
     cwd: repoPath,
     stderr: "ignore",
     stdout: "ignore",
@@ -96,14 +111,14 @@ export function createTestBranch(repoPath: string, branchName: string, fromBranc
   if (fromBranch) {
     args.push(fromBranch);
   }
-  Bun.spawnSync(["git", ...args], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
+  runtime.spawnSync(["git", ...args], { cwd: repoPath, stderr: "ignore", stdout: "ignore" });
 }
 
 /**
  * Checks out a branch in a repository
  */
 export function checkoutBranch(repoPath: string, branchName: string): void {
-  Bun.spawnSync(["git", "checkout", branchName], {
+  runtime.spawnSync(["git", "checkout", branchName], {
     cwd: repoPath,
     stderr: "ignore",
     stdout: "ignore",
@@ -114,7 +129,7 @@ export function checkoutBranch(repoPath: string, branchName: string): void {
  * Gets the current commit SHA in a repository
  */
 export function getCurrentCommit(repoPath: string): string {
-  const proc = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: repoPath });
+  const proc = runtime.spawnSync(["git", "rev-parse", "HEAD"], { cwd: repoPath });
   return new TextDecoder().decode(proc.stdout).trim();
 }
 

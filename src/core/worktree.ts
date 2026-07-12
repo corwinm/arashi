@@ -1,3 +1,4 @@
+import { runtime } from "#runtime";
 /**
  * Worktree Orchestration Module
  *
@@ -689,7 +690,7 @@ export const detectRepositoryType = async (
   // Check if repository has .arashi/config.json → meta-repo
   const configPath = join(repo.path, ".arashi", "config.json");
   try {
-    const configFile = Bun.file(configPath);
+    const configFile = runtime.file(configPath);
     const exists = await configFile.exists();
     if (exists) {
       return {
@@ -718,7 +719,7 @@ export const detectRepositoryType = async (
       const metaConfigPath = join(grandparentPath, ".arashi", "config.json");
 
       try {
-        const metaConfigFile = Bun.file(metaConfigPath);
+        const metaConfigFile = runtime.file(metaConfigPath);
         const metaExists = await metaConfigFile.exists();
 
         if (metaExists) {

@@ -30,27 +30,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          version: 10.15.1
 
-      - name: Cache Bun install
-        uses: actions/cache@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          node-version: 24
+          cache: pnpm
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Validate generated config schema
-        run: bun run schema:check
+        run: pnpm run schema:check
 
       - name: Validate CLI command contract
-        run: bun run contract:check
+        run: pnpm run contract:check
 
       - name: Validate README documentation link target
         run: |
@@ -65,18 +63,18 @@ jobs:
 
       - name: Run lint gate
         id: lint
-        run: bun run lint:ci
+        run: pnpm run lint:ci
 
       - name: Run format gate
         id: format
-        run: bun run format:check
+        run: pnpm run format:check
 
       - name: Report quality gate failure guidance
         if: failure()
         run: |
           echo "Quality checks failed."
-          echo "Run 'bun run lint:fix' and 'bun run format' locally, then retry the workflow."
-          echo "If lint still fails, run 'bun run lint' for full diagnostics and fix listed files."
+          echo "Run 'pnpm run lint:fix' and 'pnpm run format' locally, then retry the workflow."
+          echo "If lint still fails, run 'pnpm run lint' for full diagnostics and fix listed files."
 
   test:
     name: Test (${{ matrix.os }})
@@ -91,24 +89,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          version: 10.15.1
 
-      - name: Cache Bun install
-        uses: actions/cache@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          node-version: 24
+          cache: pnpm
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Run tests
-        run: bun run test
+        run: pnpm run test
 
   build:
     name: Build (${{ matrix.os }})
@@ -143,19 +139,22 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Cache Bun install
-        uses: actions/cache@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          version: 10.15.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build binary
-        run: bun run ${{ matrix.script }}
+        run: pnpm run ${{ matrix.script }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

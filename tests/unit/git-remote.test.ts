@@ -1,17 +1,18 @@
+import { runtime } from "#test-runtime";
 import {
   classifyRemoteTrackingFetchFailure,
   compareCurrentBranchToDefaultBranch,
   resolveDefaultBranchTarget,
 } from "../../src/lib/git-remote.ts";
 import { createTempDir, initBareGitRepo, removeTempDir } from "../helpers/git-test-utils";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { join } from "path";
 import { writeFileSync } from "fs";
 
 const textDecoder = new TextDecoder();
 
 function runGit(cwd: string, args: string[]): string {
-  const proc = Bun.spawnSync(["git", ...args], {
+  const proc = runtime.spawnSync(["git", ...args], {
     cwd,
     stderr: "pipe",
     stdout: "pipe",

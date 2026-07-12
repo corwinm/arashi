@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { runtime, spawn } from "#test-runtime";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { spawn } from "bun";
 import { tmpdir } from "os";
 
 interface CommandResult {
@@ -98,9 +98,16 @@ async function createWorkspace(
 }
 
 async function runSetup(workspaceRoot: string, args: string[] = []): Promise<CommandResult> {
-  const arashiRoot = join(import.meta.dir, "..", "..");
+  const arashiRoot = join(import.meta.dirname, "..", "..");
   const entrypoint = join(arashiRoot, "src", "index.ts");
-  return runCommand(workspaceRoot, ["bun", entrypoint, "setup", ...args]);
+  return runCommand(workspaceRoot, [
+    process.execPath,
+    "--import",
+    "tsx",
+    entrypoint,
+    "setup",
+    ...args,
+  ]);
 }
 
 describe("setup command", () => {
@@ -122,7 +129,7 @@ describe("setup command", () => {
     });
 
     const result = await runSetup(workspaceRoot);
-    const order = await Bun.file(join(workspaceRoot, "setup-order.log")).text();
+    const order = await runtime.file(join(workspaceRoot, "setup-order.log")).text();
 
     expect(result.exitCode).toBe(0);
     expect(order.trim().split("\n")).toEqual(["main", "repo-a", "repo-b"]);
@@ -198,7 +205,7 @@ describe("setup command", () => {
 
   test("classifies failures and timeouts in summary", async () => {
     const { workspaceRoot } = await createWorkspace(testDir, {
-      hooksTimeoutMs: 25,
+      hooksTimeoutMs: 100,
       repoASetup: "#!/bin/sh\nexit 5\n",
       repoBSetup: "#!/bin/sh\nsleep 1\n",
     });

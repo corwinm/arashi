@@ -1,5 +1,5 @@
 import type { Config, LoadedConfig } from "../../src/lib/config.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { OperationSummary } from "../../src/core/worktree.ts";
 import { executeCreate } from "../../src/commands/create.ts";
 type CreateCommandDependencies = NonNullable<Parameters<typeof executeCreate>[2]>;

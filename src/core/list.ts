@@ -427,7 +427,9 @@ export const hasUncommittedChanges = async (worktreePath: string): Promise<boole
  * validateWorktreeListItem(item); // Succeeds
  * ```
  */
-export const validateWorktreeListItem = (item: unknown): asserts item is WorktreeListItem => {
+export const validateWorktreeListItem: (item: unknown) => asserts item is WorktreeListItem = (
+  item: unknown,
+): asserts item is WorktreeListItem => {
   if (typeof item !== "object" || item === null) {
     throw new ListCommandError("worktree item must be an object");
   }
@@ -526,7 +528,9 @@ export const validateWorktreeListItem = (item: unknown): asserts item is Worktre
  * validateListCommandOutput(output); // Succeeds or throws
  * ```
  */
-export const validateListCommandOutput = (output: unknown): asserts output is ListCommandOutput => {
+export const validateListCommandOutput: (output: unknown) => asserts output is ListCommandOutput = (
+  output: unknown,
+): asserts output is ListCommandOutput => {
   if (typeof output !== "object" || output === null) {
     throw new ListCommandError("output must be an object");
   }

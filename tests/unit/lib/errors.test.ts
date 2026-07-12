@@ -2,7 +2,7 @@
  * Unit tests for ArashiError class
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { ArashiError } from "../../../src/lib/errors";
 import { GitErrorCode } from "../../../src/types/git";
 

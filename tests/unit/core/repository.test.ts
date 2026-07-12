@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { runtime } from "#test-runtime";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm } from "fs/promises";
 import { detectSetupScript } from "../../../src/core/repository.js";
 import { join } from "path";
@@ -19,7 +20,7 @@ describe("detectSetupScript", () => {
     const repoPath = join(testDir, "setup-repo");
     await mkdir(repoPath, { recursive: true });
     const setupPath = join(repoPath, "setup.sh");
-    await Bun.write(setupPath, "#!/bin/bash\necho 'Setup script'");
+    await runtime.write(setupPath, "#!/bin/bash\necho 'Setup script'");
 
     const result = await detectSetupScript(repoPath);
 
@@ -41,7 +42,7 @@ describe("detectSetupScript", () => {
     const repo1Path = join(testDir, "bash-setup-repo");
     await mkdir(repo1Path, { recursive: true });
     const bashSetupPath = join(repo1Path, "setup.bash");
-    await Bun.write(bashSetupPath, "#!/bin/bash\necho 'Bash setup'");
+    await runtime.write(bashSetupPath, "#!/bin/bash\necho 'Bash setup'");
 
     const result1 = await detectSetupScript(repo1Path);
     expect(result1.hasSetupScript).toBe(true);
@@ -50,7 +51,7 @@ describe("detectSetupScript", () => {
     const repo2Path = join(testDir, "arashi-setup-repo");
     await mkdir(join(repo2Path, ".arashi"), { recursive: true });
     const arashiSetupPath = join(repo2Path, ".arashi", "setup.sh");
-    await Bun.write(arashiSetupPath, "#!/bin/bash\necho 'Arashi setup'");
+    await runtime.write(arashiSetupPath, "#!/bin/bash\necho 'Arashi setup'");
 
     const result2 = await detectSetupScript(repo2Path);
     expect(result2.hasSetupScript).toBe(true);
@@ -61,7 +62,7 @@ describe("detectSetupScript", () => {
     const repoPath = join(testDir, "custom-setup-repo");
     await mkdir(repoPath, { recursive: true });
     const customPath = join(repoPath, "install.sh");
-    await Bun.write(customPath, "#!/bin/bash\necho 'Custom install'");
+    await runtime.write(customPath, "#!/bin/bash\necho 'Custom install'");
 
     const result = await detectSetupScript(repoPath, ["install.sh", "bootstrap.sh"]);
 
