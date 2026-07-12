@@ -1,0 +1,2 @@
+# Keep executable JavaScript shebangs parseable on Windows checkouts.
+bin/*.js text eol=lf

@@ -9,10 +9,22 @@ import {
 
 const tsxImport = createRequire(import.meta.url).resolve("tsx");
 
-const resolveTestCommand = (command: string[]): string[] => {
-  const resolved = command.map((argument, index) =>
-    argument === "tsx" && command[index - 1] === "--import" ? tsxImport : argument,
-  );
+const windowsAbsolutePathPattern = /^[A-Za-z]:[\\/]/;
+
+export const resolveTestCommand = (command: string[], platform = process.platform): string[] => {
+  const resolved = command.map((argument, index) => {
+    if (argument === "tsx" && command[index - 1] === "--import") {
+      return tsxImport;
+    }
+    if (
+      platform === "win32" &&
+      windowsAbsolutePathPattern.test(argument) &&
+      argument.endsWith(".ts")
+    ) {
+      return new URL(`file:///${argument.replaceAll("\\", "/")}`).href;
+    }
+    return argument;
+  });
   return resolved[0] === "git" && resolved[1] === "commit"
     ? ["git", "-c", "commit.gpgsign=false", ...resolved.slice(1)]
     : resolved;
