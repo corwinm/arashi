@@ -1,3 +1,9 @@
+## [1.19.1](https://github.com/corwinm/arashi/compare/v1.19.0...v1.19.1) (2026-07-13)
+
+### Bug Fixes
+
+- validate list max depth ([#88](https://github.com/corwinm/arashi/issues/88)) ([5a1cd40](https://github.com/corwinm/arashi/commit/5a1cd4044b37713364d96ed564ccc6f4f132d8af))
+
 ## [1.19.0](https://github.com/corwinm/arashi/compare/v1.18.0...v1.19.0) (2026-07-11)
 
 ### Features
