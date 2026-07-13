@@ -34,8 +34,7 @@ exit 19`,
     const proc = runtime.spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         branch,
@@ -73,8 +72,7 @@ exit 19`,
     const proc = runtime.spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         branch,

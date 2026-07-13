@@ -68,8 +68,7 @@ async function runInitCommand(
   const proc = spawn(
     [
       process.execPath,
-      "--no-warnings",
-      "--experimental-transform-types",
+
       arashiBin,
       "init",
       ...args,

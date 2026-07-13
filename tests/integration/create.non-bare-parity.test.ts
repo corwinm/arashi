@@ -34,8 +34,7 @@ describe("create command parity between non-bare and bare invocation", () => {
     const command = runtime.spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         branch,

@@ -107,8 +107,6 @@ async function runPushCommand(workspaceRoot: string, args: string[] = []): Promi
   const arashiBin = join(arashiRoot, "src", "index.ts");
   return runCommand(workspaceRoot, [
     process.execPath,
-    "--no-warnings",
-    "--experimental-transform-types",
 
     arashiBin,
     "push",

@@ -34,8 +34,6 @@ describe("add command duplicate guidance", () => {
     const proc = spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
 
         entrypoint,
         "add",

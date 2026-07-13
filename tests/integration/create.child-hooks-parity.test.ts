@@ -45,8 +45,7 @@ describe("create command hook parity between root and child invocation", () => {
     const rootRun = runtime.spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         rootBranch,
@@ -66,8 +65,7 @@ describe("create command hook parity between root and child invocation", () => {
     const childRun = runtime.spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         childBranch,

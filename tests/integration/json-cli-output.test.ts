@@ -21,14 +21,11 @@ const makeTempDir = async (): Promise<string> => {
 };
 
 const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> => {
-  const proc = runtime.spawn(
-    [process.execPath, "--no-warnings", "--experimental-transform-types", CLI_ENTRY, ...args],
-    {
-      cwd,
-      stderr: "pipe",
-      stdout: "pipe",
-    },
-  );
+  const proc = runtime.spawn([process.execPath, CLI_ENTRY, ...args], {
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
 
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),

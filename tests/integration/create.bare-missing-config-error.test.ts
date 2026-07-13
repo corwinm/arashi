@@ -23,8 +23,7 @@ describe("create missing config guidance from bare root", () => {
     const proc = runtime.spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         "feature-no-config",

@@ -139,12 +139,13 @@ export class ConcurrentRollbackError extends Error {
  * Error thrown when log entry is invalid
  */
 export class InvalidLogEntryError extends Error {
-  constructor(
-    message: string,
-    public readonly entry: unknown,
-    public readonly reason: string,
-  ) {
+  public readonly entry: unknown;
+  public readonly reason: string;
+
+  constructor(message: string, entry: unknown, reason: string) {
     super(message);
+    this.entry = entry;
+    this.reason = reason;
     this.name = "InvalidLogEntryError";
   }
 }

@@ -35,8 +35,7 @@ const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> =
 const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> =>
   runCommand(cwd, [
     process.execPath,
-    "--no-warnings",
-    "--experimental-transform-types",
+
     CLI_ENTRY,
     ...args,
   ]);

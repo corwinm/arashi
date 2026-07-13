@@ -97,13 +97,15 @@ export class ArashiError extends Error {
 /**
  * Error codes for Add Command specific errors
  */
-export enum AddCommandErrorCode {
-  INVALID_URL = "INVALID_URL",
-  DUPLICATE_NAME = "DUPLICATE_NAME",
-  CLONE_FAILED = "CLONE_FAILED",
-  BRANCH_DETECTION_FAILED = "BRANCH_DETECTION_FAILED",
-  CONFIG_UPDATE_FAILED = "CONFIG_UPDATE_FAILED",
-}
+export const AddCommandErrorCode = {
+  INVALID_URL: "INVALID_URL",
+  DUPLICATE_NAME: "DUPLICATE_NAME",
+  CLONE_FAILED: "CLONE_FAILED",
+  BRANCH_DETECTION_FAILED: "BRANCH_DETECTION_FAILED",
+  CONFIG_UPDATE_FAILED: "CONFIG_UPDATE_FAILED",
+} as const;
+
+export type AddCommandErrorCode = (typeof AddCommandErrorCode)[keyof typeof AddCommandErrorCode];
 
 /**
  * Custom error class for add command operations
@@ -147,15 +149,18 @@ export class AddCommandError extends Error {
 /**
  * Error codes for Remove Command specific errors
  */
-export enum RemoveCommandErrorCode {
-  NO_REPOSITORIES = "NO_REPOSITORIES",
-  BRANCH_NOT_FOUND = "BRANCH_NOT_FOUND",
-  WORKTREE_LOCKED = "WORKTREE_LOCKED",
-  WORKTREE_IN_USE = "WORKTREE_IN_USE",
-  CONFIG_ERROR = "CONFIG_ERROR",
-  INVALID_OPTIONS = "INVALID_OPTIONS",
-  NON_INTERACTIVE = "NON_INTERACTIVE",
-}
+export const RemoveCommandErrorCode = {
+  NO_REPOSITORIES: "NO_REPOSITORIES",
+  BRANCH_NOT_FOUND: "BRANCH_NOT_FOUND",
+  WORKTREE_LOCKED: "WORKTREE_LOCKED",
+  WORKTREE_IN_USE: "WORKTREE_IN_USE",
+  CONFIG_ERROR: "CONFIG_ERROR",
+  INVALID_OPTIONS: "INVALID_OPTIONS",
+  NON_INTERACTIVE: "NON_INTERACTIVE",
+} as const;
+
+export type RemoveCommandErrorCode =
+  (typeof RemoveCommandErrorCode)[keyof typeof RemoveCommandErrorCode];
 
 /**
  * Custom error class for remove command operations

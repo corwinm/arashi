@@ -41,8 +41,7 @@ describe("create command child-repo hook success flows", () => {
     const proc = runtime.spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         branch,
@@ -101,8 +100,7 @@ describe("create command child-repo hook success flows", () => {
     const proc = runtime.spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
+
         CLI_ENTRY,
         "create",
         branch,

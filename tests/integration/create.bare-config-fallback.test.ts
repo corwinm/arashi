@@ -23,8 +23,6 @@ describe("create config fallback in bare repository", () => {
     const proc = runtime.spawn(
       [
         process.execPath,
-        "--no-warnings",
-        "--experimental-transform-types",
 
         CLI_ENTRY,
         "create",
