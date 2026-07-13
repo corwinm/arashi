@@ -22,6 +22,9 @@ const CLONE_COMPLETE_PERCENTAGE = 100;
 const DEFAULT_EXCLUDE_PATTERNS = ["node_modules", ".git"];
 const COMMON_BRANCHES = ["main", "master", "develop", "trunk"];
 
+const comparePaths = (left: { path: string }, right: { path: string }): number =>
+  left.path.localeCompare(right.path, "en");
+
 const scanSymlinkDirectory = async (options: {
   dirPath: string;
   entryName: string;
@@ -436,6 +439,9 @@ export const discoverRepositories = async (
 
     discoverySpinner.succeed(`Found ${repositories.length} ${repositoryLabel}`);
 
+    repositories.sort(comparePaths);
+    errors.sort(comparePaths);
+
     return {
       duration: Date.now() - startTime,
       errors,
@@ -537,17 +543,14 @@ const classifyError = (path: string, error: unknown): DiscoveryError => {
  * @throws {RepositoryInvalidError} If default branch cannot be determined
  */
 export const detectDefaultBranch = async (repositoryPath: string): Promise<string> => {
-  const remoteHeadPath = join(repositoryPath, ".git", "refs", "remotes", "origin", "HEAD");
-  if (await fileExists(remoteHeadPath)) {
-    try {
-      const result = await execGit(["symbolic-ref", "refs/remotes/origin/HEAD"], repositoryPath);
+  try {
+    const result = await execGit(["symbolic-ref", "refs/remotes/origin/HEAD"], repositoryPath);
 
-      const match = result.stdout.trim().match(/refs\/remotes\/origin\/(.+)/);
-      if (match && match[ONE]) {
-        return match[ONE].trim();
-      }
-    } catch {}
-  }
+    const match = result.stdout.trim().match(/refs\/remotes\/origin\/(.+)/);
+    if (match && match[ONE]) {
+      return match[ONE].trim();
+    }
+  } catch {}
 
   try {
     const result = await execGit(

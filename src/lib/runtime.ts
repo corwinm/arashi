@@ -14,11 +14,38 @@ type SpawnOptions = {
   killSignal?: NodeJS.Signals;
 };
 
+const WINDOWS_BATCH_FILE = /\.(?:cmd|bat)$/i;
+
+const escapeCmdArgument = (argument: string): string =>
+  `"${argument
+    .replaceAll("^", "^^")
+    .replaceAll("%", "%%")
+    .replaceAll("!", "^!")
+    .replace(/[&|<>()]/g, "^$&")
+    .replaceAll('"', '\\"')}"`;
+
+export function prepareSpawnCommand(
+  command: string[],
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env,
+): { command: string; args: string[] } {
+  const executable = command[0]!;
+  if (platform !== "win32" || !WINDOWS_BATCH_FILE.test(executable)) {
+    return { command: executable, args: command.slice(1) };
+  }
+
+  return {
+    command: env.ComSpec ?? env.COMSPEC ?? "cmd.exe",
+    args: ["/d", "/s", "/c", command.map(escapeCmdArgument).join(" ")],
+  };
+}
+
 export function spawn(command: string[], options: SpawnOptions = {}) {
   if (options.cwd && !existsSync(options.cwd)) {
     throw new Error(`Working directory not found: ${options.cwd}`);
   }
-  const child = nodeSpawn(command[0]!, command.slice(1), {
+  const invocation = prepareSpawnCommand(command, process.platform, options.env ?? process.env);
+  const child = nodeSpawn(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: options.env,
     killSignal: options.killSignal,
@@ -62,7 +89,8 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
 }
 
 export function spawnSync(command: string[], options: SpawnOptions = {}) {
-  const result = nodeSpawnSync(command[0]!, command.slice(1), {
+  const invocation = prepareSpawnCommand(command, process.platform, options.env ?? process.env);
+  const result = nodeSpawnSync(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: options.env,
   });

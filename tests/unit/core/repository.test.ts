@@ -1,7 +1,11 @@
 import { runtime } from "../../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, rm } from "fs/promises";
-import { detectSetupScript } from "../../../src/core/repository.js";
+import { mkdir, mkdtemp, rm, symlink } from "fs/promises";
+import {
+  detectDefaultBranch,
+  detectSetupScript,
+  discoverRepositories,
+} from "../../../src/core/repository.js";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -68,5 +72,56 @@ describe("detectSetupScript", () => {
 
     expect(result.hasSetupScript).toBe(true);
     expect(result.setupScriptPath).toBe(customPath);
+  });
+});
+
+describe("repository discovery regressions", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "arashi-repository-"));
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { force: true, recursive: true });
+  });
+
+  const git = async (cwd: string, ...args: string[]) => {
+    const child = runtime.spawn(["git", ...args], { cwd });
+    expect(await child.exited).toBe(0);
+  };
+
+  test("detects an origin default branch from a linked worktree", async () => {
+    const mainRepo = join(testDir, "main-repo");
+    const linkedWorktree = join(testDir, "linked-worktree");
+    await mkdir(mainRepo);
+    await git(mainRepo, "init", "-b", "release");
+    await git(mainRepo, "config", "user.email", "test@example.com");
+    await git(mainRepo, "config", "user.name", "Test User");
+    await runtime.write(join(mainRepo, "README.md"), "test\n");
+    await git(mainRepo, "add", "README.md");
+    await git(mainRepo, "commit", "-m", "initial");
+    await git(mainRepo, "branch", "feature");
+    await git(mainRepo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/release");
+    await git(mainRepo, "worktree", "add", linkedWorktree, "feature");
+
+    expect(await detectDefaultBranch(linkedWorktree)).toBe("release");
+  });
+
+  test("returns repositories in deterministic path order after parallel discovery", async () => {
+    for (const name of ["zeta", "alpha", "middle"]) {
+      await mkdir(join(testDir, name, ".git"), { recursive: true });
+    }
+    for (const name of ["zeta-broken", "alpha-broken"]) {
+      await symlink(join(testDir, "missing"), join(testDir, name));
+    }
+
+    const result = await discoverRepositories(testDir, { followSymlinks: true, maxDepth: 1 });
+
+    expect(result.repositories.map(({ name }) => name)).toEqual(["alpha", "middle", "zeta"]);
+    expect(result.errors.map(({ path }) => path)).toEqual([
+      join(testDir, "alpha-broken"),
+      join(testDir, "zeta-broken"),
+    ]);
   });
 });
