@@ -1,3 +1,9 @@
+## [1.19.2](https://github.com/corwinm/arashi/compare/v1.19.1...v1.19.2) (2026-07-13)
+
+### Bug Fixes
+
+- reject empty repository filters ([#89](https://github.com/corwinm/arashi/issues/89)) ([6626f1e](https://github.com/corwinm/arashi/commit/6626f1e3510736d7c28c0b60b02049fbf5948812))
+
 ## [1.19.1](https://github.com/corwinm/arashi/compare/v1.19.0...v1.19.1) (2026-07-13)
 
 ### Bug Fixes
