@@ -1,3 +1,5 @@
+import { EmptyRepositoryFiltersError } from "./repo-filter.ts";
+
 export const JSON_SCHEMA_VERSION = 1;
 
 export interface JsonWarning {
@@ -66,10 +68,20 @@ export const writeJsonEnvelope = (envelope: JsonEnvelope): void => {
 export const unknownErrorToJsonError = (
   error: unknown,
   code = "UNKNOWN_ERROR",
-): JsonCommandError => ({
-  code,
-  message: error instanceof Error ? error.message : String(error),
-});
+): JsonCommandError => {
+  if (error instanceof EmptyRepositoryFiltersError) {
+    return {
+      code: error.code,
+      details: error.details,
+      message: error.message,
+    };
+  }
+
+  return {
+    code,
+    message: error instanceof Error ? error.message : String(error),
+  };
+};
 
 export const unsupportedJsonModeError = (command: string, mode: string): JsonErrorEnvelope =>
   createJsonErrorEnvelope(command, {

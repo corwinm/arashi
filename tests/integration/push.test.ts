@@ -126,6 +126,49 @@ describe("push command", () => {
   });
 
   test(
+    "rejects empty restrictive filters without creating remote branches",
+    async () => {
+      const { workspaceRoot, mainRemote, repoPath, repoRemote } =
+        await createWorkspaceWithRepo(testDir);
+      await runGit(workspaceRoot, ["checkout", "-b", "feature/empty-filter"]);
+      await runGit(repoPath, ["checkout", "-b", "feature/empty-filter"]);
+      await commitFile(workspaceRoot, "main-empty.txt", "publishable main change");
+      await commitFile(repoPath, "child-empty.txt", "publishable child change");
+
+      const only = await runPushCommand(workspaceRoot, ["--only", ",", "--set-upstream"]);
+      expect(only.exitCode).toBe(2);
+      expect(only.stderr).toContain("--only");
+
+      const group = await runPushCommand(workspaceRoot, [
+        "--group",
+        ",",
+        "--set-upstream",
+        "--json",
+      ]);
+      expect(group.exitCode).toBe(2);
+      expect(group.stderr).toBe("");
+      expect(JSON.parse(group.stdout)).toMatchObject({
+        error: {
+          code: "EMPTY_REPOSITORY_FILTERS",
+          details: { emptyFilters: ["group"] },
+        },
+        ok: false,
+      });
+
+      for (const remote of [mainRemote, repoRemote]) {
+        const ref = await runCommand(remote, [
+          "git",
+          "rev-parse",
+          "--verify",
+          "refs/heads/feature/empty-filter",
+        ]);
+        expect(ref.exitCode).not.toBe(0);
+      }
+    },
+    PUSH_TEST_TIMEOUT,
+  );
+
+  test(
     "pushes eligible repositories with upstream setup and skips untouched child repositories",
     async () => {
       const { workspaceRoot, mainRemote, repoRemote } = await createWorkspaceWithRepo(testDir);

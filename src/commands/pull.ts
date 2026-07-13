@@ -21,7 +21,7 @@ import {
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { Command } from "commander";
 import { checkRemoteChanges } from "../lib/git-remote.ts";
-import { filterRepositories } from "../lib/repo-filter.ts";
+import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { info } from "../lib/logger.ts";
 import { runPullWithRollback } from "../lib/pull-runner.ts";
 
@@ -67,6 +67,9 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
     options.only,
     options.group,
   );
+  if (filterResult.emptyFilters.length > ZERO) {
+    throw new EmptyRepositoryFiltersError(filterResult.emptyFilters);
+  }
   if (filterResult.missing.length > ZERO) {
     throw new CliUsageError(
       `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
@@ -197,7 +200,11 @@ export function createCommand(): Command {
           } else {
             console.error("Unknown error");
           }
-          process.exit(error instanceof CliUsageError ? USAGE_EXIT_CODE : ERROR_EXIT_CODE);
+          process.exit(
+            error instanceof CliUsageError || error instanceof EmptyRepositoryFiltersError
+              ? USAGE_EXIT_CODE
+              : ERROR_EXIT_CODE,
+          );
         }
       }
     });

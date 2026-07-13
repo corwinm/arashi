@@ -13,7 +13,7 @@ import {
 } from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { Command } from "commander";
-import { filterRepositories } from "../lib/repo-filter.ts";
+import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { normalizeSpawnEnvironment } from "../lib/shell-directives.ts";
 
 const ZERO = 0;
@@ -84,20 +84,6 @@ const parseJobs = (value: string | undefined): number => {
 
 const formatCommand = (command: string[]): string =>
   command.map((part) => JSON.stringify(part)).join(" ");
-
-const normalizeOnlyFilters = (only: string[] | undefined): string[] | undefined => {
-  if (!only) {
-    return undefined;
-  }
-
-  const normalized = only.flatMap((value) =>
-    value
-      .split(",")
-      .map((name) => name.trim())
-      .filter(Boolean),
-  );
-  return normalized.length > ZERO ? normalized : undefined;
-};
 
 const createNotStartedResult = (repo: ExecRepository, command: string[]): ExecResult => ({
   command,
@@ -295,12 +281,14 @@ const executeExec = async (
     },
   );
 
-  const onlyFilters = normalizeOnlyFilters(options.only) ?? [];
   const filterResult = filterRepositories(
     repositoriesResult.repositories,
-    onlyFilters.length > ZERO ? onlyFilters : undefined,
+    options.only,
     options.group,
   );
+  if (filterResult.emptyFilters.length > ZERO) {
+    throw new EmptyRepositoryFiltersError(filterResult.emptyFilters);
+  }
   if (filterResult.missing.length > ZERO) {
     throw new CliUsageError(
       `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
@@ -335,7 +323,7 @@ const executeExec = async (
         groups: filterResult.filters.groups,
         jobs,
         json: options.json === true,
-        only: onlyFilters,
+        only: filterResult.filters.only,
       },
       repositories,
       results: [],
@@ -360,7 +348,7 @@ const executeExec = async (
       groups: filterResult.filters.groups,
       jobs,
       json: options.json === true,
-      only: onlyFilters,
+      only: filterResult.filters.only,
     },
     repositories,
     results,
@@ -429,7 +417,11 @@ export function createCommand(): Command {
           process.exit(USAGE_EXIT_CODE);
         } else {
           console.error(error instanceof Error ? error.message : "Unknown error");
-          process.exit(error instanceof CliUsageError ? USAGE_EXIT_CODE : ERROR_EXIT_CODE);
+          process.exit(
+            error instanceof CliUsageError || error instanceof EmptyRepositoryFiltersError
+              ? USAGE_EXIT_CODE
+              : ERROR_EXIT_CODE,
+          );
         }
       }
     });
