@@ -32,7 +32,7 @@ describe("changed-files quality checks", () => {
 
     writeFileSync(join(repository, "sample.ts"), "export const value = 2;\n");
 
-    const result = spawnSync(process.execPath, [qualityScript.pathname], {
+    const result = spawnSync(process.execPath, [fileURLToPath(qualityScript)], {
       cwd: repository,
       encoding: "utf8",
       env: {
