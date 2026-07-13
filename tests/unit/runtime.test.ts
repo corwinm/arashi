@@ -11,10 +11,10 @@ describe("prepareSpawnCommand", () => {
     ).toEqual({
       args: [
         "/d",
-        "/v:on",
+        "/v:off",
         "/s",
         "/c",
-        '"!ARASHI_CMD_ARGUMENT_0! !ARASHI_CMD_ARGUMENT_1! !ARASHI_CMD_ARGUMENT_2!"',
+        '"%ARASHI_CMD_ARGUMENT_0% %ARASHI_CMD_ARGUMENT_1% %ARASHI_CMD_ARGUMENT_2%"',
       ],
       command: "C:\\Windows\\System32\\cmd.exe",
       env: {
@@ -48,10 +48,10 @@ describe("prepareSpawnCommand", () => {
     ).toEqual({
       args: [
         "/d",
-        "/v:on",
+        "/v:off",
         "/s",
         "/c",
-        '"!ARASHI_CMD_ARGUMENT_0! !ARASHI_CMD_ARGUMENT_1! !ARASHI_CMD_ARGUMENT_2! !ARASHI_CMD_ARGUMENT_3! !ARASHI_CMD_ARGUMENT_4! !ARASHI_CMD_ARGUMENT_5!"',
+        '"%ARASHI_CMD_ARGUMENT_0% %ARASHI_CMD_ARGUMENT_1% %ARASHI_CMD_ARGUMENT_2% %ARASHI_CMD_ARGUMENT_3% %ARASHI_CMD_ARGUMENT_4% %ARASHI_CMD_ARGUMENT_5%"',
       ],
       command: "custom-cmd.exe",
       env: {

@@ -19,9 +19,9 @@ const WINDOWS_BATCH_FILE = /\.(?:cmd|bat)$/i;
 const CMD_ARGUMENT_VARIABLE_PREFIX = "ARASHI_CMD_ARGUMENT_";
 
 // Quote according to CommandLineToArgvW's rules. The result is stored in an
-// Environment variable and introduced with delayed expansion. Cmd parses the
-// Fixed !VARIABLE! token, but never parses user-controlled argument contents as
-// Command syntax.
+// environment variable and introduced with ordinary expansion. Cmd expands each
+// fixed %VARIABLE% token once, but does not rescan user-controlled contents as
+// command syntax. Delayed expansion stays disabled so literal ! characters survive.
 const quoteWindowsArgument = (argument: string): string =>
   `"${argument.replaceAll(/(\\*)"/g, String.raw`$1$1\"`).replace(/(\\*)$/, "$1$1")}"`;
 
@@ -44,7 +44,7 @@ export function prepareSpawnCommand(
   const variableNames = values.map((_value, index) => `${CMD_ARGUMENT_VARIABLE_PREFIX}${index}`);
 
   return {
-    args: ["/d", "/v:on", "/s", "/c", `"${variableNames.map((name) => `!${name}!`).join(" ")}"`],
+    args: ["/d", "/v:off", "/s", "/c", `"${variableNames.map((name) => `%${name}%`).join(" ")}"`],
     command: env.ComSpec ?? env.COMSPEC ?? "cmd.exe",
     env: {
       ...Object.fromEntries(
