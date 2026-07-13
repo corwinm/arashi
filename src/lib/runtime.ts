@@ -16,27 +16,39 @@ type SpawnOptions = {
 
 const WINDOWS_BATCH_FILE = /\.(?:cmd|bat)$/i;
 
-const escapeCmdArgument = (argument: string): string =>
-  `"${argument
-    .replaceAll("^", "^^")
-    .replaceAll("%", "%%")
-    .replaceAll("!", "^!")
-    .replace(/[&|<>()]/g, "^$&")
-    .replaceAll('"', '\\"')}"`;
+const CMD_META_CHARACTER = /([()\][%!^"`<>&|;, *?])/g;
+
+const escapeCmdToken = (token: string): string => token.replace(CMD_META_CHARACTER, "^$1");
+
+// Quote for both cmd.exe and the batch file's C-runtime-style argument parser.
+// Backslashes before quotes (and at the end) must first be doubled; carets then
+// Protect every character that cmd.exe could interpret before the batch file runs.
+const escapeCmdArgument = (argument: string): string => {
+  const quoted = argument
+    .replaceAll(/(?=(\\+?)?)\1"/g, String.raw`$1$1\"`)
+    .replace(/(?=(\\+?)?)\1$/, "$1$1");
+  return `"${quoted}"`.replace(CMD_META_CHARACTER, "^$1");
+};
 
 export function prepareSpawnCommand(
   command: string[],
   platform: NodeJS.Platform = process.platform,
   env: Record<string, string | undefined> = process.env,
-): { command: string; args: string[] } {
+): { command: string; args: string[]; windowsVerbatimArguments: boolean } {
   const executable = command[0]!;
   if (platform !== "win32" || !WINDOWS_BATCH_FILE.test(executable)) {
-    return { command: executable, args: command.slice(1) };
+    return { args: command.slice(1), command: executable, windowsVerbatimArguments: false };
   }
 
   return {
+    args: [
+      "/d",
+      "/s",
+      "/c",
+      `"${[escapeCmdToken(executable), ...command.slice(1).map((argument) => escapeCmdArgument(argument))].join(" ")}"`,
+    ],
     command: env.ComSpec ?? env.COMSPEC ?? "cmd.exe",
-    args: ["/d", "/s", "/c", command.map(escapeCmdArgument).join(" ")],
+    windowsVerbatimArguments: true,
   };
 }
 
@@ -50,6 +62,7 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
     env: options.env,
     killSignal: options.killSignal,
     timeout: options.timeout,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     stdio: [options.stdin ?? "pipe", options.stdout ?? "pipe", options.stderr ?? "pipe"],
   });
   let exitCode: number | null = null;
@@ -93,6 +106,7 @@ export function spawnSync(command: string[], options: SpawnOptions = {}) {
   const result = nodeSpawnSync(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: options.env,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
   return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
