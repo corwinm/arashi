@@ -10,7 +10,7 @@
  */
 
 import { InvalidLogEntryError, OperationLog } from "../../../src/core/rollback";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "vitest";
 
 interface WorktreeCreatedEntry {
   type: "worktree_created";
@@ -375,19 +375,6 @@ describe("OperationLog - User Story 2: Operation Logging", () => {
 // ============================================================================
 // User Story 3: Type-Specific Rollback Functions (Unit Tests with Mocks)
 // ============================================================================
-
-describe("Type-Specific Rollback Functions - User Story 3", () => {
-  // These tests will use mocks to verify the rollback functions call the correct
-  // Git and filesystem operations without actually performing them
-  // Note: For full integration tests with real git repositories and directories,
-  // See tests/integration/rollback-integration.test.ts
-  // T025: Unit test for rollbackWorktreeCreated() with mock
-  // T026: Unit test for rollbackWorktreeCreated() when worktree doesn't exist (idempotent)
-  // Note: Type-specific rollback functions (rollbackWorktreeCreated, rollbackBranchCreated,
-  // RollbackDirectoryCreated) are tested via integration tests in the rollback orchestration
-  // Tests below. Mock-based unit tests are not necessary as the integration tests provide
-  // Sufficient coverage of the actual behavior.
-});
 
 // ============================================================================
 // User Story 1: Automatic Cleanup on Failed Operations (Rollback Orchestration)

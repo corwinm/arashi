@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "../helpers/node-runtime.ts";
+import { afterEach, describe, expect, test } from "vitest";
 import { basename, join } from "path";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { createRepoSpecificHookInRepo } from "../helpers/hooks.ts";
@@ -6,7 +7,7 @@ import { existsSync } from "fs";
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
-const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
 
 afterEach(async () => {
   if (!workspace) {
@@ -30,11 +31,21 @@ describe("create command parity between non-bare and bare invocation", () => {
       `echo "parity" > "\${ARASHI_WORKTREE_PATH}/hook-parity.log"`,
     );
 
-    const command = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-progress"], {
-      cwd: workspace.worktreePath,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+    const command = runtime.spawn(
+      [
+        process.execPath,
+
+        CLI_ENTRY,
+        "create",
+        branch,
+        "--no-progress",
+      ],
+      {
+        cwd: workspace.worktreePath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
 
     const exitCode = await command.exited;
     const stdout = await new Response(command.stdout).text();

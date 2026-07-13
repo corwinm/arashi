@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "../helpers/node-runtime.ts";
+import { afterEach, describe, expect, test } from "vitest";
 import { createChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
 import { createRepoSpecificHookInRepo } from "../helpers/hooks.ts";
 import { join } from "path";
 type ChildHookWorkspace = Awaited<ReturnType<typeof createChildHookWorkspace>>;
 
-const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
 let workspace: ChildHookWorkspace | null = null;
 
 afterEach(async () => {
@@ -30,11 +31,21 @@ describe("create command child-repo hook failure reporting", () => {
 exit 19`,
     );
 
-    const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-progress"], {
-      cwd: workspace.childInvocationPath,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+    const proc = runtime.spawn(
+      [
+        process.execPath,
+
+        CLI_ENTRY,
+        "create",
+        branch,
+        "--no-progress",
+      ],
+      {
+        cwd: workspace.childInvocationPath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
 
     const exitCode = await proc.exited;
     const stdout = await new Response(proc.stdout).text();
@@ -58,11 +69,21 @@ exit 19`,
 
     createRepoSpecificHookInRepo(workspace.hookRootPath, "post-create", timeoutRepo, "sleep 1");
 
-    const proc = Bun.spawn(["bun", CLI_ENTRY, "create", branch, "--no-progress"], {
-      cwd: workspace.childInvocationPath,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+    const proc = runtime.spawn(
+      [
+        process.execPath,
+
+        CLI_ENTRY,
+        "create",
+        branch,
+        "--no-progress",
+      ],
+      {
+        cwd: workspace.childInvocationPath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
 
     const exitCode = await proc.exited;
     const stdout = await new Response(proc.stdout).text();

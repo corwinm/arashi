@@ -1,3 +1,4 @@
+import { runtime } from "./node-runtime.ts";
 import { basename, join, resolve } from "path";
 import { mkdir, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -50,7 +51,7 @@ export async function createChildHookWorkspace(
     const repoPath = join(reposDirPath, repoName);
     await mkdir(repoPath, { recursive: true });
     await initGitRepo(repoPath, "main");
-    await Bun.write(join(repoPath, "README.md"), `# ${repoName}\n`);
+    await runtime.write(join(repoPath, "README.md"), `# ${repoName}\n`);
     await execGit(["add", "README.md"], repoPath);
     await execGit(["commit", "-m", "Initial child commit"], repoPath);
 
@@ -62,8 +63,8 @@ export async function createChildHookWorkspace(
     };
   }
 
-  await Bun.write(join(workspacePath, "README.md"), "# Child Hook Workspace\n");
-  await Bun.write(
+  await runtime.write(join(workspacePath, "README.md"), "# Child Hook Workspace\n");
+  await runtime.write(
     join(workspacePath, ".arashi", "config.json"),
     JSON.stringify(
       {
@@ -116,7 +117,7 @@ async function initGitRepo(repoPath: string, branch: string): Promise<void> {
 }
 
 async function execGit(args: string[], cwd: string): Promise<void> {
-  const proc = Bun.spawn(["git", ...args], {
+  const proc = runtime.spawn(["git", ...args], {
     cwd,
     stderr: "pipe",
     stdout: "pipe",

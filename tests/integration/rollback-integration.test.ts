@@ -5,7 +5,7 @@
  * Uses temporary test resources that are created and cleaned up for each test.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { join, resolve } from "path";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import {

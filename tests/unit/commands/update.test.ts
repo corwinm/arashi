@@ -5,7 +5,7 @@ import {
   fetchLatestRelease,
   runDirectUpdate,
 } from "../../../src/commands/update.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 interface MockResponse {
   json: () => Promise<{ html_url: string; tag_name: string }>;

@@ -3,7 +3,7 @@ import {
   filterSwitchCandidates,
   selectSwitchCandidate,
 } from "../../../src/core/switch.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
 import type { WorktreeInfo } from "../../../src/types/remove.ts";
 import { resolve } from "path";

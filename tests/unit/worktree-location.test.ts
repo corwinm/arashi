@@ -6,7 +6,7 @@ import {
   normalizeWorktreesDirWithDefault,
   resolveWorktreesBasePath,
 } from "../../src/lib/worktree-location.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { join, resolve } from "path";
 
 describe("worktree location normalization", () => {

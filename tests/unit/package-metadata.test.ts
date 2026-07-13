@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import pkg from "../../package.json";
 
 describe("npm package metadata", () => {

@@ -2,7 +2,7 @@
  * Integration test: User Story 3 - --no-check-dirty bypass
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,

@@ -1,3 +1,4 @@
+import { runtime } from "../lib/runtime.ts";
 /**
  * Worktree Orchestration Module
  *
@@ -481,12 +482,13 @@ interface ShouldReuseBranchOptions {
  * Error thrown when repository validation fails
  */
 export class RepositoryValidationError extends Error {
-  constructor(
-    message: string,
-    public readonly repositoryName: string,
-    public readonly repositoryPath?: string,
-  ) {
+  public readonly repositoryName: string;
+  public readonly repositoryPath?: string;
+
+  constructor(message: string, repositoryName: string, repositoryPath?: string) {
     super(message);
+    this.repositoryName = repositoryName;
+    this.repositoryPath = repositoryPath;
     this.name = "RepositoryValidationError";
   }
 }
@@ -531,11 +533,11 @@ export class HookExecutionError extends Error {
  * Error thrown when user aborts due to conflicts
  */
 export class ConflictAbortedError extends Error {
-  constructor(
-    message: string,
-    public readonly conflicts: BranchConflict[],
-  ) {
+  public readonly conflicts: BranchConflict[];
+
+  constructor(message: string, conflicts: BranchConflict[]) {
     super(message);
+    this.conflicts = conflicts;
     this.name = "ConflictAbortedError";
   }
 }
@@ -554,12 +556,13 @@ export class UserAbortedError extends Error {
  * Error thrown when branch name is invalid
  */
 export class InvalidBranchNameError extends Error {
-  constructor(
-    message: string,
-    public readonly branchName: string,
-    public readonly reason: string,
-  ) {
+  public readonly branchName: string;
+  public readonly reason: string;
+
+  constructor(message: string, branchName: string, reason: string) {
     super(message);
+    this.branchName = branchName;
+    this.reason = reason;
     this.name = "InvalidBranchNameError";
   }
 }
@@ -568,12 +571,13 @@ export class InvalidBranchNameError extends Error {
  * Error thrown when insufficient permissions
  */
 export class InsufficientPermissionsError extends Error {
-  constructor(
-    message: string,
-    public readonly path: string,
-    public readonly operation: string,
-  ) {
+  public readonly path: string;
+  public readonly operation: string;
+
+  constructor(message: string, path: string, operation: string) {
     super(message);
+    this.path = path;
+    this.operation = operation;
     this.name = "InsufficientPermissionsError";
   }
 }
@@ -689,7 +693,7 @@ export const detectRepositoryType = async (
   // Check if repository has .arashi/config.json → meta-repo
   const configPath = join(repo.path, ".arashi", "config.json");
   try {
-    const configFile = Bun.file(configPath);
+    const configFile = runtime.file(configPath);
     const exists = await configFile.exists();
     if (exists) {
       return {
@@ -718,7 +722,7 @@ export const detectRepositoryType = async (
       const metaConfigPath = join(grandparentPath, ".arashi", "config.json");
 
       try {
-        const metaConfigFile = Bun.file(metaConfigPath);
+        const metaConfigFile = runtime.file(metaConfigPath);
         const metaExists = await metaConfigFile.exists();
 
         if (metaExists) {

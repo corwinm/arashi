@@ -3,7 +3,7 @@ import {
   createJsonSuccessEnvelope,
   stringifyJsonEnvelope,
 } from "../../../src/lib/json-output.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 describe("json output envelopes", () => {
   test("creates a parseable success envelope", () => {

@@ -103,8 +103,8 @@ Invoke-WebRequest -Uri "https://github.com/corwinm/arashi/releases/latest/downlo
 You can also build from source for local development:
 
 ```bash
-bun install
-bun run build
+pnpm install
+pnpm run build
 ```
 
 ## Command Surface

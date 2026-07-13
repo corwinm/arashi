@@ -12,8 +12,8 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { findWorkspaceRoot, loadConfig } from "../lib/config.js";
-import { info, error as logError } from "../lib/logger.js";
+import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import { info, error as logError } from "../lib/logger.ts";
 import { relative, resolve } from "path";
 import { Command } from "commander";
 
@@ -366,7 +366,7 @@ export const createCommand = (): Command =>
     )
     .option(
       "--validation <entry>",
-      "Validation command and result evidence, e.g. 'bun run test — passed' (repeatable)",
+      "Validation command and result evidence, e.g. 'pnpm run test — passed' (repeatable)",
       collectRepeated,
     )
     .option(
@@ -389,7 +389,7 @@ export const createCommand = (): Command =>
       `
 Examples:
   $ arashi handoff --link https://github.com/corwinm/arashi-arashi/issues/186
-  $ arashi handoff --validation "bun run test — passed" --todo "watch CI"
+  $ arashi handoff --validation "pnpm run test — passed" --todo "watch CI"
   $ arashi handoff --json --next-command "arashi status --verbose"
       `,
     )

@@ -1,3 +1,4 @@
+import { runtime } from "../lib/runtime.ts";
 /**
  * CLI Command: Initialize Workspace
  *
@@ -575,9 +576,9 @@ const writeHookTemplates = async (hooksDir: string): Promise<void> => {
       addOperation({
         path: templatePath,
         rollback: async () => {
-          const file = Bun.file(templatePath);
+          const file = runtime.file(templatePath);
           if (await file.exists()) {
-            await Bun.write(templatePath, "");
+            await runtime.write(templatePath, "");
             await removeDir(templatePath);
           }
         },
@@ -674,9 +675,9 @@ const updateGitignore = async (
     addOperation({
       path: gitignorePath,
       rollback: async () => {
-        const file = Bun.file(gitignorePath);
+        const file = runtime.file(gitignorePath);
         if (await file.exists()) {
-          await Bun.write(gitignorePath, "");
+          await runtime.write(gitignorePath, "");
           await removeDir(gitignorePath);
         }
       },
@@ -989,9 +990,9 @@ export const executeInit = async (
         addOperation({
           path: configPath,
           rollback: async () => {
-            const file = Bun.file(configPath);
+            const file = runtime.file(configPath);
             if (await file.exists()) {
-              await Bun.write(configPath, "");
+              await runtime.write(configPath, "");
               await removeDir(configPath);
             }
           },

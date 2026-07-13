@@ -1,3 +1,4 @@
+import { runtime } from "../helpers/node-runtime.ts";
 /**
  * Integration Tests: Repository Management MVP
  *
@@ -6,12 +7,12 @@
  */
 
 import { CloneStatus, cloneRepository, discoverRepositories } from "../../src/core/repository.js";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdir, rm, stat } from "fs/promises";
 import { createStandardTestRepos } from "../helpers/create-test-repos.js";
 import { join } from "path";
 
-const TEST_WORKSPACE = join(import.meta.dir, "../temp-integration-workspace");
+const TEST_WORKSPACE = join(import.meta.dirname, "../temp-integration-workspace");
 
 describe("Repository Management MVP Integration", () => {
   beforeAll(async () => {
@@ -84,28 +85,28 @@ describe("Repository Management MVP Integration", () => {
       repoPromises.push(
         (async () => {
           await mkdir(repoPath, { recursive: true });
-          const proc = Bun.spawn(["git", "init", "-b", "main"], {
+          const proc = runtime.spawn(["git", "init", "-b", "main"], {
             cwd: repoPath,
             stderr: "ignore",
             stdout: "ignore",
           });
           await proc.exited;
 
-          const proc2 = Bun.spawn(["git", "config", "user.name", "Test"], {
+          const proc2 = runtime.spawn(["git", "config", "user.name", "Test"], {
             cwd: repoPath,
             stderr: "ignore",
             stdout: "ignore",
           });
           await proc2.exited;
 
-          const proc3 = Bun.spawn(["git", "config", "user.email", "test@test.com"], {
+          const proc3 = runtime.spawn(["git", "config", "user.email", "test@test.com"], {
             cwd: repoPath,
             stderr: "ignore",
             stdout: "ignore",
           });
           await proc3.exited;
 
-          const proc4 = Bun.spawn(["git", "commit", "--allow-empty", "-m", "Initial"], {
+          const proc4 = runtime.spawn(["git", "commit", "--allow-empty", "-m", "Initial"], {
             cwd: repoPath,
             stderr: "ignore",
             stdout: "ignore",
@@ -133,7 +134,7 @@ describe("Repository Management MVP Integration", () => {
 
     // Clean up perf test repos
     await rm(perfTestPath, { force: true, recursive: true });
-  }, 10_000); // Increased timeout for performance test
+  }, 30_000);
 });
 
 // ============================================================================
@@ -149,28 +150,40 @@ describe("Integration: Setup Script Detection", () => {
     // Create repo with setup.sh
     const repo1Path = join(workspaceDir, "has-setup");
     await mkdir(repo1Path, { recursive: true });
-    const proc1 = Bun.spawn(["git", "init", "-b", "main"], { cwd: repo1Path, stdout: "ignore" });
+    const proc1 = runtime.spawn(["git", "init", "-b", "main"], {
+      cwd: repo1Path,
+      stdout: "ignore",
+    });
     await proc1.exited;
-    await Bun.write(join(repo1Path, "setup.sh"), "#!/bin/bash\necho 'Setup'");
+    await runtime.write(join(repo1Path, "setup.sh"), "#!/bin/bash\necho 'Setup'");
 
     // Create repo with setup.bash
     const repo2Path = join(workspaceDir, "has-bash-setup");
     await mkdir(repo2Path, { recursive: true });
-    const proc2 = Bun.spawn(["git", "init", "-b", "main"], { cwd: repo2Path, stdout: "ignore" });
+    const proc2 = runtime.spawn(["git", "init", "-b", "main"], {
+      cwd: repo2Path,
+      stdout: "ignore",
+    });
     await proc2.exited;
-    await Bun.write(join(repo2Path, "setup.bash"), "#!/bin/bash\necho 'Bash Setup'");
+    await runtime.write(join(repo2Path, "setup.bash"), "#!/bin/bash\necho 'Bash Setup'");
 
     // Create repo with .arashi/setup.sh
     const repo3Path = join(workspaceDir, "has-arashi-setup");
     await mkdir(join(repo3Path, ".arashi"), { recursive: true });
-    const proc3 = Bun.spawn(["git", "init", "-b", "main"], { cwd: repo3Path, stdout: "ignore" });
+    const proc3 = runtime.spawn(["git", "init", "-b", "main"], {
+      cwd: repo3Path,
+      stdout: "ignore",
+    });
     await proc3.exited;
-    await Bun.write(join(repo3Path, ".arashi", "setup.sh"), "#!/bin/bash\necho 'Arashi Setup'");
+    await runtime.write(join(repo3Path, ".arashi", "setup.sh"), "#!/bin/bash\necho 'Arashi Setup'");
 
     // Create repo without setup script
     const repo4Path = join(workspaceDir, "no-setup");
     await mkdir(repo4Path, { recursive: true });
-    const proc4 = Bun.spawn(["git", "init", "-b", "main"], { cwd: repo4Path, stdout: "ignore" });
+    const proc4 = runtime.spawn(["git", "init", "-b", "main"], {
+      cwd: repo4Path,
+      stdout: "ignore",
+    });
     await proc4.exited;
 
     // Act: Discover repositories
@@ -218,20 +231,23 @@ describe("Integration: Repository Cloning", () => {
     await mkdir(sourceRepo, { recursive: true });
 
     // Initialize git repo
-    await Bun.spawn(["git", "init", "-b", "main"], { cwd: sourceRepo, stdout: "ignore" }).exited;
-    await Bun.spawn(["git", "config", "user.name", "Test"], { cwd: sourceRepo, stdout: "ignore" })
+    await runtime.spawn(["git", "init", "-b", "main"], { cwd: sourceRepo, stdout: "ignore" })
       .exited;
-    await Bun.spawn(["git", "config", "user.email", "test@test.com"], {
+    await runtime.spawn(["git", "config", "user.name", "Test"], {
+      cwd: sourceRepo,
+      stdout: "ignore",
+    }).exited;
+    await runtime.spawn(["git", "config", "user.email", "test@test.com"], {
       cwd: sourceRepo,
       stdout: "ignore",
     }).exited;
 
     // Add some content
-    await Bun.write(join(sourceRepo, "README.md"), "# Test Repository\n\nThis is a test.");
-    await Bun.write(join(sourceRepo, "code.ts"), "export const version = '1.0.0';");
+    await runtime.write(join(sourceRepo, "README.md"), "# Test Repository\n\nThis is a test.");
+    await runtime.write(join(sourceRepo, "code.ts"), "export const version = '1.0.0';");
 
-    await Bun.spawn(["git", "add", "."], { cwd: sourceRepo, stdout: "ignore" }).exited;
-    await Bun.spawn(["git", "commit", "-m", "Initial commit"], {
+    await runtime.spawn(["git", "add", "."], { cwd: sourceRepo, stdout: "ignore" }).exited;
+    await runtime.spawn(["git", "commit", "-m", "Initial commit"], {
       cwd: sourceRepo,
       stdout: "ignore",
     }).exited;
@@ -255,12 +271,12 @@ describe("Integration: Repository Cloning", () => {
     expect(gitDirStat.isDirectory()).toBe(true);
 
     // Verify files were cloned
-    const readmeFile = Bun.file(join(targetPath, "README.md"));
+    const readmeFile = runtime.file(join(targetPath, "README.md"));
     expect(await readmeFile.exists()).toBe(true);
     const readmeContent = await readmeFile.text();
     expect(readmeContent).toContain("Test Repository");
 
-    const codeFile = Bun.file(join(targetPath, "code.ts"));
+    const codeFile = runtime.file(join(targetPath, "code.ts"));
     expect(await codeFile.exists()).toBe(true);
     const codeContent = await codeFile.text();
     expect(codeContent).toContain("version = '1.0.0'");

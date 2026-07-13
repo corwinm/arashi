@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Command } from "commander";
 import { buildProgram, discoverCommandPaths } from "../../src/cli-program.ts";
 import {

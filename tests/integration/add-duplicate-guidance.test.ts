@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { spawn } from "bun";
 import { tmpdir } from "os";
+import { spawn } from "../helpers/node-runtime.ts";
 
 describe("add command duplicate guidance", () => {
   let testDir: string;
@@ -30,12 +30,21 @@ describe("add command duplicate guidance", () => {
   });
 
   test("suggests clone instead of remove for duplicate repository", async () => {
-    const entrypoint = join(import.meta.dir, "..", "..", "src", "index.ts");
-    const proc = spawn(["bun", entrypoint, "add", "git@github.com:corwinm/arashi-docs.git"], {
-      cwd: testDir,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+    const entrypoint = join(import.meta.dirname, "..", "..", "src", "index.ts");
+    const proc = spawn(
+      [
+        process.execPath,
+
+        entrypoint,
+        "add",
+        "git@github.com:corwinm/arashi-docs.git",
+      ],
+      {
+        cwd: testDir,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
 
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();

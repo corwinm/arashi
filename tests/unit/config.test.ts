@@ -12,7 +12,7 @@ import {
   normalizeConfig,
   validateConfig,
 } from "../../src/lib/config";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { DEFAULT_WORKTREES_DIR } from "../../src/lib/worktree-location";
 import { join } from "path";
 

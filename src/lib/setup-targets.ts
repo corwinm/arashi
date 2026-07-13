@@ -1,3 +1,4 @@
+import { runtime } from "./runtime.ts";
 import type { SetupScopeType, SetupTarget } from "./setup-types.ts";
 import type { WorkspaceRepository } from "./config.ts";
 import { join } from "path";
@@ -66,7 +67,7 @@ function findMissingRepositories(repositories: WorkspaceRepository[], only: stri
 async function detectSetupScript(repositoryPath: string): Promise<string | undefined> {
   for (const pattern of DEFAULT_SETUP_PATTERNS) {
     const candidate = join(repositoryPath, pattern);
-    const exists = await Bun.file(candidate).exists();
+    const exists = await runtime.file(candidate).exists();
     if (exists) {
       return candidate;
     }

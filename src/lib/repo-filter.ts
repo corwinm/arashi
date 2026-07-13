@@ -1,7 +1,7 @@
 import type { WorkspaceRepository } from "./config.ts";
 
-export interface RepositoryFilterResult {
-  selected: WorkspaceRepository[];
+export interface RepositoryFilterResult<T extends WorkspaceRepository = WorkspaceRepository> {
+  selected: T[];
   missing: string[];
   unknownGroups: string[];
   emptyIntersection: boolean;
@@ -43,11 +43,11 @@ const repoMatchesAnyGroup = (repo: WorkspaceRepository, groups: string[]): boole
   return groups.some((group) => repoGroups.has(group.toLowerCase()));
 };
 
-export function filterRepositories(
-  repositories: WorkspaceRepository[],
+export function filterRepositories<T extends WorkspaceRepository>(
+  repositories: T[],
   only: string[] | string | undefined,
   groups?: string[] | string,
-): RepositoryFilterResult {
+): RepositoryFilterResult<T> {
   const normalizedOnly = normalizeFilterList(only);
   const normalizedGroups = normalizeFilterList(groups);
   const repoMap = new Map(repositories.map((repo) => [repo.name, repo]));
@@ -58,7 +58,7 @@ export function filterRepositories(
     (group) => !configuredGroups.has(group.toLowerCase()),
   );
 
-  let candidates: WorkspaceRepository[] = repositories;
+  let candidates: T[] = repositories;
   const missing: string[] = [];
 
   if (normalizedOnly.length > 0) {

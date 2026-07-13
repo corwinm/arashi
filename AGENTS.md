@@ -16,6 +16,6 @@ This repository contains the Arashi CLI implementation.
 
 ## Validation
 
-- `bun run lint`
-- `bun run test`
-- `bun run build`
+- `pnpm run lint`
+- `pnpm run test`
+- `pnpm run build`

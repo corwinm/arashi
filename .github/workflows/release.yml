@@ -56,10 +56,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 24
+          cache: pnpm
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -67,7 +73,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
-        run: bun install
+        run: pnpm install
 
       - name: Configure Git
         run: |
@@ -79,12 +85,12 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
             echo "🧪 Running in DRY-RUN mode - no release will be created"
             echo "🔨 Validating binary + checksum build steps"
-            bun run build:all
+            pnpm run build:all
             ./scripts/generate-checksums.sh
-            bunx semantic-release --dry-run
+            pnpm exec semantic-release --dry-run
           else
             echo "🚀 Running semantic-release..."
-            bunx semantic-release
+            pnpm exec semantic-release
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

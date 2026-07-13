@@ -1,11 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "../helpers/node-runtime.ts";
+import { afterEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import type { RepoStatus } from "../../src/commands/status.ts";
 import { join } from "path";
 import { repositoryStatusToDoctorFindings } from "../../src/lib/doctor.ts";
 import { tmpdir } from "os";
 
-const CLI_ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
 
 interface CommandResult {
   exitCode: number;
@@ -22,7 +23,7 @@ const makeTempDir = async (): Promise<string> => {
 };
 
 const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> => {
-  const proc = Bun.spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
+  const proc = runtime.spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -32,7 +33,12 @@ const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> =
 };
 
 const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> =>
-  runCommand(cwd, ["bun", CLI_ENTRY, ...args]);
+  runCommand(cwd, [
+    process.execPath,
+
+    CLI_ENTRY,
+    ...args,
+  ]);
 
 const runGit = async (cwd: string, args: string[]): Promise<string> => {
   const result = await runCommand(cwd, ["git", ...args]);

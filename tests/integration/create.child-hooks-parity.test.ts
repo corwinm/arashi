@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "../helpers/node-runtime.ts";
+import { afterEach, describe, expect, test } from "vitest";
 import { createChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
 import { createRepoSpecificHookInRepo } from "../helpers/hooks.ts";
 import { join } from "path";
 type ChildHookWorkspace = Awaited<ReturnType<typeof createChildHookWorkspace>>;
 
-const CLI_ENTRY = join(import.meta.dir, "../../src/index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
 let workspace: ChildHookWorkspace | null = null;
 
 afterEach(async () => {
@@ -41,21 +42,41 @@ describe("create command hook parity between root and child invocation", () => {
     const rootBranch = "feature-hook-parity-root";
     const childBranch = "feature-hook-parity-child";
 
-    const rootRun = Bun.spawn(["bun", CLI_ENTRY, "create", rootBranch, "--no-progress"], {
-      cwd: workspace.workspacePath,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+    const rootRun = runtime.spawn(
+      [
+        process.execPath,
+
+        CLI_ENTRY,
+        "create",
+        rootBranch,
+        "--no-progress",
+      ],
+      {
+        cwd: workspace.workspacePath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
 
     const rootExitCode = await rootRun.exited;
     const rootOutput = `${await new Response(rootRun.stdout).text()}\n${await new Response(rootRun.stderr).text()}`;
     expect(rootExitCode).toBe(0);
 
-    const childRun = Bun.spawn(["bun", CLI_ENTRY, "create", childBranch, "--no-progress"], {
-      cwd: workspace.childInvocationPath,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+    const childRun = runtime.spawn(
+      [
+        process.execPath,
+
+        CLI_ENTRY,
+        "create",
+        childBranch,
+        "--no-progress",
+      ],
+      {
+        cwd: workspace.childInvocationPath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
 
     const childExitCode = await childRun.exited;
     const childOutput = `${await new Response(childRun.stdout).text()}\n${await new Response(childRun.stderr).text()}`;

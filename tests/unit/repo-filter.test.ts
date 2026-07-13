@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { filterRepositories, normalizeFilterList } from "../../src/lib/repo-filter.ts";
 import type { WorkspaceRepository } from "../../src/lib/config.ts";
 

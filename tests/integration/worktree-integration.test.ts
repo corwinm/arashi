@@ -1,3 +1,4 @@
+import { runtime } from "../helpers/node-runtime.ts";
 /**
  * Integration tests for worktree orchestration
  *
@@ -5,7 +6,7 @@
  * Tests use real git repositories to verify end-to-end functionality
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { access } from "fs/promises";
 import { constants } from "fs";
 import { createTestWorkspace } from "../helpers/create-test-workspace.ts";
@@ -231,7 +232,7 @@ async function verifyWorktreeExists(path: string): Promise<boolean> {
  * Verify a branch exists in a repository
  */
 async function verifyBranchExists(repoPath: string, branchName: string): Promise<boolean> {
-  const proc = Bun.spawn(["git", "branch", "--list", branchName], {
+  const proc = runtime.spawn(["git", "branch", "--list", branchName], {
     cwd: repoPath,
     stdout: "pipe",
   });

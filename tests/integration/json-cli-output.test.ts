@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { runtime } from "../helpers/node-runtime.ts";
+import { afterEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
-const CLI_ENTRY = join(import.meta.dir, "..", "..", "src", "index.ts");
+const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
 
 interface CommandResult {
   exitCode: number;
@@ -20,7 +21,7 @@ const makeTempDir = async (): Promise<string> => {
 };
 
 const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> => {
-  const proc = Bun.spawn(["bun", CLI_ENTRY, ...args], {
+  const proc = runtime.spawn([process.execPath, CLI_ENTRY, ...args], {
     cwd,
     stderr: "pipe",
     stdout: "pipe",
@@ -36,7 +37,7 @@ const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> =>
 };
 
 const runCommand = async (cwd: string, args: string[]): Promise<CommandResult> => {
-  const proc = Bun.spawn(args, {
+  const proc = runtime.spawn(args, {
     cwd,
     stderr: "pipe",
     stdout: "pipe",
@@ -230,7 +231,7 @@ describe("CLI JSON output contract", () => {
       expect.objectContaining({ repositoryName: "repo-a", status: "success" }),
     );
     expect(result.stdout).not.toContain("[1/1]");
-    expect(await Bun.file(join(workspaceRoot, "setup-marker.txt")).text()).toBe(
+    expect(await runtime.file(join(workspaceRoot, "setup-marker.txt")).text()).toBe(
       "repo-a-json-setup\n",
     );
   });
@@ -321,7 +322,7 @@ describe("CLI JSON output contract", () => {
       },
     });
     for (const repo of createdRepositories) {
-      expect(await Bun.file(repo.worktreePath as string).exists()).toBe(false);
+      expect(await runtime.file(repo.worktreePath as string).exists()).toBe(false);
     }
     expect(removeResult.stdout).not.toContain("Successfully removed");
   });

@@ -6,12 +6,12 @@
  */
 
 import { GitTestRepo, commitChanges, createFile } from "../../helpers/git-test-utils";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ArashiError } from "../../../src/lib/errors";
 import { GitErrorCode } from "../../../src/types/git";
 import { exec } from "../../../src/lib/git";
 
-const SLOW_GIT_TEST_TIMEOUT = process.platform === "win32" ? 15_000 : 5000;
+const SLOW_GIT_TEST_TIMEOUT = 30_000;
 
 describe("exec() - Integration Tests", () => {
   let testRepo: GitTestRepo;

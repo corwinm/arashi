@@ -1,3 +1,4 @@
+import { runtime } from "../lib/runtime.ts";
 /**
  * Add Command
  *
@@ -16,6 +17,7 @@ import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { executeClone } from "./clone.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
+import { rm } from "node:fs/promises";
 
 type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
 
@@ -36,7 +38,7 @@ const detectDefaultBranchOrThrow = async (clonePath: string, gitUrl: string): Pr
   }
 };
 
-const hasMakefileSetupTarget = async (file: Bun.BunFile): Promise<boolean> => {
+const hasMakefileSetupTarget = async (file: { text(): Promise<string> }): Promise<boolean> => {
   try {
     const content = await file.text();
     return /^(setup|install):/m.test(content);
@@ -344,7 +346,7 @@ const SETUP_SCRIPT_NAMES = [
 export async function detectSetupScript(repoPath: string): Promise<string | null> {
   for (const scriptName of SETUP_SCRIPT_NAMES) {
     const scriptPath = join(repoPath, scriptName);
-    const file = Bun.file(scriptPath);
+    const file = runtime.file(scriptPath);
 
     if (await file.exists()) {
       // For Makefile, verify it has setup/install target
@@ -486,7 +488,7 @@ const executeAdd = async (
     for (const operation of rollbackOperations) {
       try {
         if (operation.type === "clone") {
-          await Bun.$`rm -rf ${operation.path}`;
+          await rm(operation.path, { force: true, recursive: true });
         }
       } catch (cleanupError) {
         info(`Warning: Failed to clean up ${operation.path}: ${(cleanupError as Error).message}`);

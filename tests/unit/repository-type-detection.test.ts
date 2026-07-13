@@ -6,7 +6,7 @@
  * as meta-repo, child, or standalone based on configuration and location.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, rm, writeFile } from "fs/promises";
 import type { Config as ArashiConfig } from "../../src/lib/config.ts";
 import type { Repository } from "../../src/core/repository.ts";
@@ -14,7 +14,7 @@ import { detectRepositoryType } from "../../src/core/worktree.ts";
 import { join } from "path";
 
 describe("detectRepositoryType", () => {
-  const testDir = join(import.meta.dir, "temp-test-workspace");
+  const testDir = join(import.meta.dirname, "temp-test-workspace");
 
   beforeEach(async () => {
     await mkdir(testDir, { recursive: true });

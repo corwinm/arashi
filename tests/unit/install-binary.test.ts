@@ -5,7 +5,7 @@ import {
   installBinary,
   isBinaryInstalled,
 } from "../../bin/install-binary.js";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -67,15 +67,15 @@ describe("installBinary", () => {
     const result = await installBinary({
       arch: "x64",
       binDir: tempDir,
-      chmodImpl: (path, mode) => {
+      chmodImpl: (path: string, mode: number) => {
         chmodCalls.push({ mode, path: String(path) });
       },
-      downloadFileImpl: async (_url, dest) => {
+      downloadFileImpl: async (_url: string, dest: string) => {
         await writeFile(String(dest), "binary");
       },
-      log: (message) => logs.push(message),
+      log: (message: string) => logs.push(message),
       platform: "linux",
-      verifyBinaryImpl: (path) => {
+      verifyBinaryImpl: (path: string) => {
         verifyCalls.push(String(path));
       },
       version: "1.2.3",
@@ -100,7 +100,7 @@ describe("installBinary", () => {
         arch: "x64",
         binDir: tempDir,
         chmodImpl: () => {},
-        downloadFileImpl: async (_url, dest) => {
+        downloadFileImpl: async (_url: string, dest: string) => {
           await writeFile(String(dest), "partial");
         },
         log: () => {},
@@ -144,7 +144,7 @@ describe("installBinary", () => {
       arch: "x64",
       binDir: tempDir,
       chmodImpl: () => {},
-      downloadFileImpl: async (_url, dest) => {
+      downloadFileImpl: async (_url: string, dest: string) => {
         downloaded = true;
         await writeFile(String(dest), "new binary");
       },

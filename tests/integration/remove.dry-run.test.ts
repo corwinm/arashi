@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { basename, join } from "path";
 import { chmod, mkdir, writeFile } from "fs/promises";
 import {
@@ -8,7 +8,6 @@ import {
 } from "../helpers/remove-test-workspace.ts";
 import { existsSync, realpathSync } from "fs";
 import { executeRemove } from "../../src/commands/remove.ts";
-import { spawn } from "bun";
 
 describe("remove command - dry-run preview", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
@@ -243,3 +242,4 @@ async function createWorkspaceHook(
   await writeFile(hookPath, `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`);
   await chmod(hookPath, 0o755);
 }
+import { spawn } from "../helpers/node-runtime.ts";

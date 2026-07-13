@@ -90,12 +90,14 @@ export interface RepositoryInfo {
 /**
  * Error codes for git operations
  */
-export enum GitErrorCode {
-  GIT_FATAL = "GIT_FATAL",
-  NOT_A_REPOSITORY = "NOT_A_REPOSITORY",
-  ALREADY_EXISTS = "ALREADY_EXISTS",
-  NOT_FOUND = "NOT_FOUND",
-  PERMISSION_DENIED = "PERMISSION_DENIED",
-  NETWORK_ERROR = "NETWORK_ERROR",
-  GIT_ERROR = "GIT_ERROR",
-}
+export const GitErrorCode = {
+  GIT_FATAL: "GIT_FATAL",
+  NOT_A_REPOSITORY: "NOT_A_REPOSITORY",
+  ALREADY_EXISTS: "ALREADY_EXISTS",
+  NOT_FOUND: "NOT_FOUND",
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  NETWORK_ERROR: "NETWORK_ERROR",
+  GIT_ERROR: "GIT_ERROR",
+} as const;
+
+export type GitErrorCode = (typeof GitErrorCode)[keyof typeof GitErrorCode];

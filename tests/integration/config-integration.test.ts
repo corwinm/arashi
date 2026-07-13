@@ -1,3 +1,4 @@
+import { runtime } from "../helpers/node-runtime.ts";
 /**
  * Integration Tests for Configuration Management
  *
@@ -19,7 +20,7 @@ import {
   repairRepositoryGitUrls,
   saveConfig,
 } from "../../src/lib/config";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -29,7 +30,7 @@ type Config = Awaited<ReturnType<typeof loadConfig>>;
 const normalizePathSeparators = (value: string): string => value.replaceAll("\\", "/");
 
 async function runGit(args: string[], cwd: string): Promise<void> {
-  const proc = Bun.spawn(["git", ...args], {
+  const proc = runtime.spawn(["git", ...args], {
     cwd,
     stderr: "pipe",
     stdout: "pipe",
@@ -82,7 +83,7 @@ describe("saveConfig", () => {
     await saveConfig(testDir, config);
 
     const configPath = getConfigPath(testDir);
-    const file = Bun.file(configPath);
+    const file = runtime.file(configPath);
     expect(await file.exists()).toBe(true);
   });
 
@@ -91,7 +92,7 @@ describe("saveConfig", () => {
     await saveConfig(testDir, config);
 
     const configPath = getConfigPath(testDir);
-    const content = await Bun.file(configPath).text();
+    const content = await runtime.file(configPath).text();
 
     // Check for 2-space indentation
     expect(content).toContain('  "version"');
@@ -109,7 +110,7 @@ describe("saveConfig", () => {
 
     // Check if directory exists by trying to access the config file
     const configPath = getConfigPath(testDir);
-    const fileExists = await Bun.file(configPath).exists();
+    const fileExists = await runtime.file(configPath).exists();
     expect(fileExists).toBe(true);
   });
 
@@ -192,7 +193,7 @@ describe("loadConfig", () => {
     const loaded = await loadConfig(testDir);
     expect(loaded.version).toBe("1.0.0");
 
-    const persisted = JSON.parse(await Bun.file(configPath).text()) as { version: string };
+    const persisted = JSON.parse(await runtime.file(configPath).text()) as { version: string };
     expect(persisted.version).toBe("1.0.0");
   });
 
@@ -224,7 +225,7 @@ describe("loadConfig", () => {
       const err = error as ConfigNotFoundError;
       expect(err.message).toContain("not found");
       expect(err.message).toContain("arashi init");
-      expect(normalizePathSeparators(err.context.path)).toContain(".arashi/config.json");
+      expect(normalizePathSeparators(String(err.context.path))).toContain(".arashi/config.json");
     }
   });
 
@@ -520,12 +521,12 @@ describe("round-trip tests", () => {
     const config = generateDefaultConfig();
     await saveConfig(testDir, config);
 
-    const content1 = await Bun.file(getConfigPath(testDir)).text();
+    const content1 = await runtime.file(getConfigPath(testDir)).text();
 
     const loaded = await loadConfig(testDir);
     await saveConfig(testDir, loaded);
 
-    const content2 = await Bun.file(getConfigPath(testDir)).text();
+    const content2 = await runtime.file(getConfigPath(testDir)).text();
 
     expect(content1).toBe(content2);
   });

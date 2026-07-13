@@ -1,3 +1,4 @@
+import { runtime } from "./runtime.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { normalizeSpawnEnvironment, stripDirectiveEnvironment } from "./shell-directives.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
@@ -265,7 +266,7 @@ export async function runSwitchProcess(
   options: SwitchProcessRunOptions,
 ): Promise<SwitchProcessResult> {
   try {
-    const proc = Bun.spawn(command, {
+    const proc = runtime.spawn(command, {
       cwd: options.cwd,
       env: normalizeSpawnEnvironment(options.env),
       stderr: "pipe",

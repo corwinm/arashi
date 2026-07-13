@@ -1,3 +1,4 @@
+import { runtime } from "./node-runtime.ts";
 /**
  * Test helper for creating temporary git repositories for worktree testing
  *
@@ -74,7 +75,7 @@ export async function createTestWorkspace(config?: TestRepositoryConfig[]): Prom
     // Create setup script if specified
     if (repoConfig.hasSetupScript) {
       const setupPath = join(repoPath, "setup.sh");
-      await Bun.write(setupPath, "#!/bin/bash\necho 'Setup script'\n");
+      await runtime.write(setupPath, "#!/bin/bash\necho 'Setup script'\n");
       await execGit(["add", "setup.sh"], repoPath);
       await execGit(["commit", "-m", "Add setup script"], repoPath);
     }
@@ -107,7 +108,7 @@ export async function createTestWorkspace(config?: TestRepositoryConfig[]): Prom
  * Execute git command in a specific directory
  */
 async function execGit(args: string[], cwd: string): Promise<void> {
-  const proc = Bun.spawn(["git", ...args], {
+  const proc = runtime.spawn(["git", ...args], {
     cwd,
     stderr: "pipe",
     stdout: "pipe",

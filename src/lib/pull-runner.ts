@@ -1,3 +1,4 @@
+import { runtime } from "./runtime.ts";
 import { isAbsolute, resolve } from "path";
 import { exec } from "./git.ts";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";
@@ -97,7 +98,7 @@ async function abortMergeIfNeeded(repoPath: string): Promise<boolean> {
     const resolvedPath = isAbsolute(mergeHeadPath)
       ? mergeHeadPath
       : resolve(repoPath, mergeHeadPath);
-    const mergeHeadFile = Bun.file(resolvedPath);
+    const mergeHeadFile = runtime.file(resolvedPath);
     if (await mergeHeadFile.exists()) {
       await exec(["merge", "--abort"], repoPath);
       return true;
@@ -114,7 +115,7 @@ async function runGitCommand(
   cwd: string,
   timeoutMs?: number,
 ): Promise<{ exitCode: number; output: string; error?: string; timedOut?: boolean }> {
-  const proc = Bun.spawn(["git", ...args], {
+  const proc = runtime.spawn(["git", ...args], {
     cwd,
     env: normalizeSpawnEnvironment(process.env),
     stderr: "pipe",

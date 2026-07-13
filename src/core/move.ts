@@ -74,12 +74,13 @@ export interface MoveSummary {
 }
 
 export class MovePlanningError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly details?: Record<string, unknown>,
-  ) {
+  public readonly code: string;
+  public readonly details?: Record<string, unknown>;
+
+  constructor(message: string, code: string, details?: Record<string, unknown>) {
     super(message);
+    this.code = code;
+    this.details = details;
     this.name = "MovePlanningError";
   }
 }

@@ -21,7 +21,7 @@ import { createCommand as createSyncCommand } from "./commands/sync.ts";
 import { createCommand as createUpdateCommand } from "./commands/update.ts";
 import { detectTerminalContext } from "./lib/terminal-context.ts";
 import { renderHelpBanner } from "./lib/logo.ts";
-import pkg from "../package.json";
+import pkg from "../package.json" with { type: "json" };
 
 export interface BuildProgramOptions {
   includeHelpBanner?: boolean;

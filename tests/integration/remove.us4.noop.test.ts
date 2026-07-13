@@ -2,14 +2,13 @@
  * Integration test: User Story 4 - no-op when both keep flags set
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
 } from "../helpers/remove-test-workspace.ts";
 import { executeRemove } from "../../src/commands/remove.ts";
 import { existsSync } from "fs";
-import { spawn } from "bun";
 
 describe("remove command - US4 no-op keep flags", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
@@ -56,3 +55,4 @@ describe("remove command - US4 no-op keep flags", () => {
     }
   });
 });
+import { spawn } from "../helpers/node-runtime.ts";

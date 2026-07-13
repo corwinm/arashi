@@ -1,3 +1,4 @@
+import { runtime } from "./runtime.ts";
 import { access, stat } from "fs/promises";
 import { constants } from "fs";
 import { homedir } from "os";
@@ -484,7 +485,7 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
   console.log(`🪝 Executing hook: ${options.hookName}`);
 
   try {
-    const proc = Bun.spawn(getShellCommand(options.scriptPath), {
+    const proc = runtime.spawn(getShellCommand(options.scriptPath), {
       cwd: options.context.repoPath,
       env: buildEnvironment(options.context),
       killSignal: "SIGTERM",

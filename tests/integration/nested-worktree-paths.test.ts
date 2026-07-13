@@ -1,3 +1,4 @@
+import { runtime, spawn } from "../helpers/node-runtime.ts";
 /**
  * Integration Tests: Nested Worktree Paths
  * Feature: 001-nested-worktree-paths
@@ -6,15 +7,14 @@
  * within the full worktree creation flow for all repository types.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, rm, writeFile } from "fs/promises";
 import type { Repository } from "../../src/core/repository.ts";
 import { createCoordinatedWorktrees } from "../../src/core/worktree.ts";
 import { join } from "path";
-import { spawn } from "bun";
 
 describe("Nested Worktree Paths Integration", () => {
-  const testDir = join(import.meta.dir, "../temp-integration-workspace");
+  const testDir = join(import.meta.dirname, "../temp-integration-workspace");
 
   beforeEach(async () => {
     await mkdir(testDir, { recursive: true });
@@ -70,10 +70,10 @@ describe("Nested Worktree Paths Integration", () => {
       expect(result.failureCount).toBe(0);
 
       const worktreePath = join(metaRepoPath, ".arashi", "worktrees", "parent-repo-feature");
-      const worktreeExists = await Bun.file(join(worktreePath, "README.md")).exists();
+      const worktreeExists = await runtime.file(join(worktreePath, "README.md")).exists();
       expect(worktreeExists).toBe(true);
 
-      const parentExists = await Bun.file(join(metaRepoPath, "README.md")).exists();
+      const parentExists = await runtime.file(join(metaRepoPath, "README.md")).exists();
       expect(parentExists).toBe(true);
     });
 
@@ -109,7 +109,7 @@ describe("Nested Worktree Paths Integration", () => {
       expect(result.successCount).toBe(1);
 
       const worktreePath = join(metaRepoPath, ".arashi", "worktrees", "existing-repo-bugfix-123");
-      const worktreeExists = await Bun.file(join(worktreePath, "README.md")).exists();
+      const worktreeExists = await runtime.file(join(worktreePath, "README.md")).exists();
       expect(worktreeExists).toBe(true);
     });
   });

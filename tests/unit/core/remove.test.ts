@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
 import { groupWorktreesByParent } from "../../../src/core/remove.ts";
 

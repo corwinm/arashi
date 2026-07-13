@@ -1,3 +1,4 @@
+import { runtime } from "../lib/runtime.ts";
 /**
  * Repository Management - Core Module
  *
@@ -6,10 +7,10 @@
  */
 
 import { basename, join, resolve } from "path";
-import { spinner as createSpinner, warn } from "../lib/logger.js";
+import { spinner as createSpinner, warn } from "../lib/logger.ts";
 import { readdir, rm, stat } from "fs/promises";
-import { exec as execGit } from "../lib/git.js";
-import { fileExists } from "../lib/filesystem.js";
+import { exec as execGit } from "../lib/git.ts";
+import { fileExists } from "../lib/filesystem.ts";
 
 const ZERO = 0;
 const ONE = 1;
@@ -20,6 +21,9 @@ const DEFAULT_SCAN_DEPTH = 3;
 const CLONE_COMPLETE_PERCENTAGE = 100;
 const DEFAULT_EXCLUDE_PATTERNS = ["node_modules", ".git"];
 const COMMON_BRANCHES = ["main", "master", "develop", "trunk"];
+
+const comparePaths = (left: { path: string }, right: { path: string }): number =>
+  left.path.localeCompare(right.path, "en");
 
 const scanSymlinkDirectory = async (options: {
   dirPath: string;
@@ -46,13 +50,15 @@ const scanSymlinkDirectory = async (options: {
 /**
  * Error codes for repository operations
  */
-export enum ErrorCode {
-  PERMISSION_DENIED = "PERMISSION_DENIED",
-  NOT_A_DIRECTORY = "NOT_A_DIRECTORY",
-  INVALID_GIT_REPO = "INVALID_GIT_REPO",
-  SYMLINK_LOOP = "SYMLINK_LOOP",
-  IO_ERROR = "IO_ERROR",
-}
+export const ErrorCode = {
+  PERMISSION_DENIED: "PERMISSION_DENIED",
+  NOT_A_DIRECTORY: "NOT_A_DIRECTORY",
+  INVALID_GIT_REPO: "INVALID_GIT_REPO",
+  SYMLINK_LOOP: "SYMLINK_LOOP",
+  IO_ERROR: "IO_ERROR",
+} as const;
+
+export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 // ============================================================================
 // Core Interfaces (T007-T010)
@@ -175,36 +181,42 @@ export interface ValidationOptions {
 /**
  * Status of a clone operation (T071)
  */
-export enum CloneStatus {
-  PENDING = "PENDING",
-  IN_PROGRESS = "IN_PROGRESS",
-  COMPLETED = "COMPLETED",
-  FAILED = "FAILED",
-}
+export const CloneStatus = {
+  PENDING: "PENDING",
+  IN_PROGRESS: "IN_PROGRESS",
+  COMPLETED: "COMPLETED",
+  FAILED: "FAILED",
+} as const;
+
+export type CloneStatus = (typeof CloneStatus)[keyof typeof CloneStatus];
 
 /**
  * Phase of clone operation (T073)
  */
-export enum ClonePhase {
-  VALIDATING = "VALIDATING",
-  CLONING = "CLONING",
-  RECEIVING = "RECEIVING",
-  RESOLVING = "RESOLVING",
-  COMPLETED = "COMPLETED",
-}
+export const ClonePhase = {
+  VALIDATING: "VALIDATING",
+  CLONING: "CLONING",
+  RECEIVING: "RECEIVING",
+  RESOLVING: "RESOLVING",
+  COMPLETED: "COMPLETED",
+} as const;
+
+export type ClonePhase = (typeof ClonePhase)[keyof typeof ClonePhase];
 
 /**
  * Error codes for clone operations (T075)
  */
-export enum CloneErrorCode {
-  TARGET_EXISTS = "TARGET_EXISTS",
-  INVALID_URL = "INVALID_URL",
-  NETWORK_ERROR = "NETWORK_ERROR",
-  AUTH_FAILED = "AUTH_FAILED",
-  TIMEOUT = "TIMEOUT",
-  DISK_FULL = "DISK_FULL",
-  UNKNOWN = "UNKNOWN",
-}
+export const CloneErrorCode = {
+  TARGET_EXISTS: "TARGET_EXISTS",
+  INVALID_URL: "INVALID_URL",
+  NETWORK_ERROR: "NETWORK_ERROR",
+  AUTH_FAILED: "AUTH_FAILED",
+  TIMEOUT: "TIMEOUT",
+  DISK_FULL: "DISK_FULL",
+  UNKNOWN: "UNKNOWN",
+} as const;
+
+export type CloneErrorCode = (typeof CloneErrorCode)[keyof typeof CloneErrorCode];
 
 /**
  * Clone progress information (T072)
@@ -288,12 +300,13 @@ export interface CloneOptions {
  * Base error class for repository operations
  */
 export class RepositoryError extends Error {
-  constructor(
-    message: string,
-    public readonly repository: string,
-    public readonly cause?: Error,
-  ) {
+  public readonly repository: string;
+  public readonly cause?: Error;
+
+  constructor(message: string, repository: string, cause?: Error) {
     super(message);
+    this.repository = repository;
+    this.cause = cause;
     this.name = "RepositoryError";
 
     // Maintain proper stack trace (V8 engines)
@@ -389,8 +402,12 @@ export const discoverRepositories = async (
 
       const entries = await readdir(dirPath, { withFileTypes: true });
 
-      for (const entry of entries) {
-        if (!excludePatterns.some((pattern) => entry.name.includes(pattern))) {
+      await Promise.all(
+        entries.map(async (entry) => {
+          if (excludePatterns.some((pattern) => entry.name.includes(pattern))) {
+            return;
+          }
+
           if (entry.isDirectory()) {
             const subPath = join(dirPath, entry.name);
             await scanDirectory(subPath, depth + ONE);
@@ -405,8 +422,8 @@ export const discoverRepositories = async (
               scanDirectory,
             });
           }
-        }
-      }
+        }),
+      );
     } catch (error: unknown) {
       errors.push(classifyError(dirPath, error));
     }
@@ -421,6 +438,9 @@ export const discoverRepositories = async (
     }
 
     discoverySpinner.succeed(`Found ${repositories.length} ${repositoryLabel}`);
+
+    repositories.sort(comparePaths);
+    errors.sort(comparePaths);
 
     return {
       duration: Date.now() - startTime,
@@ -477,7 +497,7 @@ const classifyError = (path: string, error: unknown): DiscoveryError => {
     candidate = error as { code?: unknown; message?: unknown };
   }
 
-  let code = ErrorCode.IO_ERROR;
+  let code: ErrorCode = ErrorCode.IO_ERROR;
   let message = "I/O error";
 
   if (candidate.code === "EACCES" || candidate.code === "EPERM") {
@@ -532,17 +552,26 @@ export const detectDefaultBranch = async (repositoryPath: string): Promise<strin
     }
   } catch {}
 
-  for (const branch of COMMON_BRANCHES) {
-    try {
-      await execGit(["rev-parse", "--verify", `refs/heads/${branch}`], repositoryPath);
-      return branch;
-    } catch {}
-  }
-
   try {
-    const result = await execGit(["rev-parse", "--abbrev-ref", "HEAD"], repositoryPath);
+    const result = await execGit(
+      ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+      repositoryPath,
+    );
+    const branches = new Set(
+      result.stdout
+        .split("\n")
+        .map((branch) => branch.trim())
+        .filter(Boolean),
+    );
 
-    const currentBranch = result.stdout.trim();
+    for (const branch of COMMON_BRANCHES) {
+      if (branches.has(branch)) {
+        return branch;
+      }
+    }
+
+    const result2 = await execGit(["rev-parse", "--abbrev-ref", "HEAD"], repositoryPath);
+    const currentBranch = result2.stdout.trim();
     if (currentBranch && currentBranch !== "HEAD") {
       return currentBranch;
     }
@@ -588,7 +617,7 @@ export const detectSetupScript = async (
     const scriptPath = join(repositoryPath, pattern);
 
     try {
-      const file = Bun.file(scriptPath);
+      const file = runtime.file(scriptPath);
       const exists = await file.exists();
 
       if (exists) {
@@ -839,7 +868,7 @@ const handleCloneFailure = async (
 
   operation.status = CloneStatus.FAILED;
 
-  let errorCode = CloneErrorCode.UNKNOWN;
+  let errorCode: CloneErrorCode = CloneErrorCode.UNKNOWN;
   let errorMessage = errorText;
 
   if (errorText.includes("timeout") || errorText.includes("timed out")) {

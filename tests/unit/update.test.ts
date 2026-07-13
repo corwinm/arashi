@@ -6,7 +6,7 @@ import {
   runNpmManagedUpdate,
   selectPackageManagerCommand,
 } from "../../bin/update.js";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 interface MockPackageResponse {
   json: () => Promise<unknown>;
@@ -48,10 +48,10 @@ describe("update helpers", () => {
 
   test("fetches latest npm package version with injectable fetch", async () => {
     const version = await fetchLatestPackageVersion({
-      fetchImpl: (url: string) => {
-        expect(url).toBe("https://registry.npmjs.org/arashi/latest");
-        return Promise.resolve(createResponse({ version: "9.8.7" }));
-      },
+      fetchImpl: ((input: string | URL | Request) => {
+        expect(input).toBe("https://registry.npmjs.org/arashi/latest");
+        return Promise.resolve(createResponse({ version: "9.8.7" }) as Response);
+      }) as typeof fetch,
     });
 
     expect(version).toBe("9.8.7");
@@ -91,8 +91,11 @@ describe("update helpers", () => {
       command: "vp",
     });
     expect(
+      // The JavaScript implementation accepts rootDir, but TypeScript cannot infer it from the
+      // defaulted destructuring signature.
       selectPackageManagerCommand({
         env: { npm_config_user_agent: "npm/10 node/v22" },
+        // @ts-expect-error rootDir is a supported runtime option
         rootDir: "/Users/corwin/.vite-plus/packages/arashi/current/package",
       }),
     ).toMatchObject({

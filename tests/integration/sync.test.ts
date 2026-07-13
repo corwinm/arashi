@@ -1,9 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { readFile, writeFile } from "fs/promises";
 import { createRemoveWorkspace } from "../helpers/remove-test-workspace.ts";
 import { executeSync } from "../../src/commands/sync.ts";
 import { join } from "path";
-import { spawn } from "bun";
 type RemoveTestWorkspace = Awaited<ReturnType<typeof createRemoveWorkspace>>;
 
 type SyncConfig = {
@@ -306,3 +305,4 @@ async function updateConfig(
   const updated = update(config);
   await writeFile(configPath, JSON.stringify(updated, null, 2));
 }
+import { spawn } from "../helpers/node-runtime.ts";

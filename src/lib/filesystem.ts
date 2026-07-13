@@ -1,6 +1,6 @@
 import {
   copyFile as bunCopyFile,
-  exists as bunExists,
+  access,
   mkdir,
   readFile,
   rm,
@@ -161,7 +161,8 @@ export async function ensureDir(path: string): Promise<void> {
  */
 export async function fileExists(path: string): Promise<boolean> {
   try {
-    return await bunExists(path);
+    await access(path);
+    return true;
   } catch {
     return false;
   }

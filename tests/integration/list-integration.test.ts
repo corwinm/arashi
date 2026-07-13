@@ -5,12 +5,11 @@
  * worktree discovery, sub-repository detection, and output formatting.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { listCommand } from "../../src/core/list";
 import { realpathSync } from "fs";
-import { spawn } from "bun";
 import { tmpdir } from "os";
 
 interface JsonSubRepository {
@@ -759,3 +758,4 @@ describe("list command - edge cases", () => {
     await spawn(["git", "worktree", "remove", "--force", wtPath], { cwd: testDir }).exited;
   });
 });
+import { spawn } from "../helpers/node-runtime.ts";

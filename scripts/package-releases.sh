@@ -11,7 +11,7 @@ rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
 echo "Building all platforms..."
-bun run build:all
+pnpm run build:all
 
 echo ""
 echo "Creating release packages..."

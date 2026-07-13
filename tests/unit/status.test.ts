@@ -15,7 +15,7 @@ import {
   parseBranchLine,
   parseGitStatus,
 } from "../../src/commands/status.ts";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 describe("parseGitStatus", () => {
   test("parses clean repository output", () => {
