@@ -27,11 +27,16 @@ const escapeCmdToken = (token: string): string =>
   escapeCmdPercent(token.replace(CMD_META_CHARACTER, "^$1"));
 
 // Quote for both cmd.exe and the batch file's C-runtime-style argument parser.
-// Backslashes before quotes (and at the end) must first be doubled; carets then
-// Protect every character that cmd.exe could interpret before the batch file runs.
+// Backslashes before quotes (and at the end) must first be doubled.
+// Carets protect every character that cmd.exe could interpret before the batch file runs.
+// Cmd consumes one backslash from a non-empty run before a caret-protected quote.
+// Add one more for that layer before the C-runtime-style parser sees it.
 const escapeCmdArgument = (argument: string): string => {
   const quoted = argument
-    .replaceAll(/(?=(\\+?)?)\1"/g, String.raw`$1$1\"`)
+    .replaceAll(
+      /(\\*)"/g,
+      (_match, backslashes: string) => `${backslashes}${backslashes}${backslashes ? "\\" : ""}\\"`,
+    )
     .replace(/(?=(\\+?)?)\1$/, "$1$1");
   return escapeCmdPercent(`"${quoted}"`.replace(CMD_META_CHARACTER, "^$1"));
 };

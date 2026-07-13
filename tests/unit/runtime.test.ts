@@ -43,7 +43,7 @@ describe("prepareSpawnCommand", () => {
         "/v:off",
         "/s",
         "/c",
-        String.raw`"C:\Program^ Files\pnpm.cmd ^"^" ^"embedded^ \^"quote\^"^" ^"100%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%PATH%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%CD%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%NAME:old=new%ARASHI_CMD_LITERAL_PERCENT%^ ^!important^!^ ^^^ caret^ ^&^ pipe^|^ ^<in^>^ ^(group^)^" ^"trailing\\^" ^"slashes\\\\^"quote^""`,
+        String.raw`"C:\Program^ Files\pnpm.cmd ^"^" ^"embedded^ \^"quote\^"^" ^"100%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%PATH%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%CD%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%NAME:old=new%ARASHI_CMD_LITERAL_PERCENT%^ ^!important^!^ ^^^ caret^ ^&^ pipe^|^ ^<in^>^ ^(group^)^" ^"trailing\\^" ^"slashes\\\\\\^"quote^""`,
       ],
       command: "custom-cmd.exe",
       env: {
