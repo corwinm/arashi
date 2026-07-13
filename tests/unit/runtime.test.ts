@@ -9,8 +9,12 @@ describe("prepareSpawnCommand", () => {
         ComSpec: "C:\\Windows\\System32\\cmd.exe",
       }),
     ).toEqual({
-      args: ["/d", "/s", "/c", '"pnpm.cmd ^"install^" ^"package^ ^&^ echo^ injected^""'],
+      args: ["/d", "/v:off", "/s", "/c", '"pnpm.cmd ^"install^" ^"package^ ^&^ echo^ injected^""'],
       command: "C:\\Windows\\System32\\cmd.exe",
+      env: {
+        ARASHI_CMD_LITERAL_PERCENT: "%",
+        ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      },
       windowsVerbatimArguments: true,
     });
   });
@@ -22,21 +26,31 @@ describe("prepareSpawnCommand", () => {
           String.raw`C:\Program Files\pnpm.cmd`,
           "",
           'embedded "quote"',
-          "100% !important! ^ caret & pipe| <in> (group)",
+          "100% %PATH% %CD% %NAME:old=new% !important! ^ caret & pipe| <in> (group)",
           "trailing\\",
           String.raw`slashes\\"quote`,
         ],
         "win32",
-        { COMSPEC: "custom-cmd.exe" },
+        {
+          ARASHI_CMD_LITERAL_PERCENT: "hostile",
+          COMSPEC: "custom-cmd.exe",
+          Path: String.raw`C:\Windows`,
+        },
       ),
     ).toEqual({
       args: [
         "/d",
+        "/v:off",
         "/s",
         "/c",
-        String.raw`"C:\Program^ Files\pnpm.cmd ^"^" ^"embedded^ \^"quote\^"^" ^"100^%^ ^!important^!^ ^^^ caret^ ^&^ pipe^|^ ^<in^>^ ^(group^)^" ^"trailing\\^" ^"slashes\\\\^"quote^""`,
+        String.raw`"C:\Program^ Files\pnpm.cmd ^"^" ^"embedded^ \^"quote\^"^" ^"100%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%PATH%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%CD%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%NAME:old=new%ARASHI_CMD_LITERAL_PERCENT%^ ^!important^!^ ^^^ caret^ ^&^ pipe^|^ ^<in^>^ ^(group^)^" ^"trailing\\^" ^"slashes\\\\^"quote^""`,
       ],
       command: "custom-cmd.exe",
+      env: {
+        ARASHI_CMD_LITERAL_PERCENT: "%",
+        COMSPEC: "custom-cmd.exe",
+        Path: String.raw`C:\Windows`,
+      },
       windowsVerbatimArguments: true,
     });
   });
@@ -61,7 +75,7 @@ describe("prepareSpawnCommand", () => {
       const expected = [
         "",
         'embedded "quote"',
-        "100% !important! ^ caret & pipe| <in> (group)",
+        "100% %PATH% %CD% %NAME:old=new% !important! ^ caret & pipe| <in> (group)",
         "trailing\\",
         String.raw`slashes\\"quote`,
       ];

@@ -16,9 +16,15 @@ type SpawnOptions = {
 
 const WINDOWS_BATCH_FILE = /\.(?:cmd|bat)$/i;
 
-const CMD_META_CHARACTER = /([()\][%!^"`<>&|;, *?])/g;
+const CMD_META_CHARACTER = /([()\][!^"`<>&|;, *?])/g;
+const CMD_LITERAL_PERCENT_VARIABLE = "ARASHI_CMD_LITERAL_PERCENT";
 
-const escapeCmdToken = (token: string): string => token.replace(CMD_META_CHARACTER, "^$1");
+// Cmd expands variables once, so this controlled expansion yields an unscanned literal percent.
+const escapeCmdPercent = (value: string): string =>
+  value.replaceAll("%", `%${CMD_LITERAL_PERCENT_VARIABLE}%`);
+
+const escapeCmdToken = (token: string): string =>
+  escapeCmdPercent(token.replace(CMD_META_CHARACTER, "^$1"));
 
 // Quote for both cmd.exe and the batch file's C-runtime-style argument parser.
 // Backslashes before quotes (and at the end) must first be doubled; carets then
@@ -27,14 +33,19 @@ const escapeCmdArgument = (argument: string): string => {
   const quoted = argument
     .replaceAll(/(?=(\\+?)?)\1"/g, String.raw`$1$1\"`)
     .replace(/(?=(\\+?)?)\1$/, "$1$1");
-  return `"${quoted}"`.replace(CMD_META_CHARACTER, "^$1");
+  return escapeCmdPercent(`"${quoted}"`.replace(CMD_META_CHARACTER, "^$1"));
 };
 
 export function prepareSpawnCommand(
   command: string[],
   platform: NodeJS.Platform = process.platform,
   env: Record<string, string | undefined> = process.env,
-): { command: string; args: string[]; windowsVerbatimArguments: boolean } {
+): {
+  command: string;
+  args: string[];
+  windowsVerbatimArguments: boolean;
+  env?: Record<string, string | undefined>;
+} {
   const executable = command[0]!;
   if (platform !== "win32" || !WINDOWS_BATCH_FILE.test(executable)) {
     return { args: command.slice(1), command: executable, windowsVerbatimArguments: false };
@@ -43,11 +54,18 @@ export function prepareSpawnCommand(
   return {
     args: [
       "/d",
+      "/v:off",
       "/s",
       "/c",
       `"${[escapeCmdToken(executable), ...command.slice(1).map((argument) => escapeCmdArgument(argument))].join(" ")}"`,
     ],
     command: env.ComSpec ?? env.COMSPEC ?? "cmd.exe",
+    env: {
+      ...Object.fromEntries(
+        Object.entries(env).filter(([name]) => name.toUpperCase() !== CMD_LITERAL_PERCENT_VARIABLE),
+      ),
+      [CMD_LITERAL_PERCENT_VARIABLE]: "%",
+    },
     windowsVerbatimArguments: true,
   };
 }
@@ -59,7 +77,7 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
   const invocation = prepareSpawnCommand(command, process.platform, options.env ?? process.env);
   const child = nodeSpawn(invocation.command, invocation.args, {
     cwd: options.cwd,
-    env: options.env,
+    env: invocation.env ?? options.env,
     killSignal: options.killSignal,
     timeout: options.timeout,
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
@@ -105,7 +123,7 @@ export function spawnSync(command: string[], options: SpawnOptions = {}) {
   const invocation = prepareSpawnCommand(command, process.platform, options.env ?? process.env);
   const result = nodeSpawnSync(invocation.command, invocation.args, {
     cwd: options.cwd,
-    env: options.env,
+    env: invocation.env ?? options.env,
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
   return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
