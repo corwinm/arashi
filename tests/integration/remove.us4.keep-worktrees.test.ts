@@ -51,4 +51,4 @@ describe("remove command - US4 keep worktrees", () => {
     }
   });
 });
-import { spawn } from "#test-runtime";
+import { spawn } from "../helpers/node-runtime.ts";

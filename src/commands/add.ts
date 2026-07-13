@@ -1,4 +1,4 @@
-import { runtime } from "#runtime";
+import { runtime } from "../lib/runtime.ts";
 /**
  * Add Command
  *

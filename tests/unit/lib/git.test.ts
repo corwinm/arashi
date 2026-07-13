@@ -1,4 +1,4 @@
-import { runtime } from "#test-runtime";
+import { runtime } from "../../helpers/node-runtime.ts";
 /**
  * Unit tests for git.ts core functions
  *

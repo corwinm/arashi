@@ -1,4 +1,4 @@
-import { runtime, spawn } from "#test-runtime";
+import { runtime, spawn } from "../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";

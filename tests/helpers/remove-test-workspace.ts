@@ -162,4 +162,4 @@ async function runGit(repoPath: string, args: string[]): Promise<void> {
     throw new Error(`git ${args.join(" ")} failed in ${repoPath}: ${detail}`);
   }
 }
-import { spawn } from "#test-runtime";
+import { spawn } from "./node-runtime.ts";

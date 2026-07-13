@@ -305,4 +305,4 @@ async function updateConfig(
   const updated = update(config);
   await writeFile(configPath, JSON.stringify(updated, null, 2));
 }
-import { spawn } from "#test-runtime";
+import { spawn } from "../helpers/node-runtime.ts";

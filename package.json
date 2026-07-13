@@ -47,10 +47,6 @@
     "arm64"
   ],
   "type": "module",
-  "imports": {
-    "#runtime": "./src/lib/runtime.ts",
-    "#test-runtime": "./tests/helpers/node-runtime.ts"
-  },
   "scripts": {
     "dev": "node src/index.ts",
     "build": "bun build src/index.ts --compile --minify --outfile bin/arashi.bin",

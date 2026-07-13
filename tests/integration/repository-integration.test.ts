@@ -1,4 +1,4 @@
-import { runtime } from "#test-runtime";
+import { runtime } from "../helpers/node-runtime.ts";
 /**
  * Integration Tests: Repository Management MVP
  *

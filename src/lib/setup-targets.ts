@@ -1,4 +1,4 @@
-import { runtime } from "#runtime";
+import { runtime } from "./runtime.ts";
 import type { SetupScopeType, SetupTarget } from "./setup-types.ts";
 import type { WorkspaceRepository } from "./config.ts";
 import { join } from "path";

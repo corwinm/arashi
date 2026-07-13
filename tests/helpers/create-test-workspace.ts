@@ -1,4 +1,4 @@
-import { runtime } from "#test-runtime";
+import { runtime } from "./node-runtime.ts";
 /**
  * Test helper for creating temporary git repositories for worktree testing
  *

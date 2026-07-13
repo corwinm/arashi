@@ -1,4 +1,4 @@
-import { runtime } from "#test-runtime";
+import { runtime } from "../helpers/node-runtime.ts";
 import { createCommand, executeSwitch } from "../../src/commands/switch.ts";
 import { describe, expect, test } from "vitest";
 import { join, resolve } from "path";

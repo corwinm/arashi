@@ -1,4 +1,4 @@
-import { runtime } from "#runtime";
+import { runtime } from "../lib/runtime.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { basename, resolve, sep } from "path";
 import {

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { spawn } from "#test-runtime";
+import { spawn } from "../helpers/node-runtime.ts";
 
 describe("add command duplicate guidance", () => {
   let testDir: string;

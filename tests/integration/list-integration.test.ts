@@ -758,4 +758,4 @@ describe("list command - edge cases", () => {
     await spawn(["git", "worktree", "remove", "--force", wtPath], { cwd: testDir }).exited;
   });
 });
-import { spawn } from "#test-runtime";
+import { spawn } from "../helpers/node-runtime.ts";

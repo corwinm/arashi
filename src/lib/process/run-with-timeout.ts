@@ -1,4 +1,4 @@
-import { runtime } from "#runtime";
+import { runtime } from "../runtime.ts";
 import { normalizeSpawnEnvironment } from "../shell-directives.ts";
 
 export interface RunWithTimeoutResult {

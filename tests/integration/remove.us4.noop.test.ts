@@ -55,4 +55,4 @@ describe("remove command - US4 no-op keep flags", () => {
     }
   });
 });
-import { spawn } from "#test-runtime";
+import { spawn } from "../helpers/node-runtime.ts";

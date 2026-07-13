@@ -1,4 +1,4 @@
-import { runtime } from "#test-runtime";
+import { runtime } from "./node-runtime.ts";
 /**
  * Test helper utilities for creating and managing temporary git repositories
  */

@@ -1,4 +1,4 @@
-import { runtime } from "#test-runtime";
+import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { createChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";

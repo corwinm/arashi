@@ -134,4 +134,4 @@ describe("remove command - US2 multi-select", () => {
     }
   });
 });
-import { spawn } from "#test-runtime";
+import { spawn } from "../helpers/node-runtime.ts";

@@ -242,4 +242,4 @@ async function createWorkspaceHook(
   await writeFile(hookPath, `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`);
   await chmod(hookPath, 0o755);
 }
-import { spawn } from "#test-runtime";
+import { spawn } from "../helpers/node-runtime.ts";

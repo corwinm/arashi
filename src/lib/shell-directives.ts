@@ -1,4 +1,4 @@
-import { runtime } from "#runtime";
+import { runtime } from "./runtime.ts";
 import type { SupportedShell } from "./shell-integration.ts";
 
 export const ARASHI_DIRECTIVE_FILE_ENV = "ARASHI_DIRECTIVE_FILE";

@@ -1,4 +1,4 @@
-import { runtime } from "#runtime";
+import { runtime } from "./runtime.ts";
 import { isAbsolute, resolve } from "path";
 import { exec } from "./git.ts";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";

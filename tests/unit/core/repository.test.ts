@@ -1,4 +1,4 @@
-import { runtime } from "#test-runtime";
+import { runtime } from "../../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm } from "fs/promises";
 import { detectSetupScript } from "../../../src/core/repository.js";

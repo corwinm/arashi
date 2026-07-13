@@ -273,4 +273,4 @@ describe("pull command", () => {
     SLOW_PULL_TEST_TIMEOUT,
   );
 });
-import { spawn } from "#test-runtime";
+import { spawn } from "../helpers/node-runtime.ts";

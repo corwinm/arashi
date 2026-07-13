@@ -1,4 +1,4 @@
-import { runtime } from "#runtime";
+import { runtime } from "./runtime.ts";
 import { basename, dirname, join } from "path";
 import { homedir } from "os";
 import { mkdir } from "fs/promises";

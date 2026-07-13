@@ -1,4 +1,4 @@
-import { runtime } from "#runtime";
+import { runtime } from "./runtime.ts";
 import { access, stat } from "fs/promises";
 import { constants } from "fs";
 import { homedir } from "os";

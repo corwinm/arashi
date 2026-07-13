@@ -1,4 +1,4 @@
-import { runtime } from "#test-runtime";
+import { runtime } from "./node-runtime.ts";
 import { basename, join, resolve } from "path";
 import { mkdir, rm } from "fs/promises";
 import { tmpdir } from "os";

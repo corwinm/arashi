@@ -1,4 +1,4 @@
-import { runtime, spawn } from "#test-runtime";
+import { runtime, spawn } from "../helpers/node-runtime.ts";
 /**
  * Integration Tests: Nested Worktree Paths
  * Feature: 001-nested-worktree-paths

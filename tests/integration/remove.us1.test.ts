@@ -96,4 +96,4 @@ describe("remove command - US1 single branch", () => {
     expect(parentChoice?.name).toContain("repo-b=child-b");
   });
 });
-import { spawn } from "#test-runtime";
+import { spawn } from "../helpers/node-runtime.ts";
