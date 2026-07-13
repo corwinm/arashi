@@ -9,10 +9,18 @@ describe("prepareSpawnCommand", () => {
         ComSpec: "C:\\Windows\\System32\\cmd.exe",
       }),
     ).toEqual({
-      args: ["/d", "/v:off", "/s", "/c", '"pnpm.cmd ^"install^" ^"package^ ^&^ echo^ injected^""'],
+      args: [
+        "/d",
+        "/v:on",
+        "/s",
+        "/c",
+        '"!ARASHI_CMD_ARGUMENT_0! !ARASHI_CMD_ARGUMENT_1! !ARASHI_CMD_ARGUMENT_2!"',
+      ],
       command: "C:\\Windows\\System32\\cmd.exe",
       env: {
-        ARASHI_CMD_LITERAL_PERCENT: "%",
+        ARASHI_CMD_ARGUMENT_0: '"pnpm.cmd"',
+        ARASHI_CMD_ARGUMENT_1: '"install"',
+        ARASHI_CMD_ARGUMENT_2: '"package & echo injected"',
         ComSpec: "C:\\Windows\\System32\\cmd.exe",
       },
       windowsVerbatimArguments: true,
@@ -32,7 +40,7 @@ describe("prepareSpawnCommand", () => {
         ],
         "win32",
         {
-          ARASHI_CMD_LITERAL_PERCENT: "hostile",
+          ARASHI_CMD_ARGUMENT_99: "hostile",
           COMSPEC: "custom-cmd.exe",
           Path: String.raw`C:\Windows`,
         },
@@ -40,14 +48,20 @@ describe("prepareSpawnCommand", () => {
     ).toEqual({
       args: [
         "/d",
-        "/v:off",
+        "/v:on",
         "/s",
         "/c",
-        String.raw`"C:\Program^ Files\pnpm.cmd ^"^" ^"embedded^ \^"quote\^"^" ^"100%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%PATH%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%CD%ARASHI_CMD_LITERAL_PERCENT%^ %ARASHI_CMD_LITERAL_PERCENT%NAME:old=new%ARASHI_CMD_LITERAL_PERCENT%^ ^!important^!^ ^^^ caret^ ^&^ pipe^|^ ^<in^>^ ^(group^)^" ^"trailing\\^" ^"slashes\\\\\\^"quote^""`,
+        '"!ARASHI_CMD_ARGUMENT_0! !ARASHI_CMD_ARGUMENT_1! !ARASHI_CMD_ARGUMENT_2! !ARASHI_CMD_ARGUMENT_3! !ARASHI_CMD_ARGUMENT_4! !ARASHI_CMD_ARGUMENT_5!"',
       ],
       command: "custom-cmd.exe",
       env: {
-        ARASHI_CMD_LITERAL_PERCENT: "%",
+        ARASHI_CMD_ARGUMENT_0: String.raw`"C:\Program Files\pnpm.cmd"`,
+        ARASHI_CMD_ARGUMENT_1: '""',
+        ARASHI_CMD_ARGUMENT_2: String.raw`"embedded \"quote\""`,
+        ARASHI_CMD_ARGUMENT_3:
+          '"100% %PATH% %CD% %NAME:old=new% !important! ^ caret & pipe| <in> (group)"',
+        ARASHI_CMD_ARGUMENT_4: String.raw`"trailing\\"`,
+        ARASHI_CMD_ARGUMENT_5: String.raw`"slashes\\\\\"quote"`,
         COMSPEC: "custom-cmd.exe",
         Path: String.raw`C:\Windows`,
       },

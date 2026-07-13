@@ -16,30 +16,14 @@ type SpawnOptions = {
 
 const WINDOWS_BATCH_FILE = /\.(?:cmd|bat)$/i;
 
-const CMD_META_CHARACTER = /([()\][!^"`<>&|;, *?])/g;
-const CMD_LITERAL_PERCENT_VARIABLE = "ARASHI_CMD_LITERAL_PERCENT";
+const CMD_ARGUMENT_VARIABLE_PREFIX = "ARASHI_CMD_ARGUMENT_";
 
-// Cmd expands variables once, so this controlled expansion yields an unscanned literal percent.
-const escapeCmdPercent = (value: string): string =>
-  value.replaceAll("%", `%${CMD_LITERAL_PERCENT_VARIABLE}%`);
-
-const escapeCmdToken = (token: string): string =>
-  escapeCmdPercent(token.replace(CMD_META_CHARACTER, "^$1"));
-
-// Quote for both cmd.exe and the batch file's C-runtime-style argument parser.
-// Backslashes before quotes (and at the end) must first be doubled.
-// Carets protect every character that cmd.exe could interpret before the batch file runs.
-// Cmd consumes one backslash from a non-empty run before a caret-protected quote.
-// Add one more for that layer before the C-runtime-style parser sees it.
-const escapeCmdArgument = (argument: string): string => {
-  const quoted = argument
-    .replaceAll(
-      /(\\*)"/g,
-      (_match, backslashes: string) => `${backslashes}${backslashes}${backslashes ? "\\" : ""}\\"`,
-    )
-    .replace(/(?=(\\+?)?)\1$/, "$1$1");
-  return escapeCmdPercent(`"${quoted}"`.replace(CMD_META_CHARACTER, "^$1"));
-};
+// Quote according to CommandLineToArgvW's rules. The result is stored in an
+// Environment variable and introduced with delayed expansion. Cmd parses the
+// Fixed !VARIABLE! token, but never parses user-controlled argument contents as
+// Command syntax.
+const quoteWindowsArgument = (argument: string): string =>
+  `"${argument.replaceAll(/(\\*)"/g, String.raw`$1$1\"`).replace(/(\\*)$/, "$1$1")}"`;
 
 export function prepareSpawnCommand(
   command: string[],
@@ -56,20 +40,19 @@ export function prepareSpawnCommand(
     return { args: command.slice(1), command: executable, windowsVerbatimArguments: false };
   }
 
+  const values = command.map((argument) => quoteWindowsArgument(argument));
+  const variableNames = values.map((_value, index) => `${CMD_ARGUMENT_VARIABLE_PREFIX}${index}`);
+
   return {
-    args: [
-      "/d",
-      "/v:off",
-      "/s",
-      "/c",
-      `"${[escapeCmdToken(executable), ...command.slice(1).map((argument) => escapeCmdArgument(argument))].join(" ")}"`,
-    ],
+    args: ["/d", "/v:on", "/s", "/c", `"${variableNames.map((name) => `!${name}!`).join(" ")}"`],
     command: env.ComSpec ?? env.COMSPEC ?? "cmd.exe",
     env: {
       ...Object.fromEntries(
-        Object.entries(env).filter(([name]) => name.toUpperCase() !== CMD_LITERAL_PERCENT_VARIABLE),
+        Object.entries(env).filter(
+          ([name]) => !name.toUpperCase().startsWith(CMD_ARGUMENT_VARIABLE_PREFIX),
+        ),
       ),
-      [CMD_LITERAL_PERCENT_VARIABLE]: "%",
+      ...Object.fromEntries(variableNames.map((name, index) => [name, values[index]])),
     },
     windowsVerbatimArguments: true,
   };
