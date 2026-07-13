@@ -22,6 +22,7 @@ import { getFullGitStatus, getGitStatus } from "../lib/git.ts";
 import { info, error as logError, spinner } from "../lib/logger.ts";
 import { Command } from "commander";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
+import { EmptyRepositoryFiltersError } from "../lib/repo-filter.ts";
 import { resolve } from "path";
 import { stat } from "fs/promises";
 
@@ -820,6 +821,15 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
 
   const statusSpinner = options.json ? null : spinner("Checking repository status...");
   const filterResult = filterRepositories(config.repos, undefined, options.group);
+  if (filterResult.emptyFilters.length > ZERO) {
+    const filterError = new EmptyRepositoryFiltersError(filterResult.emptyFilters);
+    if (options.json) {
+      writeJsonEnvelope(createJsonErrorEnvelope("status", unknownErrorToJsonError(filterError)));
+    } else {
+      logError(filterError.message);
+    }
+    process.exit(USAGE_EXIT_CODE);
+  }
   if (filterResult.unknownGroups.length > ZERO) {
     const message = `Unknown repository groups in --group filter: ${filterResult.unknownGroups.join(", ")}`;
     if (options.json) {

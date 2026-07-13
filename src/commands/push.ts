@@ -14,7 +14,7 @@ import {
 import { executePushPlan, planPush } from "../lib/push-runner.ts";
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { Command } from "commander";
-import { filterRepositories } from "../lib/repo-filter.ts";
+import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { info } from "../lib/logger.ts";
 
 const ZERO = 0;
@@ -55,6 +55,9 @@ export const executePush = async (options: PushCommandOptions): Promise<PushSumm
     options.only,
     options.group,
   );
+  if (filterResult.emptyFilters.length > ZERO) {
+    throw new EmptyRepositoryFiltersError(filterResult.emptyFilters);
+  }
   if (filterResult.missing.length > ZERO) {
     throw new CliUsageError(
       `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
@@ -166,7 +169,11 @@ export function createCommand(): Command {
           process.exit(USAGE_EXIT_CODE);
         } else {
           console.error(error instanceof Error ? error.message : "Unknown error");
-          process.exit(error instanceof CliUsageError ? USAGE_EXIT_CODE : ERROR_EXIT_CODE);
+          process.exit(
+            error instanceof CliUsageError || error instanceof EmptyRepositoryFiltersError
+              ? USAGE_EXIT_CODE
+              : ERROR_EXIT_CODE,
+          );
         }
       }
     });

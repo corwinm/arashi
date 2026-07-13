@@ -19,7 +19,7 @@ import {
 import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { info, error as logError } from "../lib/logger.ts";
 import { Command } from "commander";
-import { filterRepositories } from "../lib/repo-filter.ts";
+import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { runSetupTarget } from "../lib/setup-runner.ts";
 
 const ZERO = 0;
@@ -60,6 +60,9 @@ const executeSetup = async (options: SetupCommandOptions): Promise<SetupRunSumma
     options.only,
     options.group,
   );
+  if (filterResult.emptyFilters.length > ZERO) {
+    throw new EmptyRepositoryFiltersError(filterResult.emptyFilters);
+  }
   if (filterResult.missing.length > ZERO) {
     throw new CliUsageError(
       `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
@@ -159,7 +162,11 @@ export function createCommand(): Command {
           process.exit(USAGE_EXIT_CODE);
         } else {
           logError(error instanceof Error ? error.message : String(error));
-          process.exit(error instanceof CliUsageError ? USAGE_EXIT_CODE : ERROR_EXIT_CODE);
+          process.exit(
+            error instanceof CliUsageError || error instanceof EmptyRepositoryFiltersError
+              ? USAGE_EXIT_CODE
+              : ERROR_EXIT_CODE,
+          );
         }
       }
     });

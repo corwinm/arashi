@@ -12,6 +12,7 @@ import { Command } from "commander";
 import { alignRepositoryBranch } from "../lib/git/sync-branch.ts";
 import { exec } from "../lib/git.ts";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
+import { EmptyRepositoryFiltersError } from "../lib/repo-filter.ts";
 import { resolve } from "path";
 
 type Config = Awaited<ReturnType<typeof loadConfig>>;
@@ -61,13 +62,12 @@ export function createCommand(): Command {
 export async function executeSync(options: SyncCommandOptions): Promise<SyncSummary> {
   const workspaceRoot = await findWorkspaceRoot();
   const config = await loadConfig(workspaceRoot);
-  const parentBranch = await getParentBranch(workspaceRoot);
 
-  const { repositories, missing, unknownGroups, emptyIntersection } = filterRepositories(
-    config.repos,
-    options.only,
-    options.group,
-  );
+  const { repositories, emptyFilters, missing, unknownGroups, emptyIntersection } =
+    filterRepositories(config.repos, options.only, options.group);
+  if (emptyFilters.length > ZERO) {
+    throw new EmptyRepositoryFiltersError(emptyFilters);
+  }
   if (missing.length > 0) {
     throw new Error(`Repositories not found: ${missing.join(", ")}`);
   }
@@ -82,6 +82,7 @@ export async function executeSync(options: SyncCommandOptions): Promise<SyncSumm
     throw new Error("No managed repositories found to sync");
   }
 
+  const parentBranch = await getParentBranch(workspaceRoot);
   const timeoutMs = getSyncTimeoutMs(config);
   const tracker = createRollbackTracker();
 

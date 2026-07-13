@@ -2,7 +2,9 @@ import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
   stringifyJsonEnvelope,
+  unknownErrorToJsonError,
 } from "../../../src/lib/json-output.ts";
+import { EmptyRepositoryFiltersError } from "../../../src/lib/repo-filter.ts";
 import { describe, expect, test } from "vitest";
 
 describe("json output envelopes", () => {
@@ -45,6 +47,14 @@ describe("json output envelopes", () => {
       ok: false,
       schemaVersion: 1,
       warnings: [],
+    });
+  });
+
+  test("preserves structured repository-filter usage errors", () => {
+    expect(unknownErrorToJsonError(new EmptyRepositoryFiltersError(["only", "group"]))).toEqual({
+      code: "EMPTY_REPOSITORY_FILTERS",
+      details: { emptyFilters: ["only", "group"] },
+      message: "Explicitly empty repository filters: --only, --group",
     });
   });
 });

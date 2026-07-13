@@ -105,6 +105,68 @@ afterEach(async () => {
 });
 
 describe("repository group command integration", () => {
+  test("all seven repository-filter consumers reject explicitly empty filters", async () => {
+    const workspaceRoot = await createWorkspace();
+    const cases: Array<[string, string[]]> = [
+      ["create", ["create", "feature/empty-create", "--group", ",", "--dry-run"]],
+      ["exec", ["exec", "--group", ",", "--", "pwd"]],
+      ["pull", ["pull", "--group", ","]],
+      ["push", ["push", "--group", ","]],
+      ["setup", ["setup", "--group", ","]],
+      ["status", ["status", "--group", ","]],
+      ["sync", ["sync", "--group", ","]],
+    ];
+
+    for (const [name, args] of cases) {
+      const result = await runArashi(workspaceRoot, args);
+      expect(result.exitCode, name).toBe(2);
+      expect(result.stderr + result.stdout, name).toContain("--group");
+      expect(result.stderr + result.stdout, name).toContain("empty");
+    }
+
+    const execOnly = await runArashi(workspaceRoot, ["exec", "--only", ",", "--", "pwd"]);
+    expect(execOnly.exitCode).toBe(2);
+    expect(execOnly.stderr + execOnly.stdout).toContain("--only");
+    expect(execOnly.stdout).not.toContain("[repo-a]");
+  });
+
+  test("JSON errors are one envelope with structured empty-filter details and precedence", async () => {
+    const workspaceRoot = await createWorkspace();
+    const cases: Array<{ args: string[]; emptyFilters: string[] }> = [
+      {
+        args: ["create", "feature/empty-json", "--group", ",", "--dry-run", "--json"],
+        emptyFilters: ["group"],
+      },
+      { args: ["exec", "--group", ",", "--json", "--", "pwd"], emptyFilters: ["group"] },
+      { args: ["pull", "--group", ",", "--json"], emptyFilters: ["group"] },
+      { args: ["push", "--group", ",", "--json"], emptyFilters: ["group"] },
+      { args: ["setup", "--group", ",", "--json"], emptyFilters: ["group"] },
+      { args: ["status", "--group", ",", "--json"], emptyFilters: ["group"] },
+      {
+        args: ["sync", "--only", ",", "--group", ",", "--json"],
+        emptyFilters: ["only", "group"],
+      },
+      {
+        args: ["sync", "--only", ",", "--group", "missing", "--json"],
+        emptyFilters: ["only"],
+      },
+    ];
+
+    for (const { args, emptyFilters } of cases) {
+      const result = await runArashi(workspaceRoot, args);
+      expect(result.exitCode, args[0]).toBe(2);
+      expect(result.stderr, args[0]).toBe("");
+      const envelope = parseJson(result.stdout);
+      expect(envelope, args[0]).toMatchObject({
+        error: {
+          code: "EMPTY_REPOSITORY_FILTERS",
+          details: { emptyFilters },
+        },
+        ok: false,
+      });
+    }
+  });
+
   test("status --group filters human and JSON output and reports unknown groups", async () => {
     const workspaceRoot = await createWorkspace();
 

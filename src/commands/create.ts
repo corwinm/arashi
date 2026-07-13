@@ -35,7 +35,11 @@ import { error, info, success, warn } from "../lib/logger.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec } from "../lib/git.ts";
-import { filterRepositories as filterWorkspaceRepositories } from "../lib/repo-filter.ts";
+import {
+  EmptyRepositoryFiltersError,
+  filterRepositories as filterWorkspaceRepositories,
+  findEmptyRepositoryFilters,
+} from "../lib/repo-filter.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 
@@ -552,6 +556,9 @@ Examples:
       } catch (createError) {
         if (options.json) {
           writeCreateJsonError(createError);
+          if (createError instanceof EmptyRepositoryFiltersError) {
+            process.exit(CANCELLED_EXIT_CODE);
+          }
           if (
             createError instanceof ConflictAbortedError ||
             createError instanceof UserAbortedError
@@ -561,7 +568,10 @@ Examples:
           process.exit(ERROR_EXIT_CODE);
         }
 
-        if (createError instanceof InvalidBranchNameError) {
+        if (createError instanceof EmptyRepositoryFiltersError) {
+          error(createError.message);
+          process.exit(CANCELLED_EXIT_CODE);
+        } else if (createError instanceof InvalidBranchNameError) {
           error(`Invalid branch name: ${createError.branchName}`);
           error(createError.reason);
           process.exit(ERROR_EXIT_CODE);
@@ -603,6 +613,11 @@ export async function executeCreate(
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
 ): Promise<number> {
+  const emptyFilters = findEmptyRepositoryFilters(options.only, options.group);
+  if (emptyFilters.length > ZERO) {
+    throw new EmptyRepositoryFiltersError(emptyFilters);
+  }
+
   const resolveInvocationContext =
     deps.resolveCreateInvocationContext ?? resolveCreateInvocationContext;
   const loadWorkspaceConfig = deps.loadConfigWithFallback ?? loadConfigWithFallback;
@@ -706,6 +721,9 @@ export async function executeCreate(
     options.only,
     options.group,
   );
+  if (groupFilterResult.emptyFilters.length > ZERO) {
+    throw new EmptyRepositoryFiltersError(groupFilterResult.emptyFilters);
+  }
   if (groupFilterResult.missing.length > ZERO) {
     throw new RepositoryValidationError(
       `Unknown repositories in --only filter: ${groupFilterResult.missing.join(", ")}`,
