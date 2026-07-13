@@ -83,7 +83,7 @@ if (changedFiles.length === 0) {
 const { lintTargets, formatTargets } = splitQualityTargets(changedFiles);
 
 if (lintTargets.length > 0) {
-  run("oxlint", ["--config", "oxlint.json", "-D", "no-explicit-any", ...lintTargets]);
+  run("oxlint", ["--config", ".oxlintrc.json", "-D", "no-explicit-any", ...lintTargets]);
 } else {
   console.log("No changed JavaScript or TypeScript files detected for linting.");
 }

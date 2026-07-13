@@ -6,6 +6,7 @@
  * include detailed sub-repository information in verbose mode.
  */
 
+import { Command, InvalidArgumentError } from "commander";
 import {
   ConfigurationMissingError,
   ListCommandError,
@@ -16,7 +17,6 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { Command } from "commander";
 import { listCommand } from "../core/list.ts";
 import { error as logError } from "../lib/logger.ts";
 
@@ -30,7 +30,20 @@ interface CliOptions {
   /** Show table format with headers */
   table?: boolean;
   /** Maximum depth for sub-repository discovery */
-  maxDepth?: string;
+  maxDepth?: number;
+}
+
+export function parseMaxDepth(value: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new InvalidArgumentError("--max-depth must be a non-negative safe integer");
+  }
+
+  const depth = Number(value);
+  if (!Number.isSafeInteger(depth)) {
+    throw new InvalidArgumentError("--max-depth must be a non-negative safe integer");
+  }
+
+  return depth;
 }
 
 export function createCommand(): Command {
@@ -39,7 +52,12 @@ export function createCommand(): Command {
     .option("-v, --verbose", "Show detailed sub-repository information")
     .option("-j, --json", "Output in JSON format")
     .option("-t, --table", "Show table format with headers (default: simple list)")
-    .option("--max-depth <depth>", "Maximum depth for sub-repo discovery (default: 3)", "3")
+    .option(
+      "--max-depth <depth>",
+      "Maximum depth for sub-repo discovery (default: 3)",
+      parseMaxDepth,
+      3,
+    )
     .addHelpText(
       "after",
       `
@@ -126,7 +144,7 @@ function mapListErrorToJsonError(error: unknown): ReturnType<typeof unknownError
 async function executeList(options: CliOptions): Promise<void> {
   const listOptions: ListCommandOptions = {
     json: options.json || false,
-    maxDepth: parseInt(options.maxDepth || "3", 10),
+    maxDepth: options.maxDepth ?? 3,
     table: options.table || false,
     verbose: options.verbose || false,
   };
