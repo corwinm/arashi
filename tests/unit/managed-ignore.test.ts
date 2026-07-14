@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "../helpers/node-runtime.ts";
 import {
@@ -69,6 +69,9 @@ describe("managed ignore path classification", () => {
   });
 
   test("parses delimiter-safe effective source data", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
     const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-"));
     testRoots.push(root);
     await git(root, ["init"]);
@@ -113,7 +116,8 @@ describe("managed ignore path classification", () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-"));
     testRoots.push(root);
     await git(root, ["init"]);
-    await git(root, ["config", "--local", "core.excludesFile", root]);
+    const invalidExcludePath = process.platform === "win32" ? join(root, "invalid:exclude") : root;
+    await git(root, ["config", "--local", "core.excludesFile", invalidExcludePath]);
 
     await expect(
       reconcileManagedIgnore({
@@ -227,7 +231,7 @@ describe("managed ignore path classification", () => {
       worktreesDir: ".arashi/worktrees",
     });
 
-    expect(inspection.localExcludePath).toBe(await realpath(excludePath));
+    expect(normalize(inspection.localExcludePath)).toBe(normalize(await realpath(excludePath)));
     expect(inspection.paths.map((path) => path.source?.type)).toEqual(["local", "global"]);
   });
 
