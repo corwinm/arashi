@@ -81,7 +81,7 @@
     "commander": "12.1.0",
     "conventional-changelog-conventionalcommits": "8.0.0",
     "husky": "9.1.7",
-    "js-yaml": "4.1.1",
+    "js-yaml": "4.2.0",
     "lint-staged": "16.2.7",
     "ora": "8.2.0",
     "oxfmt": "0.28.0",
@@ -89,7 +89,7 @@
     "semantic-release": "25.0.6",
     "ts-json-schema-generator": "2.4.0",
     "typescript": "5.9.3",
-    "vitest": "3.2.4"
+    "vitest": "4.1.10"
   },
   "lint-staged": {
     "*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}": "oxfmt --config .oxfmtrc.json --write"
