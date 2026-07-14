@@ -22,7 +22,7 @@ type ConfigSwitchMode = "launch" | "cd" | "auto";
 type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
 type SwitchCandidateDiscoveryResult = Awaited<ReturnType<typeof discoverSwitchCandidates>>;
 type SwitchCandidate = SwitchCandidateDiscoveryResult["candidates"][number];
-type SwitchLaunchMode = "cd" | "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";
+type SwitchLaunchMode = "cd" | LaunchSwitchResult["mode"];
 type SupportedIde = "vscode" | "cursor" | "kiro";
 type SwitchProcessRunner = NonNullable<
   NonNullable<Parameters<typeof launchSwitchTarget>[2]>["runProcess"]
