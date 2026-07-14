@@ -132,7 +132,8 @@ Arashi currently provides these commands:
 ## Quick Example
 
 ```bash
-arashi init
+arashi init                         # repository-local ignore rules (default)
+arashi init --ignore-scope tracked  # opt in to a shared .gitignore block
 arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
 arashi create feature-auth-refresh
@@ -147,6 +148,25 @@ arashi switch --repos docs                  # repo-name matching in child repos
 arashi switch --cd feature-auth-refresh     # parent-shell cd when shell integration is active
 arashi switch --no-default-launch           # bypass configured launch mode defaults once
 ```
+
+### Managed Git ignore rules
+
+Configured workspaces keep `reposDir` and `worktreesDir` effectively ignored. Arashi asks Git
+first, so an existing tracked `.gitignore`, repository-local `.git/info/exclude`, or configured
+global excludes rule is honored without duplication. Missing safe repository-relative rules use
+the common repository's local exclude file by default, including when a command runs in a linked
+worktree.
+
+Use `arashi init --ignore-scope tracked` when the team wants Arashi-owned rules committed in the
+workspace `.gitignore`. Use `arashi init --ignore-scope none` for a fully manual workflow; Arashi
+will warn about unignored managed paths but will not edit ignore files. Running
+`arashi init --ignore-scope local` resets that clone-local preference without recreating an
+existing workspace. The explicit `tracked` or `none` preference is stored only in local Git config
+as `arashi.ignoreScope`; Arashi never creates or modifies global Git ignore configuration.
+
+`init`, `pull`, `clone`, `add`, and `create` reconcile the same owned rules before materializing
+configured repositories or worktrees. `doctor` reports missing, unsafe, invalid, or stale managed
+ignore state without changing it.
 
 ## Workflow Guides
 

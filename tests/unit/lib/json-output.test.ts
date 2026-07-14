@@ -5,6 +5,7 @@ import {
   unknownErrorToJsonError,
 } from "../../../src/lib/json-output.ts";
 import { EmptyRepositoryFiltersError } from "../../../src/lib/repo-filter.ts";
+import { ManagedIgnoreError } from "../../../src/lib/managed-ignore.ts";
 import { describe, expect, test } from "vitest";
 
 describe("json output envelopes", () => {
@@ -55,6 +56,21 @@ describe("json output envelopes", () => {
       code: "EMPTY_REPOSITORY_FILTERS",
       details: { emptyFilters: ["only", "group"] },
       message: "Explicitly empty repository filters: --only, --group",
+    });
+  });
+
+  test("preserves structured managed-ignore reconciliation errors", () => {
+    const error = new ManagedIgnoreError("inspection failed", {
+      attempted: false,
+      changed: false,
+      phase: "inspection",
+      restored: false,
+    });
+
+    expect(unknownErrorToJsonError(error)).toEqual({
+      code: "MANAGED_IGNORE_RECONCILIATION_FAILED",
+      details: error.details,
+      message: "inspection failed",
     });
   });
 });

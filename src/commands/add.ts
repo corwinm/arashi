@@ -18,11 +18,22 @@ import { Command } from "commander";
 import { executeClone } from "./clone.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
 import { rm } from "node:fs/promises";
+import {
+  reconcileManagedIgnore,
+  restoreManagedIgnore,
+  type ManagedIgnoreReconciliation,
+} from "../lib/managed-ignore.ts";
+import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 
 type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
 
 const ZERO = 0;
-const JSON_INDENT = 2;
 const ERROR_EXIT_CODE = 1;
 const CANCELLED_EXIT_CODE = 2;
 
@@ -132,6 +143,8 @@ export interface AddCommandResult {
   setupScriptCreated: boolean;
   /** Original Git URL that was cloned */
   gitUrl: string;
+  /** Managed ignore reconciliation retained for the materialized repository. */
+  managedIgnore: ManagedIgnoreReconciliation;
 }
 
 /**
@@ -381,6 +394,7 @@ const executeAdd = async (
   workspaceRoot: string,
 ): Promise<AddCommandResult> => {
   const operations: RollbackOperation[] = [];
+  let managedIgnore: ManagedIgnoreReconciliation | undefined = undefined;
 
   try {
     // Step 1: Validate workspace is initialized
@@ -418,6 +432,17 @@ const executeAdd = async (
     // Step 5: Prepare clone destination
     const reposDir = join(workspaceRoot, config.reposDir);
     const clonePath = join(reposDir, repositoryName);
+
+    managedIgnore = await reconcileManagedIgnore({
+      reposDir: config.reposDir,
+      workspaceRoot,
+      worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+    });
+    if (!options.json) {
+      for (const warning of managedIgnore.warnings) {
+        info(`Warning: ${warning}`);
+      }
+    }
 
     // Step 6: Clone repository
     const s2 = spinner(`Cloning repository from ${gitUrl}...`).start();
@@ -476,11 +501,13 @@ const executeAdd = async (
       clonePath,
       defaultBranch,
       gitUrl,
+      managedIgnore,
       repositoryName,
       setupScript,
       setupScriptCreated: false,
     };
   } catch (error) {
+    let managedIgnoreRestoreError: string | undefined = undefined;
     // Rollback operations in reverse order
     const rollbackOperations = [...operations];
     rollbackOperations.reverse();
@@ -494,6 +521,21 @@ const executeAdd = async (
         info(`Warning: Failed to clean up ${operation.path}: ${(cleanupError as Error).message}`);
         info(`Please manually remove: rm -rf ${operation.path}`);
       }
+    }
+
+    if (managedIgnore?.changed) {
+      try {
+        await restoreManagedIgnore(managedIgnore);
+      } catch (restoreError) {
+        managedIgnoreRestoreError = (restoreError as Error).message;
+      }
+    }
+    if (error instanceof AddCommandError && managedIgnore) {
+      throw new AddCommandError(error.message, error.code, {
+        ...error.context,
+        managedIgnore,
+        ...(managedIgnoreRestoreError ? { managedIgnoreRestoreError } : {}),
+      });
     }
 
     // Re-throw original error
@@ -570,24 +612,20 @@ export function createCommand(): Command {
         const result = await executeAdd(gitUrl, options, workspaceRoot);
 
         if (options.json) {
-          console.log(
-            JSON.stringify(
-              {
-                repository: {
-                  defaultBranch: result.defaultBranch,
-                  gitUrl: result.gitUrl,
-                  name: result.repositoryName,
-                  path: result.clonePath.replace(workspaceRoot, "."),
-                  setupScript: result.setupScript
-                    ? result.setupScript.replace(workspaceRoot, ".")
-                    : null,
-                  setupScriptCreated: result.setupScriptCreated,
-                },
-                success: true,
+          writeJsonEnvelope(
+            createJsonSuccessEnvelope("add", {
+              managedIgnore: result.managedIgnore,
+              repository: {
+                defaultBranch: result.defaultBranch,
+                gitUrl: result.gitUrl,
+                name: result.repositoryName,
+                path: result.clonePath.replace(workspaceRoot, "."),
+                setupScript: result.setupScript
+                  ? result.setupScript.replace(workspaceRoot, ".")
+                  : null,
+                setupScriptCreated: result.setupScriptCreated,
               },
-              null,
-              2,
-            ),
+            }),
           );
         } else {
           displaySuccess(result, workspaceRoot);
@@ -597,19 +635,12 @@ export function createCommand(): Command {
       } catch (error) {
         if (error instanceof AddCommandError) {
           if (options.json) {
-            console.log(
-              JSON.stringify(
-                {
-                  error: {
-                    code: error.code,
-                    details: error.context,
-                    message: error.message,
-                  },
-                  success: false,
-                },
-                null,
-                JSON_INDENT,
-              ),
+            writeJsonEnvelope(
+              createJsonErrorEnvelope("add", {
+                code: error.code,
+                details: error.context,
+                message: error.message,
+              }),
             );
           } else {
             displayError(error);
@@ -617,21 +648,10 @@ export function createCommand(): Command {
           }
           process.exit(CANCELLED_EXIT_CODE);
         } else {
-          logError(`\nUnexpected error: ${(error as Error).message}`);
           if (options.json) {
-            console.log(
-              JSON.stringify(
-                {
-                  error: {
-                    code: "UNKNOWN_ERROR",
-                    message: (error as Error).message,
-                  },
-                  success: false,
-                },
-                null,
-                JSON_INDENT,
-              ),
-            );
+            writeJsonEnvelope(createJsonErrorEnvelope("add", unknownErrorToJsonError(error)));
+          } else {
+            logError(`\nUnexpected error: ${(error as Error).message}`);
           }
           process.exit(ERROR_EXIT_CODE);
         }

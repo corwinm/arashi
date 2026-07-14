@@ -24,6 +24,9 @@ import { checkRemoteChanges } from "../lib/git-remote.ts";
 import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { info } from "../lib/logger.ts";
 import { runPullWithRollback } from "../lib/pull-runner.ts";
+import { reconcileManagedIgnore } from "../lib/managed-ignore.ts";
+import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
+import { fileExists } from "../lib/filesystem.ts";
 
 const ZERO = 0;
 const ONE = 1;
@@ -44,29 +47,11 @@ export interface PullCommandOptions {
   verbose?: boolean;
 }
 
-const executePull = async (options: PullCommandOptions): Promise<PullSummary> => {
-  let workspaceRoot = "";
-  try {
-    workspaceRoot = await findWorkspaceRoot();
-  } catch {
-    throw new CliUsageError(
-      'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
-    );
-  }
-
-  const repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch(
-    (error): never => {
-      throw new CliUsageError(
-        `Failed to load workspace configuration: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    },
-  );
-
-  const filterResult = filterRepositories(
-    repositoriesResult.repositories,
-    options.only,
-    options.group,
-  );
+const selectRepositories = (
+  repositories: Awaited<ReturnType<typeof loadWorkspaceRepositories>>["repositories"],
+  options: PullCommandOptions,
+) => {
+  const filterResult = filterRepositories(repositories, options.only, options.group);
   if (filterResult.emptyFilters.length > ZERO) {
     throw new EmptyRepositoryFiltersError(filterResult.emptyFilters);
   }
@@ -83,18 +68,58 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
   if (filterResult.emptyIntersection) {
     throw new CliUsageError("No repositories matched the combined --only/--group filters");
   }
+  return filterResult.selected;
+};
 
-  const repositories = filterResult.selected;
+const excludeWorkspaceRoot = (
+  repositories: Awaited<ReturnType<typeof loadWorkspaceRepositories>>["repositories"],
+  workspaceRoot: string,
+) => repositories.filter((repository) => repository.path !== workspaceRoot);
+
+const executePull = async (options: PullCommandOptions): Promise<PullSummary> => {
+  let workspaceRoot = "";
+  try {
+    workspaceRoot = await findWorkspaceRoot();
+  } catch {
+    throw new CliUsageError(
+      'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
+    );
+  }
+
+  let repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch((error): never => {
+    throw new CliUsageError(
+      `Failed to load workspace configuration: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+
+  let repositories = selectRepositories(repositoriesResult.repositories, options);
+  const selectedParent = repositories.find((repository) => repository.path === workspaceRoot);
+  if (selectedParent) {
+    repositories = [
+      selectedParent,
+      ...repositories.filter((repository) => repository !== selectedParent),
+    ];
+  }
+  let managedIgnore = await reconcileManagedIgnore({
+    reposDir: repositoriesResult.config.reposDir,
+    workspaceRoot,
+    worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+  });
+  if (!options.json) {
+    for (const warning of managedIgnore.warnings) {
+      info(`Warning: ${warning}`);
+    }
+  }
   if (repositories.length === ZERO) {
     if (!options.json) {
       info("No repositories selected for pull");
     }
-    return { overallStatus: "success", results: [] };
+    return { managedIgnore, overallStatus: "success", results: [] };
   }
 
   const results: PullResult[] = [];
-  const total = repositories.length;
-  const timeoutMs = repositoriesResult.config.hooks?.timeout;
+  let total = repositories.length;
+  let timeoutMs = repositoriesResult.config.hooks?.timeout;
 
   for (let index = ZERO; index < repositories.length; index += ONE) {
     const repo = repositories[index];
@@ -103,6 +128,19 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
     }
 
     const start = Date.now();
+    if (repo.path !== workspaceRoot && !(await fileExists(repo.path))) {
+      const result: PullResult = {
+        elapsedSeconds: (Date.now() - start) / MILLISECONDS_PER_SECOND,
+        errorMessage: `Repository is not materialized; run \`arashi clone\` to create ${repo.name}.`,
+        repositoryId: repo.name,
+        status: "skipped",
+      };
+      results.push(result);
+      if (!options.json) {
+        info(formatResultLine(result));
+      }
+      continue;
+    }
     const remoteStatus = await checkRemoteChanges(repo.name, repo.path);
     if (remoteStatus.error) {
       const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
@@ -152,9 +190,39 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         info(formatResultLine(lastResult));
       }
     }
+
+    const parentResult = results.at(-ONE);
+    if (
+      repo.path === workspaceRoot &&
+      parentResult?.repositoryId === repo.name &&
+      parentResult.status === "updated"
+    ) {
+      repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch((error): never => {
+        throw new CliUsageError(
+          `Failed to reload pulled workspace configuration: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+      const postPullSelection = excludeWorkspaceRoot(
+        selectRepositories(repositoriesResult.repositories, options),
+        workspaceRoot,
+      );
+      repositories.splice(index + ONE, repositories.length, ...postPullSelection);
+      total = repositories.length;
+      timeoutMs = repositoriesResult.config.hooks?.timeout;
+      managedIgnore = await reconcileManagedIgnore({
+        reposDir: repositoriesResult.config.reposDir,
+        workspaceRoot,
+        worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+      });
+      if (!options.json) {
+        for (const warning of managedIgnore.warnings) {
+          info(`Warning: ${warning}`);
+        }
+      }
+    }
   }
 
-  const summary = buildSummary(results);
+  const summary = { ...buildSummary(results), managedIgnore };
   if (!options.json) {
     console.log(formatSummary(summary));
   }

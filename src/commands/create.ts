@@ -42,6 +42,12 @@ import {
 } from "../lib/repo-filter.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
+import {
+  reconcileManagedIgnore,
+  restoreManagedIgnore,
+  type ManagedIgnoreReconciliation,
+} from "../lib/managed-ignore.ts";
+import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
@@ -154,12 +160,14 @@ interface CreateSummaryJsonOptions {
   branchName: string;
   dirtyWorkspaceGuidance?: ReturnType<typeof buildDirtyGuidance>;
   moveSummary?: MoveSummary | null;
+  managedIgnore?: ManagedIgnoreReconciliation;
   summary: OperationSummary;
 }
 
 const createSummaryJsonData = ({
   branchName,
   dirtyWorkspaceGuidance,
+  managedIgnore,
   moveSummary,
   summary,
 }: CreateSummaryJsonOptions) => ({
@@ -169,6 +177,7 @@ const createSummaryJsonData = ({
   errorSummary: summary.errorSummary,
   failureCount: summary.failureCount,
   hookOutcomes: summary.hookOutcomes,
+  managedIgnore,
   moveSummary,
   nextSteps: summary.nextSteps,
   repositories: summary.repositoryResults.map((result) => ({
@@ -258,6 +267,7 @@ export interface CreateCommandDependencies {
   resolveCurrentBranch?: (path: string) => Promise<string>;
   applyRepositoryFilter?: typeof applyRepositoryFilter;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
+  reconcileManagedIgnore?: typeof reconcileManagedIgnore;
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
     options: { sesh?: boolean },
@@ -631,6 +641,7 @@ export async function executeCreate(
     });
   const filterRepositories = deps.applyRepositoryFilter ?? applyRepositoryFilter;
   const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
+  const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileManagedIgnore;
 
   // 1. Resolve invocation context and load configuration
   const context = await resolveInvocationContext();
@@ -807,8 +818,27 @@ export async function executeCreate(
     workspaceRoot: context.workspaceRoot,
   };
 
+  // A bare repository has no work tree whose untracked paths Git can ignore.
+  const managedIgnore =
+    context.repositoryType === "bare"
+      ? undefined
+      : await reconcileIgnore({
+          dryRun: options.dryRun,
+          reposDir: arashiConfig.reposDir,
+          workspaceRoot: context.workspaceRoot,
+          worktreesDir: arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+        });
+  if (!options.json && managedIgnore) {
+    for (const warning of managedIgnore.warnings) {
+      warn(warning);
+    }
+  }
+
   // 6. Execute coordinated worktree creation
   const summary = await runCreate(branchName, selectedRepos, worktreeOptions);
+  if (summary.rolledBack && managedIgnore?.changed) {
+    await restoreManagedIgnore(managedIgnore);
+  }
   const dirtyGuidanceContext = options.dryRun
     ? null
     : await resolvePostCreateDirtyGuidance(context, arashiConfig, branchName);
@@ -825,7 +855,13 @@ export async function executeCreate(
     writeJsonEnvelope(
       createJsonSuccessEnvelope(
         "create",
-        createSummaryJsonData({ branchName, dirtyWorkspaceGuidance, moveSummary, summary }),
+        createSummaryJsonData({
+          branchName,
+          dirtyWorkspaceGuidance,
+          managedIgnore,
+          moveSummary,
+          summary,
+        }),
       ),
     );
     if (summary.rolledBack || summary.failureCount > ZERO) {

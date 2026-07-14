@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -192,6 +192,44 @@ describe("pull command", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("repo-a");
       expect(result.stdout).not.toContain("workspace");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
+
+  test(
+    "reloads parent config and reconciles changed managed paths before child processing",
+    async () => {
+      const { workspaceRoot, mainRemote } = await createWorkspaceWithRepo(testDir);
+      await runGit(workspaceRoot, ["add", ".arashi/config.json"]);
+      await runGit(workspaceRoot, ["commit", "-m", "Track workspace config"]);
+      await runGit(workspaceRoot, ["push", "origin", "HEAD:main"]);
+
+      const updater = join(testDir, "main-config-update");
+      await runGit(testDir, ["clone", mainRemote, updater]);
+      await runGit(updater, ["checkout", "-B", "main", "origin/main"]);
+      await runGit(updater, ["config", "user.email", "test@example.com"]);
+      await runGit(updater, ["config", "user.name", "Test User"]);
+      const config = JSON.parse(
+        await readFile(join(updater, ".arashi", "config.json"), "utf8"),
+      ) as Record<string, unknown>;
+      config.reposDir = "./managed-repos";
+      config.worktreesDir = "./managed-worktrees";
+      (config.repos as Record<string, unknown>)["new-child"] = {
+        gitUrl: "https://example.invalid/new-child.git",
+        path: "./managed-repos/new-child",
+      };
+      await writeFile(join(updater, ".arashi", "config.json"), JSON.stringify(config, null, 2));
+      await runGit(updater, ["add", ".arashi/config.json"]);
+      await runGit(updater, ["commit", "-m", "Change managed paths"]);
+      await runGit(updater, ["push", "origin", "HEAD:main"]);
+
+      const result = await runPullCommand(workspaceRoot);
+      const exclude = await readFile(join(workspaceRoot, ".git", "info", "exclude"), "utf8");
+
+      expect(result.exitCode).toBe(0);
+      expect(exclude).toContain("managed-repos/");
+      expect(exclude).toContain("managed-worktrees/");
+      expect(result.stdout).toContain("arashi clone");
     },
     SLOW_PULL_TEST_TIMEOUT,
   );

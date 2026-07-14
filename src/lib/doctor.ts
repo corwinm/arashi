@@ -9,6 +9,8 @@ import { checkAllRepos, isMissingRepositoryStatus } from "../commands/status.ts"
 import { findWorkspaceRoot, getConfigPath, loadConfig } from "./config.ts";
 import { discoverPrunableWorktrees } from "../core/remove.ts";
 import { readdir } from "fs/promises";
+import { inspectManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
+import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
 
 const ZERO = 0;
 
@@ -61,6 +63,86 @@ const ALL_CHECKED_CATEGORIES: DoctorCategory[] = [
 ];
 
 const createFinding = (finding: DoctorFinding): DoctorFinding => finding;
+
+export const managedIgnoreToDoctorFindings = (
+  inspection: ManagedIgnoreInspection,
+): DoctorFinding[] => {
+  const findings: DoctorFinding[] = [];
+  for (const path of inspection.paths) {
+    if (path.status === "unignored") {
+      findings.push(
+        createFinding({
+          category: "configuration",
+          code: "MANAGED_IGNORE_MISSING",
+          details: { path: path.input, rule: path.rule, scope: inspection.scope },
+          message: `Managed path '${path.rule}' is not effectively ignored (scope: ${inspection.scope}).`,
+          scope: `managed-ignore:${path.rule}`,
+          severity: "warning",
+          suggestedCommands: ["arashi init --ignore-scope local"],
+        }),
+      );
+    } else if (path.status === "unsafe") {
+      findings.push(
+        createFinding({
+          category: "configuration",
+          code: "MANAGED_IGNORE_UNSAFE_PATH",
+          details: { path: path.input, safetyReason: path.safetyReason },
+          message: `Configured managed path '${path.input}' is unsafe to ignore automatically (${path.safetyReason}).`,
+          scope: `managed-ignore:${path.input}`,
+          severity: "warning",
+          suggestedCommands: ["arashi init --help", "edit .arashi/config.json"],
+        }),
+      );
+    }
+  }
+  for (const stale of inspection.staleRules) {
+    findings.push(
+      createFinding({
+        category: "configuration",
+        code: "MANAGED_IGNORE_STALE_RULE",
+        details: { ...stale },
+        message: `Arashi-owned ignore rule '${stale.rule}' is stale in ${stale.path}.`,
+        scope: `managed-ignore:${stale.target}`,
+        severity: "warning",
+        suggestedCommands: ["arashi init --ignore-scope local"],
+      }),
+    );
+  }
+  return findings;
+};
+
+const collectManagedIgnoreFindings = async (
+  workspaceRoot: string,
+  config: Config,
+): Promise<DoctorFinding[]> => {
+  try {
+    const inspection = await inspectManagedIgnore({
+      reposDir: config.reposDir,
+      workspaceRoot,
+      worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+    });
+    return managedIgnoreToDoctorFindings(inspection);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Invalid clone-local arashi.ignoreScope")) {
+      return [
+        createFinding({
+          category: "configuration",
+          code: "MANAGED_IGNORE_SCOPE_INVALID",
+          details: { error: message },
+          message,
+          scope: "managed-ignore:preference",
+          severity: "warning",
+          suggestedCommands: [
+            "git config --local --unset arashi.ignoreScope",
+            "arashi init --ignore-scope local",
+          ],
+        }),
+      ];
+    }
+    throw error;
+  }
+};
 
 export const summarizeDoctorFindings = (findings: DoctorFinding[]): DoctorSummary => ({
   error: findings.filter((finding) => finding.severity === "error").length,
@@ -505,6 +587,7 @@ export const runDoctor = async (): Promise<DoctorResult> => {
   }
 
   const phaseResults = await Promise.allSettled([
+    collectManagedIgnoreFindings(workspaceRoot, config),
     collectRepositoryFindings(workspaceRoot, config),
     collectWorktreeFindings(workspaceRoot, config),
     collectHookFindings(workspaceRoot, config),

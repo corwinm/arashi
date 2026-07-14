@@ -11,11 +11,11 @@ import {
   DEFAULT_CONFIG_SCHEMA_URL,
   configExists,
   getConfigPath,
+  loadConfig,
   saveConfig,
 } from "../lib/config.ts";
 import {
   DEFAULT_WORKTREES_DIR,
-  DEFAULT_WORKTREES_GITIGNORE_ENTRY,
   WorktreeLocationValidationError,
   normalizeWorktreesDir,
 } from "../lib/worktree-location.ts";
@@ -34,7 +34,6 @@ import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
   unknownErrorToJsonError,
-  unsupportedJsonModeError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
@@ -42,6 +41,11 @@ import { isAbsolute, join, relative, resolve } from "path";
 import { Command } from "commander";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec as gitExec } from "../lib/git.ts";
+import {
+  reconcileManagedIgnore,
+  restoreManagedIgnore,
+  type ManagedIgnoreReconciliation,
+} from "../lib/managed-ignore.ts";
 
 type Config = Parameters<typeof saveConfig>[1];
 type RepoConfig = Config["repos"][string];
@@ -76,6 +80,12 @@ interface InitOptions {
 
   /** Verbose output - show detailed information during initialization */
   verbose?: boolean;
+
+  /** Managed Git ignore destination */
+  ignoreScope?: string;
+
+  /** Suppress human output for JSON mode */
+  quiet?: boolean;
 }
 
 interface InitResult {
@@ -102,6 +112,15 @@ interface InitResult {
 
   /** Resolved workspace root used for initialization */
   workspaceRoot?: string;
+
+  /** Managed Git ignore inspection and final reconciliation state */
+  managedIgnore?: ManagedIgnoreReconciliation;
+
+  /** Structured managed-ignore failure details for JSON automation */
+  managedIgnoreFailure?: ReturnType<typeof unknownErrorToJsonError>;
+
+  /** Whether only an existing workspace preference was reconciled */
+  preferenceOnly?: boolean;
 }
 
 interface InitDependencies {
@@ -129,7 +148,7 @@ interface HookTemplate {
   content: string;
 }
 
-type OperationType = "CREATE_DIR" | "WRITE_FILE" | "MODIFY_FILE" | "BACKUP_FILE";
+type OperationType = "CREATE_DIR" | "WRITE_FILE" | "MODIFY_FILE" | "BACKUP_FILE" | "MANAGED_IGNORE";
 
 interface Operation {
   /** Type of operation performed */
@@ -184,8 +203,10 @@ const addOperation = (operation: Operation): void => {
 /**
  * Execute rollback of all tracked operations in LIFO order
  */
-const executeRollback = async (): Promise<void> => {
-  info("\nRolling back changes...");
+const executeRollback = async (quiet = false): Promise<void> => {
+  if (!quiet) {
+    info("\nRolling back changes...");
+  }
 
   const reversedOps = [...operations];
   reversedOps.reverse();
@@ -193,9 +214,13 @@ const executeRollback = async (): Promise<void> => {
   for (const op of reversedOps) {
     try {
       await op.rollback();
-      info(`  • Rolled back: ${op.path}`);
+      if (!quiet) {
+        info(`  • Rolled back: ${op.path}`);
+      }
     } catch (error) {
-      warn(`  • Failed to rollback: ${op.path} - ${(error as Error).message}`);
+      if (!quiet) {
+        warn(`  • Failed to rollback: ${op.path} - ${(error as Error).message}`);
+      }
     }
   }
 
@@ -321,9 +346,9 @@ const resolveInitRoot = async (
 
   if (options.dryRun) {
     if (bootstrapTarget !== ".") {
-      logDryRun("CREATE_DIR", workspaceRoot);
+      logDryRun("CREATE_DIR", workspaceRoot, options);
     }
-    logDryRun("GIT_INIT", workspaceRoot);
+    logDryRun("GIT_INIT", workspaceRoot, options);
   } else {
     logVerbose(`Bootstrapping git repository at: ${workspaceRoot}`, options);
 
@@ -377,7 +402,10 @@ const logVerbose = (message: string, options: InitOptions): void => {
 /**
  * Log dry-run action
  */
-const logDryRun = (action: string, details: string): void => {
+const logDryRun = (action: string, details: string, options: InitOptions): void => {
+  if (options.quiet) {
+    return;
+  }
   console.log(`[DRY RUN] ${action}: ${details}`);
 };
 
@@ -589,113 +617,6 @@ const writeHookTemplates = async (hooksDir: string): Promise<void> => {
 };
 
 // ============================================================================
-// Gitignore Helper
-// ============================================================================
-
-/**
- * Update .gitignore to exclude managed directories (idempotent)
- */
-const normalizeGitignorePattern = (directoryPath: string): string => {
-  let pattern = directoryPath.replace(/^\.\//, "");
-  if (!pattern.endsWith("/")) {
-    pattern += "/";
-  }
-  return pattern;
-};
-
-const hasGitignorePattern = (content: string, pattern: string): boolean => {
-  const alternate = pattern.endsWith("/") ? pattern.slice(0, -1) : pattern;
-  return content
-    .split("\n")
-    .map((line) => line.trim())
-    .some((line) => line === pattern || line === alternate);
-};
-
-const getManagedWorktreesGitignorePattern = (worktreesDir: string): string | undefined => {
-  const normalizedWorktreesDir = normalizeWorktreesDir(worktreesDir);
-
-  if (
-    normalizedWorktreesDir === "." ||
-    normalizedWorktreesDir === ".." ||
-    normalizedWorktreesDir.startsWith("../")
-  ) {
-    return undefined;
-  }
-
-  if (normalizedWorktreesDir === DEFAULT_WORKTREES_DIR) {
-    return DEFAULT_WORKTREES_GITIGNORE_ENTRY;
-  }
-
-  return normalizeGitignorePattern(normalizedWorktreesDir);
-};
-
-const getManagedGitignorePatterns = (reposDir: string, worktreesDir: string): string[] => {
-  const patterns = [normalizeGitignorePattern(reposDir)];
-  const worktreesPattern = getManagedWorktreesGitignorePattern(worktreesDir);
-  if (worktreesPattern) {
-    patterns.push(worktreesPattern);
-  }
-
-  return patterns;
-};
-
-const updateGitignore = async (
-  cwd: string,
-  reposDir: string,
-  worktreesDir: string,
-): Promise<void> => {
-  const gitignorePath = join(cwd, ".gitignore");
-  const patterns = getManagedGitignorePatterns(reposDir, worktreesDir);
-
-  let content = "";
-  let originalContent: string | undefined = undefined;
-
-  if (await fileExists(gitignorePath)) {
-    originalContent = await readTextFile(gitignorePath);
-    content = originalContent;
-  }
-
-  const missingPatterns = patterns.filter((pattern) => !hasGitignorePattern(content, pattern));
-  if (missingPatterns.length === 0) {
-    return;
-  }
-
-  if (content && !content.endsWith("\n")) {
-    content += "\n";
-  }
-
-  content += "\n# Arashi managed repositories\n";
-  for (const pattern of missingPatterns) {
-    content += `${pattern}\n`;
-  }
-
-  await writeTextFile(gitignorePath, content);
-
-  if (originalContent === undefined) {
-    addOperation({
-      path: gitignorePath,
-      rollback: async () => {
-        const file = runtime.file(gitignorePath);
-        if (await file.exists()) {
-          await runtime.write(gitignorePath, "");
-          await removeDir(gitignorePath);
-        }
-      },
-      type: "WRITE_FILE",
-    });
-  } else {
-    addOperation({
-      originalContent,
-      path: gitignorePath,
-      rollback: async () => {
-        await writeTextFile(gitignorePath, originalContent);
-      },
-      type: "MODIFY_FILE",
-    });
-  }
-};
-
-// ============================================================================
 // Main Command Logic
 // ============================================================================
 
@@ -712,7 +633,7 @@ export const executeInit = async (
   operations.length = ZERO;
 
   // Dry-run header
-  if (options.dryRun) {
+  if (options.dryRun && !options.quiet) {
     console.log("=== DRY RUN MODE ===");
     console.log("No changes will be made to the filesystem.\n");
   }
@@ -727,7 +648,35 @@ export const executeInit = async (
 
     // 2. Check if already initialized (without --force)
     logVerbose("Checking for existing Arashi configuration...", options);
-    if (!options.force && (await configExists(workspaceRoot))) {
+    const hasExistingConfig = await configExists(workspaceRoot);
+    if (
+      !options.force &&
+      hasExistingConfig &&
+      options.ignoreScope !== undefined &&
+      options.reposDir === undefined &&
+      options.worktreesDir === undefined
+    ) {
+      const existingConfig = await loadConfig(workspaceRoot);
+      const managedIgnore = await reconcileManagedIgnore({
+        dryRun: options.dryRun,
+        reposDir: existingConfig.reposDir,
+        requestedScope: options.ignoreScope,
+        workspaceRoot,
+        worktreesDir: existingConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+      });
+      return {
+        configPath: getConfigPath(workspaceRoot),
+        discoveredCount: Object.keys(existingConfig.repos).length,
+        exitCode: ExitCode.SUCCESS,
+        hooksPath: join(workspaceRoot, ".arashi", "hooks"),
+        managedIgnore,
+        preferenceOnly: true,
+        reposPath: resolve(workspaceRoot, existingConfig.reposDir),
+        success: true,
+        workspaceRoot,
+      };
+    }
+    if (!options.force && hasExistingConfig) {
       const existingConfigPath = getConfigPath(workspaceRoot);
       return {
         error: `Arashi configuration already exists at: ${existingConfigPath}`,
@@ -749,7 +698,7 @@ export const executeInit = async (
       const backupPath = `${existingConfigPath}.backup-${timestamp}`;
 
       if (options.dryRun) {
-        logDryRun("BACKUP", `${existingConfigPath} → ${backupPath}`);
+        logDryRun("BACKUP", `${existingConfigPath} → ${backupPath}`, options);
       } else {
         warn(EXISTING_CONFIG_WARNING);
         info(`Backing up: ${existingConfigPath} → ${backupPath}\n`);
@@ -769,7 +718,7 @@ export const executeInit = async (
 
     if (!isValidPath(reposDir)) {
       if (initRoot.bootstrapped && !options.dryRun) {
-        await executeRollback();
+        await executeRollback(options.quiet);
       }
 
       return {
@@ -786,7 +735,7 @@ export const executeInit = async (
     const rawWorktreesDir = options.worktreesDir;
     if (rawWorktreesDir !== undefined && !isValidPath(rawWorktreesDir)) {
       if (initRoot.bootstrapped && !options.dryRun) {
-        await executeRollback();
+        await executeRollback(options.quiet);
       }
 
       return {
@@ -803,7 +752,7 @@ export const executeInit = async (
     } catch (error) {
       if (error instanceof WorktreeLocationValidationError) {
         if (initRoot.bootstrapped && !options.dryRun) {
-          await executeRollback();
+          await executeRollback(options.quiet);
         }
 
         return {
@@ -818,11 +767,38 @@ export const executeInit = async (
     }
     logVerbose(`Resolved worktrees directory: ${resolve(workspaceRoot, worktreesDir)}`, options);
 
+    // Reconcile before any managed directories are materialized.
+    logVerbose("Reconciling managed Git ignore rules...", options);
+    const managedIgnore = await reconcileManagedIgnore({
+      dryRun: options.dryRun,
+      reposDir,
+      requestedScope: options.ignoreScope,
+      workspaceRoot,
+      worktreesDir,
+    });
+    if (options.dryRun && managedIgnore.targetPath) {
+      logDryRun(
+        "UPDATE_FILE",
+        `${managedIgnore.targetPath} (add: ${managedIgnore.plannedRules.join(", ")})`,
+        options,
+      );
+    }
+    logVerbose("✓ Managed Git ignore rules reconciled", options);
+    if (!options.dryRun && managedIgnore.attempted) {
+      addOperation({
+        path: managedIgnore.targetPath ?? "clone-local arashi.ignoreScope",
+        rollback: async () => {
+          await restoreManagedIgnore(managedIgnore);
+        },
+        type: "MANAGED_IGNORE",
+      });
+    }
+
     // 5. Create .arashi directory
     const arashiDir = join(workspaceRoot, ".arashi");
 
     if (options.dryRun) {
-      logDryRun("CREATE_DIR", arashiDir);
+      logDryRun("CREATE_DIR", arashiDir, options);
     } else {
       logVerbose(`Creating .arashi directory: ${arashiDir}`, options);
       try {
@@ -836,6 +812,7 @@ export const executeInit = async (
         });
         logVerbose("✓ .arashi directory created", options);
       } catch (error) {
+        await executeRollback(options.quiet);
         if (error instanceof PermissionError) {
           return {
             error: `Permission denied creating directory: ${arashiDir}`,
@@ -852,7 +829,7 @@ export const executeInit = async (
     const hooksDir = join(arashiDir, "hooks");
 
     if (options.dryRun) {
-      logDryRun("CREATE_DIR", hooksDir);
+      logDryRun("CREATE_DIR", hooksDir, options);
     } else {
       logVerbose(`Creating hooks directory: ${hooksDir}`, options);
       try {
@@ -866,7 +843,7 @@ export const executeInit = async (
         });
         logVerbose("✓ Hooks directory created", options);
       } catch (error) {
-        await executeRollback();
+        await executeRollback(options.quiet);
         if (error instanceof PermissionError) {
           return {
             error: `Permission denied creating hooks directory: ${hooksDir}`,
@@ -883,7 +860,7 @@ export const executeInit = async (
     if (options.dryRun) {
       for (const template of HOOK_TEMPLATES) {
         const templatePath = join(hooksDir, template.filename);
-        logDryRun("WRITE_FILE", `${templatePath} (${template.content.length} bytes)`);
+        logDryRun("WRITE_FILE", `${templatePath} (${template.content.length} bytes)`, options);
       }
     } else {
       logVerbose(`Writing ${HOOK_TEMPLATES.length} hook templates...`, options);
@@ -891,7 +868,7 @@ export const executeInit = async (
         await writeHookTemplates(hooksDir);
         logVerbose("✓ Hook templates written", options);
       } catch (error) {
-        await executeRollback();
+        await executeRollback(options.quiet);
         if (error instanceof PermissionError || error instanceof DiskFullError) {
           return {
             error: `Failed to write hook templates: ${(error as Error).message}`,
@@ -907,7 +884,7 @@ export const executeInit = async (
 
     // 8. Create repos directory
     if (options.dryRun) {
-      logDryRun("CREATE_DIR", absoluteReposPath);
+      logDryRun("CREATE_DIR", absoluteReposPath, options);
     } else {
       logVerbose(`Creating repos directory: ${absoluteReposPath}`, options);
       try {
@@ -921,7 +898,7 @@ export const executeInit = async (
         });
         logVerbose("✓ Repos directory created", options);
       } catch (error) {
-        await executeRollback();
+        await executeRollback(options.quiet);
         if (error instanceof PermissionError) {
           return {
             error: `Permission denied creating repos directory: ${absoluteReposPath}`,
@@ -948,7 +925,7 @@ export const executeInit = async (
     if (options.noDiscover) {
       logVerbose("Skipping repository discovery (--no-discover)", options);
     } else if (options.dryRun) {
-      logDryRun("DISCOVER", `Scan ${reposDir} for git repositories`);
+      logDryRun("DISCOVER", `Scan ${reposDir} for git repositories`, options);
       discoveredCount = 0; // Can't discover in dry-run mode
     } else {
       logVerbose(`Discovering repositories in: ${reposDir}`, options);
@@ -958,7 +935,7 @@ export const executeInit = async (
         logVerbose(`✓ Found ${discoveredCount} repositories`, options);
         collectDiscoveredRepos(discoveredRepos, options, discoveryResult.repositories);
       } catch (error) {
-        await executeRollback();
+        await executeRollback(options.quiet);
         return {
           error: `Repository discovery failed: ${(error as Error).message}`,
           exitCode: ExitCode.DISCOVERY_FAILED,
@@ -979,9 +956,11 @@ export const executeInit = async (
 
     const configPath = getConfigPath(workspaceRoot);
     if (options.dryRun) {
-      logDryRun("WRITE_FILE", `${configPath}`);
-      console.log("\nConfiguration preview:");
-      console.log(JSON.stringify(arashiConfig, null, JSON_INDENT));
+      logDryRun("WRITE_FILE", `${configPath}`, options);
+      if (!options.quiet) {
+        console.log("\nConfiguration preview:");
+        console.log(JSON.stringify(arashiConfig, null, JSON_INDENT));
+      }
     } else {
       logVerbose("Writing configuration file...", options);
       try {
@@ -1000,7 +979,7 @@ export const executeInit = async (
         });
         logVerbose("✓ Configuration written", options);
       } catch (error) {
-        await executeRollback();
+        await executeRollback(options.quiet);
         if (error instanceof PermissionError || error instanceof DiskFullError) {
           return {
             error: `Failed to write configuration: ${(error as Error).message}`,
@@ -1014,35 +993,11 @@ export const executeInit = async (
       }
     }
 
-    // 11. Update .gitignore
-    const gitignorePath = join(workspaceRoot, ".gitignore");
-    const managedPatterns = getManagedGitignorePatterns(reposDir, worktreesDir);
-    if (options.dryRun) {
-      logDryRun("UPDATE_FILE", `${gitignorePath} (add: ${managedPatterns.join(", ")})`);
-    } else {
-      logVerbose("Updating .gitignore...", options);
-      try {
-        await updateGitignore(workspaceRoot, reposDir, worktreesDir);
-        logVerbose("✓ .gitignore updated", options);
-      } catch (error) {
-        await executeRollback();
-        if (error instanceof PermissionError) {
-          return {
-            error: `Failed to update .gitignore: ${(error as Error).message}`,
-            exitCode: ExitCode.PERMISSION_DENIED,
-            success: false,
-            workspaceRoot,
-          };
-        }
-        throw error;
-      }
-    }
-
-    // 12. Success!
+    // 11. Success!
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     logVerbose(`Initialization completed in ${duration}s`, options);
 
-    if (options.dryRun) {
+    if (options.dryRun && !options.quiet) {
       console.log("\n=== DRY RUN COMPLETE ===");
       console.log("No changes were made. Run without --dry-run to apply.");
     }
@@ -1054,6 +1009,7 @@ export const executeInit = async (
       discoveredCount,
       exitCode: ExitCode.SUCCESS,
       hooksPath: hooksDir,
+      managedIgnore,
       reposPath: absoluteReposPath,
       success: true,
       workspaceRoot,
@@ -1061,12 +1017,16 @@ export const executeInit = async (
   } catch (error) {
     // Unexpected error - rollback and exit
     if (!options.dryRun) {
-      await executeRollback();
+      await executeRollback(options.quiet);
     }
+    const structuredError = unknownErrorToJsonError(error);
 
     return {
       error: `Unexpected error: ${(error as Error).message}`,
       exitCode: ExitCode.UNKNOWN,
+      ...(structuredError.code === "MANAGED_IGNORE_RECONCILIATION_FAILED"
+        ? { managedIgnoreFailure: structuredError }
+        : {}),
       success: false,
       workspaceRoot: cwd,
     };
@@ -1077,7 +1037,9 @@ export const executeInit = async (
  * Display success message with details
  */
 const displaySuccess = (result: InitResult, options: InitOptions): void => {
-  success("Initialized Arashi workspace");
+  success(
+    result.preferenceOnly ? "Updated managed ignore preference" : "Initialized Arashi workspace",
+  );
 
   console.log("\nCreated:");
   console.log(`  • Configuration: ${result.configPath}`);
@@ -1096,12 +1058,22 @@ const displaySuccess = (result: InitResult, options: InitOptions): void => {
     console.log(`\nDiscovered ${result.discoveredCount} repositories`);
   }
 
-  const reposDir = options.reposDir || "./repos";
-  const worktreesDir = options.worktreesDir || DEFAULT_WORKTREES_DIR;
-  const managedPatterns = getManagedGitignorePatterns(reposDir, worktreesDir);
-  console.log(`\nUpdated .gitignore to exclude: ${managedPatterns[0]}`);
-  for (const pattern of managedPatterns.slice(1)) {
-    console.log(`  • ${pattern}`);
+  if (result.managedIgnore) {
+    console.log(`\nManaged ignore scope: ${result.managedIgnore.scope}`);
+    for (const path of result.managedIgnore.paths) {
+      if (path.status === "unsafe") {
+        console.log(`  • Skipped unsafe path: ${path.input} (${path.safetyReason})`);
+      } else if (path.source) {
+        console.log(
+          `  • ${path.rule}: already ignored by ${path.source.type} (${path.source.path})`,
+        );
+      } else {
+        console.log(`  • ${path.rule}: ${path.status}`);
+      }
+    }
+    for (const warning of result.managedIgnore.warnings) {
+      warn(warning);
+    }
   }
 
   console.log("\nNext steps:");
@@ -1175,32 +1147,38 @@ const displayError = (result: InitResult): void => {
 export function createCommand(): Command {
   return new Command("init")
     .description("Initialize Arashi workspace in the current repository or bootstrap a new one")
-    .option("--repos-dir <path>", "Custom location for managed repositories", "./repos")
-    .option(
-      "--worktrees-dir <path>",
-      "Custom base location for managed worktrees",
-      DEFAULT_WORKTREES_DIR,
-    )
+    .option("--repos-dir <path>", "Custom location for managed repositories")
+    .option("--worktrees-dir <path>", "Custom base location for managed worktrees")
+    .option("--ignore-scope <scope>", "Managed Git ignore scope: local (default), tracked, or none")
     .option("--force", "Overwrite existing configuration if present")
     .option("--no-discover", "Skip automatic repository discovery")
     .option("--dry-run", "Show what would be done without making changes")
     .option("--verbose", "Show detailed information during initialization")
     .option("--json", "Output result as JSON")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ arashi init                         # Local info/exclude rules (default)
+  $ arashi init --ignore-scope tracked  # Team-owned .gitignore block
+  $ arashi init --ignore-scope none     # Manual ignore management
+  $ arashi init --ignore-scope local    # Reset an existing clone to the default
+
+Existing effective tracked, local, or global rules are honored. Arashi never modifies global Git configuration.
+      `,
+    )
     .action(async (options: InitOptions & { discover?: boolean; json?: boolean }) => {
       // Commander converts --no-discover to discover: false
       const normalizedOptions: InitOptions = {
         dryRun: options.dryRun,
         force: options.force,
+        ignoreScope: options.ignoreScope,
         noDiscover: options.discover === false, // --no-discover sets discover: false
+        quiet: options.json,
         reposDir: options.reposDir,
         verbose: options.json ? false : options.verbose,
         worktreesDir: options.worktreesDir,
       };
-
-      if (options.json && options.dryRun) {
-        writeJsonEnvelope(unsupportedJsonModeError("init", "dry-run-preview"));
-        process.exit(ExitCode.UNKNOWN);
-      }
 
       const result = await executeInit(normalizedOptions).catch((error): never => {
         if (options.json) {
@@ -1220,11 +1198,14 @@ export function createCommand(): Command {
       } else {
         if (options.json) {
           writeJsonEnvelope(
-            createJsonErrorEnvelope("init", {
-              code: `INIT_${result.exitCode}`,
-              details: { exitCode: result.exitCode, workspaceRoot: result.workspaceRoot },
-              message: result.error || "Unknown error",
-            }),
+            createJsonErrorEnvelope(
+              "init",
+              result.managedIgnoreFailure ?? {
+                code: `INIT_${result.exitCode}`,
+                details: { exitCode: result.exitCode, workspaceRoot: result.workspaceRoot },
+                message: result.error || "Unknown error",
+              },
+            ),
           );
         } else {
           displayError(result);

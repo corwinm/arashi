@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { executeClone, resolveCoordinatedSourceWorkspaceRoot } from "../../src/commands/clone.ts";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import type { Config } from "../../src/lib/config.ts";
 import { join } from "path";
 import { tmpdir } from "os";
+import { spawn } from "../helpers/node-runtime.ts";
 
 describe("clone command", () => {
   let workspaceRoot: string;
 
   beforeEach(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), "arashi-clone-command-"));
+    await spawn(["git", "init"], { cwd: workspaceRoot }).exited;
     await mkdir(join(workspaceRoot, "repos"), { recursive: true });
   });
 
@@ -122,6 +124,36 @@ describe("clone command", () => {
 
     expect(result.cloned).toEqual(["repo-a", "repo-b"]);
     expect(clonedDestinations).toHaveLength(2);
+  });
+
+  test("reconciles local ignore rules before cloning a configured repository", async () => {
+    const config: Config = {
+      repos: {
+        "repo-a": {
+          gitUrl: "https://github.com/team/repo-a.git",
+          path: "./repos/repo-a",
+        },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true },
+      {
+        cloneRepository: async (_gitUrl, destinationPath) => {
+          const exclude = await readFile(join(workspaceRoot, ".git", "info", "exclude"), "utf8");
+          expect(exclude).toContain("repos/");
+          await mkdir(destinationPath, { recursive: true });
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        loadConfig: async () => config,
+        saveConfig: async () => {},
+        workspaceRoot,
+      },
+    );
+
+    expect(result.managedIgnore).toMatchObject({ changed: true, scope: "local" });
   });
 
   test("completes missing repositories in coordinated worktrees using current branch", async () => {

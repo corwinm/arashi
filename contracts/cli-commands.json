@@ -433,6 +433,13 @@
           "variadic": false
         },
         {
+          "flags": "--ignore-scope <scope>",
+          "description": "Managed Git ignore scope: local (default), tracked, or none",
+          "required": true,
+          "optional": false,
+          "variadic": false
+        },
+        {
           "flags": "--json",
           "description": "Output result as JSON",
           "required": false,

@@ -77,6 +77,21 @@ export const unknownErrorToJsonError = (
     };
   }
 
+  if (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    "details" in error &&
+    typeof error.details === "object" &&
+    error.details !== null
+  ) {
+    return {
+      code: error.code,
+      details: error.details as Record<string, unknown>,
+      message: error.message,
+    };
+  }
+
   return {
     code,
     message: error instanceof Error ? error.message : String(error),

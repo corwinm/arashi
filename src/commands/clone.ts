@@ -29,6 +29,12 @@ import {
 import { Command } from "commander";
 import { removeDir } from "../lib/filesystem.ts";
 import { stat } from "fs/promises";
+import {
+  reconcileManagedIgnore,
+  restoreManagedIgnore,
+  type ManagedIgnoreReconciliation,
+} from "../lib/managed-ignore.ts";
+import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 
 interface Choice<T> {
   value: T;
@@ -59,6 +65,7 @@ export interface CloneExecutionResult {
   cloned: string[];
   failed: { name: string; reason: string }[];
   skipped: string[];
+  managedIgnore?: ManagedIgnoreReconciliation;
 }
 
 interface CloneCommandDependencies {
@@ -312,6 +319,17 @@ export async function executeClone(
     .map((repository) => repository.name)
     .filter((name) => !selectedRepositories.some((repository) => repository.name === name));
 
+  const managedIgnore = await reconcileManagedIgnore({
+    reposDir: config.reposDir,
+    workspaceRoot,
+    worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+  });
+  if (!options.json) {
+    for (const warning of managedIgnore.warnings) {
+      warn(warning);
+    }
+  }
+
   for (const repository of selectedRepositories) {
     const rawGitUrl = repository.config.gitUrl;
     if (rawGitUrl) {
@@ -360,6 +378,10 @@ export async function executeClone(
     await writeConfig(workspaceRoot, config);
   }
 
+  if (cloned.length === ZERO && managedIgnore.changed) {
+    await restoreManagedIgnore(managedIgnore);
+  }
+
   if (failed.length > 0) {
     if (!options.json) {
       warn(`Clone completed with failures (${failed.length}).`);
@@ -379,6 +401,7 @@ export async function executeClone(
   return {
     cloned,
     failed,
+    managedIgnore,
     skipped,
     status,
   };
