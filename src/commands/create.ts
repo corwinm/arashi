@@ -354,7 +354,20 @@ export async function resolveManagedIgnoreWorkspaceRoot(
   const temporaryParent = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-worktree-"));
   const temporaryWorktree = join(temporaryParent, "worktree");
   try {
-    await exec(["worktree", "add", "--detach", temporaryWorktree, "HEAD"], context.executionPath);
+    const branchRefs = await exec(
+      ["for-each-ref", "--format=%(refname)", "--sort=-committerdate", "refs/heads"],
+      context.executionPath,
+    );
+    const sourceRef = branchRefs.stdout.split(/\r?\n/).find((line) => line.trim().length > 0);
+    if (!sourceRef) {
+      throw new CreateSetupError(
+        "Managed ignore reconciliation requires at least one committed branch in the bare repository.",
+      );
+    }
+    await exec(
+      ["worktree", "add", "--detach", temporaryWorktree, sourceRef.trim()],
+      context.executionPath,
+    );
   } catch (error) {
     await rm(temporaryParent, { force: true, recursive: true });
     throw error;

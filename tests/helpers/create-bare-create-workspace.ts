@@ -67,6 +67,8 @@ export async function createBareCreateWorkspace(
 
   if (createLinkedWorktree) {
     await execGit(["worktree", "add", worktreePath, "main"], bareRepoPath);
+  } else {
+    await execGit(["symbolic-ref", "HEAD", "refs/heads/unborn"], bareRepoPath);
   }
 
   return {
