@@ -244,4 +244,88 @@ describe("create defaults integration", () => {
 
     expect(launchCalls).toEqual([{ sesh: false }]);
   });
+
+  test("retains managed ignore state when rollback leaves a residual worktree", async () => {
+    let restoreCalls = 0;
+    const managedIgnore = {
+      appliedRules: ["repos/"],
+      attempted: true,
+      changed: true,
+      fileChanges: { local: true, preference: false, tracked: false },
+      localExcludePath: "/workspace/.git/info/exclude",
+      paths: [],
+      plannedRules: ["repos/"],
+      restored: false,
+      scope: "local" as const,
+      staleRules: [],
+      storedPreference: null,
+      trackedIgnorePath: "/workspace/.gitignore",
+      warnings: [],
+    };
+    const failedSummary = {
+      ...createSummary(),
+      rolledBack: true,
+    };
+
+    await expect(
+      executeCreate(
+        branchName,
+        {},
+        baseDeps({
+          createCoordinatedWorktrees: async () => failedSummary,
+          pathExists: () => true,
+          reconcileManagedIgnore: async () => managedIgnore,
+          restoreManagedIgnore: async () => {
+            restoreCalls += 1;
+          },
+        }),
+      ),
+    ).rejects.toThrow('process.exit unexpectedly called with "1"');
+
+    expect(restoreCalls).toBe(0);
+    expect(managedIgnore.changed).toBe(true);
+  });
+
+  test("restores managed ignore state after a complete worktree rollback", async () => {
+    let restoreCalls = 0;
+    const managedIgnore = {
+      appliedRules: ["repos/"],
+      attempted: true,
+      changed: true,
+      fileChanges: { local: true, preference: false, tracked: false },
+      localExcludePath: "/workspace/.git/info/exclude",
+      paths: [],
+      plannedRules: ["repos/"],
+      restored: false,
+      scope: "local" as const,
+      staleRules: [],
+      storedPreference: null,
+      trackedIgnorePath: "/workspace/.gitignore",
+      warnings: [],
+    };
+    const failedSummary = {
+      ...createSummary(),
+      rolledBack: true,
+    };
+
+    await expect(
+      executeCreate(
+        branchName,
+        {},
+        baseDeps({
+          createCoordinatedWorktrees: async () => failedSummary,
+          pathExists: () => false,
+          reconcileManagedIgnore: async () => managedIgnore,
+          restoreManagedIgnore: async (result) => {
+            restoreCalls += 1;
+            result.changed = false;
+            result.restored = true;
+          },
+        }),
+      ),
+    ).rejects.toThrow('process.exit unexpectedly called with "1"');
+
+    expect(restoreCalls).toBe(1);
+    expect(managedIgnore).toMatchObject({ changed: false, restored: true });
+  });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "../helpers/node-runtime.ts";
@@ -32,8 +32,18 @@ afterEach(async () => {
 describe("managed ignore path classification", () => {
   test("normalizes and deduplicates safe repository-relative directories", () => {
     expect(classifyManagedPaths(["./repos", "repos/", "repos\\", ".arashi\\worktrees\\"])).toEqual([
-      { input: "./repos", rule: "repos/", safety: "safe" },
-      { input: ".arashi\\worktrees\\", rule: ".arashi/worktrees/", safety: "safe" },
+      { input: "./repos", rule: "/repos/", safety: "safe" },
+      { input: ".arashi\\worktrees\\", rule: "/.arashi/worktrees/", safety: "safe" },
+    ]);
+  });
+
+  test("escapes Git pattern metacharacters in configured directory names", () => {
+    expect(classifyManagedPaths(["!cache", "#generated", "[ab]", "star*", "maybe?"])).toEqual([
+      { input: "!cache", rule: "/\\!cache/", safety: "safe" },
+      { input: "#generated", rule: "/\\#generated/", safety: "safe" },
+      { input: "[ab]", rule: "/\\[ab\\]/", safety: "safe" },
+      { input: "star*", rule: "/star\\*/", safety: "safe" },
+      { input: "maybe?", rule: "/maybe\\?/", safety: "safe" },
     ]);
   });
 
@@ -46,6 +56,13 @@ describe("managed ignore path classification", () => {
       { input: "../repos", reason: "parent-traversal", safety: "unsafe" },
       { input: "/tmp/repos", reason: "absolute", safety: "unsafe" },
       { input: String.raw`C:\repos`, reason: "absolute", safety: "unsafe" },
+    ]);
+  });
+
+  test("rejects control characters that could inject managed ignore rules", () => {
+    expect(classifyManagedPaths(["safe\n*", "safe\0path"])).toEqual([
+      { input: "safe\n*", reason: "control-character", safety: "unsafe" },
+      { input: "safe\0path", reason: "control-character", safety: "unsafe" },
     ]);
   });
 
@@ -62,7 +79,7 @@ describe("managed ignore path classification", () => {
     });
 
     expect(inspection.paths[0]).toMatchObject({
-      rule: "repos/",
+      rule: "/repos/",
       source: { pattern: "repos/", type: "tracked" },
       status: "already-ignored",
     });
@@ -156,6 +173,90 @@ describe("managed ignore path classification", () => {
     expect(explicit).toMatchObject({ scope: "none", storedPreference: "tracked" });
   });
 
+  test("preserves team-owned tracked rules when no clone-local scope was selected", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    const tracked =
+      "# BEGIN Arashi managed ignore rules\n/repos/\n/.arashi/worktrees/\n# END Arashi managed ignore rules\n";
+    await writeFile(join(root, ".gitignore"), tracked);
+
+    const result = await reconcileManagedIgnore({
+      reposDir: "repos",
+      workspaceRoot: root,
+      worktreesDir: ".arashi/worktrees",
+    });
+
+    expect(result.changed).toBe(false);
+    expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(tracked);
+    expect(await readFile(join(root, ".git", "info", "exclude"), "utf8")).not.toContain(
+      "BEGIN Arashi",
+    );
+  });
+
+  test("migrates Arashi-owned rules when switching from local to tracked scope", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+
+    await reconcileManagedIgnore({
+      reposDir: "repos",
+      workspaceRoot: root,
+      worktreesDir: ".arashi/worktrees",
+    });
+    const result = await reconcileManagedIgnore({
+      reposDir: "repos",
+      requestedScope: "tracked",
+      workspaceRoot: root,
+      worktreesDir: ".arashi/worktrees",
+    });
+
+    expect(await readFile(join(root, ".gitignore"), "utf8")).toContain("/repos/");
+    expect(await readFile(join(root, ".git", "info", "exclude"), "utf8")).not.toContain(
+      "BEGIN Arashi",
+    );
+    expect(result.fileChanges).toMatchObject({ local: true, preference: true, tracked: true });
+  });
+
+  test("propagates failures while clearing the clone-local scope preference", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    await git(root, ["config", "--local", "arashi.ignoreScope", "tracked"]);
+    await writeFile(join(root, ".git", "config.lock"), "locked");
+
+    await expect(
+      reconcileManagedIgnore({
+        reposDir: "repos",
+        requestedScope: "local",
+        workspaceRoot: root,
+        worktreesDir: ".arashi/worktrees",
+      }),
+    ).rejects.toMatchObject({ code: "MANAGED_IGNORE_RECONCILIATION_FAILED" });
+  });
+
+  test("rejects a tracked ignore target that is a symbolic link", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    const outside = join(root, "outside-ignore");
+    await writeFile(outside, "outside\n");
+    await symlink(outside, join(root, ".gitignore"));
+
+    await expect(
+      reconcileManagedIgnore({
+        reposDir: "repos",
+        requestedScope: "tracked",
+        workspaceRoot: root,
+        worktreesDir: ".arashi/worktrees",
+      }),
+    ).rejects.toMatchObject({ code: "MANAGED_IGNORE_RECONCILIATION_FAILED" });
+    expect(await readFile(outside, "utf8")).toBe("outside\n");
+  });
+
   test("restores preference state when applying the target file fails", async () => {
     if (process.platform === "win32") {
       return;
@@ -202,7 +303,7 @@ describe("managed ignore path classification", () => {
     });
 
     expect(await readFile(excludePath, "utf8")).toContain(
-      "# BEGIN Arashi managed ignore rules\nrepos/\n.arashi/worktrees/\n# END Arashi managed ignore rules",
+      "# BEGIN Arashi managed ignore rules\n/repos/\n/.arashi/worktrees/\n# END Arashi managed ignore rules",
     );
     expect(result).toMatchObject({ attempted: true, changed: true, restored: false });
 
@@ -245,7 +346,7 @@ describe("managed ignore path classification", () => {
     const excludePath = join(root, ".git", "info", "exclude");
     await writeFile(
       excludePath,
-      "user-rule/\n# BEGIN Arashi managed ignore rules\nold-repos/\nrepos/\n# END Arashi managed ignore rules\n",
+      "user-rule/\n# BEGIN Arashi managed ignore rules\n/old-repos/\n/repos/\n# END Arashi managed ignore rules\n",
     );
 
     await reconcileManagedIgnore({

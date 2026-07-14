@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, posix, resolve, win32 } from "path";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { ArashiError } from "./errors.ts";
 import { exec as gitExec } from "./git.ts";
 import { runtime } from "./runtime.ts";
@@ -11,7 +11,11 @@ export interface SafeManagedPath {
   safety: "safe";
 }
 
-export type UnsafeManagedPathReason = "absolute" | "parent-traversal" | "repository-root";
+export type UnsafeManagedPathReason =
+  | "absolute"
+  | "control-character"
+  | "parent-traversal"
+  | "repository-root";
 
 export interface UnsafeManagedPath {
   input: string;
@@ -93,8 +97,7 @@ export class ManagedIgnoreError extends Error {
 }
 
 interface ManagedIgnoreSnapshot {
-  fileContent: string | null;
-  filePath?: string;
+  files: Array<{ content: string | null; path: string }>;
   preference: string | null;
   workspaceRoot: string;
 }
@@ -108,6 +111,14 @@ export const classifyManagedPaths = (paths: string[]): ManagedPathClassification
   const candidates: ManagedPathClassification[] = [];
 
   for (const input of paths) {
+    const hasControlCharacter = [...input].some((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint !== undefined && (codePoint <= 31 || codePoint === 127);
+    });
+    if (hasControlCharacter) {
+      candidates.push({ input, reason: "control-character", safety: "unsafe" });
+      continue;
+    }
     const slashPath = input.replaceAll("\\", "/");
     const normalized = posix.normalize(slashPath).replace(/^\.\//, "").replace(/\/$/, "");
     if (normalized === "" || normalized === ".") {
@@ -123,7 +134,8 @@ export const classifyManagedPaths = (paths: string[]): ManagedPathClassification
       continue;
     }
 
-    const rule = `${normalized}/`;
+    const escaped = normalized.replace(/([*?[\]])/g, "\\$1").replace(/^([#!])/, "\\$1");
+    const rule = `/${escaped}/`;
     if (seen.has(rule)) {
       continue;
     }
@@ -205,8 +217,10 @@ export const inspectManagedIgnore = async ({
       workspaceRoot,
     );
     storedValue = result.stdout.trim() || null;
-  } catch {
-    // Git exits 1 when a config key is absent.
+  } catch (error) {
+    if (!(error instanceof ArashiError && error.context.exitCode === 1)) {
+      throw error;
+    }
   }
   const validScopes = new Set<ManagedIgnoreScope>(["local", "tracked", "none"]);
   if (storedValue !== null && !validScopes.has(storedValue as ManagedIgnoreScope)) {
@@ -221,6 +235,8 @@ export const inspectManagedIgnore = async ({
   const scope = (requestedScope as ManagedIgnoreScope | undefined) ?? storedPreference ?? "local";
   const localPathResult = await gitExec(["rev-parse", "--git-path", "info/exclude"], workspaceRoot);
   const localExcludePath = resolveGitPath(workspaceRoot, localPathResult.stdout.trim());
+  const trackedIgnorePath = resolve(workspaceRoot, ".gitignore");
+  await assertNotSymlink(trackedIgnorePath);
   const classifications = classifyManagedPaths([reposDir, worktreesDir]);
   const paths: ManagedIgnorePathResult[] = [];
 
@@ -234,11 +250,11 @@ export const inspectManagedIgnore = async ({
       });
       continue;
     }
-    const source = await inspectEffectiveSource(
-      workspaceRoot,
-      classification.rule,
-      localExcludePath,
-    );
+    const effectivePath = `${posix
+      .normalize(classification.input.replaceAll("\\", "/"))
+      .replace(/^\.\//, "")
+      .replace(/\/$/, "")}/`;
+    const source = await inspectEffectiveSource(workspaceRoot, effectivePath, localExcludePath);
     paths.push({
       input: classification.input,
       rule: classification.rule,
@@ -249,7 +265,6 @@ export const inspectManagedIgnore = async ({
   }
 
   const safeRules = new Set(paths.flatMap((path) => (path.rule ? [path.rule] : [])));
-  const trackedIgnorePath = resolve(workspaceRoot, ".gitignore");
   const staleRules: ManagedIgnoreStaleRule[] = [];
   for (const [target, path] of [
     ["local", localExcludePath],
@@ -279,6 +294,19 @@ const readOptionalFile = async (path: string): Promise<string | null> => {
       return null;
     }
     throw error;
+  }
+};
+
+const assertNotSymlink = async (path: string): Promise<void> => {
+  try {
+    const stats = await lstat(path);
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Refusing to modify symbolic-link ignore file: ${path}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
   }
 };
 
@@ -331,8 +359,10 @@ const updateStoredPreference = async (
   if (scope === "local") {
     try {
       await gitExec(["config", "--local", "--unset-all", "arashi.ignoreScope"], workspaceRoot);
-    } catch {
-      // The default is represented by an absent key.
+    } catch (error) {
+      if (!(error instanceof ArashiError && error.context.exitCode === 5)) {
+        throw error;
+      }
     }
     return;
   }
@@ -353,25 +383,51 @@ export const reconcileManagedIgnore = async (
     );
   }
   const targetType = inspection.scope === "none" ? undefined : inspection.scope;
-  let targetPath: string | undefined;
-  if (targetType === "local") {
-    targetPath = inspection.localExcludePath;
-  } else if (targetType === "tracked") {
-    targetPath = inspection.trackedIgnorePath;
-  }
-  const targetContent = targetPath ? await readOptionalFile(targetPath) : null;
-  const currentOwnedRules = getOwnedRules(targetContent);
+  const targetPath =
+    targetType === "local"
+      ? inspection.localExcludePath
+      : targetType === "tracked"
+        ? inspection.trackedIgnorePath
+        : undefined;
+  const fileStates = {
+    local: {
+      content: await readOptionalFile(inspection.localExcludePath),
+      path: inspection.localExcludePath,
+    },
+    tracked: {
+      content: await readOptionalFile(inspection.trackedIgnorePath),
+      path: inspection.trackedIgnorePath,
+    },
+  };
+  const ownedRules = {
+    local: getOwnedRules(fileStates.local.content),
+    tracked: getOwnedRules(fileStates.tracked.content),
+  };
   const safeRules = new Set(
     inspection.paths.flatMap((path) => (path.safety === "safe" && path.rule ? [path.rule] : [])),
   );
-  const staleRules: ManagedIgnoreStaleRule[] = targetType
-    ? currentOwnedRules
-        .filter((rule) => !safeRules.has(rule))
-        .map((rule) => ({ path: targetPath ?? "", rule, target: targetType }))
-    : inspection.staleRules;
-  const missingPaths = inspection.paths.filter(
-    (path) => path.safety === "safe" && path.status === "unignored" && path.rule,
-  );
+  const staleRules = inspection.staleRules;
+  const migrateOwnedRules =
+    options.requestedScope !== undefined || inspection.storedPreference !== null;
+  const otherType =
+    migrateOwnedRules && targetType === "local"
+      ? "tracked"
+      : migrateOwnedRules && targetType === "tracked"
+        ? "local"
+        : undefined;
+  const missingPaths = inspection.paths.filter((path) => {
+    if (path.safety !== "safe" || !path.rule) {
+      return false;
+    }
+    if (path.status === "unignored") {
+      return true;
+    }
+    return (
+      otherType !== undefined &&
+      path.source?.type === otherType &&
+      ownedRules[otherType].includes(path.rule)
+    );
+  });
   const plannedRules = targetType ? missingPaths.map((path) => path.rule as string) : [];
   const warnings =
     inspection.scope === "none"
@@ -385,12 +441,37 @@ export const reconcileManagedIgnore = async (
           ),
         ]
       : [];
-  const desiredRules = [
-    ...currentOwnedRules.filter((rule) => safeRules.has(rule)),
-    ...plannedRules,
-  ].filter((rule, index, rules) => rules.indexOf(rule) === index);
-  const nextContent = targetPath ? replaceOwnedBlock(targetContent, desiredRules) : targetContent;
-  const fileWouldChange = targetPath !== undefined && nextContent !== targetContent;
+  const nextContents = {
+    local:
+      targetType === undefined
+        ? fileStates.local.content
+        : targetType === "local"
+          ? replaceOwnedBlock(
+              fileStates.local.content,
+              [...ownedRules.local.filter((rule) => safeRules.has(rule)), ...plannedRules].filter(
+                (rule, index, rules) => rules.indexOf(rule) === index,
+              ),
+            )
+          : migrateOwnedRules
+            ? replaceOwnedBlock(fileStates.local.content, [])
+            : fileStates.local.content,
+    tracked:
+      targetType === undefined
+        ? fileStates.tracked.content
+        : targetType === "tracked"
+          ? replaceOwnedBlock(
+              fileStates.tracked.content,
+              [...ownedRules.tracked.filter((rule) => safeRules.has(rule)), ...plannedRules].filter(
+                (rule, index, rules) => rules.indexOf(rule) === index,
+              ),
+            )
+          : migrateOwnedRules
+            ? replaceOwnedBlock(fileStates.tracked.content, [])
+            : fileStates.tracked.content,
+  };
+  const filePlans = (["local", "tracked"] as const).filter(
+    (type) => nextContents[type] !== fileStates[type].content,
+  );
   const preferenceWouldChange =
     options.requestedScope !== undefined &&
     (inspection.scope === "local"
@@ -399,7 +480,7 @@ export const reconcileManagedIgnore = async (
   const result: ManagedIgnoreReconciliation = {
     ...inspection,
     appliedRules: [],
-    attempted: fileWouldChange || preferenceWouldChange,
+    attempted: filePlans.length > 0 || preferenceWouldChange,
     changed: false,
     fileChanges: { local: false, preference: false, tracked: false },
     paths: inspection.paths.map((path) =>
@@ -416,8 +497,10 @@ export const reconcileManagedIgnore = async (
   };
 
   reconciliationSnapshots.set(result, {
-    fileContent: targetContent,
-    filePath: targetPath,
+    files: (["local", "tracked"] as const).map((type) => ({
+      content: fileStates[type].content,
+      path: fileStates[type].path,
+    })),
     preference: inspection.storedPreference,
     workspaceRoot: options.workspaceRoot,
   });
@@ -432,13 +515,17 @@ export const reconcileManagedIgnore = async (
       await updateStoredPreference(options.workspaceRoot, inspection.scope);
       result.fileChanges.preference = true;
     }
-    if (fileWouldChange && targetPath && nextContent !== null) {
+    for (const type of filePlans) {
+      const nextContent = nextContents[type];
+      if (nextContent === null) {
+        continue;
+      }
       mutationStarted = true;
-      await mkdir(dirname(targetPath), { recursive: true });
-      await writeFile(targetPath, nextContent);
-      result.fileChanges[targetType as "local" | "tracked"] = true;
-      result.appliedRules = plannedRules;
+      await mkdir(dirname(fileStates[type].path), { recursive: true });
+      await writeFile(fileStates[type].path, nextContent);
+      result.fileChanges[type] = true;
     }
+    result.appliedRules = plannedRules;
   } catch (error) {
     result.changed = mutationStarted;
     if (mutationStarted) {
@@ -477,7 +564,7 @@ export const reconcileManagedIgnore = async (
       { cause: error },
     );
   }
-  result.changed = fileWouldChange || preferenceWouldChange;
+  result.changed = filePlans.length > 0 || preferenceWouldChange;
   return result;
 };
 
@@ -488,17 +575,17 @@ export const restoreManagedIgnore = async (
   if (!snapshot) {
     throw new Error("Managed ignore reconciliation cannot be restored.");
   }
-  if (snapshot.filePath) {
-    if (snapshot.fileContent === null) {
+  for (const file of snapshot.files) {
+    if (file.content === null) {
       try {
-        await unlink(snapshot.filePath);
+        await unlink(file.path);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
           throw error;
         }
       }
     } else {
-      await writeFile(snapshot.filePath, snapshot.fileContent);
+      await writeFile(file.path, file.content);
     }
   }
   if (snapshot.preference === null) {

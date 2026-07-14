@@ -538,6 +538,7 @@ describe("CLI JSON output contract", () => {
     const parsed = parseSingleJsonDocument(result.stdout);
     expect(parsed).toMatchObject({ command: "add", ok: true, schemaVersion: 1 });
     expect(jsonData(parsed).managedIgnore).toMatchObject({ changed: true, scope: "local" });
+    expect(result.stderr).toBe("");
   });
 
   test("remove --json rejects interactive selection mode with one envelope", async () => {

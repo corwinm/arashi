@@ -315,6 +315,7 @@ export async function executeClone(
 
   const cloned: string[] = [];
   const failed: { name: string; reason: string }[] = [];
+  let residualMaterializedState = false;
   const skipped = missingWithUrls
     .map((repository) => repository.name)
     .filter((name) => !selectedRepositories.some((repository) => repository.name === name));
@@ -359,7 +360,18 @@ export async function executeClone(
         cloneSpinner?.succeed(`Cloned ${repository.name}`);
         cloned.push(repository.name);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        let reason = error instanceof Error ? error.message : String(error);
+        if (await exists(repository.path)) {
+          try {
+            await deleteDirectory(repository.path);
+          } catch (cleanupError) {
+            residualMaterializedState = true;
+            reason += `; cleanup failed: ${
+              cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+            }`;
+          }
+        }
+        residualMaterializedState = residualMaterializedState || (await exists(repository.path));
         cloneSpinner?.fail(`Failed to clone ${repository.name}`);
         failed.push({
           name: repository.name,
@@ -374,11 +386,18 @@ export async function executeClone(
     }
   }
 
-  if (configUpdated) {
-    await writeConfig(workspaceRoot, config);
+  try {
+    if (configUpdated) {
+      await writeConfig(workspaceRoot, config);
+    }
+  } catch (error) {
+    if (cloned.length === ZERO && !residualMaterializedState && managedIgnore.changed) {
+      await restoreManagedIgnore(managedIgnore);
+    }
+    throw error;
   }
 
-  if (cloned.length === ZERO && managedIgnore.changed) {
+  if (cloned.length === ZERO && !residualMaterializedState && managedIgnore.changed) {
     await restoreManagedIgnore(managedIgnore);
   }
 

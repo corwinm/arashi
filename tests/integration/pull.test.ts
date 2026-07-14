@@ -197,6 +197,24 @@ describe("pull command", () => {
   );
 
   test(
+    "pulls the selected parent before tracked managed-ignore reconciliation",
+    async () => {
+      const { workspaceRoot, mainRemote } = await createWorkspaceWithRepo(testDir);
+      await runGit(workspaceRoot, ["config", "--local", "arashi.ignoreScope", "tracked"]);
+      await createRemoteCommit(mainRemote, testDir, "main-ignore-update", ".gitignore");
+
+      const result = await runPullCommand(workspaceRoot, ["--only", "workspace"]);
+      const trackedIgnore = await readFile(join(workspaceRoot, ".gitignore"), "utf8");
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("updated");
+      expect(trackedIgnore).toContain("update");
+      expect(trackedIgnore).toContain("/repos/");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
+
+  test(
     "reloads parent config and reconciles changed managed paths before child processing",
     async () => {
       const { workspaceRoot, mainRemote } = await createWorkspaceWithRepo(testDir);

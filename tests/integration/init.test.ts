@@ -533,6 +533,33 @@ describe("init command - repository bootstrap", () => {
     expect(loadedConfig.reposDir).toBe("./repos");
   });
 
+  test("dry-run previews bootstrap ignore rules without requiring a Git repository", async () => {
+    testDir = await createTempDir();
+
+    const result = await executeInit(
+      { dryRun: true, noDiscover: true },
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: true }),
+        promptInput: async () => ({ status: "ok", value: "." }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result).toMatchObject({
+      managedIgnore: {
+        changed: false,
+        paths: [{ status: "planned" }, { status: "planned" }],
+        scope: "local",
+      },
+      success: true,
+      workspaceRoot: testDir,
+    });
+    expect(await fileExists(join(testDir, ".git"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, "repos"))).toBe(false);
+  });
+
   test("rejects unsupported bootstrap targets", async () => {
     testDir = await createTempDir();
 
@@ -583,6 +610,34 @@ describe("init command - rollback behavior", () => {
     expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
     // Managed ignore state is part of the same rollback boundary.
     expect(await fileExists(join(testDir, ".gitignore"))).toBe(false);
+  });
+
+  test("reports incomplete managed-ignore rollback details", async () => {
+    await writeFile(join(testDir, "repos"), "blocks directory creation");
+
+    const result = await executeInit(
+      { noDiscover: true, quiet: true },
+      {
+        cwd: testDir,
+        restoreManagedIgnore: async () => {
+          throw new Error("simulated restore failure");
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      rollbackFailure: {
+        code: "INIT_ROLLBACK_FAILED",
+        details: {
+          failures: [
+            expect.objectContaining({
+              message: "simulated restore failure",
+            }),
+          ],
+        },
+      },
+      success: false,
+    });
   });
 
   test("rolls back when config write fails due to permissions", async () => {
@@ -897,7 +952,7 @@ describe("init command - dry-run mode", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[DRY RUN] UPDATE_FILE:");
-    expect(result.stdout).toContain("add: repos/");
+    expect(result.stdout).toContain("add: /repos/");
     expect(result.stdout).not.toContain("../workspace-worktrees/");
     expect(result.stdout).not.toContain(".arashi/worktrees/");
   });

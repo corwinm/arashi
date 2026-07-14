@@ -100,14 +100,17 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
       ...repositories.filter((repository) => repository !== selectedParent),
     ];
   }
-  let managedIgnore = await reconcileManagedIgnore({
-    reposDir: repositoriesResult.config.reposDir,
-    workspaceRoot,
-    worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-  });
-  if (!options.json) {
-    for (const warning of managedIgnore.warnings) {
-      info(`Warning: ${warning}`);
+  let managedIgnore;
+  if (!selectedParent) {
+    managedIgnore = await reconcileManagedIgnore({
+      reposDir: repositoriesResult.config.reposDir,
+      workspaceRoot,
+      worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+    });
+    if (!options.json) {
+      for (const warning of managedIgnore.warnings) {
+        info(`Warning: ${warning}`);
+      }
     }
   }
   if (repositories.length === ZERO) {
@@ -192,32 +195,46 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
     }
 
     const parentResult = results.at(-ONE);
-    if (
-      repo.path === workspaceRoot &&
-      parentResult?.repositoryId === repo.name &&
-      parentResult.status === "updated"
-    ) {
-      repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch((error): never => {
-        throw new CliUsageError(
-          `Failed to reload pulled workspace configuration: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-      const postPullSelection = excludeWorkspaceRoot(
-        selectRepositories(repositoriesResult.repositories, options),
-        workspaceRoot,
-      );
-      repositories.splice(index + ONE, repositories.length, ...postPullSelection);
-      total = repositories.length;
-      timeoutMs = repositoriesResult.config.hooks?.timeout;
-      managedIgnore = await reconcileManagedIgnore({
-        reposDir: repositoriesResult.config.reposDir,
-        workspaceRoot,
-        worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-      });
-      if (!options.json) {
-        for (const warning of managedIgnore.warnings) {
-          info(`Warning: ${warning}`);
+    if (repo.path === workspaceRoot && parentResult?.repositoryId === repo.name) {
+      if (parentResult.status === "updated") {
+        try {
+          repositoriesResult = await loadWorkspaceRepositories(workspaceRoot);
+          const postPullSelection = excludeWorkspaceRoot(
+            selectRepositories(repositoriesResult.repositories, options),
+            workspaceRoot,
+          );
+          repositories.splice(index + ONE, repositories.length, ...postPullSelection);
+          total = repositories.length;
+          timeoutMs = repositoriesResult.config.hooks?.timeout;
+        } catch (error) {
+          results.push({
+            elapsedSeconds: ZERO,
+            errorMessage: `Failed to reload pulled workspace configuration: ${error instanceof Error ? error.message : String(error)}`,
+            repositoryId: "workspace-config",
+            status: "failed",
+          });
+          break;
         }
+      }
+      try {
+        managedIgnore = await reconcileManagedIgnore({
+          reposDir: repositoriesResult.config.reposDir,
+          workspaceRoot,
+          worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+        });
+        if (!options.json) {
+          for (const warning of managedIgnore.warnings) {
+            info(`Warning: ${warning}`);
+          }
+        }
+      } catch (error) {
+        results.push({
+          elapsedSeconds: ZERO,
+          errorMessage: `Managed ignore reconciliation failed: ${error instanceof Error ? error.message : String(error)}`,
+          repositoryId: "managed-ignore",
+          status: "failed",
+        });
+        break;
       }
     }
   }

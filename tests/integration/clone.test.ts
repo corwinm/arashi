@@ -218,6 +218,44 @@ describe("clone command", () => {
     expect(resolveCoordinatedSourceWorkspaceRoot("/workspace/arashi-arashi")).toBeNull();
   });
 
+  test("retains managed ignore coverage when failed clone cleanup leaves a destination", async () => {
+    const destination = join(workspaceRoot, "repos", "repo-a");
+    let materialized = false;
+    const config: Config = {
+      repos: {
+        "repo-a": {
+          gitUrl: "https://github.com/team/repo-a.git",
+          path: "./repos/repo-a",
+        },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true },
+      {
+        cloneRepository: async () => {
+          materialized = true;
+          throw new Error("simulated partial clone");
+        },
+        loadConfig: async () => config,
+        pathExists: async (path) => path === destination && materialized,
+        removeDir: async () => {
+          throw new Error("simulated cleanup failure");
+        },
+        saveConfig: async () => {},
+        workspaceRoot,
+      },
+    );
+
+    expect(result.status).toBe("partial-failure");
+    expect(result.managedIgnore).toMatchObject({ changed: true, restored: false });
+    expect(await readFile(join(workspaceRoot, ".git", "info", "exclude"), "utf8")).toContain(
+      "/repos/",
+    );
+  });
+
   test("continues cloning after partial failures", async () => {
     const config: Config = {
       repos: {

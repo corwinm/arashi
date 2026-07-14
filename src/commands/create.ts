@@ -16,6 +16,7 @@ import {
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
 import { basename, resolve } from "path";
+import { existsSync } from "node:fs";
 import {
   buildDirtyGuidance,
   buildMovePlan,
@@ -261,6 +262,7 @@ export interface ResolvedCreateDefaults {
 
 export interface CreateCommandDependencies {
   resolveCreateInvocationContext?: (invocationPath?: string) => Promise<CreateInvocationContext>;
+  resolveManagedIgnoreWorkspaceRoot?: (context: CreateInvocationContext) => Promise<string>;
   loadConfigWithFallback?: typeof loadConfigWithFallback;
   discoverRepositories?: typeof discoverRepositories;
   isGitRepository?: (path: string) => Promise<boolean>;
@@ -268,6 +270,8 @@ export interface CreateCommandDependencies {
   applyRepositoryFilter?: typeof applyRepositoryFilter;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
   reconcileManagedIgnore?: typeof reconcileManagedIgnore;
+  restoreManagedIgnore?: typeof restoreManagedIgnore;
+  pathExists?: (path: string) => boolean;
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
     options: { sesh?: boolean },
@@ -319,6 +323,29 @@ export async function resolveCreateInvocationContext(
     repositoryType: "non-bare",
     workspaceRoot,
   };
+}
+
+export async function resolveManagedIgnoreWorkspaceRoot(
+  context: CreateInvocationContext,
+): Promise<string> {
+  if (context.repositoryType !== "bare") {
+    return context.workspaceRoot;
+  }
+
+  const result = await exec(["worktree", "list", "--porcelain"], context.executionPath);
+  const worktreePaths = result.stdout
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length).trim());
+  const linkedWorktree = worktreePaths.find(
+    (path) => resolve(path) !== resolve(context.executionPath),
+  );
+  if (!linkedWorktree) {
+    throw new CreateSetupError(
+      "Managed ignore reconciliation from a bare repository requires an existing linked worktree.",
+    );
+  }
+  return linkedWorktree;
 }
 
 const isGitRepository = async (path: string): Promise<boolean> => {
@@ -630,6 +657,8 @@ export async function executeCreate(
 
   const resolveInvocationContext =
     deps.resolveCreateInvocationContext ?? resolveCreateInvocationContext;
+  const resolveIgnoreWorkspaceRoot =
+    deps.resolveManagedIgnoreWorkspaceRoot ?? resolveManagedIgnoreWorkspaceRoot;
   const loadWorkspaceConfig = deps.loadConfigWithFallback ?? loadConfigWithFallback;
   const discoverWorkspaceRepositories = deps.discoverRepositories ?? discoverRepositories;
   const detectGitRepository = deps.isGitRepository ?? isGitRepository;
@@ -642,6 +671,8 @@ export async function executeCreate(
   const filterRepositories = deps.applyRepositoryFilter ?? applyRepositoryFilter;
   const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
   const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileManagedIgnore;
+  const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
+  const pathExists = deps.pathExists ?? existsSync;
 
   // 1. Resolve invocation context and load configuration
   const context = await resolveInvocationContext();
@@ -818,17 +849,14 @@ export async function executeCreate(
     workspaceRoot: context.workspaceRoot,
   };
 
-  // A bare repository has no work tree whose untracked paths Git can ignore.
-  const managedIgnore =
-    context.repositoryType === "bare"
-      ? undefined
-      : await reconcileIgnore({
-          dryRun: options.dryRun,
-          reposDir: arashiConfig.reposDir,
-          workspaceRoot: context.workspaceRoot,
-          worktreesDir: arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-        });
-  if (!options.json && managedIgnore) {
+  const managedIgnoreWorkspaceRoot = await resolveIgnoreWorkspaceRoot(context);
+  const managedIgnore = await reconcileIgnore({
+    dryRun: options.dryRun,
+    reposDir: arashiConfig.reposDir,
+    workspaceRoot: managedIgnoreWorkspaceRoot,
+    worktreesDir: arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+  });
+  if (!options.json) {
     for (const warning of managedIgnore.warnings) {
       warn(warning);
     }
@@ -836,8 +864,11 @@ export async function executeCreate(
 
   // 6. Execute coordinated worktree creation
   const summary = await runCreate(branchName, selectedRepos, worktreeOptions);
-  if (summary.rolledBack && managedIgnore?.changed) {
-    await restoreManagedIgnore(managedIgnore);
+  const residualWorktrees = summary.repositoryResults.some(
+    (result) => Boolean(result.worktreePath) && pathExists(result.worktreePath as string),
+  );
+  if (summary.rolledBack && !residualWorktrees && managedIgnore.changed) {
+    await restoreIgnore(managedIgnore);
   }
   const dirtyGuidanceContext = options.dryRun
     ? null

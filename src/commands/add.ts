@@ -395,6 +395,7 @@ const executeAdd = async (
 ): Promise<AddCommandResult> => {
   const operations: RollbackOperation[] = [];
   let managedIgnore: ManagedIgnoreReconciliation | undefined = undefined;
+  const startSpinner = (text: string) => (options.json ? undefined : spinner(text).start());
 
   try {
     // Step 1: Validate workspace is initialized
@@ -408,9 +409,9 @@ const executeAdd = async (
     }
 
     // Step 2: Parse and validate Git URL
-    const s1 = spinner("Validating Git URL...").start();
+    const s1 = startSpinner("Validating Git URL...");
     const urlInfo = parseGitUrl(gitUrl);
-    s1.succeed("Git URL validated");
+    s1?.succeed("Git URL validated");
 
     // Step 3: Determine repository name
     const repositoryName = options.name || urlInfo.derivedName;
@@ -445,13 +446,17 @@ const executeAdd = async (
     }
 
     // Step 6: Clone repository
-    const s2 = spinner(`Cloning repository from ${gitUrl}...`).start();
+    const s2 = startSpinner(`Cloning repository from ${gitUrl}...`);
+    const clonePathExistedBefore = await runtime.file(clonePath).exists();
     try {
       await clone(gitUrl, clonePath);
       operations.push({ path: clonePath, reversible: true, type: "clone" });
-      s2.succeed("Repository cloned");
+      s2?.succeed("Repository cloned");
     } catch (error) {
-      s2.fail("Clone failed");
+      if (!clonePathExistedBefore && (await runtime.file(clonePath).exists())) {
+        operations.push({ path: clonePath, reversible: true, type: "clone" });
+      }
+      s2?.fail("Clone failed");
       throw new AddCommandError(
         `Git clone operation failed: ${(error as Error).message}`,
         AddCommandErrorCode.CLONE_FAILED,
@@ -460,24 +465,24 @@ const executeAdd = async (
     }
 
     // Step 7: Detect default branch
-    const s3 = spinner("Detecting default branch...").start();
+    const s3 = startSpinner("Detecting default branch...");
     const defaultBranch = await detectDefaultBranchOrThrow(clonePath, gitUrl).catch((error) => {
-      s3.fail("Branch detection failed");
+      s3?.fail("Branch detection failed");
       throw error;
     });
-    s3.succeed(`Detected default branch: ${defaultBranch}`);
+    s3?.succeed(`Detected default branch: ${defaultBranch}`);
 
     // Step 8: Detect setup script
-    const s4 = spinner("Checking for setup script...").start();
+    const s4 = startSpinner("Checking for setup script...");
     const setupScript = await detectSetupScript(clonePath);
     if (setupScript) {
-      s4.succeed(`Found setup script: ${basename(setupScript)}`);
+      s4?.succeed(`Found setup script: ${basename(setupScript)}`);
     } else {
-      s4.info("No setup script found");
+      s4?.info("No setup script found");
     }
 
     // Step 9: Update configuration
-    const s5 = spinner("Updating configuration...").start();
+    const s5 = startSpinner("Updating configuration...");
     try {
       const repoConfig: RepoConfig = {
         gitUrl: urlInfo.url,
@@ -486,9 +491,9 @@ const executeAdd = async (
 
       config.repos[repositoryName] = repoConfig;
       await saveConfig(workspaceRoot, config);
-      s5.succeed("Configuration updated");
+      s5?.succeed("Configuration updated");
     } catch (error) {
-      s5.fail("Configuration update failed");
+      s5?.fail("Configuration update failed");
       throw new AddCommandError(
         `Failed to update configuration file: ${(error as Error).message}`,
         AddCommandErrorCode.CONFIG_UPDATE_FAILED,
@@ -508,6 +513,7 @@ const executeAdd = async (
     };
   } catch (error) {
     let managedIgnoreRestoreError: string | undefined = undefined;
+    let materializedStateSurvives = false;
     // Rollback operations in reverse order
     const rollbackOperations = [...operations];
     rollbackOperations.reverse();
@@ -518,12 +524,18 @@ const executeAdd = async (
           await rm(operation.path, { force: true, recursive: true });
         }
       } catch (cleanupError) {
-        info(`Warning: Failed to clean up ${operation.path}: ${(cleanupError as Error).message}`);
-        info(`Please manually remove: rm -rf ${operation.path}`);
+        materializedStateSurvives = true;
+        if (!options.json) {
+          info(`Warning: Failed to clean up ${operation.path}: ${(cleanupError as Error).message}`);
+          info(`Please manually remove: rm -rf ${operation.path}`);
+        }
+      }
+      if (operation.type === "clone" && (await runtime.file(operation.path).exists())) {
+        materializedStateSurvives = true;
       }
     }
 
-    if (managedIgnore?.changed) {
+    if (managedIgnore?.changed && !materializedStateSurvives) {
       try {
         await restoreManagedIgnore(managedIgnore);
       } catch (restoreError) {
@@ -534,6 +546,7 @@ const executeAdd = async (
       throw new AddCommandError(error.message, error.code, {
         ...error.context,
         managedIgnore,
+        materializedStateSurvives,
         ...(managedIgnoreRestoreError ? { managedIgnoreRestoreError } : {}),
       });
     }

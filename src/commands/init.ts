@@ -42,9 +42,11 @@ import { Command } from "commander";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec as gitExec } from "../lib/git.ts";
 import {
+  classifyManagedPaths,
   reconcileManagedIgnore,
   restoreManagedIgnore,
   type ManagedIgnoreReconciliation,
+  type ManagedIgnoreScope,
 } from "../lib/managed-ignore.ts";
 
 type Config = Parameters<typeof saveConfig>[1];
@@ -57,6 +59,73 @@ const ZERO = 0;
 const JSON_INDENT = 2;
 const PATH_MAX_LENGTH = 4096;
 const EXISTING_CONFIG_WARNING = "\n⚠ Warning: Existing configuration will be backed up";
+
+const previewBootstrapManagedIgnore = (
+  workspaceRoot: string,
+  reposDir: string,
+  worktreesDir: string,
+  requestedScope?: string,
+): ManagedIgnoreReconciliation => {
+  const validScopes = new Set<ManagedIgnoreScope>(["local", "tracked", "none"]);
+  const scope = (requestedScope ?? "local") as ManagedIgnoreScope;
+  if (!validScopes.has(scope)) {
+    throw new Error("Invalid ignore scope. Expected one of: local, tracked, none.");
+  }
+  const classifications = classifyManagedPaths([reposDir, worktreesDir]);
+  const plannedRules =
+    scope === "none"
+      ? []
+      : classifications.flatMap((path) => (path.safety === "safe" ? [path.rule] : []));
+  const localExcludePath = join(workspaceRoot, ".git", "info", "exclude");
+  const trackedIgnorePath = join(workspaceRoot, ".gitignore");
+  const targetType = scope === "none" ? undefined : scope;
+  const targetPath =
+    targetType === "local"
+      ? localExcludePath
+      : targetType === "tracked"
+        ? trackedIgnorePath
+        : undefined;
+  const paths = classifications.map((path) =>
+    path.safety === "safe"
+      ? {
+          input: path.input,
+          rule: path.rule,
+          safety: "safe" as const,
+          status: scope === "none" ? ("unignored" as const) : ("planned" as const),
+        }
+      : {
+          input: path.input,
+          safety: "unsafe" as const,
+          safetyReason: path.reason,
+          status: "unsafe" as const,
+        },
+  );
+
+  return {
+    appliedRules: [],
+    attempted: plannedRules.length > 0 || requestedScope !== undefined,
+    changed: false,
+    fileChanges: { local: false, preference: false, tracked: false },
+    localExcludePath,
+    paths,
+    plannedRules,
+    restored: false,
+    scope,
+    staleRules: [],
+    storedPreference: null,
+    targetPath,
+    targetType,
+    trackedIgnorePath,
+    warnings:
+      scope === "none"
+        ? paths.flatMap((path) =>
+            path.rule
+              ? [`Managed path '${path.rule}' remains unignored because scope is none.`]
+              : [],
+          )
+        : [],
+  };
+};
 
 // ============================================================================
 // Data Types
@@ -119,6 +188,9 @@ interface InitResult {
   /** Structured managed-ignore failure details for JSON automation */
   managedIgnoreFailure?: ReturnType<typeof unknownErrorToJsonError>;
 
+  /** Structured incomplete-rollback details for JSON automation */
+  rollbackFailure?: ReturnType<typeof unknownErrorToJsonError>;
+
   /** Whether only an existing workspace preference was reconciled */
   preferenceOnly?: boolean;
 }
@@ -135,6 +207,9 @@ interface InitDependencies {
 
   /** Override confirmation prompt implementation for tests */
   promptConfirm?: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
+
+  /** Override managed-ignore restoration for rollback tests */
+  restoreManagedIgnore?: typeof restoreManagedIgnore;
 
   /** Override stdin tty detection for tests */
   stdinIsTTY?: boolean;
@@ -193,6 +268,17 @@ const ExitCode = {
 
 const operations: Operation[] = [];
 
+class InitRollbackError extends Error {
+  readonly code = "INIT_ROLLBACK_FAILED";
+  readonly details: { failures: Array<{ message: string; path: string }> };
+
+  constructor(failures: Array<{ message: string; path: string }>) {
+    super(`Initialization rollback was incomplete for ${failures.length} operation(s).`);
+    this.name = "InitRollbackError";
+    this.details = { failures };
+  }
+}
+
 /**
  * Add an operation to the rollback stack
  */
@@ -210,6 +296,7 @@ const executeRollback = async (quiet = false): Promise<void> => {
 
   const reversedOps = [...operations];
   reversedOps.reverse();
+  const failures: Array<{ message: string; path: string }> = [];
 
   for (const op of reversedOps) {
     try {
@@ -218,6 +305,10 @@ const executeRollback = async (quiet = false): Promise<void> => {
         info(`  • Rolled back: ${op.path}`);
       }
     } catch (error) {
+      failures.push({
+        message: error instanceof Error ? error.message : String(error),
+        path: op.path,
+      });
       if (!quiet) {
         warn(`  • Failed to rollback: ${op.path} - ${(error as Error).message}`);
       }
@@ -225,6 +316,9 @@ const executeRollback = async (quiet = false): Promise<void> => {
   }
 
   operations.length = ZERO;
+  if (failures.length > ZERO) {
+    throw new InitRollbackError(failures);
+  }
 };
 
 // ============================================================================
@@ -629,6 +723,7 @@ export const executeInit = async (
 ): Promise<InitResult> => {
   const startTime = Date.now();
   const cwd = deps.cwd ?? process.cwd();
+  const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
 
   operations.length = ZERO;
 
@@ -769,13 +864,16 @@ export const executeInit = async (
 
     // Reconcile before any managed directories are materialized.
     logVerbose("Reconciling managed Git ignore rules...", options);
-    const managedIgnore = await reconcileManagedIgnore({
-      dryRun: options.dryRun,
-      reposDir,
-      requestedScope: options.ignoreScope,
-      workspaceRoot,
-      worktreesDir,
-    });
+    const managedIgnore =
+      options.dryRun && initRoot.bootstrapped
+        ? previewBootstrapManagedIgnore(workspaceRoot, reposDir, worktreesDir, options.ignoreScope)
+        : await reconcileManagedIgnore({
+            dryRun: options.dryRun,
+            reposDir,
+            requestedScope: options.ignoreScope,
+            workspaceRoot,
+            worktreesDir,
+          });
     if (options.dryRun && managedIgnore.targetPath) {
       logDryRun(
         "UPDATE_FILE",
@@ -788,7 +886,7 @@ export const executeInit = async (
       addOperation({
         path: managedIgnore.targetPath ?? "clone-local arashi.ignoreScope",
         rollback: async () => {
-          await restoreManagedIgnore(managedIgnore);
+          await restoreIgnore(managedIgnore);
         },
         type: "MANAGED_IGNORE",
       });
@@ -1027,6 +1125,9 @@ export const executeInit = async (
       ...(structuredError.code === "MANAGED_IGNORE_RECONCILIATION_FAILED"
         ? { managedIgnoreFailure: structuredError }
         : {}),
+      ...(structuredError.code === "INIT_ROLLBACK_FAILED"
+        ? { rollbackFailure: structuredError }
+        : {}),
       success: false,
       workspaceRoot: cwd,
     };
@@ -1200,11 +1301,12 @@ Existing effective tracked, local, or global rules are honored. Arashi never mod
           writeJsonEnvelope(
             createJsonErrorEnvelope(
               "init",
-              result.managedIgnoreFailure ?? {
-                code: `INIT_${result.exitCode}`,
-                details: { exitCode: result.exitCode, workspaceRoot: result.workspaceRoot },
-                message: result.error || "Unknown error",
-              },
+              result.managedIgnoreFailure ??
+                result.rollbackFailure ?? {
+                  code: `INIT_${result.exitCode}`,
+                  details: { exitCode: result.exitCode, workspaceRoot: result.workspaceRoot },
+                  message: result.error || "Unknown error",
+                },
             ),
           );
         } else {
