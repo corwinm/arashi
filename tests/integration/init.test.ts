@@ -608,36 +608,29 @@ describe("init command - rollback behavior", () => {
 
     // Verify .arashi directory removed
     expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
-    // Managed ignore state is part of the same rollback boundary.
-    expect(await fileExists(join(testDir, ".gitignore"))).toBe(false);
+    // Coverage is retained because the managed repos path still exists.
+    expect(await fileExists(join(testDir, ".gitignore"))).toBe(true);
+    expect(await readTextFile(join(testDir, ".gitignore"))).toContain("/repos/");
   });
 
-  test("reports incomplete managed-ignore rollback details", async () => {
+  test("retains managed ignore coverage when init rollback leaves a managed directory", async () => {
     await writeFile(join(testDir, "repos"), "blocks directory creation");
+    let restoreCalled = false;
 
     const result = await executeInit(
       { noDiscover: true, quiet: true },
       {
         cwd: testDir,
         restoreManagedIgnore: async () => {
-          throw new Error("simulated restore failure");
+          restoreCalled = true;
         },
       },
     );
 
-    expect(result).toMatchObject({
-      rollbackFailure: {
-        code: "INIT_ROLLBACK_FAILED",
-        details: {
-          failures: [
-            expect.objectContaining({
-              message: "simulated restore failure",
-            }),
-          ],
-        },
-      },
-      success: false,
-    });
+    expect(result.success).toBe(false);
+    expect(restoreCalled).toBe(false);
+    const exclude = await readTextFile(join(testDir, ".git", "info", "exclude"));
+    expect(exclude).toContain("/repos/");
   });
 
   test("rolls back when config write fails due to permissions", async () => {

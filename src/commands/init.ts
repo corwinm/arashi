@@ -237,6 +237,9 @@ interface Operation {
 
   /** Rollback function */
   rollback: () => Promise<void>;
+
+  /** Final-state guard for rollbacks that would remove required coverage */
+  shouldRollback?: () => Promise<boolean>;
 }
 
 interface InitResolution {
@@ -300,6 +303,12 @@ const executeRollback = async (quiet = false): Promise<void> => {
 
   for (const op of reversedOps) {
     try {
+      if (op.shouldRollback && !(await op.shouldRollback())) {
+        if (!quiet) {
+          info(`  • Retained: ${op.path} (managed state still exists)`);
+        }
+        continue;
+      }
       await op.rollback();
       if (!quiet) {
         info(`  • Rolled back: ${op.path}`);
@@ -888,6 +897,9 @@ export const executeInit = async (
         rollback: async () => {
           await restoreIgnore(managedIgnore);
         },
+        shouldRollback: async () =>
+          !(await fileExists(absoluteReposPath)) &&
+          !(await fileExists(resolve(workspaceRoot, worktreesDir))),
         type: "MANAGED_IGNORE",
       });
     }

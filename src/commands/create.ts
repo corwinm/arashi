@@ -15,8 +15,10 @@ import {
   applyRepositoryFilter,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
-import { basename, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import {
   buildDirtyGuidance,
   buildMovePlan,
@@ -62,6 +64,8 @@ type LaunchMode = "auto" | "sesh";
 type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
 type OperationSummary = Awaited<ReturnType<typeof createCoordinatedWorktrees>>;
 type RepositoryResult = OperationSummary["repositoryResults"][number];
+
+const temporaryManagedIgnoreWorktrees = new Map<string, string>();
 type SwitchProcessRunner = NonNullable<
   NonNullable<Parameters<typeof launchSwitchTarget>[2]>["runProcess"]
 >;
@@ -347,10 +351,31 @@ export async function resolveManagedIgnoreWorkspaceRoot(
       // Ignore stale worktree-list entries and continue looking for a usable work tree.
     }
   }
-  throw new CreateSetupError(
-    "Managed ignore reconciliation from a bare repository requires an existing linked worktree.",
-  );
+  const temporaryParent = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-worktree-"));
+  const temporaryWorktree = join(temporaryParent, "worktree");
+  try {
+    await exec(["worktree", "add", "--detach", temporaryWorktree, "HEAD"], context.executionPath);
+  } catch (error) {
+    await rm(temporaryParent, { force: true, recursive: true });
+    throw error;
+  }
+  temporaryManagedIgnoreWorktrees.set(temporaryWorktree, context.executionPath);
+  return temporaryWorktree;
 }
+
+const releaseManagedIgnoreWorkspaceRoot = async (workspaceRoot: string): Promise<boolean> => {
+  const bareRepository = temporaryManagedIgnoreWorktrees.get(workspaceRoot);
+  if (!bareRepository) {
+    return false;
+  }
+  temporaryManagedIgnoreWorktrees.delete(workspaceRoot);
+  try {
+    await exec(["worktree", "remove", "--force", workspaceRoot], bareRepository);
+  } finally {
+    await rm(dirname(workspaceRoot), { force: true, recursive: true });
+  }
+  return true;
+};
 
 const isGitRepository = async (path: string): Promise<boolean> => {
   try {
@@ -854,12 +879,30 @@ export async function executeCreate(
   };
 
   const managedIgnoreWorkspaceRoot = await resolveIgnoreWorkspaceRoot(context);
-  const managedIgnore = await reconcileIgnore({
-    dryRun: options.dryRun,
-    reposDir: arashiConfig.reposDir,
-    workspaceRoot: managedIgnoreWorkspaceRoot,
-    worktreesDir: arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-  });
+  const temporaryIgnoreWorkspace = temporaryManagedIgnoreWorktrees.has(managedIgnoreWorkspaceRoot);
+  let managedIgnore: ManagedIgnoreReconciliation;
+  try {
+    managedIgnore = await reconcileIgnore({
+      dryRun: options.dryRun,
+      reposDir: arashiConfig.reposDir,
+      workspaceRoot: managedIgnoreWorkspaceRoot,
+      worktreesDir: arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+    });
+    if (
+      temporaryIgnoreWorkspace &&
+      managedIgnore.targetType === "tracked" &&
+      managedIgnore.attempted
+    ) {
+      if (managedIgnore.changed) {
+        await restoreIgnore(managedIgnore);
+      }
+      throw new CreateSetupError(
+        "Tracked managed-ignore changes from a bare repository require an existing linked worktree. Run arashi init from a checked-out worktree first.",
+      );
+    }
+  } finally {
+    await releaseManagedIgnoreWorkspaceRoot(managedIgnoreWorkspaceRoot);
+  }
   if (!options.json) {
     for (const warning of managedIgnore.warnings) {
       warn(warning);

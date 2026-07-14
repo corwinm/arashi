@@ -127,6 +127,9 @@ export interface AddCommandOptions {
   json?: boolean;
 }
 
+export const shouldTreatFailedCloneAsMaterialized = (destinationExists: boolean): boolean =>
+  destinationExists;
+
 /**
  * Result of add operation
  */
@@ -394,6 +397,7 @@ const executeAdd = async (
   workspaceRoot: string,
 ): Promise<AddCommandResult> => {
   const operations: RollbackOperation[] = [];
+  let existingFailedCloneDestinationSurvives = false;
   let managedIgnore: ManagedIgnoreReconciliation | undefined = undefined;
   const startSpinner = (text: string) => (options.json ? undefined : spinner(text).start());
 
@@ -453,7 +457,12 @@ const executeAdd = async (
       operations.push({ path: clonePath, reversible: true, type: "clone" });
       s2?.succeed("Repository cloned");
     } catch (error) {
-      if (!clonePathExistedBefore && (await runtime.file(clonePath).exists())) {
+      const clonePathExistsAfterFailure = await runtime.file(clonePath).exists();
+      if (clonePathExistedBefore) {
+        existingFailedCloneDestinationSurvives = shouldTreatFailedCloneAsMaterialized(
+          clonePathExistsAfterFailure,
+        );
+      } else if (clonePathExistsAfterFailure) {
         operations.push({ path: clonePath, reversible: true, type: "clone" });
       }
       s2?.fail("Clone failed");
@@ -513,7 +522,7 @@ const executeAdd = async (
     };
   } catch (error) {
     let managedIgnoreRestoreError: string | undefined = undefined;
-    let materializedStateSurvives = false;
+    let materializedStateSurvives = existingFailedCloneDestinationSurvives;
     // Rollback operations in reverse order
     const rollbackOperations = [...operations];
     rollbackOperations.reverse();

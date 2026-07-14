@@ -258,6 +258,29 @@ describe("managed ignore path classification", () => {
     expect(await readFile(outside, "utf8")).toBe("outside\n");
   });
 
+  test("allows local reconciliation when only the tracked ignore target is a symbolic link", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    const outside = join(root, "outside-tracked-ignore");
+    await writeFile(outside, "outside\n");
+    await symlink(outside, join(root, ".gitignore"));
+
+    const result = await reconcileManagedIgnore({
+      reposDir: "repos",
+      requestedScope: "local",
+      workspaceRoot: root,
+      worktreesDir: ".arashi/worktrees",
+    });
+
+    expect(result.targetType).toBe("local");
+    expect(result.fileChanges.local).toBe(true);
+    expect(await readFile(outside, "utf8")).toBe("outside\n");
+  });
+
   test("rejects a tracked ignore target that is a symbolic link", async () => {
     if (process.platform === "win32") {
       return;

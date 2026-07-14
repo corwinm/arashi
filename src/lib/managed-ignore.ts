@@ -236,8 +236,6 @@ export const inspectManagedIgnore = async ({
   const localPathResult = await gitExec(["rev-parse", "--git-path", "info/exclude"], workspaceRoot);
   const localExcludePath = resolveGitPath(workspaceRoot, localPathResult.stdout.trim());
   const trackedIgnorePath = resolve(workspaceRoot, ".gitignore");
-  await assertNotSymlink(localExcludePath);
-  await assertNotSymlink(trackedIgnorePath);
   const classifications = classifyManagedPaths([reposDir, worktreesDir]);
   const paths: ManagedIgnorePathResult[] = [];
 
@@ -497,14 +495,12 @@ export const reconcileManagedIgnore = async (
     warnings,
   };
 
-  reconciliationSnapshots.set(result, {
-    files: (["local", "tracked"] as const).map((type) => ({
-      content: fileStates[type].content,
-      path: fileStates[type].path,
-    })),
+  const snapshot: ManagedIgnoreSnapshot = {
+    files: [],
     preference: inspection.storedPreference,
     workspaceRoot: options.workspaceRoot,
-  });
+  };
+  reconciliationSnapshots.set(result, snapshot);
   if (options.dryRun) {
     return result;
   }
@@ -524,6 +520,10 @@ export const reconcileManagedIgnore = async (
       mutationStarted = true;
       await mkdir(dirname(fileStates[type].path), { recursive: true });
       await assertNotSymlink(fileStates[type].path);
+      snapshot.files.push({
+        content: fileStates[type].content,
+        path: fileStates[type].path,
+      });
       await writeFile(fileStates[type].path, nextContent);
       result.fileChanges[type] = true;
     }
