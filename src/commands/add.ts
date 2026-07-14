@@ -18,11 +18,22 @@ import { Command } from "commander";
 import { executeClone } from "./clone.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
 import { rm } from "node:fs/promises";
+import {
+  reconcileManagedIgnore,
+  restoreManagedIgnore,
+  type ManagedIgnoreReconciliation,
+} from "../lib/managed-ignore.ts";
+import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
+import {
+  createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
+  writeJsonEnvelope,
+} from "../lib/json-output.ts";
 
 type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
 
 const ZERO = 0;
-const JSON_INDENT = 2;
 const ERROR_EXIT_CODE = 1;
 const CANCELLED_EXIT_CODE = 2;
 
@@ -116,6 +127,9 @@ export interface AddCommandOptions {
   json?: boolean;
 }
 
+export const shouldTreatFailedCloneAsMaterialized = (destinationExists: boolean): boolean =>
+  destinationExists;
+
 /**
  * Result of add operation
  */
@@ -132,6 +146,8 @@ export interface AddCommandResult {
   setupScriptCreated: boolean;
   /** Original Git URL that was cloned */
   gitUrl: string;
+  /** Managed ignore reconciliation retained for the materialized repository. */
+  managedIgnore: ManagedIgnoreReconciliation;
 }
 
 /**
@@ -381,6 +397,9 @@ const executeAdd = async (
   workspaceRoot: string,
 ): Promise<AddCommandResult> => {
   const operations: RollbackOperation[] = [];
+  let existingFailedCloneDestinationSurvives = false;
+  let managedIgnore: ManagedIgnoreReconciliation | undefined = undefined;
+  const startSpinner = (text: string) => (options.json ? undefined : spinner(text).start());
 
   try {
     // Step 1: Validate workspace is initialized
@@ -394,9 +413,9 @@ const executeAdd = async (
     }
 
     // Step 2: Parse and validate Git URL
-    const s1 = spinner("Validating Git URL...").start();
+    const s1 = startSpinner("Validating Git URL...");
     const urlInfo = parseGitUrl(gitUrl);
-    s1.succeed("Git URL validated");
+    s1?.succeed("Git URL validated");
 
     // Step 3: Determine repository name
     const repositoryName = options.name || urlInfo.derivedName;
@@ -419,14 +438,34 @@ const executeAdd = async (
     const reposDir = join(workspaceRoot, config.reposDir);
     const clonePath = join(reposDir, repositoryName);
 
+    managedIgnore = await reconcileManagedIgnore({
+      reposDir: config.reposDir,
+      workspaceRoot,
+      worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+    });
+    if (!options.json) {
+      for (const warning of managedIgnore.warnings) {
+        info(`Warning: ${warning}`);
+      }
+    }
+
     // Step 6: Clone repository
-    const s2 = spinner(`Cloning repository from ${gitUrl}...`).start();
+    const s2 = startSpinner(`Cloning repository from ${gitUrl}...`);
+    const clonePathExistedBefore = await runtime.file(clonePath).exists();
     try {
       await clone(gitUrl, clonePath);
       operations.push({ path: clonePath, reversible: true, type: "clone" });
-      s2.succeed("Repository cloned");
+      s2?.succeed("Repository cloned");
     } catch (error) {
-      s2.fail("Clone failed");
+      const clonePathExistsAfterFailure = await runtime.file(clonePath).exists();
+      if (clonePathExistedBefore) {
+        existingFailedCloneDestinationSurvives = shouldTreatFailedCloneAsMaterialized(
+          clonePathExistsAfterFailure,
+        );
+      } else if (clonePathExistsAfterFailure) {
+        operations.push({ path: clonePath, reversible: true, type: "clone" });
+      }
+      s2?.fail("Clone failed");
       throw new AddCommandError(
         `Git clone operation failed: ${(error as Error).message}`,
         AddCommandErrorCode.CLONE_FAILED,
@@ -435,24 +474,24 @@ const executeAdd = async (
     }
 
     // Step 7: Detect default branch
-    const s3 = spinner("Detecting default branch...").start();
+    const s3 = startSpinner("Detecting default branch...");
     const defaultBranch = await detectDefaultBranchOrThrow(clonePath, gitUrl).catch((error) => {
-      s3.fail("Branch detection failed");
+      s3?.fail("Branch detection failed");
       throw error;
     });
-    s3.succeed(`Detected default branch: ${defaultBranch}`);
+    s3?.succeed(`Detected default branch: ${defaultBranch}`);
 
     // Step 8: Detect setup script
-    const s4 = spinner("Checking for setup script...").start();
+    const s4 = startSpinner("Checking for setup script...");
     const setupScript = await detectSetupScript(clonePath);
     if (setupScript) {
-      s4.succeed(`Found setup script: ${basename(setupScript)}`);
+      s4?.succeed(`Found setup script: ${basename(setupScript)}`);
     } else {
-      s4.info("No setup script found");
+      s4?.info("No setup script found");
     }
 
     // Step 9: Update configuration
-    const s5 = spinner("Updating configuration...").start();
+    const s5 = startSpinner("Updating configuration...");
     try {
       const repoConfig: RepoConfig = {
         gitUrl: urlInfo.url,
@@ -461,9 +500,9 @@ const executeAdd = async (
 
       config.repos[repositoryName] = repoConfig;
       await saveConfig(workspaceRoot, config);
-      s5.succeed("Configuration updated");
+      s5?.succeed("Configuration updated");
     } catch (error) {
-      s5.fail("Configuration update failed");
+      s5?.fail("Configuration update failed");
       throw new AddCommandError(
         `Failed to update configuration file: ${(error as Error).message}`,
         AddCommandErrorCode.CONFIG_UPDATE_FAILED,
@@ -476,11 +515,14 @@ const executeAdd = async (
       clonePath,
       defaultBranch,
       gitUrl,
+      managedIgnore,
       repositoryName,
       setupScript,
       setupScriptCreated: false,
     };
   } catch (error) {
+    let managedIgnoreRestoreError: string | undefined = undefined;
+    let materializedStateSurvives = existingFailedCloneDestinationSurvives;
     // Rollback operations in reverse order
     const rollbackOperations = [...operations];
     rollbackOperations.reverse();
@@ -491,9 +533,31 @@ const executeAdd = async (
           await rm(operation.path, { force: true, recursive: true });
         }
       } catch (cleanupError) {
-        info(`Warning: Failed to clean up ${operation.path}: ${(cleanupError as Error).message}`);
-        info(`Please manually remove: rm -rf ${operation.path}`);
+        materializedStateSurvives = true;
+        if (!options.json) {
+          info(`Warning: Failed to clean up ${operation.path}: ${(cleanupError as Error).message}`);
+          info(`Please manually remove: rm -rf ${operation.path}`);
+        }
       }
+      if (operation.type === "clone" && (await runtime.file(operation.path).exists())) {
+        materializedStateSurvives = true;
+      }
+    }
+
+    if (managedIgnore?.changed && !materializedStateSurvives) {
+      try {
+        await restoreManagedIgnore(managedIgnore);
+      } catch (restoreError) {
+        managedIgnoreRestoreError = (restoreError as Error).message;
+      }
+    }
+    if (error instanceof AddCommandError && managedIgnore) {
+      throw new AddCommandError(error.message, error.code, {
+        ...error.context,
+        managedIgnore,
+        materializedStateSurvives,
+        ...(managedIgnoreRestoreError ? { managedIgnoreRestoreError } : {}),
+      });
     }
 
     // Re-throw original error
@@ -570,24 +634,20 @@ export function createCommand(): Command {
         const result = await executeAdd(gitUrl, options, workspaceRoot);
 
         if (options.json) {
-          console.log(
-            JSON.stringify(
-              {
-                repository: {
-                  defaultBranch: result.defaultBranch,
-                  gitUrl: result.gitUrl,
-                  name: result.repositoryName,
-                  path: result.clonePath.replace(workspaceRoot, "."),
-                  setupScript: result.setupScript
-                    ? result.setupScript.replace(workspaceRoot, ".")
-                    : null,
-                  setupScriptCreated: result.setupScriptCreated,
-                },
-                success: true,
+          writeJsonEnvelope(
+            createJsonSuccessEnvelope("add", {
+              managedIgnore: result.managedIgnore,
+              repository: {
+                defaultBranch: result.defaultBranch,
+                gitUrl: result.gitUrl,
+                name: result.repositoryName,
+                path: result.clonePath.replace(workspaceRoot, "."),
+                setupScript: result.setupScript
+                  ? result.setupScript.replace(workspaceRoot, ".")
+                  : null,
+                setupScriptCreated: result.setupScriptCreated,
               },
-              null,
-              2,
-            ),
+            }),
           );
         } else {
           displaySuccess(result, workspaceRoot);
@@ -597,19 +657,12 @@ export function createCommand(): Command {
       } catch (error) {
         if (error instanceof AddCommandError) {
           if (options.json) {
-            console.log(
-              JSON.stringify(
-                {
-                  error: {
-                    code: error.code,
-                    details: error.context,
-                    message: error.message,
-                  },
-                  success: false,
-                },
-                null,
-                JSON_INDENT,
-              ),
+            writeJsonEnvelope(
+              createJsonErrorEnvelope("add", {
+                code: error.code,
+                details: error.context,
+                message: error.message,
+              }),
             );
           } else {
             displayError(error);
@@ -617,21 +670,10 @@ export function createCommand(): Command {
           }
           process.exit(CANCELLED_EXIT_CODE);
         } else {
-          logError(`\nUnexpected error: ${(error as Error).message}`);
           if (options.json) {
-            console.log(
-              JSON.stringify(
-                {
-                  error: {
-                    code: "UNKNOWN_ERROR",
-                    message: (error as Error).message,
-                  },
-                  success: false,
-                },
-                null,
-                JSON_INDENT,
-              ),
-            );
+            writeJsonEnvelope(createJsonErrorEnvelope("add", unknownErrorToJsonError(error)));
+          } else {
+            logError(`\nUnexpected error: ${(error as Error).message}`);
           }
           process.exit(ERROR_EXIT_CODE);
         }

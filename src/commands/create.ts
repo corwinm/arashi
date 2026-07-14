@@ -15,7 +15,10 @@ import {
   applyRepositoryFilter,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
-import { basename, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import {
   buildDirtyGuidance,
   buildMovePlan,
@@ -42,6 +45,12 @@ import {
 } from "../lib/repo-filter.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
+import {
+  reconcileManagedIgnore,
+  restoreManagedIgnore,
+  type ManagedIgnoreReconciliation,
+} from "../lib/managed-ignore.ts";
+import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
@@ -55,6 +64,8 @@ type LaunchMode = "auto" | "sesh";
 type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
 type OperationSummary = Awaited<ReturnType<typeof createCoordinatedWorktrees>>;
 type RepositoryResult = OperationSummary["repositoryResults"][number];
+
+const temporaryManagedIgnoreWorktrees = new Map<string, string>();
 type SwitchProcessRunner = NonNullable<
   NonNullable<Parameters<typeof launchSwitchTarget>[2]>["runProcess"]
 >;
@@ -154,12 +165,14 @@ interface CreateSummaryJsonOptions {
   branchName: string;
   dirtyWorkspaceGuidance?: ReturnType<typeof buildDirtyGuidance>;
   moveSummary?: MoveSummary | null;
+  managedIgnore?: ManagedIgnoreReconciliation;
   summary: OperationSummary;
 }
 
 const createSummaryJsonData = ({
   branchName,
   dirtyWorkspaceGuidance,
+  managedIgnore,
   moveSummary,
   summary,
 }: CreateSummaryJsonOptions) => ({
@@ -169,6 +182,7 @@ const createSummaryJsonData = ({
   errorSummary: summary.errorSummary,
   failureCount: summary.failureCount,
   hookOutcomes: summary.hookOutcomes,
+  managedIgnore,
   moveSummary,
   nextSteps: summary.nextSteps,
   repositories: summary.repositoryResults.map((result) => ({
@@ -252,12 +266,16 @@ export interface ResolvedCreateDefaults {
 
 export interface CreateCommandDependencies {
   resolveCreateInvocationContext?: (invocationPath?: string) => Promise<CreateInvocationContext>;
+  resolveManagedIgnoreWorkspaceRoot?: (context: CreateInvocationContext) => Promise<string>;
   loadConfigWithFallback?: typeof loadConfigWithFallback;
   discoverRepositories?: typeof discoverRepositories;
   isGitRepository?: (path: string) => Promise<boolean>;
   resolveCurrentBranch?: (path: string) => Promise<string>;
   applyRepositoryFilter?: typeof applyRepositoryFilter;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
+  reconcileManagedIgnore?: typeof reconcileManagedIgnore;
+  restoreManagedIgnore?: typeof restoreManagedIgnore;
+  pathExists?: (path: string) => boolean;
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
     options: { sesh?: boolean },
@@ -310,6 +328,67 @@ export async function resolveCreateInvocationContext(
     workspaceRoot,
   };
 }
+
+export async function resolveManagedIgnoreWorkspaceRoot(
+  context: CreateInvocationContext,
+): Promise<string> {
+  if (context.repositoryType !== "bare") {
+    return context.workspaceRoot;
+  }
+
+  const result = await exec(["worktree", "list", "--porcelain"], context.executionPath);
+  const worktreePaths = result.stdout
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length).trim());
+  for (const path of worktreePaths) {
+    try {
+      const repositoryType = await exec(["rev-parse", "--is-bare-repository"], path);
+      if (repositoryType.stdout.trim() === "false") {
+        return path;
+      }
+    } catch {
+      // Ignore stale worktree-list entries and continue looking for a usable work tree.
+    }
+  }
+  const temporaryParent = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-worktree-"));
+  const temporaryWorktree = join(temporaryParent, "worktree");
+  try {
+    const branchRefs = await exec(
+      ["for-each-ref", "--format=%(refname)", "--sort=-committerdate", "refs/heads"],
+      context.executionPath,
+    );
+    const sourceRef = branchRefs.stdout.split(/\r?\n/).find((line) => line.trim().length > 0);
+    if (!sourceRef) {
+      throw new CreateSetupError(
+        "Managed ignore reconciliation requires at least one committed branch in the bare repository.",
+      );
+    }
+    await exec(
+      ["worktree", "add", "--detach", temporaryWorktree, sourceRef.trim()],
+      context.executionPath,
+    );
+  } catch (error) {
+    await rm(temporaryParent, { force: true, recursive: true });
+    throw error;
+  }
+  temporaryManagedIgnoreWorktrees.set(temporaryWorktree, context.executionPath);
+  return temporaryWorktree;
+}
+
+const releaseManagedIgnoreWorkspaceRoot = async (workspaceRoot: string): Promise<boolean> => {
+  const bareRepository = temporaryManagedIgnoreWorktrees.get(workspaceRoot);
+  if (!bareRepository) {
+    return false;
+  }
+  temporaryManagedIgnoreWorktrees.delete(workspaceRoot);
+  try {
+    await exec(["worktree", "remove", "--force", workspaceRoot], bareRepository);
+  } finally {
+    await rm(dirname(workspaceRoot), { force: true, recursive: true });
+  }
+  return true;
+};
 
 const isGitRepository = async (path: string): Promise<boolean> => {
   try {
@@ -620,6 +699,8 @@ export async function executeCreate(
 
   const resolveInvocationContext =
     deps.resolveCreateInvocationContext ?? resolveCreateInvocationContext;
+  const resolveIgnoreWorkspaceRoot =
+    deps.resolveManagedIgnoreWorkspaceRoot ?? resolveManagedIgnoreWorkspaceRoot;
   const loadWorkspaceConfig = deps.loadConfigWithFallback ?? loadConfigWithFallback;
   const discoverWorkspaceRepositories = deps.discoverRepositories ?? discoverRepositories;
   const detectGitRepository = deps.isGitRepository ?? isGitRepository;
@@ -631,6 +712,9 @@ export async function executeCreate(
     });
   const filterRepositories = deps.applyRepositoryFilter ?? applyRepositoryFilter;
   const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
+  const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileManagedIgnore;
+  const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
+  const pathExists = deps.pathExists ?? existsSync;
 
   // 1. Resolve invocation context and load configuration
   const context = await resolveInvocationContext();
@@ -807,8 +891,45 @@ export async function executeCreate(
     workspaceRoot: context.workspaceRoot,
   };
 
+  const managedIgnoreWorkspaceRoot = await resolveIgnoreWorkspaceRoot(context);
+  const temporaryIgnoreWorkspace = temporaryManagedIgnoreWorktrees.has(managedIgnoreWorkspaceRoot);
+  let managedIgnore: ManagedIgnoreReconciliation;
+  try {
+    managedIgnore = await reconcileIgnore({
+      dryRun: options.dryRun,
+      reposDir: arashiConfig.reposDir,
+      workspaceRoot: managedIgnoreWorkspaceRoot,
+      worktreesDir: arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+    });
+    if (
+      temporaryIgnoreWorkspace &&
+      managedIgnore.targetType === "tracked" &&
+      managedIgnore.attempted
+    ) {
+      if (managedIgnore.changed) {
+        await restoreIgnore(managedIgnore);
+      }
+      throw new CreateSetupError(
+        "Tracked managed-ignore changes from a bare repository require an existing linked worktree. Run arashi init from a checked-out worktree first.",
+      );
+    }
+  } finally {
+    await releaseManagedIgnoreWorkspaceRoot(managedIgnoreWorkspaceRoot);
+  }
+  if (!options.json) {
+    for (const warning of managedIgnore.warnings) {
+      warn(warning);
+    }
+  }
+
   // 6. Execute coordinated worktree creation
   const summary = await runCreate(branchName, selectedRepos, worktreeOptions);
+  const residualWorktrees = summary.repositoryResults.some(
+    (result) => Boolean(result.worktreePath) && pathExists(result.worktreePath as string),
+  );
+  if (summary.rolledBack && !residualWorktrees && managedIgnore.changed) {
+    await restoreIgnore(managedIgnore);
+  }
   const dirtyGuidanceContext = options.dryRun
     ? null
     : await resolvePostCreateDirtyGuidance(context, arashiConfig, branchName);
@@ -825,7 +946,13 @@ export async function executeCreate(
     writeJsonEnvelope(
       createJsonSuccessEnvelope(
         "create",
-        createSummaryJsonData({ branchName, dirtyWorkspaceGuidance, moveSummary, summary }),
+        createSummaryJsonData({
+          branchName,
+          dirtyWorkspaceGuidance,
+          managedIgnore,
+          moveSummary,
+          summary,
+        }),
       ),
     );
     if (summary.rolledBack || summary.failureCount > ZERO) {

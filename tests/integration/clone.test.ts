@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { executeClone, resolveCoordinatedSourceWorkspaceRoot } from "../../src/commands/clone.ts";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import type { Config } from "../../src/lib/config.ts";
 import { join } from "path";
 import { tmpdir } from "os";
+import { spawn } from "../helpers/node-runtime.ts";
 
 describe("clone command", () => {
   let workspaceRoot: string;
 
   beforeEach(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), "arashi-clone-command-"));
+    await spawn(["git", "init"], { cwd: workspaceRoot }).exited;
     await mkdir(join(workspaceRoot, "repos"), { recursive: true });
   });
 
@@ -124,6 +126,36 @@ describe("clone command", () => {
     expect(clonedDestinations).toHaveLength(2);
   });
 
+  test("reconciles local ignore rules before cloning a configured repository", async () => {
+    const config: Config = {
+      repos: {
+        "repo-a": {
+          gitUrl: "https://github.com/team/repo-a.git",
+          path: "./repos/repo-a",
+        },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true },
+      {
+        cloneRepository: async (_gitUrl, destinationPath) => {
+          const exclude = await readFile(join(workspaceRoot, ".git", "info", "exclude"), "utf8");
+          expect(exclude).toContain("repos/");
+          await mkdir(destinationPath, { recursive: true });
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        loadConfig: async () => config,
+        saveConfig: async () => {},
+        workspaceRoot,
+      },
+    );
+
+    expect(result.managedIgnore).toMatchObject({ changed: true, scope: "local" });
+  });
+
   test("completes missing repositories in coordinated worktrees using current branch", async () => {
     const coordinatedRoot = join(workspaceRoot, ".arashi", "worktrees", "meta-feat-demo");
     await mkdir(join(workspaceRoot, "repos", "repo-a"), { recursive: true });
@@ -184,6 +216,44 @@ describe("clone command", () => {
       ),
     ).toBe("/workspace/arashi-arashi/");
     expect(resolveCoordinatedSourceWorkspaceRoot("/workspace/arashi-arashi")).toBeNull();
+  });
+
+  test("retains managed ignore coverage when failed clone cleanup leaves a destination", async () => {
+    const destination = join(workspaceRoot, "repos", "repo-a");
+    let materialized = false;
+    const config: Config = {
+      repos: {
+        "repo-a": {
+          gitUrl: "https://github.com/team/repo-a.git",
+          path: "./repos/repo-a",
+        },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true },
+      {
+        cloneRepository: async () => {
+          materialized = true;
+          throw new Error("simulated partial clone");
+        },
+        loadConfig: async () => config,
+        pathExists: async (path) => path === destination && materialized,
+        removeDir: async () => {
+          throw new Error("simulated cleanup failure");
+        },
+        saveConfig: async () => {},
+        workspaceRoot,
+      },
+    );
+
+    expect(result.status).toBe("partial-failure");
+    expect(result.managedIgnore).toMatchObject({ changed: true, restored: false });
+    expect(await readFile(join(workspaceRoot, ".git", "info", "exclude"), "utf8")).toContain(
+      "/repos/",
+    );
   });
 
   test("continues cloning after partial failures", async () => {

@@ -11,6 +11,7 @@ export interface BareCreateWorkspace {
 }
 
 export interface BareCreateWorkspaceOptions {
+  createLinkedWorktree?: boolean;
   includeConfig?: boolean;
   configReposDir?: string;
   configWorktreesDir?: string;
@@ -19,6 +20,7 @@ export interface BareCreateWorkspaceOptions {
 export async function createBareCreateWorkspace(
   options: BareCreateWorkspaceOptions = {},
 ): Promise<BareCreateWorkspace> {
+  const createLinkedWorktree = options.createLinkedWorktree ?? true;
   const includeConfig = options.includeConfig ?? true;
   const configReposDir = options.configReposDir ?? "./repos";
   const configWorktreesDir = options.configWorktreesDir ?? ".arashi/worktrees";
@@ -63,7 +65,11 @@ export async function createBareCreateWorkspace(
   await execGit(["remote", "add", "origin", bareRepoPath], seedPath);
   await execGit(["push", "origin", "main"], seedPath);
 
-  await execGit(["worktree", "add", worktreePath, "main"], bareRepoPath);
+  if (createLinkedWorktree) {
+    await execGit(["worktree", "add", worktreePath, "main"], bareRepoPath);
+  } else {
+    await execGit(["symbolic-ref", "HEAD", "refs/heads/unborn"], bareRepoPath);
+  }
 
   return {
     bareRepoPath,

@@ -17,6 +17,7 @@ import {
   detectSetupScript,
   isValidGitUrl,
   parseGitUrl,
+  shouldTreatFailedCloneAsMaterialized,
 } from "../../src/commands/add.ts";
 import { mkdir, rm } from "fs/promises";
 import { AddCommandErrorCode } from "../../src/lib/errors.ts";
@@ -267,6 +268,11 @@ describe("Add Command - Edge Cases", () => {
 // Or CI/CD pipelines with test repositories.
 
 describe("Add Command - Validation Summary", () => {
+  test("treats surviving failed-clone destinations as materialized even when they pre-existed", () => {
+    expect(shouldTreatFailedCloneAsMaterialized(true)).toBe(true);
+    expect(shouldTreatFailedCloneAsMaterialized(false)).toBe(false);
+  });
+
   test("all URL validation functions work correctly", () => {
     expect(() => {
       const valid = isValidGitUrl("https://github.com/user/repo.git");

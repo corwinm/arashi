@@ -87,6 +87,19 @@ async function runInitCommand(
   return { exitCode, stderr, stdout };
 }
 
+async function runCommand(
+  cwd: string,
+  args: string[],
+): Promise<{ exitCode: number; stderr: string; stdout: string }> {
+  const proc = spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { exitCode, stderr, stdout };
+}
+
 describe("init command - success cases", () => {
   let testDir: string;
 
@@ -134,16 +147,40 @@ describe("init command - success cases", () => {
     // Verify repos directory created
     expect(await fileExists(join(testDir, "repos"))).toBe(true);
 
-    // Verify .gitignore updated
+    // Verify repository-local ignore rules are the default
     const gitignorePath = join(testDir, ".gitignore");
-    expect(await fileExists(gitignorePath)).toBe(true);
-    const gitignoreContent = await readTextFile(gitignorePath);
-    expect(gitignoreContent).toContain("repos/");
-    expect(gitignoreContent).toContain(".arashi/worktrees/");
+    expect(await fileExists(gitignorePath)).toBe(false);
+    const localExcludeContent = await readTextFile(join(testDir, ".git", "info", "exclude"));
+    expect(localExcludeContent).toContain("repos/");
+    expect(localExcludeContent).toContain(".arashi/worktrees/");
+  });
+
+  test("JSON reports managed-ignore inspection failures with stable phase details", async () => {
+    await runCommand(testDir, ["git", "config", "--local", "core.excludesFile", testDir]);
+
+    const result = await runInitCommand(testDir, ["--json", "--no-discover"]);
+    const envelope = JSON.parse(result.stdout) as {
+      error: { code: string; details: { attempted: boolean; phase: string; restored: boolean } };
+      ok: boolean;
+    };
+
+    expect(result.exitCode).toBe(99);
+    expect(envelope).toMatchObject({
+      error: {
+        code: "MANAGED_IGNORE_RECONCILIATION_FAILED",
+        details: { attempted: false, phase: "inspection", restored: false },
+      },
+      ok: false,
+    });
   });
 
   test("init with custom repos directory", async () => {
-    const result = await runInitCommand(testDir, ["--repos-dir", "./custom-repos"]);
+    const result = await runInitCommand(testDir, [
+      "--repos-dir",
+      "./custom-repos",
+      "--ignore-scope",
+      "tracked",
+    ]);
 
     expect(result.exitCode).toBe(0);
 
@@ -161,7 +198,12 @@ describe("init command - success cases", () => {
   });
 
   test("init with custom managed subdirectory adds normalized worktrees ignore entry", async () => {
-    const result = await runInitCommand(testDir, ["--worktrees-dir", "./workspace-worktrees/"]);
+    const result = await runInitCommand(testDir, [
+      "--worktrees-dir",
+      "./workspace-worktrees/",
+      "--ignore-scope",
+      "tracked",
+    ]);
 
     expect(result.exitCode).toBe(0);
 
@@ -176,7 +218,12 @@ describe("init command - success cases", () => {
   });
 
   test("init with parent worktrees directory does not auto-ignore unsafe path", async () => {
-    const result = await runInitCommand(testDir, ["--worktrees-dir", "../workspace-worktrees"]);
+    const result = await runInitCommand(testDir, [
+      "--worktrees-dir",
+      "../workspace-worktrees",
+      "--ignore-scope",
+      "tracked",
+    ]);
 
     expect(result.exitCode).toBe(0);
 
@@ -190,7 +237,12 @@ describe("init command - success cases", () => {
   });
 
   test("init with dot worktrees directory does not auto-ignore workspace root", async () => {
-    const result = await runInitCommand(testDir, ["--worktrees-dir", "."]);
+    const result = await runInitCommand(testDir, [
+      "--worktrees-dir",
+      ".",
+      "--ignore-scope",
+      "tracked",
+    ]);
 
     expect(result.exitCode).toBe(0);
 
@@ -220,9 +272,29 @@ describe("init command - success cases", () => {
     expect(Object.keys(loadedConfig.repos)).toHaveLength(0);
   });
 
+  test("none preference can be reset to local without reinitializing config", async () => {
+    const first = await runInitCommand(testDir, ["--ignore-scope", "none", "--no-discover"]);
+    expect(first.exitCode).toBe(0);
+    expect(
+      await runCommand(testDir, ["git", "config", "--local", "--get", "arashi.ignoreScope"]),
+    ).toMatchObject({ exitCode: 0, stdout: "none\n" });
+    const originalConfig = await readTextFile(getConfigPath(testDir));
+
+    const reset = await runInitCommand(testDir, ["--ignore-scope", "local"]);
+
+    expect(reset.exitCode).toBe(0);
+    expect(reset.stdout).toContain("Updated managed ignore preference");
+    expect(await readTextFile(getConfigPath(testDir))).toBe(originalConfig);
+    expect(
+      (await runCommand(testDir, ["git", "config", "--local", "--get", "arashi.ignoreScope"]))
+        .exitCode,
+    ).toBe(1);
+    expect(await readTextFile(join(testDir, ".git", "info", "exclude"))).toContain("repos/");
+  });
+
   test("init with --force overwrites existing configuration", async () => {
     // First initialization
-    await runInitCommand(testDir);
+    await runInitCommand(testDir, ["--ignore-scope", "tracked"]);
 
     // Modify config
     let loadedConfig = await loadConfig(testDir);
@@ -249,7 +321,7 @@ describe("init command - success cases", () => {
 
   test(".gitignore update is idempotent", async () => {
     // First init
-    await runInitCommand(testDir);
+    await runInitCommand(testDir, ["--ignore-scope", "tracked"]);
 
     const gitignoreContent1 = await readTextFile(join(testDir, ".gitignore"));
     const reposLineCount1 = (gitignoreContent1.match(/repos\//g) || []).length;
@@ -273,7 +345,12 @@ describe("init command - success cases", () => {
   });
 
   test(".gitignore update is idempotent with configured worktrees directory", async () => {
-    await runInitCommand(testDir, ["--worktrees-dir", "workspace-worktrees"]);
+    await runInitCommand(testDir, [
+      "--worktrees-dir",
+      "workspace-worktrees",
+      "--ignore-scope",
+      "tracked",
+    ]);
 
     const gitignoreContent1 = await readTextFile(join(testDir, ".gitignore"));
     const reposLineCount1 = (gitignoreContent1.match(/repos\//g) || []).length;
@@ -282,7 +359,12 @@ describe("init command - success cases", () => {
 
     await rm(join(testDir, ".arashi"), { recursive: true });
 
-    await runInitCommand(testDir, ["--worktrees-dir", "./workspace-worktrees/"]);
+    await runInitCommand(testDir, [
+      "--worktrees-dir",
+      "./workspace-worktrees/",
+      "--ignore-scope",
+      "tracked",
+    ]);
 
     const gitignoreContent2 = await readTextFile(join(testDir, ".gitignore"));
     const reposLineCount2 = (gitignoreContent2.match(/repos\//g) || []).length;
@@ -451,6 +533,33 @@ describe("init command - repository bootstrap", () => {
     expect(loadedConfig.reposDir).toBe("./repos");
   });
 
+  test("dry-run previews bootstrap ignore rules without requiring a Git repository", async () => {
+    testDir = await createTempDir();
+
+    const result = await executeInit(
+      { dryRun: true, noDiscover: true },
+      {
+        cwd: testDir,
+        promptConfirm: async () => ({ status: "ok", value: true }),
+        promptInput: async () => ({ status: "ok", value: "." }),
+        stdinIsTTY: true,
+      },
+    );
+
+    expect(result).toMatchObject({
+      managedIgnore: {
+        changed: false,
+        paths: [{ status: "planned" }, { status: "planned" }],
+        scope: "local",
+      },
+      success: true,
+      workspaceRoot: testDir,
+    });
+    expect(await fileExists(join(testDir, ".git"))).toBe(false);
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    expect(await fileExists(join(testDir, "repos"))).toBe(false);
+  });
+
   test("rejects unsupported bootstrap targets", async () => {
     testDir = await createTempDir();
 
@@ -491,7 +600,7 @@ describe("init command - rollback behavior", () => {
     // Create a file where repos directory should be (will cause mkdir to fail)
     await writeFile(join(testDir, "repos"), "file content");
 
-    const result = await runInitCommand(testDir);
+    const result = await runInitCommand(testDir, ["--ignore-scope", "tracked"]);
 
     // Should fail
     expect(result.exitCode).not.toBe(0);
@@ -499,6 +608,29 @@ describe("init command - rollback behavior", () => {
 
     // Verify .arashi directory removed
     expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    // Coverage is retained because the managed repos path still exists.
+    expect(await fileExists(join(testDir, ".gitignore"))).toBe(true);
+    expect(await readTextFile(join(testDir, ".gitignore"))).toContain("/repos/");
+  });
+
+  test("retains managed ignore coverage when init rollback leaves a managed directory", async () => {
+    await writeFile(join(testDir, "repos"), "blocks directory creation");
+    let restoreCalled = false;
+
+    const result = await executeInit(
+      { noDiscover: true, quiet: true },
+      {
+        cwd: testDir,
+        restoreManagedIgnore: async () => {
+          restoreCalled = true;
+        },
+      },
+    );
+
+    expect(result.success).toBe(false);
+    expect(restoreCalled).toBe(false);
+    const exclude = await readTextFile(join(testDir, ".git", "info", "exclude"));
+    expect(exclude).toContain("/repos/");
   });
 
   test("rolls back when config write fails due to permissions", async () => {
@@ -593,7 +725,7 @@ describe("init command - edge cases", () => {
       await rm(gitignorePath);
     }
 
-    const result = await runInitCommand(testDir);
+    const result = await runInitCommand(testDir, ["--ignore-scope", "tracked"]);
 
     expect(result.exitCode).toBe(0);
 
@@ -612,7 +744,7 @@ describe("init command - edge cases", () => {
     // Create .gitignore without trailing newline
     await writeFile(join(testDir, ".gitignore"), "node_modules/");
 
-    const result = await runInitCommand(testDir);
+    const result = await runInitCommand(testDir, ["--ignore-scope", "tracked"]);
 
     expect(result.exitCode).toBe(0);
 
@@ -717,8 +849,8 @@ describe("init command - output format", () => {
     // Check for discovery info
     expect(result.stdout).toMatch(/Discovered \d+ repositories/);
 
-    // Check for .gitignore info
-    expect(result.stdout).toContain("Updated .gitignore");
+    // Check for managed ignore info
+    expect(result.stdout).toContain("Managed ignore scope: local");
 
     // Check for next steps
     expect(result.stdout).toContain("Next steps:");
@@ -813,7 +945,7 @@ describe("init command - dry-run mode", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[DRY RUN] UPDATE_FILE:");
-    expect(result.stdout).toContain("add: repos/");
+    expect(result.stdout).toContain("add: /repos/");
     expect(result.stdout).not.toContain("../workspace-worktrees/");
     expect(result.stdout).not.toContain(".arashi/worktrees/");
   });
@@ -876,13 +1008,13 @@ describe("init command - dry-run mode", () => {
     expect(result.stdout).toContain("setup.sh.example");
   });
 
-  test("--dry-run shows .gitignore update", async () => {
+  test("--dry-run shows managed ignore update", async () => {
     const result = await runInitCommand(testDir, ["--dry-run"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[DRY RUN]");
     expect(result.stdout).toContain("[DRY RUN] UPDATE_FILE:");
-    expect(result.stdout).toContain(".gitignore");
+    expect(result.stdout).toContain("info/exclude");
   });
 });
 
@@ -942,12 +1074,12 @@ describe("init command - verbose mode", () => {
     expect(result.stdout).toContain("✓ Found 1 repositories");
   });
 
-  test("--verbose shows .gitignore update details", async () => {
+  test("--verbose shows managed ignore update details", async () => {
     const result = await runInitCommand(testDir, ["--verbose"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[VERBOSE]");
-    expect(result.stdout).toContain("Updating .gitignore");
+    expect(result.stdout).toContain("Reconciling managed Git ignore rules");
   });
 
   test("--verbose works with --force and shows backup details", async () => {

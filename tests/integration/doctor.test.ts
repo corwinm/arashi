@@ -125,7 +125,7 @@ const createHealthyRemoteBackedWorkspace = async (): Promise<string> => {
   await writeWorkspaceConfig(workspaceRoot, {
     "repo-a": { gitUrl: repoRemote, path: "./repos/repo-a" },
   });
-  await writeFile(join(workspaceRoot, ".gitignore"), "repos/\n");
+  await writeFile(join(workspaceRoot, ".gitignore"), "repos/\n.arashi/worktrees/\n");
   await runGit(workspaceRoot, ["add", ".arashi/config.json", ".gitignore"]);
   await runGit(workspaceRoot, ["commit", "-m", "Add Arashi config"]);
   await runGit(workspaceRoot, ["push", "origin", "HEAD:main"]);

@@ -250,6 +250,7 @@ describe("CLI JSON output contract", () => {
       warnings: [],
     });
     const data = jsonData(parsed);
+    expect(data.managedIgnore).toMatchObject({ scope: "local" });
     expect(data.overallStatus).toBe("success");
     expect(jsonArray(data.results)).toEqual([
       expect.objectContaining({ repositoryId: "repo-a", status: "skipped" }),
@@ -281,6 +282,7 @@ describe("CLI JSON output contract", () => {
     expect(createData).toMatchObject({
       branchName,
       failureCount: 0,
+      managedIgnore: { changed: true, scope: "local" },
       successCount: 3,
       totalRepositories: 3,
     });
@@ -460,7 +462,7 @@ describe("CLI JSON output contract", () => {
         code: "NOT_IN_REPOSITORY",
         command: "create",
       },
-      { args: ["init", "--dry-run", "--json"], code: "JSON_UNSUPPORTED_FOR_MODE", command: "init" },
+      { args: ["init", "--dry-run", "--json"], code: "INIT_1", command: "init" },
       { args: ["prune", "--json"], code: "NOT_IN_WORKSPACE", command: "prune" },
       { args: ["pull", "--json"], code: "UNKNOWN_ERROR", command: "pull" },
       { args: ["setup", "--json"], code: "UNKNOWN_ERROR", command: "setup" },
@@ -515,6 +517,28 @@ describe("CLI JSON output contract", () => {
       warnings: [],
     });
     expect(result.stdout).not.toContain("[VERBOSE]");
+  });
+
+  test("add --json reports managed ignore reconciliation in one envelope", async () => {
+    const baseDir = await makeTempDir();
+    const remote = await createBareRemote(baseDir, "add-json-remote");
+    await seedRemote(remote, baseDir, "add-json-seed");
+    const workspaceRoot = await makeTempDir();
+    await initializeGitRepository(workspaceRoot);
+    await mkdir(join(workspaceRoot, ".arashi"), { recursive: true });
+    await mkdir(join(workspaceRoot, "repos"), { recursive: true });
+    await writeFile(
+      join(workspaceRoot, ".arashi", "config.json"),
+      JSON.stringify({ repos: {}, reposDir: "./repos", version: "1.0.0" }),
+    );
+
+    const result = await runArashi(workspaceRoot, ["add", remote, "--json", "--force"]);
+
+    expect(result.exitCode, JSON.stringify(result)).toBe(0);
+    const parsed = parseSingleJsonDocument(result.stdout);
+    expect(parsed).toMatchObject({ command: "add", ok: true, schemaVersion: 1 });
+    expect(jsonData(parsed).managedIgnore).toMatchObject({ changed: true, scope: "local" });
+    expect(result.stderr).toBe("");
   });
 
   test("remove --json rejects interactive selection mode with one envelope", async () => {

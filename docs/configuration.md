@@ -2,6 +2,20 @@
 
 Arashi stores workspace settings in `.arashi/config.json`.
 
+The personal managed-ignore preference is deliberately not stored in that shared file. Safe
+configured `reposDir` and `worktreesDir` paths default to repository-local Git excludes. Select a
+different clone-local policy with:
+
+```bash
+arashi init --ignore-scope local    # default; remove any stored override
+arashi init --ignore-scope tracked  # maintain an owned block in .gitignore
+arashi init --ignore-scope none     # report only; manage ignore rules manually
+```
+
+Git's effective tracked, repository-local, or existing global rule always takes precedence, and
+Arashi does not write global Git configuration. Lifecycle commands (`pull`, `clone`, `add`, and
+`create`) reuse the stored preference and reconcile before materializing configured paths.
+
 To enable JSON validation and editor autocomplete, include a `$schema` property:
 
 ```json

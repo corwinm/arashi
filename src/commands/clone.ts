@@ -29,6 +29,12 @@ import {
 import { Command } from "commander";
 import { removeDir } from "../lib/filesystem.ts";
 import { stat } from "fs/promises";
+import {
+  reconcileManagedIgnore,
+  restoreManagedIgnore,
+  type ManagedIgnoreReconciliation,
+} from "../lib/managed-ignore.ts";
+import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 
 interface Choice<T> {
   value: T;
@@ -59,6 +65,7 @@ export interface CloneExecutionResult {
   cloned: string[];
   failed: { name: string; reason: string }[];
   skipped: string[];
+  managedIgnore?: ManagedIgnoreReconciliation;
 }
 
 interface CloneCommandDependencies {
@@ -308,9 +315,21 @@ export async function executeClone(
 
   const cloned: string[] = [];
   const failed: { name: string; reason: string }[] = [];
+  let residualMaterializedState = false;
   const skipped = missingWithUrls
     .map((repository) => repository.name)
     .filter((name) => !selectedRepositories.some((repository) => repository.name === name));
+
+  const managedIgnore = await reconcileManagedIgnore({
+    reposDir: config.reposDir,
+    workspaceRoot,
+    worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+  });
+  if (!options.json) {
+    for (const warning of managedIgnore.warnings) {
+      warn(warning);
+    }
+  }
 
   for (const repository of selectedRepositories) {
     const rawGitUrl = repository.config.gitUrl;
@@ -341,7 +360,18 @@ export async function executeClone(
         cloneSpinner?.succeed(`Cloned ${repository.name}`);
         cloned.push(repository.name);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        let reason = error instanceof Error ? error.message : String(error);
+        if (await exists(repository.path)) {
+          try {
+            await deleteDirectory(repository.path);
+          } catch (cleanupError) {
+            residualMaterializedState = true;
+            reason += `; cleanup failed: ${
+              cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+            }`;
+          }
+        }
+        residualMaterializedState = residualMaterializedState || (await exists(repository.path));
         cloneSpinner?.fail(`Failed to clone ${repository.name}`);
         failed.push({
           name: repository.name,
@@ -356,8 +386,19 @@ export async function executeClone(
     }
   }
 
-  if (configUpdated) {
-    await writeConfig(workspaceRoot, config);
+  try {
+    if (configUpdated) {
+      await writeConfig(workspaceRoot, config);
+    }
+  } catch (error) {
+    if (cloned.length === ZERO && !residualMaterializedState && managedIgnore.changed) {
+      await restoreManagedIgnore(managedIgnore);
+    }
+    throw error;
+  }
+
+  if (cloned.length === ZERO && !residualMaterializedState && managedIgnore.changed) {
+    await restoreManagedIgnore(managedIgnore);
   }
 
   if (failed.length > 0) {
@@ -379,6 +420,7 @@ export async function executeClone(
   return {
     cloned,
     failed,
+    managedIgnore,
     skipped,
     status,
   };
