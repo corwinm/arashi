@@ -337,15 +337,19 @@ export async function resolveManagedIgnoreWorkspaceRoot(
     .split(/\r?\n/)
     .filter((line) => line.startsWith("worktree "))
     .map((line) => line.slice("worktree ".length).trim());
-  const linkedWorktree = worktreePaths.find(
-    (path) => resolve(path) !== resolve(context.executionPath),
-  );
-  if (!linkedWorktree) {
-    throw new CreateSetupError(
-      "Managed ignore reconciliation from a bare repository requires an existing linked worktree.",
-    );
+  for (const path of worktreePaths) {
+    try {
+      const repositoryType = await exec(["rev-parse", "--is-bare-repository"], path);
+      if (repositoryType.stdout.trim() === "false") {
+        return path;
+      }
+    } catch {
+      // Ignore stale worktree-list entries and continue looking for a usable work tree.
+    }
   }
-  return linkedWorktree;
+  throw new CreateSetupError(
+    "Managed ignore reconciliation from a bare repository requires an existing linked worktree.",
+  );
 }
 
 const isGitRepository = async (path: string): Promise<boolean> => {
