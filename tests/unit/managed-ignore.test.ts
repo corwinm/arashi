@@ -117,6 +117,9 @@ describe("managed ignore path classification", () => {
     testRoots.push(root);
     await git(root, ["init"]);
     const invalidExcludePath = process.platform === "win32" ? join(root, "invalid:exclude") : root;
+    if (process.platform === "win32") {
+      await writeFile(invalidExcludePath, "repos/\n");
+    }
     await git(root, ["config", "--local", "core.excludesFile", invalidExcludePath]);
 
     await expect(
