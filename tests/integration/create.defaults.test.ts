@@ -108,6 +108,54 @@ describe("create defaults integration", () => {
     expect(launchCalls).toEqual([{ sesh: true }]);
   });
 
+  test("preserves cmux launch mode for configured post-create launch", async () => {
+    const launchCandidates: string[] = [];
+
+    await executeCreate(
+      branchName,
+      {},
+      baseDeps({
+        launchSwitchTarget: async (candidate) => {
+          launchCandidates.push(candidate.worktreePath);
+          return { command: ["cmux", "workspace", "create"], mode: "cmux" };
+        },
+        loadConfigWithFallback: async () =>
+          createLoadedConfig({
+            defaults: {
+              create: {
+                launch: true,
+                switch: true,
+              },
+            },
+          }),
+      }),
+    );
+
+    expect(launchCandidates).toEqual([`${workspaceRoot}/${branchName}`]);
+  });
+
+  test("reports cmux launch failure after preserving created worktrees", async () => {
+    let creationCompleted = false;
+
+    await expect(
+      executeCreate(
+        branchName,
+        { launch: true },
+        baseDeps({
+          createCoordinatedWorktrees: async () => {
+            creationCompleted = true;
+            return createSummary();
+          },
+          launchSwitchTarget: async () => {
+            throw new Error("cmux socket access denied");
+          },
+        }),
+      ),
+    ).rejects.toThrow("cmux socket access denied");
+
+    expect(creationCompleted).toBe(true);
+  });
+
   test("applies editor-scoped create defaults for editor-hosted invocations", async () => {
     const launchCalls = createLaunchCalls();
 

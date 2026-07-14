@@ -3,7 +3,7 @@ import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { normalizeSpawnEnvironment, stripDirectiveEnvironment } from "./shell-directives.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
 
-type SwitchLaunchMode = "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";
+type SwitchLaunchMode = "sesh" | "tmux" | "cmux" | "vscode" | "cursor" | "kiro" | "fallback";
 export type SupportedIde = "vscode" | "cursor" | "kiro";
 
 const IDE_COMMANDS: Record<SupportedIde, string> = {
@@ -13,6 +13,7 @@ const IDE_COMMANDS: Record<SupportedIde, string> = {
 };
 
 const WINDOWS_SHELL = "cmd.exe";
+const CMUX_MINIMUM_VERSION = "0.64.18";
 
 export interface SwitchProcessResult {
   exitCode: number;
@@ -130,6 +131,13 @@ export async function launchSwitchTarget(
     };
   }
 
+  if (isCmuxSession(env)) {
+    return launchWithCmux(candidate, {
+      env: childEnv,
+      runProcess,
+    });
+  }
+
   const detectedIde = detectIntegratedIde(env);
   if (detectedIde) {
     const launchResult = await launchWithPreferredIde(candidate, detectedIde, {
@@ -196,6 +204,12 @@ export function detectIntegratedIde(
 
 export function isTmuxSession(env: Record<string, string | undefined> = process.env): boolean {
   return typeof env.TMUX === "string" && env.TMUX.trim().length > 0;
+}
+
+export function isCmuxSession(env: Record<string, string | undefined> = process.env): boolean {
+  return [env.CMUX_WORKSPACE_ID, env.CMUX_SURFACE_ID].some(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
 }
 
 export type TerminalApp = "kitty" | "ghostty" | "wezterm" | "iterm2";
@@ -298,6 +312,73 @@ function buildSeshTmuxCommand(worktreePath: string): string[] {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+async function launchWithCmux(
+  candidate: SwitchCandidate,
+  deps: {
+    env: Record<string, string | undefined>;
+    runProcess: SwitchProcessRunner;
+  },
+): Promise<LaunchSwitchResult> {
+  const command = [
+    "cmux",
+    "workspace",
+    "create",
+    "--cwd",
+    candidate.worktreePath,
+    "--focus",
+    "true",
+    "--json",
+  ];
+  const result = await deps.runProcess(command, {
+    cwd: candidate.worktreePath,
+    env: deps.env,
+  });
+
+  if (result.exitCode !== 0) {
+    const detail = (result.stderr || result.stdout || "unknown failure").trim();
+    throwLaunchFailure(
+      candidate.worktreePath,
+      command,
+      `cmux workspace creation failed. Ensure cmux v${CMUX_MINIMUM_VERSION} or newer is installed and local socket access is enabled. ${detail}`,
+    );
+  }
+
+  const workspaceId = parseCmuxWorkspaceIdentifier(result.stdout);
+  if (!workspaceId) {
+    throwLaunchFailure(
+      candidate.worktreePath,
+      command,
+      `cmux returned invalid JSON or omitted workspace_ref/workspace_id. Ensure cmux v${CMUX_MINIMUM_VERSION} or newer is installed.`,
+    );
+  }
+
+  return {
+    command,
+    mode: "cmux",
+  };
+}
+
+function parseCmuxWorkspaceIdentifier(stdout: string): string | null {
+  try {
+    const payload: unknown = JSON.parse(stdout.trim());
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+      return null;
+    }
+
+    const record = payload as Record<string, unknown>;
+    for (const key of ["workspace_ref", "workspace_id"] as const) {
+      const value = record[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        return value;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 async function launchWithFallback(

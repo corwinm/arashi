@@ -79,6 +79,28 @@ describe("switch command integration", () => {
     expect(discoveredRepoSets).toEqual([["workspace"]]);
   });
 
+  test("reports cmux launch mode from the shared launcher", async () => {
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async () => ({
+          command: ["cmux", "workspace", "create"],
+          mode: "cmux",
+        }),
+        loadWorkspaceRepositories: async () => ({
+          repositories: [{ name: "workspace", path: "/workspace" }],
+        }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("cmux");
+  });
+
   test("uses child repositories only with --repos", async () => {
     const discoveredRepoSets: string[][] = [];
     const repositories: WorkspaceRepository[] = [

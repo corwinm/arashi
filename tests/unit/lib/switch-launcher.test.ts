@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   detectIntegratedIde,
   detectTerminalApp,
+  isCmuxSession,
   launchSwitchTarget,
 } from "../../../src/lib/switch-launcher.ts";
 import type { SwitchCandidate } from "../../../src/core/switch.ts";
@@ -485,6 +486,186 @@ describe("launchSwitchTarget", () => {
     expect(commands[0]).toEqual(["open", "-a", "iTerm", "/workspace/feature-auth"]);
   });
 
+  test("launches a cmux workspace with an argv-safe exact worktree path", async () => {
+    const specialCandidate: SwitchCandidate = {
+      ...candidate,
+      worktreePath: "/workspace/feature auth's $review",
+    };
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+      return {
+        exitCode: 0,
+        stderr: "",
+        stdout: '{"workspace_ref":"workspace:7"}\n',
+      };
+    };
+
+    const result = await launchSwitchTarget(
+      specialCandidate,
+      {},
+      {
+        env: {
+          CMUX_SURFACE_ID: "surface:2",
+          CMUX_WORKSPACE_ID: "workspace:1",
+          TERM_PROGRAM: "ghostty",
+        },
+        platform: "darwin",
+        runProcess,
+      },
+    );
+
+    expect(result.mode).toBe("cmux");
+    expect(result.command).toEqual([
+      "cmux",
+      "workspace",
+      "create",
+      "--cwd",
+      "/workspace/feature auth's $review",
+      "--focus",
+      "true",
+      "--json",
+    ]);
+    expect(commands).toEqual([result.command]);
+  });
+
+  test("accepts cmux workspace UUID output", async () => {
+    const result = await launchSwitchTarget(
+      candidate,
+      {},
+      {
+        env: { CMUX_WORKSPACE_ID: "workspace:1", TERM_PROGRAM: "ghostty" },
+        platform: "darwin",
+        runProcess: async () => ({
+          exitCode: 0,
+          stderr: "",
+          stdout: '{"workspace_id":"9836651E-71D1-4558-B5A8-E108D95CC92B"}',
+        }),
+      },
+    );
+
+    expect(result.mode).toBe("cmux");
+  });
+
+  test("does not treat a cmux socket path alone as an active cmux terminal", async () => {
+    const commands: string[][] = [];
+    const result = await launchSwitchTarget(
+      candidate,
+      {},
+      {
+        env: { CMUX_SOCKET_PATH: "/tmp/cmux.sock", TERM_PROGRAM: "ghostty" },
+        platform: "darwin",
+        runProcess: async (command) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result.mode).toBe("fallback");
+    expect(commands[0]).toEqual(["ghostty", "--working-directory", candidate.worktreePath]);
+  });
+
+  test("preserves nested tmux precedence inside cmux", async () => {
+    const commands: string[][] = [];
+    const result = await launchSwitchTarget(
+      candidate,
+      {},
+      {
+        env: {
+          CMUX_WORKSPACE_ID: "workspace:1",
+          TERM_PROGRAM: "ghostty",
+          TMUX: "/tmp/tmux-1000/default",
+        },
+        platform: "darwin",
+        runProcess: async (command) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result.mode).toBe("tmux");
+    expect(commands).toEqual([["tmux", "new-window", "-c", candidate.worktreePath]]);
+  });
+
+  test("preserves explicit IDE precedence inside cmux", async () => {
+    const commands: string[][] = [];
+    const result = await launchSwitchTarget(
+      candidate,
+      { preferredIde: "vscode", requirePreferredIde: true },
+      {
+        env: { CMUX_WORKSPACE_ID: "workspace:1", TERM_PROGRAM: "ghostty" },
+        platform: "darwin",
+        runProcess: async (command) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result.mode).toBe("vscode");
+    expect(commands).toEqual([
+      ["which", "code"],
+      ["code", "--new-window", candidate.worktreePath],
+    ]);
+  });
+
+  test.each([
+    {
+      name: "cannot execute the cmux CLI",
+      result: { exitCode: -1, stderr: "spawn cmux ENOENT", stdout: "" },
+    },
+    {
+      name: "cmux socket access fails",
+      result: { exitCode: 1, stderr: "socket access denied", stdout: "" },
+    },
+    {
+      name: "cmux returns malformed JSON",
+      result: { exitCode: 0, stderr: "", stdout: "OK workspace:2" },
+    },
+    {
+      name: "cmux omits the workspace identifier",
+      result: { exitCode: 0, stderr: "", stdout: '{"ok":true}' },
+    },
+  ])("fails without Ghostty fallback when $name", async ({ result }) => {
+    const commands: string[][] = [];
+
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        {},
+        {
+          env: { CMUX_WORKSPACE_ID: "workspace:1", TERM_PROGRAM: "ghostty" },
+          platform: "darwin",
+          runProcess: async (command) => {
+            commands.push(command);
+            return result;
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: {
+        command: [
+          "cmux",
+          "workspace",
+          "create",
+          "--cwd",
+          candidate.worktreePath,
+          "--focus",
+          "true",
+          "--json",
+        ],
+        path: candidate.worktreePath,
+      },
+      message: expect.stringContaining("cmux v0.64.18 or newer"),
+    });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.[0]).toBe("cmux");
+  });
+
   test("throws launch failure when all fallback commands fail", async () => {
     await expect(
       launchSwitchTarget(
@@ -495,6 +676,24 @@ describe("launchSwitchTarget", () => {
     ).rejects.toMatchObject({
       code: SwitchCommandErrorCode.LAUNCH_FAILED,
     });
+  });
+});
+
+describe("isCmuxSession", () => {
+  test("detects a cmux workspace identifier", () => {
+    expect(isCmuxSession({ CMUX_WORKSPACE_ID: "workspace:1" })).toBe(true);
+  });
+
+  test("detects a cmux surface identifier", () => {
+    expect(isCmuxSession({ CMUX_SURFACE_ID: "surface:1" })).toBe(true);
+  });
+
+  test("rejects empty cmux identifiers", () => {
+    expect(isCmuxSession({ CMUX_SURFACE_ID: " ", CMUX_WORKSPACE_ID: "" })).toBe(false);
+  });
+
+  test("rejects socket path without managed-terminal identifiers", () => {
+    expect(isCmuxSession({ CMUX_SOCKET_PATH: "/tmp/cmux.sock" })).toBe(false);
   });
 });
 
