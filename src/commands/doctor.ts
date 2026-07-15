@@ -175,12 +175,30 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
       summary: summarizeDoctorFindings(findings),
       workspaceRoot: context.mainRoot,
     };
-    if (options.json) writeJsonEnvelope(createJsonSuccessEnvelope("doctor", data));
-    else
+    const hasBlockingFindings = data.summary.error > ZERO;
+    if (options.json) {
+      if (hasBlockingFindings) {
+        writeJsonEnvelope(
+          createJsonErrorEnvelope("doctor", {
+            code: "DOCTOR_BLOCKING_FINDINGS",
+            details: data,
+            message: `${data.summary.error} blocking doctor finding(s) detected`,
+          }),
+        );
+      } else {
+        writeJsonEnvelope(createJsonSuccessEnvelope("doctor", data));
+      }
+    } else {
       console.log(
-        `Arashi workspace doctor\nWorkspace mode: standalone\nWorkspace: ${context.mainRoot}\n${findings.length ? findings.map((finding) => finding.message).join("\n") : "No workspace health findings were detected."}`,
+        `Workspace mode: standalone\n${formatDoctorHumanOutput({
+          checkedCategories: [...data.checkedCategories],
+          findings,
+          summary: data.summary,
+          workspaceRoot: context.mainRoot,
+        })}`,
       );
-    return ZERO;
+    }
+    return hasBlockingFindings ? ERROR_EXIT_CODE : ZERO;
   }
   const result = await runDoctor();
   const hasBlockingFindings = result.summary.error > ZERO;

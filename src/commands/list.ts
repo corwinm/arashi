@@ -72,10 +72,15 @@ Examples:
   $ arashi list | fzf              # Interactive selection with fzf
 `,
     )
-    .action(async (options: CliOptions) => {
+    .action(async (options: CliOptions, command: Command) => {
       try {
         const context = await resolveWorkspaceContext();
         if (context.mode === "standalone") {
+          if (command.getOptionValueSource("maxDepth") === "cli") {
+            throw new ListCommandError(
+              "--max-depth is not supported in standalone mode because standalone discovery never traverses sub-repositories.",
+            );
+          }
           const worktrees = await standaloneWorktrees(context);
           if (options.json) {
             writeJsonEnvelope(

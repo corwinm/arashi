@@ -352,14 +352,15 @@ describe("standalone lifecycle", () => {
     );
   });
 
-  test("list preserves simple composability, table, verbose, and max-depth modes", async () => {
+  test("list preserves simple composability, table, and verbose modes while rejecting standalone depth discovery", async () => {
     const root = await repository();
     await arashi(root, ["init", "--zero-config"]);
     await arashi(root, ["create", "list-modes", "--json"]);
 
-    const simple = await arashi(root, ["list", "--max-depth", "0"]);
+    const simple = await arashi(root, ["list"]);
     const table = await arashi(root, ["list", "--table"]);
-    const verbose = await arashi(root, ["list", "--verbose", "--max-depth", "0"]);
+    const verbose = await arashi(root, ["list", "--verbose"]);
+    const depth = await arashi(root, ["list", "--max-depth", "0", "--json"]);
 
     expect(simple.exitCode).toBe(0);
     expect(simple.stdout.trim().split("\n")).toHaveLength(2);
@@ -375,6 +376,12 @@ describe("standalone lifecycle", () => {
     expect(verbose.stdout).toContain("Workspace mode: standalone");
     expect(verbose.stdout).toContain("HEAD:");
     expect(verbose.stdout).toContain("Branch:");
+    expect(depth.exitCode).not.toBe(0);
+    expect(JSON.parse(depth.stdout)).toMatchObject({
+      command: "list",
+      error: { message: expect.stringContaining("--max-depth") },
+      ok: false,
+    });
   });
 
   test("prune reports structured stale entries, reasons, totals, and results", async () => {
@@ -457,6 +464,48 @@ describe("standalone lifecycle", () => {
     );
     expect(JSON.stringify(data)).not.toContain("managed-ignore:./repos");
     expect(JSON.stringify(data)).not.toContain("MANAGED_IGNORE_MISSING");
+  });
+
+  test("doctor preserves blocking exit, JSON, and human finding contracts in standalone mode", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const realGit = (await run(root, ["which", "git"])).stdout.trim();
+    const bin = join(root, "test-bin");
+    const wrapper = join(bin, "git");
+    await mkdir(bin);
+    await writeFile(
+      wrapper,
+      `#!/bin/sh\nif [ "$1" = status ]; then echo 'injected status failure' >&2; exit 42; fi\nexec '${realGit}' "$@"\n`,
+    );
+    await chmod(wrapper, 0o755);
+    const env = { PATH: `${bin}:${process.env.PATH ?? ""}` };
+
+    const json = await arashi(root, ["doctor", "--json"], env);
+    expect(json.exitCode).not.toBe(0);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      command: "doctor",
+      error: {
+        code: "DOCTOR_BLOCKING_FINDINGS",
+        details: {
+          findings: [
+            expect.objectContaining({
+              code: "REPOSITORY_STATUS_FAILED",
+              severity: "error",
+              suggestedCommands: [expect.stringContaining("git -C")],
+            }),
+          ],
+          mode: "standalone",
+        },
+      },
+      ok: false,
+    });
+
+    const human = await arashi(root, ["doctor"], env);
+    expect(human.exitCode).not.toBe(0);
+    expect(human.stdout).toContain("Workspace mode: standalone");
+    expect(human.stdout).toContain("REPOSITORY_STATUS_FAILED");
+    expect(human.stdout).toContain("repository:");
+    expect(human.stdout).toContain("Suggested commands:");
   });
 
   test("move JSON and human results identify standalone mode and roots", async () => {
