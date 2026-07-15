@@ -2,6 +2,7 @@ import { access, lstat, mkdir, readFile, rmdir, unlink, writeFile } from "fs/pro
 import { dirname, isAbsolute, join, resolve } from "path";
 import { configExists } from "./config.ts";
 import { exec } from "./git.ts";
+import { parseGitIgnoreVerbose } from "./git-ignore.ts";
 import { resolveGitMainWorktree } from "./workspace-context.ts";
 
 const RULE = ".worktrees/";
@@ -82,8 +83,11 @@ async function effectiveIgnore(
 ): Promise<{ ignored: boolean; source?: string }> {
   try {
     const result = await exec(["check-ignore", "--no-index", "-v", path], root);
-    const line = result.stdout.trim();
-    return { ignored: line.length > 0, ...(line ? { source: line.split("\t", 1)[0] } : {}) };
+    const evidence = parseGitIgnoreVerbose(result.stdout);
+    return {
+      ignored: evidence.ignored,
+      ...(evidence.metadata ? { source: evidence.metadata } : {}),
+    };
   } catch {
     return { ignored: false };
   }

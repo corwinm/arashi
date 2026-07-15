@@ -1,6 +1,7 @@
 import { access, rmdir } from "fs/promises";
 import { dirname, join, relative, resolve } from "path";
 import { exec } from "./git.ts";
+import { parseGitIgnoreVerbose } from "./git-ignore.ts";
 import { executeHook, resolveScopedLifecycleHooks } from "./hooks.ts";
 import type { StandaloneWorkspaceContext } from "./workspace-context.ts";
 
@@ -115,13 +116,12 @@ export async function inspectStandaloneIgnore(
       ["check-ignore", "--no-index", "--verbose", destination],
       context.mainRoot,
     );
-    const metadata = result.stdout.trim().split("\t", 1)[0] ?? "";
-    const match = metadata.match(/^(.*):(\d+):(.*)$/);
+    const evidence = parseGitIgnoreVerbose(result.stdout);
     return {
-      ignored: true,
-      ...(match
-        ? { line: Number(match[2]), pattern: match[3], source: match[1] }
-        : { pattern: null, source: metadata || null }),
+      ignored: evidence.ignored,
+      ...(evidence.line === undefined ? {} : { line: evidence.line }),
+      pattern: evidence.pattern,
+      source: evidence.source,
     };
   } catch {
     return { ignored: false, pattern: null, source: null };

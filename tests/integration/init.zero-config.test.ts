@@ -228,6 +228,26 @@ describe("init --zero-config", () => {
     expect(await readFile(exclude)).toEqual(before);
   });
 
+  test("treats a tracked negation as exposed and rolls back an ineffective local rule", async () => {
+    const root = await repository();
+    const exclude = join(root, ".git", "info", "exclude");
+    const before = await readFile(exclude);
+    await writeFile(join(root, ".gitignore"), "!/.worktrees/\n!/.worktrees/**\n");
+
+    const result = await arashi(root, ["init", "--zero-config", "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(JSON.parse(result.stdout).error).toMatchObject({
+      code: "ZERO_CONFIG_BOOTSTRAP_FAILED",
+      details: {
+        finalState: { localExcludeChanged: false, worktreesDirectoryChanged: false },
+        restored: { localExclude: true, worktreesDirectory: true },
+      },
+    });
+    expect(await readFile(exclude)).toEqual(before);
+    await expect(access(join(root, ".worktrees"))).rejects.toThrow();
+  });
+
   test("preserves CRLF local exclude formatting", async () => {
     const root = await repository();
     const exclude = join(root, ".git", "info", "exclude");

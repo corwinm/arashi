@@ -68,6 +68,25 @@ describe("standalone lifecycle", () => {
     await expect(access(join(root, ".worktrees", "feat"))).rejects.toThrow();
   });
 
+  test("blocks create when verbose Git ignore evidence is an effective negation", async () => {
+    const root = await repository();
+    await mkdir(join(root, ".worktrees"));
+    await writeFile(join(root, ".gitignore"), "!/.worktrees/\n!/.worktrees/**\n");
+
+    const result = await arashi(root, ["create", "feat/exposed", "--dry-run", "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(JSON.parse(result.stdout).error).toMatchObject({
+      code: "STANDALONE_DESTINATION_NOT_IGNORED",
+      details: {
+        effectiveIgnore: { ignored: false },
+        mutation: { branch: false, config: false, ignore: false, worktree: false },
+      },
+    });
+    expect((await run(root, ["git", "branch", "--list", "feat/exposed"])).stdout).toBe("");
+    await expect(access(join(root, ".worktrees", "feat", "exposed"))).rejects.toThrow();
+  });
+
   test("create JSON reports the effective ignore source", async () => {
     const root = await repository();
     await arashi(root, ["init", "--zero-config"]);
