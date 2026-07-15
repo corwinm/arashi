@@ -97,11 +97,32 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
   try {
     context = await resolveWorkspaceContext();
   } catch (error) {
-    if (options.json)
+    const converted = unknownErrorToJsonError(error, "CONFIG_LOAD_FAILED");
+    const finding = {
+      category: "configuration" as const,
+      code: "CONFIG_LOAD_FAILED",
+      details: converted.details,
+      message: converted.message,
+      scope: process.cwd(),
+      severity: "error" as const,
+      suggestedCommands: [],
+    };
+    const details = {
+      checkedCategories: ["configuration"] as const,
+      findings: [finding],
+      summary: summarizeDoctorFindings([finding]),
+    };
+    if (options.json) {
       writeJsonEnvelope(
-        createJsonErrorEnvelope("doctor", unknownErrorToJsonError(error, "CONFIG_LOAD_FAILED")),
+        createJsonErrorEnvelope("doctor", {
+          code: "DOCTOR_BLOCKING_FINDINGS",
+          details,
+          message: "1 blocking doctor finding(s) detected",
+        }),
       );
-    else console.error(error instanceof Error ? error.message : String(error));
+    } else {
+      console.error(error instanceof Error ? error.message : String(error));
+    }
     return ERROR_EXIT_CODE;
   }
   if (context?.mode === "standalone") {
