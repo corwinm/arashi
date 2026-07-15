@@ -117,7 +117,7 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
         createJsonErrorEnvelope("doctor", {
           code: "DOCTOR_BLOCKING_FINDINGS",
           details,
-          message: "1 blocking doctor finding(s) detected",
+          message: `1 blocking doctor finding(s) detected: ${converted.message}`,
         }),
       );
     } else {
