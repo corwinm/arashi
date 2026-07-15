@@ -283,8 +283,12 @@ describe("CLI JSON output contract", () => {
       branchName,
       failureCount: 0,
       managedIgnore: { changed: true, scope: "local" },
+      mode: "configured",
+      repositoriesBase: join(await realpath(workspaceRoot), "repos"),
       successCount: 3,
       totalRepositories: 3,
+      workspaceRoot: await realpath(workspaceRoot),
+      worktreesBase: join(await realpath(workspaceRoot), ".arashi", "worktrees"),
     });
     const createdRepositories = jsonArray(createData.repositories);
     expect(createdRepositories.map((repo) => repo.repositoryName).toSorted()).toEqual(
@@ -315,6 +319,8 @@ describe("CLI JSON output contract", () => {
     });
     const removeData = jsonData(removeParsed);
     expect(removeData).toMatchObject({
+      mode: "configured",
+      repositoriesBase: join(await realpath(workspaceRoot), "repos"),
       success: true,
       summary: {
         successfulBranches: 3,
@@ -322,11 +328,29 @@ describe("CLI JSON output contract", () => {
         totalBranches: 3,
         totalWorktrees: 3,
       },
+      workspaceRoot: await realpath(workspaceRoot),
+      worktreesBase: join(await realpath(workspaceRoot), ".arashi", "worktrees"),
     });
     for (const repo of createdRepositories) {
       expect(await runtime.file(repo.worktreePath as string).exists()).toBe(false);
     }
     expect(removeResult.stdout).not.toContain("Successfully removed");
+  });
+
+  test("configured list JSON includes additive workspace path metadata", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    const canonicalRoot = await realpath(workspaceRoot);
+
+    const result = await runArashi(workspaceRoot, ["list", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(jsonData(parseSingleJsonDocument(result.stdout))).toMatchObject({
+      mode: "configured",
+      repositoriesBase: join(canonicalRoot, "repos"),
+      workspaceRoot: canonicalRoot,
+      worktreesBase: join(canonicalRoot, ".arashi", "worktrees"),
+      worktrees: expect.any(Array),
+    });
   });
 
   test("prune --json reports and removes stale worktree metadata", async () => {

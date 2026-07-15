@@ -51,7 +51,7 @@ import {
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
-import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
 import {
   createStandaloneWorktree,
   StandaloneDestinationNotIgnoredError,
@@ -178,6 +178,7 @@ interface CreateSummaryJsonOptions {
   moveSummary?: MoveSummary | null;
   managedIgnore?: ManagedIgnoreReconciliation;
   summary: OperationSummary;
+  workspaceMetadata?: Record<string, unknown>;
 }
 
 const createSummaryJsonData = ({
@@ -186,7 +187,9 @@ const createSummaryJsonData = ({
   managedIgnore,
   moveSummary,
   summary,
+  workspaceMetadata,
 }: CreateSummaryJsonOptions) => ({
+  ...workspaceMetadata,
   branchName,
   dirtyWorkspaceGuidance,
   dryRun: summary.isDryRun === true,
@@ -587,6 +590,46 @@ const applyPostCreateDefaults = async ({
   );
 };
 
+const applyStandaloneCreateOverrides = async (options: {
+  branchName: string;
+  commandOptions: CreateCommandOptions;
+  context: Extract<Awaited<ReturnType<typeof resolveWorkspaceContext>>, { mode: "standalone" }>;
+  deps: CreateCommandDependencies;
+  worktreePath: string;
+}): Promise<void> => {
+  if (options.commandOptions.dryRun) {
+    return;
+  }
+  const defaults = resolveCreateDefaults(options.commandOptions, options.context.config);
+  if (!defaults.shouldSwitch) {
+    return;
+  }
+
+  info(`Default switch target: ${options.worktreePath}`);
+  if (!defaults.shouldLaunch) {
+    info("Launch skipped (resolved defaults disabled launch for this invocation).");
+    return;
+  }
+
+  const launchCandidate = options.deps.launchSwitchTarget ?? launchSwitchTarget;
+  const launchResult = await launchCandidate(
+    {
+      branchName: options.branchName,
+      repoName: options.context.repository.name,
+      worktreePath: options.worktreePath,
+    },
+    { sesh: defaults.launchMode === SESH_LAUNCH_MODE },
+    {
+      env: options.deps.env ?? process.env,
+      platform: options.deps.platform ?? process.platform,
+      runProcess: options.deps.runProcess,
+    },
+  );
+  success(
+    `Opened ${launchResult.mode} context for ${options.context.repository.name} at ${options.worktreePath}`,
+  );
+};
+
 export function createCommand(): Command {
   const editorHostOption = new Option(
     "--editor-host <host>",
@@ -724,8 +767,13 @@ export async function executeCreate(
         skipHooks: options.noHooks === true || options.hooks === false,
       },
     );
-    if (options.json) writeJsonEnvelope(createJsonSuccessEnvelope("create", standaloneResult));
-    else {
+    const standaloneData = {
+      ...workspaceJsonMetadata(workspaceContext),
+      ...standaloneResult,
+    };
+    if (options.json) {
+      writeJsonEnvelope(createJsonSuccessEnvelope("create", standaloneData));
+    } else {
       info("Workspace mode: standalone");
       success(
         options.dryRun
@@ -733,6 +781,13 @@ export async function executeCreate(
           : `Created worktree at ${standaloneResult.worktreePath}`,
       );
     }
+    await applyStandaloneCreateOverrides({
+      branchName,
+      commandOptions: options,
+      context: workspaceContext,
+      deps,
+      worktreePath: standaloneResult.worktreePath,
+    });
     return ZERO;
   }
 
@@ -991,6 +1046,15 @@ export async function executeCreate(
           managedIgnore,
           moveSummary,
           summary,
+          workspaceMetadata: {
+            mode: "configured",
+            repositoriesBase: resolve(context.workspaceRoot, arashiConfig.reposDir),
+            workspaceRoot: context.workspaceRoot,
+            worktreesBase: resolve(
+              context.workspaceRoot,
+              arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+            ),
+          },
         }),
       ),
     );

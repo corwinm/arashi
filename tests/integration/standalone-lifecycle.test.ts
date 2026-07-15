@@ -3,6 +3,8 @@ import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from
 import { basename, join } from "path";
 import { tmpdir } from "os";
 import { spawn } from "../helpers/node-runtime.ts";
+import { executeCreate } from "../../src/commands/create.ts";
+import { executeRemove } from "../../src/commands/remove.ts";
 
 const roots: string[] = [];
 async function run(cwd: string, args: string[], env?: Record<string, string>) {
@@ -150,9 +152,167 @@ describe("standalone lifecycle", () => {
     expect(JSON.parse((await arashi(linked, ["status", "--json"])).stdout).data.mode).toBe(
       "standalone",
     );
-    const removed = await arashi(root, ["remove", "feat/example", "--json"]);
+    const removed = await arashi(root, ["remove", "feat/example", "--force", "--json"]);
     expect(removed.exitCode).toBe(0);
     await expect(access(linked)).rejects.toThrow();
+    await expect(access(join(root, ".arashi"))).rejects.toThrow();
+  });
+
+  test("standalone remove preserves confirmation and effective keep semantics", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    for (const branch of ["declined", "keep-directory", "keep-branch"]) {
+      expect((await arashi(root, ["create", branch, "--json"])).exitCode).toBe(0);
+    }
+
+    const originalCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const prompts: string[] = [];
+      expect(
+        await executeRemove(
+          "declined",
+          {},
+          {
+            confirm: async (message) => {
+              prompts.push(message);
+              return { status: "ok", value: false };
+            },
+            multiSelect: async () => ({ status: "ok", value: [] }),
+          },
+        ),
+      ).toBe(0);
+      expect(prompts).toEqual([expect.stringContaining("Remove 1 worktree and delete 1 branch")]);
+      await expect(access(join(root, ".worktrees", "declined"))).resolves.toBeUndefined();
+      expect((await run(root, ["git", "branch", "--list", "declined"])).stdout).toContain(
+        "declined",
+      );
+
+      expect(await executeRemove("keep-directory", { force: true, keepWorktrees: true })).toBe(0);
+      await expect(access(join(root, ".worktrees", "keep-directory"))).resolves.toBeUndefined();
+      const keptDirectoryListing = (await run(root, ["git", "worktree", "list", "--porcelain"]))
+        .stdout;
+      expect(keptDirectoryListing).toContain(".worktrees/keep-directory");
+      expect(keptDirectoryListing).toContain("detached");
+      expect((await run(root, ["git", "branch", "--list", "keep-directory"])).stdout).toBe("");
+
+      expect(await executeRemove("keep-branch", { force: true, keepBranches: true })).toBe(0);
+      await expect(access(join(root, ".worktrees", "keep-branch"))).rejects.toThrow();
+      expect((await run(root, ["git", "branch", "--list", "keep-branch"])).stdout.trim()).toBe(
+        "keep-branch",
+      );
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  test("standalone remove dry-run reports a complete non-mutating plan", async () => {
+    const root = await repository();
+    const canonicalRoot = await realpath(root);
+    await arashi(root, ["init", "--zero-config"]);
+    await arashi(root, ["create", "remove-preview", "--json"]);
+    const linked = join(root, ".worktrees", "remove-preview");
+    await writeFile(join(linked, "dirty.txt"), "dirty\n");
+    const home = await mkdtemp(join(tmpdir(), "arashi-remove-preview-home-"));
+    roots.push(home);
+    const hooks = join(home, ".arashi", "hooks");
+    await mkdir(hooks, { recursive: true });
+    const marker = join(home, "hook-ran");
+    for (const hookName of ["pre-remove", "post-remove"]) {
+      const hook = join(hooks, `${hookName}.sh`);
+      await writeFile(hook, `#!/bin/sh\ntouch "${marker}"\n`);
+      await chmod(hook, 0o755);
+    }
+
+    const result = await arashi(root, ["remove", "remove-preview", "--dry-run", "--json"], {
+      HOME: home,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).data).toMatchObject({
+      blockers: [
+        expect.objectContaining({
+          branchName: "remove-preview",
+          path: expect.stringContaining("remove-preview"),
+          type: "dirty_worktree",
+        }),
+      ],
+      dryRun: true,
+      effectiveOptions: {
+        checkDirty: true,
+        force: false,
+        keepBranches: false,
+        keepWorktrees: false,
+      },
+      hooks: expect.arrayContaining([
+        expect.objectContaining({ hookName: "pre-remove", scope: "global-shared" }),
+        expect.objectContaining({ hookName: "post-remove", scope: "global-shared" }),
+      ]),
+      mode: "standalone",
+      operations: expect.arrayContaining([
+        expect.objectContaining({
+          type: "worktree_remove",
+          worktreePath: join(canonicalRoot, ".worktrees", "remove-preview"),
+        }),
+        expect.objectContaining({ branchName: "remove-preview", type: "branch_delete" }),
+      ]),
+      repositoriesBase: canonicalRoot,
+      repositoryPath: canonicalRoot,
+      summary: { totalBranches: 1, totalWorktrees: 1 },
+      workspaceRoot: canonicalRoot,
+      worktreesBase: join(canonicalRoot, ".worktrees"),
+    });
+    await expect(access(marker)).rejects.toThrow();
+    await expect(access(linked)).resolves.toBeUndefined();
+    expect((await run(root, ["git", "branch", "--list", "remove-preview"])).stdout).toContain(
+      "remove-preview",
+    );
+  });
+
+  test("standalone create applies explicit launch, sesh, switch, and opt-out overrides", async () => {
+    const root = await repository();
+    const canonicalRoot = await realpath(root);
+    await arashi(root, ["init", "--zero-config"]);
+    const originalCwd = process.cwd();
+    process.chdir(root);
+    const launches: { branchName: string; sesh?: boolean }[] = [];
+    const output: string[] = [];
+    const originalLog = console.log;
+    console.log = (...values: unknown[]) => output.push(values.map(String).join(" "));
+    const dependencies = {
+      launchSwitchTarget: async (
+        candidate: { branchName: string },
+        options: { sesh?: boolean },
+      ) => {
+        launches.push({ branchName: candidate.branchName, sesh: options.sesh });
+        return {
+          command: ["test-launch"],
+          mode: options.sesh ? ("sesh" as const) : ("fallback" as const),
+        };
+      },
+    };
+    try {
+      expect(await executeCreate("explicit-launch", { launch: true }, dependencies)).toBe(0);
+      expect(await executeCreate("explicit-sesh", { sesh: true }, dependencies)).toBe(0);
+      expect(await executeCreate("explicit-switch", { switch: true }, dependencies)).toBe(0);
+      expect(
+        await executeCreate("explicit-opt-out", { launch: false, switch: false }, dependencies),
+      ).toBe(0);
+    } finally {
+      console.log = originalLog;
+      process.chdir(originalCwd);
+    }
+
+    expect(launches).toEqual([
+      { branchName: "explicit-launch", sesh: false },
+      { branchName: "explicit-sesh", sesh: true },
+    ]);
+    expect(output.join("\n")).toContain(
+      `Default switch target: ${join(canonicalRoot, ".worktrees", "explicit-switch")}`,
+    );
+    expect(output.join("\n")).toContain(
+      "Launch skipped (resolved defaults disabled launch for this invocation).",
+    );
     await expect(access(join(root, ".arashi"))).rejects.toThrow();
   });
 
@@ -363,6 +523,7 @@ describe("standalone lifecycle", () => {
     const depth = await arashi(root, ["list", "--max-depth", "0", "--json"]);
 
     expect(simple.exitCode).toBe(0);
+    expect(simple.stderr).toContain("Workspace mode: standalone");
     expect(simple.stdout.trim().split("\n")).toHaveLength(2);
     expect(
       simple.stdout
@@ -373,6 +534,8 @@ describe("standalone lifecycle", () => {
     expect(table.stdout).toContain("BRANCH");
     expect(table.stdout).toContain("WORKTREE");
     expect(table.stdout).toContain("list-modes");
+    expect(table.stderr).toContain("Workspace mode: standalone");
+    expect(table.stdout).not.toContain("Workspace mode: standalone");
     expect(verbose.stdout).toContain("Workspace mode: standalone");
     expect(verbose.stdout).toContain("HEAD:");
     expect(verbose.stdout).toContain("Branch:");
@@ -647,7 +810,7 @@ describe("standalone lifecycle", () => {
     await writeFile(hook, "#!/bin/sh\nexit 42\n");
     await chmod(hook, 0o755);
 
-    const result = await arashi(root, ["remove", "protected"], { HOME: home });
+    const result = await arashi(root, ["remove", "protected", "--force"], { HOME: home });
 
     expect(result.exitCode).not.toBe(0);
     await expect(access(join(root, ".worktrees", "protected"))).resolves.toBeUndefined();
@@ -673,22 +836,22 @@ describe("standalone lifecycle", () => {
     );
     await chmod(join(hookDirectory, "post-remove.sh"), 0o755);
 
-    const result = await arashi(root, ["remove", "partial-remove", "--json"], { HOME: home });
+    const result = await arashi(root, ["remove", "partial-remove", "--force", "--json"], {
+      HOME: home,
+    });
 
     expect(result.exitCode).not.toBe(0);
     expect(await readFile(record, "utf8")).toContain("standalone");
     expect(JSON.parse(result.stdout).error).toMatchObject({
       code: "STANDALONE_REMOVE_PARTIAL_FAILURE",
       details: {
-        finalState: { branchExists: true, worktreeExists: true },
+        finalState: { branchExists: false, worktreeExists: false },
         hookFailures: expect.arrayContaining([
           expect.objectContaining({ hookName: "post-remove" }),
         ]),
-        operationFailures: expect.arrayContaining([
-          expect.objectContaining({ operation: "remove-worktree" }),
-        ]),
+        operationFailures: [],
       },
     });
-    await expect(access(linked)).resolves.toBeUndefined();
+    await expect(access(linked)).rejects.toThrow();
   });
 });

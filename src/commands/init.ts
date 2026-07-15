@@ -1306,7 +1306,15 @@ Existing effective tracked, local, or global rules are honored. Arashi never mod
             writeJsonEnvelope(
               createJsonErrorEnvelope("init", {
                 code: "ZERO_CONFIG_INCOMPATIBLE_OPTIONS",
-                details: { conflicts, mode: "standalone" },
+                details: {
+                  attempted: { localExclude: false, worktreesDirectory: false },
+                  conflicts,
+                  finalState: {
+                    localExcludeChanged: false,
+                    worktreesDirectoryChanged: false,
+                  },
+                  mode: "standalone",
+                },
                 message: conflictError.message,
               }),
             );

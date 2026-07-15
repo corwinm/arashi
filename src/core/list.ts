@@ -40,6 +40,7 @@ interface ListCommandOptions {
   json?: boolean;
   table?: boolean;
   maxDepth?: number;
+  jsonMetadata?: Record<string, unknown>;
 }
 
 interface ListCommandOutput {
@@ -262,6 +263,7 @@ export const findParentRepo = async (currentPath: string): Promise<string | null
 export const listCommand = async (options?: ListCommandOptions): Promise<void> => {
   const opts: ListCommandOptions = {
     json: options?.json || false,
+    jsonMetadata: options?.jsonMetadata,
     maxDepth: options?.maxDepth || DEFAULT_MAX_DEPTH,
     table: options?.table || false,
     verbose: options?.verbose || false,
@@ -310,7 +312,10 @@ export const listCommand = async (options?: ListCommandOptions): Promise<void> =
     let output_str = formatAsSimpleList(output);
     if (opts.json) {
       output_str = stringifyJsonEnvelope(
-        createJsonSuccessEnvelope("list", { worktrees: output.worktrees }),
+        createJsonSuccessEnvelope("list", {
+          ...opts.jsonMetadata,
+          worktrees: output.worktrees,
+        }),
       );
     } else if (opts.table || opts.verbose) {
       // Table format when explicitly requested or in verbose mode

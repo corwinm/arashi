@@ -20,7 +20,7 @@ import {
 } from "../lib/json-output.ts";
 import { listCommand } from "../core/list.ts";
 import { error as logError } from "../lib/logger.ts";
-import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
 import { standaloneWorktrees } from "../lib/standalone.ts";
 
 type ListCommandOptions = Parameters<typeof listCommand>[0];
@@ -85,13 +85,13 @@ Examples:
           if (options.json) {
             writeJsonEnvelope(
               createJsonSuccessEnvelope("list", {
-                mode: "standalone",
+                ...workspaceJsonMetadata(context),
                 repositoryPath: context.mainRoot,
-                workspaceRoot: context.mainRoot,
                 worktrees,
               }),
             );
           } else {
+            console.error("Workspace mode: standalone");
             if (options.table) {
               console.log("BRANCH\tHEAD\tWORKTREE");
               for (const worktree of worktrees)
@@ -111,7 +111,10 @@ Examples:
           }
           process.exit(0);
         }
-        await executeList(options);
+        await executeList(
+          options,
+          context.mode === "configured" ? workspaceJsonMetadata(context) : undefined,
+        );
       } catch (error) {
         if (options.json) {
           writeJsonEnvelope(createJsonErrorEnvelope("list", mapListErrorToJsonError(error)));
@@ -181,9 +184,13 @@ function mapListErrorToJsonError(error: unknown): ReturnType<typeof unknownError
   return unknownErrorToJsonError(error);
 }
 
-async function executeList(options: CliOptions): Promise<void> {
+async function executeList(
+  options: CliOptions,
+  jsonMetadata?: Record<string, unknown>,
+): Promise<void> {
   const listOptions: ListCommandOptions = {
     json: options.json || false,
+    jsonMetadata,
     maxDepth: options.maxDepth ?? 3,
     table: options.table || false,
     verbose: options.verbose || false,

@@ -12,6 +12,7 @@ import {
 import { exec } from "./git.ts";
 import { createJsonErrorEnvelope, writeJsonEnvelope } from "./json-output.ts";
 import { error as logError } from "./logger.ts";
+import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
 
 export { ConfigParseError } from "./config.ts";
 
@@ -42,6 +43,28 @@ export type WorkspaceContext =
   | ConfiguredWorkspaceContext
   | StandaloneWorkspaceContext
   | UnavailableWorkspaceContext;
+
+export interface WorkspaceJsonMetadata extends Record<string, unknown> {
+  mode: "configured" | "standalone";
+  repositoriesBase: string;
+  workspaceRoot: string;
+  worktreesBase: string;
+}
+
+export const workspaceJsonMetadata = (
+  context: ConfiguredWorkspaceContext | StandaloneWorkspaceContext,
+): WorkspaceJsonMetadata => ({
+  mode: context.mode,
+  repositoriesBase:
+    context.mode === "standalone"
+      ? context.mainRoot
+      : resolve(context.workspaceRoot, context.config.reposDir),
+  workspaceRoot: context.workspaceRoot,
+  worktreesBase:
+    context.mode === "standalone"
+      ? resolve(context.mainRoot, ".worktrees")
+      : resolve(context.workspaceRoot, context.config.worktreesDir ?? DEFAULT_WORKTREES_DIR),
+});
 
 const standaloneConfig = (): Config => ({
   repos: {},

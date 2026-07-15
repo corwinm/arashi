@@ -46,7 +46,7 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
-import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
 import { runStandaloneGlobalHooks, standaloneWorktrees } from "../lib/standalone.ts";
 import { exec as standaloneGitExec, getDefaultBranch } from "../lib/git.ts";
 import { info, error as logError, spinner, warn } from "../lib/logger.ts";
@@ -159,6 +159,15 @@ const formatDirtyDetailsText = (worktree: WorktreeEntry): string => {
   return ` (${parts.join(", ")})`;
 };
 
+const removalJsonData = (
+  summary: Parameters<typeof formatRemovalSummaryJson>[0],
+  extras: NonNullable<Parameters<typeof formatRemovalSummaryJson>[1]>,
+  metadata?: Record<string, unknown>,
+): Record<string, unknown> => ({
+  ...JSON.parse(formatRemovalSummaryJson(summary, extras)),
+  ...metadata,
+});
+
 interface SelectionExpansionOptions {
   entries: WorktreeEntry[];
   grouping: WorktreeGrouping;
@@ -222,99 +231,216 @@ export async function executeRemove(
         RemoveCommandErrorCode.BRANCH_NOT_FOUND,
       );
     }
-    if (!options.dryRun) {
+    const repositoryName = workspaceContext.repository.name;
+    const targetEntry: WorktreeEntry = {
+      branch: target.branch ?? "",
+      childrenPaths: [],
+      isMain: false,
+      parentPath: null,
+      path: target.path,
+      repository: repositoryName,
+      status: "present",
+    };
+    if (options.checkDirty !== false) {
+      await resolveWorktreeStatuses([targetEntry], true);
+    }
+
+    const branchPresence: Record<string, string[]> = target.branch
+      ? { [target.branch]: [repositoryName] }
+      : {};
+    const prompt = promptHandlers || { confirm: promptConfirm, multiSelect: promptMultiSelect };
+    const allowNonInteractive = Boolean(promptHandlers);
+    if (!options.force && !options.dryRun && !(options.keepBranches && options.keepWorktrees)) {
+      ensureInteractive(allowNonInteractive);
+      const confirmation = await promptConfirmation({
+        branchPresence,
+        checkDirty: options.checkDirty !== false,
+        confirm: prompt.confirm,
+        worktrees: [targetEntry],
+      });
+      if (confirmation === "cancelled") {
+        info("Operation cancelled");
+        return ZERO;
+      }
+      if (confirmation === "declined") {
+        info("Operation cancelled by user");
+        return ZERO;
+      }
+    }
+
+    const totalWorktrees = options.keepWorktrees ? ZERO : ONE;
+    const totalBranches = options.keepBranches || !target.branch ? ZERO : ONE;
+    const summary = createRemovalSummary(totalWorktrees, totalBranches);
+    const metadata = {
+      ...workspaceJsonMetadata(workspaceContext),
+      repositoryPath: workspaceContext.mainRoot,
+    };
+    const hookTargets = [{ name: repositoryName, path: workspaceContext.mainRoot }];
+
+    if (options.dryRun) {
+      summary.dryRun = true;
+      summary.effectiveOptions = {
+        checkDirty: options.checkDirty !== false,
+        force: options.force === true,
+        keepBranches: options.keepBranches === true,
+        keepWorktrees: options.keepWorktrees === true,
+      };
+      summary.dirtyWorktrees = targetEntry.isDirty ? [targetEntry] : [];
+      if (!options.keepWorktrees) {
+        summary.operations.push({
+          branchName: targetEntry.branch,
+          repository: repositoryName,
+          status: "pending",
+          type: "worktree_remove",
+          worktreePath: targetEntry.path,
+        });
+      }
+      if (!options.keepBranches && target.branch) {
+        summary.operations.push({
+          branchName: target.branch,
+          repository: repositoryName,
+          status: "pending",
+          type: "branch_delete",
+        });
+      }
+      summary.hookPreviews = await previewRemoveLifecycleHooks({
+        globalOnly: true,
+        targetRepositories: hookTargets,
+        workspaceRoot: workspaceContext.mainRoot,
+      });
+      summary.duration = Date.now() - startTime;
+      const data = removalJsonData(summary, {}, metadata);
+      if (options.json) {
+        writeJsonEnvelope(createJsonSuccessEnvelope("remove", data));
+      } else {
+        info("Workspace mode: standalone");
+        console.log(formatRemovalSummaryHuman(summary, {}));
+      }
+      return ZERO;
+    }
+
+    if (options.keepBranches && options.keepWorktrees) {
+      summary.duration = Date.now() - startTime;
+      const data = removalJsonData(summary, {}, metadata);
+      if (options.json) {
+        writeJsonEnvelope(createJsonSuccessEnvelope("remove", data));
+      } else {
+        warn("Both --keep-worktrees and --keep-branches specified");
+        info("No operations will be performed. At least one removal type must be enabled.");
+      }
+      return ZERO;
+    }
+
+    await runStandaloneGlobalHooks(
+      workspaceContext,
+      "pre-remove",
+      target.branch ?? branchArg,
+      target.path,
+      false,
+      options.json === true,
+    );
+    const operationFailures: { message: string; operation: string }[] = [];
+    const hookFailures: { hookName: string; message: string }[] = [];
+    if (options.keepWorktrees) {
+      try {
+        await detachWorktree(target.path);
+      } catch (error) {
+        operationFailures.push({
+          message: error instanceof Error ? error.message : String(error),
+          operation: "detach-worktree",
+        });
+      }
+    } else {
+      const operation: RemovalOperation = {
+        branchName: targetEntry.branch,
+        repository: repositoryName,
+        status: "pending",
+        type: "worktree_remove",
+        worktreePath: target.path,
+      };
+      try {
+        await removeWorktree(
+          targetEntry,
+          workspaceContext.mainRoot,
+          options.force === true || options.checkDirty === false || targetEntry.isDirty === true,
+        );
+        operation.status = "success";
+        summary.successfulWorktrees = ONE;
+      } catch (error) {
+        operation.status = "failed";
+        operation.error = formatWorktreeRemovalError(error);
+        operationFailures.push({ message: operation.error, operation: "remove-worktree" });
+      }
+      summary.operations.push(operation);
+    }
+    if (!options.keepBranches && target.branch) {
+      const operation: RemovalOperation = {
+        branchName: target.branch,
+        repository: repositoryName,
+        status: "pending",
+        type: "branch_delete",
+      };
+      try {
+        await standaloneGitExec(["branch", "-D", target.branch], workspaceContext.mainRoot);
+        operation.status = "success";
+        summary.successfulBranches = ONE;
+      } catch (error) {
+        operation.status = "failed";
+        operation.error = formatBranchDeletionError(error);
+        operationFailures.push({ message: operation.error, operation: "delete-branch" });
+      }
+      summary.operations.push(operation);
+    }
+    try {
       await runStandaloneGlobalHooks(
         workspaceContext,
-        "pre-remove",
+        "post-remove",
         target.branch ?? branchArg,
         target.path,
         false,
         options.json === true,
       );
+    } catch (error) {
+      hookFailures.push({
+        hookName: "post-remove",
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
-    const operationFailures: { message: string; operation: string }[] = [];
-    const hookFailures: { hookName: string; message: string }[] = [];
-    if (!options.dryRun && !options.keepWorktrees) {
-      try {
-        await standaloneGitExec(
-          [
-            "worktree",
-            "remove",
-            ...(options.force || options.checkDirty === false ? ["--force"] : []),
-            target.path,
-          ],
-          workspaceContext.mainRoot,
-        );
-      } catch (error) {
-        operationFailures.push({
-          message: error instanceof Error ? error.message : String(error),
-          operation: "remove-worktree",
-        });
-      }
-    }
-    if (!options.dryRun && !options.keepBranches && target.branch) {
-      try {
-        await standaloneGitExec(["branch", "-D", target.branch], workspaceContext.mainRoot);
-      } catch (error) {
-        operationFailures.push({
-          message: error instanceof Error ? error.message : String(error),
-          operation: "delete-branch",
-        });
-      }
-    }
-    if (!options.dryRun) {
-      try {
-        await runStandaloneGlobalHooks(
-          workspaceContext,
-          "post-remove",
-          target.branch ?? branchArg,
-          target.path,
-          false,
-          options.json === true,
-        );
-      } catch (error) {
-        hookFailures.push({
-          hookName: "post-remove",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-      if (operationFailures.length > ZERO || hookFailures.length > ZERO) {
-        let finalBranchExists = false;
-        if (target.branch) {
-          try {
-            await standaloneGitExec(
-              ["show-ref", "--verify", `refs/heads/${target.branch}`],
-              workspaceContext.mainRoot,
-            );
-            finalBranchExists = true;
-          } catch {
-            finalBranchExists = false;
-          }
+    if (operationFailures.length > ZERO || hookFailures.length > ZERO) {
+      let finalBranchExists = false;
+      if (target.branch) {
+        try {
+          await standaloneGitExec(
+            ["show-ref", "--verify", `refs/heads/${target.branch}`],
+            workspaceContext.mainRoot,
+          );
+          finalBranchExists = true;
+        } catch {
+          finalBranchExists = false;
         }
-        throw new StandaloneRemovePartialFailure({
-          finalState: {
-            branchExists: finalBranchExists,
-            worktreeExists: existsSync(target.path),
-          },
-          hookFailures,
-          operationFailures,
-        });
       }
+      throw new StandaloneRemovePartialFailure({
+        finalState: {
+          branchExists: finalBranchExists,
+          worktreeExists: existsSync(target.path),
+        },
+        hookFailures,
+        operationFailures,
+      });
     }
-    const data = {
-      branch: target.branch,
-      dryRun: options.dryRun === true,
-      mode: "standalone",
-      repositoryPath: workspaceContext.mainRoot,
-      worktreePath: target.path,
-    };
-    if (options.json) writeJsonEnvelope(createJsonSuccessEnvelope("remove", data));
-    else
-      console.log(
-        `${options.dryRun ? "Would remove" : "Removed"} standalone worktree ${target.path}`,
-      );
+    summary.duration = Date.now() - startTime;
+    const data = removalJsonData(summary, {}, metadata);
+    if (options.json) {
+      writeJsonEnvelope(createJsonSuccessEnvelope("remove", data));
+    } else {
+      info("Workspace mode: standalone");
+      console.log(formatRemovalSummaryHuman(summary, {}));
+    }
     return ZERO;
   }
+
+  const configuredMetadata =
+    workspaceContext.mode === "configured" ? workspaceJsonMetadata(workspaceContext) : undefined;
 
   if (options.json && !branchArg) {
     writeJsonEnvelope(unsupportedJsonModeError("remove", "interactive-selection"));
@@ -333,7 +459,7 @@ export async function executeRemove(
     };
     if (options.json) {
       writeJsonEnvelope(
-        createJsonSuccessEnvelope("remove", JSON.parse(formatRemovalSummaryJson(summary, {}))),
+        createJsonSuccessEnvelope("remove", removalJsonData(summary, {}, configuredMetadata)),
       );
     } else if (options.dryRun) {
       console.log(formatRemovalSummaryHuman(summary, {}));
@@ -344,8 +470,14 @@ export async function executeRemove(
     return ZERO;
   }
 
-  const workspaceRoot = await getWorkspaceRoot();
-  const config = await loadWorkspaceConfig(workspaceRoot);
+  const workspaceRoot =
+    workspaceContext.mode === "configured"
+      ? workspaceContext.workspaceRoot
+      : await getWorkspaceRoot();
+  const config =
+    workspaceContext.mode === "configured"
+      ? workspaceContext.config
+      : await loadWorkspaceConfig(workspaceRoot);
   const reposDirName = basename(config.reposDir);
   const childRepoNames = new Set(Object.keys(config.repos));
   const repositories = buildRepositoryTargets(workspaceRoot, config.repos);
@@ -628,7 +760,7 @@ export async function executeRemove(
       writeJsonEnvelope(
         createJsonSuccessEnvelope(
           "remove",
-          JSON.parse(formatRemovalSummaryJson(summary, { missingBranches, skippedMain })),
+          removalJsonData(summary, { missingBranches, skippedMain }, configuredMetadata),
         ),
       );
     } else {
@@ -654,7 +786,7 @@ export async function executeRemove(
       writeJsonEnvelope(
         createJsonSuccessEnvelope(
           "remove",
-          JSON.parse(formatRemovalSummaryJson(summary, { missingBranches, skippedMain })),
+          removalJsonData(summary, { missingBranches, skippedMain }, configuredMetadata),
         ),
       );
     } else {
@@ -770,7 +902,7 @@ export async function executeRemove(
     writeJsonEnvelope(
       createJsonSuccessEnvelope(
         "remove",
-        JSON.parse(formatRemovalSummaryJson(summary, { missingBranches, skippedMain })),
+        removalJsonData(summary, { missingBranches, skippedMain }, configuredMetadata),
       ),
     );
   } else {
@@ -1138,6 +1270,7 @@ const formatBranchDeletionError = (error: unknown): string => {
 };
 
 const previewRemoveLifecycleHooks = async (options: {
+  globalOnly?: boolean;
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
 }): Promise<RemoveHookPreview[]> => {
@@ -1148,7 +1281,9 @@ const previewRemoveLifecycleHooks = async (options: {
       targetRepositories: options.targetRepositories,
       workspaceRoot: options.workspaceRoot,
     });
-    for (const resolvedHook of resolvedHooks) {
+    for (const resolvedHook of resolvedHooks.filter(
+      (candidate) => !options.globalOnly || candidate.scope.startsWith("global-"),
+    )) {
       const validation = await validateHook(resolvedHook.scriptPath);
       previews.push({
         error: validation.error,

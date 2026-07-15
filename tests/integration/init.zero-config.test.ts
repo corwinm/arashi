@@ -268,6 +268,36 @@ describe("init --zero-config", () => {
     await expect(access(join(root, ".worktrees"))).rejects.toThrow();
   });
 
+  test.each([
+    "--repos-dir=x",
+    "--worktrees-dir=x",
+    "--ignore-scope=none",
+    "--force",
+    "--no-discover",
+  ])(
+    "reports unchanged attempted and final state for incompatible JSON option %s",
+    async (option) => {
+      const root = await repository();
+      const result = await arashi(root, ["init", "--zero-config", option, "--json"]);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        command: "init",
+        error: {
+          code: "ZERO_CONFIG_INCOMPATIBLE_OPTIONS",
+          details: {
+            attempted: { localExclude: false, worktreesDirectory: false },
+            conflicts: [expect.stringMatching(/^--/)],
+            finalState: { localExcludeChanged: false, worktreesDirectoryChanged: false },
+            mode: "standalone",
+          },
+        },
+        ok: false,
+      });
+      await expect(access(join(root, ".worktrees"))).rejects.toThrow();
+    },
+  );
+
   test("rejects existing configured state before mutation", async () => {
     const root = await repository();
     await mkdir(join(root, ".arashi"));
