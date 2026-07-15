@@ -31,7 +31,7 @@ async function arashi(cwd: string, args: string[], env?: Record<string, string>)
 async function repository() {
   const root = await mkdtemp(join(tmpdir(), "arashi-standalone-"));
   roots.push(root);
-  await run(root, ["git", "init"]);
+  await run(root, ["git", "init", "-b", "main"]);
   await run(root, ["git", "config", "user.email", "test@example.com"]);
   await run(root, ["git", "config", "user.name", "Test User"]);
   await writeFile(join(root, "README.md"), "test\n");
