@@ -11,13 +11,7 @@ import {
   unsupportedJsonModeError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import {
-  findWorkspaceRoot,
-  loadConfig,
-  normalizeConfig,
-  repairRepositoryGitUrls,
-  saveConfig,
-} from "../lib/config.ts";
+import { loadConfig, normalizeConfig, repairRepositoryGitUrls, saveConfig } from "../lib/config.ts";
 import { info, error as logError, spinner, success, warn } from "../lib/logger.ts";
 import { join, resolve } from "path";
 import {
@@ -35,6 +29,7 @@ import {
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
+import { findConfiguredWorkspaceRoot } from "../lib/workspace-context.ts";
 
 interface Choice<T> {
   value: T;
@@ -139,7 +134,8 @@ export async function executeClone(
   options: CloneCommandOptions,
   deps: CloneCommandDependencies = {},
 ): Promise<CloneExecutionResult> {
-  const resolveWorkspaceRoot = deps.findWorkspaceRoot ?? findWorkspaceRoot;
+  const resolveWorkspaceRoot =
+    deps.findWorkspaceRoot ?? (() => findConfiguredWorkspaceRoot("clone"));
   const readConfig = deps.loadConfig ?? loadConfig;
   const writeConfig = deps.saveConfig ?? saveConfig;
   const repairGitUrls = deps.repairRepositoryGitUrls ?? repairRepositoryGitUrls;

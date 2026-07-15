@@ -20,11 +20,11 @@ import {
   unsupportedJsonModeError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import { resolveWorkspaceContext, requireAvailableWorkspace } from "../lib/workspace-context.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
 import { Command } from "commander";
 import { select as promptSelect } from "../lib/prompts.ts";
-import { resolve } from "path";
+import { join, resolve } from "path";
 
 interface MoveCommandOptions {
   from?: string;
@@ -149,10 +149,12 @@ export async function executeMove(
   promptHandlers: MovePromptHandlers = DEFAULT_PROMPT_HANDLERS,
 ): Promise<number> {
   const invocationPath = resolve(".");
-  const workspaceRoot = await findWorkspaceRoot(invocationPath);
-  const config = await loadConfig(workspaceRoot);
+  const context = await resolveWorkspaceContext(invocationPath);
+  requireAvailableWorkspace(context);
+  const workspaceRoot = context.workspaceRoot;
+  const config = context.config;
   const repositories = buildRepositoryTargets(workspaceRoot, config.repos);
-  const currentWorkspace = await findWorkspaceByPath(repositories, workspaceRoot);
+  const currentWorkspace = await findWorkspaceByPath(repositories, invocationPath);
   const workspaces = await discoverWorkspaces(repositories);
 
   let source: WorkspaceSelection | null = options.from
@@ -199,12 +201,26 @@ export async function executeMove(
 
   const plan = buildMovePlan(source, target);
   const summary = await executeMovePlan(plan);
+  const data =
+    context.mode === "standalone"
+      ? {
+          ...summary,
+          mode: "standalone" as const,
+          repositoryPath: context.mainRoot,
+          workspaceRoot: context.mainRoot,
+          worktreesBase: join(context.mainRoot, ".worktrees"),
+        }
+      : { ...summary, mode: "configured" as const, workspaceRoot };
 
   if (options.json) {
     writeJsonEnvelope(
-      createJsonSuccessEnvelope("move", summary as unknown as Record<string, unknown>),
+      createJsonSuccessEnvelope("move", data as unknown as Record<string, unknown>),
     );
   } else {
+    if (context.mode === "standalone") {
+      info(`Workspace mode: standalone`);
+      info(`Main repository: ${context.mainRoot}`);
+    }
     printSummary(summary);
   }
 

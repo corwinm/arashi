@@ -30,6 +30,7 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
+import { throwIfStandaloneWorkspace } from "../lib/workspace-context.ts";
 
 type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
 
@@ -405,6 +406,7 @@ const executeAdd = async (
     // Step 1: Validate workspace is initialized
     const hasConfig = await configExists(workspaceRoot);
     if (!hasConfig) {
+      await throwIfStandaloneWorkspace("add", workspaceRoot);
       throw new AddCommandError(
         'Workspace not initialized. Run "arashi init" first.',
         AddCommandErrorCode.CONFIG_UPDATE_FAILED,

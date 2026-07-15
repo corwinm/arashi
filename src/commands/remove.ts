@@ -46,12 +46,14 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { runStandaloneGlobalHooks, standaloneWorktrees } from "../lib/standalone.ts";
+import { exec as standaloneGitExec, getDefaultBranch } from "../lib/git.ts";
 import { info, error as logError, spinner, warn } from "../lib/logger.ts";
 import { confirm as promptConfirm, multiSelect as promptMultiSelect } from "../lib/prompts.ts";
 import { Command } from "commander";
 import chalk from "chalk";
 import { existsSync } from "fs";
-import { getDefaultBranch } from "../lib/git.ts";
 
 interface Choice<T> {
   value: T;
@@ -97,6 +99,21 @@ interface CliOptions {
   path?: boolean;
   json?: boolean;
   dryRun?: boolean;
+}
+
+class StandaloneRemovePartialFailure extends Error {
+  readonly code = "STANDALONE_REMOVE_PARTIAL_FAILURE";
+  readonly details: {
+    finalState: { branchExists: boolean; worktreeExists: boolean };
+    hookFailures: { hookName: string; message: string }[];
+    operationFailures: { message: string; operation: string }[];
+  };
+
+  constructor(details: StandaloneRemovePartialFailure["details"]) {
+    super("Standalone remove completed with one or more operation or finalization failures");
+    this.details = details;
+    this.name = "StandaloneRemovePartialFailure";
+  }
 }
 
 const loadWorkspaceConfig = async (workspaceRoot: string): Promise<Config> => {
@@ -186,6 +203,118 @@ export async function executeRemove(
   },
 ): Promise<number> {
   const startTime = Date.now();
+
+  const workspaceContext = await resolveWorkspaceContext();
+  if (workspaceContext.mode === "standalone") {
+    if (!branchArg) {
+      throw new RemoveCommandError(
+        "A branch or worktree path is required in non-interactive standalone mode",
+        RemoveCommandErrorCode.NON_INTERACTIVE,
+      );
+    }
+    const worktrees = await standaloneWorktrees(workspaceContext);
+    const target = worktrees.find((entry) =>
+      options.path ? resolve(entry.path) === resolve(branchArg) : entry.branch === branchArg,
+    );
+    if (!target || target.path === workspaceContext.mainRoot) {
+      throw new RemoveCommandError(
+        `Standalone worktree not found: ${branchArg}`,
+        RemoveCommandErrorCode.BRANCH_NOT_FOUND,
+      );
+    }
+    if (!options.dryRun) {
+      await runStandaloneGlobalHooks(
+        workspaceContext,
+        "pre-remove",
+        target.branch ?? branchArg,
+        target.path,
+        false,
+        options.json === true,
+      );
+    }
+    const operationFailures: { message: string; operation: string }[] = [];
+    const hookFailures: { hookName: string; message: string }[] = [];
+    if (!options.dryRun && !options.keepWorktrees) {
+      try {
+        await standaloneGitExec(
+          [
+            "worktree",
+            "remove",
+            ...(options.force || options.checkDirty === false ? ["--force"] : []),
+            target.path,
+          ],
+          workspaceContext.mainRoot,
+        );
+      } catch (error) {
+        operationFailures.push({
+          message: error instanceof Error ? error.message : String(error),
+          operation: "remove-worktree",
+        });
+      }
+    }
+    if (!options.dryRun && !options.keepBranches && target.branch) {
+      try {
+        await standaloneGitExec(["branch", "-D", target.branch], workspaceContext.mainRoot);
+      } catch (error) {
+        operationFailures.push({
+          message: error instanceof Error ? error.message : String(error),
+          operation: "delete-branch",
+        });
+      }
+    }
+    if (!options.dryRun) {
+      try {
+        await runStandaloneGlobalHooks(
+          workspaceContext,
+          "post-remove",
+          target.branch ?? branchArg,
+          target.path,
+          false,
+          options.json === true,
+        );
+      } catch (error) {
+        hookFailures.push({
+          hookName: "post-remove",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      if (operationFailures.length > ZERO || hookFailures.length > ZERO) {
+        let finalBranchExists = false;
+        if (target.branch) {
+          try {
+            await standaloneGitExec(
+              ["show-ref", "--verify", `refs/heads/${target.branch}`],
+              workspaceContext.mainRoot,
+            );
+            finalBranchExists = true;
+          } catch {
+            finalBranchExists = false;
+          }
+        }
+        throw new StandaloneRemovePartialFailure({
+          finalState: {
+            branchExists: finalBranchExists,
+            worktreeExists: existsSync(target.path),
+          },
+          hookFailures,
+          operationFailures,
+        });
+      }
+    }
+    const data = {
+      branch: target.branch,
+      dryRun: options.dryRun === true,
+      mode: "standalone",
+      repositoryPath: workspaceContext.mainRoot,
+      worktreePath: target.path,
+    };
+    if (options.json) writeJsonEnvelope(createJsonSuccessEnvelope("remove", data));
+    else
+      console.log(
+        `${options.dryRun ? "Would remove" : "Removed"} standalone worktree ${target.path}`,
+      );
+    return ZERO;
+  }
 
   if (options.json && !branchArg) {
     writeJsonEnvelope(unsupportedJsonModeError("remove", "interactive-selection"));

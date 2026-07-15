@@ -51,6 +51,11 @@ import {
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
+import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import {
+  createStandaloneWorktree,
+  StandaloneDestinationNotIgnoredError,
+} from "../lib/standalone.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
@@ -119,6 +124,9 @@ const createCommandErrorCode = (createError: unknown): string => {
   if (createError instanceof CreateSetupError) {
     return "WORKSPACE_CONFIG_NOT_FOUND";
   }
+  if (createError instanceof StandaloneDestinationNotIgnoredError) {
+    return createError.code;
+  }
   if (createError instanceof ConflictAbortedError) {
     return "BRANCH_CONFLICT";
   }
@@ -133,6 +141,9 @@ const createCommandErrorCode = (createError: unknown): string => {
 };
 
 const createCommandErrorDetails = (createError: unknown): Record<string, unknown> | undefined => {
+  if (createError instanceof StandaloneDestinationNotIgnoredError) {
+    return createError.details;
+  }
   if (createError instanceof InvalidBranchNameError) {
     return { branchName: createError.branchName, reason: createError.reason };
   }
@@ -695,6 +706,34 @@ export async function executeCreate(
   const emptyFilters = findEmptyRepositoryFilters(options.only, options.group);
   if (emptyFilters.length > ZERO) {
     throw new EmptyRepositoryFiltersError(emptyFilters);
+  }
+
+  const workspaceContext = await resolveWorkspaceContext();
+  if (workspaceContext.mode === "standalone") {
+    if (options.only || options.group || options.interactive) {
+      throw new CreateSetupError(
+        "Repository selection is not meaningful in standalone mode; omit --only, --group, and --interactive.",
+      );
+    }
+    const standaloneResult = await createStandaloneWorktree(
+      workspaceContext,
+      branchName,
+      options.dryRun === true,
+      {
+        quiet: options.json === true,
+        skipHooks: options.noHooks === true || options.hooks === false,
+      },
+    );
+    if (options.json) writeJsonEnvelope(createJsonSuccessEnvelope("create", standaloneResult));
+    else {
+      info("Workspace mode: standalone");
+      success(
+        options.dryRun
+          ? `Would create worktree at ${standaloneResult.worktreePath}`
+          : `Created worktree at ${standaloneResult.worktreePath}`,
+      );
+    }
+    return ZERO;
   }
 
   const resolveInvocationContext =

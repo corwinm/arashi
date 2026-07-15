@@ -11,7 +11,11 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import { loadWorkspaceRepositories } from "../lib/config.ts";
+import {
+  ConfiguredWorkspaceRequiredError,
+  findConfiguredWorkspaceRoot,
+} from "../lib/workspace-context.ts";
 import { Command } from "commander";
 import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { normalizeSpawnEnvironment } from "../lib/shell-directives.ts";
@@ -266,8 +270,9 @@ const executeExec = async (
   const jobs = parseJobs(options.jobs);
   let workspaceRoot = "";
   try {
-    workspaceRoot = await findWorkspaceRoot();
-  } catch {
+    workspaceRoot = await findConfiguredWorkspaceRoot("exec");
+  } catch (error) {
+    if (error instanceof ConfiguredWorkspaceRequiredError) throw error;
     throw new CliUsageError(
       'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
     );

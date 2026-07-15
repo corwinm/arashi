@@ -5,7 +5,12 @@
  * coordinated Arashi workspace.
  */
 
-import { checkAllRepos, collectStatusWarnings, summarizeStatuses } from "./status.ts";
+import {
+  checkAllRepos,
+  checkRepoStatus,
+  collectStatusWarnings,
+  summarizeStatuses,
+} from "./status.ts";
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
@@ -13,8 +18,11 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { standaloneWorktrees } from "../lib/standalone.ts";
 import { info, error as logError } from "../lib/logger.ts";
-import { relative, resolve } from "path";
+import { basename, join, relative, resolve } from "path";
+import { realpath } from "fs/promises";
 import { Command } from "commander";
 
 type JsonWarning = NonNullable<Parameters<typeof createJsonSuccessEnvelope>[2]>[number];
@@ -54,12 +62,15 @@ interface HandoffRepositorySummary {
 }
 
 interface HandoffData {
+  callerWorktree?: string;
   context: HandoffContext;
   currentRepository: { name: string; path: string } | null;
   effectiveOptions: {
     format: "json" | "markdown";
   };
   generatedNextCommands: string[];
+  mode: "configured" | "standalone";
+  repositoryPath?: string;
   repositories: HandoffRepositorySummary[];
   summary: ReturnType<typeof summarizeStatuses> & {
     touchedCount: number;
@@ -68,6 +79,8 @@ interface HandoffData {
     branch: string;
     path: string;
   };
+  workspaceRoot?: string;
+  worktreesBase?: string;
 }
 
 interface BuildHandoffDataInput {
@@ -196,6 +209,7 @@ const buildHandoffData = ({
       format: options.json ? "json" : "markdown",
     },
     generatedNextCommands: collectGeneratedNextCommands(statuses),
+    mode: "configured",
     repositories: statuses.map((status) => summarizeRepo(status)),
     summary: {
       ...summary,
@@ -205,6 +219,7 @@ const buildHandoffData = ({
       branch: mainRepository?.branch.localBranch || "unknown",
       path: workspaceRoot,
     },
+    workspaceRoot,
   };
 };
 
@@ -262,8 +277,10 @@ export const renderMarkdownReport = (data: HandoffData): string => {
 
 ## Workspace
 
+- Workspace mode: ${data.mode}
 - Path: ${data.workspace.path}
 - Branch: ${data.workspace.branch}
+- Caller worktree: ${data.callerWorktree ?? "not applicable"}
 - Current repository: ${data.currentRepository ? `${data.currentRepository.name} (${data.currentRepository.path})` : "not resolved"}
 
 ## Summary
@@ -297,6 +314,70 @@ ${commandBlock ? `${commandBlock}\n` : "- No next commands suggested.\n"}
 };
 
 const runHandoff = async (options: HandoffOptions): Promise<void> => {
+  let context;
+  try {
+    context = await resolveWorkspaceContext();
+  } catch (error) {
+    if (options.json)
+      writeJsonEnvelope(createJsonErrorEnvelope("handoff", unknownErrorToJsonError(error)));
+    else logError(error instanceof Error ? error.message : String(error));
+    process.exit(ERROR_EXIT_CODE);
+  }
+  if (context.mode === "standalone") {
+    try {
+      const worktrees = await standaloneWorktrees(context);
+      const statuses = await Promise.all(
+        worktrees.map((worktree) =>
+          checkRepoStatus(worktree.branch ?? basename(worktree.path), worktree.path),
+        ),
+      );
+      const callerWorktree = process.cwd();
+      const canonicalCaller = await realpath(callerWorktree);
+      const canonicalStatusPaths = await Promise.all(
+        statuses.map(async (status) => await realpath(status.path)),
+      );
+      const callerStatus = statuses[canonicalStatusPaths.indexOf(canonicalCaller)];
+      const selectedCallerStatus =
+        callerStatus ??
+        statuses.find((status) => resolve(status.path) === resolve(callerWorktree)) ??
+        statuses[ZERO];
+      const data: HandoffData = {
+        ...buildHandoffData({
+          cwd: canonicalCaller,
+          options,
+          statuses,
+          workspaceRoot: context.mainRoot,
+        }),
+        callerWorktree,
+        currentRepository: selectedCallerStatus
+          ? { name: selectedCallerStatus.name, path: selectedCallerStatus.path }
+          : null,
+        mode: "standalone",
+        repositoryPath: context.mainRoot,
+        workspace: {
+          branch: selectedCallerStatus?.branch.localBranch || "unknown",
+          path: context.mainRoot,
+        },
+        worktreesBase: join(context.mainRoot, ".worktrees"),
+      };
+      if (options.json)
+        writeJsonEnvelope(
+          createJsonSuccessEnvelope(
+            "handoff",
+            data as unknown as Record<string, unknown>,
+            collectStatusWarnings(statuses),
+          ),
+        );
+      else process.stdout.write(renderMarkdownReport(data));
+      if (statuses.some((status) => status.error !== null)) process.exit(ERROR_EXIT_CODE);
+      return;
+    } catch (error) {
+      if (options.json)
+        writeJsonEnvelope(createJsonErrorEnvelope("handoff", unknownErrorToJsonError(error)));
+      else logError(error instanceof Error ? error.message : String(error));
+      process.exit(ERROR_EXIT_CODE);
+    }
+  }
   let workspaceRoot = "";
   try {
     workspaceRoot = await findWorkspaceRoot();
@@ -325,6 +406,7 @@ const runHandoff = async (options: HandoffOptions): Promise<void> => {
       statuses,
       workspaceRoot,
     });
+    data.worktreesBase = resolve(workspaceRoot, config.worktreesDir ?? "../.worktrees");
     const warnings: JsonWarning[] = collectStatusWarnings(statuses);
 
     if (options.json) {

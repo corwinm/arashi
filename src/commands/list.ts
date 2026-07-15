@@ -14,11 +14,14 @@ import {
 } from "../types/list.ts";
 import {
   createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { listCommand } from "../core/list.ts";
 import { error as logError } from "../lib/logger.ts";
+import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { standaloneWorktrees } from "../lib/standalone.ts";
 
 type ListCommandOptions = Parameters<typeof listCommand>[0];
 
@@ -71,6 +74,38 @@ Examples:
     )
     .action(async (options: CliOptions) => {
       try {
+        const context = await resolveWorkspaceContext();
+        if (context.mode === "standalone") {
+          const worktrees = await standaloneWorktrees(context);
+          if (options.json) {
+            writeJsonEnvelope(
+              createJsonSuccessEnvelope("list", {
+                mode: "standalone",
+                repositoryPath: context.mainRoot,
+                workspaceRoot: context.mainRoot,
+                worktrees,
+              }),
+            );
+          } else {
+            if (options.table) {
+              console.log("BRANCH\tHEAD\tWORKTREE");
+              for (const worktree of worktrees)
+                console.log(
+                  `${worktree.branch ?? "(detached)"}\t${worktree.head}\t${worktree.path}`,
+                );
+            } else if (options.verbose) {
+              console.log(`Workspace mode: standalone\nMain repository: ${context.mainRoot}`);
+              for (const worktree of worktrees) {
+                console.log(
+                  `\nWorktree: ${worktree.path}\n  Branch: ${worktree.branch ?? "(detached)"}\n  HEAD: ${worktree.head}`,
+                );
+              }
+            } else {
+              for (const worktree of worktrees) console.log(worktree.path);
+            }
+          }
+          process.exit(0);
+        }
         await executeList(options);
       } catch (error) {
         if (options.json) {

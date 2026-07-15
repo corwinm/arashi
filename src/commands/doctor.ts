@@ -1,11 +1,21 @@
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
+  unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { Command } from "commander";
+import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { exec } from "../lib/git.ts";
 import chalk from "chalk";
-import { runDoctor } from "../lib/doctor.ts";
+import { resolve } from "path";
+import {
+  repositoryStatusToDoctorFindings,
+  runDoctor,
+  summarizeDoctorFindings,
+} from "../lib/doctor.ts";
+import { checkRepoStatus } from "./status.ts";
+import { discoverPrunableWorktrees } from "../core/remove.ts";
 
 const ZERO = 0;
 const ERROR_EXIT_CODE = 1;
@@ -83,21 +93,97 @@ export const formatDoctorHumanOutput = (result: DoctorResult): string => {
 };
 
 export const executeDoctor = async (options: DoctorOptions = {}): Promise<number> => {
+  let context;
+  try {
+    context = await resolveWorkspaceContext();
+  } catch (error) {
+    if (options.json)
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("doctor", unknownErrorToJsonError(error, "CONFIG_LOAD_FAILED")),
+      );
+    else console.error(error instanceof Error ? error.message : String(error));
+    return ERROR_EXIT_CODE;
+  }
+  if (context?.mode === "standalone") {
+    let ignored = true;
+    try {
+      await exec(
+        ["check-ignore", "--no-index", ".worktrees/.arashi-ignore-probe"],
+        context.mainRoot,
+      );
+    } catch {
+      ignored = false;
+    }
+    const repositoryStatus = await checkRepoStatus(context.repository.name, context.mainRoot);
+    const pruneResults = await discoverPrunableWorktrees([context.repository]);
+    const findings = [
+      ...(!ignored
+        ? [
+            {
+              category: "configuration" as const,
+              code: "STANDALONE_WORKTREES_NOT_IGNORED",
+              message: ".worktrees is not effectively ignored",
+              scope: context.mainRoot,
+              severity: "warning" as const,
+              suggestedCommands: ["arashi init --zero-config"],
+            },
+          ]
+        : []),
+      ...repositoryStatusToDoctorFindings(repositoryStatus),
+      ...pruneResults.flatMap((repository) =>
+        repository.prunable.map((worktree) => ({
+          category: "worktree" as const,
+          code: "WORKTREE_STALE_METADATA",
+          details: {
+            path: worktree.path,
+            pruneReason: worktree.pruneReason,
+            repository: repository.name,
+          },
+          message: `Repository '${repository.name}' has stale worktree metadata for ${worktree.path}.`,
+          scope: `repository:${repository.name}`,
+          severity: "warning" as const,
+          suggestedCommands: ["arashi prune --dry-run", "arashi prune"],
+        })),
+      ),
+    ];
+    const data = {
+      checkedCategories: ["workspace", "repository", "worktree"] as const,
+      findings,
+      mode: "standalone",
+      repositoryPath: context.mainRoot,
+      summary: summarizeDoctorFindings(findings),
+      workspaceRoot: context.mainRoot,
+    };
+    if (options.json) writeJsonEnvelope(createJsonSuccessEnvelope("doctor", data));
+    else
+      console.log(
+        `Arashi workspace doctor\nWorkspace mode: standalone\nWorkspace: ${context.mainRoot}\n${findings.length ? findings.map((finding) => finding.message).join("\n") : "No workspace health findings were detected."}`,
+      );
+    return ZERO;
+  }
   const result = await runDoctor();
   const hasBlockingFindings = result.summary.error > ZERO;
+  const configuredData = {
+    ...result,
+    mode: "configured" as const,
+    worktreesBase:
+      context.mode === "configured"
+        ? resolve(context.workspaceRoot, context.config.worktreesDir ?? "../.worktrees")
+        : undefined,
+  };
 
   if (options.json) {
     if (hasBlockingFindings) {
       writeJsonEnvelope(
         createJsonErrorEnvelope("doctor", {
           code: "DOCTOR_BLOCKING_FINDINGS",
-          details: result as unknown as Record<string, unknown>,
+          details: configuredData as unknown as Record<string, unknown>,
           message: `${result.summary.error} blocking doctor finding(s) detected`,
         }),
       );
     } else {
       writeJsonEnvelope(
-        createJsonSuccessEnvelope("doctor", result as unknown as Record<string, unknown>),
+        createJsonSuccessEnvelope("doctor", configuredData as unknown as Record<string, unknown>),
       );
     }
   } else {

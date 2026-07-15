@@ -12,7 +12,11 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { executePushPlan, planPush } from "../lib/push-runner.ts";
-import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import { loadWorkspaceRepositories } from "../lib/config.ts";
+import {
+  ConfiguredWorkspaceRequiredError,
+  findConfiguredWorkspaceRoot,
+} from "../lib/workspace-context.ts";
 import { Command } from "commander";
 import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { info } from "../lib/logger.ts";
@@ -35,8 +39,9 @@ export interface PushCommandOptions {
 export const executePush = async (options: PushCommandOptions): Promise<PushSummary> => {
   let workspaceRoot = "";
   try {
-    workspaceRoot = await findWorkspaceRoot();
-  } catch {
+    workspaceRoot = await findConfiguredWorkspaceRoot("push");
+  } catch (error) {
+    if (error instanceof ConfiguredWorkspaceRequiredError) throw error;
     throw new CliUsageError(
       'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
     );

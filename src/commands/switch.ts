@@ -14,6 +14,7 @@ import { Command } from "commander";
 import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
+import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
 
 type LoadWorkspaceRepositoriesResult = Awaited<ReturnType<typeof loadWorkspaceRepositories>>;
 type Config = NonNullable<LoadWorkspaceRepositoriesResult["config"]>;
@@ -175,8 +176,24 @@ export async function executeSwitch(
   const augmentAllCandidates = deps.augmentAllScopeCandidates ?? augmentAllScopeCandidates;
   const launchCandidate = deps.launchSwitchTarget ?? launchSwitchTarget;
 
-  const workspaceRoot = await resolveWorkspaceRoot();
-  const workspace = await resolveWorkspaceRepositories(workspaceRoot);
+  const context = await resolveWorkspaceContext();
+  if (context.mode === "standalone" && (options.repos || options.all)) {
+    throw new SwitchCommandError(
+      "--repos and --all are not meaningful in standalone mode; switch already uses this repository's worktrees.",
+      SwitchCommandErrorCode.CONFLICTING_SWITCH_OPTIONS,
+      { mode: "standalone" },
+    );
+  }
+  if (context.mode === "standalone") {
+    info(`Workspace mode: standalone`);
+    info(`Main repository: ${context.mainRoot}`);
+  }
+  const workspaceRoot =
+    context.mode === "standalone" ? context.mainRoot : await resolveWorkspaceRoot();
+  const workspace =
+    context.mode === "standalone"
+      ? { config: context.config, repositories: [context.repository] }
+      : await resolveWorkspaceRepositories(workspaceRoot);
   const scope = resolveSwitchScope(options);
   const targetRepositories = filterRepositoriesByScope(
     scope,

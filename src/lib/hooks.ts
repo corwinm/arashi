@@ -92,6 +92,7 @@ export interface HookExecutionOptions {
   scriptPath: string;
   context: HookContext;
   timeout?: number;
+  quiet?: boolean;
 }
 
 interface RunLifecycleHookOptions {
@@ -313,7 +314,11 @@ const buildEnvironment = (context: HookContext): Record<string, string> => {
 /**
  * Streams and prefixes output from a ReadableStream.
  */
-const streamOutput = async (stream: ReadableStream, prefix: string): Promise<string> => {
+const streamOutput = async (
+  stream: ReadableStream,
+  prefix: string,
+  quiet = false,
+): Promise<string> => {
   const decoder = new TextDecoder();
   const lines: string[] = [];
   let buffer = "";
@@ -324,13 +329,17 @@ const streamOutput = async (stream: ReadableStream, prefix: string): Promise<str
     buffer = parts.pop() ?? "";
 
     for (const line of parts) {
-      console.log(`${prefix} ${line}`);
+      if (!quiet) {
+        console.log(`${prefix} ${line}`);
+      }
       lines.push(line);
     }
   }
 
   if (buffer) {
-    console.log(`${prefix} ${buffer}`);
+    if (!quiet) {
+      console.log(`${prefix} ${buffer}`);
+    }
     lines.push(buffer);
   }
 
@@ -482,7 +491,9 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
   const startTime = Date.now();
   const timeout = options.timeout ?? DEFAULT_HOOK_TIMEOUT;
 
-  console.log(`🪝 Executing hook: ${options.hookName}`);
+  if (!options.quiet) {
+    console.log(`🪝 Executing hook: ${options.hookName}`);
+  }
 
   try {
     const proc = runtime.spawn(getShellCommand(options.scriptPath), {
@@ -495,8 +506,8 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
     });
 
     const [stdout, stderr] = await Promise.all([
-      streamOutput(proc.stdout, `[${options.hookName}:OUT]`),
-      streamOutput(proc.stderr, `[${options.hookName}:ERR]`),
+      streamOutput(proc.stdout, `[${options.hookName}:OUT]`, options.quiet),
+      streamOutput(proc.stderr, `[${options.hookName}:ERR]`, options.quiet),
     ]);
 
     await proc.exited;
