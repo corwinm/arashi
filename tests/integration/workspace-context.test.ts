@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { access, chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
-import { join } from "path";
+import { access, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { basename, join } from "path";
 import { tmpdir } from "os";
 import { spawn } from "../helpers/node-runtime.ts";
 import { ConfigParseError, resolveWorkspaceContext } from "../../src/lib/workspace-context.ts";
@@ -51,7 +51,7 @@ describe("resolveWorkspaceContext", () => {
       config: { repos: {}, reposDir: "./repos", version: "1.0.0", worktreesDir: ".worktrees" },
       mainRoot: canonicalRoot,
       mode: "standalone",
-      repository: { name: root.split("/").at(-1), path: canonicalRoot },
+      repository: { name: basename(canonicalRoot), path: canonicalRoot },
       workspaceRoot: canonicalRoot,
     });
     await expect(access(join(root, ".arashi", "config.json"))).rejects.toThrow();
@@ -104,13 +104,9 @@ describe("resolveWorkspaceContext", () => {
     await mkdir(join(root, ".worktrees"));
     await mkdir(join(root, ".arashi"));
     const config = join(root, ".arashi", "config.json");
-    await writeFile(config, JSON.stringify({ version: "1.0.0", reposDir: "./repos", repos: {} }));
-    await chmod(config, 0o000);
-    try {
-      await expect(resolveWorkspaceContext(root)).rejects.toBeInstanceOf(ConfigError);
-    } finally {
-      await chmod(config, 0o600);
-    }
+    await mkdir(config);
+
+    await expect(resolveWorkspaceContext(root)).rejects.toBeInstanceOf(ConfigError);
   });
 
   test("does not hide invalid configuration at a linked-worktree invocation root", async () => {
