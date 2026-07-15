@@ -281,6 +281,24 @@ describe("standalone lifecycle", () => {
       workspaceRoot: canonicalRoot,
       worktreesBase: join(canonicalRoot, ".worktrees"),
     });
+    const keepWorktree = await arashi(
+      root,
+      ["remove", "remove-preview", "--dry-run", "--keep-worktrees", "--json"],
+      { HOME: home },
+    );
+    expect(keepWorktree.exitCode).toBe(0);
+    expect(JSON.parse(keepWorktree.stdout).data).toMatchObject({
+      effectiveOptions: { keepBranches: false, keepWorktrees: true },
+      operations: expect.arrayContaining([
+        expect.objectContaining({
+          branchName: "remove-preview",
+          type: "worktree_detach",
+          worktreePath: join(canonicalRoot, ".worktrees", "remove-preview"),
+        }),
+        expect.objectContaining({ branchName: "remove-preview", type: "branch_delete" }),
+      ]),
+      summary: { totalBranches: 1, totalWorktrees: 0 },
+    });
     await expect(access(marker)).rejects.toThrow();
     await expect(access(linked)).resolves.toBeUndefined();
     expect((await run(root, ["git", "branch", "--list", "remove-preview"])).stdout).toContain(
@@ -851,16 +869,21 @@ describe("standalone lifecycle", () => {
     await mkdir(hookDirectory, { recursive: true });
     await writeFile(
       join(hookDirectory, "post-remove.sh"),
-      `#!/bin/sh\nprintf '%s\\n' "$ARASHI_WORKSPACE_MODE:$ARASHI_REPO_NAME:$ARASHI_BRANCH_NAME" > '${record}'\nexit 23\n`,
+      `#!/bin/sh\nprintf '%s\\n' 'targeted' >> '${record}'\nexit 23\n`,
     );
     await chmod(join(hookDirectory, "post-remove.sh"), 0o755);
+    await writeFile(
+      join(home, ".arashi", "hooks", "post-remove.sh"),
+      `#!/bin/sh\nprintf '%s\\n' 'shared' >> '${record}'\nexit 24\n`,
+    );
+    await chmod(join(home, ".arashi", "hooks", "post-remove.sh"), 0o755);
 
     const result = await arashi(root, ["remove", "partial-remove", "--force", "--json"], {
       HOME: home,
     });
 
     expect(result.exitCode).not.toBe(0);
-    expect(await readFile(record, "utf8")).toContain("standalone");
+    expect(await readFile(record, "utf8")).toBe("targeted\nshared\n");
     expect(JSON.parse(result.stdout).error).toMatchObject({
       code: "STANDALONE_REMOVE_PARTIAL_FAILURE",
       details: {
@@ -871,6 +894,7 @@ describe("standalone lifecycle", () => {
         operationFailures: [],
       },
     });
+    expect(JSON.parse(result.stdout).error.details.hookFailures).toHaveLength(2);
     await expect(access(linked)).rejects.toThrow();
   });
 });

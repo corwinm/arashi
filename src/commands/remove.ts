@@ -294,6 +294,14 @@ export async function executeRemove(
           type: "worktree_remove",
           worktreePath: targetEntry.path,
         });
+      } else if (!options.keepBranches && target.branch) {
+        summary.operations.push({
+          branchName: target.branch,
+          repository: repositoryName,
+          status: "pending",
+          type: "worktree_detach",
+          worktreePath: targetEntry.path,
+        });
       }
       if (!options.keepBranches && target.branch) {
         summary.operations.push({
@@ -392,14 +400,16 @@ export async function executeRemove(
       summary.operations.push(operation);
     }
     try {
-      await runStandaloneGlobalHooks(
+      const postHookFailures = await runStandaloneGlobalHooks(
         workspaceContext,
         "post-remove",
         target.branch ?? branchArg,
         target.path,
         false,
         options.json === true,
+        true,
       );
+      hookFailures.push(...postHookFailures);
     } catch (error) {
       hookFailures.push({
         hookName: "post-remove",

@@ -52,35 +52,46 @@ export async function runStandaloneGlobalHooks(
   worktreePath: string,
   skipHooks: boolean,
   quiet = false,
-): Promise<void> {
-  if (skipHooks) return;
+  continueOnFailure = false,
+): Promise<{ hookName: string; message: string }[]> {
+  if (skipHooks) return [];
+  const failures: { hookName: string; message: string }[] = [];
   const hooks = await resolveScopedLifecycleHooks({
     hookName,
     targetRepositories: [context.repository],
     workspaceRoot: context.mainRoot,
   });
   for (const hook of hooks.filter((candidate) => candidate.scope.startsWith("global-"))) {
-    const result = await executeHook({
-      context: {
-        hookName,
-        hookScope: hook.scope,
-        operationData: {
-          BRANCH_NAME: branch,
-          REPO_NAME: context.repository.name,
-          WORKSPACE_MODE: "standalone",
-          WORKTREE_PATH: worktreePath,
+    try {
+      const result = await executeHook({
+        context: {
+          hookName,
+          hookScope: hook.scope,
+          operationData: {
+            BRANCH_NAME: branch,
+            REPO_NAME: context.repository.name,
+            WORKSPACE_MODE: "standalone",
+            WORKTREE_PATH: worktreePath,
+          },
+          repoPath: context.mainRoot,
+          sourceScriptPath: hook.sourceScriptPath,
+          targetRepoName: context.repository.name,
+          targetRepoPath: context.mainRoot,
         },
-        repoPath: context.mainRoot,
-        sourceScriptPath: hook.sourceScriptPath,
-        targetRepoName: context.repository.name,
-        targetRepoPath: context.mainRoot,
-      },
-      hookName,
-      quiet,
-      scriptPath: hook.scriptPath,
-    });
-    if (!result.success) throw new StandaloneHookError(hookName, hook.scriptPath);
+        hookName,
+        quiet,
+        scriptPath: hook.scriptPath,
+      });
+      if (!result.success) throw new StandaloneHookError(hookName, hook.scriptPath);
+    } catch (error) {
+      if (!continueOnFailure) throw error;
+      failures.push({
+        hookName,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
+  return failures;
 }
 
 export async function standaloneWorktrees(context: StandaloneWorkspaceContext) {

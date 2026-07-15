@@ -397,6 +397,18 @@ export const formatRemovalSummaryHuman = (
     }
   }
 
+  if (
+    summary.operations.some((op) => op.type === "worktree_detach" && op.status === worktreeStatus)
+  ) {
+    lines.push("");
+    lines.push(summary.dryRun ? "Planned worktree detaches:" : "Detached worktrees:");
+    for (const op of summary.operations) {
+      if (op.type === "worktree_detach" && op.status === worktreeStatus) {
+        lines.push(`  • ${op.repository}: ${op.worktreePath}`);
+      }
+    }
+  }
+
   if (summary.operations.some((op) => op.type === "branch_delete" && op.status === branchStatus)) {
     lines.push("");
     lines.push(summary.dryRun ? "Planned branch deletions:" : "Deleted branches:");
