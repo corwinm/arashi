@@ -1,7 +1,8 @@
 import { dirname, join, relative } from "path";
-import { readFileSync, readdirSync } from "fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "url";
+import { tmpdir } from "os";
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFilePath);
@@ -116,6 +117,7 @@ function getHostTestFiles(): string[] {
 
 async function main(): Promise<void> {
   const selectedFiles = getHostTestFiles();
+  const isolatedHome = mkdtempSync(join(tmpdir(), "arashi-test-home-"));
 
   if (selectedFiles.length === 0) {
     throw new Error("No test files matched the current platform.");
@@ -126,6 +128,13 @@ async function main(): Promise<void> {
     [join(workspaceRoot, "node_modules", "vitest", "vitest.mjs"), "run", ...selectedFiles],
     {
       cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "commit.gpgsign",
+        GIT_CONFIG_VALUE_0: "false",
+        HOME: isolatedHome,
+      },
       stdio: "inherit",
     },
   );
@@ -133,6 +142,7 @@ async function main(): Promise<void> {
     proc.once("error", reject);
     proc.once("exit", (code) => resolve(code ?? 1));
   });
+  rmSync(isolatedHome, { force: true, recursive: true });
   process.exit(exitCode);
 }
 

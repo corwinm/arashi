@@ -57,7 +57,7 @@ export interface WorktreeGrouping {
 
 export interface RemovalOperation {
   /** Operation type */
-  type: "worktree_remove" | "branch_delete";
+  type: "worktree_remove" | "worktree_detach" | "branch_delete";
   /** Repository name */
   repository: string;
   /** Target branch name */

@@ -15,6 +15,7 @@ import { discoverPrunableWorktrees, pruneRepositoryWorktrees } from "../core/rem
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
 import { info, error as logError } from "../lib/logger.ts";
 import { Command } from "commander";
+import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
 
 const ZERO = 0;
 const ONE = 1;
@@ -125,6 +126,61 @@ const formatHumanOutput = (data: PruneData): string => {
 };
 
 export const executePrune = async (options: PruneOptions): Promise<number> => {
+  let context;
+  try {
+    context = await resolveWorkspaceContext();
+  } catch (error) {
+    if (options.json)
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("prune", unknownErrorToJsonError(error, "CONFIG_LOAD_FAILED")),
+      );
+    else logError(error instanceof Error ? error.message : String(error));
+    return ONE;
+  }
+  if (context.mode === "standalone") {
+    const dryRun = options.dryRun === true;
+    const expire = options.expire ?? "now";
+    const repositories = await discoverPrunableWorktrees([context.repository]);
+    if (dryRun) {
+      for (const repo of repositories) if (repo.status !== "failed") repo.status = "skipped";
+    } else {
+      for (const repo of repositories) {
+        if (repo.status === "failed" || repo.prunable.length === ZERO) {
+          if (repo.status !== "failed") repo.status = "skipped";
+          continue;
+        }
+        try {
+          await pruneRepositoryWorktrees(repo.path, expire);
+          repo.prunedCount = repo.prunable.length;
+          repo.status = "pruned";
+        } catch (error) {
+          repo.error = error instanceof Error ? error.message : String(error);
+          repo.status = "failed";
+        }
+      }
+    }
+    const summarized = summarize({ dryRun, expire, repositories, workspaceRoot: context.mainRoot });
+    const data = {
+      ...summarized,
+      mode: "standalone" as const,
+      repositoryPath: context.mainRoot,
+    };
+    if (options.json) {
+      if (data.totalFailed > ZERO)
+        writeJsonEnvelope(
+          createJsonErrorEnvelope("prune", {
+            code: "PRUNE_FAILED",
+            details: data as unknown as Record<string, unknown>,
+            message: "The standalone repository failed to prune",
+          }),
+        );
+      else writeJsonEnvelope(createJsonSuccessEnvelope("prune", data));
+    } else
+      console.log(
+        `Workspace mode: standalone\nMain repository: ${context.mainRoot}\n${formatHumanOutput(data)}`,
+      );
+    return data.totalFailed > ZERO ? ONE : ZERO;
+  }
   let workspaceRoot = "";
   try {
     workspaceRoot = await findWorkspaceRoot();
@@ -177,7 +233,11 @@ export const executePrune = async (options: PruneOptions): Promise<number> => {
       );
     }
 
-    const data = summarize({ dryRun, expire, repositories: results, workspaceRoot });
+    const data = {
+      ...summarize({ dryRun, expire, repositories: results, workspaceRoot }),
+      mode: "configured" as const,
+      worktreesBase: resolve(workspaceRoot, config.worktreesDir ?? "../.worktrees"),
+    };
     if (options.json) {
       const hasFailures = data.totalFailed > ZERO;
       if (hasFailures) {

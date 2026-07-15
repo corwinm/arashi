@@ -68,6 +68,38 @@ describe("CLI command contract", () => {
     ]);
   });
 
+  test("classifies standalone support and configured-only boundaries", () => {
+    expect(commandSemantics.create.standalone).toEqual({ support: "full" });
+    expect(commandSemantics.move.standalone).toEqual({ support: "full" });
+    expect(commandSemantics.init.standalone.support).toBe("conditional");
+    for (const command of ["add", "clone", "exec", "pull", "push", "setup", "sync"] as const) {
+      expect(commandSemantics[command].standalone.support).toBe("configured-only");
+      expect(commandSemantics[command].standalone).toHaveProperty("reason");
+    }
+  });
+
+  test("publishes enforceable init zero-config option and output policy", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+    );
+    const init = contract.commands.find((command) => command.path === "init");
+
+    expect(init?.semantics.zeroConfig).toEqual({
+      compatibleOptions: ["--dry-run", "--json", "--verbose"],
+      dryRun: { finalState: "unchanged", supported: true },
+      incompatibleOptions: [
+        "--force",
+        "--ignore-scope",
+        "--no-discover",
+        "--repos-dir",
+        "--worktrees-dir",
+      ],
+      json: { singleEnvelope: true, supported: true, suppressesHumanStdout: true },
+      option: "--zero-config",
+    });
+  });
+
   test("serializes deterministically with structural metadata", () => {
     const program = buildProgram({ includeHelpBanner: false });
     const first = serializeCommandContract(generateCommandContract(program, commandSemantics));

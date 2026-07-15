@@ -18,7 +18,7 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import { loadWorkspaceRepositories } from "../lib/config.ts";
 import { Command } from "commander";
 import { checkRemoteChanges } from "../lib/git-remote.ts";
 import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
@@ -27,6 +27,10 @@ import { runPullWithRollback } from "../lib/pull-runner.ts";
 import { reconcileManagedIgnore } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { fileExists } from "../lib/filesystem.ts";
+import {
+  ConfiguredWorkspaceRequiredError,
+  findConfiguredWorkspaceRoot,
+} from "../lib/workspace-context.ts";
 
 const ZERO = 0;
 const ONE = 1;
@@ -79,8 +83,9 @@ const excludeWorkspaceRoot = (
 const executePull = async (options: PullCommandOptions): Promise<PullSummary> => {
   let workspaceRoot = "";
   try {
-    workspaceRoot = await findWorkspaceRoot();
-  } catch {
+    workspaceRoot = await findConfiguredWorkspaceRoot("pull");
+  } catch (error) {
+    if (error instanceof ConfiguredWorkspaceRequiredError) throw error;
     throw new CliUsageError(
       'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
     );

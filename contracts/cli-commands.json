@@ -55,6 +55,10 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Adding child repositories requires persisted configuration."
+        },
         "vscode": {
           "expectation": "required"
         }
@@ -92,6 +96,10 @@
         },
         "skills": {
           "expectation": "required"
+        },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Cloning configured child repositories requires persisted configuration."
         },
         "vscode": {
           "expectation": "required"
@@ -229,6 +237,9 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "full"
+        },
         "vscode": {
           "expectation": "required"
         }
@@ -258,6 +269,9 @@
         },
         "skills": {
           "expectation": "required"
+        },
+        "standalone": {
+          "support": "full"
         },
         "vscode": {
           "expectation": "excluded",
@@ -332,6 +346,10 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Cross-repository execution requires persisted repository metadata."
+        },
         "vscode": {
           "expectation": "excluded",
           "reason": "Arbitrary cross-repository process execution is intentionally terminal-only."
@@ -405,6 +423,9 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "full"
+        },
         "vscode": {
           "expectation": "excluded",
           "reason": "Agent handoff generation is intentionally terminal-only."
@@ -473,6 +494,13 @@
           "required": true,
           "optional": false,
           "variadic": false
+        },
+        {
+          "flags": "--zero-config",
+          "description": "Prepare implicit standalone mode without creating configuration",
+          "required": false,
+          "optional": false,
+          "variadic": false
         }
       ],
       "semantics": {
@@ -485,8 +513,32 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "conditional",
+          "reason": "Only init --zero-config prepares standalone mode; ordinary init creates configured mode."
+        },
         "vscode": {
           "expectation": "required"
+        },
+        "zeroConfig": {
+          "compatibleOptions": ["--dry-run", "--json", "--verbose"],
+          "dryRun": {
+            "finalState": "unchanged",
+            "supported": true
+          },
+          "incompatibleOptions": [
+            "--force",
+            "--ignore-scope",
+            "--no-discover",
+            "--repos-dir",
+            "--worktrees-dir"
+          ],
+          "json": {
+            "singleEnvelope": true,
+            "supported": true,
+            "suppressesHumanStdout": true
+          },
+          "option": "--zero-config"
         }
       }
     },
@@ -516,6 +568,10 @@
         "skills": {
           "expectation": "excluded",
           "reason": "The skill assumes Arashi is already installed; bootstrap guidance belongs in installation docs."
+        },
+        "standalone": {
+          "support": "not-applicable",
+          "reason": "Installation does not consume workspace context."
         },
         "vscode": {
           "expectation": "required"
@@ -568,6 +624,9 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "full"
+        },
         "vscode": {
           "expectation": "represented",
           "reason": "The worktree panel represents the CLI list workflow."
@@ -613,6 +672,9 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "full"
+        },
         "vscode": {
           "expectation": "required"
         }
@@ -656,6 +718,9 @@
         },
         "skills": {
           "expectation": "required"
+        },
+        "standalone": {
+          "support": "full"
         },
         "vscode": {
           "expectation": "required"
@@ -707,6 +772,10 @@
         },
         "skills": {
           "expectation": "required"
+        },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Coordinated pull requires persisted repository metadata."
         },
         "vscode": {
           "expectation": "required"
@@ -765,6 +834,10 @@
         },
         "skills": {
           "expectation": "required"
+        },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Coordinated push requires persisted repository metadata."
         },
         "vscode": {
           "expectation": "excluded",
@@ -847,6 +920,9 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "full"
+        },
         "vscode": {
           "expectation": "required"
         }
@@ -898,6 +974,10 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Repository setup coordination requires persisted repository metadata."
+        },
         "vscode": {
           "expectation": "required"
         }
@@ -920,6 +1000,10 @@
         },
         "skills": {
           "expectation": "required"
+        },
+        "standalone": {
+          "support": "not-applicable",
+          "reason": "This command does not consume Arashi workspace context."
         },
         "vscode": {
           "expectation": "required"
@@ -961,6 +1045,10 @@
           "expectation": "represented",
           "reason": "Shell initialization is covered as part of the shell workflow."
         },
+        "standalone": {
+          "support": "not-applicable",
+          "reason": "Shell initialization does not consume workspace context."
+        },
         "vscode": {
           "expectation": "excluded",
           "reason": "Shell initialization configures terminals and is not an editor command."
@@ -986,6 +1074,10 @@
         "skills": {
           "expectation": "represented",
           "reason": "Shell installation is covered as part of the shell workflow."
+        },
+        "standalone": {
+          "support": "not-applicable",
+          "reason": "Shell installation does not consume workspace context."
         },
         "vscode": {
           "expectation": "excluded",
@@ -1038,6 +1130,9 @@
         },
         "skills": {
           "expectation": "required"
+        },
+        "standalone": {
+          "support": "full"
         },
         "vscode": {
           "expectation": "required"
@@ -1147,6 +1242,9 @@
         "skills": {
           "expectation": "required"
         },
+        "standalone": {
+          "support": "full"
+        },
         "vscode": {
           "expectation": "required"
         }
@@ -1197,6 +1295,10 @@
         },
         "skills": {
           "expectation": "required"
+        },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Repository synchronization requires persisted repository metadata."
         },
         "vscode": {
           "expectation": "required"
@@ -1249,6 +1351,10 @@
         },
         "skills": {
           "expectation": "required"
+        },
+        "standalone": {
+          "support": "not-applicable",
+          "reason": "This command does not consume Arashi workspace context."
         },
         "vscode": {
           "expectation": "required"

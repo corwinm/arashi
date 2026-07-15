@@ -14,11 +14,14 @@ import {
 } from "../types/list.ts";
 import {
   createJsonErrorEnvelope,
+  createJsonSuccessEnvelope,
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { listCommand } from "../core/list.ts";
 import { error as logError } from "../lib/logger.ts";
+import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
+import { standaloneWorktrees } from "../lib/standalone.ts";
 
 type ListCommandOptions = Parameters<typeof listCommand>[0];
 
@@ -69,9 +72,49 @@ Examples:
   $ arashi list | fzf              # Interactive selection with fzf
 `,
     )
-    .action(async (options: CliOptions) => {
+    .action(async (options: CliOptions, command: Command) => {
       try {
-        await executeList(options);
+        const context = await resolveWorkspaceContext();
+        if (context.mode === "standalone") {
+          if (command.getOptionValueSource("maxDepth") === "cli") {
+            throw new ListCommandError(
+              "--max-depth is not supported in standalone mode because standalone discovery never traverses sub-repositories.",
+            );
+          }
+          const worktrees = await standaloneWorktrees(context);
+          if (options.json) {
+            writeJsonEnvelope(
+              createJsonSuccessEnvelope("list", {
+                ...workspaceJsonMetadata(context),
+                repositoryPath: context.mainRoot,
+                worktrees,
+              }),
+            );
+          } else {
+            console.error("Workspace mode: standalone");
+            if (options.table) {
+              console.log("BRANCH\tHEAD\tWORKTREE");
+              for (const worktree of worktrees)
+                console.log(
+                  `${worktree.branch ?? "(detached)"}\t${worktree.head}\t${worktree.path}`,
+                );
+            } else if (options.verbose) {
+              console.log(`Workspace mode: standalone\nMain repository: ${context.mainRoot}`);
+              for (const worktree of worktrees) {
+                console.log(
+                  `\nWorktree: ${worktree.path}\n  Branch: ${worktree.branch ?? "(detached)"}\n  HEAD: ${worktree.head}`,
+                );
+              }
+            } else {
+              for (const worktree of worktrees) console.log(worktree.path);
+            }
+          }
+          process.exit(0);
+        }
+        await executeList(
+          options,
+          context.mode === "configured" ? workspaceJsonMetadata(context) : undefined,
+        );
       } catch (error) {
         if (options.json) {
           writeJsonEnvelope(createJsonErrorEnvelope("list", mapListErrorToJsonError(error)));
@@ -141,9 +184,13 @@ function mapListErrorToJsonError(error: unknown): ReturnType<typeof unknownError
   return unknownErrorToJsonError(error);
 }
 
-async function executeList(options: CliOptions): Promise<void> {
+async function executeList(
+  options: CliOptions,
+  jsonMetadata?: Record<string, unknown>,
+): Promise<void> {
   const listOptions: ListCommandOptions = {
     json: options.json || false,
+    jsonMetadata,
     maxDepth: options.maxDepth ?? 3,
     table: options.table || false,
     verbose: options.verbose || false,

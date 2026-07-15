@@ -7,11 +7,23 @@ export type JsonPolicy =
 export type SurfacePolicy =
   | { expectation: "required" }
   | { expectation: "represented" | "excluded"; reason: string };
+export type StandalonePolicy =
+  | { support: "full" }
+  | { support: "conditional" | "configured-only" | "not-applicable"; reason: string };
+export interface ZeroConfigCommandPolicy {
+  compatibleOptions: string[];
+  dryRun: { finalState: "unchanged"; supported: true };
+  incompatibleOptions: string[];
+  json: { singleEnvelope: true; supported: true; suppressesHumanStdout: true };
+  option: "--zero-config";
+}
 export interface CommandSemanticMetadata {
   json: JsonPolicy;
   docs: SurfacePolicy;
   skills: SurfacePolicy;
+  standalone: StandalonePolicy;
   vscode: SurfacePolicy;
+  zeroConfig?: ZeroConfigCommandPolicy;
 }
 export type CommandSemantics = Record<string, CommandSemanticMetadata>;
 
@@ -19,37 +31,83 @@ const unsupported = (reason: string): JsonPolicy => ({ support: "unsupported", r
 const required = (): SurfacePolicy => ({ expectation: "required" });
 const excluded = (reason: string): SurfacePolicy => ({ expectation: "excluded", reason });
 const represented = (reason: string): SurfacePolicy => ({ expectation: "represented", reason });
+const standalone = (): StandalonePolicy => ({ support: "full" });
+const configuredOnly = (reason: string): StandalonePolicy => ({
+  support: "configured-only",
+  reason,
+});
+const notApplicable = (reason: string): StandalonePolicy => ({ support: "not-applicable", reason });
+const conditionalStandalone = (reason: string): StandalonePolicy => ({
+  support: "conditional",
+  reason,
+});
 const standard = (
   json: JsonPolicy = unsupported("This interactive command has no machine-readable output mode."),
+  standalonePolicy: StandalonePolicy = notApplicable(
+    "This command does not consume Arashi workspace context.",
+  ),
 ): CommandSemanticMetadata => ({
   json,
   docs: required(),
   skills: required(),
+  standalone: standalonePolicy,
   vscode: required(),
 });
 
 export const commandSemantics: CommandSemantics = {
-  add: standard({ support: "full" }),
-  clone: standard(),
-  create: standard({
-    support: "conditional",
-    reason: "JSON is available only for non-interactive create operations.",
-  }),
+  add: standard(
+    { support: "full" },
+    configuredOnly("Adding child repositories requires persisted configuration."),
+  ),
+  clone: standard(
+    undefined,
+    configuredOnly("Cloning configured child repositories requires persisted configuration."),
+  ),
+  create: standard(
+    {
+      support: "conditional",
+      reason: "JSON is available only for non-interactive create operations.",
+    },
+    standalone(),
+  ),
   doctor: {
-    ...standard({ support: "full" }),
+    ...standard({ support: "full" }, standalone()),
     vscode: excluded("Diagnostics remain a terminal-focused maintenance workflow."),
   },
   exec: {
-    ...standard({ support: "full" }),
+    ...standard(
+      { support: "full" },
+      configuredOnly("Cross-repository execution requires persisted repository metadata."),
+    ),
     vscode: excluded(
       "Arbitrary cross-repository process execution is intentionally terminal-only.",
     ),
   },
   handoff: {
-    ...standard({ support: "full" }),
+    ...standard({ support: "full" }, standalone()),
     vscode: excluded("Agent handoff generation is intentionally terminal-only."),
   },
-  init: standard({ support: "full" }),
+  init: {
+    ...standard(
+      { support: "full" },
+      conditionalStandalone(
+        "Only init --zero-config prepares standalone mode; ordinary init creates configured mode.",
+      ),
+    ),
+    zeroConfig: {
+      compatibleOptions: ["--dry-run", "--json", "--verbose"],
+      dryRun: { finalState: "unchanged", supported: true },
+      incompatibleOptions: [
+        "--force",
+        "--ignore-scope",
+        "--no-discover",
+        "--repos-dir",
+        "--worktrees-dir",
+      ],
+      json: { singleEnvelope: true, supported: true, suppressesHumanStdout: true },
+      option: "--zero-config",
+    },
+  },
   install: {
     json: { support: "full" },
     docs: excluded(
@@ -58,24 +116,37 @@ export const commandSemantics: CommandSemantics = {
     skills: excluded(
       "The skill assumes Arashi is already installed; bootstrap guidance belongs in installation docs.",
     ),
+    standalone: notApplicable("Installation does not consume workspace context."),
     vscode: required(),
   },
   list: {
-    ...standard({ support: "full" }),
+    ...standard({ support: "full" }, standalone()),
     vscode: represented("The worktree panel represents the CLI list workflow."),
   },
-  move: standard({ support: "full" }),
-  prune: standard({ support: "full" }),
-  pull: standard({ support: "full" }),
+  move: standard({ support: "full" }, standalone()),
+  prune: standard({ support: "full" }, standalone()),
+  pull: standard(
+    { support: "full" },
+    configuredOnly("Coordinated pull requires persisted repository metadata."),
+  ),
   push: {
-    ...standard({ support: "full" }),
+    ...standard(
+      { support: "full" },
+      configuredOnly("Coordinated push requires persisted repository metadata."),
+    ),
     vscode: excluded("Push remains explicit terminal source-control behavior."),
   },
-  remove: standard({
-    support: "conditional",
-    reason: "JSON mode requires an explicit branch and is non-interactive.",
-  }),
-  setup: standard({ support: "full" }),
+  remove: standard(
+    {
+      support: "conditional",
+      reason: "JSON mode requires an explicit branch and is non-interactive.",
+    },
+    standalone(),
+  ),
+  setup: standard(
+    { support: "full" },
+    configuredOnly("Repository setup coordination requires persisted repository metadata."),
+  ),
   shell: standard(unsupported("Shell integration emits shell code rather than JSON.")),
   "shell init": {
     json: unsupported(
@@ -83,19 +154,25 @@ export const commandSemantics: CommandSemantics = {
     ),
     docs: excluded("This subcommand is documented on the parent shell command page."),
     skills: represented("Shell initialization is covered as part of the shell workflow."),
+    standalone: notApplicable("Shell initialization does not consume workspace context."),
     vscode: excluded("Shell initialization configures terminals and is not an editor command."),
   },
   "shell install": {
     json: unsupported("Shell installation mutates shell configuration and has no JSON mode."),
     docs: excluded("This subcommand is documented on the parent shell command page."),
     skills: represented("Shell installation is covered as part of the shell workflow."),
+    standalone: notApplicable("Shell installation does not consume workspace context."),
     vscode: excluded("Shell configuration installation is outside extension scope."),
   },
-  status: standard({ support: "full" }),
+  status: standard({ support: "full" }, standalone()),
   switch: standard(
     unsupported("Switch launches a shell; --json only returns an unsupported-mode error."),
+    standalone(),
   ),
-  sync: standard({ support: "full" }),
+  sync: standard(
+    { support: "full" },
+    configuredOnly("Repository synchronization requires persisted repository metadata."),
+  ),
   update: standard({
     support: "conditional",
     reason: "JSON cannot be combined with interactive confirmation options.",
@@ -115,6 +192,10 @@ export function validateCommandSemantics(paths: string[], metadata: CommandSeman
     const item = metadata[path];
     if (item.json.support !== "full" && !item.json.reason.trim())
       errors.push(`Command "${path}" ${item.json.support} JSON support requires a reason`);
+    if (item.standalone.support !== "full" && !item.standalone.reason.trim())
+      errors.push(
+        `Command "${path}" ${item.standalone.support} standalone support requires a reason`,
+      );
     for (const surface of ["docs", "skills", "vscode"] as const) {
       const policy = item[surface];
       if (policy.expectation !== "required" && !policy.reason.trim())
@@ -192,5 +273,16 @@ export function generateCommandContract(
 }
 
 export function serializeCommandContract(contract: CliCommandContract): string {
-  return `${JSON.stringify(contract, null, 2)}\n`;
+  const formatted = JSON.stringify(contract, null, 2).replace(
+    /^(\s*"[^"]+": )\[\n((?:\s+"(?:[^"\\]|\\.)*",?\n)+)\s*\]/gm,
+    (block, prefix: string, entries: string) => {
+      const inline = `${prefix}[${entries
+        .trim()
+        .split("\n")
+        .map((entry) => entry.trim().replace(/,$/, ""))
+        .join(", ")}]`;
+      return inline.length <= 100 ? inline : block;
+    },
+  );
+  return `${formatted}\n`;
 }

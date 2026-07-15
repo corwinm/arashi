@@ -16,11 +16,15 @@ import {
   isExecutableTarget,
   orderSetupTargets,
 } from "../lib/setup-targets.ts";
-import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import { loadWorkspaceRepositories } from "../lib/config.ts";
 import { info, error as logError } from "../lib/logger.ts";
 import { Command } from "commander";
 import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { runSetupTarget } from "../lib/setup-runner.ts";
+import {
+  ConfiguredWorkspaceRequiredError,
+  findConfiguredWorkspaceRoot,
+} from "../lib/workspace-context.ts";
 
 const ZERO = 0;
 const ONE = 1;
@@ -40,8 +44,9 @@ export interface SetupCommandOptions {
 const executeSetup = async (options: SetupCommandOptions): Promise<SetupRunSummary> => {
   let workspaceRoot = "";
   try {
-    workspaceRoot = await findWorkspaceRoot();
-  } catch {
+    workspaceRoot = await findConfiguredWorkspaceRoot("setup");
+  } catch (error) {
+    if (error instanceof ConfiguredWorkspaceRequiredError) throw error;
     throw new CliUsageError(
       'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
     );

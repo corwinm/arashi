@@ -48,6 +48,10 @@ import {
   type ManagedIgnoreReconciliation,
   type ManagedIgnoreScope,
 } from "../lib/managed-ignore.ts";
+import {
+  bootstrapZeroConfig,
+  type ZeroConfigBootstrapResult,
+} from "../lib/zero-config-bootstrap.ts";
 
 type Config = Parameters<typeof saveConfig>[1];
 type RepoConfig = Config["repos"][string];
@@ -132,6 +136,8 @@ const previewBootstrapManagedIgnore = (
 // ============================================================================
 
 interface InitOptions {
+  /** Prepare the implicit standalone .worktrees convention only */
+  zeroConfig?: boolean;
   /** Custom location for managed repositories */
   reposDir?: string;
 
@@ -1263,6 +1269,7 @@ export function createCommand(): Command {
     .option("--repos-dir <path>", "Custom location for managed repositories")
     .option("--worktrees-dir <path>", "Custom base location for managed worktrees")
     .option("--ignore-scope <scope>", "Managed Git ignore scope: local (default), tracked, or none")
+    .option("--zero-config", "Prepare implicit standalone mode without creating configuration")
     .option("--force", "Overwrite existing configuration if present")
     .option("--no-discover", "Skip automatic repository discovery")
     .option("--dry-run", "Show what would be done without making changes")
@@ -1272,6 +1279,7 @@ export function createCommand(): Command {
       "after",
       `
 Examples:
+  $ arashi init --zero-config           # Standalone .worktrees/ convention only
   $ arashi init                         # Local info/exclude rules (default)
   $ arashi init --ignore-scope tracked  # Team-owned .gitignore block
   $ arashi init --ignore-scope none     # Manual ignore management
@@ -1281,6 +1289,82 @@ Existing effective tracked, local, or global rules are honored. Arashi never mod
       `,
     )
     .action(async (options: InitOptions & { discover?: boolean; json?: boolean }) => {
+      if (options.zeroConfig) {
+        const conflicts = [
+          options.reposDir !== undefined ? "--repos-dir" : undefined,
+          options.worktreesDir !== undefined ? "--worktrees-dir" : undefined,
+          options.ignoreScope !== undefined ? "--ignore-scope" : undefined,
+          options.force ? "--force" : undefined,
+          options.discover === false ? "--no-discover" : undefined,
+        ].filter((value): value is string => value !== undefined);
+
+        if (conflicts.length > ZERO) {
+          const conflictError = new Error(
+            `--zero-config is incompatible with ${conflicts.join(", ")}.`,
+          );
+          if (options.json) {
+            writeJsonEnvelope(
+              createJsonErrorEnvelope("init", {
+                code: "ZERO_CONFIG_INCOMPATIBLE_OPTIONS",
+                details: {
+                  attempted: { localExclude: false, worktreesDirectory: false },
+                  conflicts,
+                  finalState: {
+                    localExcludeChanged: false,
+                    worktreesDirectoryChanged: false,
+                  },
+                  mode: "standalone",
+                },
+                message: conflictError.message,
+              }),
+            );
+          } else {
+            logError(conflictError.message);
+          }
+          process.exit(ExitCode.INVALID_PATH);
+        }
+
+        let zeroConfigResult: ZeroConfigBootstrapResult;
+        try {
+          zeroConfigResult = await bootstrapZeroConfig(process.cwd(), {
+            dryRun: options.dryRun,
+          });
+        } catch (bootstrapError) {
+          if (options.json) {
+            writeJsonEnvelope(
+              createJsonErrorEnvelope(
+                "init",
+                unknownErrorToJsonError(bootstrapError, "ZERO_CONFIG_BOOTSTRAP_FAILED"),
+              ),
+            );
+          } else {
+            logError((bootstrapError as Error).message);
+          }
+          process.exit(ExitCode.NOT_GIT_REPOSITORY);
+        }
+
+        if (options.json) {
+          writeJsonEnvelope(
+            createJsonSuccessEnvelope(
+              "init",
+              zeroConfigResult as unknown as Record<string, unknown>,
+            ),
+          );
+        } else if (options.dryRun) {
+          info("Standalone zero-config bootstrap (dry run)");
+          console.log(`  • .worktrees directory: ${zeroConfigResult.worktreesDirectory.path}`);
+          console.log(`  • Local exclude rule: ${zeroConfigResult.localExclude.rule}`);
+          console.log("No changes were made.");
+        } else {
+          success("Initialized standalone zero-config workspace");
+          console.log(`  • Worktrees: ${zeroConfigResult.worktreesDirectory.path}`);
+          console.log(`  • Local exclude: ${zeroConfigResult.localExclude.path}`);
+          console.log("  • Create a worktree: arashi create <branch-name>");
+          console.log("  • Upgrade for coordination: arashi init");
+        }
+        process.exit(ExitCode.SUCCESS);
+      }
+
       // Commander converts --no-discover to discover: false
       const normalizedOptions: InitOptions = {
         dryRun: options.dryRun,

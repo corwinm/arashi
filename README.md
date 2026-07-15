@@ -112,6 +112,7 @@ pnpm run build
 Arashi currently provides these commands:
 
 - `arashi init`
+- [`arashi init --zero-config`](docs/standalone.md) for a single repository with `.worktrees/<branch>` paths and no persisted Arashi configuration
 - `arashi install`
 - `arashi update [--check] [--dry-run] [--yes]`
 - `arashi add <git-url>`

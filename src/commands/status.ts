@@ -18,13 +18,15 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { standaloneWorktrees } from "../lib/standalone.ts";
 import { getFullGitStatus, getGitStatus } from "../lib/git.ts";
 import { info, error as logError, spinner } from "../lib/logger.ts";
 import { Command } from "commander";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
 import { EmptyRepositoryFiltersError } from "../lib/repo-filter.ts";
-import { resolve } from "path";
-import { stat } from "fs/promises";
+import { basename, join, resolve } from "path";
+import { realpath, stat } from "fs/promises";
 
 type DefaultBranchComparison = Awaited<ReturnType<typeof compareCurrentBranchToDefaultBranch>>;
 type Config = Awaited<ReturnType<typeof loadConfig>>;
@@ -782,6 +784,67 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     process.exit(USAGE_EXIT_CODE);
   }
 
+  let workspaceContext;
+  try {
+    workspaceContext = await resolveWorkspaceContext();
+  } catch (error) {
+    if (options.json)
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("status", unknownErrorToJsonError(error, "CONFIG_LOAD_FAILED")),
+      );
+    else logError(error instanceof Error ? error.message : String(error));
+    process.exit(USAGE_EXIT_CODE);
+  }
+  if (workspaceContext.mode === "standalone") {
+    if (options.group) {
+      const message = "--group is not meaningful in standalone mode";
+      if (options.json)
+        writeJsonEnvelope(
+          createJsonErrorEnvelope("status", { code: "STANDALONE_FILTER_UNSUPPORTED", message }),
+        );
+      else logError(message);
+      process.exit(USAGE_EXIT_CODE);
+    }
+    const worktrees = await standaloneWorktrees(workspaceContext);
+    const statuses = await Promise.all(
+      worktrees.map((worktree) =>
+        checkRepoStatus(worktree.branch ?? basename(worktree.path), worktree.path, {
+          verbose: options.verbose === true,
+        }),
+      ),
+    );
+    const callerWorktree = await realpath(process.cwd());
+    const currentStatus = statuses.find((status) => resolve(status.path) === callerWorktree);
+    const summary = summarizeStatuses(statuses);
+    if (options.json)
+      writeJsonEnvelope(
+        createJsonSuccessEnvelope(
+          "status",
+          {
+            callerWorktree,
+            currentBranch: currentStatus?.branch.localBranch ?? null,
+            mode: "standalone",
+            repositoryPath: workspaceContext.mainRoot,
+            summary,
+            workspaceRoot: workspaceContext.mainRoot,
+            worktrees: statuses,
+            worktreesBase: join(workspaceContext.mainRoot, ".worktrees"),
+          },
+          collectStatusWarnings(statuses),
+        ),
+      );
+    else {
+      console.log(`Workspace mode: standalone\nMain repository: ${workspaceContext.mainRoot}`);
+      if (callerWorktree !== workspaceContext.mainRoot)
+        console.log(`Caller worktree: ${callerWorktree}`);
+      let output = formatDefaultOutput(statuses);
+      if (options.verbose) output = formatVerboseOutput(statuses);
+      else if (options.short) output = formatShortOutput(statuses);
+      console.log(output);
+    }
+    process.exit(ZERO);
+  }
+
   let workspaceRoot = "";
   try {
     workspaceRoot = await findWorkspaceRoot();
@@ -889,9 +952,11 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
         "status",
         {
           filters: filterResult.filters,
+          mode: "configured",
           repositories: statuses,
           summary,
           workspaceRoot,
+          worktreesBase: resolve(workspaceRoot, config.worktreesDir ?? "../.worktrees"),
         },
         collectStatusWarnings(statuses),
       ),
