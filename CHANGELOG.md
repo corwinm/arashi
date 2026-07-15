@@ -1,3 +1,11 @@
+## [1.20.0](https://github.com/corwinm/arashi/compare/v1.19.2...v1.20.0) (2026-07-15)
+
+### Features
+
+- add cmux workspace launching ([#91](https://github.com/corwinm/arashi/issues/91)) ([1dcfeb9](https://github.com/corwinm/arashi/commit/1dcfeb931fa5113e30deb2488f99c2536eb01828))
+- reconcile managed Git ignore rules ([#92](https://github.com/corwinm/arashi/issues/92)) ([8da9064](https://github.com/corwinm/arashi/commit/8da90642de50b0dda414a75a17b499411d49f8d0))
+- support zero-config standalone repositories ([#93](https://github.com/corwinm/arashi/issues/93)) ([91acd82](https://github.com/corwinm/arashi/commit/91acd826427ffaa243f5b8f8644430618d23a2bf))
+
 ## [1.19.2](https://github.com/corwinm/arashi/compare/v1.19.1...v1.19.2) (2026-07-13)
 
 ### Bug Fixes
