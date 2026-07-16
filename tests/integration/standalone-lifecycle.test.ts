@@ -286,6 +286,60 @@ describe("standalone lifecycle", () => {
     expect((await run(root, ["git", "branch", "--list", "interactive-remove"])).stdout).toBe("");
   });
 
+  test("standalone remove excludes prunable worktrees from selection", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    await arashi(root, ["create", "selectable-remove", "--json"]);
+    const selectable = await realpath(join(root, ".worktrees", "selectable-remove"));
+    const stale = join(root, ".worktrees", "stale-remove");
+    expect(
+      (await run(root, ["git", "worktree", "add", "-b", "stale-remove", stale])).exitCode,
+    ).toBe(0);
+    await rm(stale, { force: true, recursive: true });
+
+    const originalCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const promptHandlers = {
+        confirm: async () => ({ status: "ok" as const, value: true }),
+        multiSelect: async () => ({ status: "ok" as const, value: [] }),
+        select: async (_message: string, choices: { name: string; value: string }[]) => {
+          expect(choices).toEqual([
+            expect.objectContaining({ name: "selectable-remove", value: selectable }),
+          ]);
+          return { reason: "exit" as const, status: "cancelled" as const };
+        },
+      };
+
+      expect(await executeRemove(undefined, { force: true }, promptHandlers)).toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    await expect(access(selectable)).resolves.toBeUndefined();
+    expect((await run(root, ["git", "branch", "--list", "stale-remove"])).stdout).toContain(
+      "stale-remove",
+    );
+  });
+
+  test("standalone remove directs stale-only selection to prune", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const stale = join(root, ".worktrees", "stale-only-remove");
+    expect(
+      (await run(root, ["git", "worktree", "add", "-b", "stale-only-remove", stale])).exitCode,
+    ).toBe(0);
+    await rm(stale, { force: true, recursive: true });
+
+    const result = await arashi(root, ["remove", "--force"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("arashi prune");
+    expect((await run(root, ["git", "branch", "--list", "stale-only-remove"])).stdout).toContain(
+      "stale-only-remove",
+    );
+  });
+
   test("standalone remove JSON requires an explicit target", async () => {
     const root = await repository();
     await arashi(root, ["init", "--zero-config"]);

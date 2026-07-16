@@ -99,14 +99,22 @@ export async function standaloneWorktrees(context: StandaloneWorkspaceContext) {
     ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
     context.mainRoot,
   );
-  const records: Array<{ branch: string | null; head: string; path: string }> = [];
-  let current: { branch: string | null; head: string; path: string } | null = null;
+  const records: Array<{
+    branch: string | null;
+    head: string;
+    path: string;
+    pruneReason?: string;
+  }> = [];
+  let current: (typeof records)[number] | null = null;
   for (const line of result.stdout.split(/\r?\n/)) {
     if (line.startsWith("worktree ")) {
       current = { branch: null, head: "", path: line.slice(9) };
       records.push(current);
     } else if (current && line.startsWith("HEAD ")) current.head = line.slice(5);
     else if (current && line.startsWith("branch refs/heads/")) current.branch = line.slice(18);
+    else if (current && line.startsWith("prunable")) {
+      current.pruneReason = line.slice("prunable".length).trim() || "stale worktree metadata";
+    }
   }
   return records;
 }

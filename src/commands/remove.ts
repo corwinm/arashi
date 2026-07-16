@@ -234,11 +234,18 @@ export async function executeRemove(
         return ONE;
       }
 
+      const prunable = worktrees.filter((entry) => entry.pruneReason || !existsSync(entry.path));
       const selectable = worktrees.filter(
-        (entry) => resolve(entry.path) !== resolve(workspaceContext.mainRoot),
+        (entry) =>
+          !entry.pruneReason &&
+          existsSync(entry.path) &&
+          resolve(entry.path) !== resolve(workspaceContext.mainRoot),
       );
       if (selectable.length === ZERO) {
         info("No worktrees found to remove");
+        if (prunable.length > ZERO) {
+          info("Stale worktree metadata found; run 'arashi prune' to clean it up");
+        }
         return ZERO;
       }
 
