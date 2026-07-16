@@ -1,3 +1,9 @@
+## [1.20.1](https://github.com/corwinm/arashi/compare/v1.20.0...v1.20.1) (2026-07-16)
+
+### Bug Fixes
+
+- prompt for standalone worktree removal ([#94](https://github.com/corwinm/arashi/issues/94)) ([9b27d3f](https://github.com/corwinm/arashi/commit/9b27d3f2597e8c6ffb11283a246bd65b0c7cfef7))
+
 ## [1.20.0](https://github.com/corwinm/arashi/compare/v1.19.2...v1.20.0) (2026-07-15)
 
 ### Features
