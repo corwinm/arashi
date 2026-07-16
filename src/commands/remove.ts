@@ -50,7 +50,11 @@ import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace
 import { runStandaloneGlobalHooks, standaloneWorktrees } from "../lib/standalone.ts";
 import { exec as standaloneGitExec, getDefaultBranch } from "../lib/git.ts";
 import { info, error as logError, spinner, warn } from "../lib/logger.ts";
-import { confirm as promptConfirm, multiSelect as promptMultiSelect } from "../lib/prompts.ts";
+import {
+  confirm as promptConfirm,
+  multiSelect as promptMultiSelect,
+  select as promptSelect,
+} from "../lib/prompts.ts";
 import { Command } from "commander";
 import chalk from "chalk";
 import { existsSync } from "fs";
@@ -209,28 +213,65 @@ export async function executeRemove(
   promptHandlers?: {
     confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
     multiSelect: (message: string, choices: Choice<string>[]) => Promise<PromptOutcome<string[]>>;
+    select?: (message: string, choices: Choice<string>[]) => Promise<PromptOutcome<string>>;
   },
 ): Promise<number> {
   const startTime = Date.now();
 
   const workspaceContext = await resolveWorkspaceContext();
   if (workspaceContext.mode === "standalone") {
-    if (!branchArg) {
-      throw new RemoveCommandError(
-        "A branch or worktree path is required in non-interactive standalone mode",
-        RemoveCommandErrorCode.NON_INTERACTIVE,
-      );
-    }
+    const prompt = promptHandlers || {
+      confirm: promptConfirm,
+      multiSelect: promptMultiSelect,
+      select: promptSelect,
+    };
+    const allowNonInteractive = Boolean(promptHandlers);
     const worktrees = await standaloneWorktrees(workspaceContext);
-    const target = worktrees.find((entry) =>
-      options.path ? resolve(entry.path) === resolve(branchArg) : entry.branch === branchArg,
-    );
-    if (!target || target.path === workspaceContext.mainRoot) {
+    let selectedTargetPath: string | undefined = undefined;
+    if (!branchArg) {
+      if (options.json) {
+        writeJsonEnvelope(unsupportedJsonModeError("remove", "interactive-selection"));
+        return ONE;
+      }
+
+      const selectable = worktrees.filter(
+        (entry) => resolve(entry.path) !== resolve(workspaceContext.mainRoot),
+      );
+      if (selectable.length === ZERO) {
+        info("No worktrees found to remove");
+        return ZERO;
+      }
+
+      ensureInteractive(allowNonInteractive);
+      const selection = await (prompt.select ?? promptSelect)(
+        "Select a worktree to remove:",
+        selectable.map((entry) => ({
+          description: entry.path,
+          name: entry.branch || basename(entry.path),
+          value: entry.path,
+        })),
+      );
+      if (selection.status === "cancelled") {
+        info("Selection cancelled");
+        return ZERO;
+      }
+      selectedTargetPath = selection.value;
+    }
+    const target = worktrees.find((entry) => {
+      if (selectedTargetPath) {
+        return resolve(entry.path) === resolve(selectedTargetPath);
+      }
+      return options.path
+        ? resolve(entry.path) === resolve(branchArg!)
+        : entry.branch === branchArg;
+    });
+    if (!target || resolve(target.path) === resolve(workspaceContext.mainRoot)) {
       throw new RemoveCommandError(
-        `Standalone worktree not found: ${branchArg}`,
+        `Standalone worktree not found: ${branchArg ?? selectedTargetPath}`,
         RemoveCommandErrorCode.BRANCH_NOT_FOUND,
       );
     }
+    const targetLabel = target.branch ?? branchArg ?? selectedTargetPath ?? target.path;
     const repositoryName = workspaceContext.repository.name;
     const targetEntry: WorktreeEntry = {
       branch: target.branch ?? "",
@@ -248,8 +289,6 @@ export async function executeRemove(
     const branchPresence: Record<string, string[]> = target.branch
       ? { [target.branch]: [repositoryName] }
       : {};
-    const prompt = promptHandlers || { confirm: promptConfirm, multiSelect: promptMultiSelect };
-    const allowNonInteractive = Boolean(promptHandlers);
     if (!options.force && !options.dryRun && !(options.keepBranches && options.keepWorktrees)) {
       ensureInteractive(allowNonInteractive);
       const confirmation = await promptConfirmation({
@@ -342,7 +381,7 @@ export async function executeRemove(
     await runStandaloneGlobalHooks(
       workspaceContext,
       "pre-remove",
-      target.branch ?? branchArg,
+      targetLabel,
       target.path,
       false,
       options.json === true,
@@ -403,7 +442,7 @@ export async function executeRemove(
       const postHookFailures = await runStandaloneGlobalHooks(
         workspaceContext,
         "post-remove",
-        target.branch ?? branchArg,
+        targetLabel,
         target.path,
         false,
         options.json === true,

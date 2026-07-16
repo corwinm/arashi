@@ -225,6 +225,86 @@ describe("standalone lifecycle", () => {
     }
   });
 
+  test("standalone explicit detached path preserves the hook target label", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const relativeTarget = join(".worktrees", "detached-remove");
+    const linked = join(root, relativeTarget);
+    expect((await run(root, ["git", "worktree", "add", "--detach", linked, "HEAD"])).exitCode).toBe(
+      0,
+    );
+
+    const home = await mkdtemp(join(tmpdir(), "arashi-remove-hook-home-"));
+    roots.push(home);
+    const hookDirectory = join(home, ".arashi", "hooks");
+    const hook = join(hookDirectory, "pre-remove.sh");
+    const record = join(home, "branch-name");
+    await mkdir(hookDirectory, { recursive: true });
+    await writeFile(hook, `#!/bin/sh\nprintf '%s' "$ARASHI_BRANCH_NAME" > "${record}"\n`);
+    await chmod(hook, 0o755);
+
+    const result = await arashi(root, ["remove", relativeTarget, "--path", "--force", "--json"], {
+      HOME: home,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(await readFile(record, "utf8")).toBe(relativeTarget);
+    await expect(access(linked)).rejects.toThrow();
+  });
+
+  test("standalone remove without a target prompts for a worktree", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    await arashi(root, ["create", "interactive-remove", "--json"]);
+    const linked = join(root, ".worktrees", "interactive-remove");
+    const canonicalLinked = await realpath(linked);
+
+    const originalCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const promptHandlers = {
+        confirm: async () => ({ status: "ok" as const, value: true }),
+        multiSelect: async () => ({ status: "ok" as const, value: [] }),
+        select: async (message: string, choices: { name: string; value: string }[]) => {
+          expect(message).toBe("Select a worktree to remove:");
+          expect(choices).toEqual([
+            expect.objectContaining({
+              name: expect.stringContaining("interactive-remove"),
+              value: canonicalLinked,
+            }),
+          ]);
+          return { status: "ok" as const, value: canonicalLinked };
+        },
+      };
+
+      expect(await executeRemove(undefined, { force: true }, promptHandlers)).toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    await expect(access(linked)).rejects.toThrow();
+    expect((await run(root, ["git", "branch", "--list", "interactive-remove"])).stdout).toBe("");
+  });
+
+  test("standalone remove JSON requires an explicit target", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    await arashi(root, ["create", "json-remove", "--json"]);
+
+    const result = await arashi(root, ["remove", "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      command: "remove",
+      error: {
+        code: "JSON_UNSUPPORTED_FOR_MODE",
+        details: { mode: "interactive-selection" },
+      },
+      ok: false,
+    });
+    await expect(access(join(root, ".worktrees", "json-remove"))).resolves.toBeUndefined();
+  });
+
   test("standalone remove dry-run reports a complete non-mutating plan", async () => {
     const root = await repository();
     const canonicalRoot = await realpath(root);
