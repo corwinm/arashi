@@ -208,8 +208,7 @@ export function validateCommandSemantics(paths: string[], metadata: CommandSeman
 }
 
 export interface CliCommandContract {
-  schemaVersion: 1;
-  cliVersion: string;
+  schemaVersion: 2;
   commands: ContractCommand[];
 }
 interface ContractCommand {
@@ -266,8 +265,7 @@ export function generateCommandContract(
   };
   visit(program, "");
   return {
-    schemaVersion: 1,
-    cliVersion: program.version() ?? "",
+    schemaVersion: 2,
     commands: commands.toSorted((a, b) => a.path.localeCompare(b.path)),
   };
 }
