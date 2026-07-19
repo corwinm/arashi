@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Command } from "commander";
+import pkg from "../../package.json";
 import { buildProgram, discoverCommandPaths } from "../../src/cli-program.ts";
 import {
   commandSemantics,
@@ -40,6 +41,7 @@ describe("CLI command contract", () => {
     expect(first).toBeInstanceOf(Command);
     expect(second).not.toBe(first);
     expect(first.name()).toBe("arashi");
+    expect(first.version()).toBe(pkg.version);
   });
 
   test("discovers every registered command path exactly", () => {
@@ -108,11 +110,23 @@ describe("CLI command contract", () => {
     );
     expect(first).toBe(second);
     const contract = JSON.parse(first);
-    expect(contract.schemaVersion).toBe(1);
+    expect(contract.schemaVersion).toBe(2);
+    expect(contract).not.toHaveProperty("cliVersion");
     expect(contract.commands.map((command: { path: string }) => command.path)).toEqual(
       expectedPaths,
     );
     expect(contract.commands[0]).toHaveProperty("options");
     expect(first.endsWith("\n")).toBe(true);
+  });
+
+  test("does not change when only the runtime release version changes", () => {
+    const current = buildProgram({ includeHelpBanner: false });
+    const alternateRelease = new Command().name("arashi").version("999.0.0");
+    for (const command of buildProgram({ includeHelpBanner: false }).commands)
+      alternateRelease.addCommand(command);
+
+    expect(serializeCommandContract(generateCommandContract(current, commandSemantics))).toBe(
+      serializeCommandContract(generateCommandContract(alternateRelease, commandSemantics)),
+    );
   });
 });
