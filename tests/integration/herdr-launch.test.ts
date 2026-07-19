@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { resolve } from "node:path";
 import type { CreateCommandDependencies } from "../../src/commands/create.ts";
 import {
   createCommand as createCreateCommand,
@@ -416,7 +417,7 @@ describe("Herdr post-create preservation", () => {
     expect(calls).toEqual([
       {
         candidate: expect.objectContaining({
-          herdrSource: { path: workspaceRoot, status: "available" },
+          herdrSource: { path: resolve(workspaceRoot), status: "available" },
           worktreePath: "/workspace-herdr",
         }),
         options: expect.objectContaining({ herdr: true }),

@@ -107,18 +107,21 @@ describe("Herdr source resolution", () => {
             repository: "duplicate",
           },
         ],
-        resolveGitMainWorktree: async (path) => path.replace("/targets/", "/sources/"),
+        resolveGitMainWorktree: async (path) =>
+          path === resolve("/targets/parent")
+            ? resolve("/sources/parent")
+            : resolve("/sources/child"),
       },
     );
 
     expect(result.candidates).toEqual([
       expect.objectContaining({
-        herdrSource: { path: "/sources/parent", status: "available" },
-        worktreePath: "/targets/parent",
+        herdrSource: { path: resolve("/sources/parent"), status: "available" },
+        worktreePath: resolve("/targets/parent"),
       }),
       expect.objectContaining({
-        herdrSource: { path: "/sources/child", status: "available" },
-        worktreePath: "/targets/child",
+        herdrSource: { path: resolve("/sources/child"), status: "available" },
+        worktreePath: resolve("/targets/child"),
       }),
     ]);
   });
