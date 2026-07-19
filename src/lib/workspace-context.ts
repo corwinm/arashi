@@ -134,8 +134,7 @@ export async function resolveGitMainWorktree(invocationPath: string): Promise<st
     if (!firstWorktree) return null;
     const listedRoot = resolve(firstWorktree);
     if (listedRoot === resolve(absoluteCommonDir)) {
-      const topLevel = await exec(["rev-parse", "--show-toplevel"], absoluteInvocationPath);
-      return resolve(topLevel.stdout.trim());
+      return null;
     }
     return listedRoot;
   } catch {

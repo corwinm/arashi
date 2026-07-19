@@ -4,6 +4,7 @@ import type { WorkspaceRepository } from "../lib/config.ts";
 import type { WorktreeInfo } from "../types/remove.ts";
 import { discoverAllWorktrees } from "./remove.ts";
 import { select as promptSelect } from "../lib/prompts.ts";
+import { resolveGitMainWorktree } from "../lib/workspace-context.ts";
 
 interface Choice<T> {
   value: T;
@@ -24,6 +25,7 @@ export interface SwitchCandidate {
   branchName: string;
   worktreePath: string;
   repoName: string;
+  herdrSource?: { status: "available"; path: string } | { status: "unavailable" };
 }
 
 export interface SwitchCandidateDiscoveryResult {
@@ -33,6 +35,7 @@ export interface SwitchCandidateDiscoveryResult {
 
 interface DiscoverSwitchCandidatesDependencies {
   discoverAllWorktrees?: (repositories: RepositoryTarget[]) => Promise<WorktreeInfo[]>;
+  resolveGitMainWorktree?: (path: string) => Promise<string | null>;
 }
 
 interface SelectSwitchCandidateOptions {
@@ -47,20 +50,40 @@ interface SelectSwitchCandidateDependencies {
   ) => Promise<PromptOutcome<SwitchCandidate>>;
 }
 
+const candidateSourceKey = (repoName: string, worktreePath: string): string =>
+  `${repoName}\u0000${resolve(worktreePath)}`;
+
 export async function discoverSwitchCandidates(
   repositories: WorkspaceRepository[],
   deps: DiscoverSwitchCandidatesDependencies = {},
 ): Promise<SwitchCandidateDiscoveryResult> {
   const discoverWorktrees = deps.discoverAllWorktrees ?? discoverAllWorktrees;
+  const resolveMainWorktree = deps.resolveGitMainWorktree ?? resolveGitMainWorktree;
   const targets: RepositoryTarget[] = repositories.map((repo) => ({
     name: repo.name,
     path: repo.path,
   }));
   const worktrees = await discoverWorktrees(targets);
-  return buildSwitchCandidates(worktrees);
+  const sources = new Map<string, SwitchCandidate["herdrSource"]>();
+  await Promise.all(
+    worktrees.map(async (worktree) => {
+      const worktreePath = resolve(worktree.path);
+      const mainWorktree = await resolveMainWorktree(worktreePath);
+      sources.set(
+        candidateSourceKey(worktree.repository.trim(), worktreePath),
+        mainWorktree
+          ? { path: resolve(mainWorktree), status: "available" }
+          : { status: "unavailable" },
+      );
+    }),
+  );
+  return buildSwitchCandidates(worktrees, sources);
 }
 
-export function buildSwitchCandidates(worktrees: WorktreeInfo[]): SwitchCandidateDiscoveryResult {
+export function buildSwitchCandidates(
+  worktrees: WorktreeInfo[],
+  herdrSources: ReadonlyMap<string, SwitchCandidate["herdrSource"]> = new Map(),
+): SwitchCandidateDiscoveryResult {
   const candidates: SwitchCandidate[] = [];
   const seen = new Set<string>();
   let skippedCount = 0;
@@ -78,10 +101,13 @@ export function buildSwitchCandidates(worktrees: WorktreeInfo[]): SwitchCandidat
       continue;
     }
 
+    const repoName = worktree.repository.trim();
+    const worktreePath = resolve(worktree.path);
     const candidate: SwitchCandidate = {
       branchName: worktree.branch.trim(),
-      repoName: worktree.repository.trim(),
-      worktreePath: resolve(worktree.path),
+      herdrSource: herdrSources.get(candidateSourceKey(repoName, worktreePath)),
+      repoName,
+      worktreePath,
     };
     const dedupeKey = `${candidate.repoName}\u0000${candidate.worktreePath}`;
 

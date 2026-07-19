@@ -476,6 +476,25 @@ describe("CLI JSON output contract", () => {
     });
   });
 
+  test("create --json --herdr rejects launch mode before repository mutation", async () => {
+    const cwd = await makeTempDir();
+
+    const result = await runArashi(cwd, ["create", "feature-herdr-json", "--json", "--herdr"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = parseSingleJsonDocument(result.stdout);
+    expect(parsed).toMatchObject({
+      command: "create",
+      error: {
+        code: "JSON_UNSUPPORTED_FOR_MODE",
+        details: { mode: "interactive-or-launch" },
+      },
+      ok: false,
+      schemaVersion: 1,
+      warnings: [],
+    });
+  });
+
   test("automation commands expose JSON envelopes or structured unsupported-mode errors", async () => {
     const cwd = await makeTempDir();
 

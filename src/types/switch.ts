@@ -30,4 +30,13 @@ export class SwitchCommandError extends Error {
   }
 }
 
-export type SwitchLaunchMode = "cd" | "sesh" | "tmux" | "vscode" | "cursor" | "kiro" | "fallback";
+export type SwitchLaunchMode =
+  | "cd"
+  | "sesh"
+  | "tmux"
+  | "herdr"
+  | "cmux"
+  | "vscode"
+  | "cursor"
+  | "kiro"
+  | "fallback";

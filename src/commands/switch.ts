@@ -14,11 +14,11 @@ import { Command } from "commander";
 import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
-import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { resolveGitMainWorktree, resolveWorkspaceContext } from "../lib/workspace-context.ts";
 
 type LoadWorkspaceRepositoriesResult = Awaited<ReturnType<typeof loadWorkspaceRepositories>>;
 type Config = NonNullable<LoadWorkspaceRepositoriesResult["config"]>;
-type LaunchMode = "auto" | "sesh";
+type LaunchMode = "auto" | "sesh" | "herdr";
 type ConfigSwitchMode = "launch" | "cd" | "auto";
 type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
 type SwitchCandidateDiscoveryResult = Awaited<ReturnType<typeof discoverSwitchCandidates>>;
@@ -40,10 +40,12 @@ const AUTO_SWITCH_MODE: ConfigSwitchMode = "auto";
 const CD_SWITCH_MODE: ConfigSwitchMode = "cd";
 const LAUNCH_SWITCH_MODE: ConfigSwitchMode = "launch";
 const SESH_LAUNCH_MODE: LaunchMode = "sesh";
+const HERDR_LAUNCH_MODE: LaunchMode = "herdr";
 const DETACHED_HEAD = "HEAD";
 const KEY_SEPARATOR = "\u0000";
 
 export interface SwitchCommandOptions {
+  herdr?: boolean;
   sesh?: boolean;
   cd?: boolean;
   vscode?: boolean;
@@ -57,6 +59,7 @@ export interface SwitchCommandOptions {
 }
 
 interface LaunchResolution {
+  herdr?: boolean;
   preferredIde?: SupportedIde;
   requirePreferredIde?: boolean;
   sesh?: boolean;
@@ -93,6 +96,7 @@ export interface SwitchCommandDependencies {
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
     options: {
+      herdr?: boolean;
       preferredIde?: SupportedIde;
       requirePreferredIde?: boolean;
       sesh?: boolean;
@@ -124,6 +128,7 @@ export function createCommand(): Command {
     .argument("[filter]", "Filter targets by branch name or worktree path")
     .option("--path", "Treat argument as exact worktree path")
     .option("--sesh", "Use sesh in tmux mode")
+    .option("--herdr", "Open or focus the selected worktree in Herdr")
     .option("--cd", "Change the current shell directory when shell integration is active")
     .option("--no-cd", "Disable parent-shell directory switching for this invocation")
     .option("--vscode", "Open the selected worktree in VS Code")
@@ -316,6 +321,7 @@ export async function executeSwitch(
   const launchResult = await launchCandidate(
     selected,
     {
+      herdr: resolvedLaunch.herdr,
       preferredIde: resolvedLaunch.preferredIde,
       requirePreferredIde: resolvedLaunch.requirePreferredIde,
       sesh: resolvedLaunch.sesh,
@@ -498,6 +504,7 @@ const augmentAllScopeCandidates = async (
 
       const candidate: SwitchCandidate = {
         branchName,
+        herdrSource: await resolveHerdrSource(childWorktreePath),
         repoName: childRepository.name,
         worktreePath: childWorktreePath,
       };
@@ -513,6 +520,15 @@ const augmentAllScopeCandidates = async (
   }
 
   return merged;
+};
+
+const resolveHerdrSource = async (
+  repositoryPath: string,
+): Promise<SwitchCandidate["herdrSource"]> => {
+  const mainWorktree = await resolveGitMainWorktree(repositoryPath);
+  return mainWorktree
+    ? { path: resolve(mainWorktree), status: "available" }
+    : { status: "unavailable" };
 };
 
 const getBranchName = async (repoPath: string): Promise<string | null> => {
@@ -607,10 +623,13 @@ const resolveLaunchOptions = (
   options: SwitchCommandOptions,
   configLaunchMode: LaunchMode | undefined,
 ): LaunchResolution => {
-  const explicitIde = resolveExplicitIde(options);
-  if (explicitIde) {
+  const explicitLauncher = resolveExplicitLauncher(options);
+  if (explicitLauncher === HERDR_LAUNCH_MODE) {
+    return { herdr: true, sesh: false };
+  }
+  if (explicitLauncher && explicitLauncher !== SESH_LAUNCH_MODE) {
     return {
-      preferredIde: explicitIde,
+      preferredIde: explicitLauncher,
       requirePreferredIde: true,
       sesh: false,
     };
@@ -620,13 +639,15 @@ const resolveLaunchOptions = (
     builtInValue: AUTO_LAUNCH_MODE,
     configValue: configLaunchMode,
     explicitValue: SESH_LAUNCH_MODE,
-    hasExplicitValue: options.sesh === true,
+    hasExplicitValue: explicitLauncher === SESH_LAUNCH_MODE,
     optOut: options.defaultLaunch === false,
   });
 
-  return {
-    sesh: resolvedLaunchMode.value === SESH_LAUNCH_MODE,
-  };
+  if (resolvedLaunchMode.value === HERDR_LAUNCH_MODE) {
+    return { herdr: true, sesh: false };
+  }
+
+  return { sesh: resolvedLaunchMode.value === SESH_LAUNCH_MODE };
 };
 
 const resolveSwitchBehavior = (
@@ -635,6 +656,7 @@ const resolveSwitchBehavior = (
   shellIntegrationActive: boolean,
 ): SwitchBehaviorResolution => {
   const hasExplicitLaunchOverride =
+    options.herdr === true ||
     options.sesh === true ||
     options.vscode === true ||
     options.cursor === true ||
@@ -687,26 +709,23 @@ const resolveSwitchBehavior = (
   };
 };
 
-const resolveExplicitIde = (options: SwitchCommandOptions): SupportedIde | undefined => {
+const resolveExplicitLauncher = (
+  options: SwitchCommandOptions,
+): SupportedIde | "sesh" | "herdr" | undefined => {
   const launchOverrides = [
+    options.herdr === true ? "herdr" : null,
     options.sesh === true ? "sesh" : null,
     options.vscode === true ? "vscode" : null,
     options.cursor === true ? "cursor" : null,
     options.kiro === true ? "kiro" : null,
-  ].filter((value): value is "sesh" | SupportedIde => value !== null);
+  ].filter((value): value is "sesh" | "herdr" | SupportedIde => value !== null);
 
   if (launchOverrides.length > ONE) {
     throw new SwitchCommandError(
       `Conflicting launch overrides provided (${launchOverrides.map((value) => `--${value}`).join(", ")}). Choose exactly one explicit switch mode.`,
       SwitchCommandErrorCode.CONFLICTING_LAUNCH_OPTIONS,
-      {
-        launchOverrides,
-      },
+      { launchOverrides },
     );
-  }
-
-  if (launchOverrides[ZERO] === "sesh" || launchOverrides.length === ZERO) {
-    return undefined;
   }
 
   return launchOverrides[ZERO];
