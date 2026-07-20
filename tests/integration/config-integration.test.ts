@@ -20,7 +20,7 @@ import {
   repairRepositoryGitUrls,
   saveConfig,
 } from "../../src/lib/config";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -172,6 +172,61 @@ describe("loadConfig", () => {
 
     const loaded = await loadConfig(testDir);
     expect(loaded).toEqual(config);
+  });
+
+  test("emits one exact migration warning for an accepted legacy switch field", async () => {
+    const configPath = getConfigPath(testDir);
+    await mkdir(join(testDir, ".arashi"), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        defaults: { switch: { launchMode: "sesh", launch_mode: "sesh", mode: "auto" } },
+        repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
+      }),
+    );
+    const originalNoColor = process.env.NO_COLOR;
+    process.env.NO_COLOR = "1";
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const loaded = await loadConfig(testDir);
+
+      expect(loaded.defaults?.switch).toEqual({ mode: "sesh" });
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[WARN] defaults.switch.launchMode and defaults.switch.launch_mode are deprecated; use defaults.switch.mode: "sesh" instead.',
+      );
+    } finally {
+      errorSpy.mockRestore();
+      if (originalNoColor === undefined) {
+        delete process.env.NO_COLOR;
+      } else {
+        process.env.NO_COLOR = originalNoColor;
+      }
+    }
+  });
+
+  test("rejects conflicting legacy switch fields without mutating the config file", async () => {
+    const configPath = getConfigPath(testDir);
+    await mkdir(join(testDir, ".arashi"), { recursive: true });
+    const content = JSON.stringify(
+      {
+        defaults: { switch: { launchMode: "sesh", launch_mode: "herdr" } },
+        repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
+      },
+      null,
+      2,
+    );
+    await writeFile(configPath, content);
+
+    await expect(loadConfig(testDir)).rejects.toThrow(
+      'defaults.switch.launchMode: "sesh" conflicts with defaults.switch.launch_mode: "herdr"',
+    );
+    expect(await runtime.file(configPath).text()).toBe(content);
   });
 
   test("migrates version alias to canonical version and persists", async () => {

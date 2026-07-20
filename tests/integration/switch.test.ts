@@ -527,7 +527,7 @@ describe("switch command integration", () => {
           config: {
             defaults: {
               switch: {
-                launchMode: "sesh",
+                mode: "sesh",
               },
             },
             repos: {},
@@ -763,7 +763,7 @@ describe("switch command integration", () => {
           config: {
             defaults: {
               switch: {
-                launchMode: "sesh",
+                mode: "sesh",
               },
             },
             repos: {},
@@ -804,7 +804,7 @@ describe("switch command integration", () => {
           config: {
             defaults: {
               switch: {
-                launchMode: "sesh",
+                mode: "sesh",
               },
             },
             repos: {},

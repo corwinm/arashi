@@ -182,6 +182,27 @@ afterEach(async () => {
 });
 
 describe("CLI JSON output contract", () => {
+  test("keeps legacy switch migration diagnostics out of JSON stdout", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    const configPath = join(workspaceRoot, ".arashi", "config.json");
+    const config = JSON.parse(await runtime.file(configPath).text()) as Record<string, unknown>;
+    config.defaults = { switch: { launch_mode: "herdr", mode: "launch" } };
+    await writeFile(configPath, JSON.stringify(config, null, 2));
+
+    const result = await runArashi(workspaceRoot, ["status", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(parseSingleJsonDocument(result.stdout)).toMatchObject({
+      command: "status",
+      ok: true,
+      schemaVersion: 1,
+    });
+    expect(result.stdout).not.toContain("deprecated");
+    expect(result.stderr).toBe(
+      '⚠ defaults.switch.launch_mode is deprecated; use defaults.switch.mode: "herdr" instead.\n',
+    );
+  });
+
   test("status --json covers a clean workspace with configured repositories", async () => {
     const workspaceRoot = await createCommonWorkspace();
 

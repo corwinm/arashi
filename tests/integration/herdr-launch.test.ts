@@ -318,7 +318,7 @@ describe("Herdr launcher", () => {
 });
 
 describe("Herdr configuration and command resolution", () => {
-  test("normalizes Herdr launchMode on switch, create, and editor defaults", () => {
+  test("normalizes unified Herdr mode on switch and preserves create defaults", () => {
     const normalized = normalizeConfig({
       defaults: {
         create: { launchMode: "herdr" },
@@ -334,14 +334,14 @@ describe("Herdr configuration and command resolution", () => {
       launch: true,
       launchMode: "herdr",
     });
-    expect(normalized.defaults?.switch?.launchMode).toBe("herdr");
+    expect(normalized.defaults?.switch?.mode).toBe("herdr");
     const legacy = normalizeConfig({
       defaults: { switch: { launch_mode: "herdr" } },
       repos: {},
       reposDir: "./repos",
       version: "1.0.0",
     });
-    expect(legacy.defaults?.switch?.launchMode).toBe("herdr");
+    expect(legacy.defaults?.switch?.mode).toBe("herdr");
   });
 
   test("registers --herdr on switch and create help surfaces", () => {
@@ -421,7 +421,7 @@ describe("Herdr configuration and command resolution", () => {
         loadWorkspaceRepositories: async () => ({
           config: {
             ...baseConfig(),
-            defaults: configured ? { switch: { launchMode: "herdr" } } : undefined,
+            defaults: configured ? { switch: { mode: "herdr" } } : undefined,
           },
           repositories: [],
         }),

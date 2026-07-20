@@ -39,8 +39,8 @@ const AUTO_LAUNCH_MODE: LaunchMode = "auto";
 const AUTO_SWITCH_MODE: ConfigSwitchMode = "auto";
 const CD_SWITCH_MODE: ConfigSwitchMode = "cd";
 const LAUNCH_SWITCH_MODE: ConfigSwitchMode = "launch";
-const SESH_LAUNCH_MODE: LaunchMode = "sesh";
-const HERDR_LAUNCH_MODE: LaunchMode = "herdr";
+const SESH_LAUNCH_MODE = "sesh" as const;
+const HERDR_LAUNCH_MODE = "herdr" as const;
 const DETACHED_HEAD = "HEAD";
 const KEY_SEPARATOR = "\u0000";
 
@@ -272,15 +272,21 @@ export async function executeSwitch(
     workspaceRepoName: scope === "all" ? basename(resolve(workspaceRoot)) : undefined,
   });
 
-  const resolvedLaunch = resolveLaunchOptions(
-    options,
-    workspace.config?.defaults?.switch?.launchMode,
-  );
+  const configuredMode = workspace.config?.defaults?.switch?.mode;
+  const configuredLaunchMode =
+    configuredMode === SESH_LAUNCH_MODE || configuredMode === HERDR_LAUNCH_MODE
+      ? configuredMode
+      : undefined;
+  const configuredBehaviorMode =
+    configuredMode === SESH_LAUNCH_MODE || configuredMode === HERDR_LAUNCH_MODE
+      ? LAUNCH_SWITCH_MODE
+      : configuredMode;
+  const resolvedLaunch = resolveLaunchOptions(options, configuredLaunchMode);
   const commandEnv = deps.env ?? process.env;
   const directiveContext = getDirectiveContext(commandEnv);
   const resolvedBehavior = resolveSwitchBehavior(
     options,
-    workspace.config?.defaults?.switch?.mode,
+    configuredBehaviorMode,
     directiveContext !== null,
   );
 

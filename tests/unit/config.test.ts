@@ -92,8 +92,7 @@ describe("validateConfig - root level", () => {
           switch: true,
         },
         switch: {
-          launchMode: "sesh",
-          mode: "cd",
+          mode: "sesh",
         },
       },
       repos: {},
@@ -151,7 +150,6 @@ describe("validateConfig - root level", () => {
     expect(normalized.defaults?.create?.launchMode).toBe("sesh");
     expect(normalized.defaults?.create?.launch).toBe(true);
     expect(normalized.defaults?.switch?.mode).toBe("auto");
-    expect(normalized.defaults?.switch?.launchMode).toBe("auto");
   });
 
   test("normalizes editor-scoped create defaults", () => {
@@ -184,20 +182,20 @@ describe("validateConfig - root level", () => {
     expect(normalized.defaults?.editors?.kiro?.create?.switch).toBe(true);
   });
 
-  test("ignores malformed defaults and preserves baseline behavior", () => {
-    const normalized = normalizeConfig({
-      defaults: {
-        create: "invalid",
-        switch: {
-          launchMode: "unknown",
+  test("rejects malformed switch defaults", () => {
+    expect(() =>
+      normalizeConfig({
+        defaults: {
+          create: "invalid",
+          switch: {
+            launchMode: "unknown",
+          },
         },
-      },
-      repos: {},
-      reposDir: "./repos",
-      version: "1.0.0",
-    });
-
-    expect(normalized.defaults).toBeUndefined();
+        repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
+      }),
+    ).toThrow('defaults.switch.launchMode: must be one of "auto", "sesh", or "herdr"');
   });
 
   test("throws on null config", () => {
