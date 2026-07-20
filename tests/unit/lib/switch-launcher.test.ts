@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   detectIntegratedIde,
+  detectManagedSwitchContext,
   detectTerminalApp,
   isCmuxSession,
   launchSwitchTarget,
@@ -22,6 +23,61 @@ const failingRunProcess: SwitchProcessRunner = async () => ({
   exitCode: 1,
   stderr: "launch failed",
   stdout: "",
+});
+
+describe("detectManagedSwitchContext", () => {
+  test.each([
+    [{ TMUX: " /tmp/tmux/default " }, "tmux"],
+    [{ HERDR_ENV: " 1 " }, "herdr"],
+    [{ CMUX_WORKSPACE_ID: " workspace:1 " }, "cmux"],
+    [{ CMUX_SURFACE_ID: " surface:1 " }, "cmux"],
+    [
+      {
+        TERM_PROGRAM: "vscode",
+        VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/cursor",
+      },
+      "cursor",
+    ],
+    [{ TERM_PROGRAM: "vscode", VSCODE_GIT_ASKPASS_EXTRA_ARGS: "--host=kiro" }, "kiro"],
+    [{ TERM_PROGRAM: "vscode" }, "vscode"],
+  ] as const)("classifies strict managed evidence %#", (env, expected) => {
+    expect(detectManagedSwitchContext(env)).toBe(expected);
+  });
+
+  test.each([
+    {},
+    { HERDR_ENV: "true" },
+    { HERDR_ENV: "11" },
+    { CMUX_SOCKET_PATH: "/tmp/cmux.sock" },
+    { CMUX_SURFACE_ID: "", CMUX_WORKSPACE_ID: " " },
+    { TERM_PROGRAM: "ghostty" },
+    { TERM_PROGRAM: "Apple_Terminal" },
+    { TERM_PROGRAM: "unsupported-ide" },
+    { TERM: "xterm-256color" },
+  ])("rejects weak or generic evidence %#", (env) => {
+    expect(detectManagedSwitchContext(env)).toBeNull();
+  });
+
+  test("uses tmux, Herdr, cmux, then IDE precedence", () => {
+    const allSignals = {
+      CMUX_WORKSPACE_ID: "workspace:1",
+      HERDR_ENV: "1",
+      TERM_PROGRAM: "vscode",
+      TMUX: "/tmp/tmux/default",
+      VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/cursor",
+    };
+    expect(detectManagedSwitchContext(allSignals)).toBe("tmux");
+    expect(detectManagedSwitchContext({ ...allSignals, TMUX: "" })).toBe("herdr");
+    expect(detectManagedSwitchContext({ ...allSignals, HERDR_ENV: "0", TMUX: "" })).toBe("cmux");
+    expect(
+      detectManagedSwitchContext({
+        ...allSignals,
+        CMUX_WORKSPACE_ID: "",
+        HERDR_ENV: "0",
+        TMUX: "",
+      }),
+    ).toBe("cursor");
+  });
 });
 
 describe("launchSwitchTarget", () => {

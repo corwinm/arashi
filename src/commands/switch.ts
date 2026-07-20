@@ -6,20 +6,20 @@ import {
   filterSwitchCandidates,
   selectSwitchCandidate,
 } from "../core/switch.ts";
-import { findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
+import { type SwitchMode, findWorkspaceRoot, loadWorkspaceRepositories } from "../lib/config.ts";
 import { getDirectiveContext, writeCdDirective } from "../lib/shell-directives.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
 import { unsupportedJsonModeError, writeJsonEnvelope } from "../lib/json-output.ts";
 import { Command } from "commander";
 import { exec } from "../lib/git.ts";
-import { launchSwitchTarget } from "../lib/switch-launcher.ts";
+import { detectManagedSwitchContext, launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
 
 type LoadWorkspaceRepositoriesResult = Awaited<ReturnType<typeof loadWorkspaceRepositories>>;
 type Config = NonNullable<LoadWorkspaceRepositoriesResult["config"]>;
 type LaunchMode = "auto" | "sesh" | "herdr";
-type ConfigSwitchMode = "launch" | "cd" | "auto";
+type SwitchBehaviorMode = "launch" | "cd" | "auto";
 type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
 type SwitchCandidateDiscoveryResult = Awaited<ReturnType<typeof discoverSwitchCandidates>>;
 type SwitchCandidate = SwitchCandidateDiscoveryResult["candidates"][number];
@@ -36,9 +36,9 @@ const SUCCESS_EXIT_CODE = 0;
 const ERROR_EXIT_CODE = 1;
 const USAGE_EXIT_CODE = 2;
 const AUTO_LAUNCH_MODE: LaunchMode = "auto";
-const AUTO_SWITCH_MODE: ConfigSwitchMode = "auto";
-const CD_SWITCH_MODE: ConfigSwitchMode = "cd";
-const LAUNCH_SWITCH_MODE: ConfigSwitchMode = "launch";
+const AUTO_SWITCH_MODE: SwitchBehaviorMode = "auto";
+const CD_SWITCH_MODE: SwitchBehaviorMode = "cd";
+const LAUNCH_SWITCH_MODE: SwitchBehaviorMode = "launch";
 const SESH_LAUNCH_MODE = "sesh" as const;
 const HERDR_LAUNCH_MODE = "herdr" as const;
 const DETACHED_HEAD = "HEAD";
@@ -66,9 +66,29 @@ interface LaunchResolution {
 }
 
 interface SwitchBehaviorResolution {
-  mode: ConfigSwitchMode;
+  mode: SwitchBehaviorMode;
   skipLaunchWhenUnavailable: boolean;
   warnOnMissingIntegration: boolean;
+}
+
+interface SwitchResolution {
+  behavior: SwitchBehaviorResolution;
+  launch: LaunchResolution;
+}
+
+interface SwitchResolutionInput {
+  configMode?: SwitchMode;
+  managedContextActive: boolean;
+  options: SwitchCommandOptions;
+  shellIntegrationActive: boolean;
+}
+
+interface SwitchBehaviorInput {
+  configMode?: SwitchBehaviorMode;
+  hasExplicitLaunchOverride: boolean;
+  managedContextActive: boolean;
+  options: SwitchCommandOptions;
+  shellIntegrationActive: boolean;
 }
 
 type SwitchRepositoryScope = "parent" | "repos" | "all";
@@ -272,23 +292,15 @@ export async function executeSwitch(
     workspaceRepoName: scope === "all" ? basename(resolve(workspaceRoot)) : undefined,
   });
 
-  const configuredMode = workspace.config?.defaults?.switch?.mode;
-  const configuredLaunchMode =
-    configuredMode === SESH_LAUNCH_MODE || configuredMode === HERDR_LAUNCH_MODE
-      ? configuredMode
-      : undefined;
-  const configuredBehaviorMode =
-    configuredMode === SESH_LAUNCH_MODE || configuredMode === HERDR_LAUNCH_MODE
-      ? LAUNCH_SWITCH_MODE
-      : configuredMode;
-  const resolvedLaunch = resolveLaunchOptions(options, configuredLaunchMode);
   const commandEnv = deps.env ?? process.env;
   const directiveContext = getDirectiveContext(commandEnv);
-  const resolvedBehavior = resolveSwitchBehavior(
+  const resolution = resolveSwitchResolution({
+    configMode: workspace.config?.defaults?.switch?.mode,
+    managedContextActive: detectManagedSwitchContext(commandEnv) !== null,
     options,
-    configuredBehaviorMode,
-    directiveContext !== null,
-  );
+    shellIntegrationActive: directiveContext !== null,
+  });
+  const { behavior: resolvedBehavior, launch: resolvedLaunch } = resolution;
 
   if (resolvedBehavior.mode === CD_SWITCH_MODE && directiveContext) {
     await writeCdDirective(directiveContext, selected.worktreePath);
@@ -615,11 +627,44 @@ const buildPathNoMatchMessage = (filter: string | undefined): string => {
   return `No worktree exists at exact path \`${resolve(filter.trim())}\`. Run \`arashi list\` to see available worktree paths.`;
 };
 
+export const resolveSwitchResolution = ({
+  configMode,
+  managedContextActive,
+  options,
+  shellIntegrationActive,
+}: SwitchResolutionInput): SwitchResolution => {
+  const explicitLauncher = resolveExplicitLauncher(options);
+  if (options.cd === true && explicitLauncher) {
+    throw new SwitchCommandError(
+      "Conflicting switch behavior overrides provided (--cd with an explicit launch override). Choose either parent-shell switching or a launch target.",
+      SwitchCommandErrorCode.CONFLICTING_SWITCH_OPTIONS,
+    );
+  }
+
+  const configLaunchMode: LaunchMode | undefined =
+    configMode === SESH_LAUNCH_MODE || configMode === HERDR_LAUNCH_MODE ? configMode : undefined;
+  const configBehaviorMode: SwitchBehaviorMode | undefined =
+    configMode === SESH_LAUNCH_MODE || configMode === HERDR_LAUNCH_MODE
+      ? LAUNCH_SWITCH_MODE
+      : configMode;
+
+  return {
+    behavior: resolveSwitchBehavior({
+      configMode: configBehaviorMode,
+      hasExplicitLaunchOverride: explicitLauncher !== undefined,
+      managedContextActive,
+      options,
+      shellIntegrationActive,
+    }),
+    launch: resolveLaunchOptions(options, configLaunchMode, explicitLauncher),
+  };
+};
+
 const resolveLaunchOptions = (
   options: SwitchCommandOptions,
   configLaunchMode: LaunchMode | undefined,
+  explicitLauncher: SupportedIde | "sesh" | "herdr" | undefined,
 ): LaunchResolution => {
-  const explicitLauncher = resolveExplicitLauncher(options);
   if (explicitLauncher === HERDR_LAUNCH_MODE) {
     return { herdr: true, sesh: false };
   }
@@ -646,25 +691,13 @@ const resolveLaunchOptions = (
   return { sesh: resolvedLaunchMode.value === SESH_LAUNCH_MODE };
 };
 
-const resolveSwitchBehavior = (
-  options: SwitchCommandOptions,
-  configMode: ConfigSwitchMode | undefined,
-  shellIntegrationActive: boolean,
-): SwitchBehaviorResolution => {
-  const hasExplicitLaunchOverride =
-    options.herdr === true ||
-    options.sesh === true ||
-    options.vscode === true ||
-    options.cursor === true ||
-    options.kiro === true;
-
-  if (options.cd === true && hasExplicitLaunchOverride) {
-    throw new SwitchCommandError(
-      "Conflicting switch behavior overrides provided (--cd with an explicit launch override). Choose either parent-shell switching or a launch target.",
-      SwitchCommandErrorCode.CONFLICTING_SWITCH_OPTIONS,
-    );
-  }
-
+const resolveSwitchBehavior = ({
+  configMode,
+  hasExplicitLaunchOverride,
+  managedContextActive,
+  options,
+  shellIntegrationActive,
+}: SwitchBehaviorInput): SwitchBehaviorResolution => {
   if (hasExplicitLaunchOverride) {
     return {
       mode: LAUNCH_SWITCH_MODE,
@@ -692,7 +725,7 @@ const resolveSwitchBehavior = (
   const mode = configMode ?? LAUNCH_SWITCH_MODE;
   if (mode === AUTO_SWITCH_MODE) {
     return {
-      mode: shellIntegrationActive ? CD_SWITCH_MODE : LAUNCH_SWITCH_MODE,
+      mode: managedContextActive || !shellIntegrationActive ? LAUNCH_SWITCH_MODE : CD_SWITCH_MODE,
       skipLaunchWhenUnavailable: false,
       warnOnMissingIntegration: false,
     };

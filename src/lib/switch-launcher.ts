@@ -14,6 +14,7 @@ type SwitchLaunchMode =
   | "kiro"
   | "fallback";
 export type SupportedIde = "vscode" | "cursor" | "kiro";
+export type ManagedSwitchContext = "tmux" | "herdr" | "cmux" | SupportedIde;
 
 const IDE_COMMANDS: Record<SupportedIde, string> = {
   cursor: "cursor",
@@ -128,7 +129,8 @@ export async function launchSwitchTarget(
     }
   }
 
-  if (isTmuxSession(env)) {
+  const managedContext = detectManagedSwitchContext(env);
+  if (managedContext === "tmux") {
     const tmuxCommand = ["tmux", "new-window", "-c", candidate.worktreePath];
     const tmuxResult = await runProcess(tmuxCommand, {
       cwd: candidate.worktreePath,
@@ -149,23 +151,22 @@ export async function launchSwitchTarget(
     };
   }
 
-  if (isHerdrSession(env)) {
+  if (managedContext === "herdr") {
     return launchWithHerdr(await resolveHerdrCandidate(candidate, deps), {
       env: childEnv,
       runProcess,
     });
   }
 
-  if (isCmuxSession(env)) {
+  if (managedContext === "cmux") {
     return launchWithCmux(candidate, {
       env: childEnv,
       runProcess,
     });
   }
 
-  const detectedIde = detectIntegratedIde(env);
-  if (detectedIde) {
-    const launchResult = await launchWithPreferredIde(candidate, detectedIde, {
+  if (managedContext === "vscode" || managedContext === "cursor" || managedContext === "kiro") {
+    const launchResult = await launchWithPreferredIde(candidate, managedContext, {
       env: childEnv,
       platform,
       requireAvailability: false,
@@ -225,6 +226,21 @@ export function detectIntegratedIde(
   }
 
   return null;
+}
+
+export function detectManagedSwitchContext(
+  env: Record<string, string | undefined> = process.env,
+): ManagedSwitchContext | null {
+  if (isTmuxSession(env)) {
+    return "tmux";
+  }
+  if (isHerdrSession(env)) {
+    return "herdr";
+  }
+  if (isCmuxSession(env)) {
+    return "cmux";
+  }
+  return detectIntegratedIde(env);
 }
 
 export function isTmuxSession(env: Record<string, string | undefined> = process.env): boolean {
