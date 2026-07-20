@@ -374,6 +374,42 @@ describe("launchSwitchTarget", () => {
     expect(commands[1]).toEqual(["open", "-a", "Terminal", "/workspace/feature-auth"]);
   });
 
+  test("rejects when an available auto-detected IDE launcher exits nonzero", async () => {
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+
+      if (command[0] === "which" && command[1] === "code") {
+        return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/code\n" };
+      }
+
+      if (command[0] === "code") {
+        return { exitCode: 23, stderr: "editor launch failed", stdout: "" };
+      }
+
+      return { exitCode: 0, stderr: "unexpected fallback", stdout: "" };
+    };
+
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        {},
+        { env: { TERM_PROGRAM: "vscode" }, platform: "darwin", runProcess },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: {
+        command: ["code", "--new-window", candidate.worktreePath],
+        path: candidate.worktreePath,
+        reason: "editor launch failed",
+      },
+    });
+    expect(commands).toEqual([
+      ["which", "code"],
+      ["code", "--new-window", candidate.worktreePath],
+    ]);
+  });
+
   test("falls back to terminal launcher when VS Code CLI is unavailable", async () => {
     const commands: string[][] = [];
     const runProcess: SwitchProcessRunner = async (command) => {
@@ -429,6 +465,34 @@ describe("launchSwitchTarget", () => {
     expect(result.mode).toBe("tmux");
     expect(commands[0]).toEqual(["tmux", "new-window", "-c", "/workspace/feature-auth"]);
     expect(commands.some((command) => command[0] === "code")).toBe(false);
+  });
+
+  test("rejects when auto-selected tmux execution fails without fallback", async () => {
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+      return { exitCode: 41, stderr: "tmux server unavailable", stdout: "" };
+    };
+
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        {},
+        {
+          env: { TERM_PROGRAM: "vscode", TMUX: "/tmp/tmux-1000/default" },
+          platform: "darwin",
+          runProcess,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: {
+        command: ["tmux", "new-window", "-c", candidate.worktreePath],
+        path: candidate.worktreePath,
+        reason: "tmux server unavailable",
+      },
+    });
+    expect(commands).toEqual([["tmux", "new-window", "-c", candidate.worktreePath]]);
   });
 
   test("uses kitty tab launch commands when running in kitty", async () => {
