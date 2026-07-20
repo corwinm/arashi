@@ -144,7 +144,7 @@ export interface SwitchExecutionResult {
 
 export function createCommand(): Command {
   return new Command("switch")
-    .description("Open a terminal context for an existing worktree")
+    .description("Switch to an existing worktree using explicit, configured, or contextual modes")
     .argument("[filter]", "Filter targets by branch name or worktree path")
     .option("--path", "Treat argument as exact worktree path")
     .option("--sesh", "Use sesh in tmux mode")
@@ -154,7 +154,7 @@ export function createCommand(): Command {
     .option("--vscode", "Open the selected worktree in VS Code")
     .option("--cursor", "Open the selected worktree in Cursor")
     .option("--kiro", "Open the selected worktree in Kiro")
-    .option("--no-default-launch", "Ignore configured default launch mode for this invocation")
+    .option("--no-default-launch", "Bypass a configured sesh or Herdr mode for this invocation")
     .option("--repos", "Use child repositories only")
     .option("--all", "Use both parent and child repositories")
     .option(
@@ -173,6 +173,9 @@ Examples:
   $ arashi switch --path /path/to/worktree
   $ arashi switch feature-auth
   $ arashi switch repo-a --sesh
+
+Configured modes: auto | cd | launch | sesh | herdr
+Precedence: explicit launcher flags, --cd/--no-cd, configured mode, then automatic context detection.
 `,
     )
     .action(async (filter: string | undefined, options: SwitchCommandOptions) => {

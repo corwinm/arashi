@@ -31,4 +31,4 @@ arashi shell init fish
 - `arashi shell install` supports bash, zsh, and fish in the first release.
 - If automatic install cannot detect a writable startup file, Arashi tells you to use `arashi shell init <shell>` instead.
 - Restart your shell or source the updated startup file after installation.
-- Shell integration enables `arashi switch --cd` and `defaults.switch.mode: "cd" | "auto"` to change the current shell directory instead of only opening a new terminal context.
+- Shell integration enables `arashi switch --cd`, configured `cd`, and contextual `auto` to change the current shell directory instead of only opening a new terminal context. The full unified switch mode set is `auto` | `cd` | `launch` | `sesh` | `herdr`; `auto` first honors strict managed launcher contexts, then uses `cd` only when none is detected.
