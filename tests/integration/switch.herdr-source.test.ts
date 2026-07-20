@@ -1,0 +1,244 @@
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { afterEach, describe, expect, test } from "vitest";
+import { executeSwitch } from "../../src/commands/switch.ts";
+import { discoverSwitchCandidates } from "../../src/core/switch.ts";
+import { launchSwitchTarget } from "../../src/lib/switch-launcher.ts";
+
+const run = promisify(execFile);
+const roots: string[] = [];
+const herdrSuccess = {
+  exitCode: 0,
+  stderr: "",
+  stdout: JSON.stringify({
+    result: {
+      already_open: false,
+      type: "worktree_opened",
+      workspace: { workspace_id: "workspace-123" },
+    },
+  }),
+};
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((path) => rm(path, { force: true, recursive: true })));
+});
+
+async function createLinkedRepository(): Promise<{ linked: string; main: string }> {
+  const root = await mkdtemp(join(tmpdir(), "arashi-herdr-source-"));
+  roots.push(root);
+  const main = join(root, "main source");
+  const linked = join(root, "linked worktree");
+  await mkdir(main);
+  await run("git", ["init", "-b", "main"], { cwd: main });
+  await run("git", ["config", "user.name", "Test"], { cwd: main });
+  await run("git", ["config", "user.email", "test@example.com"], { cwd: main });
+  await run("git", ["commit", "--allow-empty", "-m", "initial"], { cwd: main });
+  await run("git", ["worktree", "add", "-b", "feature/herdr", linked], { cwd: main });
+  return { linked, main };
+}
+
+describe("Herdr source resolution", () => {
+  test("does not resolve Herdr sources during candidate discovery", async () => {
+    const result = await discoverSwitchCandidates([{ name: "repo", path: "/source/repo" }], {
+      discoverAllWorktrees: async () => [
+        {
+          branch: "feature/lazy-source",
+          isMain: false,
+          path: "/targets/lazy-source",
+          repository: "repo",
+        },
+      ],
+    });
+
+    expect(result.candidates[0]).not.toHaveProperty("herdrSource");
+  });
+
+  test("resolves the non-bare main checkout from a configured linked repository", async () => {
+    const { linked, main } = await createLinkedRepository();
+    const result = await discoverSwitchCandidates([{ name: "repo", path: linked }], {
+      discoverAllWorktrees: async () => [
+        { branch: "main", isMain: false, path: main, repository: "repo" },
+        { branch: "feature/herdr", isMain: true, path: linked, repository: "repo" },
+      ],
+    });
+    const sourcePath = await realpath(main);
+    const launch = await launchSwitchTarget(
+      result.candidates[1]!,
+      { herdr: true },
+      {
+        env: {},
+        runProcess: async () => herdrSuccess,
+      },
+    );
+
+    expect(launch.command).toContain(sourcePath);
+    expect(launch.command).toContain(resolve(linked));
+  });
+
+  test("records unavailable source state for a bare repository", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-herdr-bare-"));
+    roots.push(root);
+    const bare = join(root, "repo.git");
+    await run("git", ["init", "--bare", bare]);
+    const result = await discoverSwitchCandidates([{ name: "repo", path: bare }], {
+      discoverAllWorktrees: async () => [
+        { branch: "main", isMain: true, path: bare, repository: "repo" },
+      ],
+    });
+    let processCalls = 0;
+    await expect(
+      launchSwitchTarget(
+        result.candidates[0]!,
+        { herdr: true },
+        {
+          env: {},
+          runProcess: async () => {
+            processCalls += 1;
+            return herdrSuccess;
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "LAUNCH_FAILED" });
+    expect(processCalls).toBe(0);
+  });
+
+  test("records unavailable source state for a linked worktree backed by a bare repository", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-herdr-bare-linked-"));
+    roots.push(root);
+    const seed = join(root, "seed");
+    const bare = join(root, "repo.git");
+    const linked = join(root, "linked");
+    await mkdir(seed);
+    await run("git", ["init", "-b", "main"], { cwd: seed });
+    await run("git", ["config", "user.name", "Test"], { cwd: seed });
+    await run("git", ["config", "user.email", "test@example.com"], { cwd: seed });
+    await run("git", ["commit", "--allow-empty", "-m", "initial"], { cwd: seed });
+    await run("git", ["clone", "--bare", seed, bare]);
+    await run("git", ["worktree", "add", linked, "main"], { cwd: bare });
+
+    const result = await discoverSwitchCandidates([{ name: "repo", path: linked }], {
+      discoverAllWorktrees: async () => [
+        { branch: "main", isMain: false, path: linked, repository: "repo" },
+      ],
+    });
+
+    let processCalls = 0;
+    await expect(
+      launchSwitchTarget(
+        result.candidates[0]!,
+        { herdr: true },
+        {
+          env: {},
+          runProcess: async () => {
+            processCalls += 1;
+            return herdrSuccess;
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "LAUNCH_FAILED" });
+    expect(processCalls).toBe(0);
+  });
+
+  test("keeps distinct Herdr sources when repositories share a display name", async () => {
+    const result = await discoverSwitchCandidates(
+      [
+        { name: "duplicate", path: "/sources/parent" },
+        { name: "duplicate", path: "/sources/child" },
+      ],
+      {
+        discoverAllWorktrees: async () => [
+          {
+            branch: "feature/parent",
+            isMain: false,
+            path: "/targets/parent",
+            repository: "duplicate",
+          },
+          {
+            branch: "feature/child",
+            isMain: false,
+            path: "/targets/child",
+            repository: "duplicate",
+          },
+        ],
+      },
+    );
+    const commands: string[][] = [];
+    for (const candidate of result.candidates) {
+      await launchSwitchTarget(
+        candidate,
+        { herdr: true },
+        {
+          env: {},
+          resolveGitMainWorktree: async (path) =>
+            path === resolve("/targets/parent")
+              ? resolve("/sources/parent")
+              : resolve("/sources/child"),
+          runProcess: async (command) => {
+            commands.push(command);
+            return herdrSuccess;
+          },
+        },
+      );
+    }
+
+    expect(commands[0]).toContain(resolve("/sources/parent"));
+    expect(commands[1]).toContain(resolve("/sources/child"));
+  });
+
+  test("resolves child repository source metadata for coordinated --all augmentation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-herdr-all-source-"));
+    roots.push(root);
+    const workspaceRoot = join(root, "parent workspace");
+    const childMain = join(root, "child main");
+    const childLinked = join(workspaceRoot, "repos", "child");
+    await mkdir(workspaceRoot, { recursive: true });
+    await mkdir(childMain);
+    await run("git", ["init", "-b", "main"], { cwd: childMain });
+    await run("git", ["config", "user.name", "Test"], { cwd: childMain });
+    await run("git", ["config", "user.email", "test@example.com"], { cwd: childMain });
+    await run("git", ["commit", "--allow-empty", "-m", "initial"], { cwd: childMain });
+    await run("git", ["worktree", "add", "-b", "feature/child-herdr", childLinked], {
+      cwd: childMain,
+    });
+
+    let launchedCommand: string[] | undefined;
+    await executeSwitch(
+      "feature/child-herdr",
+      { all: true, herdr: true },
+      {
+        discoverSwitchCandidates: async () => ({
+          candidates: [
+            {
+              branchName: "feature/parent",
+              herdrSource: { path: workspaceRoot, status: "available" },
+              repoName: basename(workspaceRoot),
+              worktreePath: workspaceRoot,
+            },
+          ],
+          skippedCount: 0,
+        }),
+        findWorkspaceRoot: async () => workspaceRoot,
+        loadWorkspaceRepositories: async () =>
+          ({
+            config: { repos: {}, reposDir: "repos", version: "1.0.0" },
+            repositories: [
+              { name: basename(workspaceRoot), path: workspaceRoot },
+              { name: "child", path: childMain },
+            ],
+          }) as never,
+        runProcess: async (command) => {
+          launchedCommand = command;
+          return herdrSuccess;
+        },
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(launchedCommand).toContain(await realpath(childMain));
+    expect(launchedCommand).toContain(resolve(childLinked));
+  });
+});

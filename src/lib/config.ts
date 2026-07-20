@@ -81,7 +81,7 @@ export interface Config {
   repos: Record<string, RepoConfig>;
 }
 
-export type LaunchMode = "auto" | "sesh";
+export type LaunchMode = "auto" | "sesh" | "herdr";
 export type SwitchMode = "launch" | "cd" | "auto";
 export type CreateDefaultsEditorHost = "vscode" | "cursor" | "kiro";
 
@@ -573,7 +573,7 @@ const normalizeSyncConfig = (
 };
 
 const normalizeLaunchMode = (value: unknown): LaunchMode | undefined => {
-  if (value === "auto" || value === "sesh") {
+  if (value === "auto" || value === "sesh" || value === "herdr") {
     return value;
   }
 

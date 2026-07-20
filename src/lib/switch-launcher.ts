@@ -2,8 +2,17 @@ import { runtime } from "./runtime.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { normalizeSpawnEnvironment, stripDirectiveEnvironment } from "./shell-directives.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
+import { resolveGitMainWorktree } from "./workspace-context.ts";
 
-type SwitchLaunchMode = "sesh" | "tmux" | "cmux" | "vscode" | "cursor" | "kiro" | "fallback";
+type SwitchLaunchMode =
+  | "sesh"
+  | "tmux"
+  | "herdr"
+  | "cmux"
+  | "vscode"
+  | "cursor"
+  | "kiro"
+  | "fallback";
 export type SupportedIde = "vscode" | "cursor" | "kiro";
 
 const IDE_COMMANDS: Record<SupportedIde, string> = {
@@ -32,6 +41,7 @@ export type SwitchProcessRunner = (
 ) => Promise<SwitchProcessResult>;
 
 export interface LaunchSwitchOptions {
+  herdr?: boolean;
   sesh?: boolean;
   preferredIde?: SupportedIde;
   requirePreferredIde?: boolean;
@@ -40,6 +50,7 @@ export interface LaunchSwitchOptions {
 export interface LaunchSwitchDependencies {
   env?: Record<string, string | undefined>;
   platform?: NodeJS.Platform;
+  resolveGitMainWorktree?: (path: string) => Promise<string | null>;
   runProcess?: SwitchProcessRunner;
 }
 
@@ -98,6 +109,13 @@ export async function launchSwitchTarget(
     };
   }
 
+  if (options.herdr) {
+    return launchWithHerdr(await resolveHerdrCandidate(candidate, deps), {
+      env: childEnv,
+      runProcess,
+    });
+  }
+
   if (options.preferredIde) {
     const launchResult = await launchWithPreferredIde(candidate, options.preferredIde, {
       env: childEnv,
@@ -129,6 +147,13 @@ export async function launchSwitchTarget(
       command: tmuxCommand,
       mode: "tmux",
     };
+  }
+
+  if (isHerdrSession(env)) {
+    return launchWithHerdr(await resolveHerdrCandidate(candidate, deps), {
+      env: childEnv,
+      runProcess,
+    });
   }
 
   if (isCmuxSession(env)) {
@@ -204,6 +229,10 @@ export function detectIntegratedIde(
 
 export function isTmuxSession(env: Record<string, string | undefined> = process.env): boolean {
   return typeof env.TMUX === "string" && env.TMUX.trim().length > 0;
+}
+
+export function isHerdrSession(env: Record<string, string | undefined> = process.env): boolean {
+  return env.HERDR_ENV?.trim() === "1";
 }
 
 export function isCmuxSession(env: Record<string, string | undefined> = process.env): boolean {
@@ -312,6 +341,92 @@ function buildSeshTmuxCommand(worktreePath: string): string[] {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+async function resolveHerdrCandidate(
+  candidate: SwitchCandidate,
+  deps: LaunchSwitchDependencies,
+): Promise<SwitchCandidate> {
+  if (candidate.herdrSource) {
+    return candidate;
+  }
+
+  const resolveMainWorktree = deps.resolveGitMainWorktree ?? resolveGitMainWorktree;
+  const mainWorktree = await resolveMainWorktree(candidate.worktreePath);
+  return {
+    ...candidate,
+    herdrSource: mainWorktree
+      ? { path: mainWorktree, status: "available" }
+      : { status: "unavailable" },
+  };
+}
+
+async function launchWithHerdr(
+  candidate: SwitchCandidate,
+  deps: { env: Record<string, string | undefined>; runProcess: SwitchProcessRunner },
+): Promise<LaunchSwitchResult> {
+  if (candidate.herdrSource?.status !== "available") {
+    throw new SwitchCommandError(
+      `Herdr requires a non-bare source checkout for ${candidate.repoName}, but Git could not resolve one for ${candidate.worktreePath}.`,
+      SwitchCommandErrorCode.LAUNCH_FAILED,
+      { path: candidate.worktreePath, reason: "non-bare source checkout unavailable" },
+    );
+  }
+
+  const command = [
+    "herdr",
+    "worktree",
+    "open",
+    "--cwd",
+    candidate.herdrSource.path,
+    "--path",
+    candidate.worktreePath,
+    "--label",
+    `${candidate.repoName}: ${candidate.branchName}`,
+    "--focus",
+    "--json",
+  ];
+  const result = await deps.runProcess(command, {
+    cwd: candidate.worktreePath,
+    env: deps.env,
+  });
+  if (result.exitCode !== 0) {
+    const detail = (result.stderr || result.stdout || "unknown failure").trim();
+    throwLaunchFailure(
+      candidate.worktreePath,
+      command,
+      `Herdr launch failed. Ensure the Herdr CLI is installed and its default server/socket is running. ${detail}`,
+    );
+  }
+
+  if (!isValidHerdrResponse(result.stdout)) {
+    const detail = (result.stderr || result.stdout || "empty response").trim();
+    throwLaunchFailure(
+      candidate.worktreePath,
+      command,
+      `Herdr response could not be validated. Expected worktree_opened JSON with boolean already_open and a non-empty workspace_id. ${detail}`,
+    );
+  }
+
+  return { command, mode: "herdr" };
+}
+
+function isValidHerdrResponse(stdout: string): boolean {
+  try {
+    const payload: unknown = JSON.parse(stdout.trim());
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+    const result = (payload as Record<string, unknown>).result;
+    if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
+    const record = result as Record<string, unknown>;
+    if (record.type !== "worktree_opened" || typeof record.already_open !== "boolean") return false;
+    const workspace = record.workspace;
+    if (typeof workspace !== "object" || workspace === null || Array.isArray(workspace))
+      return false;
+    const workspaceId = (workspace as Record<string, unknown>).workspace_id;
+    return typeof workspaceId === "string" && workspaceId.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function launchWithCmux(

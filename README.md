@@ -117,12 +117,12 @@ Arashi currently provides these commands:
 - `arashi update [--check] [--dry-run] [--yes]`
 - `arashi add <git-url>`
 - `arashi clone [--all]`
-- `arashi create <branch>`
+- `arashi create <branch> [--sesh|--herdr]`
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
 - `arashi prune [--dry-run]` - clean stale Git worktree metadata
-- `arashi switch [filter] [--repos|--all] [--cd|--no-cd] [--sesh] [--no-default-launch]`
+- `arashi switch [filter] [--repos|--all] [--cd|--no-cd] [--sesh|--herdr] [--no-default-launch]`
 - `arashi shell init <bash|zsh|fish>`
 - `arashi shell install`
 - `arashi pull`
@@ -139,6 +139,7 @@ arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
 arashi create feature-auth-refresh
 arashi create feature-auth-refresh --launch
+arashi create feature-auth-refresh --herdr
 arashi create feature-auth-refresh --no-launch
 arashi shell install
 arashi status
@@ -147,6 +148,7 @@ arashi switch --repos feature-auth-refresh  # child repo worktrees in current wo
 arashi switch --all feature-auth-refresh    # all repos
 arashi switch --repos docs                  # repo-name matching in child repos
 arashi switch --cd feature-auth-refresh     # parent-shell cd when shell integration is active
+arashi switch --herdr feature-auth-refresh  # open or focus a persistent Herdr workspace
 arashi switch --no-default-launch           # bypass configured launch mode defaults once
 ```
 
@@ -176,7 +178,7 @@ Use the docs site workflow guides when you want setup guidance by outcome instea
 For contributors working on Arashi itself, the project planning workflow in the `arashi-arashi` meta-repo now uses OpenSpec. Older SpecKit-oriented references in legacy planning artifacts are historical context only.
 
 - Hooks and configuration defaults: [arashi.haphazard.dev/workflows/hooks-and-config](https://arashi.haphazard.dev/workflows/hooks-and-config/)
-- Integrations for VSCode, tmux, and `tmux` plus `sesh`: [arashi.haphazard.dev/workflows/integrations](https://arashi.haphazard.dev/workflows/integrations/)
+- Integrations for Herdr, VSCode, tmux, and `tmux` plus `sesh`: [arashi.haphazard.dev/workflows](https://arashi.haphazard.dev/workflows/)
 - Agent-assisted and spec-driven change flow: [arashi.haphazard.dev/workflows/agents-and-specs](https://arashi.haphazard.dev/workflows/agents-and-specs/)
 
 ## Shell Integration
@@ -318,6 +320,8 @@ Example config header:
 ```
 
 `defaults.switch.mode` accepts `"launch"`, `"cd"`, or `"auto"`. `"auto"` prefers parent-shell switching only when shell integration is active.
+
+Launch modes accept `"auto"`, `"sesh"`, or `"herdr"`. `--herdr` is available on both `create` and `switch`; automatic launch mode detects Herdr only from `HERDR_ENV=1`. Herdr launch uses `herdr worktree open` with the Git-resolved non-bare main checkout and selected worktree.
 
 Use `defaults.create` for terminal `arashi create` behavior. Use `defaults.editors.<host>.create` for editor-specific overrides such as VS Code extension create flows. Supported hosts are `vscode`, `cursor`, and `kiro`.
 

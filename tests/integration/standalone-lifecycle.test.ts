@@ -487,6 +487,51 @@ describe("standalone lifecycle", () => {
     await expect(access(join(root, ".arashi"))).rejects.toThrow();
   });
 
+  test("standalone Herdr launch uses the main checkout and preserves the created worktree on failure", async () => {
+    const root = await repository();
+    const canonicalRoot = await realpath(root);
+    await arashi(root, ["init", "--zero-config"]);
+    const originalCwd = process.cwd();
+    process.chdir(root);
+    let capturedCommand: string[] | undefined;
+    try {
+      await expect(
+        executeCreate(
+          "herdr-launch-failure",
+          { herdr: true },
+          {
+            runProcess: async (command) => {
+              capturedCommand = command;
+              return {
+                exitCode: 1,
+                stderr: "Herdr server unavailable after standalone creation",
+                stdout: "",
+              };
+            },
+          },
+        ),
+      ).rejects.toThrow("Herdr server unavailable after standalone creation");
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    const worktreePath = join(canonicalRoot, ".worktrees", "herdr-launch-failure");
+    expect(capturedCommand).toEqual([
+      "herdr",
+      "worktree",
+      "open",
+      "--cwd",
+      canonicalRoot,
+      "--path",
+      worktreePath,
+      "--label",
+      `${basename(canonicalRoot)}: herdr-launch-failure`,
+      "--focus",
+      "--json",
+    ]);
+    await expect(access(worktreePath)).resolves.toBeUndefined();
+  });
+
   test.each([
     ["create", ["branch", "--only", "repo"]],
     ["create", ["branch", "--group", "group"]],

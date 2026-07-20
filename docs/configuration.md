@@ -70,7 +70,7 @@ You can set command-scoped defaults under `defaults`.
 
 - `switch` (boolean): default auto-switch behavior after create
 - `launch` (boolean): default launch behavior after create
-- `launchMode` (`auto` | `sesh`): preferred launch mode when launch is enabled
+- `launchMode` (`auto` | `sesh` | `herdr`): preferred launch mode when launch is enabled
 
 ### `defaults.editors.<host>.create`
 
@@ -78,7 +78,7 @@ Supported hosts: `vscode`, `cursor`, `kiro`
 
 - `switch` (boolean): host-specific auto-switch behavior after create
 - `launch` (boolean): host-specific launch behavior after create
-- `launchMode` (`auto` | `sesh`): preferred launch mode for that editor host
+- `launchMode` (`auto` | `sesh` | `herdr`): preferred launch mode for that editor host
 
 Use editor-scoped defaults when terminal `arashi create` should behave one way, but extension-driven create should behave differently.
 
@@ -108,9 +108,11 @@ In that configuration, terminal `arashi create` uses `defaults.create`, while VS
 ### `defaults.switch`
 
 - `mode` (`launch` | `cd` | `auto`): preferred switch behavior for `arashi switch`
-- `launchMode` (`auto` | `sesh`): preferred launch mode for `arashi switch`
+- `launchMode` (`auto` | `sesh` | `herdr`): preferred launch mode for `arashi switch`
 
 Use `mode: "launch"` to preserve launcher-only behavior, `mode: "cd"` to request parent-shell directory switching by default, or `mode: "auto"` to prefer `cd` only when shell integration is active.
+
+Use `launchMode: "herdr"` to open or focus persistent Herdr workspaces. Automatic launch mode also selects Herdr only when `HERDR_ENV` normalizes exactly to `1`; active tmux remains ahead of automatic Herdr detection. Herdr requires a Git-resolvable non-bare main checkout and a reachable default Herdr server/socket.
 
 Enable shell integration with:
 

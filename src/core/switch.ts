@@ -24,6 +24,7 @@ export interface SwitchCandidate {
   branchName: string;
   worktreePath: string;
   repoName: string;
+  herdrSource?: { status: "available"; path: string } | { status: "unavailable" };
 }
 
 export interface SwitchCandidateDiscoveryResult {
@@ -78,10 +79,12 @@ export function buildSwitchCandidates(worktrees: WorktreeInfo[]): SwitchCandidat
       continue;
     }
 
+    const repoName = worktree.repository.trim();
+    const worktreePath = resolve(worktree.path);
     const candidate: SwitchCandidate = {
       branchName: worktree.branch.trim(),
-      repoName: worktree.repository.trim(),
-      worktreePath: resolve(worktree.path),
+      repoName,
+      worktreePath,
     };
     const dedupeKey = `${candidate.repoName}\u0000${candidate.worktreePath}`;
 

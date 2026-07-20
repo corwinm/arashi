@@ -122,7 +122,7 @@
       "type": "object"
     },
     "LaunchMode": {
-      "enum": ["auto", "sesh"],
+      "enum": ["auto", "sesh", "herdr"],
       "type": "string"
     },
     "RepoConfig": {

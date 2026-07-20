@@ -148,6 +148,13 @@
           "variadic": false
         },
         {
+          "flags": "--herdr",
+          "description": "Launch using Herdr mode (implies --launch)",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
           "flags": "--json",
           "description": "Return structured JSON output for non-interactive create operations",
           "required": false,
@@ -1169,6 +1176,13 @@
         {
           "flags": "--cursor",
           "description": "Open the selected worktree in Cursor",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
+          "flags": "--herdr",
+          "description": "Open or focus the selected worktree in Herdr",
           "required": false,
           "optional": false,
           "variadic": false

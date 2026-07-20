@@ -36,6 +36,7 @@ import {
 } from "../lib/json-output.ts";
 import { error, info, success, warn } from "../lib/logger.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
+import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec } from "../lib/git.ts";
 import {
@@ -65,7 +66,7 @@ type ConflictResolutionStrategy = "ABORT" | "REUSE_EXISTING" | "CREATE_ALTERNATE
 type HookOutcomeRecord = Awaited<
   ReturnType<typeof createCoordinatedWorktrees>
 >["hookOutcomes"][number];
-type LaunchMode = "auto" | "sesh";
+type LaunchMode = "auto" | "sesh" | "herdr";
 type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
 type OperationSummary = Awaited<ReturnType<typeof createCoordinatedWorktrees>>;
 type RepositoryResult = OperationSummary["repositoryResults"][number];
@@ -98,6 +99,7 @@ const CANCELLED_EXIT_CODE = 2;
 const MILLISECONDS_PER_SECOND = 1000;
 const AUTO_LAUNCH_MODE: LaunchMode = "auto";
 const SESH_LAUNCH_MODE: LaunchMode = "sesh";
+const HERDR_LAUNCH_MODE: LaunchMode = "herdr";
 
 const describeConflictScope = (existsLocally: boolean, existsRemotely: boolean): string => {
   if (existsLocally && existsRemotely) {
@@ -248,6 +250,9 @@ interface CreateCommandOptions {
   /** Force sesh launch mode when launching */
   sesh?: boolean;
 
+  /** Force Herdr launch mode when launching */
+  herdr?: boolean;
+
   /** Internal editor-host context for create default resolution */
   editorHost?: CreateDefaultsEditorHost;
 
@@ -292,7 +297,7 @@ export interface CreateCommandDependencies {
   pathExists?: (path: string) => boolean;
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
-    options: { sesh?: boolean },
+    options: { herdr?: boolean; sesh?: boolean },
     deps: {
       env: Record<string, string | undefined>;
       platform: NodeJS.Platform;
@@ -302,6 +307,7 @@ export interface CreateCommandDependencies {
   env?: Record<string, string | undefined>;
   platform?: NodeJS.Platform;
   runProcess?: SwitchProcessRunner;
+  resolveGitMainWorktree?: (path: string) => Promise<string | null>;
 }
 
 export interface CreateInvocationContext {
@@ -465,6 +471,7 @@ export function resolveCreateDefaults(
   options: CreateCommandOptions,
   workspaceConfig: Config,
 ): ResolvedCreateDefaults {
+  validateCreateLaunchOptions(options);
   const createDefaults = resolveConfiguredCreateDefaults(options, workspaceConfig);
 
   const switchResolution = resolveDefaultWithPrecedence<boolean>({
@@ -474,21 +481,20 @@ export function resolveCreateDefaults(
     hasExplicitValue: options.switch === true,
     optOut: options.switch === false,
   });
-
   const launchResolution = resolveDefaultWithPrecedence<boolean>({
     builtInValue: false,
     configValue: createDefaults?.launch,
     explicitValue: true,
-    hasExplicitValue: options.launch === true || options.sesh === true,
-    optOut: options.launch === false,
+    hasExplicitValue: options.launch === true || options.sesh === true || options.herdr === true,
+    optOut: options.launch === false && options.herdr !== true && options.sesh !== true,
   });
 
   const launchModeResolution = resolveDefaultWithPrecedence<LaunchMode>({
     builtInValue: AUTO_LAUNCH_MODE,
     configValue: createDefaults?.launchMode,
-    explicitValue: SESH_LAUNCH_MODE,
-    hasExplicitValue: options.sesh === true,
-    optOut: options.launch === false,
+    explicitValue: options.herdr ? HERDR_LAUNCH_MODE : SESH_LAUNCH_MODE,
+    hasExplicitValue: options.sesh === true || options.herdr === true,
+    optOut: options.launch === false && options.herdr !== true && options.sesh !== true,
   });
 
   const shouldLaunch = launchResolution.value;
@@ -499,6 +505,15 @@ export function resolveCreateDefaults(
     shouldLaunch,
     shouldSwitch,
   };
+}
+
+function validateCreateLaunchOptions(options: CreateCommandOptions): void {
+  if (options.herdr && options.sesh) {
+    throw new SwitchCommandError(
+      "Conflicting launch overrides provided (--herdr, --sesh). Choose exactly one explicit create launcher.",
+      SwitchCommandErrorCode.CONFLICTING_LAUNCH_OPTIONS,
+    );
+  }
 }
 
 const selectPrimaryCreateResult = (
@@ -576,11 +591,13 @@ const applyPostCreateDefaults = async ({
       worktreePath: primaryResult.worktreePath,
     },
     {
+      ...(defaults.launchMode === HERDR_LAUNCH_MODE ? { herdr: true } : {}),
       sesh: defaults.launchMode === SESH_LAUNCH_MODE,
     },
     {
       env: deps.env ?? process.env,
       platform: deps.platform ?? process.platform,
+      resolveGitMainWorktree: deps.resolveGitMainWorktree,
       runProcess: deps.runProcess,
     },
   );
@@ -618,10 +635,14 @@ const applyStandaloneCreateOverrides = async (options: {
       repoName: options.context.repository.name,
       worktreePath: options.worktreePath,
     },
-    { sesh: defaults.launchMode === SESH_LAUNCH_MODE },
+    {
+      ...(defaults.launchMode === HERDR_LAUNCH_MODE ? { herdr: true } : {}),
+      sesh: defaults.launchMode === SESH_LAUNCH_MODE,
+    },
     {
       env: options.deps.env ?? process.env,
       platform: options.deps.platform ?? process.platform,
+      resolveGitMainWorktree: options.deps.resolveGitMainWorktree,
       runProcess: options.deps.runProcess,
     },
   );
@@ -649,6 +670,7 @@ export function createCommand(): Command {
     .option("--launch", "Launch terminal/editor context after create")
     .option("--no-launch", "Disable configured create launch defaults for this invocation")
     .option("--sesh", "Launch using sesh mode (implies --launch)")
+    .option("--herdr", "Launch using Herdr mode (implies --launch)")
     .option(
       "--conflict <strategy>",
       "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
@@ -677,7 +699,7 @@ Examples:
     .action(async (branchName: string, options: CreateCommandOptions) => {
       if (
         options.json &&
-        (options.interactive || options.launch || options.sesh || options.switch)
+        (options.interactive || options.launch || options.sesh || options.herdr || options.switch)
       ) {
         writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
         process.exit(ERROR_EXIT_CODE);
@@ -714,6 +736,9 @@ Examples:
         } else if (createError instanceof CreateSetupError) {
           error(createError.message);
           process.exit(ERROR_EXIT_CODE);
+        } else if (createError instanceof SwitchCommandError) {
+          error(createError.message);
+          process.exit(ERROR_EXIT_CODE);
         } else if (createError instanceof ConflictAbortedError) {
           warn("Create aborted due to branch/worktree conflicts.");
           for (const conflict of createError.conflicts) {
@@ -746,6 +771,7 @@ export async function executeCreate(
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
 ): Promise<number> {
+  validateCreateLaunchOptions(options);
   const emptyFilters = findEmptyRepositoryFilters(options.only, options.group);
   if (emptyFilters.length > ZERO) {
     throw new EmptyRepositoryFiltersError(emptyFilters);
