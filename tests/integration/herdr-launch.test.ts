@@ -542,7 +542,7 @@ describe("Herdr create integration", () => {
       branchName,
       { herdr: true },
       createDeps({
-        resolveGitMainWorktree: async () => workspaceRoot,
+        resolveGitMainWorktree: async () => resolve(workspaceRoot),
         runProcess: async (command: string[]) => {
           commands.push(command);
           return herdrSuccess();
