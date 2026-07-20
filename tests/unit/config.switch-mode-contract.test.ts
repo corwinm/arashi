@@ -126,15 +126,19 @@ describe("legacy switch launch mode normalization", () => {
     ]);
   });
 
-  test("rejects conflicting aliases before mode mapping", () => {
-    expect(() =>
-      normalizeConfigWithDiagnostics(
-        rawConfig({ launchMode: "sesh", launch_mode: "herdr", mode: "cd" }),
-      ),
-    ).toThrowError(
-      'defaults.switch.launchMode: "sesh" conflicts with defaults.switch.launch_mode: "herdr"; remove both legacy fields and set defaults.switch.mode to one supported value',
-    );
-  });
+  test.each([
+    ["sesh", "herdr"],
+    ["tmux", "sesh"],
+  ])(
+    "rejects conflicting raw aliases %s and %s before validation or mode mapping",
+    (launchMode, launch_mode) => {
+      expect(() =>
+        normalizeConfigWithDiagnostics(rawConfig({ launchMode, launch_mode, mode: "cd" })),
+      ).toThrowError(
+        `defaults.switch.launchMode: "${launchMode}" conflicts with defaults.switch.launch_mode: "${launch_mode}"; remove both legacy fields and set defaults.switch.mode to one supported value`,
+      );
+    },
+  );
 
   test.each([
     ["cd", "sesh"],

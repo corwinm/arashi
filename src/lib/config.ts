@@ -655,6 +655,17 @@ const normalizeSwitchCommandDefaults = (
     errors.push('defaults.switch.mode: must be one of "auto", "cd", "launch", "sesh", or "herdr"');
   }
 
+  if (
+    value.launchMode !== undefined &&
+    value.launch_mode !== undefined &&
+    value.launchMode !== value.launch_mode
+  ) {
+    errors.push(
+      `defaults.switch.launchMode: ${JSON.stringify(value.launchMode)} conflicts with defaults.switch.launch_mode: ${JSON.stringify(value.launch_mode)}; remove both legacy fields and set defaults.switch.mode to one supported value`,
+    );
+    return undefined;
+  }
+
   const camelLaunchMode = normalizeLaunchMode(value.launchMode);
   const snakeLaunchMode = normalizeLaunchMode(value.launch_mode);
   if (value.launchMode !== undefined && camelLaunchMode === undefined) {
@@ -662,17 +673,6 @@ const normalizeSwitchCommandDefaults = (
   }
   if (value.launch_mode !== undefined && snakeLaunchMode === undefined) {
     errors.push('defaults.switch.launch_mode: must be one of "auto", "sesh", or "herdr"');
-  }
-
-  if (
-    camelLaunchMode !== undefined &&
-    snakeLaunchMode !== undefined &&
-    camelLaunchMode !== snakeLaunchMode
-  ) {
-    errors.push(
-      `defaults.switch.launchMode: "${camelLaunchMode}" conflicts with defaults.switch.launch_mode: "${snakeLaunchMode}"; remove both legacy fields and set defaults.switch.mode to one supported value`,
-    );
-    return undefined;
   }
 
   const launchMode = camelLaunchMode ?? snakeLaunchMode;
