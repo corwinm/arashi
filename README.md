@@ -117,7 +117,7 @@ Arashi currently provides these commands:
 - `arashi update [--check] [--dry-run] [--yes]`
 - `arashi add <git-url>`
 - `arashi clone [--all]`
-- `arashi create <branch> [--herdr]`
+- `arashi create <branch> [--sesh|--herdr]`
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
