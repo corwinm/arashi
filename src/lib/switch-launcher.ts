@@ -2,6 +2,7 @@ import { runtime } from "./runtime.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { normalizeSpawnEnvironment, stripDirectiveEnvironment } from "./shell-directives.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
+import { resolveGitMainWorktree } from "./workspace-context.ts";
 
 type SwitchLaunchMode =
   | "sesh"
@@ -49,6 +50,7 @@ export interface LaunchSwitchOptions {
 export interface LaunchSwitchDependencies {
   env?: Record<string, string | undefined>;
   platform?: NodeJS.Platform;
+  resolveGitMainWorktree?: (path: string) => Promise<string | null>;
   runProcess?: SwitchProcessRunner;
 }
 
@@ -108,7 +110,10 @@ export async function launchSwitchTarget(
   }
 
   if (options.herdr) {
-    return launchWithHerdr(candidate, { env: childEnv, runProcess });
+    return launchWithHerdr(await resolveHerdrCandidate(candidate, deps), {
+      env: childEnv,
+      runProcess,
+    });
   }
 
   if (options.preferredIde) {
@@ -145,7 +150,10 @@ export async function launchSwitchTarget(
   }
 
   if (isHerdrSession(env)) {
-    return launchWithHerdr(candidate, { env: childEnv, runProcess });
+    return launchWithHerdr(await resolveHerdrCandidate(candidate, deps), {
+      env: childEnv,
+      runProcess,
+    });
   }
 
   if (isCmuxSession(env)) {
@@ -333,6 +341,24 @@ function buildSeshTmuxCommand(worktreePath: string): string[] {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+async function resolveHerdrCandidate(
+  candidate: SwitchCandidate,
+  deps: LaunchSwitchDependencies,
+): Promise<SwitchCandidate> {
+  if (candidate.herdrSource) {
+    return candidate;
+  }
+
+  const resolveMainWorktree = deps.resolveGitMainWorktree ?? resolveGitMainWorktree;
+  const mainWorktree = await resolveMainWorktree(candidate.worktreePath);
+  return {
+    ...candidate,
+    herdrSource: mainWorktree
+      ? { path: mainWorktree, status: "available" }
+      : { status: "unavailable" },
+  };
 }
 
 async function launchWithHerdr(

@@ -52,11 +52,7 @@ import {
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
-import {
-  resolveGitMainWorktree,
-  resolveWorkspaceContext,
-  workspaceJsonMetadata,
-} from "../lib/workspace-context.ts";
+import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
 import {
   createStandaloneWorktree,
   StandaloneDestinationNotIgnoredError,
@@ -475,12 +471,7 @@ export function resolveCreateDefaults(
   options: CreateCommandOptions,
   workspaceConfig: Config,
 ): ResolvedCreateDefaults {
-  if (options.herdr && options.sesh) {
-    throw new SwitchCommandError(
-      "Conflicting launch overrides provided (--herdr, --sesh). Choose exactly one explicit create launcher.",
-      SwitchCommandErrorCode.CONFLICTING_LAUNCH_OPTIONS,
-    );
-  }
+  validateCreateLaunchOptions(options);
   const createDefaults = resolveConfiguredCreateDefaults(options, workspaceConfig);
 
   const switchResolution = resolveDefaultWithPrecedence<boolean>({
@@ -490,7 +481,6 @@ export function resolveCreateDefaults(
     hasExplicitValue: options.switch === true,
     optOut: options.switch === false,
   });
-
   const launchResolution = resolveDefaultWithPrecedence<boolean>({
     builtInValue: false,
     configValue: createDefaults?.launch,
@@ -515,6 +505,15 @@ export function resolveCreateDefaults(
     shouldLaunch,
     shouldSwitch,
   };
+}
+
+function validateCreateLaunchOptions(options: CreateCommandOptions): void {
+  if (options.herdr && options.sesh) {
+    throw new SwitchCommandError(
+      "Conflicting launch overrides provided (--herdr, --sesh). Choose exactly one explicit create launcher.",
+      SwitchCommandErrorCode.CONFLICTING_LAUNCH_OPTIONS,
+    );
+  }
 }
 
 const selectPrimaryCreateResult = (
@@ -585,14 +584,9 @@ const applyPostCreateDefaults = async ({
   }
 
   const launchCandidate = deps.launchSwitchTarget ?? launchSwitchTarget;
-  const resolveMainWorktree = deps.resolveGitMainWorktree ?? resolveGitMainWorktree;
-  const mainWorktree = await resolveMainWorktree(primaryResult.repository.path);
   const launchResult = await launchCandidate(
     {
       branchName: primaryResult.branchName,
-      herdrSource: mainWorktree
-        ? { path: resolve(mainWorktree), status: "available" }
-        : { status: "unavailable" },
       repoName: primaryResult.repository.name,
       worktreePath: primaryResult.worktreePath,
     },
@@ -603,6 +597,7 @@ const applyPostCreateDefaults = async ({
     {
       env: deps.env ?? process.env,
       platform: deps.platform ?? process.platform,
+      resolveGitMainWorktree: deps.resolveGitMainWorktree,
       runProcess: deps.runProcess,
     },
   );
@@ -637,7 +632,6 @@ const applyStandaloneCreateOverrides = async (options: {
   const launchResult = await launchCandidate(
     {
       branchName: options.branchName,
-      herdrSource: { path: resolve(options.context.mainRoot), status: "available" },
       repoName: options.context.repository.name,
       worktreePath: options.worktreePath,
     },
@@ -648,6 +642,7 @@ const applyStandaloneCreateOverrides = async (options: {
     {
       env: options.deps.env ?? process.env,
       platform: options.deps.platform ?? process.platform,
+      resolveGitMainWorktree: options.deps.resolveGitMainWorktree,
       runProcess: options.deps.runProcess,
     },
   );
@@ -741,6 +736,9 @@ Examples:
         } else if (createError instanceof CreateSetupError) {
           error(createError.message);
           process.exit(ERROR_EXIT_CODE);
+        } else if (createError instanceof SwitchCommandError) {
+          error(createError.message);
+          process.exit(ERROR_EXIT_CODE);
         } else if (createError instanceof ConflictAbortedError) {
           warn("Create aborted due to branch/worktree conflicts.");
           for (const conflict of createError.conflicts) {
@@ -773,6 +771,7 @@ export async function executeCreate(
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
 ): Promise<number> {
+  validateCreateLaunchOptions(options);
   const emptyFilters = findEmptyRepositoryFilters(options.only, options.group);
   if (emptyFilters.length > ZERO) {
     throw new EmptyRepositoryFiltersError(emptyFilters);

@@ -493,26 +493,20 @@ describe("standalone lifecycle", () => {
     await arashi(root, ["init", "--zero-config"]);
     const originalCwd = process.cwd();
     process.chdir(root);
-    let captured:
-      | {
-          herdr?: boolean;
-          source?: { path: string; status: "available" } | { status: "unavailable" };
-          worktreePath: string;
-        }
-      | undefined;
+    let capturedCommand: string[] | undefined;
     try {
       await expect(
         executeCreate(
           "herdr-launch-failure",
           { herdr: true },
           {
-            launchSwitchTarget: async (candidate, options) => {
-              captured = {
-                herdr: options.herdr,
-                source: candidate.herdrSource,
-                worktreePath: candidate.worktreePath,
+            runProcess: async (command) => {
+              capturedCommand = command;
+              return {
+                exitCode: 1,
+                stderr: "Herdr server unavailable after standalone creation",
+                stdout: "",
               };
-              throw new Error("Herdr server unavailable after standalone creation");
             },
           },
         ),
@@ -522,11 +516,19 @@ describe("standalone lifecycle", () => {
     }
 
     const worktreePath = join(canonicalRoot, ".worktrees", "herdr-launch-failure");
-    expect(captured).toEqual({
-      herdr: true,
-      source: { path: canonicalRoot, status: "available" },
+    expect(capturedCommand).toEqual([
+      "herdr",
+      "worktree",
+      "open",
+      "--cwd",
+      canonicalRoot,
+      "--path",
       worktreePath,
-    });
+      "--label",
+      `${basename(canonicalRoot)}: herdr-launch-failure`,
+      "--focus",
+      "--json",
+    ]);
     await expect(access(worktreePath)).resolves.toBeUndefined();
   });
 

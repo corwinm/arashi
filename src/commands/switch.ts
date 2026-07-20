@@ -14,7 +14,7 @@ import { Command } from "commander";
 import { exec } from "../lib/git.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
-import { resolveGitMainWorktree, resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
 
 type LoadWorkspaceRepositoriesResult = Awaited<ReturnType<typeof loadWorkspaceRepositories>>;
 type Config = NonNullable<LoadWorkspaceRepositoriesResult["config"]>;
@@ -504,7 +504,6 @@ const augmentAllScopeCandidates = async (
 
       const candidate: SwitchCandidate = {
         branchName,
-        herdrSource: await resolveHerdrSource(childWorktreePath),
         repoName: childRepository.name,
         worktreePath: childWorktreePath,
       };
@@ -520,15 +519,6 @@ const augmentAllScopeCandidates = async (
   }
 
   return merged;
-};
-
-const resolveHerdrSource = async (
-  repositoryPath: string,
-): Promise<SwitchCandidate["herdrSource"]> => {
-  const mainWorktree = await resolveGitMainWorktree(repositoryPath);
-  return mainWorktree
-    ? { path: resolve(mainWorktree), status: "available" }
-    : { status: "unavailable" };
 };
 
 const getBranchName = async (repoPath: string): Promise<string | null> => {

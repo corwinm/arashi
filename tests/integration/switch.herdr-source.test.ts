@@ -6,9 +6,21 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 import { executeSwitch } from "../../src/commands/switch.ts";
 import { discoverSwitchCandidates } from "../../src/core/switch.ts";
+import { launchSwitchTarget } from "../../src/lib/switch-launcher.ts";
 
 const run = promisify(execFile);
 const roots: string[] = [];
+const herdrSuccess = {
+  exitCode: 0,
+  stderr: "",
+  stdout: JSON.stringify({
+    result: {
+      already_open: false,
+      type: "worktree_opened",
+      workspace: { workspace_id: "workspace-123" },
+    },
+  }),
+};
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((path) => rm(path, { force: true, recursive: true })));
@@ -29,6 +41,21 @@ async function createLinkedRepository(): Promise<{ linked: string; main: string 
 }
 
 describe("Herdr source resolution", () => {
+  test("does not resolve Herdr sources during candidate discovery", async () => {
+    const result = await discoverSwitchCandidates([{ name: "repo", path: "/source/repo" }], {
+      discoverAllWorktrees: async () => [
+        {
+          branch: "feature/lazy-source",
+          isMain: false,
+          path: "/targets/lazy-source",
+          repository: "repo",
+        },
+      ],
+    });
+
+    expect(result.candidates[0]).not.toHaveProperty("herdrSource");
+  });
+
   test("resolves the non-bare main checkout from a configured linked repository", async () => {
     const { linked, main } = await createLinkedRepository();
     const result = await discoverSwitchCandidates([{ name: "repo", path: linked }], {
@@ -38,16 +65,17 @@ describe("Herdr source resolution", () => {
       ],
     });
     const sourcePath = await realpath(main);
-    expect(result.candidates).toEqual([
-      expect.objectContaining({
-        herdrSource: { path: sourcePath, status: "available" },
-        worktreePath: resolve(main),
-      }),
-      expect.objectContaining({
-        herdrSource: { path: sourcePath, status: "available" },
-        worktreePath: resolve(linked),
-      }),
-    ]);
+    const launch = await launchSwitchTarget(
+      result.candidates[1]!,
+      { herdr: true },
+      {
+        env: {},
+        runProcess: async () => herdrSuccess,
+      },
+    );
+
+    expect(launch.command).toContain(sourcePath);
+    expect(launch.command).toContain(resolve(linked));
   });
 
   test("records unavailable source state for a bare repository", async () => {
@@ -60,7 +88,21 @@ describe("Herdr source resolution", () => {
         { branch: "main", isMain: true, path: bare, repository: "repo" },
       ],
     });
-    expect(result.candidates[0]?.herdrSource).toEqual({ status: "unavailable" });
+    let processCalls = 0;
+    await expect(
+      launchSwitchTarget(
+        result.candidates[0]!,
+        { herdr: true },
+        {
+          env: {},
+          runProcess: async () => {
+            processCalls += 1;
+            return herdrSuccess;
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "LAUNCH_FAILED" });
+    expect(processCalls).toBe(0);
   });
 
   test("records unavailable source state for a linked worktree backed by a bare repository", async () => {
@@ -83,7 +125,21 @@ describe("Herdr source resolution", () => {
       ],
     });
 
-    expect(result.candidates[0]?.herdrSource).toEqual({ status: "unavailable" });
+    let processCalls = 0;
+    await expect(
+      launchSwitchTarget(
+        result.candidates[0]!,
+        { herdr: true },
+        {
+          env: {},
+          runProcess: async () => {
+            processCalls += 1;
+            return herdrSuccess;
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "LAUNCH_FAILED" });
+    expect(processCalls).toBe(0);
   });
 
   test("keeps distinct Herdr sources when repositories share a display name", async () => {
@@ -107,23 +163,29 @@ describe("Herdr source resolution", () => {
             repository: "duplicate",
           },
         ],
-        resolveGitMainWorktree: async (path) =>
-          path === resolve("/targets/parent")
-            ? resolve("/sources/parent")
-            : resolve("/sources/child"),
       },
     );
+    const commands: string[][] = [];
+    for (const candidate of result.candidates) {
+      await launchSwitchTarget(
+        candidate,
+        { herdr: true },
+        {
+          env: {},
+          resolveGitMainWorktree: async (path) =>
+            path === resolve("/targets/parent")
+              ? resolve("/sources/parent")
+              : resolve("/sources/child"),
+          runProcess: async (command) => {
+            commands.push(command);
+            return herdrSuccess;
+          },
+        },
+      );
+    }
 
-    expect(result.candidates).toEqual([
-      expect.objectContaining({
-        herdrSource: { path: resolve("/sources/parent"), status: "available" },
-        worktreePath: resolve("/targets/parent"),
-      }),
-      expect.objectContaining({
-        herdrSource: { path: resolve("/sources/child"), status: "available" },
-        worktreePath: resolve("/targets/child"),
-      }),
-    ]);
+    expect(commands[0]).toContain(resolve("/sources/parent"));
+    expect(commands[1]).toContain(resolve("/sources/child"));
   });
 
   test("resolves child repository source metadata for coordinated --all augmentation", async () => {
@@ -142,9 +204,7 @@ describe("Herdr source resolution", () => {
       cwd: childMain,
     });
 
-    let launchedCandidate:
-      | Awaited<ReturnType<typeof discoverSwitchCandidates>>["candidates"][number]
-      | undefined;
+    let launchedCommand: string[] | undefined;
     await executeSwitch(
       "feature/child-herdr",
       { all: true, herdr: true },
@@ -161,10 +221,6 @@ describe("Herdr source resolution", () => {
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => workspaceRoot,
-        launchSwitchTarget: async (candidate) => {
-          launchedCandidate = candidate;
-          return { command: ["herdr"], mode: "herdr" };
-        },
         loadWorkspaceRepositories: async () =>
           ({
             config: { repos: {}, reposDir: "repos", version: "1.0.0" },
@@ -173,16 +229,16 @@ describe("Herdr source resolution", () => {
               { name: "child", path: childMain },
             ],
           }) as never,
+        runProcess: async (command) => {
+          launchedCommand = command;
+          return herdrSuccess;
+        },
         stdinIsTTY: false,
         stdoutIsTTY: false,
       },
     );
 
-    expect(launchedCandidate).toMatchObject({
-      branchName: "feature/child-herdr",
-      herdrSource: { path: await realpath(childMain), status: "available" },
-      repoName: "child",
-      worktreePath: resolve(childLinked),
-    });
+    expect(launchedCommand).toContain(await realpath(childMain));
+    expect(launchedCommand).toContain(resolve(childLinked));
   });
 });

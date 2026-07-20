@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { resolve } from "node:path";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { spawn } from "../helpers/node-runtime.ts";
 import type { CreateCommandDependencies } from "../../src/commands/create.ts";
 import {
   createCommand as createCreateCommand,
@@ -120,7 +123,38 @@ function createDeps(overrides: Record<string, unknown> = {}): CreateCommandDepen
   } as unknown as CreateCommandDependencies;
 }
 
+async function runTestCommand(command: string[], cwd: string): Promise<void> {
+  const child = spawn(command, { cwd, stderr: "ignore", stdout: "ignore" });
+  expect(await child.exited).toBe(0);
+}
+
 describe("Herdr launcher", () => {
+  test("resolves source provenance only when Herdr is selected", async () => {
+    let resolutionCalls = 0;
+    const commands: string[][] = [];
+    const result = await launchSwitchTarget(
+      { ...candidate, herdrSource: undefined },
+      { herdr: true },
+      {
+        env: {},
+        platform: "darwin",
+        resolveGitMainWorktree: async (path) => {
+          resolutionCalls += 1;
+          expect(path).toBe(candidate.worktreePath);
+          return workspaceRoot;
+        },
+        runProcess: async (command) => {
+          commands.push(command);
+          return herdrSuccess();
+        },
+      },
+    );
+
+    expect(resolutionCalls).toBe(1);
+    expect(commands[0]).toContain(workspaceRoot);
+    expect(result.mode).toBe("herdr");
+  });
+
   test("uses argv-safe existing-worktree contract", async () => {
     const special: SwitchCandidate = {
       branchName: "feature/auth '$review",
@@ -401,28 +435,123 @@ describe("Herdr configuration and command resolution", () => {
   });
 });
 
-describe("Herdr post-create preservation", () => {
+describe("Herdr create integration", () => {
+  test("does not resolve Herdr source when automatic create launch selects tmux", async () => {
+    let resolutionCalls = 0;
+    const commands: string[][] = [];
+    await executeCreate(
+      branchName,
+      {},
+      createDeps({
+        env: { TMUX: "/tmp/tmux/default" },
+        loadConfigWithFallback: async () =>
+          loadedConfig({ defaults: { create: { launch: true, launchMode: "auto" } } }),
+        resolveGitMainWorktree: async () => {
+          resolutionCalls += 1;
+          return workspaceRoot;
+        },
+        runProcess: async (command: string[]) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      }),
+    );
+
+    expect(resolutionCalls).toBe(0);
+    expect(commands[0]?.[0]).toBe("tmux");
+  });
+
+  test("rejects conflicting launchers before standalone worktree creation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-standalone-launch-conflict-"));
+    try {
+      await runTestCommand(["git", "init", "-b", "main"], root);
+      await runTestCommand(["git", "config", "user.name", "Test"], root);
+      await runTestCommand(["git", "config", "user.email", "test@example.com"], root);
+      await writeFile(join(root, "fixture.txt"), "fixture\n");
+      await runTestCommand(["git", "add", "fixture.txt"], root);
+      await runTestCommand(["git", "commit", "-m", "initial"], root);
+      await mkdir(join(root, ".worktrees"));
+      await writeFile(join(root, ".git", "info", "exclude"), ".worktrees/\n");
+
+      const child = spawn(
+        [
+          process.execPath,
+          join(import.meta.dirname, "../../src/index.ts"),
+          "create",
+          branchName,
+          "--herdr",
+          "--sesh",
+        ],
+        { cwd: root, stderr: "pipe", stdout: "pipe" },
+      );
+      const [stderr, exitCode] = await Promise.all([
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Conflicting launch overrides provided");
+      await expect(access(join(root, ".worktrees", "feature", "herdr"))).rejects.toThrow();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("reports conflicting create launchers as a usage error without a stack trace", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-create-launch-conflict-"));
+    try {
+      const gitInit = spawn(["git", "init", "-b", "main"], {
+        cwd: root,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      expect(await gitInit.exited).toBe(0);
+      await mkdir(join(root, ".arashi"));
+      await writeFile(
+        join(root, ".arashi", "config.json"),
+        JSON.stringify({ repos: {}, reposDir: "./repos", version: "1.0.0" }),
+      );
+      const child = spawn(
+        [
+          process.execPath,
+          join(import.meta.dirname, "../../src/index.ts"),
+          "create",
+          branchName,
+          "--herdr",
+          "--sesh",
+        ],
+        { cwd: root, stderr: "pipe", stdout: "pipe" },
+      );
+      const [stderr, exitCode] = await Promise.all([
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Conflicting launch overrides provided");
+      expect(stderr).not.toContain("Unexpected error:");
+      expect(stderr).not.toContain("SwitchCommandError:");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("passes source provenance and explicit Herdr mode after coordinated creation", async () => {
-    const calls: Array<{ candidate: SwitchCandidate; options: { herdr?: boolean } }> = [];
+    const commands: string[][] = [];
     await executeCreate(
       branchName,
       { herdr: true },
       createDeps({
-        launchSwitchTarget: async (selected: SwitchCandidate, options: { herdr?: boolean }) => {
-          calls.push({ candidate: selected, options });
-          return { command: ["herdr"], mode: "herdr" };
+        resolveGitMainWorktree: async () => workspaceRoot,
+        runProcess: async (command: string[]) => {
+          commands.push(command);
+          return herdrSuccess();
         },
       }),
     );
-    expect(calls).toEqual([
-      {
-        candidate: expect.objectContaining({
-          herdrSource: { path: resolve(workspaceRoot), status: "available" },
-          worktreePath: "/workspace-herdr",
-        }),
-        options: expect.objectContaining({ herdr: true }),
-      },
-    ]);
+
+    expect(commands[0]).toContain(resolve(workspaceRoot));
+    expect(commands[0]).toContain("/workspace-herdr");
   });
 
   test("preserves coordinated worktrees when Herdr launch fails", async () => {
