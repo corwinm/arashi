@@ -1,3 +1,14 @@
+## [1.21.0](https://github.com/corwinm/arashi/compare/v1.20.1...v1.21.0) (2026-07-22)
+
+### Features
+
+- add Herdr workspace launching ([#98](https://github.com/corwinm/arashi/issues/98)) ([b2dcef3](https://github.com/corwinm/arashi/commit/b2dcef355114eedc7457eb34995d8b58bab6ccd0))
+- simplify switch mode configuration ([#99](https://github.com/corwinm/arashi/issues/99)) ([74973c3](https://github.com/corwinm/arashi/commit/74973c37bf1d52356fc6c44468f10940864ea9da))
+
+### Bug Fixes
+
+- decouple command contract from release version ([#97](https://github.com/corwinm/arashi/issues/97)) ([2c01ce7](https://github.com/corwinm/arashi/commit/2c01ce70be832158a13110864aaf80b824592b9f))
+
 ## [1.20.1](https://github.com/corwinm/arashi/compare/v1.20.0...v1.20.1) (2026-07-16)
 
 ### Bug Fixes
