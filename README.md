@@ -149,7 +149,7 @@ arashi switch --all feature-auth-refresh    # all repos
 arashi switch --repos docs                  # repo-name matching in child repos
 arashi switch --cd feature-auth-refresh     # parent-shell cd when shell integration is active
 arashi switch --herdr feature-auth-refresh  # open or focus a persistent Herdr workspace
-arashi switch --no-default-launch           # bypass configured launch mode defaults once
+arashi switch --no-default-launch           # bypass configured sesh/Herdr mode once
 ```
 
 ### Managed Git ignore rules
@@ -199,7 +199,7 @@ arashi shell init zsh
 arashi shell init fish
 ```
 
-Once installed, you can use `arashi switch --cd <filter>` for one-off parent-shell switching or set `.arashi/config.json` `defaults.switch.mode` to `"cd"` or `"auto"`.
+Once installed, you can use `arashi switch --cd <filter>` for one-off parent-shell switching or set `.arashi/config.json` `defaults.switch.mode` to `"cd"` or contextual `"auto"`. The canonical modes are `auto` | `cd` | `launch` | `sesh` | `herdr`.
 
 If shell integration is inactive, `arashi switch --cd` warns and skips launch fallback for that invocation.
 
@@ -311,17 +311,18 @@ Example config header:
       }
     },
     "switch": {
-      "mode": "auto",
-      "launchMode": "sesh"
+      "mode": "sesh"
     }
   },
   "repos": {}
 }
 ```
 
-`defaults.switch.mode` accepts `"launch"`, `"cd"`, or `"auto"`. `"auto"` prefers parent-shell switching only when shell integration is active.
+`defaults.switch.mode` accepts `auto` | `cd` | `launch` | `sesh` | `herdr`. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE, then uses parent-shell `cd` when shell integration is active, and otherwise follows terminal/platform launch fallback. An absent mode preserves the built-in automatic `launch` behavior rather than newly preferring `cd`.
 
-Launch modes accept `"auto"`, `"sesh"`, or `"herdr"`. `--herdr` is available on both `create` and `switch`; automatic launch mode detects Herdr only from `HERDR_ENV=1`. Herdr launch uses `herdr worktree open` with the Git-resolved non-bare main checkout and selected worktree.
+Explicit launcher flags take precedence over `--cd` / `--no-cd`, which take precedence over the configured mode and automatic context detection. `--no-default-launch` bypasses only configured `sesh` or `herdr`. `--herdr` remains available on both `create` and `switch`; Herdr launch uses `herdr worktree open` with the Git-resolved non-bare main checkout and selected worktree.
+
+Legacy switch-only `launchMode` and `launch_mode` fields remain readable for a bounded compatibility window. Arashi warns with the exact replacement `defaults.switch.mode` on stderr; migrate promptly. Ambiguous `cd` plus an explicit legacy launcher and conflicting legacy aliases are rejected.
 
 Use `defaults.create` for terminal `arashi create` behavior. Use `defaults.editors.<host>.create` for editor-specific overrides such as VS Code extension create flows. Supported hosts are `vscode`, `cursor`, and `kiro`.
 

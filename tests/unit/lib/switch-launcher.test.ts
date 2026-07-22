@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   detectIntegratedIde,
+  detectManagedSwitchContext,
   detectTerminalApp,
   isCmuxSession,
   launchSwitchTarget,
@@ -22,6 +23,61 @@ const failingRunProcess: SwitchProcessRunner = async () => ({
   exitCode: 1,
   stderr: "launch failed",
   stdout: "",
+});
+
+describe("detectManagedSwitchContext", () => {
+  test.each([
+    [{ TMUX: " /tmp/tmux/default " }, "tmux"],
+    [{ HERDR_ENV: " 1 " }, "herdr"],
+    [{ CMUX_WORKSPACE_ID: " workspace:1 " }, "cmux"],
+    [{ CMUX_SURFACE_ID: " surface:1 " }, "cmux"],
+    [
+      {
+        TERM_PROGRAM: "vscode",
+        VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/cursor",
+      },
+      "cursor",
+    ],
+    [{ TERM_PROGRAM: "vscode", VSCODE_GIT_ASKPASS_EXTRA_ARGS: "--host=kiro" }, "kiro"],
+    [{ TERM_PROGRAM: "vscode" }, "vscode"],
+  ] as const)("classifies strict managed evidence %#", (env, expected) => {
+    expect(detectManagedSwitchContext(env)).toBe(expected);
+  });
+
+  test.each([
+    {},
+    { HERDR_ENV: "true" },
+    { HERDR_ENV: "11" },
+    { CMUX_SOCKET_PATH: "/tmp/cmux.sock" },
+    { CMUX_SURFACE_ID: "", CMUX_WORKSPACE_ID: " " },
+    { TERM_PROGRAM: "ghostty" },
+    { TERM_PROGRAM: "Apple_Terminal" },
+    { TERM_PROGRAM: "unsupported-ide" },
+    { TERM: "xterm-256color" },
+  ])("rejects weak or generic evidence %#", (env) => {
+    expect(detectManagedSwitchContext(env)).toBeNull();
+  });
+
+  test("uses tmux, Herdr, cmux, then IDE precedence", () => {
+    const allSignals = {
+      CMUX_WORKSPACE_ID: "workspace:1",
+      HERDR_ENV: "1",
+      TERM_PROGRAM: "vscode",
+      TMUX: "/tmp/tmux/default",
+      VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/cursor",
+    };
+    expect(detectManagedSwitchContext(allSignals)).toBe("tmux");
+    expect(detectManagedSwitchContext({ ...allSignals, TMUX: "" })).toBe("herdr");
+    expect(detectManagedSwitchContext({ ...allSignals, HERDR_ENV: "0", TMUX: "" })).toBe("cmux");
+    expect(
+      detectManagedSwitchContext({
+        ...allSignals,
+        CMUX_WORKSPACE_ID: "",
+        HERDR_ENV: "0",
+        TMUX: "",
+      }),
+    ).toBe("cursor");
+  });
 });
 
 describe("launchSwitchTarget", () => {
@@ -318,6 +374,42 @@ describe("launchSwitchTarget", () => {
     expect(commands[1]).toEqual(["open", "-a", "Terminal", "/workspace/feature-auth"]);
   });
 
+  test("rejects when an available auto-detected IDE launcher exits nonzero", async () => {
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+
+      if (command[0] === "which" && command[1] === "code") {
+        return { exitCode: 0, stderr: "", stdout: "/usr/local/bin/code\n" };
+      }
+
+      if (command[0] === "code") {
+        return { exitCode: 23, stderr: "editor launch failed", stdout: "" };
+      }
+
+      return { exitCode: 0, stderr: "unexpected fallback", stdout: "" };
+    };
+
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        {},
+        { env: { TERM_PROGRAM: "vscode" }, platform: "darwin", runProcess },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: {
+        command: ["code", "--new-window", candidate.worktreePath],
+        path: candidate.worktreePath,
+        reason: "editor launch failed",
+      },
+    });
+    expect(commands).toEqual([
+      ["which", "code"],
+      ["code", "--new-window", candidate.worktreePath],
+    ]);
+  });
+
   test("falls back to terminal launcher when VS Code CLI is unavailable", async () => {
     const commands: string[][] = [];
     const runProcess: SwitchProcessRunner = async (command) => {
@@ -373,6 +465,34 @@ describe("launchSwitchTarget", () => {
     expect(result.mode).toBe("tmux");
     expect(commands[0]).toEqual(["tmux", "new-window", "-c", "/workspace/feature-auth"]);
     expect(commands.some((command) => command[0] === "code")).toBe(false);
+  });
+
+  test("rejects when auto-selected tmux execution fails without fallback", async () => {
+    const commands: string[][] = [];
+    const runProcess: SwitchProcessRunner = async (command) => {
+      commands.push(command);
+      return { exitCode: 41, stderr: "tmux server unavailable", stdout: "" };
+    };
+
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        {},
+        {
+          env: { TERM_PROGRAM: "vscode", TMUX: "/tmp/tmux-1000/default" },
+          platform: "darwin",
+          runProcess,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: {
+        command: ["tmux", "new-window", "-c", candidate.worktreePath],
+        path: candidate.worktreePath,
+        reason: "tmux server unavailable",
+      },
+    });
+    expect(commands).toEqual([["tmux", "new-window", "-c", candidate.worktreePath]]);
   });
 
   test("uses kitty tab launch commands when running in kitty", async () => {

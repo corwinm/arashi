@@ -14,7 +14,7 @@ arashi switch [filter] [options]
 - `--herdr` Open or focus the selected worktree in Herdr
 - `--cd` Request parent-shell directory switching for this invocation
 - `--no-cd` Disable parent-shell directory switching for this invocation
-- `--no-default-launch` Ignore configured switch launch-mode defaults for one invocation
+- `--no-default-launch` Bypass a configured `sesh` or `herdr` mode for one invocation
 - `--repos` Search child repositories in the current workspace only
 - `--all` Search parent + child repositories
 
@@ -48,7 +48,7 @@ arashi switch feature-auth --cd
 # Force launch behavior even if switch defaults prefer cd
 arashi switch feature-auth --no-cd
 
-# Ignore configured launch-mode defaults for one run
+# Bypass a configured sesh or Herdr mode for one run
 arashi switch --no-default-launch
 ```
 
@@ -67,8 +67,10 @@ arashi switch --no-default-launch
 - Herdr launch requires the `herdr` CLI, a reachable default Herdr server/socket, and a Git-resolvable non-bare main checkout. Arashi calls `herdr worktree open`; it does not delegate Git worktree creation or removal to Herdr.
 - In Kitty, Ghostty, WezTerm, and iTerm2 terminals, Arashi attempts terminal-native launch commands before generic fallback behavior.
 - Shell integration is configured with `arashi shell install` or manual `arashi shell init <shell>` setup.
-- Configure default switch behavior in `.arashi/config.json` under `defaults.switch.mode` (`launch`, `cd`, or `auto`).
-- Configure default switch launch behavior in `.arashi/config.json` under `defaults.switch.launchMode`.
-- `defaults.switch.mode: "auto"` prefers `cd` when shell integration is active and falls back to normal launch behavior otherwise.
+- Configure one default under `defaults.switch.mode`: `auto` | `cd` | `launch` | `sesh` | `herdr`.
+- `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE. If none is detected, it uses parent-shell `cd` when available, then terminal/platform launch fallback.
+- An absent mode preserves built-in automatic `launch` behavior and does not newly prefer `cd`.
+- Explicit launcher flags take precedence over `--cd` / `--no-cd`, configured modes, and automatic context detection. Conflicting explicit launchers and `--cd` plus any explicit launcher are rejected.
+- Legacy switch `launchMode` and `launch_mode` fields are accepted only for a bounded compatibility window. Follow the exact replacement warning on stderr; ambiguous or conflicting combinations are rejected before switching.
 - If `--cd` is used without active shell integration, Arashi warns and skips launch fallback for that invocation.
 - If `defaults.switch.mode: "cd"` is configured without active shell integration, Arashi warns and then follows normal launch resolution.

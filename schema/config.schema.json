@@ -151,19 +151,15 @@
     "SwitchCommandDefaults": {
       "additionalProperties": false,
       "properties": {
-        "launchMode": {
-          "$ref": "#/definitions/LaunchMode",
-          "description": "Preferred launch mode when running switch"
-        },
         "mode": {
           "$ref": "#/definitions/SwitchMode",
-          "description": "Preferred switch behavior when running switch"
+          "description": "Preferred switch behavior and launcher when running switch"
         }
       },
       "type": "object"
     },
     "SwitchMode": {
-      "enum": ["launch", "cd", "auto"],
+      "enum": ["auto", "cd", "launch", "sesh", "herdr"],
       "type": "string"
     }
   }

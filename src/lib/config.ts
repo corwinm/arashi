@@ -16,6 +16,7 @@ import {
 import { basename, dirname, join, resolve } from "path";
 import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
 import { mkdir } from "fs/promises";
+import { warn } from "./logger.ts";
 
 const ZERO = 0;
 const TWO = 2;
@@ -82,7 +83,7 @@ export interface Config {
 }
 
 export type LaunchMode = "auto" | "sesh" | "herdr";
-export type SwitchMode = "launch" | "cd" | "auto";
+export type SwitchMode = "auto" | "cd" | "launch" | "sesh" | "herdr";
 export type CreateDefaultsEditorHost = "vscode" | "cursor" | "kiro";
 
 export interface CreateCommandDefaults {
@@ -95,10 +96,8 @@ export interface CreateCommandDefaults {
 }
 
 export interface SwitchCommandDefaults {
-  /** Preferred switch behavior when running switch */
+  /** Preferred switch behavior and launcher when running switch */
   mode?: SwitchMode;
-  /** Preferred launch mode when running switch */
-  launchMode?: LaunchMode;
 }
 
 export interface EditorCommandDefaults {
@@ -145,6 +144,18 @@ export interface LoadedConfig {
   config: Config;
   source: ConfigSourceType;
   configPath: string;
+}
+
+export interface ConfigDiagnostic {
+  code: "DEPRECATED_SWITCH_LAUNCH_MODE";
+  fields: string[];
+  message: string;
+  replacementMode: SwitchMode;
+}
+
+export interface ConfigNormalizationResult {
+  config: Config;
+  diagnostics: ConfigDiagnostic[];
 }
 
 // ============================================================================
@@ -581,7 +592,13 @@ const normalizeLaunchMode = (value: unknown): LaunchMode | undefined => {
 };
 
 const normalizeSwitchMode = (value: unknown): SwitchMode | undefined => {
-  if (value === "launch" || value === "cd" || value === "auto") {
+  if (
+    value === "auto" ||
+    value === "cd" ||
+    value === "launch" ||
+    value === "sesh" ||
+    value === "herdr"
+  ) {
     return value;
   }
 
@@ -624,29 +641,81 @@ const normalizeCreateCommandDefaults = (value: unknown): CreateCommandDefaults |
   return undefined;
 };
 
-const normalizeSwitchCommandDefaults = (value: unknown): SwitchCommandDefaults | undefined => {
+const normalizeSwitchCommandDefaults = (
+  value: unknown,
+  errors: string[],
+  diagnostics: ConfigDiagnostic[],
+): SwitchCommandDefaults | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
 
-  const mode = normalizeSwitchMode(value.mode as unknown);
-  const launchMode = normalizeLaunchMode(
-    getFirstDefined(value.launchMode as unknown, value.launch_mode as unknown),
-  );
+  const mode = normalizeSwitchMode(value.mode);
+  if (value.mode !== undefined && mode === undefined) {
+    errors.push('defaults.switch.mode: must be one of "auto", "cd", "launch", "sesh", or "herdr"');
+  }
 
-  if (mode === undefined && launchMode === undefined) {
+  if (
+    value.launchMode !== undefined &&
+    value.launch_mode !== undefined &&
+    value.launchMode !== value.launch_mode
+  ) {
+    errors.push(
+      `defaults.switch.launchMode: ${JSON.stringify(value.launchMode)} conflicts with defaults.switch.launch_mode: ${JSON.stringify(value.launch_mode)}; remove both legacy fields and set defaults.switch.mode to one supported value`,
+    );
     return undefined;
   }
 
-  const normalized: SwitchCommandDefaults = {};
-  if (mode !== undefined) {
-    normalized.mode = mode;
+  const camelLaunchMode = normalizeLaunchMode(value.launchMode);
+  const snakeLaunchMode = normalizeLaunchMode(value.launch_mode);
+  if (value.launchMode !== undefined && camelLaunchMode === undefined) {
+    errors.push('defaults.switch.launchMode: must be one of "auto", "sesh", or "herdr"');
   }
-  if (launchMode !== undefined) {
-    normalized.launchMode = launchMode;
+  if (value.launch_mode !== undefined && snakeLaunchMode === undefined) {
+    errors.push('defaults.switch.launch_mode: must be one of "auto", "sesh", or "herdr"');
   }
 
-  return normalized;
+  const launchMode = camelLaunchMode ?? snakeLaunchMode;
+  const fields: string[] = [];
+  if (camelLaunchMode !== undefined) {
+    fields.push("defaults.switch.launchMode");
+  }
+  if (snakeLaunchMode !== undefined) {
+    fields.push("defaults.switch.launch_mode");
+  }
+
+  if (launchMode === undefined) {
+    return mode === undefined ? undefined : { mode };
+  }
+
+  let replacementMode = mode;
+  if (launchMode === "auto") {
+    replacementMode ??= "launch";
+  } else if (mode === undefined || mode === "auto" || mode === "launch") {
+    replacementMode = launchMode;
+  } else if (mode === "cd" || mode !== launchMode) {
+    const fieldLabel = fields.join(" and ");
+    const legacyNoun = fields.length === TWO ? "fields" : "field";
+    errors.push(
+      `defaults.switch.mode: "${mode}" cannot be combined with legacy ${fieldLabel}: "${launchMode}"; remove the legacy ${legacyNoun} and choose defaults.switch.mode: "${mode}" or "${launchMode}"`,
+    );
+    return undefined;
+  }
+
+  if (replacementMode === undefined) {
+    return undefined;
+  }
+
+  const fieldDescription = fields.length === TWO ? `${fields[0]} and ${fields[1]}` : fields[0];
+  const verb = fields.length === TWO ? "are" : "is";
+  diagnostics.push({
+    code: "DEPRECATED_SWITCH_LAUNCH_MODE",
+    fields,
+    message: `${fieldDescription} ${verb} deprecated; use defaults.switch.mode: "${replacementMode}" instead.`,
+    replacementMode,
+  });
+
+  return { mode: replacementMode };
 };
 
 const normalizeEditorCommandDefaults = (value: unknown): EditorCommandDefaults | undefined => {
@@ -693,14 +762,18 @@ const normalizeEditorDefaultsConfig = (value: unknown): EditorDefaultsConfig | u
   return undefined;
 };
 
-const normalizeCommandDefaults = (value: unknown): CommandDefaultsConfig | undefined => {
+const normalizeCommandDefaults = (
+  value: unknown,
+  errors: string[],
+  diagnostics: ConfigDiagnostic[],
+): CommandDefaultsConfig | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
 
   const createDefaults = normalizeCreateCommandDefaults(value.create);
   const editorDefaults = normalizeEditorDefaultsConfig(value.editors);
-  const switchDefaults = normalizeSwitchCommandDefaults(value.switch);
+  const switchDefaults = normalizeSwitchCommandDefaults(value.switch, errors, diagnostics);
 
   const normalized: CommandDefaultsConfig = {};
 
@@ -761,9 +834,11 @@ const normalizeConfigInternal = (
   config: unknown,
 ): {
   config: Config;
+  diagnostics: ConfigDiagnostic[];
   migratedFromVersion?: string;
 } => {
   const errors: string[] = [];
+  const diagnostics: ConfigDiagnostic[] = [];
 
   if (!isRecord(config)) {
     throw new ConfigValidationError(["Config must be an object"]);
@@ -789,7 +864,7 @@ const normalizeConfigInternal = (
   const worktreesDir = normalizeWorktreesDirConfig(worktreesDirRaw, errors);
   const hooks = normalizeWorkspaceHooks(config.hooks, "hooks", errors);
   const sync = normalizeSyncConfig(config.sync, "sync", errors);
-  const defaults = normalizeCommandDefaults(config.defaults);
+  const defaults = normalizeCommandDefaults(config.defaults, errors, diagnostics);
 
   if (schema !== undefined && (typeof schema !== "string" || schema.trim() === "")) {
     errors.push("$schema: must be a non-empty string if present");
@@ -843,11 +918,30 @@ const normalizeConfigInternal = (
 
   return {
     config: normalizedConfig,
+    diagnostics,
     migratedFromVersion: versionInfo.migratedFromVersion,
   };
 };
 
 export const normalizeConfig = (config: unknown): Config => normalizeConfigInternal(config).config;
+
+export const normalizeConfigWithDiagnostics = (config: unknown): ConfigNormalizationResult => {
+  const normalized = normalizeConfigInternal(config);
+  return { config: normalized.config, diagnostics: normalized.diagnostics };
+};
+
+const emittedConfigDiagnostics = new Set<string>();
+
+const emitConfigDiagnostics = (configPath: string, diagnostics: ConfigDiagnostic[]): void => {
+  for (const diagnostic of diagnostics) {
+    const key = `${configPath}\u0000${diagnostic.message}`;
+    if (emittedConfigDiagnostics.has(key)) {
+      continue;
+    }
+    emittedConfigDiagnostics.add(key);
+    warn(diagnostic.message);
+  }
+};
 
 /**
  * Validate configuration structure and required fields
@@ -928,6 +1022,7 @@ export const loadConfig = async (repoPath: string): Promise<Config> => {
   }
 
   const normalized = normalizeConfigInternal(data);
+  emitConfigDiagnostics(configPath, normalized.diagnostics);
 
   if (normalized.migratedFromVersion) {
     await saveConfig(repoPath, normalized.config);
@@ -944,7 +1039,9 @@ const parseAndValidateConfig = (text: string, configPath: string): Config => {
     throw new ConfigParseError(configPath, error as Error);
   }
 
-  return normalizeConfigInternal(data).config;
+  const normalized = normalizeConfigInternal(data);
+  emitConfigDiagnostics(configPath, normalized.diagnostics);
+  return normalized.config;
 };
 
 /**

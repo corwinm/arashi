@@ -1147,7 +1147,7 @@
     },
     {
       "path": "switch",
-      "description": "Open a terminal context for an existing worktree",
+      "description": "Switch to an existing worktree using explicit, configured, or contextual modes",
       "aliases": [],
       "hidden": false,
       "arguments": [
@@ -1210,7 +1210,7 @@
         },
         {
           "flags": "--no-default-launch",
-          "description": "Ignore configured default launch mode for this invocation",
+          "description": "Bypass a configured sesh or Herdr mode for this invocation",
           "required": false,
           "optional": false,
           "variadic": false

@@ -1,5 +1,9 @@
+import {
+  createCommand,
+  executeSwitch,
+  resolveSwitchResolution,
+} from "../../src/commands/switch.ts";
 import { runtime } from "../helpers/node-runtime.ts";
-import { createCommand, executeSwitch } from "../../src/commands/switch.ts";
 import { describe, expect, test } from "vitest";
 import { join, resolve } from "path";
 import { mkdtemp, rm } from "fs/promises";
@@ -15,6 +19,82 @@ const candidate: SwitchCandidate = {
 };
 
 const resolvedPath = (path: string): string => resolve(path);
+
+describe("unified switch resolution", () => {
+  test.each([
+    { expected: "launch", managedActive: false, mode: undefined, shellActive: false },
+    { expected: "launch", managedActive: false, mode: "launch", shellActive: true },
+    { expected: "cd", managedActive: false, mode: "auto", shellActive: true },
+    { expected: "launch", managedActive: true, mode: "auto", shellActive: true },
+    { expected: "launch", managedActive: false, mode: "auto", shellActive: false },
+    { expected: "cd", managedActive: true, mode: "cd", shellActive: true },
+    { expected: "cd", managedActive: true, mode: "cd", shellActive: false },
+    { expected: "launch", managedActive: true, mode: "sesh", shellActive: true },
+    { expected: "launch", managedActive: true, mode: "herdr", shellActive: true },
+  ] as const)(
+    "resolves configured mode $mode with shell=$shellActive managed=$managedActive to $expected",
+    ({ expected, managedActive, mode, shellActive }) => {
+      expect(
+        resolveSwitchResolution({
+          configMode: mode,
+          managedContextActive: managedActive,
+          options: {},
+          shellIntegrationActive: shellActive,
+        }).behavior.mode,
+      ).toBe(expected);
+    },
+  );
+
+  test.each(["sesh", "herdr", "vscode", "cursor", "kiro"] as const)(
+    "rejects --cd with explicit --%s",
+    (launcher) => {
+      expect(() =>
+        resolveSwitchResolution({
+          configMode: "auto",
+          managedContextActive: true,
+          options: { cd: true, [launcher]: true },
+          shellIntegrationActive: true,
+        }),
+      ).toThrowError(/Conflicting switch behavior overrides/);
+    },
+  );
+
+  test("--no-cd retains a configured explicit launcher", () => {
+    expect(
+      resolveSwitchResolution({
+        configMode: "herdr",
+        managedContextActive: true,
+        options: { cd: false },
+        shellIntegrationActive: true,
+      }),
+    ).toMatchObject({
+      behavior: { mode: "launch" },
+      launch: { herdr: true, sesh: false },
+    });
+  });
+
+  test("--no-default-launch opts out only a configured explicit launcher", () => {
+    expect(
+      resolveSwitchResolution({
+        configMode: "herdr",
+        managedContextActive: true,
+        options: { defaultLaunch: false },
+        shellIntegrationActive: true,
+      }),
+    ).toMatchObject({
+      behavior: { mode: "launch" },
+      launch: { sesh: false },
+    });
+    expect(
+      resolveSwitchResolution({
+        configMode: "auto",
+        managedContextActive: false,
+        options: { defaultLaunch: false },
+        shellIntegrationActive: true,
+      }).behavior.mode,
+    ).toBe("cd");
+  });
+});
 
 describe("switch command integration", () => {
   test("registers switch command with --sesh option", () => {
@@ -527,7 +607,7 @@ describe("switch command integration", () => {
           config: {
             defaults: {
               switch: {
-                launchMode: "sesh",
+                mode: "sesh",
               },
             },
             repos: {},
@@ -626,6 +706,197 @@ describe("switch command integration", () => {
     } finally {
       await rm(tempDir, { force: true, recursive: true });
     }
+  });
+
+  test.each([
+    [{ TMUX: "/tmp/tmux/default" }, "tmux"],
+    [{ HERDR_ENV: " 1 " }, "herdr"],
+    [{ CMUX_SURFACE_ID: "surface:1" }, "cmux"],
+    [
+      {
+        TERM_PROGRAM: "vscode",
+        VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/cursor",
+      },
+      "cursor",
+    ],
+    [{ TERM_PROGRAM: "vscode", VSCODE_GIT_ASKPASS_EXTRA_ARGS: "--host=kiro" }, "kiro"],
+    [{ TERM_PROGRAM: "vscode" }, "vscode"],
+  ] as const)("configured auto launches strict managed context %#", async (signal, mode) => {
+    const tempDir = await mkdtemp(join(tmpdir(), "arashi-switch-managed-auto-"));
+    const directivePath = join(tempDir, "directive.sh");
+    let launched = false;
+    try {
+      const result = await executeSwitch(
+        undefined,
+        {},
+        {
+          discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+          env: {
+            ...signal,
+            ARASHI_DIRECTIVE_FILE: directivePath,
+            ARASHI_SHELL: "bash",
+          },
+          findWorkspaceRoot: async () => "/workspace",
+          launchSwitchTarget: async () => {
+            launched = true;
+            return { command: [mode], mode };
+          },
+          loadWorkspaceRepositories: async () => ({
+            config: {
+              defaults: { switch: { mode: "auto" } },
+              repos: {},
+              reposDir: "./repos",
+              version: "1.0.0",
+            },
+            repositories: [],
+          }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
+
+      expect(result.launchMode).toBe(mode);
+      expect(launched).toBe(true);
+      expect(await runtime.file(directivePath).exists()).toBe(false);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  test.each([
+    { CMUX_SOCKET_PATH: "/tmp/cmux.sock" },
+    { HERDR_ENV: "true" },
+    { TERM_PROGRAM: "ghostty" },
+    { TERM_PROGRAM: "unsupported-ide" },
+  ])("configured auto uses cd for weak context %#", async (signal) => {
+    const tempDir = await mkdtemp(join(tmpdir(), "arashi-switch-weak-auto-"));
+    const directivePath = join(tempDir, "directive.sh");
+    try {
+      const result = await executeSwitch(
+        undefined,
+        {},
+        {
+          discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+          env: {
+            ...signal,
+            ARASHI_DIRECTIVE_FILE: directivePath,
+            ARASHI_SHELL: "bash",
+          },
+          findWorkspaceRoot: async () => "/workspace",
+          launchSwitchTarget: async () => {
+            throw new Error("weak context must not launch");
+          },
+          loadWorkspaceRepositories: async () => ({
+            config: {
+              defaults: { switch: { mode: "auto" } },
+              repos: {},
+              reposDir: "./repos",
+              version: "1.0.0",
+            },
+            repositories: [],
+          }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
+      expect(result.launchMode).toBe("cd");
+      expect(await runtime.file(directivePath).text()).toContain(candidate.worktreePath);
+    } finally {
+      await rm(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  test.each([undefined, "launch"] as const)(
+    "%s mode launches even when shell integration is active",
+    async (mode) => {
+      let launched = false;
+      const result = await executeSwitch(
+        undefined,
+        {},
+        {
+          discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+          env: { ARASHI_DIRECTIVE_FILE: "/tmp/unused", ARASHI_SHELL: "bash" },
+          findWorkspaceRoot: async () => "/workspace",
+          launchSwitchTarget: async () => {
+            launched = true;
+            return { command: ["open"], mode: "fallback" };
+          },
+          loadWorkspaceRepositories: async () => ({
+            config: {
+              defaults: mode ? { switch: { mode } } : undefined,
+              repos: {},
+              reposDir: "./repos",
+              version: "1.0.0",
+            },
+            repositories: [],
+          }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
+      expect(result.launchMode).toBe("fallback");
+      expect(launched).toBe(true);
+    },
+  );
+
+  test("configured cd falls back to automatic launch when shell integration is unavailable", async () => {
+    let launched = false;
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+        env: {},
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async () => {
+          launched = true;
+          return { command: ["open"], mode: "fallback" };
+        },
+        loadWorkspaceRepositories: async () => ({
+          config: {
+            defaults: { switch: { mode: "cd" } },
+            repos: {},
+            reposDir: "./repos",
+            version: "1.0.0",
+          },
+          repositories: [],
+        }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+    expect(result.launchMode).toBe("fallback");
+    expect(launched).toBe(true);
+  });
+
+  test("--no-cd retains configured Herdr unless default launch is opted out", async () => {
+    const launchOptions: unknown[] = [];
+    for (const defaultLaunch of [undefined, false]) {
+      await executeSwitch(
+        undefined,
+        { cd: false, defaultLaunch },
+        {
+          discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+          findWorkspaceRoot: async () => "/workspace",
+          launchSwitchTarget: async (_candidate, launch) => {
+            launchOptions.push(launch);
+            return { command: ["open"], mode: "fallback" };
+          },
+          loadWorkspaceRepositories: async () => ({
+            config: {
+              defaults: { switch: { mode: "herdr" } },
+              repos: {},
+              reposDir: "./repos",
+              version: "1.0.0",
+            },
+            repositories: [],
+          }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
+    }
+    expect(launchOptions).toEqual([{ herdr: true, sesh: false }, { sesh: false }]);
   });
 
   test("auto mode falls back to launch behavior when shell integration is inactive", async () => {
@@ -763,7 +1034,7 @@ describe("switch command integration", () => {
           config: {
             defaults: {
               switch: {
-                launchMode: "sesh",
+                mode: "sesh",
               },
             },
             repos: {},
@@ -804,7 +1075,7 @@ describe("switch command integration", () => {
           config: {
             defaults: {
               switch: {
-                launchMode: "sesh",
+                mode: "sesh",
               },
             },
             repos: {},

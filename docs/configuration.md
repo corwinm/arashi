@@ -37,8 +37,7 @@ To enable JSON validation and editor autocomplete, include a `$schema` property:
       }
     },
     "switch": {
-      "mode": "auto",
-      "launchMode": "sesh"
+      "mode": "sesh"
     }
   },
   "repos": {}
@@ -71,6 +70,8 @@ You can set command-scoped defaults under `defaults`.
 - `switch` (boolean): default auto-switch behavior after create
 - `launch` (boolean): default launch behavior after create
 - `launchMode` (`auto` | `sesh` | `herdr`): preferred launch mode when launch is enabled
+
+Create defaults are unchanged by the unified switch mode. `defaults.create.launchMode` remains independent and supported.
 
 ### `defaults.editors.<host>.create`
 
@@ -107,12 +108,13 @@ In that configuration, terminal `arashi create` uses `defaults.create`, while VS
 
 ### `defaults.switch`
 
-- `mode` (`launch` | `cd` | `auto`): preferred switch behavior for `arashi switch`
-- `launchMode` (`auto` | `sesh` | `herdr`): preferred launch mode for `arashi switch`
+- `mode` (`auto` | `cd` | `launch` | `sesh` | `herdr`): the single switch behavior and launcher choice
 
-Use `mode: "launch"` to preserve launcher-only behavior, `mode: "cd"` to request parent-shell directory switching by default, or `mode: "auto"` to prefer `cd` only when shell integration is active.
+Use `launch` for automatic launcher selection without preferring parent-shell switching, `cd` to request parent-shell switching, `sesh` or `herdr` to force that launcher, and `auto` for contextual selection. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE. When no managed context is detected, it uses `cd` if shell integration is active; otherwise it continues through terminal and platform launch fallback.
 
-Use `launchMode: "herdr"` to open or focus persistent Herdr workspaces. Automatic launch mode also selects Herdr only when `HERDR_ENV` normalizes exactly to `1`; active tmux remains ahead of automatic Herdr detection. Herdr requires a Git-resolvable non-bare main checkout and a reachable default Herdr server/socket.
+When `defaults.switch.mode` is absent, Arashi preserves the built-in `launch` behavior. Existing configurations therefore do not newly prefer `cd` merely because shell integration is installed.
+
+Herdr automatic detection requires `HERDR_ENV` to normalize exactly to `1`. Herdr requires a Git-resolvable non-bare main checkout and a reachable default Herdr server/socket.
 
 Enable shell integration with:
 
@@ -122,9 +124,28 @@ arashi shell install
 
 If you prefer manual setup, print shell-specific wrapper code with `arashi shell init <bash|zsh|fish>`.
 
+## Legacy switch configuration migration
+
+The switch-only `launchMode` and `launch_mode` fields are accepted for a bounded compatibility window but are no longer in the canonical schema. Migrate them to one `defaults.switch.mode` value:
+
+| Legacy `mode`              | Legacy launch field                 | Unified `mode`                                 |
+| -------------------------- | ----------------------------------- | ---------------------------------------------- |
+| absent                     | absent                              | absent (built-in `launch`)                     |
+| absent / `launch`          | `auto`                              | `launch`                                       |
+| absent / `launch` / `auto` | `sesh` / `herdr`                    | Matching explicit mode                         |
+| `auto`                     | absent / `auto`                     | `auto`                                         |
+| `cd`                       | absent / `auto`                     | `cd`                                           |
+| `cd`                       | `sesh` / `herdr`                    | Rejected; choose `cd` or the explicit launcher |
+| `sesh` / `herdr`           | absent / `auto` / matching launcher | Preserve the unified explicit mode             |
+| `sesh` / `herdr`           | different explicit launcher         | Rejected as conflicting                        |
+
+Equal `launchMode` and `launch_mode` aliases collapse to one value; different aliases are rejected. Accepted legacy fields emit one warning with the exact guidance `use defaults.switch.mode: "<replacement>" instead`. Migration warnings are written to stderr, so JSON stdout remains one structured document. Rejected combinations name the conflicting fields and values and stop before target selection or mutation.
+
 ## Precedence Rules
 
-Arashi resolves defaults in this order:
+For `arashi switch`, the effective order is: Explicit launcher flags > `--cd` / `--no-cd` > configured mode > automatic context detection. Conflicting explicit launchers, or `--cd` combined with any explicit launcher, are rejected before switching.
+
+Across command defaults generally, Arashi resolves values in this order:
 
 1. Explicit CLI flag
 2. Explicit opt-out flag
@@ -138,4 +159,4 @@ Examples:
 - Extension-driven `arashi create` uses `defaults.editors.<host>.create` when present and otherwise skips post-create defaults.
 - `arashi switch feature-auth --cd` overrides config to request parent-shell directory switching for that run.
 - `arashi switch feature-auth --no-cd` forces launch behavior for that run even when switch defaults prefer `cd`.
-- `arashi switch --no-default-launch` bypasses configured switch launch mode defaults for that run.
+- `arashi switch --no-default-launch` bypasses a configured `sesh` or `herdr` mode for that run; it does not erase configured `auto`, `cd`, or `launch` behavior.
