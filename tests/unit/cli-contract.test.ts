@@ -102,6 +102,40 @@ describe("CLI command contract", () => {
     });
   });
 
+  test("publishes enforceable explicit tmux option policies", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+    );
+    const create = contract.commands.find((command) => command.path === "create");
+    const switchCommand = contract.commands.find((command) => command.path === "switch");
+
+    expect(create?.semantics.optionPolicies?.["--tmux"]).toEqual({
+      compatibleOptions: ["--no-launch", "--no-switch"],
+      conflicts: ["--herdr", "--sesh"],
+      environment: { name: "TMUX", nonEmptyAfterTrim: true },
+      implies: ["launch", "switch"],
+      json: {
+        guardPrecedence: "before-option-validation",
+        mode: "interactive-or-launch",
+        unsupported: true,
+      },
+      persisted: false,
+    });
+    expect(switchCommand?.semantics.optionPolicies?.["--tmux"]).toEqual({
+      compatibleOptions: ["--no-cd", "--no-default-launch"],
+      conflicts: ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
+      environment: { name: "TMUX", nonEmptyAfterTrim: true },
+      implies: ["launch"],
+      json: {
+        guardPrecedence: "before-option-validation",
+        mode: "launch",
+        unsupported: true,
+      },
+      persisted: false,
+    });
+  });
+
   test("serializes deterministically with structural metadata", () => {
     const program = buildProgram({ includeHelpBanner: false });
     const first = serializeCommandContract(generateCommandContract(program, commandSemantics));
@@ -110,7 +144,7 @@ describe("CLI command contract", () => {
     );
     expect(first).toBe(second);
     const contract = JSON.parse(first);
-    expect(contract.schemaVersion).toBe(2);
+    expect(contract.schemaVersion).toBe(3);
     expect(contract).not.toHaveProperty("cliVersion");
     expect(contract.commands.map((command: { path: string }) => command.path)).toEqual(
       expectedPaths,

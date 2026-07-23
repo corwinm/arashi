@@ -1,5 +1,5 @@
 import type { Config, LoadedConfig } from "../../src/lib/config.ts";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { OperationSummary } from "../../src/core/worktree.ts";
 import { executeCreate } from "../../src/commands/create.ts";
 type CreateCommandDependencies = NonNullable<Parameters<typeof executeCreate>[2]>;
@@ -7,7 +7,7 @@ type CreateCommandDependencies = NonNullable<Parameters<typeof executeCreate>[2]
 const workspaceRoot = "/workspace";
 const branchName = "feature/defaults";
 
-function createLaunchCalls(): { sesh?: boolean }[] {
+function createLaunchCalls(): { sesh?: boolean; tmux?: boolean }[] {
   return [];
 }
 
@@ -96,6 +96,117 @@ function baseDeps(overrides: Partial<CreateCommandDependencies> = {}): CreateCom
 }
 
 describe("create defaults integration", () => {
+  test.each([
+    { interactive: true },
+    { launch: true },
+    { tmux: true },
+    { sesh: true },
+    { herdr: true },
+    { switch: true },
+    { sesh: true, tmux: true },
+  ])("direct JSON rejection precedes validation and creation for %#", async (launchOptions) => {
+    let creationCalled = false;
+    const stdout: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+
+    const result = await executeCreate(
+      branchName,
+      { json: true, ...launchOptions },
+      baseDeps({
+        createCoordinatedWorktrees: async () => {
+          creationCalled = true;
+          return createSummary();
+        },
+        env: { TMUX: "  " },
+      }),
+    );
+
+    expect(result).toBe(1);
+    expect(creationCalled).toBe(false);
+    expect(stdout).toHaveLength(1);
+    expect(JSON.parse(stdout[0]!)).toMatchObject({
+      command: "create",
+      error: {
+        code: "JSON_UNSUPPORTED_FOR_MODE",
+        details: { mode: "interactive-or-launch" },
+      },
+      ok: false,
+    });
+    write.mockRestore();
+  });
+
+  test.each([undefined, "", "   "])(
+    "rejects explicit tmux context %s before configured creation",
+    async (tmuxValue) => {
+      let creationCalled = false;
+      await expect(
+        executeCreate(
+          branchName,
+          { tmux: true },
+          baseDeps({
+            createCoordinatedWorktrees: async () => {
+              creationCalled = true;
+              return createSummary();
+            },
+            env: { TMUX: tmuxValue },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "TMUX_CONTEXT_REQUIRED" });
+      expect(creationCalled).toBe(false);
+    },
+  );
+
+  test("explicit tmux overrides configured create mode", async () => {
+    const launchCalls = createLaunchCalls();
+
+    await executeCreate(
+      branchName,
+      { tmux: true },
+      baseDeps({
+        env: { TMUX: "/tmp/tmux/default" },
+        launchSwitchTarget: async (_candidate, options) => {
+          launchCalls.push(options);
+          return { command: ["tmux"], mode: "tmux" };
+        },
+        loadConfigWithFallback: async () =>
+          createLoadedConfig({
+            defaults: { create: { launch: true, launchMode: "sesh", switch: true } },
+          }),
+      }),
+    );
+
+    expect(launchCalls).toEqual([{ sesh: false, tmux: true }]);
+  });
+
+  test("preserves configured worktrees when explicit tmux process launch fails", async () => {
+    let creationCompleted = false;
+    const commands: string[][] = [];
+
+    await expect(
+      executeCreate(
+        branchName,
+        { tmux: true },
+        baseDeps({
+          createCoordinatedWorktrees: async () => {
+            creationCompleted = true;
+            return createSummary();
+          },
+          env: { TMUX: "/tmp/tmux/default" },
+          runProcess: async (command) => {
+            commands.push(command);
+            return { exitCode: 23, stderr: "tmux failed after create", stdout: "" };
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "LAUNCH_FAILED" });
+
+    expect(creationCompleted).toBe(true);
+    expect(commands).toEqual([["tmux", "new-window", "-c", `${workspaceRoot}/${branchName}`]]);
+  });
+
   test("applies configured create launch defaults", async () => {
     const launchCalls = createLaunchCalls();
 

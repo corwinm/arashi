@@ -44,7 +44,7 @@ import {
   filterRepositories as filterWorkspaceRepositories,
   findEmptyRepositoryFilters,
 } from "../lib/repo-filter.ts";
-import { launchSwitchTarget } from "../lib/switch-launcher.ts";
+import { isTmuxSession, launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 import {
   reconcileManagedIgnore,
@@ -66,7 +66,7 @@ type ConflictResolutionStrategy = "ABORT" | "REUSE_EXISTING" | "CREATE_ALTERNATE
 type HookOutcomeRecord = Awaited<
   ReturnType<typeof createCoordinatedWorktrees>
 >["hookOutcomes"][number];
-type LaunchMode = "auto" | "sesh" | "herdr";
+type LaunchMode = "auto" | "tmux" | "sesh" | "herdr";
 type LaunchSwitchResult = Awaited<ReturnType<typeof launchSwitchTarget>>;
 type OperationSummary = Awaited<ReturnType<typeof createCoordinatedWorktrees>>;
 type RepositoryResult = OperationSummary["repositoryResults"][number];
@@ -100,6 +100,7 @@ const MILLISECONDS_PER_SECOND = 1000;
 const AUTO_LAUNCH_MODE: LaunchMode = "auto";
 const SESH_LAUNCH_MODE: LaunchMode = "sesh";
 const HERDR_LAUNCH_MODE: LaunchMode = "herdr";
+const TMUX_LAUNCH_MODE: LaunchMode = "tmux";
 
 const describeConflictScope = (existsLocally: boolean, existsRemotely: boolean): string => {
   if (existsLocally && existsRemotely) {
@@ -253,6 +254,9 @@ interface CreateCommandOptions {
   /** Force Herdr launch mode when launching */
   herdr?: boolean;
 
+  /** Force plain tmux launch mode when launching */
+  tmux?: boolean;
+
   /** Internal editor-host context for create default resolution */
   editorHost?: CreateDefaultsEditorHost;
 
@@ -297,7 +301,7 @@ export interface CreateCommandDependencies {
   pathExists?: (path: string) => boolean;
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
-    options: { herdr?: boolean; sesh?: boolean },
+    options: { herdr?: boolean; sesh?: boolean; tmux?: boolean },
     deps: {
       env: Record<string, string | undefined>;
       platform: NodeJS.Platform;
@@ -485,16 +489,34 @@ export function resolveCreateDefaults(
     builtInValue: false,
     configValue: createDefaults?.launch,
     explicitValue: true,
-    hasExplicitValue: options.launch === true || options.sesh === true || options.herdr === true,
-    optOut: options.launch === false && options.herdr !== true && options.sesh !== true,
+    hasExplicitValue:
+      options.launch === true ||
+      options.tmux === true ||
+      options.sesh === true ||
+      options.herdr === true,
+    optOut:
+      options.launch === false &&
+      options.tmux !== true &&
+      options.herdr !== true &&
+      options.sesh !== true,
   });
 
+  let explicitLaunchMode = SESH_LAUNCH_MODE;
+  if (options.tmux) {
+    explicitLaunchMode = TMUX_LAUNCH_MODE;
+  } else if (options.herdr) {
+    explicitLaunchMode = HERDR_LAUNCH_MODE;
+  }
   const launchModeResolution = resolveDefaultWithPrecedence<LaunchMode>({
     builtInValue: AUTO_LAUNCH_MODE,
     configValue: createDefaults?.launchMode,
-    explicitValue: options.herdr ? HERDR_LAUNCH_MODE : SESH_LAUNCH_MODE,
-    hasExplicitValue: options.sesh === true || options.herdr === true,
-    optOut: options.launch === false && options.herdr !== true && options.sesh !== true,
+    explicitValue: explicitLaunchMode,
+    hasExplicitValue: options.tmux === true || options.sesh === true || options.herdr === true,
+    optOut:
+      options.launch === false &&
+      options.tmux !== true &&
+      options.herdr !== true &&
+      options.sesh !== true,
   });
 
   const shouldLaunch = launchResolution.value;
@@ -508,13 +530,28 @@ export function resolveCreateDefaults(
 }
 
 function validateCreateLaunchOptions(options: CreateCommandOptions): void {
-  if (options.herdr && options.sesh) {
+  const launchOverrides = [
+    options.tmux ? "tmux" : null,
+    options.sesh ? "sesh" : null,
+    options.herdr ? "herdr" : null,
+  ].filter((value): value is "tmux" | "sesh" | "herdr" => value !== null);
+  if (launchOverrides.length > ONE) {
     throw new SwitchCommandError(
-      "Conflicting launch overrides provided (--herdr, --sesh). Choose exactly one explicit create launcher.",
+      `Conflicting launch overrides provided (${launchOverrides.map((value) => `--${value}`).join(", ")}). Choose exactly one explicit create launcher.`,
       SwitchCommandErrorCode.CONFLICTING_LAUNCH_OPTIONS,
+      { launchOverrides },
     );
   }
 }
+
+const isUnsupportedCreateJsonMode = (options: CreateCommandOptions): boolean =>
+  options.json === true &&
+  (options.interactive === true ||
+    options.launch === true ||
+    options.tmux === true ||
+    options.sesh === true ||
+    options.herdr === true ||
+    options.switch === true);
 
 const selectPrimaryCreateResult = (
   repositoryResults: RepositoryResult[],
@@ -593,6 +630,7 @@ const applyPostCreateDefaults = async ({
     {
       ...(defaults.launchMode === HERDR_LAUNCH_MODE ? { herdr: true } : {}),
       sesh: defaults.launchMode === SESH_LAUNCH_MODE,
+      ...(defaults.launchMode === TMUX_LAUNCH_MODE ? { tmux: true } : {}),
     },
     {
       env: deps.env ?? process.env,
@@ -638,6 +676,7 @@ const applyStandaloneCreateOverrides = async (options: {
     {
       ...(defaults.launchMode === HERDR_LAUNCH_MODE ? { herdr: true } : {}),
       sesh: defaults.launchMode === SESH_LAUNCH_MODE,
+      ...(defaults.launchMode === TMUX_LAUNCH_MODE ? { tmux: true } : {}),
     },
     {
       env: options.deps.env ?? process.env,
@@ -671,6 +710,7 @@ export function createCommand(): Command {
     .option("--no-launch", "Disable configured create launch defaults for this invocation")
     .option("--sesh", "Launch using sesh mode (implies --launch)")
     .option("--herdr", "Launch using Herdr mode (implies --launch)")
+    .option("--tmux", "Launch using plain tmux mode (implies --launch and --switch)")
     .option(
       "--conflict <strategy>",
       "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
@@ -697,10 +737,7 @@ Examples:
 `,
     )
     .action(async (branchName: string, options: CreateCommandOptions) => {
-      if (
-        options.json &&
-        (options.interactive || options.launch || options.sesh || options.herdr || options.switch)
-      ) {
+      if (isUnsupportedCreateJsonMode(options)) {
         writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
         process.exit(ERROR_EXIT_CODE);
       }
@@ -771,7 +808,17 @@ export async function executeCreate(
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
 ): Promise<number> {
+  if (isUnsupportedCreateJsonMode(options)) {
+    writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
+    return ERROR_EXIT_CODE;
+  }
   validateCreateLaunchOptions(options);
+  if (options.tmux && !isTmuxSession(deps.env ?? process.env)) {
+    throw new SwitchCommandError(
+      "--tmux requires an active tmux client or session (non-empty TMUX environment variable not detected). Run inside tmux or choose a different launcher.",
+      SwitchCommandErrorCode.TMUX_CONTEXT_REQUIRED,
+    );
+  }
   const emptyFilters = findEmptyRepositoryFilters(options.only, options.group);
   if (emptyFilters.length > ZERO) {
     throw new EmptyRepositoryFiltersError(emptyFilters);

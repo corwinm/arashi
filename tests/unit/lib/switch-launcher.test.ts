@@ -440,6 +440,80 @@ describe("launchSwitchTarget", () => {
     expect(commands[1]).toEqual(["open", "-a", "Terminal", "/workspace/feature-auth"]);
   });
 
+  test("forces plain tmux ahead of Herdr and IDE detection with an argv-safe path", async () => {
+    const specialCandidate = {
+      ...candidate,
+      worktreePath: "/workspace/feature auth's $review",
+    };
+    const commands: string[][] = [];
+
+    const result = await launchSwitchTarget(
+      specialCandidate,
+      { tmux: true },
+      {
+        env: { HERDR_ENV: "1", TERM_PROGRAM: "vscode", TMUX: " /tmp/tmux/default " },
+        platform: "darwin",
+        runProcess: async (command) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      command: ["tmux", "new-window", "-c", specialCandidate.worktreePath],
+      mode: "tmux",
+    });
+    expect(commands).toEqual([result.command]);
+  });
+
+  test.each([undefined, "", "   "])(
+    "rejects forced plain tmux without non-empty TMUX context (%s)",
+    async (tmuxValue) => {
+      const commands: string[][] = [];
+      await expect(
+        launchSwitchTarget(
+          candidate,
+          { tmux: true },
+          {
+            env: { HERDR_ENV: "1", TMUX: tmuxValue },
+            platform: "darwin",
+            runProcess: async (command) => {
+              commands.push(command);
+              return { exitCode: 0, stderr: "", stdout: "" };
+            },
+          },
+        ),
+      ).rejects.toMatchObject({
+        code: SwitchCommandErrorCode.TMUX_CONTEXT_REQUIRED,
+        message: expect.stringContaining("--tmux requires an active tmux"),
+      });
+      expect(commands).toEqual([]);
+    },
+  );
+
+  test("does not fall back when forced plain tmux execution fails", async () => {
+    const commands: string[][] = [];
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        { tmux: true },
+        {
+          env: { HERDR_ENV: "1", TMUX: "/tmp/tmux/default" },
+          platform: "darwin",
+          runProcess: async (command) => {
+            commands.push(command);
+            return { exitCode: 23, stderr: "tmux failed", stdout: "" };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: { command: ["tmux", "new-window", "-c", candidate.worktreePath] },
+    });
+    expect(commands).toEqual([["tmux", "new-window", "-c", candidate.worktreePath]]);
+  });
+
   test("opens a new tmux window automatically when running inside tmux", async () => {
     const commands: string[][] = [];
     const runProcess: SwitchProcessRunner = async (command) => {

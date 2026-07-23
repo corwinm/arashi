@@ -58,6 +58,24 @@ describe("unified switch config contract", () => {
       switch: { mode: "launch" },
     });
   });
+
+  test("does not persist tmux in generic or editor-scoped create defaults", () => {
+    const generic = normalizeConfig({
+      defaults: { create: { launchMode: "tmux" } },
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+    });
+    const editor = normalizeConfig({
+      defaults: { editors: { vscode: { create: { launchMode: "tmux" } } } },
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+    });
+
+    expect(generic.defaults?.create?.launchMode).toBeUndefined();
+    expect(editor.defaults?.editors?.vscode?.create?.launchMode).toBeUndefined();
+  });
 });
 
 describe("legacy switch launch mode normalization", () => {

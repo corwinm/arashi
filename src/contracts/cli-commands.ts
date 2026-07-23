@@ -17,12 +17,25 @@ export interface ZeroConfigCommandPolicy {
   json: { singleEnvelope: true; supported: true; suppressesHumanStdout: true };
   option: "--zero-config";
 }
+export interface ExplicitOptionPolicy {
+  compatibleOptions: string[];
+  conflicts: string[];
+  environment: { name: string; nonEmptyAfterTrim: boolean };
+  implies: string[];
+  json: {
+    guardPrecedence: "before-option-validation";
+    mode: string;
+    unsupported: true;
+  };
+  persisted: false;
+}
 export interface CommandSemanticMetadata {
   json: JsonPolicy;
   docs: SurfacePolicy;
   skills: SurfacePolicy;
   standalone: StandalonePolicy;
   vscode: SurfacePolicy;
+  optionPolicies?: Record<string, ExplicitOptionPolicy>;
   zeroConfig?: ZeroConfigCommandPolicy;
 }
 export type CommandSemantics = Record<string, CommandSemanticMetadata>;
@@ -63,13 +76,29 @@ export const commandSemantics: CommandSemantics = {
     undefined,
     configuredOnly("Cloning configured child repositories requires persisted configuration."),
   ),
-  create: standard(
-    {
-      support: "conditional",
-      reason: "JSON is available only for non-interactive create operations.",
+  create: {
+    ...standard(
+      {
+        support: "conditional",
+        reason: "JSON is available only for non-interactive create operations.",
+      },
+      standalone(),
+    ),
+    optionPolicies: {
+      "--tmux": {
+        compatibleOptions: ["--no-launch", "--no-switch"],
+        conflicts: ["--herdr", "--sesh"],
+        environment: { name: "TMUX", nonEmptyAfterTrim: true },
+        implies: ["launch", "switch"],
+        json: {
+          guardPrecedence: "before-option-validation",
+          mode: "interactive-or-launch",
+          unsupported: true,
+        },
+        persisted: false,
+      },
     },
-    standalone(),
-  ),
+  },
   doctor: {
     ...standard({ support: "full" }, standalone()),
     vscode: excluded("Diagnostics remain a terminal-focused maintenance workflow."),
@@ -165,10 +194,26 @@ export const commandSemantics: CommandSemantics = {
     vscode: excluded("Shell configuration installation is outside extension scope."),
   },
   status: standard({ support: "full" }, standalone()),
-  switch: standard(
-    unsupported("Switch launches a shell; --json only returns an unsupported-mode error."),
-    standalone(),
-  ),
+  switch: {
+    ...standard(
+      unsupported("Switch launches a shell; --json only returns an unsupported-mode error."),
+      standalone(),
+    ),
+    optionPolicies: {
+      "--tmux": {
+        compatibleOptions: ["--no-cd", "--no-default-launch"],
+        conflicts: ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
+        environment: { name: "TMUX", nonEmptyAfterTrim: true },
+        implies: ["launch"],
+        json: {
+          guardPrecedence: "before-option-validation",
+          mode: "launch",
+          unsupported: true,
+        },
+        persisted: false,
+      },
+    },
+  },
   sync: standard(
     { support: "full" },
     configuredOnly("Repository synchronization requires persisted repository metadata."),
@@ -208,7 +253,7 @@ export function validateCommandSemantics(paths: string[], metadata: CommandSeman
 }
 
 export interface CliCommandContract {
-  schemaVersion: 2;
+  schemaVersion: 3;
   commands: ContractCommand[];
 }
 interface ContractCommand {
@@ -265,7 +310,7 @@ export function generateCommandContract(
   };
   visit(program, "");
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     commands: commands.toSorted((a, b) => a.path.localeCompare(b.path)),
   };
 }

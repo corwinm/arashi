@@ -117,12 +117,12 @@ Arashi currently provides these commands:
 - `arashi update [--check] [--dry-run] [--yes]`
 - `arashi add <git-url>`
 - `arashi clone [--all]`
-- `arashi create <branch> [--sesh|--herdr]`
+- `arashi create <branch> [--tmux|--sesh|--herdr]`
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
 - `arashi prune [--dry-run]` - clean stale Git worktree metadata
-- `arashi switch [filter] [--repos|--all] [--cd|--no-cd] [--sesh|--herdr] [--no-default-launch]`
+- `arashi switch [filter] [--repos|--all] [--cd|--no-cd] [--tmux|--sesh|--herdr] [--no-default-launch]`
 - `arashi shell init <bash|zsh|fish>`
 - `arashi shell install`
 - `arashi pull`
@@ -139,6 +139,7 @@ arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
 arashi create feature-auth-refresh
 arashi create feature-auth-refresh --launch
+arashi create feature-auth-refresh --tmux
 arashi create feature-auth-refresh --herdr
 arashi create feature-auth-refresh --no-launch
 arashi shell install
@@ -148,9 +149,12 @@ arashi switch --repos feature-auth-refresh  # child repo worktrees in current wo
 arashi switch --all feature-auth-refresh    # all repos
 arashi switch --repos docs                  # repo-name matching in child repos
 arashi switch --cd feature-auth-refresh     # parent-shell cd when shell integration is active
+arashi switch --tmux feature-auth-refresh   # force a new plain tmux window
 arashi switch --herdr feature-auth-refresh  # open or focus a persistent Herdr workspace
 arashi switch --no-default-launch           # bypass configured sesh/Herdr mode once
 ```
+
+Explicit `--tmux` is a per-invocation launcher override for `create` and `switch`; it is not a persisted configuration mode. It requires an active tmux context whose `TMUX` value is non-empty after trimming, uses the selected worktree path as one argv-safe `tmux new-window -c` argument, and does not fall back to another launcher when the prerequisite or launch fails. On `create`, it implies both launch and switch, while validation failures occur before worktree mutation.
 
 ### Managed Git ignore rules
 

@@ -17,6 +17,7 @@ describe("generated config schema switch contract", () => {
     const schema = JSON.parse(await readFile(schemaPath, "utf8")) as ConfigSchema;
 
     expect(schema.definitions.SwitchMode?.enum).toEqual(["auto", "cd", "launch", "sesh", "herdr"]);
+    expect(schema.definitions.LaunchMode?.enum).toEqual(["auto", "sesh", "herdr"]);
     expect(schema.definitions.SwitchCommandDefaults?.properties).toEqual({
       mode: {
         $ref: "#/definitions/SwitchMode",

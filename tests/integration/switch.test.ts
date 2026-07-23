@@ -3,8 +3,9 @@ import {
   executeSwitch,
   resolveSwitchResolution,
 } from "../../src/commands/switch.ts";
+import type { SwitchCommandOptions, SwitchExecutionResult } from "../../src/commands/switch.ts";
 import { runtime } from "../helpers/node-runtime.ts";
-import { describe, expect, test } from "vitest";
+import { describe, expect, expectTypeOf, test, vi } from "vitest";
 import { join, resolve } from "path";
 import { mkdtemp, rm } from "fs/promises";
 import type { SwitchCandidate } from "../../src/core/switch.ts";
@@ -45,7 +46,7 @@ describe("unified switch resolution", () => {
     },
   );
 
-  test.each(["sesh", "herdr", "vscode", "cursor", "kiro"] as const)(
+  test.each(["tmux", "sesh", "herdr", "vscode", "cursor", "kiro"] as const)(
     "rejects --cd with explicit --%s",
     (launcher) => {
       expect(() =>
@@ -56,6 +57,34 @@ describe("unified switch resolution", () => {
           shellIntegrationActive: true,
         }),
       ).toThrowError(/Conflicting switch behavior overrides/);
+    },
+  );
+
+  test.each(["sesh", "herdr", "vscode", "cursor", "kiro"] as const)(
+    "rejects --tmux with explicit --%s and reports both launchers",
+    (launcher) => {
+      expect(() =>
+        resolveSwitchResolution({
+          configMode: "auto",
+          managedContextActive: true,
+          options: { tmux: true, [launcher]: true },
+          shellIntegrationActive: true,
+        }),
+      ).toThrowError(new RegExp(`--tmux, --${launcher}`));
+    },
+  );
+
+  test.each([{ cd: false }, { defaultLaunch: false }])(
+    "keeps explicit tmux authoritative with compatible opt-out %#",
+    (compatibleOption) => {
+      expect(
+        resolveSwitchResolution({
+          configMode: "herdr",
+          managedContextActive: true,
+          options: { ...compatibleOption, tmux: true },
+          shellIntegrationActive: true,
+        }),
+      ).toMatchObject({ behavior: { mode: "launch" }, launch: { tmux: true } });
     },
   );
 
@@ -97,11 +126,28 @@ describe("unified switch resolution", () => {
 });
 
 describe("switch command integration", () => {
-  test("registers switch command with --sesh option", () => {
+  test("types direct JSON, human, and widened switch execution results accurately", () => {
+    const assertTypes = () => {
+      expectTypeOf(executeSwitch(undefined, { json: true })).toEqualTypeOf<Promise<number>>();
+      expectTypeOf(executeSwitch(undefined, { json: false })).toEqualTypeOf<
+        Promise<SwitchExecutionResult>
+      >();
+      const widened: SwitchCommandOptions = {};
+      expectTypeOf(executeSwitch(undefined, widened)).toEqualTypeOf<
+        Promise<SwitchExecutionResult | number>
+      >();
+    };
+    expectTypeOf(assertTypes).toBeFunction();
+  });
+
+  test("registers switch command with explicit plain tmux option", () => {
     const command = createCommand();
     expect(command.name()).toBe("switch");
     expect(command.options.some((option) => option.long === "--path")).toBe(true);
     expect(command.options.some((option) => option.long === "--sesh")).toBe(true);
+    expect(command.options.find((option) => option.long === "--tmux")?.description).toContain(
+      "plain tmux",
+    );
     expect(command.options.some((option) => option.long === "--cd")).toBe(true);
     expect(command.options.some((option) => option.long === "--vscode")).toBe(true);
     expect(command.options.some((option) => option.long === "--cursor")).toBe(true);
@@ -109,6 +155,68 @@ describe("switch command integration", () => {
     expect(command.options.some((option) => option.long === "--no-default-launch")).toBe(true);
     expect(command.options.some((option) => option.long === "--repos")).toBe(true);
     expect(command.options.some((option) => option.long === "--all")).toBe(true);
+  });
+
+  test("passes forced tmux through ahead of configured cd behavior", async () => {
+    const launchOptions: unknown[] = [];
+    const result = await executeSwitch(
+      undefined,
+      { tmux: true },
+      {
+        discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+        env: { TMUX: "/tmp/tmux/default" },
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async (_candidate, options) => {
+          launchOptions.push(options);
+          return { command: ["tmux"], mode: "tmux" };
+        },
+        loadWorkspaceRepositories: async () => ({
+          config: {
+            defaults: { switch: { mode: "cd" } },
+            repos: {},
+            reposDir: "./repos",
+            version: "1.0.0",
+          },
+          repositories: [],
+        }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("tmux");
+    expect(launchOptions).toEqual([{ tmux: true }]);
+  });
+
+  test("direct JSON tmux rejection precedes conflicts, blank context, and discovery", async () => {
+    let discoveryCalled = false;
+    const stdout: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+
+    const result = await executeSwitch(
+      undefined,
+      { json: true, sesh: true, tmux: true },
+      {
+        discoverSwitchCandidates: async () => {
+          discoveryCalled = true;
+          return { candidates: [candidate], skippedCount: 0 };
+        },
+        env: { TMUX: "   " },
+      },
+    );
+
+    expect(result).toBe(2);
+    expect(discoveryCalled).toBe(false);
+    expect(stdout).toHaveLength(1);
+    expect(JSON.parse(stdout[0]!)).toMatchObject({
+      command: "switch",
+      error: { code: "JSON_UNSUPPORTED_FOR_MODE", details: { mode: "launch" } },
+      ok: false,
+    });
+    write.mockRestore();
   });
 
   test("rejects conflicting explicit launch overrides", async () => {

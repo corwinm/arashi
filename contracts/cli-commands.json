@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "commands": [
     {
       "path": "add",
@@ -225,6 +225,13 @@
           "variadic": false
         },
         {
+          "flags": "--tmux",
+          "description": "Launch using plain tmux mode (implies --launch and --switch)",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
           "flags": "-i, --interactive",
           "description": "Interactively select repositories",
           "required": false,
@@ -248,6 +255,23 @@
         },
         "vscode": {
           "expectation": "required"
+        },
+        "optionPolicies": {
+          "--tmux": {
+            "compatibleOptions": ["--no-launch", "--no-switch"],
+            "conflicts": ["--herdr", "--sesh"],
+            "environment": {
+              "name": "TMUX",
+              "nonEmptyAfterTrim": true
+            },
+            "implies": ["launch", "switch"],
+            "json": {
+              "guardPrecedence": "before-option-validation",
+              "mode": "interactive-or-launch",
+              "unsupported": true
+            },
+            "persisted": false
+          }
         }
       }
     },
@@ -1237,6 +1261,13 @@
           "variadic": false
         },
         {
+          "flags": "--tmux",
+          "description": "Force launch in a new plain tmux window",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
           "flags": "--vscode",
           "description": "Open the selected worktree in VS Code",
           "required": false,
@@ -1260,6 +1291,23 @@
         },
         "vscode": {
           "expectation": "required"
+        },
+        "optionPolicies": {
+          "--tmux": {
+            "compatibleOptions": ["--no-cd", "--no-default-launch"],
+            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
+            "environment": {
+              "name": "TMUX",
+              "nonEmptyAfterTrim": true
+            },
+            "implies": ["launch"],
+            "json": {
+              "guardPrecedence": "before-option-validation",
+              "mode": "launch",
+              "unsupported": true
+            },
+            "persisted": false
+          }
         }
       }
     },

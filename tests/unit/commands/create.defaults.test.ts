@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Config } from "../../../src/lib/config.ts";
-import { resolveCreateDefaults } from "../../../src/commands/create.ts";
+import { createCommand, resolveCreateDefaults } from "../../../src/commands/create.ts";
 
 function baseConfig(): Config {
   return {
@@ -11,6 +11,12 @@ function baseConfig(): Config {
 }
 
 describe("resolveCreateDefaults", () => {
+  test("registers explicit plain tmux launch", () => {
+    expect(
+      createCommand().options.find((option) => option.long === "--tmux")?.description,
+    ).toContain("implies --launch and --switch");
+  });
+
   test("uses configured defaults when CLI flags are omitted", () => {
     const config = baseConfig();
     config.defaults = {
@@ -123,6 +129,26 @@ describe("resolveCreateDefaults", () => {
       shouldSwitch: true,
     });
   });
+
+  test.each([
+    { launch: false, tmux: true },
+    { switch: false, tmux: true },
+  ])("explicit tmux implies launch and switch despite opt-out %#", (options) => {
+    expect(resolveCreateDefaults(options, baseConfig())).toEqual({
+      launchMode: "tmux",
+      shouldLaunch: true,
+      shouldSwitch: true,
+    });
+  });
+
+  test.each(["sesh", "herdr"] as const)(
+    "rejects explicit tmux with explicit %s before defaults resolve",
+    (launcher) => {
+      expect(() =>
+        resolveCreateDefaults({ tmux: true, [launcher]: true }, baseConfig()),
+      ).toThrowError(new RegExp(`--tmux, --${launcher}`));
+    },
+  );
 
   test("allows explicit CLI options to override editor-scoped defaults", () => {
     const config = baseConfig();

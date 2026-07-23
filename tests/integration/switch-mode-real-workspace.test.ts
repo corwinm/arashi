@@ -137,6 +137,49 @@ describe("real workspace switch mode resolution", () => {
   );
 
   test.skipIf(process.platform === "win32")(
+    "uses explicit tmux in real configured and standalone workspaces without mutation",
+    async () => {
+      for (const configured of [true, false]) {
+        const fixture = await createRepository(
+          configured ? configuredWorkspace({ mode: "cd" }) : undefined,
+        );
+        const fakeBin = await mkdtemp(join(tmpdir(), "arashi-switch-tmux-bin-"));
+        roots.push(fakeBin);
+        const argvPath = join(fakeBin, "tmux.argv");
+        const tmuxPath = join(fakeBin, "tmux");
+        const script = ["#!", "/bin/sh\n", 'printf \'%s\\n\' "$@" > "$ARASHI_TEST_ARGV"\n'].join(
+          "",
+        );
+        await writeFile(tmuxPath, script);
+        await chmod(tmuxPath, 0o755);
+        const before = await snapshotWorkspace(fixture);
+        process.chdir(fixture.root);
+
+        const result = await executeSwitch(
+          fixture.worktreePath,
+          { path: true, tmux: true },
+          {
+            env: {
+              ARASHI_TEST_ARGV: argvPath,
+              PATH: fakeBin,
+              TMUX: " /tmp/tmux/client ",
+            },
+            stdinIsTTY: false,
+            stdoutIsTTY: false,
+          },
+        );
+
+        expect(result.launchMode).toBe("tmux");
+        expect(await readFile(argvPath, "utf8")).toBe(`new-window\n-c\n${fixture.worktreePath}\n`);
+        if (!configured) {
+          await expect(access(fixture.configPath)).rejects.toThrow();
+        }
+        expect(await snapshotWorkspace(fixture)).toEqual(before);
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
     "uses automatic launch for a standalone workspace with absent mode via a fake executable",
     async () => {
       const fixture = await createRepository();
