@@ -813,7 +813,7 @@ export async function executeCreate(
     return ERROR_EXIT_CODE;
   }
   validateCreateLaunchOptions(options);
-  if (options.tmux && !isTmuxSession(deps.env ?? process.env)) {
+  if (options.tmux && options.dryRun !== true && !isTmuxSession(deps.env ?? process.env)) {
     throw new SwitchCommandError(
       "--tmux requires an active tmux client or session (non-empty TMUX environment variable not detected). Run inside tmux or choose a different launcher.",
       SwitchCommandErrorCode.TMUX_CONTEXT_REQUIRED,

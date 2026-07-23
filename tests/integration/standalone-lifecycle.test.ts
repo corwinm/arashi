@@ -514,6 +514,20 @@ describe("standalone lifecycle", () => {
     expect(switchResult.stderr).toContain("--tmux requires an active tmux");
   });
 
+  test("explicit tmux dry-run previews without requiring active tmux", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+
+    const result = await arashi(root, ["create", "tmux-preview", "--dry-run", "--tmux"], {
+      TMUX: " ",
+    });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Would create worktree");
+    expect((await run(root, ["git", "branch", "--list", "tmux-preview"])).stdout).toBe("");
+    await expect(access(join(root, ".worktrees", "tmux-preview"))).rejects.toThrow();
+  });
+
   test.skipIf(process.platform === "win32")(
     "standalone tmux process failure preserves the created worktree without fallback",
     async () => {
