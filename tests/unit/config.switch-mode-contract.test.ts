@@ -34,13 +34,13 @@ describe("unified switch config contract", () => {
     );
   });
 
-  test("preserves create and editor-scoped create defaults", () => {
+  test("preserves canonical create and editor-scoped create defaults", () => {
     const normalized = normalizeConfig({
       defaults: {
-        create: { launch: true, launchMode: "sesh", switch: true },
+        create: { launch: "sesh", switch: true },
         editors: {
-          cursor: { create: { launch: false, switch: true } },
-          vscode: { create: { launch_mode: "herdr" } },
+          cursor: { create: { launch: "none", switch: true } },
+          vscode: { create: { launch: "herdr" } },
         },
         switch: { mode: "launch" },
       },
@@ -50,31 +50,27 @@ describe("unified switch config contract", () => {
     });
 
     expect(normalized.defaults).toEqual({
-      create: { launch: true, launchMode: "sesh", switch: true },
+      create: { launch: "sesh", switch: true },
       editors: {
-        cursor: { create: { launch: false, switch: true } },
-        vscode: { create: { launch: true, launchMode: "herdr" } },
+        cursor: { create: { launch: "none", switch: true } },
+        vscode: { create: { launch: "herdr" } },
       },
       switch: { mode: "launch" },
     });
   });
 
-  test("does not persist tmux in generic or editor-scoped create defaults", () => {
-    const generic = normalizeConfig({
-      defaults: { create: { launchMode: "tmux" } },
-      repos: {},
-      reposDir: "./repos",
-      version: "1.0.0",
-    });
-    const editor = normalizeConfig({
-      defaults: { editors: { vscode: { create: { launchMode: "tmux" } } } },
-      repos: {},
-      reposDir: "./repos",
-      version: "1.0.0",
-    });
-
-    expect(generic.defaults?.create?.launchMode).toBeUndefined();
-    expect(editor.defaults?.editors?.vscode?.create?.launchMode).toBeUndefined();
+  test.each([
+    ["generic", { defaults: { create: { launch: "tmux" } } }],
+    ["editor-scoped", { defaults: { editors: { vscode: { create: { launch: "tmux" } } } } }],
+  ])("rejects tmux in %s create defaults", (_scope, defaults) => {
+    expect(() =>
+      normalizeConfig({
+        ...defaults,
+        repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
+      }),
+    ).toThrow(/must be one of "none", "auto", "sesh", or "herdr"/);
   });
 });
 

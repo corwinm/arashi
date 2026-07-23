@@ -26,13 +26,12 @@ To enable JSON validation and editor autocomplete, include a `$schema` property:
   "defaults": {
     "create": {
       "switch": true,
-      "launch": true
+      "launch": "auto"
     },
     "editors": {
       "vscode": {
         "create": {
-          "launch": true,
-          "launchMode": "sesh"
+          "launch": "sesh"
         }
       }
     },
@@ -67,21 +66,14 @@ You can set command-scoped defaults under `defaults`.
 
 ### `defaults.create`
 
-- `switch` (boolean): default auto-switch behavior after create
-- `launch` (boolean): default launch behavior after create
-- `launchMode` (`auto` | `sesh` | `herdr`): preferred launch mode when launch is enabled
+- `switch` (boolean): independent post-create switch handling
+- `launch` (`none` | `auto` | `sesh` | `herdr`): the single post-create launch choice
 
-Create defaults are unchanged by the unified switch mode. `defaults.create.launchMode` remains independent and supported.
+An absent `launch` preserves built-in no-launch behavior. `none` disables launch without disabling an independently enabled `switch`; `auto` uses context detection; and `sesh` or `herdr` select that launcher directly. Any enabled launch implies switch handling for the newly created primary worktree.
 
 ### `defaults.editors.<host>.create`
 
-Supported hosts: `vscode`, `cursor`, `kiro`
-
-- `switch` (boolean): host-specific auto-switch behavior after create
-- `launch` (boolean): host-specific launch behavior after create
-- `launchMode` (`auto` | `sesh` | `herdr`): preferred launch mode for that editor host
-
-Use editor-scoped defaults when terminal `arashi create` should behave one way, but extension-driven create should behave differently.
+Supported hosts: `vscode`, `cursor`, `kiro`. These scopes use the same `switch` boolean and `launch` vocabulary. Use editor-scoped defaults when terminal `arashi create` should behave one way but an extension-driven create should behave differently.
 
 Example:
 
@@ -90,13 +82,12 @@ Example:
   "defaults": {
     "create": {
       "switch": true,
-      "launch": false
+      "launch": "none"
     },
     "editors": {
       "vscode": {
         "create": {
-          "launch": true,
-          "launchMode": "sesh"
+          "launch": "sesh"
         }
       }
     }
@@ -124,6 +115,12 @@ arashi shell install
 
 If you prefer manual setup, print shell-specific wrapper code with `arashi shell init <bash|zsh|fish>`.
 
+## Legacy create configuration migration
+
+Legacy create `launch` booleans and `launchMode` / `launch_mode` remain readable for a bounded compatibility window. `true` maps to `auto` unless a legacy launcher selects `sesh` or `herdr`; `false` without a launcher maps to `none`; and a launcher without a boolean maps to that launcher. Compatible canonical-plus-legacy values and equal aliases are accepted. Arashi emits one scope-qualified stderr warning with the exact canonical replacement and leaves the source file byte-for-byte unchanged.
+
+A legacy `false` plus any launcher, conflicting aliases, conflicting canonical/legacy choices, invalid launch values, and non-boolean `switch` values are rejected before repository discovery or mutation. Choose the single canonical `launch` value that represents the intended behavior.
+
 ## Legacy switch configuration migration
 
 The switch-only `launchMode` and `launch_mode` fields are accepted for a bounded compatibility window but are no longer in the canonical schema. Migrate them to one `defaults.switch.mode` value:
@@ -142,6 +139,8 @@ The switch-only `launchMode` and `launch_mode` fields are accepted for a bounded
 Equal `launchMode` and `launch_mode` aliases collapse to one value; different aliases are rejected. Accepted legacy fields emit one warning with the exact guidance `use defaults.switch.mode: "<replacement>" instead`. Migration warnings are written to stderr, so JSON stdout remains one structured document. Rejected combinations name the conflicting fields and values and stop before target selection or mutation.
 
 ## Precedence Rules
+
+For `arashi create`, reject `--sesh` plus `--herdr` first. Otherwise explicit `--sesh` / `--herdr` wins (and implies launch), followed by `--launch`, `--no-launch`, the matching configured scope, and built-in `none`. `--switch` / `--no-switch` resolves independently, but launch implies switch. An editor-hosted create uses only its matching scope and does not fall back to terminal or another editor scope.
 
 For `arashi switch`, the effective order is: Explicit launcher flags > `--cd` / `--no-cd` > configured mode > automatic context detection. Conflicting explicit launchers, or `--cd` combined with any explicit launcher, are rejected before switching.
 

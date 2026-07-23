@@ -47,11 +47,12 @@ describe("unified switch mode documentation contract", () => {
     expect(configuration).toContain("JSON stdout remains one structured document");
   });
 
-  test("keeps create launchMode documented as an independent default", () => {
+  test("documents canonical create launch as an independent default", () => {
     const configuration = readProjectFile("docs/configuration.md");
     expect(configuration).toContain("### `defaults.create`");
-    expect(configuration).toContain("`launchMode` (`auto` | `sesh` | `herdr`)");
-    expect(configuration).toContain("Create defaults are unchanged");
+    expect(configuration).toContain("`launch` (`none` | `auto` | `sesh` | `herdr`)");
+    expect(configuration).toContain("`switch` (boolean): independent");
+    expect(configuration).not.toContain("Create defaults are unchanged");
   });
 
   test("publishes explicit switch flag precedence in docs and CLI help", () => {

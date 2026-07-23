@@ -11,23 +11,32 @@ interface ConfigSchema {
   definitions: Record<string, JsonSchemaDefinition>;
 }
 
-describe("generated config schema switch contract", () => {
-  test("advertises one unified switch mode and preserves create launch defaults", async () => {
+describe("generated config schema contracts", () => {
+  test("advertises canonical create launch and the unified switch mode", async () => {
     const schemaPath = join(import.meta.dirname, "..", "..", "schema", "config.schema.json");
     const schema = JSON.parse(await readFile(schemaPath, "utf8")) as ConfigSchema;
 
+    expect(schema.definitions.CreateLaunchMode?.enum).toEqual(["none", "auto", "sesh", "herdr"]);
+    expect(schema.definitions.CreateCommandDefaults?.properties).toEqual({
+      launch: {
+        $ref: "#/definitions/CreateLaunchMode",
+        description: "Post-create launch choice; omitted preserves built-in no-launch behavior",
+      },
+      switch: {
+        description: "Default to switching to the new worktree after create",
+        type: "boolean",
+      },
+    });
+    expect(JSON.stringify(schema.definitions.CreateCommandDefaults)).not.toContain("launchMode");
+    expect(JSON.stringify(schema.definitions.CreateCommandDefaults)).not.toContain("launch_mode");
+
     expect(schema.definitions.SwitchMode?.enum).toEqual(["auto", "cd", "launch", "sesh", "herdr"]);
-    expect(schema.definitions.LaunchMode?.enum).toEqual(["auto", "sesh", "herdr"]);
     expect(schema.definitions.SwitchCommandDefaults?.properties).toEqual({
       mode: {
         $ref: "#/definitions/SwitchMode",
         description: "Preferred switch behavior and launcher when running switch",
       },
     });
-    expect(schema.definitions.CreateCommandDefaults?.properties).toHaveProperty("launch");
-    expect(schema.definitions.CreateCommandDefaults?.properties).toHaveProperty("launchMode");
     expect(schema.definitions.EditorCommandDefaults?.properties).toHaveProperty("create");
-    expect(JSON.stringify(schema.definitions.SwitchCommandDefaults)).not.toContain("launchMode");
-    expect(JSON.stringify(schema.definitions.SwitchCommandDefaults)).not.toContain("launch_mode");
   });
 });

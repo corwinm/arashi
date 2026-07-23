@@ -87,8 +87,7 @@ describe("validateConfig - root level", () => {
     const configWithDefaults = {
       defaults: {
         create: {
-          launch: true,
-          launchMode: "sesh",
+          launch: "sesh",
           switch: true,
         },
         switch: {
@@ -112,12 +111,12 @@ describe("validateConfig - root level", () => {
         editors: {
           cursor: {
             create: {
-              launch: true,
+              launch: "auto",
             },
           },
           vscode: {
             create: {
-              launchMode: "sesh",
+              launch: "sesh",
             },
           },
         },
@@ -147,8 +146,7 @@ describe("validateConfig - root level", () => {
       version: "1.0.0",
     });
 
-    expect(normalized.defaults?.create?.launchMode).toBe("sesh");
-    expect(normalized.defaults?.create?.launch).toBe(true);
+    expect(normalized.defaults?.create?.launch).toBe("sesh");
     expect(normalized.defaults?.switch?.mode).toBe("auto");
   });
 
@@ -156,7 +154,7 @@ describe("validateConfig - root level", () => {
     const normalized = normalizeConfig({
       defaults: {
         create: {
-          launch: true,
+          launch: "auto",
         },
         editors: {
           kiro: {
@@ -176,9 +174,8 @@ describe("validateConfig - root level", () => {
       version: "1.0.0",
     });
 
-    expect(normalized.defaults?.create?.launch).toBe(true);
-    expect(normalized.defaults?.editors?.vscode?.create?.launchMode).toBe("sesh");
-    expect(normalized.defaults?.editors?.vscode?.create?.launch).toBe(true);
+    expect(normalized.defaults?.create?.launch).toBe("auto");
+    expect(normalized.defaults?.editors?.vscode?.create?.launch).toBe("sesh");
     expect(normalized.defaults?.editors?.kiro?.create?.switch).toBe(true);
   });
 

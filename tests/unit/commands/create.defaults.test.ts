@@ -1,13 +1,13 @@
 import { describe, expect, test } from "vitest";
 import type { Config } from "../../../src/lib/config.ts";
-import { createCommand, resolveCreateDefaults } from "../../../src/commands/create.ts";
+import {
+  applyCreateLaunchFlagPrecedence,
+  createCommand,
+  resolveCreateDefaults,
+} from "../../../src/commands/create.ts";
 
-function baseConfig(): Config {
-  return {
-    repos: {},
-    reposDir: "./repos",
-    version: "1.0.0",
-  };
+function configWithDefaults(defaults?: Config["defaults"]): Config {
+  return { defaults, repos: {}, reposDir: "./repos", version: "1.0.0" };
 }
 
 describe("resolveCreateDefaults", () => {
@@ -17,124 +17,99 @@ describe("resolveCreateDefaults", () => {
     ).toContain("implies --launch and --switch");
   });
 
-  test("uses configured defaults when CLI flags are omitted", () => {
-    const config = baseConfig();
-    config.defaults = {
-      create: {
-        launch: true,
-        launchMode: "sesh",
-        switch: true,
-      },
-    };
+  test.each([
+    [undefined, "auto", false, false],
+    ["none", "auto", false, false],
+    ["auto", "auto", true, true],
+    ["sesh", "sesh", true, true],
+    ["herdr", "herdr", true, true],
+  ] as const)(
+    "resolves configured launch %s to internal mode %s",
+    (launch, launchMode, shouldLaunch, shouldSwitch) => {
+      const create = launch === undefined ? undefined : { launch };
+      expect(
+        resolveCreateDefaults({}, configWithDefaults(create ? { create } : undefined)),
+      ).toEqual({
+        launchMode,
+        shouldLaunch,
+        shouldSwitch,
+      });
+    },
+  );
 
-    const resolved = resolveCreateDefaults({}, config);
-
-    expect(resolved).toEqual({
-      launchMode: "sesh",
-      shouldLaunch: true,
-      shouldSwitch: true,
-    });
+  test("keeps switch independent when launch is none", () => {
+    expect(
+      resolveCreateDefaults({}, configWithDefaults({ create: { launch: "none", switch: true } })),
+    ).toEqual({ launchMode: "auto", shouldLaunch: false, shouldSwitch: true });
   });
 
-  test("uses editor-scoped defaults for editor-hosted create invocations", () => {
-    const config = baseConfig();
-    config.defaults = {
-      create: {
-        launch: true,
-        switch: true,
-      },
+  test("launch implies switch despite explicit switch opt-out", () => {
+    expect(
+      resolveCreateDefaults(
+        { switch: false },
+        configWithDefaults({ create: { launch: "herdr", switch: false } }),
+      ),
+    ).toEqual({ launchMode: "herdr", shouldLaunch: true, shouldSwitch: true });
+  });
+
+  test.each([
+    ["vscode", "sesh"],
+    ["cursor", "herdr"],
+    ["kiro", "auto"],
+  ] as const)("uses only matching %s editor defaults", (editorHost, launch) => {
+    const config = configWithDefaults({
+      create: { launch: "herdr", switch: true },
       editors: {
-        vscode: {
-          create: {
-            launch: true,
-            launchMode: "sesh",
-          },
-        },
+        cursor: { create: { launch: "herdr" } },
+        kiro: { create: { launch: "auto" } },
+        vscode: { create: { launch: "sesh" } },
       },
-    };
-
-    const resolved = resolveCreateDefaults({ editorHost: "vscode" }, config);
-
-    expect(resolved).toEqual({
-      launchMode: "sesh",
-      shouldLaunch: true,
-      shouldSwitch: true,
     });
+    expect(resolveCreateDefaults({ editorHost }, config)).toMatchObject({ launchMode: launch });
   });
 
-  test("does not fall back to generic defaults for editor-hosted create without overrides", () => {
-    const config = baseConfig();
-    config.defaults = {
-      create: {
-        launch: true,
-        launchMode: "sesh",
-        switch: true,
-      },
-    };
-
-    const resolved = resolveCreateDefaults({ editorHost: "cursor" }, config);
-
-    expect(resolved).toEqual({
-      launchMode: "auto",
-      shouldLaunch: false,
-      shouldSwitch: false,
-    });
+  test("does not fall back to generic defaults when the editor scope is missing", () => {
+    expect(
+      resolveCreateDefaults(
+        { editorHost: "cursor" },
+        configWithDefaults({ create: { launch: "sesh", switch: true } }),
+      ),
+    ).toEqual({ launchMode: "auto", shouldLaunch: false, shouldSwitch: false });
   });
 
-  test("allows CLI opt-out flags to disable configured defaults", () => {
-    const config = baseConfig();
-    config.defaults = {
-      create: {
-        launch: true,
-        launchMode: "sesh",
-        switch: true,
-      },
-    };
-
+  test.each([
+    [{ launch: true }, "auto", true],
+    [{ launch: false }, "auto", false],
+    [{ launch: true, sesh: true }, "sesh", true],
+    [{ launch: false, sesh: true }, "sesh", true],
+    [{ herdr: true, launch: true }, "herdr", true],
+    [{ herdr: true, launch: false }, "herdr", true],
+  ] as const)("applies CLI precedence for %#", (options, launchMode, shouldLaunch) => {
     const resolved = resolveCreateDefaults(
-      {
-        launch: false,
-        switch: false,
-      },
-      config,
+      options,
+      configWithDefaults({ create: { launch: "herdr", switch: false } }),
     );
-
-    expect(resolved).toEqual({
-      launchMode: "auto",
-      shouldLaunch: false,
-      shouldSwitch: false,
-    });
+    expect(resolved.launchMode).toBe(launchMode);
+    expect(resolved.shouldLaunch).toBe(shouldLaunch);
+    expect(resolved.shouldSwitch).toBe(resolved.shouldLaunch);
   });
 
-  test("allows explicit CLI launch options to override config defaults", () => {
-    const config = baseConfig();
-    config.defaults = {
-      create: {
-        launch: false,
-        switch: false,
-      },
-    };
-
-    const resolved = resolveCreateDefaults(
-      {
+  test("applies --launch before --no-launch regardless of argument order", () => {
+    for (const rawArgs of [
+      ["--launch", "--no-launch"],
+      ["--no-launch", "--launch"],
+    ]) {
+      expect(applyCreateLaunchFlagPrecedence({ launch: false }, rawArgs)).toMatchObject({
         launch: true,
-        sesh: true,
-      },
-      config,
-    );
-
-    expect(resolved).toEqual({
-      launchMode: "sesh",
-      shouldLaunch: true,
-      shouldSwitch: true,
-    });
+      });
+    }
   });
 
   test.each([
     { launch: false, tmux: true },
     { switch: false, tmux: true },
   ])("explicit tmux implies launch and switch despite opt-out %#", (options) => {
-    expect(resolveCreateDefaults(options, baseConfig())).toEqual({
+    expect(resolveCreateDefaults(options, configWithDefaults())).toEqual({
       launchMode: "tmux",
       shouldLaunch: true,
       shouldSwitch: true,
@@ -145,47 +120,14 @@ describe("resolveCreateDefaults", () => {
     "rejects explicit tmux with explicit %s before defaults resolve",
     (launcher) => {
       expect(() =>
-        resolveCreateDefaults({ tmux: true, [launcher]: true }, baseConfig()),
+        resolveCreateDefaults({ tmux: true, [launcher]: true }, configWithDefaults()),
       ).toThrowError(new RegExp(`--tmux, --${launcher}`));
     },
   );
 
-  test("allows explicit CLI options to override editor-scoped defaults", () => {
-    const config = baseConfig();
-    config.defaults = {
-      editors: {
-        vscode: {
-          create: {
-            launch: false,
-            switch: false,
-          },
-        },
-      },
-    };
-
-    const resolved = resolveCreateDefaults(
-      {
-        editorHost: "vscode",
-        launch: true,
-        sesh: true,
-      },
-      config,
+  test("rejects simultaneous explicit launchers", () => {
+    expect(() => resolveCreateDefaults({ herdr: true, sesh: true }, configWithDefaults())).toThrow(
+      "Choose exactly one explicit create launcher",
     );
-
-    expect(resolved).toEqual({
-      launchMode: "sesh",
-      shouldLaunch: true,
-      shouldSwitch: true,
-    });
-  });
-
-  test("preserves backward-compatible behavior when defaults are absent", () => {
-    const resolved = resolveCreateDefaults({}, baseConfig());
-
-    expect(resolved).toEqual({
-      launchMode: "auto",
-      shouldLaunch: false,
-      shouldSwitch: false,
-    });
   });
 });
