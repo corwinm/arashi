@@ -144,6 +144,8 @@ For `arashi create`, reject `--sesh` plus `--herdr` first. Otherwise explicit `-
 
 For `arashi switch`, the effective order is: Explicit launcher flags > `--cd` / `--no-cd` > configured mode > automatic context detection. Conflicting explicit launchers, or `--cd` combined with any explicit launcher, are rejected before switching.
 
+`--tmux` is a per-invocation explicit launcher for both `switch` and `create`; it is not part of either persisted mode vocabulary. It requires `TMUX` to be non-empty after trimming and does not fall back when the prerequisite or tmux subprocess fails. For switch, `--tmux` conflicts with `--cd`, `--sesh`, `--herdr`, `--vscode`, `--cursor`, and `--kiro`; `--tmux` + `--no-cd` and `--tmux` + `--no-default-launch` remain valid because the explicit launcher wins. For create, `--tmux` conflicts with `--sesh` and `--herdr`, implies launch and switch, and overrides `--no-launch` and `--no-switch`. JSON mode rejects explicit tmux before conflict or context validation and before mutation.
+
 Across command defaults generally, Arashi resolves values in this order:
 
 1. Explicit CLI flag

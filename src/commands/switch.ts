@@ -47,6 +47,7 @@ const KEY_SEPARATOR = "\u0000";
 export interface SwitchCommandOptions {
   herdr?: boolean;
   sesh?: boolean;
+  tmux?: boolean;
   cd?: boolean;
   vscode?: boolean;
   cursor?: boolean;
@@ -63,6 +64,7 @@ interface LaunchResolution {
   preferredIde?: SupportedIde;
   requirePreferredIde?: boolean;
   sesh?: boolean;
+  tmux?: boolean;
 }
 
 interface SwitchBehaviorResolution {
@@ -120,6 +122,7 @@ export interface SwitchCommandDependencies {
       preferredIde?: SupportedIde;
       requirePreferredIde?: boolean;
       sesh?: boolean;
+      tmux?: boolean;
     },
     deps: {
       env: Record<string, string | undefined>;
@@ -148,6 +151,7 @@ export function createCommand(): Command {
     .argument("[filter]", "Filter targets by branch name or worktree path")
     .option("--path", "Treat argument as exact worktree path")
     .option("--sesh", "Use sesh in tmux mode")
+    .option("--tmux", "Force launch in a new plain tmux window")
     .option("--herdr", "Open or focus the selected worktree in Herdr")
     .option("--cd", "Change the current shell directory when shell integration is active")
     .option("--no-cd", "Disable parent-shell directory switching for this invocation")
@@ -192,11 +196,30 @@ Precedence: explicit launcher flags, --cd/--no-cd, configured mode, then automat
     });
 }
 
+export function executeSwitch(
+  filter: string | undefined,
+  options: SwitchCommandOptions & { json: true },
+  deps?: SwitchCommandDependencies,
+): Promise<number>;
+export function executeSwitch(
+  filter: string | undefined,
+  options: SwitchCommandOptions & { json?: false },
+  deps?: SwitchCommandDependencies,
+): Promise<SwitchExecutionResult>;
+export function executeSwitch(
+  filter: string | undefined,
+  options: SwitchCommandOptions,
+  deps?: SwitchCommandDependencies,
+): Promise<SwitchExecutionResult | number>;
 export async function executeSwitch(
   filter: string | undefined,
   options: SwitchCommandOptions,
   deps: SwitchCommandDependencies = {},
-): Promise<SwitchExecutionResult> {
+): Promise<SwitchExecutionResult | number> {
+  if (options.json) {
+    writeJsonEnvelope(unsupportedJsonModeError("switch", "launch"));
+    return USAGE_EXIT_CODE;
+  }
   const resolveWorkspaceRoot = deps.findWorkspaceRoot ?? findWorkspaceRoot;
   const resolveWorkspaceRepositories = deps.loadWorkspaceRepositories ?? loadWorkspaceRepositories;
   const discoverCandidates = deps.discoverSwitchCandidates ?? discoverSwitchCandidates;
@@ -346,6 +369,7 @@ export async function executeSwitch(
       preferredIde: resolvedLaunch.preferredIde,
       requirePreferredIde: resolvedLaunch.requirePreferredIde,
       sesh: resolvedLaunch.sesh,
+      tmux: resolvedLaunch.tmux,
     },
     {
       env: commandEnv,
@@ -394,6 +418,7 @@ const handleSwitchError = (error: unknown): never => {
     if (
       error.code === SwitchCommandErrorCode.CONFLICTING_LAUNCH_OPTIONS ||
       error.code === SwitchCommandErrorCode.CONFLICTING_SWITCH_OPTIONS ||
+      error.code === SwitchCommandErrorCode.TMUX_CONTEXT_REQUIRED ||
       error.code === SwitchCommandErrorCode.SESH_REQUIRES_TMUX ||
       error.code === SwitchCommandErrorCode.SESH_NOT_FOUND ||
       error.code === SwitchCommandErrorCode.IDE_NOT_FOUND
@@ -666,8 +691,11 @@ export const resolveSwitchResolution = ({
 const resolveLaunchOptions = (
   options: SwitchCommandOptions,
   configLaunchMode: LaunchMode | undefined,
-  explicitLauncher: SupportedIde | "sesh" | "herdr" | undefined,
+  explicitLauncher: SupportedIde | "tmux" | "sesh" | "herdr" | undefined,
 ): LaunchResolution => {
+  if (explicitLauncher === "tmux") {
+    return { tmux: true };
+  }
   if (explicitLauncher === HERDR_LAUNCH_MODE) {
     return { herdr: true, sesh: false };
   }
@@ -743,14 +771,15 @@ const resolveSwitchBehavior = ({
 
 const resolveExplicitLauncher = (
   options: SwitchCommandOptions,
-): SupportedIde | "sesh" | "herdr" | undefined => {
+): SupportedIde | "tmux" | "sesh" | "herdr" | undefined => {
   const launchOverrides = [
+    options.tmux === true ? "tmux" : null,
     options.herdr === true ? "herdr" : null,
     options.sesh === true ? "sesh" : null,
     options.vscode === true ? "vscode" : null,
     options.cursor === true ? "cursor" : null,
     options.kiro === true ? "kiro" : null,
-  ].filter((value): value is "sesh" | "herdr" | SupportedIde => value !== null);
+  ].filter((value): value is "tmux" | "sesh" | "herdr" | SupportedIde => value !== null);
 
   if (launchOverrides.length > ONE) {
     throw new SwitchCommandError(

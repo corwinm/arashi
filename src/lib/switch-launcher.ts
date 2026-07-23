@@ -44,6 +44,7 @@ export type SwitchProcessRunner = (
 export interface LaunchSwitchOptions {
   herdr?: boolean;
   sesh?: boolean;
+  tmux?: boolean;
   preferredIde?: SupportedIde;
   requirePreferredIde?: boolean;
 }
@@ -69,6 +70,16 @@ export async function launchSwitchTarget(
   const childEnv = stripDirectiveEnvironment(env);
   const platform = deps.platform ?? process.platform;
   const runProcess = deps.runProcess ?? runSwitchProcess;
+
+  if (options.tmux) {
+    if (!isTmuxSession(env)) {
+      throw new SwitchCommandError(
+        "--tmux requires an active tmux client or session (non-empty TMUX environment variable not detected). Run inside tmux or choose a different launcher.",
+        SwitchCommandErrorCode.TMUX_CONTEXT_REQUIRED,
+      );
+    }
+    return launchWithTmux(candidate, { env: childEnv, runProcess });
+  }
 
   if (options.sesh) {
     if (!isTmuxSession(env)) {
@@ -131,24 +142,7 @@ export async function launchSwitchTarget(
 
   const managedContext = detectManagedSwitchContext(env);
   if (managedContext === "tmux") {
-    const tmuxCommand = ["tmux", "new-window", "-c", candidate.worktreePath];
-    const tmuxResult = await runProcess(tmuxCommand, {
-      cwd: candidate.worktreePath,
-      env: childEnv,
-    });
-
-    if (tmuxResult.exitCode !== 0) {
-      throwLaunchFailure(
-        candidate.worktreePath,
-        tmuxCommand,
-        tmuxResult.stderr || tmuxResult.stdout,
-      );
-    }
-
-    return {
-      command: tmuxCommand,
-      mode: "tmux",
-    };
+    return launchWithTmux(candidate, { env: childEnv, runProcess });
   }
 
   if (managedContext === "herdr") {
@@ -353,6 +347,21 @@ export async function runSwitchProcess(
 
 function buildSeshTmuxCommand(worktreePath: string): string[] {
   return ["tmux", "new-window", "-c", worktreePath, `sesh connect ${shellQuote(worktreePath)}`];
+}
+
+async function launchWithTmux(
+  candidate: SwitchCandidate,
+  deps: { env: Record<string, string | undefined>; runProcess: SwitchProcessRunner },
+): Promise<LaunchSwitchResult> {
+  const command = ["tmux", "new-window", "-c", candidate.worktreePath];
+  const result = await deps.runProcess(command, {
+    cwd: candidate.worktreePath,
+    env: deps.env,
+  });
+  if (result.exitCode !== 0) {
+    throwLaunchFailure(candidate.worktreePath, command, result.stderr || result.stdout);
+  }
+  return { command, mode: "tmux" };
 }
 
 function shellQuote(value: string): string {

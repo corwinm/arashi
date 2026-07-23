@@ -71,4 +71,21 @@ describe("unified switch mode documentation contract", () => {
       )?.description,
     ).toBe("Bypass a configured sesh or Herdr mode for this invocation");
   });
+
+  test("documents explicit tmux switch and create launch without changing config modes", () => {
+    const readme = readProjectFile("README.md");
+    const configuration = readProjectFile("docs/configuration.md");
+    const switchDocs = readProjectFile("docs/commands/switch.md");
+    expect(readme).toContain("arashi switch --tmux feature-auth-refresh");
+    expect(readme).toContain("arashi create feature-auth-refresh --tmux");
+    for (const contents of [readme, configuration, switchDocs]) {
+      expect(contents).toContain("non-empty after trimming");
+      expect(contents).toContain("does not fall back");
+      expect(contents).toContain("per-invocation");
+    }
+    expect(configuration).toContain("`--tmux` + `--no-cd`");
+    expect(configuration).toContain("`--tmux` + `--no-default-launch`");
+    expect(switchDocs).toContain("--tmux --sesh");
+    expect(switchDocs).toContain("JSON_UNSUPPORTED_FOR_MODE");
+  });
 });

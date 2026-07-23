@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { Config } from "../../../src/lib/config.ts";
 import {
   applyCreateLaunchFlagPrecedence,
+  createCommand,
   resolveCreateDefaults,
 } from "../../../src/commands/create.ts";
 
@@ -10,6 +11,12 @@ function configWithDefaults(defaults?: Config["defaults"]): Config {
 }
 
 describe("resolveCreateDefaults", () => {
+  test("registers explicit plain tmux launch", () => {
+    expect(
+      createCommand().options.find((option) => option.long === "--tmux")?.description,
+    ).toContain("implies --launch and --switch");
+  });
+
   test.each([
     [undefined, "auto", false, false],
     ["none", "auto", false, false],
@@ -97,6 +104,26 @@ describe("resolveCreateDefaults", () => {
       });
     }
   });
+
+  test.each([
+    { launch: false, tmux: true },
+    { switch: false, tmux: true },
+  ])("explicit tmux implies launch and switch despite opt-out %#", (options) => {
+    expect(resolveCreateDefaults(options, configWithDefaults())).toEqual({
+      launchMode: "tmux",
+      shouldLaunch: true,
+      shouldSwitch: true,
+    });
+  });
+
+  test.each(["sesh", "herdr"] as const)(
+    "rejects explicit tmux with explicit %s before defaults resolve",
+    (launcher) => {
+      expect(() =>
+        resolveCreateDefaults({ tmux: true, [launcher]: true }, configWithDefaults()),
+      ).toThrowError(new RegExp(`--tmux, --${launcher}`));
+    },
+  );
 
   test("rejects simultaneous explicit launchers", () => {
     expect(() => resolveCreateDefaults({ herdr: true, sesh: true }, configWithDefaults())).toThrow(

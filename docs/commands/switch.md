@@ -10,6 +10,7 @@ arashi switch [filter] [options]
 
 ## Options
 
+- `--tmux` Force a new plain tmux window for this invocation
 - `--sesh` Use `sesh` in tmux mode (requires active tmux session)
 - `--herdr` Open or focus the selected worktree in Herdr
 - `--cd` Request parent-shell directory switching for this invocation
@@ -39,6 +40,9 @@ arashi switch feature-auth
 # Use sesh/tmux switching mode
 arashi switch feature-auth --sesh
 
+# Force a plain tmux window
+arashi switch --tmux feature-auth
+
 # Open or focus a persistent Herdr workspace
 arashi switch feature-auth --herdr
 
@@ -63,6 +67,8 @@ arashi switch --no-default-launch
 - In `--repos` mode, filter text matches repository names first (exact match wins; a unique partial match is auto-selected).
 - If `--repos` has no repository matches, Arashi prints available child repositories.
 - Inside tmux, Arashi opens a new tmux window automatically.
+- Explicit `--tmux` is per-invocation only, requires `TMUX` to be non-empty after trimming, and does not fall back to another launcher. It conflicts with `--cd`, `--tmux --sesh`, `--herdr`, `--vscode`, `--cursor`, and `--kiro`; `--no-cd` and `--no-default-launch` are compatible and redundant because explicit tmux wins.
+- `--json --tmux` returns one `JSON_UNSUPPORTED_FOR_MODE` envelope with the existing `launch` mode label before conflict or tmux-context validation.
 - Inside a Herdr-launched shell (`HERDR_ENV=1`), Arashi automatically opens or focuses the selected target in Herdr unless an explicit launcher or active tmux takes precedence.
 - Herdr launch requires the `herdr` CLI, a reachable default Herdr server/socket, and a Git-resolvable non-bare main checkout. Arashi calls `herdr worktree open`; it does not delegate Git worktree creation or removal to Herdr.
 - In Kitty, Ghostty, WezTerm, and iTerm2 terminals, Arashi attempts terminal-native launch commands before generic fallback behavior.

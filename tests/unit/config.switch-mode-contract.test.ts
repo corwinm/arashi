@@ -58,6 +58,20 @@ describe("unified switch config contract", () => {
       switch: { mode: "launch" },
     });
   });
+
+  test.each([
+    ["generic", { defaults: { create: { launch: "tmux" } } }],
+    ["editor-scoped", { defaults: { editors: { vscode: { create: { launch: "tmux" } } } } }],
+  ])("rejects tmux in %s create defaults", (_scope, defaults) => {
+    expect(() =>
+      normalizeConfig({
+        ...defaults,
+        repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
+      }),
+    ).toThrow(/must be one of "none", "auto", "sesh", or "herdr"/);
+  });
 });
 
 describe("legacy switch launch mode normalization", () => {

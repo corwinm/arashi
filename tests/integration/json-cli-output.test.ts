@@ -497,6 +497,23 @@ describe("CLI JSON output contract", () => {
     });
   });
 
+  test("switch --json --tmux rejects before launcher conflicts and blank context", async () => {
+    const cwd = await makeTempDir();
+
+    const result = await runArashi(cwd, ["switch", "--json", "--tmux", "--sesh"]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(parseSingleJsonDocument(result.stdout)).toMatchObject({
+      command: "switch",
+      error: {
+        code: "JSON_UNSUPPORTED_FOR_MODE",
+        details: { mode: "launch" },
+      },
+      ok: false,
+    });
+    expect(result.stderr).toBe("");
+  });
+
   test("create --json --herdr rejects launch mode before repository mutation", async () => {
     const cwd = await makeTempDir();
 
@@ -514,6 +531,31 @@ describe("CLI JSON output contract", () => {
       schemaVersion: 1,
       warnings: [],
     });
+  });
+
+  test("create --json --tmux rejects before conflicts and blank context without mutation", async () => {
+    const cwd = await makeTempDir();
+    await initializeGitRepository(cwd);
+
+    const result = await runArashi(cwd, [
+      "create",
+      "feature-tmux-json",
+      "--json",
+      "--tmux",
+      "--sesh",
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(parseSingleJsonDocument(result.stdout)).toMatchObject({
+      command: "create",
+      error: {
+        code: "JSON_UNSUPPORTED_FOR_MODE",
+        details: { mode: "interactive-or-launch" },
+      },
+      ok: false,
+    });
+    expect(result.stderr).toBe("");
+    expect(await runGit(cwd, ["branch", "--list", "feature-tmux-json"])).toBe("");
   });
 
   test("automation commands expose JSON envelopes or structured unsupported-mode errors", async () => {

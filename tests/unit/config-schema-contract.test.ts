@@ -31,6 +31,12 @@ describe("generated config schema contracts", () => {
     expect(JSON.stringify(schema.definitions.CreateCommandDefaults)).not.toContain("launch_mode");
 
     expect(schema.definitions.SwitchMode?.enum).toEqual(["auto", "cd", "launch", "sesh", "herdr"]);
+    expect(schema.definitions.SwitchCommandDefaults?.properties).toEqual({
+      mode: {
+        $ref: "#/definitions/SwitchMode",
+        description: "Preferred switch behavior and launcher when running switch",
+      },
+    });
     expect(schema.definitions.EditorCommandDefaults?.properties).toHaveProperty("create");
   });
 });

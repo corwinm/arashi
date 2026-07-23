@@ -440,6 +440,133 @@ describe("standalone lifecycle", () => {
     );
   });
 
+  test.skipIf(process.platform === "win32")(
+    "real configured and standalone create --tmux launches the exact created worktree",
+    async () => {
+      for (const configured of [true, false]) {
+        const root = await repository();
+        const canonicalRoot = await realpath(root);
+        if (configured) {
+          await mkdir(join(root, ".arashi"));
+          await writeFile(
+            join(root, ".arashi", "config.json"),
+            JSON.stringify({
+              defaults: { create: { launch: true, launchMode: "sesh", switch: true } },
+              repos: {},
+              reposDir: "./repos",
+              version: "1.0.0",
+              worktreesDir: "./.arashi/worktrees",
+            }),
+          );
+          await run(root, ["git", "add", ".arashi/config.json"]);
+          await run(root, ["git", "commit", "-m", "configure arashi"]);
+        } else {
+          await arashi(root, ["init", "--zero-config"]);
+        }
+
+        const fakeBin = await mkdtemp(join(tmpdir(), "arashi-create-tmux-bin-"));
+        roots.push(fakeBin);
+        const argvPath = join(fakeBin, "tmux.argv");
+        const tmuxPath = join(fakeBin, "tmux");
+        await writeFile(
+          tmuxPath,
+          ["#!", "/bin/sh\n", 'printf \'%s\\n\' "$@" > "$ARASHI_TEST_ARGV"\n'].join(""),
+        );
+        await chmod(tmuxPath, 0o755);
+        const branch = configured ? "tmux-configured" : "tmux-standalone";
+        const result = await arashi(root, ["create", branch, "--tmux"], {
+          ARASHI_TEST_ARGV: argvPath,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          TMUX: "/tmp/tmux/client",
+        });
+        const worktreePath = configured
+          ? join(canonicalRoot, ".arashi", "worktrees", `${basename(canonicalRoot)}-${branch}`)
+          : join(canonicalRoot, ".worktrees", branch);
+
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(await readFile(argvPath, "utf8")).toBe(`new-window\n-c\n${worktreePath}\n`);
+        await expect(access(worktreePath)).resolves.toBeUndefined();
+        if (!configured) {
+          await expect(access(join(root, ".arashi"))).rejects.toThrow();
+        }
+      }
+    },
+  );
+
+  test("explicit tmux missing context is non-mutating in a real standalone repository", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+
+    const result = await arashi(root, ["create", "tmux-preflight", "--tmux"], { TMUX: " " });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("--tmux requires an active tmux");
+    expect((await run(root, ["git", "branch", "--list", "tmux-preflight"])).stdout).toBe("");
+    await expect(access(join(root, ".worktrees", "tmux-preflight"))).rejects.toThrow();
+    await expect(access(join(root, ".arashi"))).rejects.toThrow();
+
+    const switchWorktree = join(root, ".worktrees", "tmux-switch-context");
+    await run(root, ["git", "worktree", "add", "-b", "tmux-switch-context", switchWorktree]);
+    const switchResult = await arashi(root, ["switch", "--tmux", "tmux-switch-context"], {
+      TMUX: " ",
+    });
+    expect(switchResult.exitCode).toBe(2);
+    expect(switchResult.stderr).toContain("--tmux requires an active tmux");
+  });
+
+  test("explicit tmux dry-run previews without requiring active tmux", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+
+    const result = await arashi(root, ["create", "tmux-preview", "--dry-run", "--tmux"], {
+      TMUX: " ",
+    });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Would create worktree");
+    expect((await run(root, ["git", "branch", "--list", "tmux-preview"])).stdout).toBe("");
+    await expect(access(join(root, ".worktrees", "tmux-preview"))).rejects.toThrow();
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "standalone tmux process failure preserves the created worktree without fallback",
+    async () => {
+      const root = await repository();
+      const canonicalRoot = await realpath(root);
+      await arashi(root, ["init", "--zero-config"]);
+      const fakeBin = await mkdtemp(join(tmpdir(), "arashi-create-tmux-fail-bin-"));
+      roots.push(fakeBin);
+      const argvPath = join(fakeBin, "tmux.argv");
+      const tmuxPath = join(fakeBin, "tmux");
+      await writeFile(
+        tmuxPath,
+        [
+          "#!",
+          "/bin/sh\n",
+          'printf \'%s\\n\' "$@" > "$ARASHI_TEST_ARGV"\n',
+          "printf 'tmux failed after create\\n' >&2\n",
+          "exit 23\n",
+        ].join(""),
+      );
+      await chmod(tmuxPath, 0o755);
+
+      const result = await arashi(root, ["create", "tmux-launch-failure", "--tmux"], {
+        ARASHI_TEST_ARGV: argvPath,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        TMUX: "/tmp/tmux/client",
+      });
+      const worktreePath = join(canonicalRoot, ".worktrees", "tmux-launch-failure");
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("tmux failed after create");
+      expect(await readFile(argvPath, "utf8")).toBe(`new-window\n-c\n${worktreePath}\n`);
+      await expect(access(worktreePath)).resolves.toBeUndefined();
+      expect(
+        (await run(root, ["git", "branch", "--list", "tmux-launch-failure"])).stdout,
+      ).toContain("tmux-launch-failure");
+    },
+  );
+
   test("standalone create applies explicit launch, sesh, switch, and opt-out overrides", async () => {
     const root = await repository();
     const canonicalRoot = await realpath(root);
