@@ -111,8 +111,7 @@ describe("create defaults integration", () => {
           createLoadedConfig({
             defaults: {
               create: {
-                launch: true,
-                launchMode: "sesh",
+                launch: "sesh",
                 switch: true,
               },
             },
@@ -138,7 +137,7 @@ describe("create defaults integration", () => {
           createLoadedConfig({
             defaults: {
               create: {
-                launch: true,
+                launch: "auto",
                 switch: true,
               },
             },
@@ -186,14 +185,13 @@ describe("create defaults integration", () => {
           createLoadedConfig({
             defaults: {
               create: {
-                launch: true,
+                launch: "auto",
                 switch: true,
               },
               editors: {
                 vscode: {
                   create: {
-                    launch: true,
-                    launchMode: "sesh",
+                    launch: "sesh",
                   },
                 },
               },
@@ -220,8 +218,7 @@ describe("create defaults integration", () => {
           createLoadedConfig({
             defaults: {
               create: {
-                launch: true,
-                launchMode: "sesh",
+                launch: "sesh",
                 switch: true,
               },
             },
@@ -264,8 +261,7 @@ describe("create defaults integration", () => {
           createLoadedConfig({
             defaults: {
               create: {
-                launch: true,
-                launchMode: "sesh",
+                launch: "sesh",
                 switch: true,
               },
             },
@@ -291,6 +287,39 @@ describe("create defaults integration", () => {
     );
 
     expect(launchCalls).toEqual([{ sesh: false }]);
+  });
+
+  test("rejects configured launch in JSON mode before repository discovery", async () => {
+    let discoveryCalls = 0;
+    const originalWrite = process.stdout.write;
+    let stdout = "";
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      const exitCode = await executeCreate(
+        branchName,
+        { json: true },
+        baseDeps({
+          discoverRepositories: async () => {
+            discoveryCalls += 1;
+            throw new Error("repository discovery must not run");
+          },
+          loadConfigWithFallback: async () =>
+            createLoadedConfig({ defaults: { create: { launch: "auto" } } }),
+        }),
+      );
+      expect(exitCode).toBe(1);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+    expect(discoveryCalls).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      command: "create",
+      error: { code: "JSON_UNSUPPORTED_FOR_MODE", details: { mode: "interactive-or-launch" } },
+      ok: false,
+    });
   });
 
   test("retains managed ignore state when rollback leaves a residual worktree", async () => {

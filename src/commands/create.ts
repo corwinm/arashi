@@ -45,7 +45,6 @@ import {
   findEmptyRepositoryFilters,
 } from "../lib/repo-filter.ts";
 import { launchSwitchTarget } from "../lib/switch-launcher.ts";
-import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 import {
   reconcileManagedIgnore,
   restoreManagedIgnore,
@@ -127,6 +126,9 @@ const createCommandErrorCode = (createError: unknown): string => {
     return "WORKSPACE_CONFIG_NOT_FOUND";
   }
   if (createError instanceof StandaloneDestinationNotIgnoredError) {
+    return createError.code;
+  }
+  if (createError instanceof SwitchCommandError) {
     return createError.code;
   }
   if (createError instanceof ConflictAbortedError) {
@@ -467,6 +469,16 @@ const resolveEnabledFlag = (options: { positive?: boolean; negative?: boolean })
   return true;
 };
 
+export function applyCreateLaunchFlagPrecedence(
+  options: CreateCommandOptions,
+  rawArgs: readonly string[],
+): CreateCommandOptions {
+  if (rawArgs.includes("--launch") && rawArgs.includes("--no-launch")) {
+    return { ...options, launch: true };
+  }
+  return options;
+}
+
 export function resolveCreateDefaults(
   options: CreateCommandOptions,
   workspaceConfig: Config,
@@ -474,36 +486,23 @@ export function resolveCreateDefaults(
   validateCreateLaunchOptions(options);
   const createDefaults = resolveConfiguredCreateDefaults(options, workspaceConfig);
 
-  const switchResolution = resolveDefaultWithPrecedence<boolean>({
-    builtInValue: false,
-    configValue: createDefaults?.switch,
-    explicitValue: true,
-    hasExplicitValue: options.switch === true,
-    optOut: options.switch === false,
-  });
-  const launchResolution = resolveDefaultWithPrecedence<boolean>({
-    builtInValue: false,
-    configValue: createDefaults?.launch,
-    explicitValue: true,
-    hasExplicitValue: options.launch === true || options.sesh === true || options.herdr === true,
-    optOut: options.launch === false && options.herdr !== true && options.sesh !== true,
-  });
+  let resolvedLaunch = createDefaults?.launch ?? "none";
+  if (options.herdr === true) resolvedLaunch = HERDR_LAUNCH_MODE;
+  else if (options.sesh === true) resolvedLaunch = SESH_LAUNCH_MODE;
+  else if (options.launch === true) resolvedLaunch = AUTO_LAUNCH_MODE;
+  else if (options.launch === false) resolvedLaunch = "none";
 
-  const launchModeResolution = resolveDefaultWithPrecedence<LaunchMode>({
-    builtInValue: AUTO_LAUNCH_MODE,
-    configValue: createDefaults?.launchMode,
-    explicitValue: options.herdr ? HERDR_LAUNCH_MODE : SESH_LAUNCH_MODE,
-    hasExplicitValue: options.sesh === true || options.herdr === true,
-    optOut: options.launch === false && options.herdr !== true && options.sesh !== true,
-  });
+  let resolvedSwitch = createDefaults?.switch ?? false;
+  if (options.switch === true) resolvedSwitch = true;
+  else if (options.switch === false) resolvedSwitch = false;
 
-  const shouldLaunch = launchResolution.value;
-  const shouldSwitch = shouldLaunch || switchResolution.value;
-
+  const shouldLaunch = resolvedLaunch !== "none";
+  let launchMode: LaunchMode = AUTO_LAUNCH_MODE;
+  if (resolvedLaunch === "sesh" || resolvedLaunch === "herdr") launchMode = resolvedLaunch;
   return {
-    launchMode: shouldLaunch ? launchModeResolution.value : AUTO_LAUNCH_MODE,
+    launchMode,
     shouldLaunch,
-    shouldSwitch,
+    shouldSwitch: shouldLaunch || resolvedSwitch,
   };
 }
 
@@ -694,18 +693,26 @@ Examples:
   $ arashi create feature-branch --conflict REUSE_EXISTING
   $ arashi create feature-branch --dry-run
   $ arashi create feature-branch --no-launch --no-switch --json
+
+Configured create launch values: none | auto | sesh | herdr
+Precedence: --sesh/--herdr, --launch, --no-launch, matching configured scope, then none.
+Any enabled launch implies post-create switch handling.
 `,
     )
-    .action(async (branchName: string, options: CreateCommandOptions) => {
-      if (
-        options.json &&
-        (options.interactive || options.launch || options.sesh || options.herdr || options.switch)
-      ) {
-        writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
-        process.exit(ERROR_EXIT_CODE);
-      }
+    .action(async (branchName: string, parsedOptions: CreateCommandOptions, command: Command) => {
+      const rawArgs = command.parent?.args ?? process.argv.slice(2);
+      const options = applyCreateLaunchFlagPrecedence(parsedOptions, rawArgs);
 
       try {
+        validateCreateLaunchOptions(options);
+        if (
+          options.json &&
+          (options.interactive || options.launch || options.sesh || options.herdr || options.switch)
+        ) {
+          writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
+          process.exit(ERROR_EXIT_CODE);
+        }
+
         const exitCode = await executeCreate(branchName, options);
         process.exit(exitCode);
       } catch (createError) {
@@ -779,6 +786,11 @@ export async function executeCreate(
 
   const workspaceContext = await resolveWorkspaceContext();
   if (workspaceContext.mode === "standalone") {
+    const standaloneDefaults = resolveCreateDefaults(options, workspaceContext.config);
+    if (options.json && standaloneDefaults.shouldLaunch) {
+      writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
+      return ERROR_EXIT_CODE;
+    }
     if (options.only || options.group || options.interactive) {
       throw new CreateSetupError(
         "Repository selection is not meaningful in standalone mode; omit --only, --group, and --interactive.",
@@ -857,6 +869,10 @@ export async function executeCreate(
   // Convert reposDir to absolute path since it may be relative (e.g., "./repos")
   const currentDir = context.executionPath;
   const createDefaults = resolveCreateDefaults(options, arashiConfig);
+  if (options.json && createDefaults.shouldLaunch) {
+    writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
+    return ERROR_EXIT_CODE;
+  }
   const reposDirAbsolute = resolve(currentDir, arashiConfig.reposDir);
   const discoveryResult = await discoverWorkspaceRepositories(reposDirAbsolute);
 

@@ -300,13 +300,12 @@ Example config header:
   "defaults": {
     "create": {
       "switch": true,
-      "launch": false
+      "launch": "none"
     },
     "editors": {
       "vscode": {
         "create": {
-          "launch": true,
-          "launchMode": "sesh"
+          "launch": "sesh"
         }
       }
     },
@@ -324,9 +323,13 @@ Explicit launcher flags take precedence over `--cd` / `--no-cd`, which take prec
 
 Legacy switch-only `launchMode` and `launch_mode` fields remain readable for a bounded compatibility window. Arashi warns with the exact replacement `defaults.switch.mode` on stderr; migrate promptly. Ambiguous `cd` plus an explicit legacy launcher and conflicting legacy aliases are rejected.
 
-Use `defaults.create` for terminal `arashi create` behavior. Use `defaults.editors.<host>.create` for editor-specific overrides such as VS Code extension create flows. Supported hosts are `vscode`, `cursor`, and `kiro`.
+Use `defaults.create` for terminal `arashi create` behavior. Use `defaults.editors.<host>.create` for editor-specific overrides such as VS Code extension create flows. Supported hosts are `vscode`, `cursor`, and `kiro`. Each scope has one canonical `launch` choice: `none` | `auto` | `sesh` | `herdr`. `switch` stays independent, while any enabled launch implies switch handling for the newly created primary worktree.
 
-Defaults precedence for create/switch behavior: explicit CLI flag > opt-out flag > config default > built-in default. For editor-hosted `create`, Arashi uses the matching `defaults.editors.<host>.create` override when present and otherwise skips post-create defaults instead of falling back to terminal defaults.
+Create precedence is: reject `--sesh` plus `--herdr`; then explicit `--sesh` / `--herdr`; `--launch`; `--no-launch`; the matching configured scope; and built-in `none`. An editor-hosted invocation does not fall back to terminal or another editor scope.
+
+Legacy create booleans plus `launchMode` / `launch_mode` remain readable for a bounded compatibility window. Accepted combinations warn on stderr with the exact canonical replacement and do not rewrite the file. Disabled launch plus a launcher, conflicting aliases, and conflicting canonical/legacy choices are rejected before workspace mutation.
+
+Defaults precedence for unrelated switch behavior remains unchanged.
 
 ## skills.sh Integration
 

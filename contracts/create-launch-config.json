@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "canonicalField": "defaults.create.launch",
+  "modes": ["none", "auto", "sesh", "herdr"],
+  "absentMode": "none",
+  "switch": {
+    "field": "defaults.create.switch",
+    "type": "boolean",
+    "independent": true,
+    "launchImpliesSwitch": true
+  },
+  "editorHosts": ["vscode", "cursor", "kiro"],
+  "editorScope": "defaults.editors.<host>.create",
+  "editorScopeFallback": "none",
+  "cliPrecedence": ["explicit-launcher", "launch", "no-launch", "configured", "none"],
+  "legacyFields": ["launch:boolean", "launchMode", "launch_mode"],
+  "acceptedMigrations": [
+    "launcher-without-boolean",
+    "true-with-absent-or-launcher",
+    "false-without-launcher",
+    "canonical-with-compatible-launcher",
+    "equal-launcher-aliases"
+  ],
+  "rejectedMigrations": [
+    "false-with-launcher",
+    "conflicting-launcher-aliases",
+    "none-with-launcher",
+    "auto-with-explicit-launcher",
+    "opposite-explicit-launchers",
+    "invalid-values"
+  ],
+  "jsonRestrictedModes": ["auto", "sesh", "herdr"],
+  "failurePreservesCreatedWorktrees": true
+}

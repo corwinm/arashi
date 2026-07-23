@@ -329,11 +329,8 @@ describe("Herdr configuration and command resolution", () => {
       reposDir: "./repos",
       version: "1.0.0",
     });
-    expect(normalized.defaults?.create).toMatchObject({ launch: true, launchMode: "herdr" });
-    expect(normalized.defaults?.editors?.vscode?.create).toMatchObject({
-      launch: true,
-      launchMode: "herdr",
-    });
+    expect(normalized.defaults?.create).toEqual({ launch: "herdr" });
+    expect(normalized.defaults?.editors?.vscode?.create).toEqual({ launch: "herdr" });
     expect(normalized.defaults?.switch?.mode).toBe("herdr");
     const legacy = normalizeConfig({
       defaults: { switch: { launch_mode: "herdr" } },
@@ -363,7 +360,7 @@ describe("Herdr configuration and command resolution", () => {
 
   test("configured create Herdr is suppressed by --no-launch", () => {
     const config = baseConfig();
-    config.defaults = { create: { launchMode: "herdr" } };
+    config.defaults = { create: { launch: "herdr" } };
     expect(resolveCreateDefaults({ launch: false }, config)).toEqual({
       launchMode: "auto",
       shouldLaunch: false,
@@ -405,7 +402,7 @@ describe("Herdr configuration and command resolution", () => {
   });
 
   test("passes explicit/configured Herdr into switch launcher and honors opt-out", async () => {
-    const calls: Array<{ herdr?: boolean }> = [];
+    const calls: { herdr?: boolean }[] = [];
     for (const [options, configured] of [
       [{ herdr: true }, true],
       [{}, true],
@@ -445,7 +442,7 @@ describe("Herdr create integration", () => {
       createDeps({
         env: { TMUX: "/tmp/tmux/default" },
         loadConfigWithFallback: async () =>
-          loadedConfig({ defaults: { create: { launch: true, launchMode: "auto" } } }),
+          loadedConfig({ defaults: { create: { launch: "auto" } } }),
         resolveGitMainWorktree: async () => {
           resolutionCalls += 1;
           return workspaceRoot;
