@@ -83,16 +83,15 @@ export interface Config {
 }
 
 export type LaunchMode = "auto" | "sesh" | "herdr";
+export type CreateLaunchMode = "none" | "auto" | "sesh" | "herdr";
 export type SwitchMode = "auto" | "cd" | "launch" | "sesh" | "herdr";
 export type CreateDefaultsEditorHost = "vscode" | "cursor" | "kiro";
 
 export interface CreateCommandDefaults {
   /** Default to switching to the new worktree after create */
   switch?: boolean;
-  /** Default to launching a terminal/editor context after create */
-  launch?: boolean;
-  /** Preferred launch mode for create-triggered launch */
-  launchMode?: LaunchMode;
+  /** Post-create launch choice; omitted preserves built-in no-launch behavior */
+  launch?: CreateLaunchMode;
 }
 
 export interface SwitchCommandDefaults {
@@ -146,12 +145,24 @@ export interface LoadedConfig {
   configPath: string;
 }
 
-export interface ConfigDiagnostic {
+export interface DeprecatedSwitchLaunchModeDiagnostic {
   code: "DEPRECATED_SWITCH_LAUNCH_MODE";
   fields: string[];
   message: string;
   replacementMode: SwitchMode;
 }
+
+export interface DeprecatedCreateLaunchFieldsDiagnostic {
+  code: "DEPRECATED_CREATE_LAUNCH_FIELDS";
+  fields: string[];
+  message: string;
+  replacementLaunch: CreateLaunchMode;
+  scope: string;
+}
+
+export type ConfigDiagnostic =
+  | DeprecatedCreateLaunchFieldsDiagnostic
+  | DeprecatedSwitchLaunchModeDiagnostic;
 
 export interface ConfigNormalizationResult {
   config: Config;
@@ -605,40 +616,102 @@ const normalizeSwitchMode = (value: unknown): SwitchMode | undefined => {
   return undefined;
 };
 
-const normalizeCreateCommandDefaults = (value: unknown): CreateCommandDefaults | undefined => {
+const normalizeCreateLaunchMode = (value: unknown): CreateLaunchMode | undefined => {
+  if (value === "none") return value;
+  return normalizeLaunchMode(value);
+};
+
+const normalizeCreateCommandDefaults = (
+  value: unknown,
+  scope: string,
+  errors: string[],
+  diagnostics: ConfigDiagnostic[],
+): CreateCommandDefaults | undefined => {
+  if (value === undefined) return undefined;
   if (!isRecord(value)) {
+    errors.push(`${scope}: must be an object if present`);
     return undefined;
   }
 
   const normalized: CreateCommandDefaults = {};
-
-  if (typeof value.switch === "boolean") {
-    normalized.switch = value.switch;
+  if (value.switch !== undefined) {
+    if (typeof value.switch === "boolean") normalized.switch = value.switch;
+    else errors.push(`${scope}.switch: must be a boolean if present`);
   }
 
-  if (typeof value.launch === "boolean") {
-    normalized.launch = value.launch;
+  const rawLaunch = value.launch;
+  const canonicalLaunch = normalizeCreateLaunchMode(rawLaunch);
+  const legacyBoolean = typeof rawLaunch === "boolean" ? rawLaunch : undefined;
+  if (rawLaunch !== undefined && canonicalLaunch === undefined && legacyBoolean === undefined) {
+    errors.push(`${scope}.launch: must be one of "none", "auto", "sesh", or "herdr"`);
   }
 
-  const launchMode = normalizeLaunchMode(
-    getFirstDefined(value.launchMode as unknown, value.launch_mode as unknown),
-  );
-  if (launchMode !== undefined) {
-    normalized.launchMode = launchMode;
-    if (normalized.launch === undefined) {
-      normalized.launch = true;
+  if (
+    value.launchMode !== undefined &&
+    value.launch_mode !== undefined &&
+    value.launchMode !== value.launch_mode
+  ) {
+    errors.push(
+      `${scope}.launchMode: ${JSON.stringify(value.launchMode)} conflicts with ${scope}.launch_mode: ${JSON.stringify(value.launch_mode)}; remove both legacy fields and set ${scope}.launch to one supported value`,
+    );
+    return Object.keys(normalized).length > ZERO ? normalized : undefined;
+  }
+
+  const camelLaunchMode = normalizeLaunchMode(value.launchMode);
+  const snakeLaunchMode = normalizeLaunchMode(value.launch_mode);
+  if (value.launchMode !== undefined && camelLaunchMode === undefined) {
+    errors.push(`${scope}.launchMode: must be one of "auto", "sesh", or "herdr"`);
+  }
+  if (value.launch_mode !== undefined && snakeLaunchMode === undefined) {
+    errors.push(`${scope}.launch_mode: must be one of "auto", "sesh", or "herdr"`);
+  }
+  const legacyLauncher = camelLaunchMode ?? snakeLaunchMode;
+  let replacementLaunch = canonicalLaunch;
+  let combinationValid = true;
+
+  if (legacyBoolean === false) {
+    if (legacyLauncher !== undefined) {
+      const field = camelLaunchMode !== undefined ? "launchMode" : "launch_mode";
+      errors.push(
+        `${scope}.launch: false cannot be combined with legacy ${scope}.${field}: "${legacyLauncher}"; choose ${scope}.launch: "none" or "${legacyLauncher}"`,
+      );
+      combinationValid = false;
+    } else replacementLaunch = "none";
+  } else if (legacyBoolean === true) {
+    replacementLaunch = legacyLauncher ?? "auto";
+  } else if (canonicalLaunch === undefined) {
+    replacementLaunch = legacyLauncher;
+  } else if (legacyLauncher !== undefined) {
+    const compatible =
+      (canonicalLaunch === "auto" && legacyLauncher === "auto") ||
+      ((canonicalLaunch === "sesh" || canonicalLaunch === "herdr") &&
+        (legacyLauncher === "auto" || legacyLauncher === canonicalLaunch));
+    if (!compatible) {
+      const field = camelLaunchMode !== undefined ? "launchMode" : "launch_mode";
+      errors.push(
+        `${scope}.launch: "${canonicalLaunch}" conflicts with legacy ${scope}.${field}: "${legacyLauncher}"; choose ${scope}.launch: "${canonicalLaunch}" or "${legacyLauncher}"`,
+      );
+      combinationValid = false;
     }
   }
 
-  if (normalized.launch === false) {
-    delete normalized.launchMode;
+  if (replacementLaunch !== undefined && combinationValid) normalized.launch = replacementLaunch;
+
+  const legacyFields: string[] = [];
+  if (legacyBoolean !== undefined) legacyFields.push(`${scope}.launch`);
+  if (camelLaunchMode !== undefined) legacyFields.push(`${scope}.launchMode`);
+  if (snakeLaunchMode !== undefined) legacyFields.push(`${scope}.launch_mode`);
+  if (legacyFields.length > ZERO && replacementLaunch !== undefined && combinationValid) {
+    diagnostics.push({
+      code: "DEPRECATED_CREATE_LAUNCH_FIELDS",
+      fields: legacyFields,
+      message: `${legacyFields.join(" and ")} ${legacyFields.length === 1 ? "is" : "are"} deprecated; use ${scope}.launch: "${replacementLaunch}" instead.`,
+      replacementLaunch,
+      scope,
+    });
   }
 
-  if (Object.keys(normalized).length > ZERO) {
-    return normalized;
-  }
-
-  return undefined;
+  return Object.keys(normalized).length > ZERO ? normalized : undefined;
 };
 
 const normalizeSwitchCommandDefaults = (
@@ -718,12 +791,22 @@ const normalizeSwitchCommandDefaults = (
   return { mode: replacementMode };
 };
 
-const normalizeEditorCommandDefaults = (value: unknown): EditorCommandDefaults | undefined => {
+const normalizeEditorCommandDefaults = (
+  value: unknown,
+  host: CreateDefaultsEditorHost,
+  errors: string[],
+  diagnostics: ConfigDiagnostic[],
+): EditorCommandDefaults | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
 
-  const createDefaults = normalizeCreateCommandDefaults(value.create);
+  const createDefaults = normalizeCreateCommandDefaults(
+    value.create,
+    `defaults.editors.${host}.create`,
+    errors,
+    diagnostics,
+  );
   if (!createDefaults) {
     return undefined;
   }
@@ -733,24 +816,38 @@ const normalizeEditorCommandDefaults = (value: unknown): EditorCommandDefaults |
   };
 };
 
-const normalizeEditorDefaultsConfig = (value: unknown): EditorDefaultsConfig | undefined => {
+const normalizeEditorDefaultsConfig = (
+  value: unknown,
+  errors: string[],
+  diagnostics: ConfigDiagnostic[],
+): EditorDefaultsConfig | undefined => {
   if (!isRecord(value)) {
     return undefined;
   }
 
   const normalized: EditorDefaultsConfig = {};
 
-  const vscodeDefaults = normalizeEditorCommandDefaults(value.vscode);
+  const vscodeDefaults = normalizeEditorCommandDefaults(
+    value.vscode,
+    "vscode",
+    errors,
+    diagnostics,
+  );
   if (vscodeDefaults) {
     normalized.vscode = vscodeDefaults;
   }
 
-  const cursorDefaults = normalizeEditorCommandDefaults(value.cursor);
+  const cursorDefaults = normalizeEditorCommandDefaults(
+    value.cursor,
+    "cursor",
+    errors,
+    diagnostics,
+  );
   if (cursorDefaults) {
     normalized.cursor = cursorDefaults;
   }
 
-  const kiroDefaults = normalizeEditorCommandDefaults(value.kiro);
+  const kiroDefaults = normalizeEditorCommandDefaults(value.kiro, "kiro", errors, diagnostics);
   if (kiroDefaults) {
     normalized.kiro = kiroDefaults;
   }
@@ -771,8 +868,13 @@ const normalizeCommandDefaults = (
     return undefined;
   }
 
-  const createDefaults = normalizeCreateCommandDefaults(value.create);
-  const editorDefaults = normalizeEditorDefaultsConfig(value.editors);
+  const createDefaults = normalizeCreateCommandDefaults(
+    value.create,
+    "defaults.create",
+    errors,
+    diagnostics,
+  );
+  const editorDefaults = normalizeEditorDefaultsConfig(value.editors, errors, diagnostics);
   const switchDefaults = normalizeSwitchCommandDefaults(value.switch, errors, diagnostics);
 
   const normalized: CommandDefaultsConfig = {};
@@ -1024,7 +1126,7 @@ export const loadConfig = async (repoPath: string): Promise<Config> => {
   const normalized = normalizeConfigInternal(data);
   emitConfigDiagnostics(configPath, normalized.diagnostics);
 
-  if (normalized.migratedFromVersion) {
+  if (normalized.migratedFromVersion && normalized.diagnostics.length === ZERO) {
     await saveConfig(repoPath, normalized.config);
   }
 

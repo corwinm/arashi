@@ -82,12 +82,8 @@
       "additionalProperties": false,
       "properties": {
         "launch": {
-          "description": "Default to launching a terminal/editor context after create",
-          "type": "boolean"
-        },
-        "launchMode": {
-          "$ref": "#/definitions/LaunchMode",
-          "description": "Preferred launch mode for create-triggered launch"
+          "$ref": "#/definitions/CreateLaunchMode",
+          "description": "Post-create launch choice; omitted preserves built-in no-launch behavior"
         },
         "switch": {
           "description": "Default to switching to the new worktree after create",
@@ -95,6 +91,10 @@
         }
       },
       "type": "object"
+    },
+    "CreateLaunchMode": {
+      "enum": ["none", "auto", "sesh", "herdr"],
+      "type": "string"
     },
     "EditorCommandDefaults": {
       "additionalProperties": false,
@@ -120,10 +120,6 @@
         }
       },
       "type": "object"
-    },
-    "LaunchMode": {
-      "enum": ["auto", "sesh", "herdr"],
-      "type": "string"
     },
     "RepoConfig": {
       "additionalProperties": false,

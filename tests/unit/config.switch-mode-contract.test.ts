@@ -34,13 +34,13 @@ describe("unified switch config contract", () => {
     );
   });
 
-  test("preserves create and editor-scoped create defaults", () => {
+  test("preserves canonical create and editor-scoped create defaults", () => {
     const normalized = normalizeConfig({
       defaults: {
-        create: { launch: true, launchMode: "sesh", switch: true },
+        create: { launch: "sesh", switch: true },
         editors: {
-          cursor: { create: { launch: false, switch: true } },
-          vscode: { create: { launch_mode: "herdr" } },
+          cursor: { create: { launch: "none", switch: true } },
+          vscode: { create: { launch: "herdr" } },
         },
         switch: { mode: "launch" },
       },
@@ -50,10 +50,10 @@ describe("unified switch config contract", () => {
     });
 
     expect(normalized.defaults).toEqual({
-      create: { launch: true, launchMode: "sesh", switch: true },
+      create: { launch: "sesh", switch: true },
       editors: {
-        cursor: { create: { launch: false, switch: true } },
-        vscode: { create: { launch: true, launchMode: "herdr" } },
+        cursor: { create: { launch: "none", switch: true } },
+        vscode: { create: { launch: "herdr" } },
       },
       switch: { mode: "launch" },
     });
