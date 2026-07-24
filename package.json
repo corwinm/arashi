@@ -81,7 +81,7 @@
     "commander": "12.1.0",
     "conventional-changelog-conventionalcommits": "8.0.0",
     "husky": "9.1.7",
-    "js-yaml": "4.2.0",
+    "js-yaml": "4.3.0",
     "lint-staged": "16.2.7",
     "ora": "8.2.0",
     "oxfmt": "0.28.0",
