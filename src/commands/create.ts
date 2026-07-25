@@ -607,12 +607,12 @@ interface DirtyGuidanceContext {
 }
 
 const resolvePostCreateDirtyGuidance = async (
-  context: CreateInvocationContext,
+  sourceWorkspaceRoot: string,
   config: Config,
   branchName: string,
 ): Promise<DirtyGuidanceContext | null> => {
-  const repositories = buildRepositoryTargets(context.workspaceRoot, config.repos);
-  const source = await findWorkspaceByPath(repositories, context.executionPath);
+  const repositories = buildRepositoryTargets(sourceWorkspaceRoot, config.repos);
+  const source = await findWorkspaceByPath(repositories, sourceWorkspaceRoot);
   if (!source || source.dirtyRepositories.length === ZERO) {
     return null;
   }
@@ -1136,6 +1136,11 @@ export async function executeCreate(
     );
   }
   const temporaryIgnoreWorkspace = temporaryManagedIgnoreWorktrees.has(managedIgnoreWorkspaceRoot);
+  const moveSourceWorkspaceRoot =
+    context.repositoryType === "bare" &&
+    resolve(context.invocationPath) !== resolve(context.workspaceRoot)
+      ? managedIgnoreWorkspaceRoot
+      : context.executionPath;
   let managedIgnore: ManagedIgnoreReconciliation;
   try {
     managedIgnore = await reconcileIgnore({
@@ -1175,7 +1180,7 @@ export async function executeCreate(
   }
   const dirtyGuidanceContext = options.dryRun
     ? null
-    : await resolvePostCreateDirtyGuidance(context, arashiConfig, branchName);
+    : await resolvePostCreateDirtyGuidance(moveSourceWorkspaceRoot, arashiConfig, branchName);
   const moveSummary =
     options.moveChanges && dirtyGuidanceContext
       ? await executeMovePlan(

@@ -166,7 +166,15 @@ export async function executeClone(
   const currentBranch = sourceWorkspaceRoot ? await resolveBranch(executionRoot) : null;
   const config = normalizeConfig(await readConfig(configurationRoot));
 
-  const repairResult = await repairGitUrls(executionRoot, config);
+  let repairResult = await repairGitUrls(executionRoot, config);
+  if (configurationRoot !== executionRoot && repairResult.unresolved.length > 0) {
+    const configurationRootRepair = await repairGitUrls(configurationRoot, config);
+    repairResult = {
+      repaired: [...repairResult.repaired, ...configurationRootRepair.repaired],
+      unresolved: configurationRootRepair.unresolved,
+      updated: repairResult.updated || configurationRootRepair.updated,
+    };
+  }
   let configUpdated = repairResult.updated;
 
   if (repairResult.repaired.length > 0 && !options.json) {
