@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 async function configureBareWorkspace(
-  repos: Record<string, { path: string }> = {},
+  repos: Record<string, { gitUrl?: string; path: string }> = {},
 ): Promise<BareCreateWorkspace> {
   const createdWorkspace = await createBareCreateWorkspace({ includeConfig: false });
   await mkdir(join(createdWorkspace.bareRepoPath, ".arashi"), { recursive: true });
@@ -92,6 +92,56 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     await expect(findWorkspaceRoot(childPath)).resolves.toBe(
       await realpath(workspace.bareRepoPath),
     );
+  });
+
+  test("clone materializes a missing linked child from the configured bare-root clone", async () => {
+    workspace = await configureBareWorkspace();
+    const childSourcePath = join(workspace.rootPath, "child-source");
+    const centralChildPath = join(workspace.bareRepoPath, "repos", "child");
+    const linkedChildPath = join(workspace.worktreePath, "repos", "child");
+    const nestedCallerPath = join(workspace.worktreePath, "repos", "caller");
+    await mkdir(childSourcePath, { recursive: true });
+    await execGit(["init", "-b", "main"], childSourcePath);
+    await configureRepository(childSourcePath);
+    await commitFile(childSourcePath, "README.md", "child main\n");
+    await execGit(["branch", "feature/clone-linked-child"], childSourcePath);
+    await execGit(["clone", childSourcePath, centralChildPath], workspace.bareRepoPath);
+    await mkdir(nestedCallerPath, { recursive: true });
+    await execGit(["init", "-b", "main"], nestedCallerPath);
+    await execGit(["checkout", "-b", "feature/clone-linked-child"], workspace.worktreePath);
+    await runtime.write(
+      join(workspace.bareRepoPath, ".arashi", "config.json"),
+      JSON.stringify(
+        {
+          repos: {
+            caller: { path: "./repos/caller" },
+            child: { gitUrl: pathToFileURL(childSourcePath).href, path: "./repos/child" },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+          worktreesDir: "..",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = await runCli(nestedCallerPath, ["clone", "--all", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: { cloned: ["child"], failed: [], status: "success" },
+    });
+    expect(existsSync(centralChildPath)).toBe(true);
+    expect(existsSync(linkedChildPath)).toBe(true);
+    const branch = runtime.spawnSync(["git", "branch", "--show-current"], {
+      cwd: linkedChildPath,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(branch.exitCode).toBe(0);
+    expect(new TextDecoder().decode(branch.stdout).trim()).toBe("feature/clone-linked-child");
   });
 
   test("adds a repository when invoked from a linked worktree", async () => {
