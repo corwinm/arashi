@@ -208,6 +208,29 @@ describe("arashi doctor", () => {
     );
   });
 
+  test("preserves repository findings when root Git metadata is broken", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const childPath = join(workspaceRoot, "repos", "repo-a");
+    await initializeGitRepository(childPath);
+    await writeFile(join(childPath, "dirty.txt"), "dirty\n");
+    await rm(join(workspaceRoot, ".git"), { force: true, recursive: true });
+
+    const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+    expect(result.exitCode).toBe(1);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        code: "REPOSITORY_STATUS_FAILED",
+        details: expect.objectContaining({ path: await realpath(workspaceRoot) }),
+        scope: "repository:Main Repository",
+      }),
+    );
+    expect(findings).toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_DIRTY", scope: "repository:repo-a" }),
+    );
+  });
+
   test("returns a blocking finding outside a workspace", async () => {
     const cwd = await makeTempDir();
 

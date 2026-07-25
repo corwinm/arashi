@@ -222,6 +222,33 @@ describe("CLI JSON output contract", () => {
     expect(repositories.map((repo) => repo.name)).toEqual(["Main Repository", "repo-a", "repo-b"]);
   });
 
+  test("status --json preserves repository diagnostics when root Git metadata is broken", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    await writeFile(join(workspaceRoot, "repos", "repo-a", "dirty.txt"), "dirty\n");
+    await rm(join(workspaceRoot, ".git"), { force: true, recursive: true });
+
+    const result = await runArashi(workspaceRoot, ["status", "--json"]);
+
+    expect(result.exitCode).toBe(1);
+    const parsed = parseSingleJsonDocument(result.stdout);
+    expect(parsed).toMatchObject({ command: "status", ok: true, schemaVersion: 1 });
+    const repositories = jsonArray(jsonData(parsed).repositories);
+    expect(repositories).toContainEqual(
+      expect.objectContaining({
+        error: expect.any(String),
+        name: "Main Repository",
+        path: await realpath(workspaceRoot),
+      }),
+    );
+    expect(repositories).toContainEqual(
+      expect.objectContaining({
+        error: null,
+        files: [expect.objectContaining({ path: "dirty.txt" })],
+        name: "repo-a",
+      }),
+    );
+  });
+
   test("setup --json covers common --only usage without progress noise", async () => {
     const workspaceRoot = await createCommonWorkspace();
     await writeExecutableSetupScript(

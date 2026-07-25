@@ -5,13 +5,16 @@ import {
   validateHook,
 } from "./hooks.ts";
 import { basename, join, resolve } from "path";
-import { checkAllRepos, isMissingRepositoryStatus } from "../commands/status.ts";
+import {
+  checkAllRepos,
+  isMissingRepositoryStatus,
+  shouldIncludeWorkspaceRootInRepositoryChecks,
+} from "../commands/status.ts";
 import { findWorkspaceRoot, getConfigPath, loadConfig } from "./config.ts";
 import { discoverPrunableWorktrees } from "../core/remove.ts";
 import { readdir } from "fs/promises";
 import { inspectRepositoryManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
-import { exec } from "./git.ts";
 
 const ZERO = 0;
 
@@ -368,8 +371,7 @@ const collectRepositoryFindings = async (
   workspaceRoot: string,
   config: Config,
 ): Promise<DoctorFinding[]> => {
-  const repositoryType = await exec(["rev-parse", "--is-bare-repository"], workspaceRoot);
-  const includeWorkspaceRoot = repositoryType.stdout.trim() !== "true";
+  const includeWorkspaceRoot = await shouldIncludeWorkspaceRootInRepositoryChecks(workspaceRoot);
   const statuses = await checkAllRepos(workspaceRoot, config, false, includeWorkspaceRoot);
   return statuses.flatMap((status) => repositoryStatusToDoctorFindings(status));
 };

@@ -13,6 +13,7 @@ import { AddCommandError, AddCommandErrorCode } from "../lib/errors.ts";
 import { basename, join } from "path";
 import { clone, getDefaultBranch } from "../lib/git.ts";
 import { configExists, getConfigPath, loadConfig, saveConfig } from "../lib/config.ts";
+import { findConfiguredWorkspaceRoot } from "../lib/workspace-context.ts";
 import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { executeClone } from "./clone.ts";
@@ -632,7 +633,7 @@ export function createCommand(): Command {
     .option("--json", "Output result as JSON", false)
     .action(async (gitUrl: string, options: AddCommandOptions) => {
       try {
-        const workspaceRoot = process.cwd();
+        const workspaceRoot = await findConfiguredWorkspaceRoot("add", process.cwd());
         const result = await executeAdd(gitUrl, options, workspaceRoot);
 
         if (options.json) {

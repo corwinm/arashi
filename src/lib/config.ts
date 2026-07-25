@@ -306,7 +306,7 @@ export const configExists = async (repoPath: string): Promise<boolean> => {
  * ```
  */
 export const findWorkspaceRoot = async (startPath: string = process.cwd()): Promise<string> => {
-  const { dirname, resolve, parse } = await import("path");
+  const { dirname, isAbsolute, resolve, parse } = await import("path");
 
   let currentPath = resolve(startPath);
   const rootPath = parse(currentPath).root;
@@ -334,22 +334,33 @@ export const findWorkspaceRoot = async (startPath: string = process.cwd()): Prom
     currentPath = parentPath;
   }
 
-  // A linked worktree created from a configured bare repository is commonly a
-  // sibling of that repository, so filesystem ancestors cannot expose the
-  // configuration. Follow Git's common directory and accept it only when it
-  // contains Arashi configuration.
-  try {
-    const common = await exec(["rev-parse", "--git-common-dir"], resolve(startPath));
-    const rawCommonDirectory = common.stdout.trim();
-    const { isAbsolute } = await import("path");
-    const commonDirectory = isAbsolute(rawCommonDirectory)
-      ? resolve(rawCommonDirectory)
-      : resolve(startPath, rawCommonDirectory);
-    if (await configExists(commonDirectory)) {
-      return commonDirectory;
+  // Linked worktrees from configured bare repositories are commonly siblings
+  // of those repositories, so filesystem ancestors cannot expose the configuration.
+  // Probe every ancestor because the invocation path may be a nested child repository
+  // with a different Git common directory.
+  currentPath = resolve(startPath);
+  const checkedCommonDirectories = new Set<string>();
+  while (true) {
+    try {
+      const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
+      const rawCommonDirectory = common.stdout.trim();
+      const commonDirectory = isAbsolute(rawCommonDirectory)
+        ? resolve(rawCommonDirectory)
+        : resolve(currentPath, rawCommonDirectory);
+      if (!checkedCommonDirectories.has(commonDirectory)) {
+        checkedCommonDirectories.add(commonDirectory);
+        if (await configExists(commonDirectory)) {
+          return commonDirectory;
+        }
+      }
+    } catch {
+      // Keep walking: an enclosing ancestor may belong to the configured parent worktree.
     }
-  } catch {
-    // The original ConfigNotFoundError remains authoritative outside a Git repository.
+
+    if (currentPath === rootPath) {
+      break;
+    }
+    currentPath = dirname(currentPath);
   }
 
   throw new ConfigNotFoundError(getConfigPath(startPath));

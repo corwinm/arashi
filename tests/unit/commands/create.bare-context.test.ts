@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { mkdir, realpath } from "fs/promises";
+import {
+  resolveCreateInvocationContext,
+  resolveManagedIgnoreWorkspaceRoot,
+} from "../../../src/commands/create.ts";
 import { createBareCreateWorkspace } from "../../helpers/create-bare-create-workspace.ts";
 import { join } from "path";
-import { mkdir } from "fs/promises";
-import { resolveCreateInvocationContext } from "../../../src/commands/create.ts";
+import { runtime } from "../../helpers/node-runtime.ts";
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
@@ -48,5 +52,31 @@ describe("create command bare context resolver", () => {
     expect(context.invocationPath).toBe(nestedPath);
     expect(context.workspaceRoot).toBe(workspace.worktreePath);
     expect(context.executionPath).toBe(workspace.worktreePath);
+  });
+
+  test("prefers the invoking linked worktree for tracked ignore reconciliation", async () => {
+    workspace = await createBareCreateWorkspace({ includeConfig: false });
+    await mkdir(join(workspace.bareRepoPath, ".arashi"), { recursive: true });
+    await runtime.write(
+      join(workspace.bareRepoPath, ".arashi", "config.json"),
+      JSON.stringify({ repos: {}, reposDir: "./repos", version: "1.0.0" }),
+    );
+    const invokingWorktreePath = join(workspace.rootPath, "z-invoking-worktree");
+    const addWorktree = runtime.spawnSync(
+      ["git", "worktree", "add", "-b", "invoking-branch", invokingWorktreePath, "main"],
+      {
+        cwd: workspace.bareRepoPath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    expect(addWorktree.exitCode).toBe(0);
+
+    const context = await resolveCreateInvocationContext(invokingWorktreePath);
+    const managedIgnoreWorkspaceRoot = await resolveManagedIgnoreWorkspaceRoot(context, true);
+
+    expect(context.repositoryType).toBe("bare");
+    expect(context.executionPath).toBe(context.workspaceRoot);
+    expect(managedIgnoreWorkspaceRoot).toBe(await realpath(invokingWorktreePath));
   });
 });

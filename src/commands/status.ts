@@ -400,6 +400,17 @@ export const checkAllRepos = (
   return Promise.all(statusPromises);
 };
 
+export const shouldIncludeWorkspaceRootInRepositoryChecks = async (
+  workspaceRoot: string,
+): Promise<boolean> => {
+  try {
+    const repositoryType = await gitExec(["rev-parse", "--is-bare-repository"], workspaceRoot);
+    return repositoryType.stdout.trim() !== "true";
+  } catch {
+    return true;
+  }
+};
+
 const formatTrackingSuffix = (
   branch: BranchTrackingInfo,
   refreshWarning: RepoRefreshWarning | null | undefined = null,
@@ -938,8 +949,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
 
   statusSpinner?.start();
 
-  const repositoryType = await gitExec(["rev-parse", "--is-bare-repository"], workspaceRoot);
-  const includeWorkspaceRoot = repositoryType.stdout.trim() !== "true";
+  const includeWorkspaceRoot = await shouldIncludeWorkspaceRootInRepositoryChecks(workspaceRoot);
   const statuses = await checkAllRepos(
     workspaceRoot,
     configForStatus,

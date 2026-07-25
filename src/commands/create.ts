@@ -375,6 +375,22 @@ export async function resolveManagedIgnoreWorkspaceRoot(
     return context.workspaceRoot;
   }
 
+  try {
+    const invokingRepositoryType = await exec(
+      ["rev-parse", "--is-bare-repository"],
+      context.invocationPath,
+    );
+    if (invokingRepositoryType.stdout.trim() === "false") {
+      const invokingWorktreeRoot = await exec(
+        ["rev-parse", "--show-toplevel"],
+        context.invocationPath,
+      );
+      return invokingWorktreeRoot.stdout.trim();
+    }
+  } catch {
+    // Fall back to another usable linked worktree when the invocation path is unavailable.
+  }
+
   const result = await exec(["worktree", "list", "--porcelain"], context.executionPath);
   const worktreePaths = result.stdout
     .split(/\r?\n/)
