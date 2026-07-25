@@ -279,6 +279,32 @@ describe("existing config, force, and preference authority", () => {
     expect(existsSync(join(fixture.linkedRoot!, ".arashi"))).toBe(false);
   });
 
+  test("nested coordinated child preference-only re-init reconciles the configured bare root", async () => {
+    const fixture = await createBareFixture("linked");
+    const initial = await runCli(fixture.bareRoot, ["init", "--no-discover", "--json"]);
+    expect(initial.exitCode, `${initial.stdout}\n${initial.stderr}`).toBe(0);
+
+    const childRoot = join(fixture.linkedRoot!, "repos", "child");
+    await mkdir(childRoot, { recursive: true });
+    await git(childRoot, ["init"]);
+
+    const result = await runCli(childRoot, ["init", "--ignore-scope", "none", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      command: "init",
+      data: {
+        preferenceOnly: true,
+        workspaceRoot: fixture.bareRoot,
+        worktreesDir: "..",
+      },
+      ok: true,
+    });
+    expect(await localPreference(fixture.bareRoot)).toBe("none");
+    expect(existsSync(join(childRoot, ".arashi"))).toBe(false);
+  });
+
   test("ordinary existing config is preserved without repository-aware recalculation", async () => {
     const fixture = await createBareFixture();
     await saveConfig(fixture.bareRoot, {

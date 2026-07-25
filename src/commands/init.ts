@@ -37,7 +37,7 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
-import { isAbsolute, join, relative, resolve } from "path";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { Command } from "commander";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec as gitExec } from "../lib/git.ts";
@@ -436,6 +436,71 @@ const createCancelledResult = (cwd: string): InitResult => ({
   workspaceRoot: cwd,
 });
 
+const canonicalizeConfiguredBareRoot = async (
+  commonRoot: string,
+  runGit: typeof gitExec,
+): Promise<string | undefined> => {
+  if (!(await configExists(commonRoot))) {
+    return undefined;
+  }
+
+  const commonTypeResult = await runGit(["rev-parse", "--is-bare-repository"], commonRoot);
+  const commonType = commonTypeResult.stdout.trim();
+  if (commonType !== "true" && commonType !== "false") {
+    throw new Error(`Git returned an invalid repository type: '${commonType}'.`);
+  }
+  if (commonType === "false") {
+    return undefined;
+  }
+
+  const rootResult = await runGit(["rev-parse", "--absolute-git-dir"], commonRoot);
+  const workspaceRoot = rootResult.stdout.trim();
+  if (!workspaceRoot || !isAbsolute(workspaceRoot)) {
+    throw new Error(`Git returned an invalid absolute directory: '${workspaceRoot}'.`);
+  }
+  return workspaceRoot;
+};
+
+const findEnclosingConfiguredBareRoot = async (
+  cwd: string,
+  options: InitOptions,
+  runGit: typeof gitExec,
+): Promise<string | undefined> => {
+  const checkedCommonRoots = new Set<string>();
+  let candidatePath = resolve(cwd);
+  while (true) {
+    let commonOutput: string | undefined = undefined;
+    try {
+      const commonResult = await runGit(["rev-parse", "--git-common-dir"], candidatePath);
+      commonOutput = commonResult.stdout.trim() || undefined;
+    } catch (error) {
+      logVerbose(
+        `No Git common repository resolved from ancestor ${candidatePath}: ${error instanceof Error ? error.message : String(error)}`,
+        options,
+      );
+    }
+
+    if (commonOutput) {
+      const commonRoot = isAbsolute(commonOutput)
+        ? resolve(commonOutput)
+        : resolve(candidatePath, commonOutput);
+      if (!checkedCommonRoots.has(commonRoot)) {
+        checkedCommonRoots.add(commonRoot);
+        const workspaceRoot = await canonicalizeConfiguredBareRoot(commonRoot, runGit);
+        if (workspaceRoot) {
+          return workspaceRoot;
+        }
+      }
+    }
+
+    const parentPath = dirname(candidatePath);
+    if (parentPath === candidatePath) {
+      return undefined;
+    }
+    candidatePath = parentPath;
+  }
+};
+
 const resolveInitRoot = async (
   cwd: string,
   options: InitOptions,
@@ -473,40 +538,12 @@ const resolveInitRoot = async (
         return { bootstrapped: false, repositoryType, workspaceRoot };
       }
 
-      // A linked worktree reports itself as non-bare even when its common Git directory is
-      // the configured bare workspace. Re-init must keep that existing workspace authoritative
-      // instead of creating a second .arashi directory in the linked worktree.
-      let commonOutput: string | undefined;
-      try {
-        const commonResult = await runGit(["rev-parse", "--git-common-dir"], cwd);
-        commonOutput = commonResult.stdout.trim() || undefined;
-      } catch (error) {
-        logVerbose(
-          `No Git common repository resolved from worktree: ${error instanceof Error ? error.message : String(error)}`,
-          options,
-        );
-      }
-
-      if (commonOutput) {
-        const commonRoot = isAbsolute(commonOutput)
-          ? resolve(commonOutput)
-          : resolve(cwd, commonOutput);
-        if (await configExists(commonRoot)) {
-          const commonTypeResult = await runGit(["rev-parse", "--is-bare-repository"], commonRoot);
-          const commonType = commonTypeResult.stdout.trim();
-          if (commonType !== "true" && commonType !== "false") {
-            throw new Error(`Git returned an invalid repository type: '${commonType}'.`);
-          }
-          if (commonType === "true") {
-            const rootResult = await runGit(["rev-parse", "--absolute-git-dir"], commonRoot);
-            workspaceRoot = rootResult.stdout.trim();
-            if (!workspaceRoot || !isAbsolute(workspaceRoot)) {
-              throw new Error(`Git returned an invalid absolute directory: '${workspaceRoot}'.`);
-            }
-            logVerbose(`✓ Resolved configured bare repository at: ${workspaceRoot}`, options);
-            return { bootstrapped: false, repositoryType: "bare", workspaceRoot };
-          }
-        }
+      // Linked worktrees report non-bare even when their common Git directory is configured bare.
+      // Nested child repositories require ancestor common-directory checks to recover authority.
+      const configuredBareRoot = await findEnclosingConfiguredBareRoot(cwd, options, runGit);
+      if (configuredBareRoot) {
+        logVerbose(`✓ Resolved configured bare repository at: ${configuredBareRoot}`, options);
+        return { bootstrapped: false, repositoryType: "bare", workspaceRoot: configuredBareRoot };
       }
 
       logVerbose(`✓ Confirmed ${repositoryType} git repository at: ${workspaceRoot}`, options);

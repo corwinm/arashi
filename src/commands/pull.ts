@@ -18,7 +18,7 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { loadWorkspaceRepositories } from "../lib/config.ts";
+import { loadWorkspaceRepositories, type WorkspaceRepositoryRoots } from "../lib/config.ts";
 import { Command } from "commander";
 import { checkRemoteChanges } from "../lib/git-remote.ts";
 import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
@@ -30,7 +30,7 @@ import { fileExists } from "../lib/filesystem.ts";
 import { exec } from "../lib/git.ts";
 import {
   ConfiguredWorkspaceRequiredError,
-  findConfiguredWorkspaceRoot,
+  findConfiguredWorkspaceRoots,
 } from "../lib/workspace-context.ts";
 
 const ZERO = 0;
@@ -82,17 +82,19 @@ const excludeWorkspaceRoot = (
 ) => repositories.filter((repository) => repository.path !== workspaceRoot);
 
 const executePull = async (options: PullCommandOptions): Promise<PullSummary> => {
-  let workspaceRoot = "";
-  try {
-    workspaceRoot = await findConfiguredWorkspaceRoot("pull");
-  } catch (error) {
-    if (error instanceof ConfiguredWorkspaceRequiredError) throw error;
-    throw new CliUsageError(
-      'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
-    );
-  }
+  const workspaceRoots: WorkspaceRepositoryRoots = await findConfiguredWorkspaceRoots("pull").catch(
+    (error): never => {
+      if (error instanceof ConfiguredWorkspaceRequiredError) {
+        throw error;
+      }
+      throw new CliUsageError(
+        'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
+      );
+    },
+  );
 
-  let repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch((error): never => {
+  const workspaceRoot = workspaceRoots.executionRoot;
+  let repositoriesResult = await loadWorkspaceRepositories(workspaceRoots).catch((error): never => {
     throw new CliUsageError(
       `Failed to load workspace configuration: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -219,7 +221,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
     if (repo.path === workspaceRoot && parentResult?.repositoryId === repo.name) {
       if (parentResult.status === "updated") {
         try {
-          repositoriesResult = await loadWorkspaceRepositories(workspaceRoot);
+          repositoriesResult = await loadWorkspaceRepositories(workspaceRoots);
           const postPullSelection = excludeWorkspaceRoot(
             selectRepositories(repositoriesResult.repositories, options),
             workspaceRoot,
