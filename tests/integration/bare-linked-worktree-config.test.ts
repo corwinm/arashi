@@ -3,7 +3,7 @@ import { mkdir, realpath } from "fs/promises";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { existsSync } from "fs";
 import { findWorkspaceRoot } from "../../src/lib/config.ts";
-import { join } from "path";
+import { join, resolve } from "path";
 import { pathToFileURL } from "node:url";
 import { runtime } from "../helpers/node-runtime.ts";
 
@@ -97,6 +97,8 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     const config = JSON.parse(
       await runtime.file(join(workspace.bareRepoPath, ".arashi", "config.json")).text(),
     ) as { repos: Record<string, { path: string }> };
-    expect(config.repos["source-repository"]?.path).toBe("repos/source-repository");
+    expect(resolve(workspace.bareRepoPath, config.repos["source-repository"]?.path ?? "")).toBe(
+      resolve(workspace.bareRepoPath, "repos", "source-repository"),
+    );
   });
 });
