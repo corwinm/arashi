@@ -20,7 +20,7 @@ import {
 import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
 import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
 import { standaloneWorktrees } from "../lib/standalone.ts";
-import { getFullGitStatus, getGitStatus } from "../lib/git.ts";
+import { exec as gitExec, getFullGitStatus, getGitStatus } from "../lib/git.ts";
 import { info, error as logError, spinner } from "../lib/logger.ts";
 import { Command } from "commander";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
@@ -938,7 +938,14 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
 
   statusSpinner?.start();
 
-  const statuses = await checkAllRepos(workspaceRoot, configForStatus, options.verbose || false);
+  const repositoryType = await gitExec(["rev-parse", "--is-bare-repository"], workspaceRoot);
+  const includeWorkspaceRoot = repositoryType.stdout.trim() !== "true";
+  const statuses = await checkAllRepos(
+    workspaceRoot,
+    configForStatus,
+    options.verbose || false,
+    includeWorkspaceRoot,
+  );
   const visibleStatuses = filterHumanVisibleStatuses(statuses, options);
 
   statusSpinner?.stop();

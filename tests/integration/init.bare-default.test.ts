@@ -579,6 +579,18 @@ describe("init output and persisted create placement", () => {
     });
     expect(existsSync(join(fixture.bareRoot, "repos", "child", ".git", "HEAD"))).toBe(true);
   });
+
+  test("real bare init can report status without worktree-only root inspection", async () => {
+    const fixture = await createBareFixture("committed");
+    const init = await runCli(fixture.bareRoot, ["init", "--no-discover", "--json"]);
+    expect(init.exitCode, init.stderr).toBe(0);
+
+    const status = await runCli(fixture.bareRoot, ["status", "--json"]);
+    expect(status.exitCode, `${status.stdout}\n${status.stderr}`).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({ command: "status", ok: true });
+    expect(status.stdout).not.toContain("Main Repository");
+    expect(status.stderr).not.toContain("must be run in a work tree");
+  });
 });
 
 describe("managed-ignore rollback applicability guards", () => {
