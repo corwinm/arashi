@@ -382,10 +382,11 @@ export const checkAllRepos = (
   workspaceRoot: string,
   config: Config,
   verbose = false,
+  includeWorkspaceRoot = true,
 ): Promise<RepoStatus[]> => {
-  const reposToCheck: { name: string; path: string }[] = [
-    { name: "Main Repository", path: workspaceRoot },
-  ];
+  const reposToCheck: { name: string; path: string }[] = includeWorkspaceRoot
+    ? [{ name: "Main Repository", path: workspaceRoot }]
+    : [];
 
   for (const [name, repoConfig] of Object.entries(config.repos)) {
     const absolutePath = resolve(workspaceRoot, repoConfig.path);

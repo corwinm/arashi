@@ -27,6 +27,7 @@ import { runPullWithRollback } from "../lib/pull-runner.ts";
 import { reconcileRepositoryManagedIgnore } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { fileExists } from "../lib/filesystem.ts";
+import { exec } from "../lib/git.ts";
 import {
   ConfiguredWorkspaceRequiredError,
   findConfiguredWorkspaceRoot,
@@ -99,6 +100,9 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
 
   let repositories = selectRepositories(repositoriesResult.repositories, options);
   const selectedParent = repositories.find((repository) => repository.path === workspaceRoot);
+  const workspaceRootIsBare = selectedParent
+    ? (await exec(["rev-parse", "--is-bare-repository"], workspaceRoot)).stdout.trim() === "true"
+    : false;
   if (selectedParent) {
     repositories = [
       selectedParent,
@@ -136,7 +140,18 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
     }
 
     const start = Date.now();
-    if (repo.path !== workspaceRoot && !(await fileExists(repo.path))) {
+    if (repo.path === workspaceRoot && workspaceRootIsBare) {
+      const result: PullResult = {
+        elapsedSeconds: ZERO,
+        errorMessage: "Bare workspace root has no work tree; pull skipped.",
+        repositoryId: repo.name,
+        status: "skipped",
+      };
+      results.push(result);
+      if (!options.json) {
+        info(formatResultLine(result));
+      }
+    } else if (repo.path !== workspaceRoot && !(await fileExists(repo.path))) {
       const result: PullResult = {
         elapsedSeconds: (Date.now() - start) / MILLISECONDS_PER_SECOND,
         errorMessage: `Repository is not materialized; run \`arashi clone\` to create ${repo.name}.`,
@@ -148,54 +163,55 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         info(formatResultLine(result));
       }
       continue;
-    }
-    const remoteStatus = await checkRemoteChanges(repo.name, repo.path);
-    if (remoteStatus.error) {
-      const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
-      results.push({
-        elapsedSeconds,
-        errorMessage: `Remote check failed: ${remoteStatus.error}`,
-        repositoryId: repo.name,
-        status: "failed",
-      });
-      const lastResult = results.at(-ONE);
-      if (lastResult && !options.json) {
-        info(formatResultLine(lastResult));
-      }
-    } else if (remoteStatus.hasRemoteChanges) {
-      const pullResult = await runPullWithRollback(repo.path, {
-        branch: remoteStatus.branch || undefined,
-        remote: remoteStatus.remote || undefined,
-        timeoutMs,
-        verbose: options.verbose,
-      });
-      const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
-      const result: PullResult = {
-        elapsedSeconds,
-        errorMessage: pullResult.errorMessage,
-        output: pullResult.output,
-        repositoryId: repo.name,
-        status: pullResult.status,
-      };
-      results.push(result);
-
-      if (options.verbose && pullResult.output && !options.json) {
-        console.log(pullResult.output);
-      }
-
-      if (!options.json) {
-        info(formatResultLine(result));
-      }
     } else {
-      const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
-      results.push({
-        elapsedSeconds,
-        repositoryId: repo.name,
-        status: "skipped",
-      });
-      const lastResult = results.at(-ONE);
-      if (lastResult && !options.json) {
-        info(formatResultLine(lastResult));
+      const remoteStatus = await checkRemoteChanges(repo.name, repo.path);
+      if (remoteStatus.error) {
+        const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
+        results.push({
+          elapsedSeconds,
+          errorMessage: `Remote check failed: ${remoteStatus.error}`,
+          repositoryId: repo.name,
+          status: "failed",
+        });
+        const lastResult = results.at(-ONE);
+        if (lastResult && !options.json) {
+          info(formatResultLine(lastResult));
+        }
+      } else if (remoteStatus.hasRemoteChanges) {
+        const pullResult = await runPullWithRollback(repo.path, {
+          branch: remoteStatus.branch || undefined,
+          remote: remoteStatus.remote || undefined,
+          timeoutMs,
+          verbose: options.verbose,
+        });
+        const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
+        const result: PullResult = {
+          elapsedSeconds,
+          errorMessage: pullResult.errorMessage,
+          output: pullResult.output,
+          repositoryId: repo.name,
+          status: pullResult.status,
+        };
+        results.push(result);
+
+        if (options.verbose && pullResult.output && !options.json) {
+          console.log(pullResult.output);
+        }
+
+        if (!options.json) {
+          info(formatResultLine(result));
+        }
+      } else {
+        const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
+        results.push({
+          elapsedSeconds,
+          repositoryId: repo.name,
+          status: "skipped",
+        });
+        const lastResult = results.at(-ONE);
+        if (lastResult && !options.json) {
+          info(formatResultLine(lastResult));
+        }
       }
     }
 

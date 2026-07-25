@@ -46,7 +46,7 @@ import {
 } from "../lib/repo-filter.ts";
 import { isTmuxSession, launchSwitchTarget } from "../lib/switch-launcher.ts";
 import {
-  reconcileManagedIgnore,
+  reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
@@ -291,14 +291,17 @@ export interface ResolvedCreateDefaults {
 
 export interface CreateCommandDependencies {
   resolveCreateInvocationContext?: (invocationPath?: string) => Promise<CreateInvocationContext>;
-  resolveManagedIgnoreWorkspaceRoot?: (context: CreateInvocationContext) => Promise<string>;
+  resolveManagedIgnoreWorkspaceRoot?: (
+    context: CreateInvocationContext,
+    useBareRootWhenNoLinkedWorktree?: boolean,
+  ) => Promise<string>;
   loadConfigWithFallback?: typeof loadConfigWithFallback;
   discoverRepositories?: typeof discoverRepositories;
   isGitRepository?: (path: string) => Promise<boolean>;
   resolveCurrentBranch?: (path: string) => Promise<string>;
   applyRepositoryFilter?: typeof applyRepositoryFilter;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
-  reconcileManagedIgnore?: typeof reconcileManagedIgnore;
+  reconcileManagedIgnore?: typeof reconcileRepositoryManagedIgnore;
   restoreManagedIgnore?: typeof restoreManagedIgnore;
   pathExists?: (path: string) => boolean;
   launchSwitchTarget?: (
@@ -357,6 +360,7 @@ export async function resolveCreateInvocationContext(
 
 export async function resolveManagedIgnoreWorkspaceRoot(
   context: CreateInvocationContext,
+  useBareRootWhenNoLinkedWorktree = false,
 ): Promise<string> {
   if (context.repositoryType !== "bare") {
     return context.workspaceRoot;
@@ -376,6 +380,9 @@ export async function resolveManagedIgnoreWorkspaceRoot(
     } catch {
       // Ignore stale worktree-list entries and continue looking for a usable work tree.
     }
+  }
+  if (useBareRootWhenNoLinkedWorktree) {
+    return context.workspaceRoot;
   }
   const temporaryParent = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-worktree-"));
   const temporaryWorktree = join(temporaryParent, "worktree");
@@ -884,7 +891,7 @@ export async function executeCreate(
     });
   const filterRepositories = deps.applyRepositoryFilter ?? applyRepositoryFilter;
   const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
-  const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileManagedIgnore;
+  const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileRepositoryManagedIgnore;
   const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
   const pathExists = deps.pathExists ?? existsSync;
 
@@ -1067,7 +1074,20 @@ export async function executeCreate(
     workspaceRoot: context.workspaceRoot,
   };
 
-  const managedIgnoreWorkspaceRoot = await resolveIgnoreWorkspaceRoot(context);
+  let storedIgnoreScope: string | null = null;
+  if (context.repositoryType === "bare") {
+    try {
+      storedIgnoreScope = (
+        await exec(["config", "--local", "--get", "arashi.ignoreScope"], context.executionPath)
+      ).stdout.trim();
+    } catch {
+      storedIgnoreScope = null;
+    }
+  }
+  const managedIgnoreWorkspaceRoot = await resolveIgnoreWorkspaceRoot(
+    context,
+    storedIgnoreScope === "tracked",
+  );
   const temporaryIgnoreWorkspace = temporaryManagedIgnoreWorktrees.has(managedIgnoreWorkspaceRoot);
   let managedIgnore: ManagedIgnoreReconciliation;
   try {

@@ -55,6 +55,42 @@ describe("create command from bare root", () => {
     expect(existsSync(expectedWorktreePath)).toBe(true);
   });
 
+  test("creates with stored tracked scope and no linked worktree without ignore-file writes", async () => {
+    workspace = await createBareCreateWorkspace({ createLinkedWorktree: false });
+    const branch = "feature-tracked-bare-worktree";
+    for (const args of [
+      ["symbolic-ref", "HEAD", "refs/heads/main"],
+      ["config", "--local", "arashi.ignoreScope", "tracked"],
+    ]) {
+      const git = runtime.spawnSync(["git", ...args], {
+        cwd: workspace.bareRepoPath,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      expect(git.exitCode).toBe(0);
+    }
+
+    const command = runtime.spawn(
+      [process.execPath, CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"],
+      {
+        cwd: workspace.bareRepoPath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    const [exitCode, stdout, stderr] = await Promise.all([
+      command.exited,
+      new Response(command.stdout).text(),
+      new Response(command.stderr).text(),
+    ]);
+
+    expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
+    const worktreePath = join(workspace.bareRepoPath, ".arashi", "worktrees", branch);
+    expect(existsSync(worktreePath)).toBe(true);
+    expect(existsSync(join(workspace.bareRepoPath, ".gitignore"))).toBe(false);
+    expect(existsSync(join(worktreePath, ".gitignore"))).toBe(false);
+  });
+
   test("creates the first worktree when the bare repository has no linked worktrees", async () => {
     workspace = await createBareCreateWorkspace({ createLinkedWorktree: false });
     const branch = "feature-first-bare-worktree";

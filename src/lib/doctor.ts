@@ -11,6 +11,7 @@ import { discoverPrunableWorktrees } from "../core/remove.ts";
 import { readdir } from "fs/promises";
 import { inspectRepositoryManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
+import { exec } from "./git.ts";
 
 const ZERO = 0;
 
@@ -367,7 +368,9 @@ const collectRepositoryFindings = async (
   workspaceRoot: string,
   config: Config,
 ): Promise<DoctorFinding[]> => {
-  const statuses = await checkAllRepos(workspaceRoot, config, false);
+  const repositoryType = await exec(["rev-parse", "--is-bare-repository"], workspaceRoot);
+  const includeWorkspaceRoot = repositoryType.stdout.trim() !== "true";
+  const statuses = await checkAllRepos(workspaceRoot, config, false, includeWorkspaceRoot);
   return statuses.flatMap((status) => repositoryStatusToDoctorFindings(status));
 };
 
