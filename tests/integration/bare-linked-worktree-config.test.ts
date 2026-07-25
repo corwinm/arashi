@@ -263,6 +263,46 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     ).toEqual([canonicalWorkspaceRoot, await realpath(childPath)]);
   });
 
+  test("handoff loads config from the bare root but reports the active linked parent and child", async () => {
+    workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+    const childPath = join(workspace.worktreePath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    await execGit(["init", "-b", "main"], childPath);
+    await configureRepository(childPath);
+    await commitFile(childPath, "README.md", "child main\n");
+    await runtime.write(join(workspace.worktreePath, "parent-dirty.txt"), "parent dirty\n");
+    await runtime.write(join(childPath, "child-dirty.txt"), "child dirty\n");
+
+    const result = await runCli(childPath, ["handoff", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    const envelope = JSON.parse(result.stdout) as {
+      data: {
+        repositories: { files: { path: string }[]; name: string; path: string }[];
+        workspaceRoot: string;
+      };
+    };
+    expect(await realpath(envelope.data.workspaceRoot)).toBe(
+      await realpath(workspace.bareRepoPath),
+    );
+    expect(envelope.data.repositories).toMatchObject([
+      {
+        files: expect.arrayContaining([expect.objectContaining({ path: "parent-dirty.txt" })]),
+        name: "Main Repository",
+      },
+      {
+        files: expect.arrayContaining([expect.objectContaining({ path: "child-dirty.txt" })]),
+        name: "child",
+      },
+    ]);
+    expect(
+      await Promise.all(
+        envelope.data.repositories.map(async (repository) => realpath(repository.path)),
+      ),
+    ).toEqual([await realpath(workspace.worktreePath), await realpath(childPath)]);
+  });
+
   test("exec loads config from the bare root but runs in the linked parent and its child", async () => {
     workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
     const childPath = join(workspace.worktreePath, "repos", "child");

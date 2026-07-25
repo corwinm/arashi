@@ -9,6 +9,7 @@ import {
   checkAllRepos,
   checkRepoStatus,
   collectStatusWarnings,
+  shouldIncludeWorkspaceRootInRepositoryChecks,
   summarizeStatuses,
 } from "./status.ts";
 import {
@@ -17,8 +18,8 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
-import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { loadWorkspaceRepositories } from "../lib/config.ts";
+import { findConfiguredWorkspaceRoots, resolveWorkspaceContext } from "../lib/workspace-context.ts";
 import { standaloneWorktrees } from "../lib/standalone.ts";
 import { info, error as logError } from "../lib/logger.ts";
 import { basename, join, relative, resolve } from "path";
@@ -378,9 +379,9 @@ const runHandoff = async (options: HandoffOptions): Promise<void> => {
       process.exit(ERROR_EXIT_CODE);
     }
   }
-  let workspaceRoot = "";
+  let workspaceRoots;
   try {
-    workspaceRoot = await findWorkspaceRoot();
+    workspaceRoots = await findConfiguredWorkspaceRoots("handoff");
   } catch {
     const message = "Not in an arashi workspace";
     if (options.json) {
@@ -398,15 +399,26 @@ const runHandoff = async (options: HandoffOptions): Promise<void> => {
   }
 
   try {
-    const config = await loadConfig(workspaceRoot);
-    const statuses = await checkAllRepos(workspaceRoot, config, false);
+    const { config } = await loadWorkspaceRepositories(workspaceRoots);
+    const includeWorkspaceRoot = await shouldIncludeWorkspaceRootInRepositoryChecks(
+      workspaceRoots.executionRoot,
+    );
+    const statuses = await checkAllRepos(
+      workspaceRoots.executionRoot,
+      config,
+      false,
+      includeWorkspaceRoot,
+    );
     const data = buildHandoffData({
       cwd: process.cwd(),
       options,
       statuses,
-      workspaceRoot,
+      workspaceRoot: workspaceRoots.configurationRoot,
     });
-    data.worktreesBase = resolve(workspaceRoot, config.worktreesDir ?? "../.worktrees");
+    data.worktreesBase = resolve(
+      workspaceRoots.configurationRoot,
+      config.worktreesDir ?? "../.worktrees",
+    );
     const warnings: JsonWarning[] = collectStatusWarnings(statuses);
 
     if (options.json) {
