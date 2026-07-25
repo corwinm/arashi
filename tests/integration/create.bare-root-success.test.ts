@@ -100,10 +100,12 @@ describe("create command from bare root", () => {
 
     expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
     const targetPath = join(workspace.rootPath, branch);
-    expect(await readFile(join(targetPath, "README.md"), "utf8")).toBe(changedContent);
-    expect(await readFile(join(workspace.worktreePath, "README.md"), "utf8")).toBe(
-      "# Bare Create Test\n",
+    expect((await readFile(join(targetPath, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
+      changedContent,
     );
+    expect(
+      (await readFile(join(workspace.worktreePath, "README.md"), "utf8")).replaceAll("\r\n", "\n"),
+    ).toBe("# Bare Create Test\n");
     const sourceStatus = runtime.spawnSync(["git", "status", "--short"], {
       cwd: workspace.worktreePath,
       stderr: "pipe",
