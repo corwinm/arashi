@@ -4,6 +4,7 @@ import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspa
 import { existsSync } from "fs";
 import { findWorkspaceRoot } from "../../src/lib/config.ts";
 import { join } from "path";
+import { pathToFileURL } from "node:url";
 import { runtime } from "../helpers/node-runtime.ts";
 
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
@@ -78,7 +79,7 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     await execGit(["commit", "-m", "Initial content"], sourcePath);
 
     const command = runtime.spawn(
-      [process.execPath, CLI_ENTRY, "add", sourcePath, "--force", "--json"],
+      [process.execPath, CLI_ENTRY, "add", pathToFileURL(sourcePath).href, "--force", "--json"],
       {
         cwd: workspace.worktreePath,
         stderr: "pipe",

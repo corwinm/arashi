@@ -5,7 +5,7 @@ import {
   resolveManagedIgnoreWorkspaceRoot,
 } from "../../../src/commands/create.ts";
 import { createBareCreateWorkspace } from "../../helpers/create-bare-create-workspace.ts";
-import { join } from "path";
+import { join, resolve } from "path";
 import { runtime } from "../../helpers/node-runtime.ts";
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
@@ -77,6 +77,6 @@ describe("create command bare context resolver", () => {
 
     expect(context.repositoryType).toBe("bare");
     expect(context.executionPath).toBe(context.workspaceRoot);
-    expect(managedIgnoreWorkspaceRoot).toBe(await realpath(invokingWorktreePath));
+    expect(resolve(managedIgnoreWorkspaceRoot)).toBe(resolve(await realpath(invokingWorktreePath)));
   });
 });
