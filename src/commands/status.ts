@@ -17,8 +17,9 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { findWorkspaceRoot, loadConfig } from "../lib/config.ts";
-import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import type { Config } from "../lib/config.ts";
+import { loadWorkspaceRepositories } from "../lib/config.ts";
+import { findConfiguredWorkspaceRoots, resolveWorkspaceContext } from "../lib/workspace-context.ts";
 import { standaloneWorktrees } from "../lib/standalone.ts";
 import { exec as gitExec, getFullGitStatus, getGitStatus } from "../lib/git.ts";
 import { info, error as logError, spinner } from "../lib/logger.ts";
@@ -29,7 +30,6 @@ import { basename, join, resolve } from "path";
 import { realpath, stat } from "fs/promises";
 
 type DefaultBranchComparison = Awaited<ReturnType<typeof compareCurrentBranchToDefaultBranch>>;
-type Config = Awaited<ReturnType<typeof loadConfig>>;
 type JsonWarning = NonNullable<Parameters<typeof createJsonSuccessEnvelope>[2]>[number];
 
 const ZERO = 0;
@@ -857,9 +857,9 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     process.exit(ZERO);
   }
 
-  let workspaceRoot = "";
+  let workspaceRoots;
   try {
-    workspaceRoot = await findWorkspaceRoot();
+    workspaceRoots = await findConfiguredWorkspaceRoots("status");
   } catch {
     if (options.json) {
       writeJsonEnvelope(
@@ -875,9 +875,9 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     process.exit(USAGE_EXIT_CODE);
   }
 
-  let config = createEmptyConfig();
+  let config: Config;
   try {
-    config = await loadConfig(workspaceRoot);
+    ({ config } = await loadWorkspaceRepositories(workspaceRoots));
   } catch (error) {
     if (options.json) {
       writeJsonEnvelope(
@@ -893,6 +893,9 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     }
     process.exit(USAGE_EXIT_CODE);
   }
+
+  const workspaceRoot = workspaceRoots.configurationRoot;
+  const repositoryRoot = workspaceRoots.executionRoot;
 
   const statusSpinner = options.json ? null : spinner("Checking repository status...");
   const filterResult = filterRepositories(config.repos, undefined, options.group);
@@ -949,9 +952,9 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
 
   statusSpinner?.start();
 
-  const includeWorkspaceRoot = await shouldIncludeWorkspaceRootInRepositoryChecks(workspaceRoot);
+  const includeWorkspaceRoot = await shouldIncludeWorkspaceRootInRepositoryChecks(repositoryRoot);
   const statuses = await checkAllRepos(
-    workspaceRoot,
+    repositoryRoot,
     configForStatus,
     options.verbose || false,
     includeWorkspaceRoot,
@@ -994,13 +997,6 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     process.exit(ERROR_EXIT_CODE);
   }
 };
-
-const createEmptyConfig = (): Config => ({
-  repos: {},
-  reposDir: "./repos",
-  version: "1.0.0",
-  worktreesDir: "../.worktrees",
-});
 
 /**
  * Create the status command for Commander

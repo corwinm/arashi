@@ -6,7 +6,9 @@ import { spawn } from "../helpers/node-runtime.ts";
 import {
   classifyManagedPaths,
   inspectManagedIgnore,
+  inspectRepositoryManagedIgnore,
   reconcileManagedIgnore,
+  reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
 } from "../../src/lib/managed-ignore.ts";
 
@@ -141,6 +143,25 @@ describe("managed ignore path classification", () => {
 
     await expect(
       reconcileManagedIgnore({
+        reposDir: "repos",
+        workspaceRoot: root,
+        worktreesDir: ".arashi/worktrees",
+      }),
+    ).rejects.toMatchObject({
+      code: "MANAGED_IGNORE_RECONCILIATION_FAILED",
+      details: { attempted: false, changed: false, phase: "inspection", restored: false },
+    });
+  });
+
+  test.each([
+    ["inspection", inspectRepositoryManagedIgnore],
+    ["reconciliation", reconcileRepositoryManagedIgnore],
+  ])("wraps repository classification failures during %s", async (_operation, run) => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-invalid-repository-"));
+    testRoots.push(root);
+
+    await expect(
+      run({
         reposDir: "repos",
         workspaceRoot: root,
         worktreesDir: ".arashi/worktrees",

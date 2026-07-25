@@ -699,21 +699,40 @@ const resolveManagedIgnoreRepositoryType = async (
   throw new Error(`Git returned an invalid repository type: '${value}'.`);
 };
 
+const wrapManagedIgnoreInspectionError = (error: unknown): ManagedIgnoreError =>
+  error instanceof ManagedIgnoreError
+    ? error
+    : new ManagedIgnoreError(
+        error instanceof Error ? error.message : String(error),
+        { attempted: false, changed: false, phase: "inspection", restored: false },
+        { cause: error },
+      );
+
 /** Inspect configured managed paths according to the workspace repository type. */
 export const inspectRepositoryManagedIgnore = async (
   options: RepositoryManagedIgnoreOptions,
-): Promise<ManagedIgnoreInspection> =>
-  (await resolveManagedIgnoreRepositoryType(options)) === "bare"
-    ? await inspectBareManagedIgnore(options)
-    : await inspectManagedIgnore(options);
+): Promise<ManagedIgnoreInspection> => {
+  try {
+    return (await resolveManagedIgnoreRepositoryType(options)) === "bare"
+      ? await inspectBareManagedIgnore(options)
+      : await inspectManagedIgnore(options);
+  } catch (error) {
+    throw wrapManagedIgnoreInspectionError(error);
+  }
+};
 
 /** Reconcile configured managed paths according to the workspace repository type. */
 export const reconcileRepositoryManagedIgnore = async (
   options: RepositoryManagedIgnoreOptions,
-): Promise<ManagedIgnoreReconciliation> =>
-  (await resolveManagedIgnoreRepositoryType(options)) === "bare"
-    ? await reconcileBareManagedIgnore(options)
-    : await reconcileManagedIgnore(options);
+): Promise<ManagedIgnoreReconciliation> => {
+  try {
+    return (await resolveManagedIgnoreRepositoryType(options)) === "bare"
+      ? await reconcileBareManagedIgnore(options)
+      : await reconcileManagedIgnore(options);
+  } catch (error) {
+    throw wrapManagedIgnoreInspectionError(error);
+  }
+};
 
 export const restoreManagedIgnore = async (
   reconciliation: ManagedIgnoreReconciliation,

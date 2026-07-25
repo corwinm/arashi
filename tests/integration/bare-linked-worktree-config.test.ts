@@ -130,6 +130,89 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     );
   });
 
+  test("status loads config from the bare root but inspects the dirty linked parent and child", async () => {
+    workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+    const childPath = join(workspace.worktreePath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    await execGit(["init", "-b", "main"], childPath);
+    await configureRepository(childPath);
+    await commitFile(childPath, "README.md", "child main\n");
+    await runtime.write(join(workspace.worktreePath, "parent-dirty.txt"), "parent dirty\n");
+    await runtime.write(join(childPath, "child-dirty.txt"), "child dirty\n");
+
+    const result = await runCli(childPath, ["status", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    const envelope = JSON.parse(result.stdout) as {
+      data: {
+        repositories: { files: { path: string }[]; name: string; path: string }[];
+        workspaceRoot: string;
+      };
+    };
+    const canonicalWorkspaceRoot = await realpath(workspace.worktreePath);
+    const canonicalRepositories = await Promise.all(
+      envelope.data.repositories.map(async (repository) => ({
+        ...repository,
+        path: await realpath(repository.path),
+      })),
+    );
+    expect(await realpath(envelope.data.workspaceRoot)).toBe(
+      await realpath(workspace.bareRepoPath),
+    );
+    expect(canonicalRepositories).toMatchObject([
+      {
+        files: expect.arrayContaining([expect.objectContaining({ path: "parent-dirty.txt" })]),
+        name: "Main Repository",
+        path: canonicalWorkspaceRoot,
+      },
+      {
+        files: expect.arrayContaining([expect.objectContaining({ path: "child-dirty.txt" })]),
+        name: "child",
+        path: await realpath(childPath),
+      },
+    ]);
+  });
+
+  test("doctor loads config from the bare root but inspects the dirty linked parent and child", async () => {
+    workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+    const childPath = join(workspace.worktreePath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    await execGit(["init", "-b", "main"], childPath);
+    await configureRepository(childPath);
+    await commitFile(childPath, "README.md", "child main\n");
+    await runtime.write(join(workspace.worktreePath, "parent-dirty.txt"), "parent dirty\n");
+    await runtime.write(join(childPath, "child-dirty.txt"), "child dirty\n");
+
+    const result = await runCli(childPath, ["doctor", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    const envelope = JSON.parse(result.stdout) as {
+      data: {
+        findings: { code: string; details?: { path?: string }; scope: string }[];
+        workspaceRoot: string;
+      };
+    };
+    const canonicalWorkspaceRoot = await realpath(workspace.worktreePath);
+    expect(await realpath(envelope.data.workspaceRoot)).toBe(
+      await realpath(workspace.bareRepoPath),
+    );
+    const dirtyFindings = envelope.data.findings.filter(
+      (finding) => finding.code === "REPOSITORY_DIRTY",
+    );
+    expect(dirtyFindings).toHaveLength(2);
+    expect(dirtyFindings.map((finding) => finding.scope)).toEqual([
+      "repository:Main Repository",
+      "repository:child",
+    ]);
+    expect(
+      await Promise.all(
+        dirtyFindings.map(async (finding) => realpath(finding.details?.path ?? "")),
+      ),
+    ).toEqual([canonicalWorkspaceRoot, await realpath(childPath)]);
+  });
+
   test("exec loads config from the bare root but runs in the linked parent and its child", async () => {
     workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
     const childPath = join(workspace.worktreePath, "repos", "child");
