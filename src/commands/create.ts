@@ -350,6 +350,15 @@ export async function resolveCreateInvocationContext(
   }
 
   const workspaceRoot = await findWorkspaceRoot(absoluteInvocationPath);
+  const workspaceBareProbe = await exec(["rev-parse", "--is-bare-repository"], workspaceRoot);
+  if (workspaceBareProbe.stdout.trim() === "true") {
+    return {
+      executionPath: workspaceRoot,
+      invocationPath: absoluteInvocationPath,
+      repositoryType: "bare",
+      workspaceRoot,
+    };
+  }
   return {
     executionPath: workspaceRoot,
     invocationPath: absoluteInvocationPath,

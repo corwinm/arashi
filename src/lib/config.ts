@@ -318,9 +318,9 @@ export const findWorkspaceRoot = async (startPath: string = process.cwd()): Prom
       return currentPath;
     }
 
-    // Check if we've reached the filesystem root
+    // Check if we've reached the filesystem root before trying Git topology fallback.
     if (currentPath === rootPath) {
-      throw new ConfigNotFoundError(getConfigPath(startPath));
+      break;
     }
 
     // Move to parent directory
@@ -333,6 +333,26 @@ export const findWorkspaceRoot = async (startPath: string = process.cwd()): Prom
 
     currentPath = parentPath;
   }
+
+  // A linked worktree created from a configured bare repository is commonly a
+  // sibling of that repository, so filesystem ancestors cannot expose the
+  // configuration. Follow Git's common directory and accept it only when it
+  // contains Arashi configuration.
+  try {
+    const common = await exec(["rev-parse", "--git-common-dir"], resolve(startPath));
+    const rawCommonDirectory = common.stdout.trim();
+    const { isAbsolute } = await import("path");
+    const commonDirectory = isAbsolute(rawCommonDirectory)
+      ? resolve(rawCommonDirectory)
+      : resolve(startPath, rawCommonDirectory);
+    if (await configExists(commonDirectory)) {
+      return commonDirectory;
+    }
+  } catch {
+    // The original ConfigNotFoundError remains authoritative outside a Git repository.
+  }
+
+  throw new ConfigNotFoundError(getConfigPath(startPath));
 };
 
 /**

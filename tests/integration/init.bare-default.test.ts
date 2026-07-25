@@ -470,6 +470,23 @@ describe("init output and persisted create placement", () => {
     expect(await git(fixture.bareRoot, ["worktree", "list", "--porcelain"])).toContain(
       expectedGitPath,
     );
+
+    const status = await runCli(expected, ["status", "--json"]);
+    expect(status.exitCode, `${status.stdout}\n${status.stderr}`).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      command: "status",
+      data: { workspaceRoot: fixture.bareRoot },
+      ok: true,
+    });
+
+    const followUp = await runCli(expected, [
+      "create",
+      "feature/from-linked",
+      "--no-hooks",
+      "--no-progress",
+    ]);
+    expect(followUp.exitCode, `${followUp.stdout}\n${followUp.stderr}`).toBe(0);
+    expect(existsSync(join(dirname(fixture.bareRoot), "feature", "from-linked"))).toBe(true);
   });
 
   test("bare init persists and create uses an explicit worktree base", async () => {
