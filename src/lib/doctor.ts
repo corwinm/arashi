@@ -9,7 +9,7 @@ import { checkAllRepos, isMissingRepositoryStatus } from "../commands/status.ts"
 import { findWorkspaceRoot, getConfigPath, loadConfig } from "./config.ts";
 import { discoverPrunableWorktrees } from "../core/remove.ts";
 import { readdir } from "fs/promises";
-import { inspectManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
+import { inspectRepositoryManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
 
 const ZERO = 0;
@@ -116,7 +116,7 @@ const collectManagedIgnoreFindings = async (
   config: Config,
 ): Promise<DoctorFinding[]> => {
   try {
-    const inspection = await inspectManagedIgnore({
+    const inspection = await inspectRepositoryManagedIgnore({
       reposDir: config.reposDir,
       workspaceRoot,
       worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,

@@ -606,8 +606,8 @@ describe("init command - rollback behavior", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).toContain("Rolling back");
 
-    // Verify .arashi directory removed
-    expect(await fileExists(join(testDir, ".arashi"))).toBe(false);
+    // Verify pre-existing .arashi directory is retained
+    expect(await fileExists(join(testDir, ".arashi"))).toBe(true);
     // Coverage is retained because the managed repos path still exists.
     expect(await fileExists(join(testDir, ".gitignore"))).toBe(true);
     expect(await readTextFile(join(testDir, ".gitignore"))).toContain("/repos/");

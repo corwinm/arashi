@@ -24,7 +24,7 @@ import { checkRemoteChanges } from "../lib/git-remote.ts";
 import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { info } from "../lib/logger.ts";
 import { runPullWithRollback } from "../lib/pull-runner.ts";
-import { reconcileManagedIgnore } from "../lib/managed-ignore.ts";
+import { reconcileRepositoryManagedIgnore } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { fileExists } from "../lib/filesystem.ts";
 import {
@@ -107,7 +107,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
   }
   let managedIgnore;
   if (!selectedParent) {
-    managedIgnore = await reconcileManagedIgnore({
+    managedIgnore = await reconcileRepositoryManagedIgnore({
       reposDir: repositoriesResult.config.reposDir,
       workspaceRoot,
       worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
@@ -222,7 +222,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         }
       }
       try {
-        managedIgnore = await reconcileManagedIgnore({
+        managedIgnore = await reconcileRepositoryManagedIgnore({
           reposDir: repositoriesResult.config.reposDir,
           workspaceRoot,
           worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,

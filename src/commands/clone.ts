@@ -24,7 +24,7 @@ import { Command } from "commander";
 import { removeDir } from "../lib/filesystem.ts";
 import { stat } from "fs/promises";
 import {
-  reconcileManagedIgnore,
+  reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
@@ -316,7 +316,7 @@ export async function executeClone(
     .map((repository) => repository.name)
     .filter((name) => !selectedRepositories.some((repository) => repository.name === name));
 
-  const managedIgnore = await reconcileManagedIgnore({
+  const managedIgnore = await reconcileRepositoryManagedIgnore({
     reposDir: config.reposDir,
     workspaceRoot,
     worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,

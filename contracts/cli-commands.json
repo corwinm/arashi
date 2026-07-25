@@ -520,7 +520,7 @@
         },
         {
           "flags": "--worktrees-dir <path>",
-          "description": "Custom base location for managed worktrees",
+          "description": "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
           "required": true,
           "optional": false,
           "variadic": false

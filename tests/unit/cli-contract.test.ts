@@ -102,6 +102,21 @@ describe("CLI command contract", () => {
     });
   });
 
+  test("publishes repository-aware init worktree defaults", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+    );
+    const init = contract.commands.find((command) => command.path === "init");
+    const worktreesOption = init?.options.find(
+      (option) => option.flags === "--worktrees-dir <path>",
+    );
+
+    expect(worktreesOption?.description).toBe(
+      "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
+    );
+  });
+
   test("publishes enforceable explicit tmux option policies", () => {
     const contract = generateCommandContract(
       buildProgram({ includeHelpBanner: false }),

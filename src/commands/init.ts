@@ -43,7 +43,7 @@ import { discoverRepositories } from "../core/repository.ts";
 import { exec as gitExec } from "../lib/git.ts";
 import {
   classifyManagedPaths,
-  reconcileManagedIgnore,
+  reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
   type ManagedIgnoreReconciliation,
   type ManagedIgnoreScope,
@@ -188,6 +188,9 @@ interface InitResult {
   /** Resolved workspace root used for initialization */
   workspaceRoot?: string;
 
+  /** Normalized base location for managed worktrees */
+  worktreesDir?: string;
+
   /** Managed Git ignore inspection and final reconciliation state */
   managedIgnore?: ManagedIgnoreReconciliation;
 
@@ -196,6 +199,9 @@ interface InitResult {
 
   /** Structured incomplete-rollback details for JSON automation */
   rollbackFailure?: ReturnType<typeof unknownErrorToJsonError>;
+
+  /** Structured repository resolution details for JSON automation */
+  resolutionFailure?: ReturnType<typeof unknownErrorToJsonError>;
 
   /** Whether only an existing workspace preference was reconciled */
   preferenceOnly?: boolean;
@@ -216,6 +222,9 @@ interface InitDependencies {
 
   /** Override managed-ignore restoration for rollback tests */
   restoreManagedIgnore?: typeof restoreManagedIgnore;
+
+  /** Override recursive directory creation for ownership and rollback tests */
+  ensureDir?: typeof ensureDir;
 
   /** Override stdin tty detection for tests */
   stdinIsTTY?: boolean;
@@ -251,7 +260,22 @@ interface Operation {
 interface InitResolution {
   bootstrapTarget?: string;
   bootstrapped: boolean;
+  repositoryType: "bare" | "non-bare";
   workspaceRoot: string;
+}
+
+class InitRepositoryResolutionError extends Error {
+  readonly code = "INIT_REPOSITORY_CLASSIFICATION_FAILED";
+  readonly details: { cwd: string };
+
+  constructor(cwd: string, cause: unknown) {
+    super(
+      `Unable to classify or canonicalize the existing Git repository at ${cwd}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = "InitRepositoryResolutionError";
+    this.details = { cwd };
+  }
 }
 
 // ============================================================================
@@ -279,12 +303,24 @@ const operations: Operation[] = [];
 
 class InitRollbackError extends Error {
   readonly code = "INIT_ROLLBACK_FAILED";
-  readonly details: { failures: Array<{ message: string; path: string }> };
+  readonly details: {
+    failures: Array<{ message: string; path: string }>;
+    finalState: Array<{ exists: boolean; path: string }>;
+    originalFailure: ReturnType<typeof unknownErrorToJsonError>;
+  };
 
-  constructor(failures: Array<{ message: string; path: string }>) {
+  constructor(
+    originalFailure: unknown,
+    failures: Array<{ message: string; path: string }>,
+    finalState: Array<{ exists: boolean; path: string }>,
+  ) {
     super(`Initialization rollback was incomplete for ${failures.length} operation(s).`);
     this.name = "InitRollbackError";
-    this.details = { failures };
+    this.details = {
+      failures,
+      finalState,
+      originalFailure: unknownErrorToJsonError(originalFailure),
+    };
   }
 }
 
@@ -298,7 +334,10 @@ const addOperation = (operation: Operation): void => {
 /**
  * Execute rollback of all tracked operations in LIFO order
  */
-const executeRollback = async (quiet = false): Promise<void> => {
+const executeRollback = async (
+  quiet = false,
+  originalFailure: unknown = new Error("Initialization failed"),
+): Promise<void> => {
   if (!quiet) {
     info("\nRolling back changes...");
   }
@@ -330,9 +369,15 @@ const executeRollback = async (quiet = false): Promise<void> => {
     }
   }
 
+  const finalState = await Promise.all(
+    reversedOps.map(async (operation) => ({
+      exists: await fileExists(operation.path),
+      path: operation.path,
+    })),
+  );
   operations.length = ZERO;
   if (failures.length > ZERO) {
-    throw new InitRollbackError(failures);
+    throw new InitRollbackError(originalFailure, failures, finalState);
   }
 };
 
@@ -401,15 +446,35 @@ const resolveInitRoot = async (
   const promptInput = deps.promptInput ?? input;
 
   logVerbose("Checking if current directory is a git repository...", options);
+  let existingRepository = false;
   try {
     await runGit(["rev-parse", "--git-dir"], cwd);
-    logVerbose(`✓ Confirmed git repository at: ${cwd}`, options);
-    return {
-      bootstrapped: false,
-      workspaceRoot: cwd,
-    };
+    existingRepository = true;
   } catch {
     logVerbose(`Current directory is not a git repository: ${cwd}`, options);
+  }
+
+  if (existingRepository) {
+    try {
+      const typeResult = await runGit(["rev-parse", "--is-bare-repository"], cwd);
+      const type = typeResult.stdout.trim();
+      if (type !== "true" && type !== "false") {
+        throw new Error(`Git returned an invalid repository type: '${type}'.`);
+      }
+      const repositoryType = type === "true" ? "bare" : "non-bare";
+      let workspaceRoot = cwd;
+      if (repositoryType === "bare") {
+        const rootResult = await runGit(["rev-parse", "--absolute-git-dir"], cwd);
+        workspaceRoot = rootResult.stdout.trim();
+        if (!workspaceRoot || !isAbsolute(workspaceRoot)) {
+          throw new Error(`Git returned an invalid absolute directory: '${workspaceRoot}'.`);
+        }
+      }
+      logVerbose(`✓ Confirmed ${repositoryType} git repository at: ${workspaceRoot}`, options);
+      return { bootstrapped: false, repositoryType, workspaceRoot };
+    } catch (error) {
+      throw new InitRepositoryResolutionError(cwd, error);
+    }
   }
 
   if (!getInteractiveAvailability(deps)) {
@@ -491,6 +556,7 @@ const resolveInitRoot = async (
   return {
     bootstrapTarget,
     bootstrapped: true,
+    repositoryType: "non-bare",
     workspaceRoot,
   };
 };
@@ -739,6 +805,8 @@ export const executeInit = async (
   const startTime = Date.now();
   const cwd = deps.cwd ?? process.cwd();
   const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
+  const createDirectory = deps.ensureDir ?? ensureDir;
+  let resolvedWorkspaceRoot = cwd;
 
   operations.length = ZERO;
 
@@ -754,7 +822,8 @@ export const executeInit = async (
       return initRoot;
     }
 
-    const { workspaceRoot } = initRoot;
+    const { repositoryType, workspaceRoot } = initRoot;
+    resolvedWorkspaceRoot = workspaceRoot;
 
     // 2. Check if already initialized (without --force)
     logVerbose("Checking for existing Arashi configuration...", options);
@@ -767,12 +836,14 @@ export const executeInit = async (
       options.worktreesDir === undefined
     ) {
       const existingConfig = await loadConfig(workspaceRoot);
-      const managedIgnore = await reconcileManagedIgnore({
+      const worktreesDir = existingConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR;
+      const managedIgnore = await reconcileRepositoryManagedIgnore({
         dryRun: options.dryRun,
+        repositoryType,
         reposDir: existingConfig.reposDir,
         requestedScope: options.ignoreScope,
         workspaceRoot,
-        worktreesDir: existingConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+        worktreesDir,
       });
       return {
         configPath: getConfigPath(workspaceRoot),
@@ -783,6 +854,7 @@ export const executeInit = async (
         preferenceOnly: true,
         reposPath: resolve(workspaceRoot, existingConfig.reposDir),
         success: true,
+        worktreesDir,
         workspaceRoot,
       };
     }
@@ -856,17 +928,18 @@ export const executeInit = async (
       };
     }
 
-    let worktreesDir = DEFAULT_WORKTREES_DIR;
+    const omittedWorktreesDir = repositoryType === "bare" ? ".." : DEFAULT_WORKTREES_DIR;
+    let worktreesDir = omittedWorktreesDir;
     try {
-      worktreesDir = normalizeWorktreesDir(rawWorktreesDir ?? DEFAULT_WORKTREES_DIR);
+      worktreesDir = normalizeWorktreesDir(rawWorktreesDir ?? omittedWorktreesDir);
     } catch (error) {
       if (error instanceof WorktreeLocationValidationError) {
         if (initRoot.bootstrapped && !options.dryRun) {
-          await executeRollback(options.quiet);
+          await executeRollback(options.quiet, error);
         }
 
         return {
-          error: `Invalid worktrees directory path: ${rawWorktreesDir ?? DEFAULT_WORKTREES_DIR} (${error.message})`,
+          error: `Invalid worktrees directory path: ${rawWorktreesDir ?? omittedWorktreesDir} (${error.message})`,
           exitCode: ExitCode.INVALID_PATH,
           success: false,
           workspaceRoot,
@@ -882,8 +955,9 @@ export const executeInit = async (
     const managedIgnore =
       options.dryRun && initRoot.bootstrapped
         ? previewBootstrapManagedIgnore(workspaceRoot, reposDir, worktreesDir, options.ignoreScope)
-        : await reconcileManagedIgnore({
+        : await reconcileRepositoryManagedIgnore({
             dryRun: options.dryRun,
+            repositoryType,
             reposDir,
             requestedScope: options.ignoreScope,
             workspaceRoot,
@@ -896,6 +970,15 @@ export const executeInit = async (
         options,
       );
     }
+    if (options.dryRun && !options.quiet) {
+      for (const path of managedIgnore.paths) {
+        if (path.status === "non-applicable") {
+          logDryRun("MANAGED_PATH", `${path.input} (non-applicable in bare repository)`, options);
+        } else if (path.status === "unsafe") {
+          logDryRun("MANAGED_PATH", `${path.input} (unsafe: ${path.safetyReason})`, options);
+        }
+      }
+    }
     logVerbose("✓ Managed Git ignore rules reconciled", options);
     if (!options.dryRun && managedIgnore.attempted) {
       addOperation({
@@ -903,9 +986,15 @@ export const executeInit = async (
         rollback: async () => {
           await restoreIgnore(managedIgnore);
         },
-        shouldRollback: async () =>
-          !(await fileExists(absoluteReposPath)) &&
-          !(await fileExists(resolve(workspaceRoot, worktreesDir))),
+        shouldRollback: async () => {
+          const applicablePaths = managedIgnore.paths.filter((path) => path.safety === "safe");
+          for (const path of applicablePaths) {
+            if (await fileExists(resolve(workspaceRoot, path.input))) {
+              return false;
+            }
+          }
+          return true;
+        },
         type: "MANAGED_IGNORE",
       });
     }
@@ -918,17 +1007,20 @@ export const executeInit = async (
     } else {
       logVerbose(`Creating .arashi directory: ${arashiDir}`, options);
       try {
-        await ensureDir(arashiDir);
-        addOperation({
-          path: arashiDir,
-          rollback: async () => {
-            await removeDir(arashiDir);
-          },
-          type: "CREATE_DIR",
-        });
+        const existedBefore = await fileExists(arashiDir);
+        await createDirectory(arashiDir);
+        if (!existedBefore) {
+          addOperation({
+            path: arashiDir,
+            rollback: async () => {
+              await removeDir(arashiDir);
+            },
+            type: "CREATE_DIR",
+          });
+        }
         logVerbose("✓ .arashi directory created", options);
       } catch (error) {
-        await executeRollback(options.quiet);
+        await executeRollback(options.quiet, error);
         if (error instanceof PermissionError) {
           return {
             error: `Permission denied creating directory: ${arashiDir}`,
@@ -949,17 +1041,20 @@ export const executeInit = async (
     } else {
       logVerbose(`Creating hooks directory: ${hooksDir}`, options);
       try {
-        await ensureDir(hooksDir);
-        addOperation({
-          path: hooksDir,
-          rollback: async () => {
-            await removeDir(hooksDir);
-          },
-          type: "CREATE_DIR",
-        });
+        const existedBefore = await fileExists(hooksDir);
+        await createDirectory(hooksDir);
+        if (!existedBefore) {
+          addOperation({
+            path: hooksDir,
+            rollback: async () => {
+              await removeDir(hooksDir);
+            },
+            type: "CREATE_DIR",
+          });
+        }
         logVerbose("✓ Hooks directory created", options);
       } catch (error) {
-        await executeRollback(options.quiet);
+        await executeRollback(options.quiet, error);
         if (error instanceof PermissionError) {
           return {
             error: `Permission denied creating hooks directory: ${hooksDir}`,
@@ -984,7 +1079,7 @@ export const executeInit = async (
         await writeHookTemplates(hooksDir);
         logVerbose("✓ Hook templates written", options);
       } catch (error) {
-        await executeRollback(options.quiet);
+        await executeRollback(options.quiet, error);
         if (error instanceof PermissionError || error instanceof DiskFullError) {
           return {
             error: `Failed to write hook templates: ${(error as Error).message}`,
@@ -1004,17 +1099,20 @@ export const executeInit = async (
     } else {
       logVerbose(`Creating repos directory: ${absoluteReposPath}`, options);
       try {
-        await ensureDir(absoluteReposPath);
-        addOperation({
-          path: absoluteReposPath,
-          rollback: async () => {
-            await removeDir(absoluteReposPath);
-          },
-          type: "CREATE_DIR",
-        });
+        const existedBefore = await fileExists(absoluteReposPath);
+        await createDirectory(absoluteReposPath);
+        if (!existedBefore) {
+          addOperation({
+            path: absoluteReposPath,
+            rollback: async () => {
+              await removeDir(absoluteReposPath);
+            },
+            type: "CREATE_DIR",
+          });
+        }
         logVerbose("✓ Repos directory created", options);
       } catch (error) {
-        await executeRollback(options.quiet);
+        await executeRollback(options.quiet, error);
         if (error instanceof PermissionError) {
           return {
             error: `Permission denied creating repos directory: ${absoluteReposPath}`,
@@ -1051,7 +1149,7 @@ export const executeInit = async (
         logVerbose(`✓ Found ${discoveredCount} repositories`, options);
         collectDiscoveredRepos(discoveredRepos, options, discoveryResult.repositories);
       } catch (error) {
-        await executeRollback(options.quiet);
+        await executeRollback(options.quiet, error);
         return {
           error: `Repository discovery failed: ${(error as Error).message}`,
           exitCode: ExitCode.DISCOVERY_FAILED,
@@ -1095,7 +1193,7 @@ export const executeInit = async (
         });
         logVerbose("✓ Configuration written", options);
       } catch (error) {
-        await executeRollback(options.quiet);
+        await executeRollback(options.quiet, error);
         if (error instanceof PermissionError || error instanceof DiskFullError) {
           return {
             error: `Failed to write configuration: ${(error as Error).message}`,
@@ -1128,17 +1226,23 @@ export const executeInit = async (
       managedIgnore,
       reposPath: absoluteReposPath,
       success: true,
+      worktreesDir,
       workspaceRoot,
     };
   } catch (error) {
-    // Unexpected error - rollback and exit
+    // Unexpected error - rollback and preserve both failures when cleanup is incomplete.
+    let reportedError = error;
     if (!options.dryRun) {
-      await executeRollback(options.quiet);
+      try {
+        await executeRollback(options.quiet, error);
+      } catch (rollbackError) {
+        reportedError = rollbackError;
+      }
     }
-    const structuredError = unknownErrorToJsonError(error);
+    const structuredError = unknownErrorToJsonError(reportedError);
 
     return {
-      error: `Unexpected error: ${(error as Error).message}`,
+      error: `Unexpected error: ${(reportedError as Error).message}`,
       exitCode: ExitCode.UNKNOWN,
       ...(structuredError.code === "MANAGED_IGNORE_RECONCILIATION_FAILED"
         ? { managedIgnoreFailure: structuredError }
@@ -1146,8 +1250,11 @@ export const executeInit = async (
       ...(structuredError.code === "INIT_ROLLBACK_FAILED"
         ? { rollbackFailure: structuredError }
         : {}),
+      ...(structuredError.code === "INIT_REPOSITORY_CLASSIFICATION_FAILED"
+        ? { resolutionFailure: structuredError }
+        : {}),
       success: false,
-      workspaceRoot: cwd,
+      workspaceRoot: resolvedWorkspaceRoot,
     };
   }
 };
@@ -1164,6 +1271,7 @@ const displaySuccess = (result: InitResult, options: InitOptions): void => {
   console.log(`  • Configuration: ${result.configPath}`);
   console.log(`  • Hooks directory: ${result.hooksPath}`);
   console.log(`  • Repositories directory: ${result.reposPath}`);
+  console.log(`  • Worktrees directory: ${result.worktreesDir}`);
 
   if (result.workspaceRoot && result.workspaceRoot !== process.cwd()) {
     const changeDirTarget = relative(process.cwd(), result.workspaceRoot) || ".";
@@ -1182,6 +1290,8 @@ const displaySuccess = (result: InitResult, options: InitOptions): void => {
     for (const path of result.managedIgnore.paths) {
       if (path.status === "unsafe") {
         console.log(`  • Skipped unsafe path: ${path.input} (${path.safetyReason})`);
+      } else if (path.status === "non-applicable") {
+        console.log(`  • Non-applicable bare path: ${path.input}`);
       } else if (path.source) {
         console.log(
           `  • ${path.rule}: already ignored by ${path.source.type} (${path.source.path})`,
@@ -1267,7 +1377,10 @@ export function createCommand(): Command {
   return new Command("init")
     .description("Initialize Arashi workspace in the current repository or bootstrap a new one")
     .option("--repos-dir <path>", "Custom location for managed repositories")
-    .option("--worktrees-dir <path>", "Custom base location for managed worktrees")
+    .option(
+      "--worktrees-dir <path>",
+      "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
+    )
     .option("--ignore-scope <scope>", "Managed Git ignore scope: local (default), tracked, or none")
     .option("--zero-config", "Prepare implicit standalone mode without creating configuration")
     .option("--force", "Overwrite existing configuration if present")
@@ -1398,7 +1511,8 @@ Existing effective tracked, local, or global rules are honored. Arashi never mod
             createJsonErrorEnvelope(
               "init",
               result.managedIgnoreFailure ??
-                result.rollbackFailure ?? {
+                result.rollbackFailure ??
+                result.resolutionFailure ?? {
                   code: `INIT_${result.exitCode}`,
                   details: { exitCode: result.exitCode, workspaceRoot: result.workspaceRoot },
                   message: result.error || "Unknown error",

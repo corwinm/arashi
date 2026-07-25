@@ -2,8 +2,10 @@
 
 Arashi stores workspace settings in `.arashi/config.json`.
 
-The personal managed-ignore preference is deliberately not stored in that shared file. Safe
-configured `reposDir` and `worktreesDir` paths default to repository-local Git excludes. Select a
+The personal managed-ignore preference is deliberately not stored in that shared file. In non-bare
+worktrees, safe configured `reposDir` and `worktreesDir` paths default to repository-local Git
+excludes. Bare repository roots instead report administrative subdirectories as non-applicable to
+working-tree ignore rules and skip unsafe external paths such as the `..` worktree default. Select a
 different clone-local policy with:
 
 ```bash

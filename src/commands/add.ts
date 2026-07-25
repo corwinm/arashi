@@ -19,7 +19,7 @@ import { executeClone } from "./clone.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
 import { rm } from "node:fs/promises";
 import {
-  reconcileManagedIgnore,
+  reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
@@ -440,7 +440,7 @@ const executeAdd = async (
     const reposDir = join(workspaceRoot, config.reposDir);
     const clonePath = join(reposDir, repositoryName);
 
-    managedIgnore = await reconcileManagedIgnore({
+    managedIgnore = await reconcileRepositoryManagedIgnore({
       reposDir: config.reposDir,
       workspaceRoot,
       worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
