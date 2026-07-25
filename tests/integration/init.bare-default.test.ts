@@ -591,6 +591,19 @@ describe("init output and persisted create placement", () => {
     expect(status.stdout).not.toContain("Main Repository");
     expect(status.stderr).not.toContain("must be run in a work tree");
   });
+
+  test("bare invalid stored scope preserves the managed-ignore JSON error contract", async () => {
+    const fixture = await createBareFixture("committed");
+    await git(fixture.bareRoot, ["config", "--local", "arashi.ignoreScope", "invalid"]);
+
+    const result = await runCli(fixture.bareRoot, ["init", "--no-discover", "--json"]);
+    expect(result.exitCode).toBe(99);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      command: "init",
+      error: { code: "MANAGED_IGNORE_RECONCILIATION_FAILED" },
+      ok: false,
+    });
+  });
 });
 
 describe("managed-ignore rollback applicability guards", () => {

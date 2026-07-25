@@ -1088,6 +1088,15 @@ export async function executeCreate(
     context,
     storedIgnoreScope === "tracked",
   );
+  const trackedBareRootNeedsChildRules =
+    storedIgnoreScope === "tracked" &&
+    managedIgnoreWorkspaceRoot === context.workspaceRoot &&
+    selectedRepos.some((repository) => repository.path !== context.executionPath);
+  if (trackedBareRootNeedsChildRules) {
+    throw new CreateSetupError(
+      "Tracked managed-ignore changes for selected child repositories require an existing linked worktree. Create a parent worktree first, then retry.",
+    );
+  }
   const temporaryIgnoreWorkspace = temporaryManagedIgnoreWorktrees.has(managedIgnoreWorkspaceRoot);
   let managedIgnore: ManagedIgnoreReconciliation;
   try {

@@ -641,7 +641,16 @@ export const inspectBareManagedIgnore = async (
 export const reconcileBareManagedIgnore = async (
   options: InspectManagedIgnoreOptions,
 ): Promise<ManagedIgnoreReconciliation> => {
-  const inspection = await inspectBareManagedIgnore(options);
+  let inspection: ManagedIgnoreInspection;
+  try {
+    inspection = await inspectBareManagedIgnore(options);
+  } catch (error) {
+    throw new ManagedIgnoreError(
+      error instanceof Error ? error.message : String(error),
+      { attempted: false, changed: false, phase: "inspection", restored: false },
+      { cause: error },
+    );
+  }
   const preferenceWouldChange =
     options.requestedScope !== undefined &&
     (inspection.scope === "local"
@@ -663,10 +672,18 @@ export const reconcileBareManagedIgnore = async (
     workspaceRoot: options.workspaceRoot,
   });
   if (!options.dryRun && preferenceWouldChange) {
-    await updateStoredPreference(options.workspaceRoot, inspection.scope);
-    result.attempted = true;
-    result.changed = true;
-    result.fileChanges.preference = true;
+    try {
+      await updateStoredPreference(options.workspaceRoot, inspection.scope);
+      result.attempted = true;
+      result.changed = true;
+      result.fileChanges.preference = true;
+    } catch (error) {
+      throw new ManagedIgnoreError(
+        error instanceof Error ? error.message : String(error),
+        { attempted: true, changed: false, phase: "apply", restored: false },
+        { cause: error },
+      );
+    }
   }
   return result;
 };

@@ -2,7 +2,7 @@ import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { existsSync } from "fs";
-import { readFile } from "fs/promises";
+import { mkdir, readFile } from "fs/promises";
 import { join } from "path";
 
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
@@ -89,6 +89,43 @@ describe("create command from bare root", () => {
     expect(existsSync(worktreePath)).toBe(true);
     expect(existsSync(join(workspace.bareRepoPath, ".gitignore"))).toBe(false);
     expect(existsSync(join(worktreePath, ".gitignore"))).toBe(false);
+  });
+
+  test("rejects tracked first-worktree creation when selected child repositories need ignore rules", async () => {
+    workspace = await createBareCreateWorkspace({
+      configRepos: { child: { path: "./repos/child" } },
+      createLinkedWorktree: false,
+    });
+    const childPath = join(workspace.bareRepoPath, "repos", "child");
+    await mkdir(join(workspace.bareRepoPath, "repos"), { recursive: true });
+    const clone = runtime.spawnSync(
+      ["git", "clone", "--branch", "main", workspace.bareRepoPath, childPath],
+      {
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    expect(clone.exitCode).toBe(0);
+    const scope = runtime.spawnSync(["git", "config", "--local", "arashi.ignoreScope", "tracked"], {
+      cwd: workspace.bareRepoPath,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(scope.exitCode).toBe(0);
+
+    const branch = "feature-tracked-with-child";
+    const command = runtime.spawn(
+      [process.execPath, CLI_ENTRY, "create", branch, "--no-hooks", "--no-progress"],
+      { cwd: workspace.bareRepoPath, stderr: "pipe", stdout: "pipe" },
+    );
+    const [exitCode, stderr] = await Promise.all([
+      command.exited,
+      new Response(command.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("require an existing linked worktree");
+    expect(existsSync(join(workspace.bareRepoPath, ".arashi", "worktrees", branch))).toBe(false);
   });
 
   test("creates the first worktree when the bare repository has no linked worktrees", async () => {
