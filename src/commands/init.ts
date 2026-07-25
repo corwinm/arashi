@@ -469,7 +469,46 @@ const resolveInitRoot = async (
         if (!workspaceRoot || !isAbsolute(workspaceRoot)) {
           throw new Error(`Git returned an invalid absolute directory: '${workspaceRoot}'.`);
         }
+        logVerbose(`✓ Confirmed ${repositoryType} git repository at: ${workspaceRoot}`, options);
+        return { bootstrapped: false, repositoryType, workspaceRoot };
       }
+
+      // A linked worktree reports itself as non-bare even when its common Git directory is
+      // the configured bare workspace. Re-init must keep that existing workspace authoritative
+      // instead of creating a second .arashi directory in the linked worktree.
+      let commonOutput: string | undefined;
+      try {
+        const commonResult = await runGit(["rev-parse", "--git-common-dir"], cwd);
+        commonOutput = commonResult.stdout.trim() || undefined;
+      } catch (error) {
+        logVerbose(
+          `No Git common repository resolved from worktree: ${error instanceof Error ? error.message : String(error)}`,
+          options,
+        );
+      }
+
+      if (commonOutput) {
+        const commonRoot = isAbsolute(commonOutput)
+          ? resolve(commonOutput)
+          : resolve(cwd, commonOutput);
+        if (await configExists(commonRoot)) {
+          const commonTypeResult = await runGit(["rev-parse", "--is-bare-repository"], commonRoot);
+          const commonType = commonTypeResult.stdout.trim();
+          if (commonType !== "true" && commonType !== "false") {
+            throw new Error(`Git returned an invalid repository type: '${commonType}'.`);
+          }
+          if (commonType === "true") {
+            const rootResult = await runGit(["rev-parse", "--absolute-git-dir"], commonRoot);
+            workspaceRoot = rootResult.stdout.trim();
+            if (!workspaceRoot || !isAbsolute(workspaceRoot)) {
+              throw new Error(`Git returned an invalid absolute directory: '${workspaceRoot}'.`);
+            }
+            logVerbose(`✓ Resolved configured bare repository at: ${workspaceRoot}`, options);
+            return { bootstrapped: false, repositoryType: "bare", workspaceRoot };
+          }
+        }
+      }
+
       logVerbose(`✓ Confirmed ${repositoryType} git repository at: ${workspaceRoot}`, options);
       return { bootstrapped: false, repositoryType, workspaceRoot };
     } catch (error) {

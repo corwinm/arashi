@@ -15,9 +15,9 @@ import {
   applyRepositoryFilter,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
-import { basename, dirname, join, resolve } from "path";
+import { basename, dirname, isAbsolute, join, resolve } from "path";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   buildDirtyGuidance,
@@ -375,20 +375,33 @@ export async function resolveManagedIgnoreWorkspaceRoot(
     return context.workspaceRoot;
   }
 
-  try {
-    const invokingRepositoryType = await exec(
-      ["rev-parse", "--is-bare-repository"],
-      context.invocationPath,
-    );
-    if (invokingRepositoryType.stdout.trim() === "false") {
-      const invokingWorktreeRoot = await exec(
-        ["rev-parse", "--show-toplevel"],
-        context.invocationPath,
+  const configuredCommonDirectory = await realpath(context.executionPath).catch(() =>
+    resolve(context.executionPath),
+  );
+  let candidatePath = resolve(context.invocationPath);
+  while (true) {
+    try {
+      const commonDirectory = await exec(["rev-parse", "--git-common-dir"], candidatePath);
+      const rawCommonDirectory = commonDirectory.stdout.trim();
+      const absoluteCommonDirectory = isAbsolute(rawCommonDirectory)
+        ? resolve(rawCommonDirectory)
+        : resolve(candidatePath, rawCommonDirectory);
+      const canonicalCommonDirectory = await realpath(absoluteCommonDirectory).catch(() =>
+        resolve(absoluteCommonDirectory),
       );
-      return invokingWorktreeRoot.stdout.trim();
+      if (canonicalCommonDirectory === configuredCommonDirectory) {
+        const invokingWorktreeRoot = await exec(["rev-parse", "--show-toplevel"], candidatePath);
+        return invokingWorktreeRoot.stdout.trim();
+      }
+    } catch {
+      // Keep walking: a nested child repository may hide the enclosing linked worktree.
     }
-  } catch {
-    // Fall back to another usable linked worktree when the invocation path is unavailable.
+
+    const parentPath = dirname(candidatePath);
+    if (parentPath === candidatePath) {
+      break;
+    }
+    candidatePath = parentPath;
   }
 
   const result = await exec(["worktree", "list", "--porcelain"], context.executionPath);

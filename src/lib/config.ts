@@ -137,6 +137,14 @@ export interface WorkspaceRepository {
   groups?: string[];
 }
 
+/** Separate the canonical configuration location from the active repository tree. */
+export interface WorkspaceRepositoryRoots {
+  /** Root containing .arashi/config.json */
+  configurationRoot: string;
+  /** Parent repository whose managed repositories should be operated on */
+  executionRoot: string;
+}
+
 export type ConfigSourceType = "local-file" | "repository-content";
 
 export interface LoadedConfig {
@@ -1372,15 +1380,19 @@ export const removeRepo = async (repoPath: string, name: string): Promise<void> 
  * Includes the workspace root repository plus discovered repositories.
  */
 export const loadWorkspaceRepositories = async (
-  workspaceRoot: string,
+  workspaceRoots: string | WorkspaceRepositoryRoots,
 ): Promise<{ config: Config; repositories: WorkspaceRepository[] }> => {
-  const config = await loadConfig(workspaceRoot);
+  const { configurationRoot, executionRoot } =
+    typeof workspaceRoots === "string"
+      ? { configurationRoot: workspaceRoots, executionRoot: workspaceRoots }
+      : workspaceRoots;
+  const config = await loadConfig(configurationRoot);
   const repositories: WorkspaceRepository[] = [];
-  const mainName = basename(workspaceRoot);
+  const mainName = basename(executionRoot);
 
   repositories.push({
     name: mainName,
-    path: resolve(workspaceRoot),
+    path: resolve(executionRoot),
   });
 
   for (const [name, repoConfig] of Object.entries(config.repos)) {
@@ -1388,7 +1400,7 @@ export const loadWorkspaceRepositories = async (
       gitUrl: repoConfig.gitUrl,
       groups: repoConfig.groups,
       name,
-      path: resolve(workspaceRoot, repoConfig.path),
+      path: resolve(executionRoot, repoConfig.path),
     });
   }
 

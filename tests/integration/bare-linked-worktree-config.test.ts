@@ -21,7 +21,9 @@ afterEach(async () => {
   workspace = null;
 });
 
-async function configureBareWorkspace(): Promise<BareCreateWorkspace> {
+async function configureBareWorkspace(
+  repos: Record<string, { path: string }> = {},
+): Promise<BareCreateWorkspace> {
   const createdWorkspace = await createBareCreateWorkspace({ includeConfig: false });
   await mkdir(join(createdWorkspace.bareRepoPath, ".arashi"), { recursive: true });
   await mkdir(join(createdWorkspace.bareRepoPath, "repos"), { recursive: true });
@@ -29,7 +31,7 @@ async function configureBareWorkspace(): Promise<BareCreateWorkspace> {
     join(createdWorkspace.bareRepoPath, ".arashi", "config.json"),
     JSON.stringify(
       {
-        repos: {},
+        repos,
         reposDir: "./repos",
         version: "1.0.0",
         worktreesDir: ".arashi/worktrees",
@@ -100,5 +102,117 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     expect(resolve(workspace.bareRepoPath, config.repos["source-repository"]?.path ?? "")).toBe(
       resolve(workspace.bareRepoPath, "repos", "source-repository"),
     );
+  });
+
+  test("exec loads config from the bare root but runs in the linked parent and its child", async () => {
+    workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+    const childPath = join(workspace.worktreePath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    await execGit(["init", "-b", "main"], childPath);
+
+    const command = runtime.spawn(
+      [
+        process.execPath,
+        CLI_ENTRY,
+        "exec",
+        "--json",
+        "--",
+        process.execPath,
+        "-e",
+        "process.stdout.write(process.cwd())",
+      ],
+      {
+        cwd: childPath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    const [exitCode, stdout, stderr] = await Promise.all([
+      command.exited,
+      new Response(command.stdout).text(),
+      new Response(command.stderr).text(),
+    ]);
+
+    expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
+    expect(stderr).toBe("");
+    const envelope = JSON.parse(stdout) as {
+      data: { results: { path: string; repositoryId: string; stdout: string }[] };
+    };
+    const linkedParentPath = await realpath(workspace.worktreePath);
+    const linkedChildPath = await realpath(childPath);
+    expect(envelope.data.results).toEqual([
+      {
+        command: [process.execPath, "-e", "process.stdout.write(process.cwd())"],
+        elapsedMs: expect.any(Number),
+        exitCode: 0,
+        path: linkedParentPath,
+        repositoryId: "main-worktree",
+        status: "passed",
+        stderr: "",
+        stdout: linkedParentPath,
+      },
+      {
+        command: [process.execPath, "-e", "process.stdout.write(process.cwd())"],
+        elapsedMs: expect.any(Number),
+        exitCode: 0,
+        path: linkedChildPath,
+        repositoryId: "child",
+        status: "passed",
+        stderr: "",
+        stdout: linkedChildPath,
+      },
+    ]);
+  });
+
+  test("exec invoked at the bare root continues to use the bare repository tree", async () => {
+    workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+    const childPath = join(workspace.bareRepoPath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    await execGit(["init", "-b", "main"], childPath);
+
+    const command = runtime.spawn(
+      [
+        process.execPath,
+        CLI_ENTRY,
+        "exec",
+        "--json",
+        "--",
+        process.execPath,
+        "-e",
+        "process.stdout.write(process.cwd())",
+      ],
+      {
+        cwd: workspace.bareRepoPath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    const [exitCode, stdout, stderr] = await Promise.all([
+      command.exited,
+      new Response(command.stdout).text(),
+      new Response(command.stderr).text(),
+    ]);
+
+    expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
+    expect(stderr).toBe("");
+    const envelope = JSON.parse(stdout) as {
+      data: { results: { path: string; repositoryId: string; stdout: string }[] };
+    };
+    const bareRootPath = await realpath(workspace.bareRepoPath);
+    const bareChildPath = await realpath(childPath);
+    expect(envelope.data.results).toMatchObject([
+      {
+        path: bareRootPath,
+        repositoryId: "main.git",
+        status: "passed",
+        stdout: bareRootPath,
+      },
+      {
+        path: bareChildPath,
+        repositoryId: "child",
+        status: "passed",
+        stdout: bareChildPath,
+      },
+    ]);
   });
 });

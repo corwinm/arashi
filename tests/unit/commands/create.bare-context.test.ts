@@ -79,4 +79,38 @@ describe("create command bare context resolver", () => {
     expect(context.executionPath).toBe(context.workspaceRoot);
     expect(resolve(managedIgnoreWorkspaceRoot)).toBe(resolve(await realpath(invokingWorktreePath)));
   });
+
+  test("prefers the enclosing linked worktree over a nested child repository", async () => {
+    workspace = await createBareCreateWorkspace({ includeConfig: false });
+    await mkdir(join(workspace.bareRepoPath, ".arashi"), { recursive: true });
+    await runtime.write(
+      join(workspace.bareRepoPath, ".arashi", "config.json"),
+      JSON.stringify({ repos: {}, reposDir: "./repos", version: "1.0.0" }),
+    );
+    const trackedScope = runtime.spawnSync(
+      ["git", "config", "--local", "arashi.ignoreScope", "tracked"],
+      {
+        cwd: workspace.bareRepoPath,
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    expect(trackedScope.exitCode).toBe(0);
+    const childPath = join(workspace.worktreePath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    const initializeChild = runtime.spawnSync(["git", "init", "-b", "main"], {
+      cwd: childPath,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(initializeChild.exitCode).toBe(0);
+
+    const context = await resolveCreateInvocationContext(childPath);
+    const managedIgnoreWorkspaceRoot = await resolveManagedIgnoreWorkspaceRoot(context, true);
+
+    expect(context.repositoryType).toBe("bare");
+    expect(resolve(managedIgnoreWorkspaceRoot)).toBe(
+      resolve(await realpath(workspace.worktreePath)),
+    );
+  });
 });

@@ -257,6 +257,28 @@ describe("repository-aware init resolution and defaults", () => {
 });
 
 describe("existing config, force, and preference authority", () => {
+  test("linked-worktree preference-only re-init reconciles the configured bare root", async () => {
+    const fixture = await createBareFixture("linked");
+    const initial = await runCli(fixture.bareRoot, ["init", "--no-discover", "--json"]);
+    expect(initial.exitCode, `${initial.stdout}\n${initial.stderr}`).toBe(0);
+
+    const result = await runCli(fixture.linkedRoot!, ["init", "--ignore-scope", "none", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      command: "init",
+      data: {
+        preferenceOnly: true,
+        workspaceRoot: fixture.bareRoot,
+        worktreesDir: "..",
+      },
+      ok: true,
+    });
+    expect(await localPreference(fixture.bareRoot)).toBe("none");
+    expect(existsSync(join(fixture.linkedRoot!, ".arashi"))).toBe(false);
+  });
+
   test("ordinary existing config is preserved without repository-aware recalculation", async () => {
     const fixture = await createBareFixture();
     await saveConfig(fixture.bareRoot, {
