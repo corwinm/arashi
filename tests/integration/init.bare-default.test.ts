@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { executeInit } from "../../src/commands/init.ts";
 import { loadConfig, saveConfig } from "../../src/lib/config.ts";
 import { exec as gitExec } from "../../src/lib/git.ts";
@@ -30,7 +31,7 @@ async function createBareFixture(topology: BareTopology = "committed"): Promise<
   roots.push(root);
   let bareRoot = join(root, "workspace.git");
   await git(root, ["init", "--bare", bareRoot]);
-  bareRoot = await realpath(bareRoot);
+  bareRoot = await git(bareRoot, ["rev-parse", "--absolute-git-dir"]);
 
   let linkedRoot: string | undefined;
   if (topology !== "unborn") {
@@ -553,7 +554,7 @@ describe("init output and persisted create placement", () => {
 
     const add = await runCli(fixture.bareRoot, [
       "add",
-      source.bareRoot,
+      pathToFileURL(source.bareRoot).href,
       "--name",
       "child",
       "--force",
