@@ -473,11 +473,13 @@ describe("init output and persisted create placement", () => {
 
     const status = await runCli(expected, ["status", "--json"]);
     expect(status.exitCode, `${status.stdout}\n${status.stderr}`).toBe(0);
-    expect(JSON.parse(status.stdout)).toMatchObject({
-      command: "status",
-      data: { workspaceRoot: fixture.bareRoot },
-      ok: true,
-    });
+    const statusEnvelope = JSON.parse(status.stdout) as {
+      command: string;
+      data: { workspaceRoot: string };
+      ok: boolean;
+    };
+    expect(statusEnvelope).toMatchObject({ command: "status", ok: true });
+    expect(resolve(statusEnvelope.data.workspaceRoot)).toBe(resolve(fixture.bareRoot));
 
     const followUp = await runCli(expected, [
       "create",
