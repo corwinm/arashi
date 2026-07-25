@@ -466,7 +466,10 @@ describe("init output and persisted create placement", () => {
     const expected = join(dirname(fixture.bareRoot), "feature", "example");
     expect(existsSync(expected)).toBe(true);
     expect(existsSync(join(fixture.bareRoot, "feature", "example"))).toBe(false);
-    expect(await git(fixture.bareRoot, ["worktree", "list", "--porcelain"])).toContain(expected);
+    const expectedGitPath = await git(expected, ["rev-parse", "--show-toplevel"]);
+    expect(await git(fixture.bareRoot, ["worktree", "list", "--porcelain"])).toContain(
+      expectedGitPath,
+    );
   });
 
   test("bare init persists and create uses an explicit worktree base", async () => {
