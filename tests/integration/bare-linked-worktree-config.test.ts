@@ -138,9 +138,16 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     const envelope = JSON.parse(stdout) as {
       data: { results: { path: string; repositoryId: string; stdout: string }[] };
     };
+    const canonicalResults = await Promise.all(
+      envelope.data.results.map(async (result) => ({
+        ...result,
+        path: await realpath(result.path),
+        stdout: await realpath(result.stdout),
+      })),
+    );
     const linkedParentPath = await realpath(workspace.worktreePath);
     const linkedChildPath = await realpath(childPath);
-    expect(envelope.data.results).toEqual([
+    expect(canonicalResults).toEqual([
       {
         command: [process.execPath, "-e", "process.stdout.write(process.cwd())"],
         elapsedMs: expect.any(Number),
@@ -198,9 +205,16 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     const envelope = JSON.parse(stdout) as {
       data: { results: { path: string; repositoryId: string; stdout: string }[] };
     };
+    const canonicalResults = await Promise.all(
+      envelope.data.results.map(async (result) => ({
+        ...result,
+        path: await realpath(result.path),
+        stdout: await realpath(result.stdout),
+      })),
+    );
     const bareRootPath = await realpath(workspace.bareRepoPath);
     const bareChildPath = await realpath(childPath);
-    expect(envelope.data.results).toMatchObject([
+    expect(canonicalResults).toMatchObject([
       {
         path: bareRootPath,
         repositoryId: "main.git",
