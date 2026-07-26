@@ -341,11 +341,15 @@ export async function resolveCreateInvocationContext(
   const isBare = bareProbe.stdout.trim() === "true";
 
   if (isBare) {
+    const gitDirectory = await exec(["rev-parse", "--absolute-git-dir"], absoluteInvocationPath);
+    const canonicalBareRoot = await realpath(gitDirectory.stdout.trim()).catch(() =>
+      resolve(gitDirectory.stdout.trim()),
+    );
     return {
-      executionPath: absoluteInvocationPath,
-      invocationPath: absoluteInvocationPath,
+      executionPath: canonicalBareRoot,
+      invocationPath: canonicalBareRoot,
       repositoryType: "bare",
-      workspaceRoot: absoluteInvocationPath,
+      workspaceRoot: canonicalBareRoot,
     };
   }
 

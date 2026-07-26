@@ -26,9 +26,26 @@ describe("create command bare context resolver", () => {
 
     const context = await resolveCreateInvocationContext(workspace.bareRepoPath);
 
+    const canonicalBareRoot = await realpath(workspace.bareRepoPath);
     expect(context.repositoryType).toBe("bare");
-    expect(context.workspaceRoot).toBe(workspace.bareRepoPath);
-    expect(context.executionPath).toBe(workspace.bareRepoPath);
+    expect(context.workspaceRoot).toBe(canonicalBareRoot);
+    expect(context.executionPath).toBe(canonicalBareRoot);
+  });
+
+  test("canonicalizes nested bare invocation to the absolute Git directory", async () => {
+    workspace = await createBareCreateWorkspace();
+    const nestedPath = join(workspace.bareRepoPath, "nested", "inside");
+    await mkdir(nestedPath, { recursive: true });
+
+    const context = await resolveCreateInvocationContext(nestedPath);
+    const canonicalBareRoot = await realpath(workspace.bareRepoPath);
+
+    expect(context).toMatchObject({
+      executionPath: canonicalBareRoot,
+      invocationPath: canonicalBareRoot,
+      repositoryType: "bare",
+      workspaceRoot: canonicalBareRoot,
+    });
   });
 
   test("keeps non-bare invocation behavior", async () => {
