@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { chmod, mkdir, realpath } from "fs/promises";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { existsSync } from "fs";
+import { createCommand as createAddCommand } from "../../src/commands/add.ts";
 import { findWorkspaceRoot } from "../../src/lib/config.ts";
 import { basename, join, resolve } from "path";
 import { pathToFileURL } from "node:url";
@@ -202,6 +203,86 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     );
   });
 
+  test("duplicate add clone fallback materializes a missing child from a nested repository", async () => {
+    workspace = await configureBareWorkspace();
+    const childSourcePath = join(workspace.rootPath, "child-source");
+    const centralChildPath = join(workspace.bareRepoPath, "repos", "child");
+    const linkedChildPath = join(workspace.worktreePath, "repos", "child");
+    const nestedCallerPath = join(workspace.worktreePath, "repos", "caller");
+    await mkdir(childSourcePath, { recursive: true });
+    await execGit(["init", "-b", "main"], childSourcePath);
+    await configureRepository(childSourcePath);
+    await commitFile(childSourcePath, "README.md", "child main\n");
+    await execGit(["branch", "feature/add-clone-fallback"], childSourcePath);
+    await execGit(["clone", childSourcePath, centralChildPath], workspace.bareRepoPath);
+    await mkdir(nestedCallerPath, { recursive: true });
+    await execGit(["init", "-b", "main"], nestedCallerPath);
+    await execGit(["checkout", "-b", "feature/add-clone-fallback"], workspace.worktreePath);
+    await runtime.write(
+      join(workspace.bareRepoPath, ".arashi", "config.json"),
+      JSON.stringify(
+        {
+          repos: {
+            caller: { path: "./repos/caller" },
+            child: { gitUrl: pathToFileURL(childSourcePath).href, path: "./repos/child" },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+          worktreesDir: "..",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const originalCwd = process.cwd();
+    const originalStdinIsTTY = process.stdin.isTTY;
+    const originalStdoutIsTTY = process.stdout.isTTY;
+    const prompts = await import("../../src/lib/prompts.ts");
+    const confirm = vi.spyOn(prompts, "confirm").mockResolvedValue({ status: "ok", value: true });
+    const multiSelect = vi
+      .spyOn(prompts, "multiSelect")
+      .mockResolvedValue({ status: "ok", value: ["child"] });
+    const select = vi.spyOn(prompts, "select").mockResolvedValue({ status: "ok", value: "ssh" });
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+
+    try {
+      process.chdir(nestedCallerPath);
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+      Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+      await createAddCommand().parseAsync(
+        ["node", "arashi", pathToFileURL(childSourcePath).href, "--name", "child"],
+        { from: "node" },
+      );
+
+      expect(exit).toHaveBeenCalledWith(0);
+    } finally {
+      process.chdir(originalCwd);
+      Object.defineProperty(process.stdin, "isTTY", {
+        configurable: true,
+        value: originalStdinIsTTY,
+      });
+      Object.defineProperty(process.stdout, "isTTY", {
+        configurable: true,
+        value: originalStdoutIsTTY,
+      });
+      confirm.mockRestore();
+      multiSelect.mockRestore();
+      select.mockRestore();
+      exit.mockRestore();
+    }
+
+    expect(existsSync(centralChildPath)).toBe(true);
+    expect(existsSync(linkedChildPath)).toBe(true);
+    const branch = runtime.spawnSync(["git", "branch", "--show-current"], {
+      cwd: linkedChildPath,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(branch.exitCode).toBe(0);
+    expect(new TextDecoder().decode(branch.stdout).trim()).toBe("feature/add-clone-fallback");
+  });
+
   test("status loads config from the bare root but inspects the dirty linked parent and child", async () => {
     workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
     const childPath = join(workspace.worktreePath, "repos", "child");
@@ -323,6 +404,30 @@ describe("configured bare workspace discovery from linked worktrees", () => {
         envelope.data.repositories.map(async (repository) => realpath(repository.path)),
       ),
     ).toEqual([await realpath(workspace.worktreePath), await realpath(childPath)]);
+  });
+
+  test("handoff invoked at the bare root never derives the workspace branch from a child", async () => {
+    workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+    const childPath = join(workspace.bareRepoPath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    await execGit(["init", "-b", "child-only"], childPath);
+    await configureRepository(childPath);
+    await commitFile(childPath, "README.md", "child branch\n");
+
+    const result = await runCli(workspace.bareRepoPath, ["handoff", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    const envelope = JSON.parse(result.stdout) as {
+      data: {
+        repositories: { branch: { localBranch: string }; name: string }[];
+        workspace: { branch: string };
+      };
+    };
+    expect(envelope.data.repositories).toMatchObject([
+      { branch: { localBranch: "child-only" }, name: "child" },
+    ]);
+    expect(envelope.data.workspace.branch).toBe("main");
   });
 
   test("exec loads config from the bare root but runs in the linked parent and its child", async () => {
