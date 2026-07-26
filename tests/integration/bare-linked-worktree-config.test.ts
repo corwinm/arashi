@@ -413,6 +413,7 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     await execGit(["init", "-b", "child-only"], childPath);
     await configureRepository(childPath);
     await commitFile(childPath, "README.md", "child branch\n");
+    await execGit(["symbolic-ref", "HEAD", "refs/heads/main"], workspace.bareRepoPath);
 
     const result = await runCli(workspace.bareRepoPath, ["handoff", "--json"]);
 
