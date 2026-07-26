@@ -5,16 +5,21 @@ import {
   validateHook,
 } from "./hooks.ts";
 import { basename, join, resolve } from "path";
-import { checkAllRepos, isMissingRepositoryStatus } from "../commands/status.ts";
-import { findWorkspaceRoot, getConfigPath, loadConfig } from "./config.ts";
+import {
+  checkAllRepos,
+  isMissingRepositoryStatus,
+  shouldIncludeWorkspaceRootInRepositoryChecks,
+} from "../commands/status.ts";
+import type { Config, WorkspaceRepositoryRoots } from "./config.ts";
+import { getConfigPath, loadWorkspaceRepositories } from "./config.ts";
+import { findConfiguredWorkspaceRoots } from "./workspace-context.ts";
 import { discoverPrunableWorktrees } from "../core/remove.ts";
 import { readdir } from "fs/promises";
-import { inspectManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
+import { inspectRepositoryManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
 
 const ZERO = 0;
 
-type Config = Awaited<ReturnType<typeof loadConfig>>;
 type RepoStatus = Awaited<ReturnType<typeof checkAllRepos>>[number];
 type RepositoryTarget = Parameters<typeof discoverPrunableWorktrees>[0][number];
 
@@ -116,7 +121,7 @@ const collectManagedIgnoreFindings = async (
   config: Config,
 ): Promise<DoctorFinding[]> => {
   try {
-    const inspection = await inspectManagedIgnore({
+    const inspection = await inspectRepositoryManagedIgnore({
       reposDir: config.reposDir,
       workspaceRoot,
       worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
@@ -367,7 +372,8 @@ const collectRepositoryFindings = async (
   workspaceRoot: string,
   config: Config,
 ): Promise<DoctorFinding[]> => {
-  const statuses = await checkAllRepos(workspaceRoot, config, false);
+  const includeWorkspaceRoot = await shouldIncludeWorkspaceRootInRepositoryChecks(workspaceRoot);
+  const statuses = await checkAllRepos(workspaceRoot, config, false, includeWorkspaceRoot);
   return statuses.flatMap((status) => repositoryStatusToDoctorFindings(status));
 };
 
@@ -470,10 +476,11 @@ const scanHookDirectoryForUnsupportedFiles = async (
 };
 
 const collectHookFindings = async (
-  workspaceRoot: string,
+  configurationRoot: string,
+  executionRoot: string,
   config: Config,
 ): Promise<DoctorFinding[]> => {
-  const targetRepositories = createRepositoryTargets(workspaceRoot, config);
+  const targetRepositories = createRepositoryTargets(executionRoot, config);
   const repoNames = Object.keys(config.repos);
   const findings: DoctorFinding[] = [];
   const hookNames = Object.values(GLOBAL_HOOKS);
@@ -482,7 +489,7 @@ const collectHookFindings = async (
     const resolvedHooks = await resolveScopedLifecycleHooks({
       hookName,
       targetRepositories,
-      workspaceRoot,
+      workspaceRoot: configurationRoot,
     });
     for (const hook of resolvedHooks) {
       const validation = await validateHook(hook.scriptPath);
@@ -514,12 +521,12 @@ const collectHookFindings = async (
 
   findings.push(
     ...(await scanHookDirectoryForUnsupportedFiles(
-      join(workspaceRoot, ".arashi", "hooks"),
+      join(configurationRoot, ".arashi", "hooks"),
       "workspace",
       repoNames,
     )),
   );
-  for (const target of targetRepositories.filter((target) => target.path !== workspaceRoot)) {
+  for (const target of targetRepositories.filter((target) => target.path !== executionRoot)) {
     findings.push(
       ...(await scanHookDirectoryForUnsupportedFiles(
         join(target.path, ".arashi", "hooks"),
@@ -537,9 +544,10 @@ const collectShellAndInstallHints = (): DoctorFinding[] => [];
 export const runDoctor = async (): Promise<DoctorResult> => {
   const findings: DoctorFinding[] = [];
   let workspaceRoot: string | null = null;
+  let workspaceRoots: WorkspaceRepositoryRoots;
 
   try {
-    workspaceRoot = await findWorkspaceRoot();
+    workspaceRoots = await findConfiguredWorkspaceRoots("doctor");
   } catch (error) {
     findings.push(
       createFinding({
@@ -560,22 +568,25 @@ export const runDoctor = async (): Promise<DoctorResult> => {
     };
   }
 
+  const { configurationRoot, executionRoot } = workspaceRoots;
+  workspaceRoot = configurationRoot;
+
   let config: Config | undefined = undefined;
   try {
-    config = await loadConfig(workspaceRoot);
+    ({ config } = await loadWorkspaceRepositories(workspaceRoots));
   } catch (error) {
     findings.push(
       createFinding({
         category: "configuration",
         code: "CONFIG_LOAD_FAILED",
         details: {
-          configPath: getConfigPath(workspaceRoot),
+          configPath: getConfigPath(configurationRoot),
           error: error instanceof Error ? error.message : String(error),
         },
         message: `Failed to load Arashi configuration: ${error instanceof Error ? error.message : String(error)}`,
         scope: "configuration:.arashi/config.json",
         severity: "error",
-        suggestedCommands: ["arashi init", `cat ${getConfigPath(workspaceRoot)}`],
+        suggestedCommands: ["arashi init", `cat ${getConfigPath(configurationRoot)}`],
       }),
     );
     return {
@@ -587,10 +598,10 @@ export const runDoctor = async (): Promise<DoctorResult> => {
   }
 
   const phaseResults = await Promise.allSettled([
-    collectManagedIgnoreFindings(workspaceRoot, config),
-    collectRepositoryFindings(workspaceRoot, config),
-    collectWorktreeFindings(workspaceRoot, config),
-    collectHookFindings(workspaceRoot, config),
+    collectManagedIgnoreFindings(configurationRoot, config),
+    collectRepositoryFindings(executionRoot, config),
+    collectWorktreeFindings(executionRoot, config),
+    collectHookFindings(configurationRoot, executionRoot, config),
   ]);
 
   for (const phaseResult of phaseResults) {

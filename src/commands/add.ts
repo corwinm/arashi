@@ -13,13 +13,17 @@ import { AddCommandError, AddCommandErrorCode } from "../lib/errors.ts";
 import { basename, join } from "path";
 import { clone, getDefaultBranch } from "../lib/git.ts";
 import { configExists, getConfigPath, loadConfig, saveConfig } from "../lib/config.ts";
+import {
+  findConfiguredWorkspaceRoots,
+  throwIfStandaloneWorkspace,
+} from "../lib/workspace-context.ts";
 import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { executeClone } from "./clone.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
 import { rm } from "node:fs/promises";
 import {
-  reconcileManagedIgnore,
+  reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
@@ -30,9 +34,9 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { throwIfStandaloneWorkspace } from "../lib/workspace-context.ts";
 
 type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
+type WorkspaceRoots = Awaited<ReturnType<typeof findConfiguredWorkspaceRoots>>;
 
 const ZERO = 0;
 const ERROR_EXIT_CODE = 1;
@@ -59,7 +63,10 @@ const hasMakefileSetupTarget = async (file: { text(): Promise<string> }): Promis
   }
 };
 
-const maybeRunCloneFallback = async (error: AddCommandError): Promise<void> => {
+const maybeRunCloneFallback = async (
+  error: AddCommandError,
+  workspaceRoots: WorkspaceRoots,
+): Promise<void> => {
   if (
     error.code !== AddCommandErrorCode.DUPLICATE_NAME ||
     !process.stdin.isTTY ||
@@ -73,7 +80,7 @@ const maybeRunCloneFallback = async (error: AddCommandError): Promise<void> => {
     true,
   );
   if (fallback.status === "ok" && fallback.value) {
-    const cloneResult = await executeClone({}, { workspaceRoot: process.cwd() });
+    const cloneResult = await executeClone({}, { workspaceRoots });
     if (cloneResult.status === "cancelled") {
       process.exit(ZERO);
     }
@@ -440,7 +447,7 @@ const executeAdd = async (
     const reposDir = join(workspaceRoot, config.reposDir);
     const clonePath = join(reposDir, repositoryName);
 
-    managedIgnore = await reconcileManagedIgnore({
+    managedIgnore = await reconcileRepositoryManagedIgnore({
       reposDir: config.reposDir,
       workspaceRoot,
       worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
@@ -631,8 +638,10 @@ export function createCommand(): Command {
     .option("-f, --force", "Skip confirmation prompts", false)
     .option("--json", "Output result as JSON", false)
     .action(async (gitUrl: string, options: AddCommandOptions) => {
+      let workspaceRoots: WorkspaceRoots | null = null;
       try {
-        const workspaceRoot = process.cwd();
+        workspaceRoots = await findConfiguredWorkspaceRoots("add", process.cwd());
+        const workspaceRoot = workspaceRoots.configurationRoot;
         const result = await executeAdd(gitUrl, options, workspaceRoot);
 
         if (options.json) {
@@ -668,7 +677,9 @@ export function createCommand(): Command {
             );
           } else {
             displayError(error);
-            await maybeRunCloneFallback(error);
+            if (workspaceRoots) {
+              await maybeRunCloneFallback(error, workspaceRoots);
+            }
           }
           process.exit(CANCELLED_EXIT_CODE);
         } else {

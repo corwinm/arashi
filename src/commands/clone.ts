@@ -12,6 +12,7 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { loadConfig, normalizeConfig, repairRepositoryGitUrls, saveConfig } from "../lib/config.ts";
+import type { WorkspaceRepositoryRoots } from "../lib/config.ts";
 import { info, error as logError, spinner, success, warn } from "../lib/logger.ts";
 import { join, resolve } from "path";
 import {
@@ -24,12 +25,12 @@ import { Command } from "commander";
 import { removeDir } from "../lib/filesystem.ts";
 import { stat } from "fs/promises";
 import {
-  reconcileManagedIgnore,
+  reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
-import { findConfiguredWorkspaceRoot } from "../lib/workspace-context.ts";
+import { findConfiguredWorkspaceRoots } from "../lib/workspace-context.ts";
 
 interface Choice<T> {
   value: T;
@@ -63,9 +64,11 @@ export interface CloneExecutionResult {
   managedIgnore?: ManagedIgnoreReconciliation;
 }
 
-interface CloneCommandDependencies {
+export interface CloneCommandDependencies {
   workspaceRoot?: string;
+  workspaceRoots?: WorkspaceRepositoryRoots;
   findWorkspaceRoot?: () => Promise<string>;
+  findWorkspaceRoots?: () => Promise<WorkspaceRepositoryRoots>;
   loadConfig?: (workspaceRoot: string) => Promise<Config>;
   saveConfig?: (workspaceRoot: string, config: Config) => Promise<void>;
   repairRepositoryGitUrls?: typeof repairRepositoryGitUrls;
@@ -134,8 +137,6 @@ export async function executeClone(
   options: CloneCommandOptions,
   deps: CloneCommandDependencies = {},
 ): Promise<CloneExecutionResult> {
-  const resolveWorkspaceRoot =
-    deps.findWorkspaceRoot ?? (() => findConfiguredWorkspaceRoot("clone"));
   const readConfig = deps.loadConfig ?? loadConfig;
   const writeConfig = deps.saveConfig ?? saveConfig;
   const repairGitUrls = deps.repairRepositoryGitUrls ?? repairRepositoryGitUrls;
@@ -158,12 +159,22 @@ export async function executeClone(
     (deps.stdoutIsTTY ?? process.stdout.isTTY),
   );
 
-  const workspaceRoot = deps.workspaceRoot ?? (await resolveWorkspaceRoot());
-  const sourceWorkspaceRoot = resolveSourceRoot(workspaceRoot);
-  const currentBranch = sourceWorkspaceRoot ? await resolveBranch(workspaceRoot) : null;
-  const config = normalizeConfig(await readConfig(workspaceRoot));
+  const { configurationRoot, executionRoot } = await resolveCloneWorkspaceRoots(deps);
+  const sourceWorkspaceRoot =
+    resolveSourceRoot(executionRoot) ??
+    (configurationRoot === executionRoot ? null : configurationRoot);
+  const currentBranch = sourceWorkspaceRoot ? await resolveBranch(executionRoot) : null;
+  const config = normalizeConfig(await readConfig(configurationRoot));
 
-  const repairResult = await repairGitUrls(workspaceRoot, config);
+  let repairResult = await repairGitUrls(executionRoot, config);
+  if (configurationRoot !== executionRoot && repairResult.unresolved.length > 0) {
+    const configurationRootRepair = await repairGitUrls(configurationRoot, config);
+    repairResult = {
+      repaired: [...repairResult.repaired, ...configurationRootRepair.repaired],
+      unresolved: configurationRootRepair.unresolved,
+      updated: repairResult.updated || configurationRootRepair.updated,
+    };
+  }
   let configUpdated = repairResult.updated;
 
   if (repairResult.repaired.length > 0 && !options.json) {
@@ -171,10 +182,10 @@ export async function executeClone(
   }
 
   if (repairResult.updated) {
-    await writeConfig(workspaceRoot, config);
+    await writeConfig(configurationRoot, config);
   }
 
-  let discovery = await discoverRepositories(workspaceRoot, config);
+  let discovery = await discoverRepositories(executionRoot, config);
 
   const reconcileResult = await reconcileUnmanagedRepositories({
     askInput,
@@ -185,7 +196,7 @@ export async function executeClone(
     interactive,
     quiet: Boolean(options.json),
     unmanagedRepositories: discovery.unmanagedLocal,
-    workspaceRoot,
+    workspaceRoot: executionRoot,
   });
 
   if (reconcileResult.cancelled) {
@@ -199,8 +210,8 @@ export async function executeClone(
 
   if (reconcileResult.updatedConfig) {
     configUpdated = true;
-    await writeConfig(workspaceRoot, config);
-    discovery = await discoverRepositories(workspaceRoot, config);
+    await writeConfig(configurationRoot, config);
+    discovery = await discoverRepositories(executionRoot, config);
   }
 
   if (discovery.configuredMissing.length === 0) {
@@ -316,9 +327,9 @@ export async function executeClone(
     .map((repository) => repository.name)
     .filter((name) => !selectedRepositories.some((repository) => repository.name === name));
 
-  const managedIgnore = await reconcileManagedIgnore({
+  const managedIgnore = await reconcileRepositoryManagedIgnore({
     reposDir: config.reposDir,
-    workspaceRoot,
+    workspaceRoot: configurationRoot,
     worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
   });
   if (!options.json) {
@@ -384,7 +395,7 @@ export async function executeClone(
 
   try {
     if (configUpdated) {
-      await writeConfig(workspaceRoot, config);
+      await writeConfig(configurationRoot, config);
     }
   } catch (error) {
     if (cloned.length === ZERO && !residualMaterializedState && managedIgnore.changed) {
@@ -420,6 +431,29 @@ export async function executeClone(
     skipped,
     status,
   };
+}
+
+async function resolveCloneWorkspaceRoots(
+  deps: CloneCommandDependencies,
+): Promise<WorkspaceRepositoryRoots> {
+  if (deps.workspaceRoots) {
+    return deps.workspaceRoots;
+  }
+
+  if (deps.workspaceRoot) {
+    return { configurationRoot: deps.workspaceRoot, executionRoot: deps.workspaceRoot };
+  }
+
+  if (deps.findWorkspaceRoots) {
+    return deps.findWorkspaceRoots();
+  }
+
+  if (deps.findWorkspaceRoot) {
+    const workspaceRoot = await deps.findWorkspaceRoot();
+    return { configurationRoot: workspaceRoot, executionRoot: workspaceRoot };
+  }
+
+  return findConfiguredWorkspaceRoots("clone");
 }
 
 export function resolveCoordinatedSourceWorkspaceRoot(workspaceRoot: string): string | null {

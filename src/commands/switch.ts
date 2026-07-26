@@ -14,7 +14,7 @@ import { Command } from "commander";
 import { exec } from "../lib/git.ts";
 import { detectManagedSwitchContext, launchSwitchTarget } from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
-import { resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import { findConfiguredWorkspaceRoots, resolveWorkspaceContext } from "../lib/workspace-context.ts";
 
 type LoadWorkspaceRepositoriesResult = Awaited<ReturnType<typeof loadWorkspaceRepositories>>;
 type Config = NonNullable<LoadWorkspaceRepositoriesResult["config"]>;
@@ -239,12 +239,25 @@ export async function executeSwitch(
     info(`Workspace mode: standalone`);
     info(`Main repository: ${context.mainRoot}`);
   }
-  const workspaceRoot =
-    context.mode === "standalone" ? context.mainRoot : await resolveWorkspaceRoot();
+  let configurationRoot: string;
+  let workspaceRoot: string;
+  if (context.mode === "standalone") {
+    configurationRoot = context.mainRoot;
+    workspaceRoot = context.mainRoot;
+  } else if (deps.findWorkspaceRoot) {
+    configurationRoot = await resolveWorkspaceRoot();
+    workspaceRoot = configurationRoot;
+  } else {
+    const roots = await findConfiguredWorkspaceRoots("switch", process.cwd());
+    configurationRoot = roots.configurationRoot;
+    workspaceRoot = roots.executionRoot;
+  }
   const workspace =
     context.mode === "standalone"
       ? { config: context.config, repositories: [context.repository] }
-      : await resolveWorkspaceRepositories(workspaceRoot);
+      : deps.loadWorkspaceRepositories
+        ? await resolveWorkspaceRepositories(configurationRoot)
+        : await loadWorkspaceRepositories({ configurationRoot, executionRoot: workspaceRoot });
   const scope = resolveSwitchScope(options);
   const targetRepositories = filterRepositoriesByScope(
     scope,

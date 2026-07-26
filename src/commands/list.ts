@@ -20,7 +20,11 @@ import {
 } from "../lib/json-output.ts";
 import { listCommand } from "../core/list.ts";
 import { error as logError } from "../lib/logger.ts";
-import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
+import {
+  findConfiguredWorkspaceRoots,
+  resolveWorkspaceContext,
+  workspaceJsonMetadata,
+} from "../lib/workspace-context.ts";
 import { standaloneWorktrees } from "../lib/standalone.ts";
 
 type ListCommandOptions = Parameters<typeof listCommand>[0];
@@ -111,9 +115,14 @@ Examples:
           }
           process.exit(0);
         }
+        const executionRoot =
+          context.mode === "configured"
+            ? (await findConfiguredWorkspaceRoots("list")).executionRoot
+            : undefined;
         await executeList(
           options,
           context.mode === "configured" ? workspaceJsonMetadata(context) : undefined,
+          executionRoot,
         );
       } catch (error) {
         if (options.json) {
@@ -187,6 +196,7 @@ function mapListErrorToJsonError(error: unknown): ReturnType<typeof unknownError
 async function executeList(
   options: CliOptions,
   jsonMetadata?: Record<string, unknown>,
+  workspaceRoot?: string,
 ): Promise<void> {
   const listOptions: ListCommandOptions = {
     json: options.json || false,
@@ -194,6 +204,7 @@ async function executeList(
     maxDepth: options.maxDepth ?? 3,
     table: options.table || false,
     verbose: options.verbose || false,
+    workspaceRoot,
   };
 
   await listCommand(listOptions);

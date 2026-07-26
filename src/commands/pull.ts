@@ -18,18 +18,19 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { loadWorkspaceRepositories } from "../lib/config.ts";
+import { loadWorkspaceRepositories, type WorkspaceRepositoryRoots } from "../lib/config.ts";
 import { Command } from "commander";
 import { checkRemoteChanges } from "../lib/git-remote.ts";
 import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
 import { info } from "../lib/logger.ts";
 import { runPullWithRollback } from "../lib/pull-runner.ts";
-import { reconcileManagedIgnore } from "../lib/managed-ignore.ts";
+import { reconcileRepositoryManagedIgnore } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { fileExists } from "../lib/filesystem.ts";
+import { exec } from "../lib/git.ts";
 import {
   ConfiguredWorkspaceRequiredError,
-  findConfiguredWorkspaceRoot,
+  findConfiguredWorkspaceRoots,
 } from "../lib/workspace-context.ts";
 
 const ZERO = 0;
@@ -81,17 +82,19 @@ const excludeWorkspaceRoot = (
 ) => repositories.filter((repository) => repository.path !== workspaceRoot);
 
 const executePull = async (options: PullCommandOptions): Promise<PullSummary> => {
-  let workspaceRoot = "";
-  try {
-    workspaceRoot = await findConfiguredWorkspaceRoot("pull");
-  } catch (error) {
-    if (error instanceof ConfiguredWorkspaceRequiredError) throw error;
-    throw new CliUsageError(
-      'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
-    );
-  }
+  const workspaceRoots: WorkspaceRepositoryRoots = await findConfiguredWorkspaceRoots("pull").catch(
+    (error): never => {
+      if (error instanceof ConfiguredWorkspaceRequiredError) {
+        throw error;
+      }
+      throw new CliUsageError(
+        'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
+      );
+    },
+  );
 
-  let repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch((error): never => {
+  const workspaceRoot = workspaceRoots.executionRoot;
+  let repositoriesResult = await loadWorkspaceRepositories(workspaceRoots).catch((error): never => {
     throw new CliUsageError(
       `Failed to load workspace configuration: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -99,6 +102,9 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
 
   let repositories = selectRepositories(repositoriesResult.repositories, options);
   const selectedParent = repositories.find((repository) => repository.path === workspaceRoot);
+  const workspaceRootIsBare = selectedParent
+    ? (await exec(["rev-parse", "--is-bare-repository"], workspaceRoot)).stdout.trim() === "true"
+    : false;
   if (selectedParent) {
     repositories = [
       selectedParent,
@@ -107,7 +113,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
   }
   let managedIgnore;
   if (!selectedParent) {
-    managedIgnore = await reconcileManagedIgnore({
+    managedIgnore = await reconcileRepositoryManagedIgnore({
       reposDir: repositoriesResult.config.reposDir,
       workspaceRoot,
       worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
@@ -136,7 +142,18 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
     }
 
     const start = Date.now();
-    if (repo.path !== workspaceRoot && !(await fileExists(repo.path))) {
+    if (repo.path === workspaceRoot && workspaceRootIsBare) {
+      const result: PullResult = {
+        elapsedSeconds: ZERO,
+        errorMessage: "Bare workspace root has no work tree; pull skipped.",
+        repositoryId: repo.name,
+        status: "skipped",
+      };
+      results.push(result);
+      if (!options.json) {
+        info(formatResultLine(result));
+      }
+    } else if (repo.path !== workspaceRoot && !(await fileExists(repo.path))) {
       const result: PullResult = {
         elapsedSeconds: (Date.now() - start) / MILLISECONDS_PER_SECOND,
         errorMessage: `Repository is not materialized; run \`arashi clone\` to create ${repo.name}.`,
@@ -148,54 +165,55 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         info(formatResultLine(result));
       }
       continue;
-    }
-    const remoteStatus = await checkRemoteChanges(repo.name, repo.path);
-    if (remoteStatus.error) {
-      const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
-      results.push({
-        elapsedSeconds,
-        errorMessage: `Remote check failed: ${remoteStatus.error}`,
-        repositoryId: repo.name,
-        status: "failed",
-      });
-      const lastResult = results.at(-ONE);
-      if (lastResult && !options.json) {
-        info(formatResultLine(lastResult));
-      }
-    } else if (remoteStatus.hasRemoteChanges) {
-      const pullResult = await runPullWithRollback(repo.path, {
-        branch: remoteStatus.branch || undefined,
-        remote: remoteStatus.remote || undefined,
-        timeoutMs,
-        verbose: options.verbose,
-      });
-      const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
-      const result: PullResult = {
-        elapsedSeconds,
-        errorMessage: pullResult.errorMessage,
-        output: pullResult.output,
-        repositoryId: repo.name,
-        status: pullResult.status,
-      };
-      results.push(result);
-
-      if (options.verbose && pullResult.output && !options.json) {
-        console.log(pullResult.output);
-      }
-
-      if (!options.json) {
-        info(formatResultLine(result));
-      }
     } else {
-      const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
-      results.push({
-        elapsedSeconds,
-        repositoryId: repo.name,
-        status: "skipped",
-      });
-      const lastResult = results.at(-ONE);
-      if (lastResult && !options.json) {
-        info(formatResultLine(lastResult));
+      const remoteStatus = await checkRemoteChanges(repo.name, repo.path);
+      if (remoteStatus.error) {
+        const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
+        results.push({
+          elapsedSeconds,
+          errorMessage: `Remote check failed: ${remoteStatus.error}`,
+          repositoryId: repo.name,
+          status: "failed",
+        });
+        const lastResult = results.at(-ONE);
+        if (lastResult && !options.json) {
+          info(formatResultLine(lastResult));
+        }
+      } else if (remoteStatus.hasRemoteChanges) {
+        const pullResult = await runPullWithRollback(repo.path, {
+          branch: remoteStatus.branch || undefined,
+          remote: remoteStatus.remote || undefined,
+          timeoutMs,
+          verbose: options.verbose,
+        });
+        const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
+        const result: PullResult = {
+          elapsedSeconds,
+          errorMessage: pullResult.errorMessage,
+          output: pullResult.output,
+          repositoryId: repo.name,
+          status: pullResult.status,
+        };
+        results.push(result);
+
+        if (options.verbose && pullResult.output && !options.json) {
+          console.log(pullResult.output);
+        }
+
+        if (!options.json) {
+          info(formatResultLine(result));
+        }
+      } else {
+        const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
+        results.push({
+          elapsedSeconds,
+          repositoryId: repo.name,
+          status: "skipped",
+        });
+        const lastResult = results.at(-ONE);
+        if (lastResult && !options.json) {
+          info(formatResultLine(lastResult));
+        }
       }
     }
 
@@ -203,7 +221,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
     if (repo.path === workspaceRoot && parentResult?.repositoryId === repo.name) {
       if (parentResult.status === "updated") {
         try {
-          repositoriesResult = await loadWorkspaceRepositories(workspaceRoot);
+          repositoriesResult = await loadWorkspaceRepositories(workspaceRoots);
           const postPullSelection = excludeWorkspaceRoot(
             selectRepositories(repositoriesResult.repositories, options),
             workspaceRoot,
@@ -222,7 +240,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         }
       }
       try {
-        managedIgnore = await reconcileManagedIgnore({
+        managedIgnore = await reconcileRepositoryManagedIgnore({
           reposDir: repositoriesResult.config.reposDir,
           workspaceRoot,
           worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,

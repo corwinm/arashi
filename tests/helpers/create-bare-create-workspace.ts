@@ -13,6 +13,7 @@ export interface BareCreateWorkspace {
 export interface BareCreateWorkspaceOptions {
   createLinkedWorktree?: boolean;
   includeConfig?: boolean;
+  configRepos?: Record<string, { path: string }>;
   configReposDir?: string;
   configWorktreesDir?: string;
 }
@@ -49,7 +50,7 @@ export async function createBareCreateWorkspace(
       join(seedPath, ".arashi", "config.json"),
       JSON.stringify(
         {
-          repos: {},
+          repos: options.configRepos ?? {},
           reposDir: configReposDir,
           version: "1.0.0",
           worktreesDir: configWorktreesDir,

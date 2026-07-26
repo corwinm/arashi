@@ -180,6 +180,57 @@ describe("arashi doctor", () => {
     expect(json.stdout).not.toContain("Arashi workspace doctor");
   });
 
+  test("checks children but not work-tree status for a bare workspace root", async () => {
+    const parent = await makeTempDir();
+    const workspaceRoot = join(parent, "workspace.git");
+    await runGit(parent, ["init", "--bare", workspaceRoot]);
+
+    const init = await runArashi(workspaceRoot, ["init", "--no-discover", "--json"]);
+    expect(init.exitCode, `${init.stdout}\n${init.stderr}`).toBe(0);
+
+    const childPath = join(workspaceRoot, "repos", "repo-a");
+    await initializeGitRepository(childPath);
+    await writeFile(join(childPath, "dirty.txt"), "dirty\n");
+    await writeWorkspaceConfig(workspaceRoot, { "repo-a": { path: "./repos/repo-a" } });
+
+    const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(findings).toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_DIRTY", scope: "repository:repo-a" }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({
+        code: "REPOSITORY_STATUS_FAILED",
+        details: expect.objectContaining({ path: workspaceRoot }),
+      }),
+    );
+  });
+
+  test("preserves repository findings when root Git metadata is broken", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const childPath = join(workspaceRoot, "repos", "repo-a");
+    await initializeGitRepository(childPath);
+    await writeFile(join(childPath, "dirty.txt"), "dirty\n");
+    await rm(join(workspaceRoot, ".git"), { force: true, recursive: true });
+
+    const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+    expect(result.exitCode).toBe(1);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        code: "REPOSITORY_STATUS_FAILED",
+        details: expect.objectContaining({ path: await realpath(workspaceRoot) }),
+        scope: "repository:Main Repository",
+      }),
+    );
+    expect(findings).toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_DIRTY", scope: "repository:repo-a" }),
+    );
+  });
+
   test("returns a blocking finding outside a workspace", async () => {
     const cwd = await makeTempDir();
 

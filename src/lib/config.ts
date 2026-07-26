@@ -137,6 +137,14 @@ export interface WorkspaceRepository {
   groups?: string[];
 }
 
+/** Separate the canonical configuration location from the active repository tree. */
+export interface WorkspaceRepositoryRoots {
+  /** Root containing .arashi/config.json */
+  configurationRoot: string;
+  /** Parent repository whose managed repositories should be operated on */
+  executionRoot: string;
+}
+
 export type ConfigSourceType = "local-file" | "repository-content";
 
 export interface LoadedConfig {
@@ -306,7 +314,7 @@ export const configExists = async (repoPath: string): Promise<boolean> => {
  * ```
  */
 export const findWorkspaceRoot = async (startPath: string = process.cwd()): Promise<string> => {
-  const { dirname, resolve, parse } = await import("path");
+  const { dirname, isAbsolute, resolve, parse } = await import("path");
 
   let currentPath = resolve(startPath);
   const rootPath = parse(currentPath).root;
@@ -315,12 +323,27 @@ export const findWorkspaceRoot = async (startPath: string = process.cwd()): Prom
   while (true) {
     // Check if .arashi/config.json exists in current directory
     if (await configExists(currentPath)) {
+      try {
+        const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
+        const rawCommonDirectory = common.stdout.trim();
+        const commonDirectory = isAbsolute(rawCommonDirectory)
+          ? resolve(rawCommonDirectory)
+          : resolve(currentPath, rawCommonDirectory);
+        if (commonDirectory !== currentPath && (await configExists(commonDirectory))) {
+          const bare = await exec(["rev-parse", "--is-bare-repository"], commonDirectory);
+          if (bare.stdout.trim() === "true") {
+            return commonDirectory;
+          }
+        }
+      } catch {
+        // A normal configured checkout remains authoritative when no bare common root applies.
+      }
       return currentPath;
     }
 
-    // Check if we've reached the filesystem root
+    // Check if we've reached the filesystem root before trying Git topology fallback.
     if (currentPath === rootPath) {
-      throw new ConfigNotFoundError(getConfigPath(startPath));
+      break;
     }
 
     // Move to parent directory
@@ -333,6 +356,37 @@ export const findWorkspaceRoot = async (startPath: string = process.cwd()): Prom
 
     currentPath = parentPath;
   }
+
+  // Linked worktrees from configured bare repositories are commonly siblings
+  // of those repositories, so filesystem ancestors cannot expose the configuration.
+  // Probe every ancestor because the invocation path may be a nested child repository
+  // with a different Git common directory.
+  currentPath = resolve(startPath);
+  const checkedCommonDirectories = new Set<string>();
+  while (true) {
+    try {
+      const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
+      const rawCommonDirectory = common.stdout.trim();
+      const commonDirectory = isAbsolute(rawCommonDirectory)
+        ? resolve(rawCommonDirectory)
+        : resolve(currentPath, rawCommonDirectory);
+      if (!checkedCommonDirectories.has(commonDirectory)) {
+        checkedCommonDirectories.add(commonDirectory);
+        if (await configExists(commonDirectory)) {
+          return commonDirectory;
+        }
+      }
+    } catch {
+      // Keep walking: an enclosing ancestor may belong to the configured parent worktree.
+    }
+
+    if (currentPath === rootPath) {
+      break;
+    }
+    currentPath = dirname(currentPath);
+  }
+
+  throw new ConfigNotFoundError(getConfigPath(startPath));
 };
 
 /**
@@ -1341,15 +1395,19 @@ export const removeRepo = async (repoPath: string, name: string): Promise<void> 
  * Includes the workspace root repository plus discovered repositories.
  */
 export const loadWorkspaceRepositories = async (
-  workspaceRoot: string,
+  workspaceRoots: string | WorkspaceRepositoryRoots,
 ): Promise<{ config: Config; repositories: WorkspaceRepository[] }> => {
-  const config = await loadConfig(workspaceRoot);
+  const { configurationRoot, executionRoot } =
+    typeof workspaceRoots === "string"
+      ? { configurationRoot: workspaceRoots, executionRoot: workspaceRoots }
+      : workspaceRoots;
+  const config = await loadConfig(configurationRoot);
   const repositories: WorkspaceRepository[] = [];
-  const mainName = basename(workspaceRoot);
+  const mainName = basename(configurationRoot);
 
   repositories.push({
     name: mainName,
-    path: resolve(workspaceRoot),
+    path: resolve(executionRoot),
   });
 
   for (const [name, repoConfig] of Object.entries(config.repos)) {
@@ -1357,7 +1415,7 @@ export const loadWorkspaceRepositories = async (
       gitUrl: repoConfig.gitUrl,
       groups: repoConfig.groups,
       name,
-      path: resolve(workspaceRoot, repoConfig.path),
+      path: resolve(executionRoot, repoConfig.path),
     });
   }
 

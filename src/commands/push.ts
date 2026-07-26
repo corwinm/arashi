@@ -12,10 +12,10 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { executePushPlan, planPush } from "../lib/push-runner.ts";
-import { loadWorkspaceRepositories } from "../lib/config.ts";
+import { loadWorkspaceRepositories, type WorkspaceRepositoryRoots } from "../lib/config.ts";
 import {
   ConfiguredWorkspaceRequiredError,
-  findConfiguredWorkspaceRoot,
+  findConfiguredWorkspaceRoots,
 } from "../lib/workspace-context.ts";
 import { Command } from "commander";
 import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
@@ -37,17 +37,18 @@ export interface PushCommandOptions {
 }
 
 export const executePush = async (options: PushCommandOptions): Promise<PushSummary> => {
-  let workspaceRoot = "";
-  try {
-    workspaceRoot = await findConfiguredWorkspaceRoot("push");
-  } catch (error) {
-    if (error instanceof ConfiguredWorkspaceRequiredError) throw error;
-    throw new CliUsageError(
-      'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
-    );
-  }
+  const workspaceRoots: WorkspaceRepositoryRoots = await findConfiguredWorkspaceRoots("push").catch(
+    (error): never => {
+      if (error instanceof ConfiguredWorkspaceRequiredError) {
+        throw error;
+      }
+      throw new CliUsageError(
+        'Not in an arashi workspace. Run "arashi init" to initialize a workspace',
+      );
+    },
+  );
 
-  const repositoriesResult = await loadWorkspaceRepositories(workspaceRoot).catch(
+  const repositoriesResult = await loadWorkspaceRepositories(workspaceRoots).catch(
     (error): never => {
       throw new CliUsageError(
         `Failed to load workspace configuration: ${error instanceof Error ? error.message : String(error)}`,

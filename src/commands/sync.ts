@@ -6,7 +6,7 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { createRollbackTracker, recordCreatedBranch } from "../lib/git/sync-rollback.ts";
-import { loadConfig } from "../lib/config.ts";
+import { type loadConfig, loadWorkspaceRepositories } from "../lib/config.ts";
 import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { alignRepositoryBranch } from "../lib/git/sync-branch.ts";
@@ -14,7 +14,7 @@ import { exec } from "../lib/git.ts";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
 import { EmptyRepositoryFiltersError } from "../lib/repo-filter.ts";
 import { resolve } from "path";
-import { findConfiguredWorkspaceRoot } from "../lib/workspace-context.ts";
+import { findConfiguredWorkspaceRoots } from "../lib/workspace-context.ts";
 
 type Config = Awaited<ReturnType<typeof loadConfig>>;
 type SyncBranchOutcome = Awaited<ReturnType<typeof alignRepositoryBranch>>;
@@ -61,8 +61,9 @@ export function createCommand(): Command {
 }
 
 export async function executeSync(options: SyncCommandOptions): Promise<SyncSummary> {
-  const workspaceRoot = await findConfiguredWorkspaceRoot("sync");
-  const config = await loadConfig(workspaceRoot);
+  const workspaceRoots = await findConfiguredWorkspaceRoots("sync");
+  const workspaceRoot = workspaceRoots.executionRoot;
+  const { config } = await loadWorkspaceRepositories(workspaceRoots);
 
   const { repositories, emptyFilters, missing, unknownGroups, emptyIntersection } =
     filterRepositories(config.repos, options.only, options.group);

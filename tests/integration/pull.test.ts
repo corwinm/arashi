@@ -157,6 +157,61 @@ describe("pull command", () => {
   );
 
   test(
+    "skips a remote-behind bare workspace root while updating children",
+    async () => {
+      const mainRemote = await createBareRemote(testDir, "bare-main-remote");
+      const repoRemote = await createBareRemote(testDir, "bare-child-remote");
+      await seedRemote(mainRemote, testDir, "bare-main-seed");
+      await seedRemote(repoRemote, testDir, "bare-child-seed");
+
+      const workspaceRoot = join(testDir, "workspace.git");
+      await runGit(testDir, ["clone", "--bare", mainRemote, workspaceRoot]);
+      const repoPath = join(workspaceRoot, "repos", "repo-a");
+      await mkdir(join(workspaceRoot, "repos"), { recursive: true });
+      await runGit(join(workspaceRoot, "repos"), ["clone", repoRemote, repoPath]);
+      await mkdir(join(workspaceRoot, ".arashi"), { recursive: true });
+      await writeFile(
+        join(workspaceRoot, ".arashi", "config.json"),
+        JSON.stringify(
+          {
+            repos: { "repo-a": { gitUrl: repoRemote, path: "./repos/repo-a" } },
+            reposDir: "./repos",
+            version: "1.0.0",
+            worktreesDir: "..",
+          },
+          null,
+          2,
+        ),
+      );
+
+      const bareHeadBefore = await runGit(workspaceRoot, ["rev-parse", "refs/heads/main"]);
+      await createRemoteCommit(mainRemote, testDir, "bare-main-update", "main-update.txt");
+      await createRemoteCommit(repoRemote, testDir, "bare-child-update", "child-update.txt");
+      const remoteHead = await runGit(testDir, ["ls-remote", mainRemote, "refs/heads/main"]);
+      expect(remoteHead).not.toContain(bareHeadBefore);
+
+      const result = await runPullCommand(workspaceRoot, ["--json"]);
+      const envelope = JSON.parse(result.stdout) as {
+        data: { results: { repositoryId: string; status: string }[] };
+      };
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(envelope.data.results).toContainEqual({
+        elapsedSeconds: 0,
+        errorMessage: "Bare workspace root has no work tree; pull skipped.",
+        repositoryId: "workspace.git",
+        status: "skipped",
+      });
+      expect(envelope.data.results).toContainEqual(
+        expect.objectContaining({ repositoryId: "repo-a", status: "updated" }),
+      );
+      expect(await runGit(workspaceRoot, ["rev-parse", "refs/heads/main"])).toBe(bareHeadBefore);
+      expect(await readFile(join(repoPath, "child-update.txt"), "utf8")).toContain("update");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
+
+  test(
     "reports manual-update and rolls back on conflicts or errors",
     async () => {
       const { workspaceRoot, repoRemote, repoPath } = await createWorkspaceWithRepo(testDir);

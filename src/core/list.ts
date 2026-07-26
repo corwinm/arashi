@@ -41,6 +41,7 @@ interface ListCommandOptions {
   table?: boolean;
   maxDepth?: number;
   jsonMetadata?: Record<string, unknown>;
+  workspaceRoot?: string;
 }
 
 interface ListCommandOutput {
@@ -267,10 +268,11 @@ export const listCommand = async (options?: ListCommandOptions): Promise<void> =
     maxDepth: options?.maxDepth || DEFAULT_MAX_DEPTH,
     table: options?.table || false,
     verbose: options?.verbose || false,
+    workspaceRoot: options?.workspaceRoot,
   };
 
   // Validate we're in a repository
-  let cwd = process.cwd();
+  let cwd = opts.workspaceRoot ?? process.cwd();
 
   try {
     // Check if it's a git repository by trying to get the root

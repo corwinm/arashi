@@ -209,6 +209,53 @@ describe("clone command", () => {
     ]);
   });
 
+  test("repairs a legacy gitUrl from the configuration-root clone when the linked child is missing", async () => {
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "meta-feat-demo");
+    const centralRepository = join(workspaceRoot, "repos", "repo-a");
+    await mkdir(centralRepository, { recursive: true });
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    await spawn(["git", "init"], { cwd: centralRepository }).exited;
+    await spawn(["git", "remote", "add", "origin", "https://github.com/team/repo-a.git"], {
+      cwd: centralRepository,
+    }).exited;
+
+    const config: Config = {
+      repos: {
+        "repo-a": {
+          path: "./repos/repo-a",
+        },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+    const addedWorktrees: string[] = [];
+    let savedGitUrl: string | undefined;
+
+    const result = await executeClone(
+      { all: true },
+      {
+        addWorktree: async (_sourceRepositoryPath, destinationPath) => {
+          addedWorktrees.push(destinationPath);
+          await mkdir(destinationPath, { recursive: true });
+        },
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feat/demo",
+        resolveSourceWorkspaceRoot: () => workspaceRoot,
+        saveConfig: async (_root, savedConfig) => {
+          savedGitUrl = savedConfig.repos["repo-a"]?.gitUrl;
+        },
+        workspaceRoots: {
+          configurationRoot: workspaceRoot,
+          executionRoot,
+        },
+      },
+    );
+
+    expect(result.cloned).toEqual(["repo-a"]);
+    expect(addedWorktrees).toEqual([join(executionRoot, "repos", "repo-a")]);
+    expect(savedGitUrl).toBe("https://github.com/team/repo-a.git");
+  });
+
   test("resolves coordinated worktree source root", () => {
     expect(
       resolveCoordinatedSourceWorkspaceRoot(

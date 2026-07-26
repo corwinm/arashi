@@ -15,9 +15,9 @@ import {
   applyRepositoryFilter,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
-import { basename, dirname, join, resolve } from "path";
+import { basename, dirname, isAbsolute, join, resolve } from "path";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   buildDirtyGuidance,
@@ -46,7 +46,7 @@ import {
 } from "../lib/repo-filter.ts";
 import { isTmuxSession, launchSwitchTarget } from "../lib/switch-launcher.ts";
 import {
-  reconcileManagedIgnore,
+  reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
@@ -291,14 +291,17 @@ export interface ResolvedCreateDefaults {
 
 export interface CreateCommandDependencies {
   resolveCreateInvocationContext?: (invocationPath?: string) => Promise<CreateInvocationContext>;
-  resolveManagedIgnoreWorkspaceRoot?: (context: CreateInvocationContext) => Promise<string>;
+  resolveManagedIgnoreWorkspaceRoot?: (
+    context: CreateInvocationContext,
+    useBareRootWhenNoLinkedWorktree?: boolean,
+  ) => Promise<string>;
   loadConfigWithFallback?: typeof loadConfigWithFallback;
   discoverRepositories?: typeof discoverRepositories;
   isGitRepository?: (path: string) => Promise<boolean>;
   resolveCurrentBranch?: (path: string) => Promise<string>;
   applyRepositoryFilter?: typeof applyRepositoryFilter;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
-  reconcileManagedIgnore?: typeof reconcileManagedIgnore;
+  reconcileManagedIgnore?: typeof reconcileRepositoryManagedIgnore;
   restoreManagedIgnore?: typeof restoreManagedIgnore;
   pathExists?: (path: string) => boolean;
   launchSwitchTarget?: (
@@ -338,15 +341,28 @@ export async function resolveCreateInvocationContext(
   const isBare = bareProbe.stdout.trim() === "true";
 
   if (isBare) {
+    const gitDirectory = await exec(["rev-parse", "--absolute-git-dir"], absoluteInvocationPath);
+    const canonicalBareRoot = await realpath(gitDirectory.stdout.trim()).catch(() =>
+      resolve(gitDirectory.stdout.trim()),
+    );
     return {
-      executionPath: absoluteInvocationPath,
-      invocationPath: absoluteInvocationPath,
+      executionPath: canonicalBareRoot,
+      invocationPath: canonicalBareRoot,
       repositoryType: "bare",
-      workspaceRoot: absoluteInvocationPath,
+      workspaceRoot: canonicalBareRoot,
     };
   }
 
   const workspaceRoot = await findWorkspaceRoot(absoluteInvocationPath);
+  const workspaceBareProbe = await exec(["rev-parse", "--is-bare-repository"], workspaceRoot);
+  if (workspaceBareProbe.stdout.trim() === "true") {
+    return {
+      executionPath: workspaceRoot,
+      invocationPath: absoluteInvocationPath,
+      repositoryType: "bare",
+      workspaceRoot,
+    };
+  }
   return {
     executionPath: workspaceRoot,
     invocationPath: absoluteInvocationPath,
@@ -357,9 +373,39 @@ export async function resolveCreateInvocationContext(
 
 export async function resolveManagedIgnoreWorkspaceRoot(
   context: CreateInvocationContext,
+  useBareRootWhenNoLinkedWorktree = false,
 ): Promise<string> {
   if (context.repositoryType !== "bare") {
     return context.workspaceRoot;
+  }
+
+  const configuredCommonDirectory = await realpath(context.executionPath).catch(() =>
+    resolve(context.executionPath),
+  );
+  let candidatePath = resolve(context.invocationPath);
+  while (true) {
+    try {
+      const commonDirectory = await exec(["rev-parse", "--git-common-dir"], candidatePath);
+      const rawCommonDirectory = commonDirectory.stdout.trim();
+      const absoluteCommonDirectory = isAbsolute(rawCommonDirectory)
+        ? resolve(rawCommonDirectory)
+        : resolve(candidatePath, rawCommonDirectory);
+      const canonicalCommonDirectory = await realpath(absoluteCommonDirectory).catch(() =>
+        resolve(absoluteCommonDirectory),
+      );
+      if (canonicalCommonDirectory === configuredCommonDirectory) {
+        const invokingWorktreeRoot = await exec(["rev-parse", "--show-toplevel"], candidatePath);
+        return invokingWorktreeRoot.stdout.trim();
+      }
+    } catch {
+      // Keep walking: a nested child repository may hide the enclosing linked worktree.
+    }
+
+    const parentPath = dirname(candidatePath);
+    if (parentPath === candidatePath) {
+      break;
+    }
+    candidatePath = parentPath;
   }
 
   const result = await exec(["worktree", "list", "--porcelain"], context.executionPath);
@@ -376,6 +422,9 @@ export async function resolveManagedIgnoreWorkspaceRoot(
     } catch {
       // Ignore stale worktree-list entries and continue looking for a usable work tree.
     }
+  }
+  if (useBareRootWhenNoLinkedWorktree) {
+    return context.workspaceRoot;
   }
   const temporaryParent = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-worktree-"));
   const temporaryWorktree = join(temporaryParent, "worktree");
@@ -562,12 +611,12 @@ interface DirtyGuidanceContext {
 }
 
 const resolvePostCreateDirtyGuidance = async (
-  context: CreateInvocationContext,
+  sourceWorkspaceRoot: string,
   config: Config,
   branchName: string,
 ): Promise<DirtyGuidanceContext | null> => {
-  const repositories = buildRepositoryTargets(context.workspaceRoot, config.repos);
-  const source = await findWorkspaceByPath(repositories, context.executionPath);
+  const repositories = buildRepositoryTargets(sourceWorkspaceRoot, config.repos);
+  const source = await findWorkspaceByPath(repositories, sourceWorkspaceRoot);
   if (!source || source.dirtyRepositories.length === ZERO) {
     return null;
   }
@@ -884,7 +933,7 @@ export async function executeCreate(
     });
   const filterRepositories = deps.applyRepositoryFilter ?? applyRepositoryFilter;
   const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
-  const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileManagedIgnore;
+  const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileRepositoryManagedIgnore;
   const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
   const pathExists = deps.pathExists ?? existsSync;
 
@@ -1067,8 +1116,35 @@ export async function executeCreate(
     workspaceRoot: context.workspaceRoot,
   };
 
-  const managedIgnoreWorkspaceRoot = await resolveIgnoreWorkspaceRoot(context);
+  let storedIgnoreScope: string | null = null;
+  if (context.repositoryType === "bare") {
+    try {
+      storedIgnoreScope = (
+        await exec(["config", "--local", "--get", "arashi.ignoreScope"], context.executionPath)
+      ).stdout.trim();
+    } catch {
+      storedIgnoreScope = null;
+    }
+  }
+  const managedIgnoreWorkspaceRoot = await resolveIgnoreWorkspaceRoot(
+    context,
+    storedIgnoreScope === "tracked",
+  );
+  const trackedBareRootNeedsChildRules =
+    storedIgnoreScope === "tracked" &&
+    managedIgnoreWorkspaceRoot === context.workspaceRoot &&
+    selectedRepos.some((repository) => repository.path !== context.executionPath);
+  if (trackedBareRootNeedsChildRules) {
+    throw new CreateSetupError(
+      "Tracked managed-ignore changes for selected child repositories require an existing linked worktree. Create a parent worktree first, then retry.",
+    );
+  }
   const temporaryIgnoreWorkspace = temporaryManagedIgnoreWorktrees.has(managedIgnoreWorkspaceRoot);
+  const moveSourceWorkspaceRoot =
+    context.repositoryType === "bare" &&
+    resolve(context.invocationPath) !== resolve(context.workspaceRoot)
+      ? managedIgnoreWorkspaceRoot
+      : context.executionPath;
   let managedIgnore: ManagedIgnoreReconciliation;
   try {
     managedIgnore = await reconcileIgnore({
@@ -1108,7 +1184,7 @@ export async function executeCreate(
   }
   const dirtyGuidanceContext = options.dryRun
     ? null
-    : await resolvePostCreateDirtyGuidance(context, arashiConfig, branchName);
+    : await resolvePostCreateDirtyGuidance(moveSourceWorkspaceRoot, arashiConfig, branchName);
   const moveSummary =
     options.moveChanges && dirtyGuidanceContext
       ? await executeMovePlan(

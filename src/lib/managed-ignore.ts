@@ -36,10 +36,10 @@ export interface ManagedIgnoreSource {
 export interface ManagedIgnorePathResult {
   input: string;
   rule?: string;
-  safety: "safe" | "unsafe";
+  safety: "non-applicable" | "safe" | "unsafe";
   safetyReason?: UnsafeManagedPathReason;
   source?: ManagedIgnoreSource;
-  status: "already-ignored" | "applied" | "planned" | "unignored" | "unsafe";
+  status: "already-ignored" | "applied" | "non-applicable" | "planned" | "unignored" | "unsafe";
 }
 
 export interface ManagedIgnoreInspection {
@@ -63,6 +63,10 @@ export interface InspectManagedIgnoreOptions {
   requestedScope?: string;
   workspaceRoot: string;
   worktreesDir: string;
+}
+
+export interface RepositoryManagedIgnoreOptions extends InspectManagedIgnoreOptions {
+  repositoryType?: "bare" | "non-bare";
 }
 
 export interface ManagedIgnoreReconciliation extends ManagedIgnoreInspection {
@@ -568,6 +572,166 @@ export const reconcileManagedIgnore = async (
   }
   result.changed = filePlans.length > 0 || preferenceWouldChange;
   return result;
+};
+
+/**
+ * Report managed paths for configured init rooted at a bare Git directory.
+ * These paths are administrative locations, not paths in a working tree, so
+ * this flow intentionally avoids effective-ignore inspection and file writes.
+ */
+export const inspectBareManagedIgnore = async (
+  options: InspectManagedIgnoreOptions,
+): Promise<ManagedIgnoreInspection> => {
+  const validScopes = new Set<ManagedIgnoreScope>(["local", "tracked", "none"]);
+  let storedValue: string | null = null;
+  try {
+    const result = await gitExec(
+      ["config", "--local", "--get", "arashi.ignoreScope"],
+      options.workspaceRoot,
+    );
+    storedValue = result.stdout.trim() || null;
+  } catch (error) {
+    if (!(error instanceof ArashiError && error.context.exitCode === 1)) {
+      throw error;
+    }
+  }
+  if (storedValue !== null && !validScopes.has(storedValue as ManagedIgnoreScope)) {
+    throw new Error(
+      `Invalid clone-local arashi.ignoreScope value '${storedValue}'. Run \`git config --local --unset arashi.ignoreScope\` or \`arashi init --ignore-scope local\`.`,
+    );
+  }
+  if (
+    options.requestedScope !== undefined &&
+    !validScopes.has(options.requestedScope as ManagedIgnoreScope)
+  ) {
+    throw new Error("Invalid ignore scope. Expected one of: local, tracked, none.");
+  }
+
+  const storedPreference = storedValue as ManagedIgnoreScope | null;
+  const scope =
+    (options.requestedScope as ManagedIgnoreScope | undefined) ?? storedPreference ?? "local";
+  const paths: ManagedIgnorePathResult[] = classifyManagedPaths([
+    options.reposDir,
+    options.worktreesDir,
+  ]).map((path) =>
+    path.safety === "unsafe"
+      ? {
+          input: path.input,
+          safety: "unsafe" as const,
+          safetyReason: path.reason,
+          status: "unsafe" as const,
+        }
+      : {
+          input: path.input,
+          rule: path.rule,
+          safety: "non-applicable" as const,
+          status: "non-applicable" as const,
+        },
+  );
+  return {
+    localExcludePath: resolve(options.workspaceRoot, "info/exclude"),
+    paths,
+    scope,
+    staleRules: [],
+    storedPreference,
+    trackedIgnorePath: resolve(options.workspaceRoot, ".gitignore"),
+  };
+};
+
+export const reconcileBareManagedIgnore = async (
+  options: InspectManagedIgnoreOptions,
+): Promise<ManagedIgnoreReconciliation> => {
+  let inspection: ManagedIgnoreInspection;
+  try {
+    inspection = await inspectBareManagedIgnore(options);
+  } catch (error) {
+    throw new ManagedIgnoreError(
+      error instanceof Error ? error.message : String(error),
+      { attempted: false, changed: false, phase: "inspection", restored: false },
+      { cause: error },
+    );
+  }
+  const preferenceWouldChange =
+    options.requestedScope !== undefined &&
+    (inspection.scope === "local"
+      ? inspection.storedPreference !== null
+      : inspection.storedPreference !== inspection.scope);
+  const result: ManagedIgnoreReconciliation = {
+    ...inspection,
+    appliedRules: [],
+    attempted: preferenceWouldChange,
+    changed: false,
+    fileChanges: { local: false, preference: false, tracked: false },
+    plannedRules: [],
+    restored: false,
+    warnings: [],
+  };
+  reconciliationSnapshots.set(result, {
+    files: [],
+    preference: inspection.storedPreference,
+    workspaceRoot: options.workspaceRoot,
+  });
+  if (!options.dryRun && preferenceWouldChange) {
+    try {
+      await updateStoredPreference(options.workspaceRoot, inspection.scope);
+      result.attempted = true;
+      result.changed = true;
+      result.fileChanges.preference = true;
+    } catch (error) {
+      throw new ManagedIgnoreError(
+        error instanceof Error ? error.message : String(error),
+        { attempted: true, changed: false, phase: "apply", restored: false },
+        { cause: error },
+      );
+    }
+  }
+  return result;
+};
+
+const resolveManagedIgnoreRepositoryType = async (
+  options: RepositoryManagedIgnoreOptions,
+): Promise<"bare" | "non-bare"> => {
+  if (options.repositoryType) return options.repositoryType;
+  const result = await gitExec(["rev-parse", "--is-bare-repository"], options.workspaceRoot);
+  const value = result.stdout.trim();
+  if (value === "true") return "bare";
+  if (value === "false") return "non-bare";
+  throw new Error(`Git returned an invalid repository type: '${value}'.`);
+};
+
+const wrapManagedIgnoreInspectionError = (error: unknown): ManagedIgnoreError =>
+  error instanceof ManagedIgnoreError
+    ? error
+    : new ManagedIgnoreError(
+        error instanceof Error ? error.message : String(error),
+        { attempted: false, changed: false, phase: "inspection", restored: false },
+        { cause: error },
+      );
+
+/** Inspect configured managed paths according to the workspace repository type. */
+export const inspectRepositoryManagedIgnore = async (
+  options: RepositoryManagedIgnoreOptions,
+): Promise<ManagedIgnoreInspection> => {
+  try {
+    return (await resolveManagedIgnoreRepositoryType(options)) === "bare"
+      ? await inspectBareManagedIgnore(options)
+      : await inspectManagedIgnore(options);
+  } catch (error) {
+    throw wrapManagedIgnoreInspectionError(error);
+  }
+};
+
+/** Reconcile configured managed paths according to the workspace repository type. */
+export const reconcileRepositoryManagedIgnore = async (
+  options: RepositoryManagedIgnoreOptions,
+): Promise<ManagedIgnoreReconciliation> => {
+  try {
+    return (await resolveManagedIgnoreRepositoryType(options)) === "bare"
+      ? await reconcileBareManagedIgnore(options)
+      : await reconcileManagedIgnore(options);
+  } catch (error) {
+    throw wrapManagedIgnoreInspectionError(error);
+  }
 };
 
 export const restoreManagedIgnore = async (

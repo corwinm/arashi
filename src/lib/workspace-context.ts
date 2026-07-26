@@ -1,4 +1,4 @@
-import { basename, isAbsolute, resolve } from "path";
+import { basename, dirname, isAbsolute, parse, resolve } from "path";
 import { stat } from "fs/promises";
 import {
   ConfigNotFoundError,
@@ -6,9 +6,8 @@ import {
   CURRENT_CONFIG_VERSION,
   findWorkspaceRoot,
   loadConfig,
-  type Config,
-  type WorkspaceRepository,
 } from "./config.ts";
+import type { Config, WorkspaceRepository, WorkspaceRepositoryRoots } from "./config.ts";
 import { exec } from "./git.ts";
 import { createJsonErrorEnvelope, writeJsonEnvelope } from "./json-output.ts";
 import { error as logError } from "./logger.ts";
@@ -221,6 +220,50 @@ export async function findConfiguredWorkspaceRoot(
     if (context.mode === "standalone") throw new ConfiguredWorkspaceRequiredError(commandName);
     throw error;
   }
+}
+
+/**
+ * Resolve where configured state is stored and which coordinated parent tree
+ * lifecycle commands should operate on. Direct bare-root invocations keep both
+ * roots at the configured bare repository.
+ */
+export async function findConfiguredWorkspaceRoots(
+  commandName: string,
+  invocationPath: string = process.cwd(),
+): Promise<WorkspaceRepositoryRoots> {
+  const configurationRoot = await findConfiguredWorkspaceRoot(commandName, invocationPath);
+  const absoluteInvocationPath = resolve(invocationPath);
+  const filesystemRoot = parse(absoluteInvocationPath).root;
+  let currentPath = absoluteInvocationPath;
+
+  while (true) {
+    try {
+      const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
+      const rawCommonDirectory = common.stdout.trim();
+      const commonDirectory = isAbsolute(rawCommonDirectory)
+        ? resolve(rawCommonDirectory)
+        : resolve(currentPath, rawCommonDirectory);
+
+      if (commonDirectory === resolve(configurationRoot)) {
+        const bare = await exec(["rev-parse", "--is-bare-repository"], currentPath);
+        if (bare.stdout.trim() === "true") {
+          return { configurationRoot, executionRoot: configurationRoot };
+        }
+
+        const topLevel = await exec(["rev-parse", "--show-toplevel"], currentPath);
+        return { configurationRoot, executionRoot: resolve(topLevel.stdout.trim()) };
+      }
+    } catch {
+      // A nested child may have unrelated Git metadata; continue into its parent.
+    }
+
+    if (currentPath === filesystemRoot) {
+      break;
+    }
+    currentPath = dirname(currentPath);
+  }
+
+  return { configurationRoot, executionRoot: configurationRoot };
 }
 
 export async function throwIfStandaloneWorkspace(
