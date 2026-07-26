@@ -1388,7 +1388,7 @@ export const loadWorkspaceRepositories = async (
       : workspaceRoots;
   const config = await loadConfig(configurationRoot);
   const repositories: WorkspaceRepository[] = [];
-  const mainName = basename(executionRoot);
+  const mainName = basename(configurationRoot);
 
   repositories.push({
     name: mainName,

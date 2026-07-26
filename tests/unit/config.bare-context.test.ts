@@ -1,6 +1,12 @@
-import { ConfigNotFoundError, loadConfigWithFallback } from "../../src/lib/config.ts";
+import {
+  ConfigNotFoundError,
+  loadConfigWithFallback,
+  loadWorkspaceRepositories,
+} from "../../src/lib/config.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
+import { mkdir, writeFile } from "fs/promises";
+import { basename, join } from "path";
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
 let workspace: BareCreateWorkspace | null = null;
@@ -33,6 +39,35 @@ describe("config resolution in bare contexts", () => {
 
     expect(loaded.source).toBe("repository-content");
     expect(loaded.config.reposDir).toBe("./repos");
+  });
+
+  test("keeps the configured repository name while using the linked execution path", async () => {
+    workspace = await createBareCreateWorkspace({ includeConfig: false });
+    await mkdir(join(workspace.bareRepoPath, ".arashi"), { recursive: true });
+    await writeFile(
+      join(workspace.bareRepoPath, ".arashi", "config.json"),
+      JSON.stringify({
+        repos: { child: { path: "./repos/child" } },
+        reposDir: "./repos",
+        version: "1.0.0",
+        worktreesDir: "..",
+      }),
+    );
+
+    const { repositories } = await loadWorkspaceRepositories({
+      configurationRoot: workspace.bareRepoPath,
+      executionRoot: workspace.worktreePath,
+    });
+
+    expect(repositories).toEqual([
+      { name: basename(workspace.bareRepoPath), path: workspace.worktreePath },
+      {
+        gitUrl: undefined,
+        groups: undefined,
+        name: "child",
+        path: join(workspace.worktreePath, "repos", "child"),
+      },
+    ]);
   });
 
   test("throws clear error when config does not exist", async () => {

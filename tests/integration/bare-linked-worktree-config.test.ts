@@ -3,7 +3,7 @@ import { chmod, mkdir, realpath } from "fs/promises";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { existsSync } from "fs";
 import { findWorkspaceRoot } from "../../src/lib/config.ts";
-import { join, resolve } from "path";
+import { basename, join, resolve } from "path";
 import { pathToFileURL } from "node:url";
 import { runtime } from "../helpers/node-runtime.ts";
 
@@ -352,7 +352,7 @@ describe("configured bare workspace discovery from linked worktrees", () => {
         elapsedMs: expect.any(Number),
         exitCode: 0,
         path: linkedParentPath,
-        repositoryId: "main-worktree",
+        repositoryId: basename(workspace.bareRepoPath),
         status: "passed",
         stderr: "",
         stdout: linkedParentPath,
@@ -399,7 +399,7 @@ describe("configured bare workspace discovery from linked worktrees", () => {
       data: { results: { repositoryId: string; status: string }[] };
     };
     expect(envelope.data.results).toMatchObject([
-      { repositoryId: "main-worktree", status: "planned" },
+      { repositoryId: basename(workspace.bareRepoPath), status: "planned" },
       { repositoryId: "child", status: "planned" },
     ]);
   });
