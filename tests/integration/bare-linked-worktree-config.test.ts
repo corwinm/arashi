@@ -3,6 +3,7 @@ import { chmod, mkdir, realpath } from "fs/promises";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { existsSync } from "fs";
 import { createCommand as createAddCommand } from "../../src/commands/add.ts";
+import { executeSwitch } from "../../src/commands/switch.ts";
 import { findWorkspaceRoot } from "../../src/lib/config.ts";
 import { basename, join, resolve } from "path";
 import { pathToFileURL } from "node:url";
@@ -429,6 +430,36 @@ describe("configured bare workspace discovery from linked worktrees", () => {
       { branch: { localBranch: "child-only" }, name: "child" },
     ]);
     expect(envelope.data.workspace.branch).toBe("main");
+  });
+
+  test("switch --repos scopes candidates to the invoking linked worktree", async () => {
+    workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+    const childPath = join(workspace.worktreePath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    await execGit(["init", "-b", "main"], childPath);
+    await configureRepository(childPath);
+    await commitFile(childPath, "README.md", "child main\n");
+    const originalCwd = process.cwd();
+    let launchedPath: string | undefined;
+
+    try {
+      process.chdir(workspace.worktreePath);
+      const result = await executeSwitch(
+        await realpath(childPath),
+        { json: false, path: true, repos: true },
+        {
+          launchSwitchTarget: async (target) => {
+            launchedPath = target.worktreePath;
+            return { command: ["noop"], mode: "fallback" };
+          },
+        },
+      );
+      expect(result).toMatchObject({ launchMode: "fallback" });
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    expect(await realpath(launchedPath!)).toBe(await realpath(childPath));
   });
 
   test("exec loads config from the bare root but runs in the linked parent and its child", async () => {
