@@ -323,6 +323,21 @@ export const findWorkspaceRoot = async (startPath: string = process.cwd()): Prom
   while (true) {
     // Check if .arashi/config.json exists in current directory
     if (await configExists(currentPath)) {
+      try {
+        const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
+        const rawCommonDirectory = common.stdout.trim();
+        const commonDirectory = isAbsolute(rawCommonDirectory)
+          ? resolve(rawCommonDirectory)
+          : resolve(currentPath, rawCommonDirectory);
+        if (commonDirectory !== currentPath && (await configExists(commonDirectory))) {
+          const bare = await exec(["rev-parse", "--is-bare-repository"], commonDirectory);
+          if (bare.stdout.trim() === "true") {
+            return commonDirectory;
+          }
+        }
+      } catch {
+        // A normal configured checkout remains authoritative when no bare common root applies.
+      }
       return currentPath;
     }
 

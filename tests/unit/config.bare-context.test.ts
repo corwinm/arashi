@@ -1,11 +1,12 @@
 import {
   ConfigNotFoundError,
+  findWorkspaceRoot,
   loadConfigWithFallback,
   loadWorkspaceRepositories,
 } from "../../src/lib/config.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, realpath, writeFile } from "fs/promises";
 import { basename, join } from "path";
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
@@ -21,6 +22,24 @@ afterEach(async () => {
 });
 
 describe("config resolution in bare contexts", () => {
+  test("prefers bare-root configuration over checked-out tracked configuration", async () => {
+    workspace = await createBareCreateWorkspace();
+    await mkdir(join(workspace.bareRepoPath, ".arashi"), { recursive: true });
+    await writeFile(
+      join(workspace.bareRepoPath, ".arashi", "config.json"),
+      JSON.stringify({
+        repos: {},
+        reposDir: "./bare-repos",
+        version: "1.0.0",
+        worktreesDir: "..",
+      }),
+    );
+
+    expect(await realpath(await findWorkspaceRoot(workspace.worktreePath))).toBe(
+      await realpath(workspace.bareRepoPath),
+    );
+  });
+
   test("loads local config for non-bare invocation", async () => {
     workspace = await createBareCreateWorkspace();
 
