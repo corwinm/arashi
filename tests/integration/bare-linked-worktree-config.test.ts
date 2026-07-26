@@ -94,6 +94,28 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     );
   });
 
+  test("list routes nested-child invocation through the enclosing linked parent", async () => {
+    workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+    const childPath = join(workspace.worktreePath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    await execGit(["init", "-b", "main"], childPath);
+    await configureRepository(childPath);
+    await commitFile(childPath, "README.md", "child main\n");
+
+    const result = await runCli(childPath, ["list", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    const envelope = JSON.parse(result.stdout) as { data: { worktrees: { path: string }[] } };
+    const listedPaths = await Promise.all(
+      envelope.data.worktrees.map(async (worktree) => realpath(worktree.path)),
+    );
+    expect(listedPaths, JSON.stringify(listedPaths)).toContain(
+      await realpath(workspace.worktreePath),
+    );
+    expect(listedPaths).not.toContain(await realpath(childPath));
+  });
+
   test("clone materializes a missing linked child from the configured bare-root clone", async () => {
     workspace = await configureBareWorkspace();
     const childSourcePath = join(workspace.rootPath, "child-source");
