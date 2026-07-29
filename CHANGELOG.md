@@ -1,3 +1,11 @@
+## [1.22.0](https://github.com/corwinm/arashi/compare/v1.21.0...v1.22.0) (2026-07-29)
+
+### Features
+
+- add explicit tmux launch override ([#101](https://github.com/corwinm/arashi/issues/101)) ([28301bb](https://github.com/corwinm/arashi/commit/28301bbc4c62fb606f37e8ed96bb92c43f266d55))
+- default bare init worktrees to parent ([#103](https://github.com/corwinm/arashi/issues/103)) ([269badc](https://github.com/corwinm/arashi/commit/269badc6d645914293d8055a016666d3e3027878))
+- simplify create launch configuration ([#100](https://github.com/corwinm/arashi/issues/100)) ([c3a102b](https://github.com/corwinm/arashi/commit/c3a102b3aee2354791d06f435fede6363f533c32))
+
 ## [1.21.0](https://github.com/corwinm/arashi/compare/v1.20.1...v1.21.0) (2026-07-22)
 
 ### Features
