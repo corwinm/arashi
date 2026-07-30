@@ -57,6 +57,7 @@ interface ProcessDependencies {
 
 export interface LaunchManagedKittyDependencies {
   env?: Record<string, string | undefined>;
+  lockOptions?: Omit<KittyIdentityLockOptions, "lockRoot">;
   lockRoot?: string;
   pathExists?: (path: string) => Promise<boolean>;
   platform?: NodeJS.Platform;
@@ -71,6 +72,7 @@ export interface KittyIdentityLockOptions {
   now?: () => number;
   pidAlive?: (pid: number) => boolean;
   pollIntervalMs?: number;
+  readReleasedLockOwner?: (path: string) => Promise<string>;
   removeReleasedLock?: (path: string) => Promise<void>;
   sleep?: (milliseconds: number) => Promise<void>;
   timeoutMs?: number;
@@ -280,11 +282,22 @@ export async function launchManagedKitty(
   });
   await preflightVersion(kitten, metadata.canonicalPath, env, deps.runProcess);
 
-  const lock = await acquireKittyIdentityLock(metadata.identity, { lockRoot: deps.lockRoot });
+  const lock = await acquireKittyIdentityLock(metadata.identity, {
+    ...deps.lockOptions,
+    lockRoot: deps.lockRoot,
+  });
+  let operationError: unknown;
   try {
     return await inspectFocusOrLaunch(kitten, metadata, env, deps.runProcess);
+  } catch (error) {
+    operationError = error;
+    throw error;
   } finally {
-    await lock.release();
+    try {
+      await lock.release();
+    } catch (error) {
+      if (operationError === undefined) throw error;
+    }
   }
 }
 
@@ -542,6 +555,8 @@ export async function acquireKittyIdentityLock(
     (async (milliseconds) => await new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const pidAlive = options.pidAlive ?? isPidAlive;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_LOCK_POLL_MS;
+  const readReleasedLockOwner =
+    options.readReleasedLockOwner ?? (async (path) => await readFile(path, "utf8"));
   const removeReleasedLock =
     options.removeReleasedLock ??
     (async (path: string) => await rm(path, { force: true, recursive: true }));
@@ -569,11 +584,13 @@ export async function acquireKittyIdentityLock(
         if (!(await hasRecoveryMarker(lockPath))) {
           return {
             path: lockPath,
-            release: async () => await releaseOwnedLock(lockPath, owner, removeReleasedLock),
+            release: async () =>
+              await releaseOwnedLock(lockPath, owner, readReleasedLockOwner, removeReleasedLock),
           };
         }
-        await releaseOwnedLock(lockPath, owner, removeReleasedLock);
+        await releaseOwnedLock(lockPath, owner, readReleasedLockOwner, removeReleasedLock);
       } catch (error) {
+        if (error instanceof SwitchCommandError) throw error;
         if (!isAlreadyExists(error) && !isMissing(error))
           throwIdentityLockFilesystemFailure("acquire the identity lock", lockPath, error);
       }
@@ -871,9 +888,41 @@ async function malformedLockIsStale(lockPath: string, now: number): Promise<bool
   }
 }
 
+async function readReleasedOwnerForRelease(
+  releasePath: string,
+  lockPath: string,
+  deadline: number,
+  readReleasedLockOwner: (path: string) => Promise<string>,
+): Promise<LockOwner | null> {
+  while (true) {
+    let raw: string;
+    try {
+      raw = await readReleasedLockOwner(join(releasePath, OWNER_FILE));
+    } catch (error) {
+      if (isMissing(error)) return null;
+      if (isTransientWindowsFilesystemContention(error) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        continue;
+      }
+      throwIdentityLockFilesystemFailure(
+        "read the moved identity lock during release",
+        lockPath,
+        error,
+      );
+    }
+    try {
+      return JSON.parse(raw) as LockOwner;
+    } catch {
+      return null;
+    }
+  }
+}
+
 async function releaseOwnedLock(
   lockPath: string,
   owner: LockOwner,
+  readReleasedLockOwner: (path: string) => Promise<string> = async (path) =>
+    await readFile(path, "utf8"),
   removeReleasedLock: (path: string) => Promise<void> = async (path) =>
     await rm(path, { force: true, recursive: true }),
 ): Promise<void> {
@@ -908,7 +957,12 @@ async function releaseOwnedLock(
       );
     }
 
-    const movedOwner = await readLockOwner(releasePath);
+    const movedOwner = await readReleasedOwnerForRelease(
+      releasePath,
+      lockPath,
+      deadline,
+      readReleasedLockOwner,
+    );
     if (!sameLockOwner(movedOwner, owner)) {
       try {
         await rename(releasePath, lockPath);

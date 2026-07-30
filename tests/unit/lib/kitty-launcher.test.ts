@@ -811,6 +811,35 @@ describe("managed Kitty launch", () => {
     await recovered.release();
   });
 
+  test("preserves the managed launch error when lock cleanup also fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-primary-error-"));
+    cleanup.push(root);
+    const cleanupError = new Error("cleanup denied") as NodeJS.ErrnoException;
+    cleanupError.code = "EIO";
+
+    await expect(
+      launchManagedKitty(
+        { ...candidate, worktreePath: root },
+        {
+          env: { KITTY_PID: "1" },
+          lockOptions: { removeReleasedLock: async () => await Promise.reject(cleanupError) },
+          lockRoot: join(root, "locks"),
+          platform: "linux",
+          runProcess: async (command) => {
+            if (command[0] === "which")
+              return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
+            if (command[1] === "--version")
+              return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
+            return { exitCode: 1, stderr: "permission denied", stdout: "" };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: { phase: "remote-control-inspection" },
+    });
+  });
+
   test.each(["", "window=73", "73 74"])("rejects malformed launch id %j", async (launchOutput) => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-launch-id-"));
     cleanup.push(root);
@@ -951,6 +980,26 @@ describe("cross-process Kitty identity lock", () => {
     });
     await lock.release();
     expect(removeAttempts).toBe(2);
+  });
+
+  test("retries transient reads after moving a released lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-release-read-retry-"));
+    cleanup.push(root);
+    let readAttempts = 0;
+    const lock = await acquireKittyIdentityLock("arashi-v1-release-read-retry", {
+      lockRoot: root,
+      readReleasedLockOwner: async (path) => {
+        readAttempts += 1;
+        if (readAttempts === 1) {
+          const error = new Error("busy") as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        }
+        return await readFile(path, "utf8");
+      },
+    });
+    await lock.release();
+    expect(readAttempts).toBe(2);
   });
 
   test("never steals a live-owner lock solely because it is old and times out boundedly", async () => {
