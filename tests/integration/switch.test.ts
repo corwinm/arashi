@@ -7,7 +7,7 @@ import type { SwitchCommandOptions, SwitchExecutionResult } from "../../src/comm
 import { runtime } from "../helpers/node-runtime.ts";
 import { describe, expect, expectTypeOf, test, vi } from "vitest";
 import { join, resolve } from "path";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, realpath, rm } from "fs/promises";
 import type { SwitchCandidate } from "../../src/core/switch.ts";
 import type { SwitchProcessRunner } from "../../src/lib/switch-launcher.ts";
 import type { WorkspaceRepository } from "../../src/lib/config.ts";
@@ -1045,6 +1045,41 @@ describe("switch command integration", () => {
     expect(launchCalled).toBe(true);
   });
 
+  test("managed Kitty wins before contextual shell cd and reports kitty mode", async () => {
+    let launchCalled = false;
+    const result = await executeSwitch(
+      undefined,
+      {},
+      {
+        discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+        env: {
+          ARASHI_DIRECTIVE_FILE: "/tmp/must-not-write-kitty-directive",
+          ARASHI_SHELL: "bash",
+          KITTY_PID: " 100 ",
+          KITTY_WINDOW_ID: " 73 ",
+        },
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async () => {
+          launchCalled = true;
+          return { command: ["kitten", "@", "focus-window"], mode: "kitty" };
+        },
+        loadWorkspaceRepositories: async () => ({
+          config: {
+            defaults: { switch: { mode: "auto" } },
+            repos: {},
+            reposDir: "./repos",
+            version: "1.0.0",
+          },
+          repositories: [],
+        }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+    expect(launchCalled).toBe(true);
+    expect(result.launchMode).toBe("kitty");
+  });
+
   test("does not launch when --cd is requested without shell integration", async () => {
     const originalError = console.error;
     const warnings: string[] = [];
@@ -1474,45 +1509,94 @@ describe("switch command integration", () => {
     ]);
   });
 
-  test("invokes kitty tab launch path when running in kitty", async () => {
+  test("invokes managed Kitty session launch when running in Kitty", async () => {
+    const worktreePath = await mkdtemp(join(tmpdir(), "arashi-switch-kitty-"));
+    const canonicalWorktreePath = await realpath(worktreePath);
     const invocations: string[][] = [];
+    let identity = "";
+    let launched = false;
+    const kittyCandidate = { ...candidate, worktreePath };
     const runProcess: SwitchProcessRunner = async (command) => {
       invocations.push(command);
 
-      if (command[0] === "kitty") {
+      if (command[0] === "which") {
+        return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
+      }
+      if (command[1] === "--version") {
+        return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
+      }
+      if (command.includes("launch")) {
+        const markerIndex = command.indexOf("--var");
+        identity = command[markerIndex + 1]?.split("=")[1] ?? "";
+        launched = true;
+        return { exitCode: 0, stderr: "", stdout: "73\n" };
+      }
+      if (command.includes("focus-window")) {
         return { exitCode: 0, stderr: "", stdout: "" };
+      }
+      if (command.at(-1) === "ls") {
+        if (!launched) return { exitCode: 0, stderr: "", stdout: "[]" };
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: JSON.stringify([
+            {
+              id: 1,
+              tabs: [
+                {
+                  id: 2,
+                  windows: [
+                    {
+                      cwd: canonicalWorktreePath,
+                      id: 73,
+                      is_focused: true,
+                      last_focused_at: 1,
+                      session_name: "workspace: feature/switch-command",
+                      title: "workspace: feature/switch-command",
+                      user_vars: { arashi_worktree_id: identity },
+                    },
+                  ],
+                },
+              ],
+            },
+          ]),
+        };
       }
 
       return { exitCode: 1, stderr: "unexpected command", stdout: "" };
     };
 
-    const result = await executeSwitch(
-      undefined,
-      {},
-      {
-        discoverSwitchCandidates: async () => ({
-          candidates: [candidate],
-          skippedCount: 0,
-        }),
-        env: { KITTY_PID: "100", TERM: "xterm-kitty" },
-        findWorkspaceRoot: async () => "/workspace",
-        loadWorkspaceRepositories: async () => ({ repositories: [] }),
-        platform: "linux",
-        runProcess,
-        stdinIsTTY: false,
-        stdoutIsTTY: false,
-      },
-    );
+    try {
+      const result = await executeSwitch(
+        undefined,
+        {},
+        {
+          discoverSwitchCandidates: async () => ({
+            candidates: [kittyCandidate],
+            skippedCount: 0,
+          }),
+          env: { KITTY_PID: "100", KITTY_WINDOW_ID: "73", TERM: "xterm-kitty" },
+          findWorkspaceRoot: async () => worktreePath,
+          loadWorkspaceRepositories: async () => ({ repositories: [] }),
+          platform: "linux",
+          runProcess,
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
 
-    expect(result.launchMode).toBe("fallback");
-    expect(invocations[0]).toEqual([
-      "kitty",
-      "@",
-      "launch",
-      "--type=tab",
-      "--cwd",
-      "/workspace/feature-switch-command",
-    ]);
+      expect(result.launchMode).toBe("kitty");
+      expect(invocations).toContainEqual([
+        "/usr/bin/kitten",
+        "@",
+        "focus-window",
+        "--match",
+        "id:73",
+      ]);
+      expect(invocations.filter((command) => command.includes("launch"))).toHaveLength(1);
+    } finally {
+      await rm(worktreePath, { force: true, recursive: true });
+    }
   });
 
   test("invokes wezterm launch path when running in WezTerm", async () => {

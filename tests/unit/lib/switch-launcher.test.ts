@@ -40,6 +40,7 @@ describe("detectManagedSwitchContext", () => {
     ],
     [{ TERM_PROGRAM: "vscode", VSCODE_GIT_ASKPASS_EXTRA_ARGS: "--host=kiro" }, "kiro"],
     [{ TERM_PROGRAM: "vscode" }, "vscode"],
+    [{ KITTY_PID: " 123 ", KITTY_WINDOW_ID: " 73 " }, "kitty"],
   ] as const)("classifies strict managed evidence %#", (env, expected) => {
     expect(detectManagedSwitchContext(env)).toBe(expected);
   });
@@ -54,14 +55,22 @@ describe("detectManagedSwitchContext", () => {
     { TERM_PROGRAM: "Apple_Terminal" },
     { TERM_PROGRAM: "unsupported-ide" },
     { TERM: "xterm-256color" },
+    { KITTY_PID: "123" },
+    { KITTY_WINDOW_ID: "73" },
+    { TERM: "xterm-kitty" },
+    { KITTY_PID: "", KITTY_WINDOW_ID: "   ", TERM: "xterm-kitty-extra" },
+    { TERM: "not-xterm-kitty" },
   ])("rejects weak or generic evidence %#", (env) => {
     expect(detectManagedSwitchContext(env)).toBeNull();
   });
 
-  test("uses tmux, Herdr, cmux, then IDE precedence", () => {
+  test("uses tmux, Herdr, cmux, IDE, then Kitty precedence", () => {
     const allSignals = {
       CMUX_WORKSPACE_ID: "workspace:1",
       HERDR_ENV: "1",
+      KITTY_PID: "123",
+      KITTY_WINDOW_ID: "73",
+      TERM: "xterm-kitty",
       TERM_PROGRAM: "vscode",
       TMUX: "/tmp/tmux/default",
       VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/cursor",
@@ -69,14 +78,20 @@ describe("detectManagedSwitchContext", () => {
     expect(detectManagedSwitchContext(allSignals)).toBe("tmux");
     expect(detectManagedSwitchContext({ ...allSignals, TMUX: "" })).toBe("herdr");
     expect(detectManagedSwitchContext({ ...allSignals, HERDR_ENV: "0", TMUX: "" })).toBe("cmux");
+    const ideWins = {
+      ...allSignals,
+      CMUX_WORKSPACE_ID: "",
+      HERDR_ENV: "0",
+      TMUX: "",
+    };
+    expect(detectManagedSwitchContext(ideWins)).toBe("cursor");
     expect(
       detectManagedSwitchContext({
-        ...allSignals,
-        CMUX_WORKSPACE_ID: "",
-        HERDR_ENV: "0",
-        TMUX: "",
+        ...ideWins,
+        TERM_PROGRAM: "",
+        VSCODE_GIT_ASKPASS_NODE: "",
       }),
-    ).toBe("cursor");
+    ).toBe("kitty");
   });
 });
 
@@ -569,36 +584,51 @@ describe("launchSwitchTarget", () => {
     expect(commands).toEqual([["tmux", "new-window", "-c", candidate.worktreePath]]);
   });
 
-  test("uses kitty tab launch commands when running in kitty", async () => {
+  test("selects managed Kitty before support preflight and never falls back", async () => {
     const commands: string[][] = [];
-    const runProcess: SwitchProcessRunner = async (command) => {
-      commands.push(command);
+    await expect(
+      launchSwitchTarget(
+        { ...candidate, worktreePath: process.cwd() },
+        {},
+        {
+          env: { KITTY_PID: "123", KITTY_WINDOW_ID: "73", TERM: "xterm-kitty" },
+          pathExists: async () => false,
+          platform: "linux",
+          runProcess: async (command) => {
+            commands.push(command);
+            return { exitCode: 1, stderr: "kitten missing", stdout: "" };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      message: expect.stringContaining("kitten"),
+    });
+    expect(commands).toEqual([["which", "kitten"]]);
+  });
 
-      if (command[0] === "kitty" && command[2] === "launch") {
-        return { exitCode: 0, stderr: "", stdout: "" };
-      }
+  test("continues from an unavailable integrated IDE to managed Kitty", async () => {
+    const commands: string[][] = [];
 
-      return { exitCode: 1, stderr: "unexpected", stdout: "" };
-    };
+    await expect(
+      launchSwitchTarget(
+        { ...candidate, worktreePath: process.cwd() },
+        {},
+        {
+          env: { KITTY_PID: "123", KITTY_WINDOW_ID: "73", TERM_PROGRAM: "vscode" },
+          pathExists: async () => false,
+          platform: "linux",
+          runProcess: async (command) => {
+            commands.push(command);
+            return { exitCode: 1, stderr: "missing", stdout: "" };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.LAUNCH_FAILED });
 
-    const result = await launchSwitchTarget(
-      candidate,
-      {},
-      {
-        env: { KITTY_PID: "123", TERM: "xterm-kitty" },
-        platform: "linux",
-        runProcess,
-      },
-    );
-
-    expect(result.mode).toBe("fallback");
-    expect(commands[0]).toEqual([
-      "kitty",
-      "@",
-      "launch",
-      "--type=tab",
-      "--cwd",
-      "/workspace/feature-auth",
+    expect(commands).toEqual([
+      ["which", "code"],
+      ["which", "kitten"],
     ]);
   });
 

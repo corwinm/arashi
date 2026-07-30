@@ -272,7 +272,11 @@ bindkey -s '^s' 'sesh connect $(arashi list | fzf)\n'
 
 You can also use `arashi switch --sesh` directly inside tmux to open the selected worktree in a new tmux window.
 
-`arashi switch` also detects tmux, Kitty, Ghostty, WezTerm, and iTerm2 contexts and prefers terminal-native launch behavior when available.
+`arashi switch` checks managed contexts in this order: tmux → Herdr → cmux → integrated IDE → Kitty. Managed Kitty selection requires both `KITTY_PID` and `KITTY_WINDOW_ID`; `TERM=xterm-kitty` alone remains only generic terminal evidence.
+
+Managed Kitty requires Kitty 0.43 or newer plus working `kitten @` remote control. Arashi reuses only its exact worktree marker and focuses that tab before launching a new session-backed tab. Once managed Kitty is selected, missing or unsupported tooling, denied remote control, duplicate markers, and validation failures are reported directly instead of falling back to another launcher.
+
+`arashi create --launch` and `defaults.create.launch: "auto"` use the same managed Kitty behavior. If that post-create launch fails, Arashi exits nonzero but preserves the successfully created worktree and reports the launch as partial success. Fix the launcher problem and use `arashi switch`; do not retry creation for the same branch.
 
 ### Fast remove selection
 
@@ -321,7 +325,7 @@ Example config header:
 }
 ```
 
-`defaults.switch.mode` accepts `auto` | `cd` | `launch` | `sesh` | `herdr`. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE, then uses parent-shell `cd` when shell integration is active, and otherwise follows terminal/platform launch fallback. An absent mode preserves the built-in automatic `launch` behavior rather than newly preferring `cd`.
+`defaults.switch.mode` accepts `auto` | `cd` | `launch` | `sesh` | `herdr`. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE → managed Kitty, then uses parent-shell `cd` when shell integration is active, and otherwise follows terminal/platform launch fallback. An absent mode preserves the built-in automatic `launch` behavior rather than newly preferring `cd`.
 
 Explicit launcher flags take precedence over `--cd` / `--no-cd`, which take precedence over the configured mode and automatic context detection. `--no-default-launch` bypasses only configured `sesh` or `herdr`. `--herdr` remains available on both `create` and `switch`; Herdr launch uses `herdr worktree open` with the Git-resolved non-bare main checkout and selected worktree.
 

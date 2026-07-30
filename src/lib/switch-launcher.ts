@@ -3,18 +3,20 @@ import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { normalizeSpawnEnvironment, stripDirectiveEnvironment } from "./shell-directives.ts";
 import type { SwitchCandidate } from "../core/switch.ts";
 import { resolveGitMainWorktree } from "./workspace-context.ts";
+import { launchManagedKitty } from "./kitty-launcher.ts";
 
 type SwitchLaunchMode =
   | "sesh"
   | "tmux"
   | "herdr"
   | "cmux"
+  | "kitty"
   | "vscode"
   | "cursor"
   | "kiro"
   | "fallback";
 export type SupportedIde = "vscode" | "cursor" | "kiro";
-export type ManagedSwitchContext = "tmux" | "herdr" | "cmux" | SupportedIde;
+export type ManagedSwitchContext = "tmux" | "herdr" | "cmux" | "kitty" | SupportedIde;
 
 const IDE_COMMANDS: Record<SupportedIde, string> = {
   cursor: "cursor",
@@ -54,6 +56,8 @@ export interface LaunchSwitchDependencies {
   platform?: NodeJS.Platform;
   resolveGitMainWorktree?: (path: string) => Promise<string | null>;
   runProcess?: SwitchProcessRunner;
+  kittyLockRoot?: string;
+  pathExists?: (path: string) => Promise<boolean>;
 }
 
 export interface LaunchSwitchResult {
@@ -171,6 +175,16 @@ export async function launchSwitchTarget(
     }
   }
 
+  if (managedContext === "kitty" || isKittySession(env)) {
+    return launchManagedKitty(candidate, {
+      env: childEnv,
+      lockRoot: deps.kittyLockRoot,
+      pathExists: deps.pathExists,
+      platform,
+      runProcess,
+    });
+  }
+
   const terminalAppResult = await launchWithDetectedTerminalApp(candidate, {
     env: childEnv,
     runProcess,
@@ -234,7 +248,14 @@ export function detectManagedSwitchContext(
   if (isCmuxSession(env)) {
     return "cmux";
   }
-  return detectIntegratedIde(env);
+  const ide = detectIntegratedIde(env);
+  if (ide) {
+    return ide;
+  }
+  if (isKittySession(env)) {
+    return "kitty";
+  }
+  return null;
 }
 
 export function isTmuxSession(env: Record<string, string | undefined> = process.env): boolean {
@@ -251,13 +272,18 @@ export function isCmuxSession(env: Record<string, string | undefined> = process.
   );
 }
 
+export function isKittySession(env: Record<string, string | undefined> = process.env): boolean {
+  return [env.KITTY_PID, env.KITTY_WINDOW_ID].every(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+}
+
 export type TerminalApp = "kitty" | "ghostty" | "wezterm" | "iterm2";
 
 export function detectTerminalApp(
   env: Record<string, string | undefined> = process.env,
 ): TerminalApp | null {
   const termProgram = env.TERM_PROGRAM?.toLowerCase();
-  const term = env.TERM?.toLowerCase();
 
   if (
     termProgram === "wezterm" ||
@@ -275,11 +301,7 @@ export function detectTerminalApp(
     return "ghostty";
   }
 
-  if (
-    typeof env.KITTY_PID === "string" ||
-    typeof env.KITTY_WINDOW_ID === "string" ||
-    (typeof term === "string" && term.includes("kitty"))
-  ) {
+  if (isKittySession(env) || env.TERM?.trim().toLowerCase() === "xterm-kitty") {
     return "kitty";
   }
 

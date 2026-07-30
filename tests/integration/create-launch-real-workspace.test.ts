@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { basename, join } from "path";
 import { afterEach, describe, expect, test } from "vitest";
 import { executeCreate } from "../../src/commands/create.ts";
+import { SwitchCommandError, SwitchCommandErrorCode } from "../../src/types/switch.ts";
 import { spawn } from "../helpers/node-runtime.ts";
 
 const roots: string[] = [];
@@ -86,7 +87,7 @@ describe("configured create launch in a real workspace", () => {
             calls.push({ candidate, options });
             return {
               command: [],
-              mode: launch === "auto" ? "fallback" : launch,
+              mode: launch === "auto" ? "kitty" : launch,
             };
           },
         },
@@ -108,6 +109,37 @@ describe("configured create launch in a real workspace", () => {
     },
     20_000,
   );
+
+  test("preserves created worktrees when automatic managed Kitty launch fails", async () => {
+    const root = await createConfiguredRepository("auto");
+    process.chdir(root);
+    const branchName = "feature/kitty-launch-failure";
+
+    await expect(
+      executeCreate(
+        branchName,
+        {},
+        {
+          launchSwitchTarget: async () => {
+            throw new SwitchCommandError(
+              "Managed Kitty remote-control-inspection failed: permission denied",
+              SwitchCommandErrorCode.LAUNCH_FAILED,
+              { phase: "remote-control-inspection" },
+            );
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: { phase: "remote-control-inspection" },
+    });
+
+    await expect(
+      access(
+        join(root, ".arashi", "worktrees", `${basename(root)}-feature`, "kitty-launch-failure"),
+      ),
+    ).resolves.toBeUndefined();
+  }, 20_000);
 
   test.each([
     ["--launch", "--no-launch"],

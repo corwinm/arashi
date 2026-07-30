@@ -37,6 +37,7 @@ export type SwitchLaunchMode =
   | "tmux"
   | "herdr"
   | "cmux"
+  | "kitty"
   | "vscode"
   | "cursor"
   | "kiro"

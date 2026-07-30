@@ -73,6 +73,8 @@ You can set command-scoped defaults under `defaults`.
 
 An absent `launch` preserves built-in no-launch behavior. `none` disables launch without disabling an independently enabled `switch`; `auto` uses context detection; and `sesh` or `herdr` select that launcher directly. Any enabled launch implies switch handling for the newly created primary worktree.
 
+In a managed Kitty session, `auto` uses the same exact-marker, fail-closed launcher as `arashi switch`. A post-create Kitty failure returns a nonzero result but preserves the successfully created worktree and reports partial success. Resolve the Kitty error and run `arashi switch` rather than retrying creation for the same branch.
+
 ### `defaults.editors.<host>.create`
 
 Supported hosts: `vscode`, `cursor`, `kiro`. These scopes use the same `switch` boolean and `launch` vocabulary. Use editor-scoped defaults when terminal `arashi create` should behave one way but an extension-driven create should behave differently.
@@ -103,7 +105,7 @@ In that configuration, terminal `arashi create` uses `defaults.create`, while VS
 
 - `mode` (`auto` | `cd` | `launch` | `sesh` | `herdr`): the single switch behavior and launcher choice
 
-Use `launch` for automatic launcher selection without preferring parent-shell switching, `cd` to request parent-shell switching, `sesh` or `herdr` to force that launcher, and `auto` for contextual selection. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE. When no managed context is detected, it uses `cd` if shell integration is active; otherwise it continues through terminal and platform launch fallback.
+Use `launch` for automatic launcher selection without preferring parent-shell switching, `cd` to request parent-shell switching, `sesh` or `herdr` to force that launcher, and `auto` for contextual selection. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE → managed Kitty. Managed Kitty requires both local Kitty markers plus Kitty 0.43 or newer with permitted remote control; once selected, setup, inspection, focus, locking, and launch failures fail closed rather than continuing to another launcher. When no managed context is detected, `auto` uses `cd` if shell integration is active; otherwise it continues through terminal and platform launch fallback.
 
 When `defaults.switch.mode` is absent, Arashi preserves the built-in `launch` behavior. Existing configurations therefore do not newly prefer `cd` merely because shell integration is installed.
 
