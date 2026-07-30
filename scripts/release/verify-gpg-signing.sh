@@ -33,6 +33,12 @@ secret_key_fingerprint=$(
     awk -F: '$1 == "fpr" { print toupper($10); exit }'
 )
 [[ "$secret_key_fingerprint" == "$expected_fingerprint" ]] || fail "imported secret key fingerprint does not match expected fingerprint"
+secret_key_uid=$(
+  gpg --batch --with-colons --list-secret-keys "$expected_fingerprint" 2>/dev/null |
+    awk -F: '$1 == "uid" { print $10; exit }'
+)
+expected_uid="${RELEASE_GPG_KEY_NAME} <${RELEASE_GPG_KEY_EMAIL}>"
+[[ "$secret_key_uid" == "$expected_uid" ]] || fail "imported secret key UID does not match expected release identity"
 
 head_before=$(git rev-parse HEAD)
 refs_before=$(git show-ref || true)
