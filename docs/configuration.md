@@ -73,6 +73,8 @@ You can set command-scoped defaults under `defaults`.
 
 An absent `launch` preserves built-in no-launch behavior. `none` disables launch without disabling an independently enabled `switch`; `auto` uses context detection; and `sesh` or `herdr` select that launcher directly. Any enabled launch implies switch handling for the newly created primary worktree.
 
+In a managed Kitty session, `auto` uses the same exact-marker, fail-closed launcher as `arashi switch`. A post-create Kitty failure returns a nonzero result but preserves the successfully created worktree and reports partial success. Resolve the Kitty error and run `arashi switch` rather than retrying creation for the same branch.
+
 ### `defaults.editors.<host>.create`
 
 Supported hosts: `vscode`, `cursor`, `kiro`. These scopes use the same `switch` boolean and `launch` vocabulary. Use editor-scoped defaults when terminal `arashi create` should behave one way but an extension-driven create should behave differently.

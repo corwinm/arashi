@@ -276,6 +276,8 @@ You can also use `arashi switch --sesh` directly inside tmux to open the selecte
 
 Managed Kitty requires Kitty 0.43 or newer plus working `kitten @` remote control. Arashi reuses only its exact worktree marker and focuses that tab before launching a new session-backed tab. Once managed Kitty is selected, missing or unsupported tooling, denied remote control, duplicate markers, and validation failures are reported directly instead of falling back to another launcher.
 
+`arashi create --launch` and `defaults.create.launch: "auto"` use the same managed Kitty behavior. If that post-create launch fails, Arashi exits nonzero but preserves the successfully created worktree and reports the launch as partial success. Fix the launcher problem and use `arashi switch`; do not retry creation for the same branch.
+
 ### Fast remove selection
 
 ```bash

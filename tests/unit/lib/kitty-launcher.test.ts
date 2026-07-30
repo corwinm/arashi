@@ -985,6 +985,43 @@ describe("cross-process Kitty identity lock", () => {
     expect(removeAttempts).toBe(2);
   });
 
+  test("retries transient stale-lock removal contention", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-stale-remove-retry-"));
+    cleanup.push(root);
+    const identity = "arashi-v1-stale-remove-retry";
+    const lockPath = join(root, `${identity}.lock`);
+    await mkdir(lockPath);
+    await writeFile(
+      join(lockPath, "owner.json"),
+      JSON.stringify({
+        createdAt: Date.now(),
+        identity,
+        owner: "dead-owner",
+        pid: 999_999,
+      }),
+    );
+    let removeAttempts = 0;
+
+    const lock = await acquireKittyIdentityLock(identity, {
+      lockRoot: root,
+      pidAlive: currentProcessOnly,
+      pollIntervalMs: 5,
+      removeRecoveredLock: async (path) => {
+        removeAttempts += 1;
+        if (removeAttempts === 1) {
+          const error = new Error("busy stale recovery cleanup") as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        }
+        await rm(path, { force: true, recursive: true });
+      },
+      timeoutMs: 200,
+    });
+
+    expect(removeAttempts).toBe(2);
+    await lock.release();
+  });
+
   test("retries transient reads after moving a released lock", async () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-release-read-retry-"));
     cleanup.push(root);

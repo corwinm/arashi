@@ -74,6 +74,7 @@ export interface KittyIdentityLockOptions {
   pidAlive?: (pid: number) => boolean;
   pollIntervalMs?: number;
   readReleasedLockOwner?: (path: string) => Promise<string>;
+  removeRecoveredLock?: (path: string) => Promise<void>;
   removeReleasedLock?: (path: string) => Promise<void>;
   sleep?: (milliseconds: number) => Promise<void>;
   timeoutMs?: number;
@@ -650,6 +651,7 @@ export async function acquireKittyIdentityLock(
             now(),
             pidAlive,
             options.beforeStaleLockRename,
+            options.removeRecoveredLock,
           );
         } finally {
           await guard.release();
@@ -809,6 +811,8 @@ async function recoverStaleLockIfSafe(
   now: number,
   pidAlive: (pid: number) => boolean,
   beforeRename?: () => Promise<void>,
+  removeRecoveredLock: (path: string) => Promise<void> = async (path) =>
+    await rm(path, { force: true, recursive: true }),
 ): Promise<void> {
   let recover = false;
   let inspectedOwner: LockOwner | null = null;
@@ -855,7 +859,7 @@ async function recoverStaleLockIfSafe(
       }
       return;
     }
-    await rm(recoveryPath, { force: true, recursive: true });
+    await removePathWithTransientRetries(recoveryPath, removeRecoveredLock, Date.now() + 2_000);
   } catch (error) {
     if (!isMissing(error)) throw error;
   }
@@ -1044,6 +1048,25 @@ async function shouldRetryMissingOwnedLock(
   } catch (error) {
     if (isMissing(error)) return false;
     throw error;
+  }
+}
+
+async function removePathWithTransientRetries(
+  path: string,
+  removePath: (path: string) => Promise<void>,
+  deadline: number,
+): Promise<void> {
+  while (true) {
+    try {
+      await removePath(path);
+      return;
+    } catch (error) {
+      if (isTransientWindowsFilesystemContention(error) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        continue;
+      }
+      throw error;
+    }
   }
 }
 
