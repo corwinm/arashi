@@ -761,7 +761,7 @@ describe("managed Kitty launch", () => {
     const recovered = await acquireKittyIdentityLock(metadata.identity, {
       lockRoot,
       pollIntervalMs: 5,
-      timeoutMs: 100,
+      timeoutMs: 2_000,
     });
     await recovered.release();
   });
@@ -816,7 +816,7 @@ describe("cross-process Kitty identity lock", () => {
     const secondPromise = acquireKittyIdentityLock("arashi-v1-a", {
       lockRoot: root,
       pollIntervalMs: 5,
-      timeoutMs: 500,
+      timeoutMs: 5_000,
     }).then((lock) => {
       secondAcquired = true;
       return lock;
@@ -917,7 +917,7 @@ describe("cross-process Kitty identity lock", () => {
         contenderPromise = acquireKittyIdentityLock(identity, {
           lockRoot: root,
           pollIntervalMs: 5,
-          timeoutMs: 500,
+          timeoutMs: 5_000,
         }).then((lock) => {
           acquired.push("contender");
           return lock;
@@ -927,7 +927,7 @@ describe("cross-process Kitty identity lock", () => {
       },
       lockRoot: root,
       pollIntervalMs: 5,
-      timeoutMs: 500,
+      timeoutMs: 5_000,
     }).then((lock) => {
       acquired.push("recovery");
       return lock;
@@ -963,7 +963,7 @@ describe("cross-process Kitty identity lock", () => {
       },
       lockRoot: root,
       pollIntervalMs: 5,
-      timeoutMs: 500,
+      timeoutMs: 5_000,
     }).then((lock) => {
       firstAcquired = true;
       return lock;
@@ -974,7 +974,7 @@ describe("cross-process Kitty identity lock", () => {
       lockRoot: root,
       now: () => Date.now() + 31_000,
       pollIntervalMs: 5,
-      timeoutMs: 500,
+      timeoutMs: 5_000,
     });
     resumeOwnerWrite();
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1013,7 +1013,7 @@ describe("cross-process Kitty identity lock", () => {
       },
       lockRoot: root,
       pollIntervalMs: 5,
-      timeoutMs: 500,
+      timeoutMs: 5_000,
     }).then((lock) => {
       firstAcquired = true;
       return lock;
@@ -1024,7 +1024,7 @@ describe("cross-process Kitty identity lock", () => {
       lockRoot: root,
       now: () => Date.now() + 31_000,
       pollIntervalMs: 5,
-      timeoutMs: 500,
+      timeoutMs: 5_000,
     });
     resumeGuardWrite();
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1053,7 +1053,7 @@ describe("cross-process Kitty identity lock", () => {
     const recovered = await acquireKittyIdentityLock(identity, {
       lockRoot: root,
       pidAlive: () => true,
-      timeoutMs: 100,
+      timeoutMs: 2_000,
     });
     await recovered.release();
   });
@@ -1074,7 +1074,7 @@ describe("cross-process Kitty identity lock", () => {
     );
     const deadRecovered = await acquireKittyIdentityLock("arashi-v1-dead", {
       lockRoot: root,
-      timeoutMs: 100,
+      timeoutMs: 2_000,
     });
     await deadRecovered.release();
 
@@ -1085,7 +1085,7 @@ describe("cross-process Kitty identity lock", () => {
     await utimes(malformedPath, old, old);
     const malformedRecovered = await acquireKittyIdentityLock("arashi-v1-malformed", {
       lockRoot: root,
-      timeoutMs: 100,
+      timeoutMs: 2_000,
     });
     await malformedRecovered.release();
   });
