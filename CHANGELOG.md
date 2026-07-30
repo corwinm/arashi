@@ -1,3 +1,9 @@
+## [1.23.0](https://github.com/corwinm/arashi/compare/v1.22.0...v1.23.0) (2026-07-30)
+
+### Features
+
+- add managed Kitty worktree sessions ([#105](https://github.com/corwinm/arashi/issues/105)) ([3d37054](https://github.com/corwinm/arashi/commit/3d370545acf784ec7578a9eedd513b4e9713fb83))
+
 ## [1.22.0](https://github.com/corwinm/arashi/compare/v1.21.0...v1.22.0) (2026-07-29)
 
 ### Features
