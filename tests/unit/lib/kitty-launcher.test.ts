@@ -1082,6 +1082,79 @@ describe("cross-process Kitty identity lock", () => {
     await second.release();
   });
 
+  test("fails closed without recovering a lock whose owner file cannot be read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-owner-read-failure-"));
+    cleanup.push(root);
+    const identity = "arashi-v1-owner-read-failure";
+    const lockPath = join(root, `${identity}.lock`);
+    await mkdir(lockPath);
+    await writeFile(
+      join(lockPath, "owner.json"),
+      JSON.stringify({
+        createdAt: Date.now() - 60_000,
+        identity,
+        owner: "unreadable-owner",
+        pid: 999_999,
+      }),
+    );
+
+    await expect(
+      acquireKittyIdentityLock(identity, {
+        lockRoot: root,
+        pidAlive: currentProcessOnly,
+        pollIntervalMs: 5,
+        readLockOwnerFile: async () => {
+          const error = new Error("owner read failed") as NodeJS.ErrnoException;
+          error.code = "EIO";
+          throw error;
+        },
+        timeoutMs: 100,
+      }),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: { phase: "identity-lock" },
+    });
+    await expect(stat(lockPath)).resolves.toBeDefined();
+  });
+
+  test("retries transient owner reads before recovering a stale lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-owner-read-retry-"));
+    cleanup.push(root);
+    const identity = "arashi-v1-owner-read-retry";
+    const lockPath = join(root, `${identity}.lock`);
+    const ownerPath = join(lockPath, "owner.json");
+    await mkdir(lockPath);
+    await writeFile(
+      ownerPath,
+      JSON.stringify({
+        createdAt: Date.now(),
+        identity,
+        owner: "dead-owner",
+        pid: 999_999,
+      }),
+    );
+    let readAttempts = 0;
+
+    const lock = await acquireKittyIdentityLock(identity, {
+      lockRoot: root,
+      pidAlive: currentProcessOnly,
+      pollIntervalMs: 5,
+      readLockOwnerFile: async (path) => {
+        readAttempts += 1;
+        if (readAttempts === 1) {
+          const error = new Error("transient owner read") as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        }
+        return await readFile(path, "utf8");
+      },
+      timeoutMs: 200,
+    });
+
+    expect(readAttempts).toBeGreaterThan(1);
+    await lock.release();
+  });
+
   test("never steals a live-owner lock solely because it is old and times out boundedly", async () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-live-lock-"));
     cleanup.push(root);

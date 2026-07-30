@@ -73,6 +73,7 @@ export interface KittyIdentityLockOptions {
   now?: () => number;
   pidAlive?: (pid: number) => boolean;
   pollIntervalMs?: number;
+  readLockOwnerFile?: (path: string) => Promise<string>;
   readReleasedLockOwner?: (path: string) => Promise<string>;
   removeRecoveredLock?: (path: string) => Promise<void>;
   removeReleasedLock?: (path: string) => Promise<void>;
@@ -559,6 +560,8 @@ export async function acquireKittyIdentityLock(
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_LOCK_POLL_MS;
   const readReleasedLockOwner =
     options.readReleasedLockOwner ?? (async (path) => await readFile(path, "utf8"));
+  const readLockOwnerFile =
+    options.readLockOwnerFile ?? (async (path) => await readFile(path, "utf8"));
   const removeReleasedLock =
     options.removeReleasedLock ??
     (async (path: string) => await rm(path, { force: true, recursive: true }));
@@ -630,7 +633,7 @@ export async function acquireKittyIdentityLock(
           else throw error;
         }
         if (lockExists) {
-          const observedOwner = await readLockOwner(lockPath);
+          const observedOwner = await readLockOwner(lockPath, readLockOwnerFile);
           const liveOwner = observedOwner?.identity === identity && pidAlive(observedOwner.pid);
           if (!liveOwner) {
             guard = await acquireStaleRecoveryGuard(
@@ -652,6 +655,7 @@ export async function acquireKittyIdentityLock(
             pidAlive,
             options.beforeStaleLockRename,
             options.removeRecoveredLock,
+            readLockOwnerFile,
           );
         } finally {
           await guard.release();
@@ -659,7 +663,8 @@ export async function acquireKittyIdentityLock(
       }
     } catch (error) {
       if (error instanceof SwitchCommandError) throw error;
-      throwIdentityLockFilesystemFailure("recover the stale identity lock", lockPath, error);
+      if (!isTransientWindowsFilesystemContention(error))
+        throwIdentityLockFilesystemFailure("recover the stale identity lock", lockPath, error);
     }
     if (now() - startedAt >= timeoutMs) {
       throwKittyFailure(
@@ -813,39 +818,59 @@ async function recoverStaleLockIfSafe(
   beforeRename?: () => Promise<void>,
   removeRecoveredLock: (path: string) => Promise<void> = async (path) =>
     await rm(path, { force: true, recursive: true }),
+  readOwnerFile: (path: string) => Promise<string> = async (path) => await readFile(path, "utf8"),
 ): Promise<void> {
   let recover = false;
   let inspectedOwner: LockOwner | null = null;
+  let raw: string;
   try {
-    const raw = await readFile(join(lockPath, OWNER_FILE), "utf8");
-    const parsed = JSON.parse(raw) as Partial<LockOwner>;
-    if (
-      parsed.identity === identity &&
-      typeof parsed.owner === "string" &&
-      parsed.owner.length > 0 &&
-      typeof parsed.pid === "number" &&
-      Number.isSafeInteger(parsed.pid) &&
-      parsed.pid > 0 &&
-      typeof parsed.createdAt === "number"
-    ) {
-      inspectedOwner = parsed as LockOwner;
-      recover = !pidAlive(parsed.pid);
-    } else {
+    raw = await readOwnerFile(join(lockPath, OWNER_FILE));
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+    recover = await malformedLockIsStale(lockPath, now);
+    raw = "";
+  }
+  if (!recover) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<LockOwner>;
+      if (
+        parsed.identity === identity &&
+        typeof parsed.owner === "string" &&
+        parsed.owner.length > 0 &&
+        typeof parsed.pid === "number" &&
+        Number.isSafeInteger(parsed.pid) &&
+        parsed.pid > 0 &&
+        typeof parsed.createdAt === "number"
+      ) {
+        inspectedOwner = parsed as LockOwner;
+        recover = !pidAlive(parsed.pid);
+      } else {
+        recover = await malformedLockIsStale(lockPath, now);
+      }
+    } catch {
       recover = await malformedLockIsStale(lockPath, now);
     }
-  } catch {
-    recover = await malformedLockIsStale(lockPath, now);
   }
   if (!recover) return;
 
-  const currentOwner = await readLockOwner(lockPath);
+  const currentOwner = await readLockOwner(lockPath, readOwnerFile);
   if (!sameLockOwner(inspectedOwner, currentOwner)) return;
   await beforeRename?.();
 
   const recoveryPath = `${lockPath}.recover-${process.pid}-${randomUUID()}`;
   try {
     await rename(lockPath, recoveryPath);
-    const movedOwner = await readLockOwner(recoveryPath);
+    let movedOwner: LockOwner | null;
+    try {
+      movedOwner = await readLockOwner(recoveryPath, readOwnerFile);
+    } catch (error) {
+      try {
+        await rename(recoveryPath, lockPath);
+      } catch (restoreError) {
+        if (!isAlreadyExists(restoreError)) throw restoreError;
+      }
+      throw error;
+    }
     if (!sameLockOwner(inspectedOwner, movedOwner)) {
       try {
         await rename(recoveryPath, lockPath);
@@ -865,11 +890,19 @@ async function recoverStaleLockIfSafe(
   }
 }
 
-async function readLockOwner(lockPath: string): Promise<LockOwner | null> {
+async function readLockOwner(
+  lockPath: string,
+  readOwnerFile: (path: string) => Promise<string> = async (path) => await readFile(path, "utf8"),
+): Promise<LockOwner | null> {
+  let raw: string;
   try {
-    const parsed = JSON.parse(
-      await readFile(join(lockPath, OWNER_FILE), "utf8"),
-    ) as Partial<LockOwner>;
+    raw = await readOwnerFile(join(lockPath, OWNER_FILE));
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<LockOwner>;
     if (
       typeof parsed.createdAt !== "number" ||
       typeof parsed.identity !== "string" ||
