@@ -27,6 +27,7 @@ import {
 } from "../../../src/lib/kitty-launcher.ts";
 
 const cleanup: string[] = [];
+const currentProcessOnly = (pid: number): boolean => pid === process.pid;
 afterEach(async () => {
   await Promise.all(
     cleanup.splice(0).map(async (path) => await rm(path, { force: true, recursive: true })),
@@ -808,6 +809,38 @@ describe("cross-process Kitty identity lock", () => {
     });
   });
 
+  test("fails boundedly when the lock root disappears while waiting", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-lock-root-removed-"));
+    cleanup.push(root);
+    const first = await acquireKittyIdentityLock("arashi-v1-root-removed", { lockRoot: root });
+    let removed = false;
+    const restoreRoot = setTimeout(() => void mkdir(root, { recursive: true }), 100);
+
+    try {
+      await expect(
+        acquireKittyIdentityLock("arashi-v1-root-removed", {
+          lockRoot: root,
+          pidAlive: currentProcessOnly,
+          pollIntervalMs: 5,
+          sleep: async (milliseconds) => {
+            if (!removed) {
+              removed = true;
+              await rm(root, { force: true, recursive: true });
+            }
+            await new Promise((resolve) => setTimeout(resolve, milliseconds));
+          },
+          timeoutMs: 20,
+        }),
+      ).rejects.toMatchObject({
+        code: SwitchCommandErrorCode.LAUNCH_FAILED,
+        message: expect.stringContaining("Timed out"),
+      });
+    } finally {
+      clearTimeout(restoreRoot);
+      await first.release();
+    }
+  });
+
   test("serializes contenders and releases only the owned lock", async () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-lock-"));
     cleanup.push(root);
@@ -815,6 +848,7 @@ describe("cross-process Kitty identity lock", () => {
     let secondAcquired = false;
     const secondPromise = acquireKittyIdentityLock("arashi-v1-a", {
       lockRoot: root,
+      pidAlive: currentProcessOnly,
       pollIntervalMs: 5,
       timeoutMs: 5_000,
     }).then((lock) => {
@@ -916,6 +950,7 @@ describe("cross-process Kitty identity lock", () => {
       beforeStaleLockRename: async () => {
         contenderPromise = acquireKittyIdentityLock(identity, {
           lockRoot: root,
+          pidAlive: currentProcessOnly,
           pollIntervalMs: 5,
           timeoutMs: 5_000,
         }).then((lock) => {
@@ -926,6 +961,7 @@ describe("cross-process Kitty identity lock", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       },
       lockRoot: root,
+      pidAlive: currentProcessOnly,
       pollIntervalMs: 5,
       timeoutMs: 5_000,
     }).then((lock) => {
@@ -1074,6 +1110,7 @@ describe("cross-process Kitty identity lock", () => {
     );
     const deadRecovered = await acquireKittyIdentityLock("arashi-v1-dead", {
       lockRoot: root,
+      pidAlive: currentProcessOnly,
       timeoutMs: 2_000,
     });
     await deadRecovered.release();
@@ -1085,6 +1122,7 @@ describe("cross-process Kitty identity lock", () => {
     await utimes(malformedPath, old, old);
     const malformedRecovered = await acquireKittyIdentityLock("arashi-v1-malformed", {
       lockRoot: root,
+      pidAlive: currentProcessOnly,
       timeoutMs: 2_000,
     });
     await malformedRecovered.release();

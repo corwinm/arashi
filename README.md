@@ -323,7 +323,7 @@ Example config header:
 }
 ```
 
-`defaults.switch.mode` accepts `auto` | `cd` | `launch` | `sesh` | `herdr`. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE, then uses parent-shell `cd` when shell integration is active, and otherwise follows terminal/platform launch fallback. An absent mode preserves the built-in automatic `launch` behavior rather than newly preferring `cd`.
+`defaults.switch.mode` accepts `auto` | `cd` | `launch` | `sesh` | `herdr`. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE → managed Kitty, then uses parent-shell `cd` when shell integration is active, and otherwise follows terminal/platform launch fallback. An absent mode preserves the built-in automatic `launch` behavior rather than newly preferring `cd`.
 
 Explicit launcher flags take precedence over `--cd` / `--no-cd`, which take precedence over the configured mode and automatic context detection. `--no-default-launch` bypasses only configured `sesh` or `herdr`. `--herdr` remains available on both `create` and `switch`; Herdr launch uses `herdr worktree open` with the Git-resolved non-bare main checkout and selected worktree.
 

@@ -589,17 +589,18 @@ export async function acquireKittyIdentityLock(
           if (isMissing(error)) lockExists = false;
           else throw error;
         }
-        if (!lockExists) continue;
-        const observedOwner = await readLockOwner(lockPath);
-        const liveOwner = observedOwner?.identity === identity && pidAlive(observedOwner.pid);
-        if (!liveOwner) {
-          guard = await acquireStaleRecoveryGuard(
-            lockPath,
-            identity,
-            now(),
-            pidAlive,
-            options.beforeRecoveryGuardOwnerWrite,
-          );
+        if (lockExists) {
+          const observedOwner = await readLockOwner(lockPath);
+          const liveOwner = observedOwner?.identity === identity && pidAlive(observedOwner.pid);
+          if (!liveOwner) {
+            guard = await acquireStaleRecoveryGuard(
+              lockPath,
+              identity,
+              now(),
+              pidAlive,
+              options.beforeRecoveryGuardOwnerWrite,
+            );
+          }
         }
       }
       if (guard) {
