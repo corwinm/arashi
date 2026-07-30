@@ -17,7 +17,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { SwitchCandidate } from "../../../src/core/switch.ts";
-import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
 import {
   acquireKittyIdentityLock,
   deriveKittyWorktreeMetadata,
@@ -28,6 +27,9 @@ import {
   type KittyIdentityLock,
   type KittyWorktreeMetadata,
 } from "../../../src/lib/kitty-launcher.ts";
+import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
+
+const noop = (): void => undefined;
 
 const cleanup: string[] = [];
 const currentProcessOnly = (pid: number): boolean => pid === process.pid;
@@ -1007,11 +1009,11 @@ describe("cross-process Kitty identity lock", () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-release-restore-race-"));
     cleanup.push(root);
     const identity = "arashi-v1-release-restore-race";
-    let signalMissingObserved: () => void = () => undefined;
+    let signalMissingObserved: () => void = noop;
     const missingObserved = new Promise<void>((resolve) => {
       signalMissingObserved = resolve;
     });
-    let allowRecoveryCheck: () => void = () => undefined;
+    let allowRecoveryCheck: () => void = noop;
     const recoveryMayComplete = new Promise<void>((resolve) => {
       allowRecoveryCheck = resolve;
     });
