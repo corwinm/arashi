@@ -66,6 +66,7 @@ export interface LaunchManagedKittyDependencies {
 
 export interface KittyIdentityLockOptions {
   beforeLockOwnerWrite?: () => Promise<void>;
+  beforeMissingLockRecoveryCheck?: () => Promise<void>;
   beforeRecoveryGuardOwnerWrite?: () => Promise<void>;
   beforeStaleLockRename?: () => Promise<void>;
   lockRoot?: string;
@@ -585,10 +586,22 @@ export async function acquireKittyIdentityLock(
           return {
             path: lockPath,
             release: async () =>
-              await releaseOwnedLock(lockPath, owner, readReleasedLockOwner, removeReleasedLock),
+              await releaseOwnedLock(
+                lockPath,
+                owner,
+                readReleasedLockOwner,
+                removeReleasedLock,
+                options.beforeMissingLockRecoveryCheck,
+              ),
           };
         }
-        await releaseOwnedLock(lockPath, owner, readReleasedLockOwner, removeReleasedLock);
+        await releaseOwnedLock(
+          lockPath,
+          owner,
+          readReleasedLockOwner,
+          removeReleasedLock,
+          options.beforeMissingLockRecoveryCheck,
+        );
       } catch (error) {
         if (error instanceof SwitchCommandError) throw error;
         if (!isAlreadyExists(error) && !isMissing(error))
@@ -925,6 +938,7 @@ async function releaseOwnedLock(
     await readFile(path, "utf8"),
   removeReleasedLock: (path: string) => Promise<void> = async (path) =>
     await rm(path, { force: true, recursive: true }),
+  beforeMissingLockRecoveryCheck?: () => Promise<void>,
 ): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (true) {
@@ -933,7 +947,7 @@ async function releaseOwnedLock(
       current = JSON.parse(await readFile(join(lockPath, OWNER_FILE), "utf8")) as LockOwner;
     } catch (error) {
       if (isMissing(error)) {
-        if ((await hasRecoveryMarker(lockPath)) && Date.now() < deadline) {
+        if (await shouldRetryMissingOwnedLock(lockPath, deadline, beforeMissingLockRecoveryCheck)) {
           await new Promise((resolve) => setTimeout(resolve, 5));
           continue;
         }
@@ -952,7 +966,7 @@ async function releaseOwnedLock(
       await rename(lockPath, releasePath);
     } catch (error) {
       if (isMissing(error)) {
-        if ((await hasRecoveryMarker(lockPath)) && Date.now() < deadline) {
+        if (await shouldRetryMissingOwnedLock(lockPath, deadline, beforeMissingLockRecoveryCheck)) {
           await new Promise((resolve) => setTimeout(resolve, 5));
           continue;
         }
@@ -1005,6 +1019,31 @@ async function releaseOwnedLock(
       }
     }
     return;
+  }
+}
+
+async function shouldRetryMissingOwnedLock(
+  lockPath: string,
+  deadline: number,
+  beforeCheck?: () => Promise<void>,
+): Promise<boolean> {
+  await beforeCheck?.();
+  if (await hasRecoveryMarker(lockPath)) {
+    if (Date.now() >= deadline) {
+      throwKittyFailure(
+        "identity-lock",
+        "Timed out waiting for managed Kitty stale recovery to finish during lock release.",
+        { path: lockPath },
+      );
+    }
+    return true;
+  }
+  try {
+    await stat(lockPath);
+    return true;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
   }
 }
 

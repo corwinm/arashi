@@ -1003,23 +1003,35 @@ describe("cross-process Kitty identity lock", () => {
     expect(readAttempts).toBe(2);
   });
 
-  test("waits for stale recovery to restore a temporarily missing owned lock before releasing", async () => {
+  test("re-reads an owned lock restored immediately before the recovery marker disappears", async () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-release-restore-race-"));
     cleanup.push(root);
     const identity = "arashi-v1-release-restore-race";
-    const first = await acquireKittyIdentityLock(identity, { lockRoot: root });
+    let signalMissingObserved: () => void = () => undefined;
+    const missingObserved = new Promise<void>((resolve) => {
+      signalMissingObserved = resolve;
+    });
+    let allowRecoveryCheck: () => void = () => undefined;
+    const recoveryMayComplete = new Promise<void>((resolve) => {
+      allowRecoveryCheck = resolve;
+    });
+    const first = await acquireKittyIdentityLock(identity, {
+      beforeMissingLockRecoveryCheck: async () => {
+        signalMissingObserved();
+        await recoveryMayComplete;
+      },
+      lockRoot: root,
+    });
     const markerPath = `${first.path}.recovery-test`;
     const recoveryPath = `${first.path}.recover-test`;
     await mkdir(markerPath);
     await rename(first.path, recoveryPath);
 
-    let releaseFinished = false;
-    const releasePromise = first.release().then(() => {
-      releaseFinished = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    const releasePromise = first.release();
+    await missingObserved;
     await rename(recoveryPath, first.path);
     await rm(markerPath, { force: true, recursive: true });
+    allowRecoveryCheck();
     await releasePromise;
 
     const second = await acquireKittyIdentityLock(identity, {
@@ -1028,7 +1040,6 @@ describe("cross-process Kitty identity lock", () => {
       pollIntervalMs: 5,
       timeoutMs: 100,
     });
-    expect(releaseFinished).toBe(true);
     await second.release();
   });
 
