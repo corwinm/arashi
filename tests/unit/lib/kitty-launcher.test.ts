@@ -202,7 +202,7 @@ describe("Kitty support helpers", () => {
 });
 
 describe("managed Kitty launch", () => {
-  test("reuses one exact marker/cwd match, focuses by numeric id, tolerates stale labels, and revalidates", async () => {
+  test("reuses one exact marker despite mutable cwd/labels, focuses by numeric id, and revalidates", async () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-reuse-"));
     cleanup.push(root);
     const lockRoot = join(root, "locks");
@@ -227,7 +227,7 @@ describe("managed Kitty launch", () => {
             exitCode: 0,
             stderr: "",
             stdout: state({
-              cwd: metadata.canonicalPath,
+              cwd: join(metadata.canonicalPath, "nested-shell-directory"),
               focused: inspections > 1,
               identity: metadata.identity,
             }),
@@ -277,7 +277,7 @@ describe("managed Kitty launch", () => {
                   focused: true,
                   identity: metadata.identity,
                   session: metadata.sessionName,
-                  title: metadata.title,
+                  title: "shell-updated-title",
                 })
               : "[]",
           };

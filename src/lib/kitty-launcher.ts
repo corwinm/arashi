@@ -431,12 +431,11 @@ async function launchAndValidate(
     launched.id !== launchedId ||
     launched.cwd !== metadata.canonicalPath ||
     launched.sessionName !== metadata.sessionName ||
-    launched.title !== metadata.title ||
     !launched.isFocused
   ) {
     throwKittyFailure(
       "launch-state-validation",
-      "Kitty returned window state inconsistent with the requested identity, cwd, session, title, or focus.",
+      "Kitty returned window state inconsistent with the requested identity, cwd, session, or focus.",
       { command, path: metadata.canonicalPath, windowId: launchedId },
     );
   }
@@ -478,13 +477,6 @@ function selectIdentityMatch(
   if (matches.length > 1) throwDuplicateState(metadata.canonicalPath, matches.length);
   const match = matches[0];
   if (!match) return null;
-  if (match.cwd !== metadata.canonicalPath) {
-    throwKittyFailure(
-      "identity-validation",
-      "Kitty identity marker matched a window at a different canonical cwd.",
-      { path: metadata.canonicalPath, windowId: match.id },
-    );
-  }
   return match;
 }
 
@@ -538,7 +530,9 @@ export async function acquireKittyIdentityLock(
   identity: string,
   options: KittyIdentityLockOptions = {},
 ): Promise<KittyIdentityLock> {
-  const lockRoot = options.lockRoot ?? join(tmpdir(), "arashi-kitty-locks");
+  const lockRoot =
+    options.lockRoot ??
+    join(tmpdir(), `arashi-kitty-locks-${process.getuid?.().toString() ?? "user"}`);
   const lockPath = join(lockRoot, `${identity}.lock`);
   const now = options.now ?? Date.now;
   const sleep =

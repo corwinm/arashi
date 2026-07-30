@@ -273,10 +273,9 @@ export function isCmuxSession(env: Record<string, string | undefined> = process.
 }
 
 export function isKittySession(env: Record<string, string | undefined> = process.env): boolean {
-  const hasMarker = [env.KITTY_PID, env.KITTY_WINDOW_ID].some(
+  return [env.KITTY_PID, env.KITTY_WINDOW_ID].every(
     (value) => typeof value === "string" && value.trim().length > 0,
   );
-  return hasMarker || env.TERM?.trim().toLowerCase() === "xterm-kitty";
 }
 
 export type TerminalApp = "kitty" | "ghostty" | "wezterm" | "iterm2";
@@ -302,7 +301,7 @@ export function detectTerminalApp(
     return "ghostty";
   }
 
-  if (isKittySession(env)) {
+  if (isKittySession(env) || env.TERM?.trim().toLowerCase() === "xterm-kitty") {
     return "kitty";
   }
 

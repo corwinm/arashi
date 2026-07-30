@@ -71,10 +71,13 @@ arashi switch --no-default-launch
 - `--json --tmux` returns one `JSON_UNSUPPORTED_FOR_MODE` envelope with the existing `launch` mode label before conflict or tmux-context validation.
 - Inside a Herdr-launched shell (`HERDR_ENV=1`), Arashi automatically opens or focuses the selected target in Herdr unless an explicit launcher or active tmux takes precedence.
 - Herdr launch requires the `herdr` CLI, a reachable default Herdr server/socket, and a Git-resolvable non-bare main checkout. Arashi calls `herdr worktree open`; it does not delegate Git worktree creation or removal to Herdr.
-- In Kitty, Ghostty, WezTerm, and iTerm2 terminals, Arashi attempts terminal-native launch commands before generic fallback behavior.
+- Managed Kitty selection requires both `KITTY_PID` and `KITTY_WINDOW_ID` to be non-empty after trimming. `TERM=xterm-kitty` alone remains generic terminal evidence and does not select the fail-closed managed workflow.
+- Managed Kitty requires Kitty 0.43 or newer and permitted `kitten @` remote control. Arashi queries for its exact worktree marker, focuses and reuses one matching tab, and launches a session-backed tab only when no exact match exists. Duplicate matches fail safely.
+- Once managed Kitty is selected, missing or unsupported tooling, denied remote control, malformed state, locking failures, and focus/launch validation errors are reported directly rather than falling back to another launcher.
+- In Kitty, Ghostty, WezTerm, and iTerm2 terminals without a strict managed context, Arashi may still attempt terminal-native launch commands during generic fallback behavior.
 - Shell integration is configured with `arashi shell install` or manual `arashi shell init <shell>` setup.
 - Configure one default under `defaults.switch.mode`: `auto` | `cd` | `launch` | `sesh` | `herdr`.
-- `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE. If none is detected, it uses parent-shell `cd` when available, then terminal/platform launch fallback.
+- `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE → managed Kitty. If none is detected, it uses parent-shell `cd` when available, then terminal/platform launch fallback.
 - An absent mode preserves built-in automatic `launch` behavior and does not newly prefer `cd`.
 - Explicit launcher flags take precedence over `--cd` / `--no-cd`, configured modes, and automatic context detection. Conflicting explicit launchers and `--cd` plus any explicit launcher are rejected.
 - Legacy switch `launchMode` and `launch_mode` fields are accepted only for a bounded compatibility window. Follow the exact replacement warning on stderr; ambiguous or conflicting combinations are rejected before switching.

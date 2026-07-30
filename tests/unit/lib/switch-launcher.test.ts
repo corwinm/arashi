@@ -40,9 +40,7 @@ describe("detectManagedSwitchContext", () => {
     ],
     [{ TERM_PROGRAM: "vscode", VSCODE_GIT_ASKPASS_EXTRA_ARGS: "--host=kiro" }, "kiro"],
     [{ TERM_PROGRAM: "vscode" }, "vscode"],
-    [{ KITTY_PID: " 123 " }, "kitty"],
-    [{ KITTY_WINDOW_ID: " 73 " }, "kitty"],
-    [{ TERM: " XTERM-KITTY " }, "kitty"],
+    [{ KITTY_PID: " 123 ", KITTY_WINDOW_ID: " 73 " }, "kitty"],
   ] as const)("classifies strict managed evidence %#", (env, expected) => {
     expect(detectManagedSwitchContext(env)).toBe(expected);
   });
@@ -57,6 +55,9 @@ describe("detectManagedSwitchContext", () => {
     { TERM_PROGRAM: "Apple_Terminal" },
     { TERM_PROGRAM: "unsupported-ide" },
     { TERM: "xterm-256color" },
+    { KITTY_PID: "123" },
+    { KITTY_WINDOW_ID: "73" },
+    { TERM: "xterm-kitty" },
     { KITTY_PID: "", KITTY_WINDOW_ID: "   ", TERM: "xterm-kitty-extra" },
     { TERM: "not-xterm-kitty" },
   ])("rejects weak or generic evidence %#", (env) => {
@@ -68,6 +69,7 @@ describe("detectManagedSwitchContext", () => {
       CMUX_WORKSPACE_ID: "workspace:1",
       HERDR_ENV: "1",
       KITTY_PID: "123",
+      KITTY_WINDOW_ID: "73",
       TERM: "xterm-kitty",
       TERM_PROGRAM: "vscode",
       TMUX: "/tmp/tmux/default",
@@ -589,7 +591,7 @@ describe("launchSwitchTarget", () => {
         { ...candidate, worktreePath: process.cwd() },
         {},
         {
-          env: { KITTY_PID: "123", TERM: "xterm-kitty" },
+          env: { KITTY_PID: "123", KITTY_WINDOW_ID: "73", TERM: "xterm-kitty" },
           pathExists: async () => false,
           platform: "linux",
           runProcess: async (command) => {
@@ -613,7 +615,7 @@ describe("launchSwitchTarget", () => {
         { ...candidate, worktreePath: process.cwd() },
         {},
         {
-          env: { KITTY_PID: "123", TERM_PROGRAM: "vscode" },
+          env: { KITTY_PID: "123", KITTY_WINDOW_ID: "73", TERM_PROGRAM: "vscode" },
           pathExists: async () => false,
           platform: "linux",
           runProcess: async (command) => {

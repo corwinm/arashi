@@ -1055,6 +1055,7 @@ describe("switch command integration", () => {
         env: {
           ARASHI_DIRECTIVE_FILE: "/tmp/must-not-write-kitty-directive",
           ARASHI_SHELL: "bash",
+          KITTY_PID: " 100 ",
           KITTY_WINDOW_ID: " 73 ",
         },
         findWorkspaceRoot: async () => "/workspace",
@@ -1574,7 +1575,7 @@ describe("switch command integration", () => {
             candidates: [kittyCandidate],
             skippedCount: 0,
           }),
-          env: { KITTY_PID: "100", TERM: "xterm-kitty" },
+          env: { KITTY_PID: "100", KITTY_WINDOW_ID: "73", TERM: "xterm-kitty" },
           findWorkspaceRoot: async () => worktreePath,
           loadWorkspaceRepositories: async () => ({ repositories: [] }),
           platform: "linux",
