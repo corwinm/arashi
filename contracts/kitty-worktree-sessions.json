@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "minimumVersion": "0.43.0",
+  "resultMode": "kitty",
+  "autoOrder": ["tmux", "herdr", "cmux", "ide", "kitty", "cd", "platform"],
+  "detection": {
+    "beforeSupportPreflight": true,
+    "trimMarkers": true,
+    "evidence": ["KITTY_PID", "KITTY_WINDOW_ID", "TERM=xterm-kitty"]
+  },
+  "remoteControl": {
+    "required": true,
+    "clients": ["inherited-path", "macos-app-bundle"],
+    "arbitrarySocketDiscovery": false
+  },
+  "identity": {
+    "source": "canonical-realpath",
+    "algorithm": "sha256",
+    "marker": "arashi_worktree_id",
+    "exactMatch": true
+  },
+  "reuse": {
+    "existing": "focus",
+    "duplicate": "fail",
+    "closeRaceRetries": 1,
+    "automaticWindowCleanup": false,
+    "staleReadableMetadata": "accept"
+  },
+  "locking": {
+    "crossProcess": true,
+    "scope": "identity",
+    "timeoutMs": 10000,
+    "liveOwnerStealing": false,
+    "deadOwnerRecovery": true,
+    "malformedOwnerRecoveryAfterMs": 30000,
+    "ownershipSafeRelease": true
+  },
+  "session": {
+    "scope": "live-only",
+    "persistentFiles": false,
+    "removeClosesWindows": false
+  },
+  "selection": {
+    "autoDetectedOnly": true,
+    "explicitFlag": false,
+    "persistedMode": false,
+    "failClosed": true
+  },
+  "create": {
+    "sharedLauncher": true,
+    "failurePreservesCreatedWorktrees": true
+  }
+}
