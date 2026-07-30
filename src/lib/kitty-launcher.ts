@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   access,
+  chmod,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -69,6 +71,7 @@ export interface KittyIdentityLockOptions {
   now?: () => number;
   pidAlive?: (pid: number) => boolean;
   pollIntervalMs?: number;
+  removeReleasedLock?: (path: string) => Promise<void>;
   sleep?: (milliseconds: number) => Promise<void>;
   timeoutMs?: number;
 }
@@ -539,6 +542,9 @@ export async function acquireKittyIdentityLock(
     (async (milliseconds) => await new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const pidAlive = options.pidAlive ?? isPidAlive;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_LOCK_POLL_MS;
+  const removeReleasedLock =
+    options.removeReleasedLock ??
+    (async (path: string) => await rm(path, { force: true, recursive: true }));
   const timeoutMs = options.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   const startedAt = now();
   const owner: LockOwner = {
@@ -548,8 +554,9 @@ export async function acquireKittyIdentityLock(
     pid: process.pid,
   };
   try {
-    await mkdir(lockRoot, { recursive: true });
+    await prepareLockRoot(lockRoot);
   } catch (error) {
+    if (error instanceof SwitchCommandError) throw error;
     throwIdentityLockFilesystemFailure("create the lock root", lockRoot, error);
   }
 
@@ -560,9 +567,12 @@ export async function acquireKittyIdentityLock(
         await options.beforeLockOwnerWrite?.();
         await writeFile(join(lockPath, OWNER_FILE), JSON.stringify(owner), { flag: "wx" });
         if (!(await hasRecoveryMarker(lockPath))) {
-          return { path: lockPath, release: async () => await releaseOwnedLock(lockPath, owner) };
+          return {
+            path: lockPath,
+            release: async () => await releaseOwnedLock(lockPath, owner, removeReleasedLock),
+          };
         }
-        await releaseOwnedLock(lockPath, owner);
+        await releaseOwnedLock(lockPath, owner, removeReleasedLock);
       } catch (error) {
         if (!isAlreadyExists(error) && !isMissing(error))
           throwIdentityLockFilesystemFailure("acquire the identity lock", lockPath, error);
@@ -627,6 +637,35 @@ export async function acquireKittyIdentityLock(
       );
     }
     await sleep(Math.min(pollIntervalMs, Math.max(0, timeoutMs - (now() - startedAt))));
+  }
+}
+
+async function prepareLockRoot(lockRoot: string): Promise<void> {
+  await mkdir(lockRoot, { mode: 0o700, recursive: true });
+  const rootStat = await lstat(lockRoot);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throwKittyFailure("identity-lock", "Managed Kitty lock root must be a real directory.", {
+      path: lockRoot,
+    });
+  }
+
+  const uid = process.getuid?.();
+  if (uid === undefined) return;
+  if (rootStat.uid !== uid) {
+    throwKittyFailure(
+      "identity-lock",
+      "Managed Kitty lock root is not owned by the current user.",
+      { path: lockRoot },
+    );
+  }
+  await chmod(lockRoot, 0o700);
+  const secured = await lstat(lockRoot);
+  if (secured.uid !== uid || (secured.mode & 0o777) !== 0o700) {
+    throwKittyFailure(
+      "identity-lock",
+      "Managed Kitty lock root could not be secured for the current user.",
+      { path: lockRoot },
+    );
   }
 }
 
@@ -832,7 +871,12 @@ async function malformedLockIsStale(lockPath: string, now: number): Promise<bool
   }
 }
 
-async function releaseOwnedLock(lockPath: string, owner: LockOwner): Promise<void> {
+async function releaseOwnedLock(
+  lockPath: string,
+  owner: LockOwner,
+  removeReleasedLock: (path: string) => Promise<void> = async (path) =>
+    await rm(path, { force: true, recursive: true }),
+): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (true) {
     let current: LockOwner | null;
@@ -878,14 +922,21 @@ async function releaseOwnedLock(lockPath: string, owner: LockOwner): Promise<voi
       }
       return;
     }
-    try {
-      await rm(releasePath, { force: true, recursive: true });
-    } catch (error) {
-      throwIdentityLockFilesystemFailure(
-        "remove the identity lock during release",
-        lockPath,
-        error,
-      );
+    while (true) {
+      try {
+        await removeReleasedLock(releasePath);
+        break;
+      } catch (error) {
+        if (isTransientWindowsFilesystemContention(error) && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          continue;
+        }
+        throwIdentityLockFilesystemFailure(
+          "remove the identity lock during release",
+          lockPath,
+          error,
+        );
+      }
     }
     return;
   }

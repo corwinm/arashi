@@ -1,10 +1,12 @@
 import { writeFileSync } from "node:fs";
 import {
+  chmod,
   mkdtemp,
   mkdir,
   readFile,
   realpath,
   rm,
+  stat,
   symlink,
   utimes,
   writeFile,
@@ -851,6 +853,32 @@ describe("cross-process Kitty identity lock", () => {
     });
   });
 
+  test("rejects a symlinked default-style lock root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-lock-symlink-"));
+    cleanup.push(root);
+    const target = join(root, "attacker-owned");
+    const lockRoot = join(root, "predictable-root");
+    await mkdir(target);
+    await symlink(target, lockRoot, "dir");
+
+    await expect(acquireKittyIdentityLock("identity", { lockRoot })).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      context: { phase: "identity-lock" },
+    });
+  });
+
+  test.runIf(process.platform !== "win32")(
+    "repairs current-user lock-root permissions before use",
+    async () => {
+      const lockRoot = await mkdtemp(join(tmpdir(), "arashi-kitty-lock-mode-"));
+      cleanup.push(lockRoot);
+      await chmod(lockRoot, 0o777);
+      const lock = await acquireKittyIdentityLock("identity", { lockRoot });
+      expect((await stat(lockRoot)).mode & 0o777).toBe(0o700);
+      await lock.release();
+    },
+  );
+
   test("fails boundedly when the lock root disappears while waiting", async () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-lock-root-removed-"));
     cleanup.push(root);
@@ -903,6 +931,26 @@ describe("cross-process Kitty identity lock", () => {
     const second = await secondPromise;
     expect(secondAcquired).toBe(true);
     await second.release();
+  });
+
+  test("retries transient released-lock removal contention", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-release-retry-"));
+    cleanup.push(root);
+    let removeAttempts = 0;
+    const lock = await acquireKittyIdentityLock("arashi-v1-release-retry", {
+      lockRoot: root,
+      removeReleasedLock: async (path) => {
+        removeAttempts += 1;
+        if (removeAttempts === 1) {
+          const error = new Error("busy") as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        }
+        await rm(path, { force: true, recursive: true });
+      },
+    });
+    await lock.release();
+    expect(removeAttempts).toBe(2);
   });
 
   test("never steals a live-owner lock solely because it is old and times out boundedly", async () => {
