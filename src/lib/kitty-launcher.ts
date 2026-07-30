@@ -429,13 +429,12 @@ async function launchAndValidate(
   if (
     !launched ||
     launched.id !== launchedId ||
-    launched.cwd !== metadata.canonicalPath ||
     launched.sessionName !== metadata.sessionName ||
     !launched.isFocused
   ) {
     throwKittyFailure(
       "launch-state-validation",
-      "Kitty returned window state inconsistent with the requested identity, cwd, session, or focus.",
+      "Kitty returned window state inconsistent with the requested identity, session, or focus.",
       { command, path: metadata.canonicalPath, windowId: launchedId },
     );
   }
@@ -700,6 +699,8 @@ async function acquireStaleRecoveryGuard(
   if (markers.length !== 1) return null;
 
   const markerPath = markers[0];
+  const takeoverPid = recoveryTakeoverPid(markerPath, guardPath);
+  if (takeoverPid !== null && pidAlive(takeoverPid)) return null;
   const inspectedOwner = await readLockOwner(markerPath);
   const recover =
     inspectedOwner?.identity === guardIdentity
@@ -722,6 +723,15 @@ async function acquireStaleRecoveryGuard(
   await writeFile(join(takeoverPath, OWNER_FILE), JSON.stringify(owner));
   await rename(takeoverPath, guardPath);
   return { path: guardPath, release: async () => await releaseOwnedLock(guardPath, owner) };
+}
+
+function recoveryTakeoverPid(markerPath: string, guardPath: string): number | null {
+  const prefix = `${guardPath}.takeover-`;
+  if (!markerPath.startsWith(prefix)) return null;
+  const match = markerPath.slice(prefix.length).match(/^(\d+)-/);
+  if (!match) return null;
+  const pid = Number(match[1]);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
 }
 
 async function recoverStaleLockIfSafe(

@@ -103,7 +103,7 @@ In that configuration, terminal `arashi create` uses `defaults.create`, while VS
 
 - `mode` (`auto` | `cd` | `launch` | `sesh` | `herdr`): the single switch behavior and launcher choice
 
-Use `launch` for automatic launcher selection without preferring parent-shell switching, `cd` to request parent-shell switching, `sesh` or `herdr` to force that launcher, and `auto` for contextual selection. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE. When no managed context is detected, it uses `cd` if shell integration is active; otherwise it continues through terminal and platform launch fallback.
+Use `launch` for automatic launcher selection without preferring parent-shell switching, `cd` to request parent-shell switching, `sesh` or `herdr` to force that launcher, and `auto` for contextual selection. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE → managed Kitty. Managed Kitty requires both local Kitty markers plus Kitty 0.43 or newer with permitted remote control; once selected, setup, inspection, focus, locking, and launch failures fail closed rather than continuing to another launcher. When no managed context is detected, `auto` uses `cd` if shell integration is active; otherwise it continues through terminal and platform launch fallback.
 
 When `defaults.switch.mode` is absent, Arashi preserves the built-in `launch` behavior. Existing configurations therefore do not newly prefer `cd` merely because shell integration is installed.
 

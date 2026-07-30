@@ -577,6 +577,48 @@ describe("managed Kitty launch", () => {
     });
   });
 
+  test("accepts mutable cwd after a launched window is identified", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-launch-cwd-"));
+    cleanup.push(root);
+    const target = { ...candidate, worktreePath: root };
+    const metadata = await deriveKittyWorktreeMetadata(target);
+    let launched = false;
+
+    await expect(
+      launchManagedKitty(target, {
+        env: { KITTY_PID: "1" },
+        lockRoot: join(root, "locks"),
+        platform: "linux",
+        runProcess: async (command) => {
+          if (command[0] === "which")
+            return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
+          if (command[1] === "--version")
+            return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
+          if (command.at(-1) === "ls") {
+            return {
+              exitCode: 0,
+              stderr: "",
+              stdout: launched
+                ? state({
+                    cwd: join(metadata.canonicalPath, "shell-startup-directory"),
+                    id: 73,
+                    identity: metadata.identity,
+                    session: metadata.sessionName,
+                    title: "prompt-updated title",
+                  })
+                : "[]",
+            };
+          }
+          if (command.includes("launch")) {
+            launched = true;
+            return { exitCode: 0, stderr: "", stdout: "73" };
+          }
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      }),
+    ).resolves.toMatchObject({ mode: "kitty" });
+  });
+
   test("fails duplicate exact state without focus, launch, or close", async () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-duplicate-"));
     cleanup.push(root);
@@ -888,6 +930,42 @@ describe("cross-process Kitty identity lock", () => {
       message: expect.stringContaining("lock"),
     });
     expect(JSON.parse(await readFile(join(lockPath, "owner.json"), "utf8")).owner).toBe("other");
+  });
+
+  test("does not retake a recovery takeover owned by a live process", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-live-takeover-"));
+    cleanup.push(root);
+    const identity = "arashi-v1-live-takeover";
+    const lockPath = join(root, `${identity}.lock`);
+    await mkdir(lockPath);
+    await writeFile(
+      join(lockPath, "owner.json"),
+      JSON.stringify({ createdAt: 0, identity, owner: "stale", pid: 999_999_999 }),
+    );
+    const takeoverPath = `${lockPath}.recovery.takeover-${process.pid}-${randomUUID()}`;
+    await mkdir(takeoverPath);
+    await writeFile(
+      join(takeoverPath, "owner.json"),
+      JSON.stringify({
+        createdAt: 0,
+        identity: `${identity}:recovery`,
+        owner: "stale-guard",
+        pid: 999_999_999,
+      }),
+    );
+
+    await expect(
+      acquireKittyIdentityLock(identity, {
+        lockRoot: root,
+        pidAlive: currentProcessOnly,
+        pollIntervalMs: 5,
+        timeoutMs: 25,
+      }),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.LAUNCH_FAILED,
+      message: expect.stringContaining("Timed out"),
+    });
+    expect(await readFile(join(takeoverPath, "owner.json"), "utf8")).toContain("stale-guard");
   });
 
   test("does not remove a live owner that replaces stale metadata during recovery", async () => {
