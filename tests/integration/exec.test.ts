@@ -262,13 +262,13 @@ describe("exec command", () => {
       "--",
       "sh",
       "-c",
-      "sleep 0.8; echo done",
+      "sleep 1.5; echo done",
     ]);
 
     const elapsedMs = Date.now() - startedAt;
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Summary: 2 passed, 0 failed, 0 skipped, 2 total");
-    expect(elapsedMs).toBeLessThan(1700);
+    expect(elapsedMs).toBeLessThan(2900);
   });
 
   test("--fail-fast stops starting repositories after the first failure", async () => {

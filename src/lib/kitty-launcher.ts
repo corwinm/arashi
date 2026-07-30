@@ -286,19 +286,19 @@ export async function launchManagedKitty(
     ...deps.lockOptions,
     lockRoot: deps.lockRoot,
   });
-  let operationError: unknown;
+  let result: LaunchSwitchResult;
   try {
-    return await inspectFocusOrLaunch(kitten, metadata, env, deps.runProcess);
+    result = await inspectFocusOrLaunch(kitten, metadata, env, deps.runProcess);
   } catch (error) {
-    operationError = error;
-    throw error;
-  } finally {
     try {
       await lock.release();
-    } catch (error) {
-      if (operationError === undefined) throw error;
+    } catch {
+      // Preserve the managed launcher failure that triggered cleanup.
     }
+    throw error;
   }
+  await lock.release();
+  return result;
 }
 
 async function preflightVersion(
