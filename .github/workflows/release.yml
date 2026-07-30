@@ -47,6 +47,8 @@ permissions:
 
 jobs:
   release:
+    # Repository secrets must never be exposed to workflow code from a non-default branch.
+    if: github.ref == 'refs/heads/main'
     name: Release
     runs-on: ubuntu-latest
     steps:
