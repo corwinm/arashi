@@ -833,22 +833,67 @@ async function malformedLockIsStale(lockPath: string, now: number): Promise<bool
 }
 
 async function releaseOwnedLock(lockPath: string, owner: LockOwner): Promise<void> {
-  try {
-    const current = JSON.parse(
-      await readFile(join(lockPath, OWNER_FILE), "utf8"),
-    ) as Partial<LockOwner>;
-    if (
-      current.owner !== owner.owner ||
-      current.identity !== owner.identity ||
-      current.pid !== owner.pid
-    )
-      return;
+  const deadline = Date.now() + 2_000;
+  while (true) {
+    let current: LockOwner | null;
+    try {
+      current = JSON.parse(await readFile(join(lockPath, OWNER_FILE), "utf8")) as LockOwner;
+    } catch (error) {
+      if (isMissing(error)) return;
+      if (isTransientWindowsFilesystemContention(error) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        continue;
+      }
+      throwIdentityLockFilesystemFailure("read the identity lock during release", lockPath, error);
+    }
+    if (!sameLockOwner(current, owner)) return;
+
     const releasePath = `${lockPath}.release-${owner.owner}`;
-    await rename(lockPath, releasePath);
-    await rm(releasePath, { force: true, recursive: true });
-  } catch {
-    // The lock disappeared or changed ownership; never remove an unverified lock.
+    try {
+      await rename(lockPath, releasePath);
+    } catch (error) {
+      if (isMissing(error)) return;
+      if (isTransientWindowsFilesystemContention(error) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        continue;
+      }
+      throwIdentityLockFilesystemFailure(
+        "rename the identity lock during release",
+        lockPath,
+        error,
+      );
+    }
+
+    const movedOwner = await readLockOwner(releasePath);
+    if (!sameLockOwner(movedOwner, owner)) {
+      try {
+        await rename(releasePath, lockPath);
+      } catch (error) {
+        if (!isAlreadyExists(error))
+          throwIdentityLockFilesystemFailure(
+            "restore a changed identity lock during release",
+            lockPath,
+            error,
+          );
+      }
+      return;
+    }
+    try {
+      await rm(releasePath, { force: true, recursive: true });
+    } catch (error) {
+      throwIdentityLockFilesystemFailure(
+        "remove the identity lock during release",
+        lockPath,
+        error,
+      );
+    }
+    return;
   }
+}
+
+function isTransientWindowsFilesystemContention(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EACCES" || code === "EBUSY" || code === "ENOTEMPTY" || code === "EPERM";
 }
 
 function isPidAlive(pid: number): boolean {
