@@ -577,25 +577,37 @@ export async function acquireKittyIdentityLock(
     }
 
     try {
-      let lockExists = true;
-      try {
-        await stat(lockPath);
-      } catch (error) {
-        if (isMissing(error)) lockExists = false;
-        else throw error;
-      }
-      if (!lockExists) continue;
-      const observedOwner = await readLockOwner(lockPath);
-      const liveOwner = observedOwner?.identity === identity && pidAlive(observedOwner.pid);
-      const guard = liveOwner
-        ? null
-        : await acquireStaleRecoveryGuard(
+      const recoveryMarkerPresent = await hasRecoveryMarker(lockPath);
+      let guard: KittyIdentityLock | null = null;
+      if (recoveryMarkerPresent) {
+        guard = await acquireStaleRecoveryGuard(
+          lockPath,
+          identity,
+          now(),
+          pidAlive,
+          options.beforeRecoveryGuardOwnerWrite,
+        );
+      } else {
+        let lockExists = true;
+        try {
+          await stat(lockPath);
+        } catch (error) {
+          if (isMissing(error)) lockExists = false;
+          else throw error;
+        }
+        if (!lockExists) continue;
+        const observedOwner = await readLockOwner(lockPath);
+        const liveOwner = observedOwner?.identity === identity && pidAlive(observedOwner.pid);
+        if (!liveOwner) {
+          guard = await acquireStaleRecoveryGuard(
             lockPath,
             identity,
             now(),
             pidAlive,
             options.beforeRecoveryGuardOwnerWrite,
           );
+        }
+      }
       if (guard) {
         try {
           await recoverStaleLockIfSafe(
