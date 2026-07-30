@@ -932,7 +932,13 @@ async function releaseOwnedLock(
     try {
       current = JSON.parse(await readFile(join(lockPath, OWNER_FILE), "utf8")) as LockOwner;
     } catch (error) {
-      if (isMissing(error)) return;
+      if (isMissing(error)) {
+        if ((await hasRecoveryMarker(lockPath)) && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          continue;
+        }
+        return;
+      }
       if (isTransientWindowsFilesystemContention(error) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 5));
         continue;
@@ -945,7 +951,13 @@ async function releaseOwnedLock(
     try {
       await rename(lockPath, releasePath);
     } catch (error) {
-      if (isMissing(error)) return;
+      if (isMissing(error)) {
+        if ((await hasRecoveryMarker(lockPath)) && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          continue;
+        }
+        return;
+      }
       if (isTransientWindowsFilesystemContention(error) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 5));
         continue;

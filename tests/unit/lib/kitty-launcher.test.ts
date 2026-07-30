@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -1000,6 +1001,35 @@ describe("cross-process Kitty identity lock", () => {
     });
     await lock.release();
     expect(readAttempts).toBe(2);
+  });
+
+  test("waits for stale recovery to restore a temporarily missing owned lock before releasing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-kitty-release-restore-race-"));
+    cleanup.push(root);
+    const identity = "arashi-v1-release-restore-race";
+    const first = await acquireKittyIdentityLock(identity, { lockRoot: root });
+    const markerPath = `${first.path}.recovery-test`;
+    const recoveryPath = `${first.path}.recover-test`;
+    await mkdir(markerPath);
+    await rename(first.path, recoveryPath);
+
+    let releaseFinished = false;
+    const releasePromise = first.release().then(() => {
+      releaseFinished = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await rename(recoveryPath, first.path);
+    await rm(markerPath, { force: true, recursive: true });
+    await releasePromise;
+
+    const second = await acquireKittyIdentityLock(identity, {
+      lockRoot: root,
+      pidAlive: currentProcessOnly,
+      pollIntervalMs: 5,
+      timeoutMs: 100,
+    });
+    expect(releaseFinished).toBe(true);
+    await second.release();
   });
 
   test("never steals a live-owner lock solely because it is old and times out boundedly", async () => {
