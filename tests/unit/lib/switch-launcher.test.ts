@@ -931,7 +931,7 @@ describe("launchSwitchTarget", () => {
     expect(commands).toEqual([result.command]);
   });
 
-  test("opens a new Git Bash terminal instead of cmd.exe on Windows", async () => {
+  test("uses the configured Git Bash launcher so MinTTY or ConHost is preserved", async () => {
     const windowsCandidate: SwitchCandidate = {
       ...candidate,
       worktreePath: String.raw`C:\workspace\feature auth's`,
@@ -955,6 +955,81 @@ describe("launchSwitchTarget", () => {
 
     expect(result).toEqual({
       command: [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$directory = Split-Path -Parent (Get-Command git.exe -ErrorAction Stop).Source; while ($directory) { $gitBash = Join-Path $directory 'git-bash.exe'; if (Test-Path -LiteralPath $gitBash) { Start-Process -FilePath $gitBash -ArgumentList '--no-cd' -WorkingDirectory $env:ARASHI_SWITCH_WORKTREE -ErrorAction Stop; exit 0 }; $parent = Split-Path -Parent $directory; if ($parent -eq $directory) { break }; $directory = $parent }; exit 1",
+      ],
+      mode: "fallback",
+    });
+    expect(commands).toEqual([result.command]);
+    expect(result.command).not.toContain(windowsCandidate.worktreePath);
+    expect(environments).toEqual([
+      {
+        ARASHI_SWITCH_WORKTREE: windowsCandidate.worktreePath,
+        CHERE_INVOKING: "1",
+        MSYSTEM: "MINGW64",
+        SHELL: "/usr/bin/bash",
+      },
+    ]);
+  });
+
+  test("falls back from Windows Terminal through configured Git Bash to MinTTY without leaking attempt variables", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      ...candidate,
+      worktreePath: String.raw`C:\workspace\feature & release`,
+    };
+    const baseEnv = {
+      MSYSTEM: "MINGW64",
+      SHELL: "/usr/bin/bash",
+      WT_PROFILE_ID: "{00000000-0000-0000-0000-000000000001}",
+      WT_SESSION: "00000000-0000-0000-0000-000000000002",
+    };
+    const attempts: Array<{
+      command: string[];
+      env: Record<string, string | undefined>;
+    }> = [];
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: baseEnv,
+        platform: "win32",
+        runProcess: async (command, options) => {
+          attempts.push({ command, env: options.env });
+          return {
+            exitCode: command[0] === "mintty.exe" ? 0 : 1,
+            stderr: "simulated failure",
+            stdout: "",
+          };
+        },
+      },
+    );
+
+    expect(attempts).toHaveLength(3);
+    expect(attempts[0]).toEqual({
+      command: [
+        "wt.exe",
+        "-w",
+        "new",
+        "new-tab",
+        "-p",
+        baseEnv.WT_PROFILE_ID,
+        "-d",
+        windowsCandidate.worktreePath,
+      ],
+      env: baseEnv,
+    });
+    expect(attempts[1]?.command[4]).toContain("git-bash.exe");
+    expect(attempts[1]?.env).toEqual({
+      ...baseEnv,
+      ARASHI_SWITCH_WORKTREE: windowsCandidate.worktreePath,
+      CHERE_INVOKING: "1",
+    });
+    expect(attempts[2]).toEqual({
+      command: [
         "mintty.exe",
         "--dir",
         windowsCandidate.worktreePath,
@@ -962,11 +1037,9 @@ describe("launchSwitchTarget", () => {
         "--login",
         "-i",
       ],
-      mode: "fallback",
+      env: { ...baseEnv, CHERE_INVOKING: "1" },
     });
-    expect(commands).toEqual([result.command]);
-    expect(commands.flat()).not.toContain("cmd.exe");
-    expect(environments[0]?.CHERE_INVOKING).toBe("1");
+    expect(result.command).toEqual(attempts[2]?.command);
   });
 
   test("launches the generic Windows fallback without cmd.exe reparsing the worktree path", async () => {

@@ -26,6 +26,8 @@ const IDE_COMMANDS: Record<SupportedIde, string> = {
 
 const WINDOWS_SHELL = "cmd.exe";
 const WINDOWS_SWITCH_WORKTREE_ENV = "ARASHI_SWITCH_WORKTREE";
+const WINDOWS_GIT_BASH_LAUNCH =
+  "$directory = Split-Path -Parent (Get-Command git.exe -ErrorAction Stop).Source; while ($directory) { $gitBash = Join-Path $directory 'git-bash.exe'; if (Test-Path -LiteralPath $gitBash) { Start-Process -FilePath $gitBash -ArgumentList '--no-cd' -WorkingDirectory $env:ARASHI_SWITCH_WORKTREE -ErrorAction Stop; exit 0 }; $parent = Split-Path -Parent $directory; if ($parent -eq $directory) { break }; $directory = $parent }; exit 1";
 const CMUX_MINIMUM_VERSION = "0.64.18";
 
 export interface SwitchProcessResult {
@@ -719,7 +721,14 @@ function buildFallbackCommands(
       "-Command",
       `Start-Process -FilePath ${WINDOWS_SHELL} -WorkingDirectory $env:${WINDOWS_SWITCH_WORKTREE_ENV}`,
     ];
-    const gitBashFallback = ["mintty.exe", "--dir", worktreePath, "/usr/bin/bash", "--login", "-i"];
+    const configuredGitBashFallback = [
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      WINDOWS_GIT_BASH_LAUNCH,
+    ];
+    const minttyFallback = ["mintty.exe", "--dir", worktreePath, "/usr/bin/bash", "--login", "-i"];
     const windowsTerminalSession = env.WT_SESSION?.trim();
     if (windowsTerminalSession) {
       const windowsTerminal = ["wt.exe", "-w", "new", "new-tab"];
@@ -730,12 +739,12 @@ function buildFallbackCommands(
       windowsTerminal.push("-d", worktreePath);
 
       return isMsysBashSession(env)
-        ? [windowsTerminal, gitBashFallback, cmdFallback]
+        ? [windowsTerminal, configuredGitBashFallback, minttyFallback, cmdFallback]
         : [windowsTerminal, cmdFallback];
     }
 
     if (isMsysBashSession(env)) {
-      return [gitBashFallback, cmdFallback];
+      return [configuredGitBashFallback, minttyFallback, cmdFallback];
     }
 
     return [cmdFallback];
@@ -759,6 +768,14 @@ function buildFallbackAttemptEnvironment(
   worktreePath: string,
   env: Record<string, string | undefined>,
 ): Record<string, string | undefined> {
+  if (command[4] === WINDOWS_GIT_BASH_LAUNCH) {
+    return {
+      ...env,
+      CHERE_INVOKING: "1",
+      [WINDOWS_SWITCH_WORKTREE_ENV]: worktreePath,
+    };
+  }
+
   if (command[0] === "mintty.exe") {
     return { ...env, CHERE_INVOKING: "1" };
   }
