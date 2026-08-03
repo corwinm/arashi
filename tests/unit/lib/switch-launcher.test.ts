@@ -890,6 +890,124 @@ describe("launchSwitchTarget", () => {
     expect(commands[0]?.[0]).toBe("cmux");
   });
 
+  test("opens a new window with the current profile inside Windows Terminal", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      ...candidate,
+      worktreePath: String.raw`C:\workspace\feature auth's`,
+    };
+    const commands: string[][] = [];
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: {
+          MSYSTEM: "MINGW64",
+          SHELL: "/usr/bin/bash",
+          WT_PROFILE_ID: "{00000000-0000-0000-0000-000000000001}",
+          WT_SESSION: "00000000-0000-0000-0000-000000000002",
+        },
+        platform: "win32",
+        runProcess: async (command) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      command: [
+        "wt.exe",
+        "-w",
+        "new",
+        "new-tab",
+        "-p",
+        "{00000000-0000-0000-0000-000000000001}",
+        "-d",
+        windowsCandidate.worktreePath,
+      ],
+      mode: "fallback",
+    });
+    expect(commands).toEqual([result.command]);
+  });
+
+  test("opens a new Git Bash terminal instead of cmd.exe on Windows", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      ...candidate,
+      worktreePath: String.raw`C:\workspace\feature auth's`,
+    };
+    const commands: string[][] = [];
+    const environments: Record<string, string | undefined>[] = [];
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: { MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" },
+        platform: "win32",
+        runProcess: async (command, options) => {
+          commands.push(command);
+          environments.push(options.env);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      command: [
+        "mintty.exe",
+        "--dir",
+        windowsCandidate.worktreePath,
+        "/usr/bin/bash",
+        "--login",
+        "-i",
+      ],
+      mode: "fallback",
+    });
+    expect(commands).toEqual([result.command]);
+    expect(commands.flat()).not.toContain("cmd.exe");
+    expect(environments[0]?.CHERE_INVOKING).toBe("1");
+  });
+
+  test("launches the generic Windows fallback without cmd.exe reparsing the worktree path", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      ...candidate,
+      worktreePath: String.raw`C:\workspace\feature & release|^%TEMP%`,
+    };
+    const attempts: Array<{
+      command: string[];
+      env: Record<string, string | undefined>;
+    }> = [];
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: {},
+        platform: "win32",
+        runProcess: async (command, options) => {
+          attempts.push({ command, env: options.env });
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result.command).toEqual([
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Start-Process -FilePath cmd.exe -WorkingDirectory $env:ARASHI_SWITCH_WORKTREE",
+    ]);
+    expect(result.command).not.toContain(windowsCandidate.worktreePath);
+    expect(attempts).toEqual([
+      {
+        command: result.command,
+        env: { ARASHI_SWITCH_WORKTREE: windowsCandidate.worktreePath },
+      },
+    ]);
+  });
+
   test("throws launch failure when all fallback commands fail", async () => {
     await expect(
       launchSwitchTarget(
