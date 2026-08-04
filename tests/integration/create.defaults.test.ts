@@ -337,7 +337,7 @@ describe("create defaults integration", () => {
     {
       code: "SESH_NOT_FOUND",
       env: { TMUX: "/tmp/tmux" },
-      expectedEvents: ["which sesh"],
+      expectedEvents: [`${process.platform === "win32" ? "where" : "which"} sesh`],
       lookupExitCode: 1,
     },
   ])("rejects sesh $code before managed-ignore, hooks, branches, or worktrees", async (fixture) => {

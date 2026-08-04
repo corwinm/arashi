@@ -147,12 +147,21 @@ describe("configured create launch in a real workspace", () => {
             "configured-real-tab",
           )
         : join(canonicalRoot, ".worktrees", "feature", "standalone-real-tab");
+      const canonicalExpectedWorktree = await realpath(expectedWorktree);
 
       expect(exitCode).toBe(0);
       expect(calls).toEqual([
         {
-          command: ["wezterm", "cli", "spawn", "--pane-id", "pane-17", "--cwd", expectedWorktree],
-          cwd: expectedWorktree,
+          command: [
+            "wezterm",
+            "cli",
+            "spawn",
+            "--pane-id",
+            "pane-17",
+            "--cwd",
+            canonicalExpectedWorktree,
+          ],
+          cwd: canonicalExpectedWorktree,
         },
       ]);
       await expect(access(expectedWorktree)).resolves.toBeUndefined();
