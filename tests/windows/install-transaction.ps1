@@ -120,7 +120,7 @@ try {
         throw "Expected rollback failure"
     } catch {
         if ($_.Exception.Message -notmatch "Rollback failed" -or $_.Exception.Message -notmatch "backups retained") { throw }
-        $backupMatch = [regex]::Match($_.Exception.Message, 'backups retained at: ([^\r\n]+)')
+        $backupMatch = [regex]::Match($_.Exception.Message, 'backups retained at: (.+?)\. Restore the matching files manually')
         if (-not $backupMatch.Success -or -not (Test-Path -LiteralPath $backupMatch.Groups[1].Value)) {
             throw "Rollback failure did not retain recoverable backups"
         }
