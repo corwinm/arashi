@@ -12,7 +12,12 @@ import { info, error as logError, success, warn } from "../lib/logger.ts";
 import { unsupportedJsonModeError, writeJsonEnvelope } from "../lib/json-output.ts";
 import { Command } from "commander";
 import { exec } from "../lib/git.ts";
-import { detectManagedSwitchContext, launchSwitchTarget } from "../lib/switch-launcher.ts";
+import {
+  detectManagedSwitchContext,
+  launchSwitchTarget,
+  type LaunchDisposition,
+  type LaunchSwitchOptions,
+} from "../lib/switch-launcher.ts";
 import { resolveDefaultWithPrecedence } from "../lib/default-resolution.ts";
 import { findConfiguredWorkspaceRoots, resolveWorkspaceContext } from "../lib/workspace-context.ts";
 
@@ -45,6 +50,7 @@ const DETACHED_HEAD = "HEAD";
 const KEY_SEPARATOR = "\u0000";
 
 export interface SwitchCommandOptions {
+  tab?: boolean;
   herdr?: boolean;
   sesh?: boolean;
   tmux?: boolean;
@@ -60,6 +66,7 @@ export interface SwitchCommandOptions {
 }
 
 interface LaunchResolution {
+  disposition: LaunchDisposition;
   herdr?: boolean;
   preferredIde?: SupportedIde;
   requirePreferredIde?: boolean;
@@ -117,13 +124,7 @@ export interface SwitchCommandDependencies {
   ) => Promise<SwitchCandidate[]>;
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
-    options: {
-      herdr?: boolean;
-      preferredIde?: SupportedIde;
-      requirePreferredIde?: boolean;
-      sesh?: boolean;
-      tmux?: boolean;
-    },
+    options: LaunchSwitchOptions,
     deps: {
       env: Record<string, string | undefined>;
       platform: NodeJS.Platform;
@@ -153,6 +154,7 @@ export function createCommand(): Command {
     .option("--sesh", "Use sesh in tmux mode")
     .option("--tmux", "Force launch in a new plain tmux window")
     .option("--herdr", "Open or focus the selected worktree in Herdr")
+    .option("--tab", "Open the selected worktree in a tab instead of a new window")
     .option("--cd", "Change the current shell directory when shell integration is active")
     .option("--no-cd", "Disable parent-shell directory switching for this invocation")
     .option("--vscode", "Open the selected worktree in VS Code")
@@ -180,6 +182,8 @@ Examples:
 
 Configured modes: auto | cd | launch | sesh | herdr
 Precedence: explicit launcher flags, --cd/--no-cd, configured mode, then automatic context detection.
+By default, launch opens a new OS window or managed independent-session equivalent.
+--tab requests a true tab or equivalent; unsupported mappings fail without opening a window.
 `,
     )
     .action(async (filter: string | undefined, options: SwitchCommandOptions) => {
@@ -375,21 +379,11 @@ export async function executeSwitch(
     }
   }
 
-  const launchResult = await launchCandidate(
-    selected,
-    {
-      herdr: resolvedLaunch.herdr,
-      preferredIde: resolvedLaunch.preferredIde,
-      requirePreferredIde: resolvedLaunch.requirePreferredIde,
-      sesh: resolvedLaunch.sesh,
-      tmux: resolvedLaunch.tmux,
-    },
-    {
-      env: commandEnv,
-      platform: deps.platform ?? process.platform,
-      runProcess: deps.runProcess,
-    },
-  );
+  const launchResult = await launchCandidate(selected, resolvedLaunch, {
+    env: commandEnv,
+    platform: deps.platform ?? process.platform,
+    runProcess: deps.runProcess,
+  });
 
   success(
     `Opened ${launchResult.mode} context for ${selected.repoName} (${selected.branchName}) at ${selected.worktreePath}`,
@@ -675,7 +669,7 @@ export const resolveSwitchResolution = ({
   shellIntegrationActive,
 }: SwitchResolutionInput): SwitchResolution => {
   const explicitLauncher = resolveExplicitLauncher(options);
-  if (options.cd === true && explicitLauncher) {
+  if (options.cd === true && (explicitLauncher || options.tab === true)) {
     throw new SwitchCommandError(
       "Conflicting switch behavior overrides provided (--cd with an explicit launch override). Choose either parent-shell switching or a launch target.",
       SwitchCommandErrorCode.CONFLICTING_SWITCH_OPTIONS,
@@ -692,7 +686,7 @@ export const resolveSwitchResolution = ({
   return {
     behavior: resolveSwitchBehavior({
       configMode: configBehaviorMode,
-      hasExplicitLaunchOverride: explicitLauncher !== undefined,
+      hasExplicitLaunchOverride: explicitLauncher !== undefined || options.tab === true,
       managedContextActive,
       options,
       shellIntegrationActive,
@@ -706,14 +700,16 @@ const resolveLaunchOptions = (
   configLaunchMode: LaunchMode | undefined,
   explicitLauncher: SupportedIde | "tmux" | "sesh" | "herdr" | undefined,
 ): LaunchResolution => {
+  const disposition: LaunchDisposition = options.tab === true ? "tab" : "window";
   if (explicitLauncher === "tmux") {
-    return { tmux: true };
+    return { disposition, tmux: true };
   }
   if (explicitLauncher === HERDR_LAUNCH_MODE) {
-    return { herdr: true, sesh: false };
+    return { disposition, herdr: true, sesh: false };
   }
   if (explicitLauncher && explicitLauncher !== SESH_LAUNCH_MODE) {
     return {
+      disposition,
       preferredIde: explicitLauncher,
       requirePreferredIde: true,
       sesh: false,
@@ -729,10 +725,10 @@ const resolveLaunchOptions = (
   });
 
   if (resolvedLaunchMode.value === HERDR_LAUNCH_MODE) {
-    return { herdr: true, sesh: false };
+    return { disposition, herdr: true, sesh: false };
   }
 
-  return { sesh: resolvedLaunchMode.value === SESH_LAUNCH_MODE };
+  return { disposition, sesh: resolvedLaunchMode.value === SESH_LAUNCH_MODE };
 };
 
 const resolveSwitchBehavior = ({

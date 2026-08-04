@@ -219,7 +219,7 @@ describe("managed Kitty launch", () => {
     const commands: string[][] = [];
     let inspections = 0;
 
-    const result = await launchManagedKitty(target, {
+    const result = await launchManagedKitty(target, "window", {
       env: { KITTY_PID: "123" },
       lockRoot,
       platform: "linux",
@@ -246,6 +246,7 @@ describe("managed Kitty launch", () => {
 
     expect(result).toEqual({
       command: ["/usr/bin/kitten", "@", "focus-window", "--match", "id:73"],
+      disposition: "window",
       mode: "kitty",
     });
     expect(commands.filter((command) => command.includes("launch"))).toEqual([]);
@@ -264,7 +265,7 @@ describe("managed Kitty launch", () => {
     const commands: string[][] = [];
     let launched = false;
 
-    const result = await launchManagedKitty(target, {
+    const result = await launchManagedKitty(target, "window", {
       env: { TERM: "xterm-kitty" },
       lockRoot: join(root, "locks"),
       platform: "linux",
@@ -319,7 +320,7 @@ describe("managed Kitty launch", () => {
       "--match",
       "id:73",
     ]);
-    expect(result).toEqual({ command: launchCommand, mode: "kitty" });
+    expect(result).toEqual({ command: launchCommand, disposition: "window", mode: "kitty" });
   });
 
   test.each([
@@ -330,20 +331,17 @@ describe("managed Kitty launch", () => {
     cleanup.push(root);
     const commands: string[][] = [];
     await expect(
-      launchManagedKitty(
-        { ...candidate, worktreePath: root },
-        {
-          env: { KITTY_WINDOW_ID: "7" },
-          lockRoot: join(root, "locks"),
-          platform: "linux",
-          runProcess: async (command) => {
-            commands.push(command);
-            if (command[0] === "which")
-              return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
-            return { exitCode: 0, stderr: "", stdout: version };
-          },
+      launchManagedKitty({ ...candidate, worktreePath: root }, "window", {
+        env: { KITTY_WINDOW_ID: "7" },
+        lockRoot: join(root, "locks"),
+        platform: "linux",
+        runProcess: async (command) => {
+          commands.push(command);
+          if (command[0] === "which")
+            return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
+          return { exitCode: 0, stderr: "", stdout: version };
         },
-      ),
+      }),
     ).rejects.toMatchObject({
       code: SwitchCommandErrorCode.LAUNCH_FAILED,
       message: expect.stringContaining(detail),
@@ -356,19 +354,16 @@ describe("managed Kitty launch", () => {
     cleanup.push(root);
     const commands: string[][] = [];
     await expect(
-      launchManagedKitty(
-        { ...candidate, worktreePath: root },
-        {
-          env: { KITTY_PID: "1" },
-          lockRoot: join(root, "locks"),
-          pathExists: async () => false,
-          platform: "linux",
-          runProcess: async (command) => {
-            commands.push(command);
-            return { exitCode: -1, stderr: "ENOENT", stdout: "" };
-          },
+      launchManagedKitty({ ...candidate, worktreePath: root }, "window", {
+        env: { KITTY_PID: "1" },
+        lockRoot: join(root, "locks"),
+        pathExists: async () => false,
+        platform: "linux",
+        runProcess: async (command) => {
+          commands.push(command);
+          return { exitCode: -1, stderr: "ENOENT", stdout: "" };
         },
-      ),
+      }),
     ).rejects.toMatchObject({
       code: SwitchCommandErrorCode.LAUNCH_FAILED,
       message: expect.stringContaining("kitten"),
@@ -387,22 +382,19 @@ describe("managed Kitty launch", () => {
     cleanup.push(root);
     const commands: string[][] = [];
     await expect(
-      launchManagedKitty(
-        { ...candidate, worktreePath: root },
-        {
-          env: { KITTY_PID: "1" },
-          lockRoot: join(root, "locks"),
-          platform: "linux",
-          runProcess: async (command) => {
-            commands.push(command);
-            if (command[0] === "which")
-              return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
-            if (command[1] === "--version")
-              return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
-            return result;
-          },
+      launchManagedKitty({ ...candidate, worktreePath: root }, "window", {
+        env: { KITTY_PID: "1" },
+        lockRoot: join(root, "locks"),
+        platform: "linux",
+        runProcess: async (command) => {
+          commands.push(command);
+          if (command[0] === "which")
+            return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
+          if (command[1] === "--version")
+            return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
+          return result;
         },
-      ),
+      }),
     ).rejects.toMatchObject({ code: SwitchCommandErrorCode.LAUNCH_FAILED });
     expect(commands.some((command) => command[0] === "kitty" || command[0] === "open")).toBe(false);
   });
@@ -436,7 +428,7 @@ describe("managed Kitty launch", () => {
     const commands: string[][] = [];
 
     await expect(
-      launchManagedKitty(target, {
+      launchManagedKitty(target, "window", {
         env: { KITTY_PID: "1" },
         lockRoot: join(root, "locks"),
         platform: "linux",
@@ -467,7 +459,7 @@ describe("managed Kitty launch", () => {
     let focusAttempts = 0;
 
     await expect(
-      launchManagedKitty(target, {
+      launchManagedKitty(target, "window", {
         env: { KITTY_PID: "1" },
         lockRoot: join(root, "locks"),
         platform: "linux",
@@ -504,7 +496,7 @@ describe("managed Kitty launch", () => {
     let focusAttempts = 0;
 
     await expect(
-      launchManagedKitty(target, {
+      launchManagedKitty(target, "window", {
         env: { KITTY_PID: "1" },
         lockRoot: join(root, "locks"),
         platform: "linux",
@@ -543,7 +535,7 @@ describe("managed Kitty launch", () => {
     let launched = false;
 
     await expect(
-      launchManagedKitty(target, {
+      launchManagedKitty(target, "window", {
         env: { KITTY_PID: "1" },
         lockRoot: join(root, "locks"),
         platform: "linux",
@@ -590,7 +582,7 @@ describe("managed Kitty launch", () => {
     let launched = false;
 
     await expect(
-      launchManagedKitty(target, {
+      launchManagedKitty(target, "window", {
         env: { KITTY_PID: "1" },
         lockRoot: join(root, "locks"),
         platform: "linux",
@@ -634,22 +626,19 @@ describe("managed Kitty launch", () => {
     duplicate[0].tabs[0].windows.push({ ...duplicate[0].tabs[0].windows[0], id: 74 });
     const commands: string[][] = [];
     await expect(
-      launchManagedKitty(
-        { ...candidate, worktreePath: root },
-        {
-          env: { KITTY_PID: "1" },
-          lockRoot: join(root, "locks"),
-          platform: "linux",
-          runProcess: async (command) => {
-            commands.push(command);
-            if (command[0] === "which")
-              return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
-            if (command[1] === "--version")
-              return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
-            return { exitCode: 0, stderr: "", stdout: JSON.stringify(duplicate) };
-          },
+      launchManagedKitty({ ...candidate, worktreePath: root }, "window", {
+        env: { KITTY_PID: "1" },
+        lockRoot: join(root, "locks"),
+        platform: "linux",
+        runProcess: async (command) => {
+          commands.push(command);
+          if (command[0] === "which")
+            return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
+          if (command[1] === "--version")
+            return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
+          return { exitCode: 0, stderr: "", stdout: JSON.stringify(duplicate) };
         },
-      ),
+      }),
     ).rejects.toMatchObject({
       code: SwitchCommandErrorCode.LAUNCH_FAILED,
       message: expect.stringContaining("multiple"),
@@ -671,48 +660,43 @@ describe("managed Kitty launch", () => {
     const commands: string[][] = [];
     let inspections = 0;
     let launched = false;
-    await launchManagedKitty(
-      { ...candidate, worktreePath: root },
-      {
-        env: { KITTY_PID: "1" },
-        lockRoot: join(root, "locks"),
-        platform: "linux",
-        runProcess: async (command) => {
-          commands.push(command);
-          if (command[0] === "which")
-            return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
-          if (command[1] === "--version")
-            return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
-          if (command.at(-1) === "ls") {
-            inspections += 1;
-            if (inspections === 1)
-              return {
-                exitCode: 0,
-                stderr: "",
-                stdout: state({ cwd: metadata.canonicalPath, identity: metadata.identity }),
-              };
-            if (inspections === 2) return { exitCode: 0, stderr: "", stdout: "[]" };
+    await launchManagedKitty({ ...candidate, worktreePath: root }, "window", {
+      env: { KITTY_PID: "1" },
+      lockRoot: join(root, "locks"),
+      platform: "linux",
+      runProcess: async (command) => {
+        commands.push(command);
+        if (command[0] === "which") return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
+        if (command[1] === "--version") return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
+        if (command.at(-1) === "ls") {
+          inspections += 1;
+          if (inspections === 1)
             return {
               exitCode: 0,
               stderr: "",
-              stdout: state({
-                cwd: metadata.canonicalPath,
-                identity: metadata.identity,
-                session: metadata.sessionName,
-                title: metadata.title,
-              }),
+              stdout: state({ cwd: metadata.canonicalPath, identity: metadata.identity }),
             };
-          }
-          if (command.includes("focus-window") && !launched)
-            return { exitCode: 1, stderr: "no matching windows", stdout: "" };
-          if (command.includes("launch")) {
-            launched = true;
-            return { exitCode: 0, stderr: "", stdout: "73" };
-          }
-          return { exitCode: 0, stderr: "", stdout: "" };
-        },
+          if (inspections === 2) return { exitCode: 0, stderr: "", stdout: "[]" };
+          return {
+            exitCode: 0,
+            stderr: "",
+            stdout: state({
+              cwd: metadata.canonicalPath,
+              identity: metadata.identity,
+              session: metadata.sessionName,
+              title: metadata.title,
+            }),
+          };
+        }
+        if (command.includes("focus-window") && !launched)
+          return { exitCode: 1, stderr: "no matching windows", stdout: "" };
+        if (command.includes("launch")) {
+          launched = true;
+          return { exitCode: 0, stderr: "", stdout: "73" };
+        }
+        return { exitCode: 0, stderr: "", stdout: "" };
       },
-    );
+    });
     expect(commands.filter((command) => command.includes("launch"))).toHaveLength(1);
     expect(commands.filter((command) => command.at(-1) === "ls")).toHaveLength(3);
   });
@@ -761,13 +745,13 @@ describe("managed Kitty launch", () => {
     };
 
     const [first, second] = await Promise.all([
-      launchManagedKitty(target, {
+      launchManagedKitty(target, "window", {
         env: { KITTY_PID: "1" },
         lockRoot,
         platform: "linux",
         runProcess,
       }),
-      launchManagedKitty(target, {
+      launchManagedKitty(target, "window", {
         env: { KITTY_PID: "1" },
         lockRoot,
         platform: "linux",
@@ -790,7 +774,7 @@ describe("managed Kitty launch", () => {
     const lockRoot = join(root, "locks");
 
     await expect(
-      launchManagedKitty(target, {
+      launchManagedKitty(target, "window", {
         env: { KITTY_PID: "1" },
         lockRoot,
         platform: "linux",
@@ -821,22 +805,19 @@ describe("managed Kitty launch", () => {
     cleanupError.code = "EIO";
 
     await expect(
-      launchManagedKitty(
-        { ...candidate, worktreePath: root },
-        {
-          env: { KITTY_PID: "1" },
-          lockOptions: { removeReleasedLock: async () => await Promise.reject(cleanupError) },
-          lockRoot: join(root, "locks"),
-          platform: "linux",
-          runProcess: async (command) => {
-            if (command[0] === "which")
-              return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
-            if (command[1] === "--version")
-              return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
-            return { exitCode: 1, stderr: "permission denied", stdout: "" };
-          },
+      launchManagedKitty({ ...candidate, worktreePath: root }, "window", {
+        env: { KITTY_PID: "1" },
+        lockOptions: { removeReleasedLock: async () => await Promise.reject(cleanupError) },
+        lockRoot: join(root, "locks"),
+        platform: "linux",
+        runProcess: async (command) => {
+          if (command[0] === "which")
+            return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
+          if (command[1] === "--version")
+            return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
+          return { exitCode: 1, stderr: "permission denied", stdout: "" };
         },
-      ),
+      }),
     ).rejects.toMatchObject({
       code: SwitchCommandErrorCode.LAUNCH_FAILED,
       context: { phase: "remote-control-inspection" },
@@ -847,24 +828,20 @@ describe("managed Kitty launch", () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-kitty-launch-id-"));
     cleanup.push(root);
     await expect(
-      launchManagedKitty(
-        { ...candidate, worktreePath: root },
-        {
-          env: { KITTY_PID: "1" },
-          lockRoot: join(root, "locks"),
-          platform: "linux",
-          runProcess: async (command) => {
-            if (command[0] === "which")
-              return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
-            if (command[1] === "--version")
-              return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
-            if (command.at(-1) === "ls") return { exitCode: 0, stderr: "", stdout: "[]" };
-            if (command.includes("launch"))
-              return { exitCode: 0, stderr: "", stdout: launchOutput };
-            return { exitCode: 0, stderr: "", stdout: "" };
-          },
+      launchManagedKitty({ ...candidate, worktreePath: root }, "window", {
+        env: { KITTY_PID: "1" },
+        lockRoot: join(root, "locks"),
+        platform: "linux",
+        runProcess: async (command) => {
+          if (command[0] === "which")
+            return { exitCode: 0, stderr: "", stdout: "/usr/bin/kitten\n" };
+          if (command[1] === "--version")
+            return { exitCode: 0, stderr: "", stdout: "kitty 0.48.1" };
+          if (command.at(-1) === "ls") return { exitCode: 0, stderr: "", stdout: "[]" };
+          if (command.includes("launch")) return { exitCode: 0, stderr: "", stdout: launchOutput };
+          return { exitCode: 0, stderr: "", stdout: "" };
         },
-      ),
+      }),
     ).rejects.toMatchObject({
       code: SwitchCommandErrorCode.LAUNCH_FAILED,
       message: expect.stringContaining("window ID"),

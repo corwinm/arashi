@@ -13,6 +13,7 @@ arashi switch [filter] [options]
 - `--tmux` Force a new plain tmux window for this invocation
 - `--sesh` Use `sesh` in tmux mode (requires active tmux session)
 - `--herdr` Open or focus the selected worktree in Herdr
+- `--tab` Request a true terminal tab or managed-context equivalent for this invocation
 - `--cd` Request parent-shell directory switching for this invocation
 - `--no-cd` Disable parent-shell directory switching for this invocation
 - `--no-default-launch` Bypass a configured `sesh` or `herdr` mode for one invocation
@@ -46,6 +47,9 @@ arashi switch --tmux feature-auth
 # Open or focus a persistent Herdr workspace
 arashi switch feature-auth --herdr
 
+# Request a tab/equivalent without window fallback
+arashi switch feature-auth --tab
+
 # Change the current shell directory when shell integration is active
 arashi switch feature-auth --cd
 
@@ -71,7 +75,7 @@ arashi switch --no-default-launch
 - `--json --tmux` returns one `JSON_UNSUPPORTED_FOR_MODE` envelope with the existing `launch` mode label before conflict or tmux-context validation.
 - Inside a Herdr-launched shell (`HERDR_ENV=1`), Arashi automatically opens or focuses the selected target in Herdr unless an explicit launcher or active tmux takes precedence.
 - Herdr launch requires the `herdr` CLI, a reachable default Herdr server/socket, and a Git-resolvable non-bare main checkout. Arashi calls `herdr worktree open`; it does not delegate Git worktree creation or removal to Herdr.
-- Managed Kitty selection requires both `KITTY_PID` and `KITTY_WINDOW_ID` to be non-empty after trimming. `TERM=xterm-kitty` alone remains generic terminal evidence and does not select the fail-closed managed workflow.
+- Managed Kitty selection applies when any one of `KITTY_PID`, `KITTY_WINDOW_ID`, or normalized `TERM=xterm-kitty` is non-empty/present. Once selected, the managed workflow fails closed.
 - Managed Kitty requires Kitty 0.43 or newer and permitted `kitten @` remote control. Arashi queries for its exact worktree marker, focuses and reuses one matching tab, and launches a session-backed tab only when no exact match exists. Duplicate matches fail safely.
 - Once managed Kitty is selected, missing or unsupported tooling, denied remote control, malformed state, locking failures, and focus/launch validation errors are reported directly rather than falling back to another launcher.
 - In Kitty, Ghostty, WezTerm, and iTerm2 terminals without a strict managed context, Arashi may still attempt terminal-native launch commands during generic fallback behavior.
@@ -80,6 +84,7 @@ arashi switch --no-default-launch
 - `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE → managed Kitty. If none is detected, it uses parent-shell `cd` when available, then terminal/platform launch fallback.
 - An absent mode preserves built-in automatic `launch` behavior and does not newly prefer `cd`.
 - Explicit launcher flags take precedence over `--cd` / `--no-cd`, configured modes, and automatic context detection. Conflicting explicit launchers and `--cd` plus any explicit launcher are rejected.
+- `--tab` is CLI-only and never persisted. It expresses launch intent, overrides automatic/configured parent-shell `cd`, composes with explicit launcher selectors, and never falls back to a window or another launcher. Unsupported selected adapters return `TAB_DISPOSITION_UNSUPPORTED`; runtime/preflight launch failures return `LAUNCH_FAILED`. `--tab --json` returns `JSON_UNSUPPORTED_FOR_MODE` before contextual validation.
 - Legacy switch `launchMode` and `launch_mode` fields are accepted only for a bounded compatibility window. Follow the exact replacement warning on stderr; ambiguous or conflicting combinations are rejected before switching.
 - If `--cd` is used without active shell integration, Arashi warns and skips launch fallback for that invocation.
 - If `defaults.switch.mode: "cd"` is configured without active shell integration, Arashi warns and then follows normal launch resolution.

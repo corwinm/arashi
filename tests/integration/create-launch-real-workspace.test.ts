@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -19,6 +19,50 @@ async function run(cwd: string, command: string[]): Promise<void> {
   if (exitCode !== 0) {
     throw new Error(`${command.join(" ")} failed (${exitCode}): ${stderr}`);
   }
+}
+
+async function runCapture(cwd: string, command: string[]): Promise<{ stdout: string }> {
+  const child = spawn(command, { cwd, stderr: "pipe", stdout: "pipe" });
+  const [exitCode, stderr, stdout] = await Promise.all([
+    child.exited,
+    new Response(child.stderr).text(),
+    new Response(child.stdout).text(),
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(`${command.join(" ")} failed (${exitCode}): ${stderr}`);
+  }
+  return { stdout };
+}
+
+async function runCli(
+  cwd: string,
+  args: string[],
+): Promise<{ exitCode: number; stderr: string; stdout: string }> {
+  const child = spawn([process.execPath, CLI_ENTRY, ...args], {
+    cwd,
+    env: {
+      ...process.env,
+      CMUX_SURFACE_ID: "",
+      CMUX_WORKSPACE_ID: "",
+      HERDR_ENV: "",
+      KITTY_PID: "",
+      KITTY_WINDOW_ID: "",
+      TERM: "",
+      TERM_PROGRAM: "",
+      TMUX: "",
+      WEZTERM_EXECUTABLE: "",
+      WEZTERM_PANE: "",
+      WT_SESSION: "",
+    },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [exitCode, stderr, stdout] = await Promise.all([
+    child.exited,
+    new Response(child.stderr).text(),
+    new Response(child.stdout).text(),
+  ]);
+  return { exitCode, stderr, stdout };
 }
 
 async function createConfiguredRepository(launch: "auto" | "sesh" | "herdr"): Promise<string> {
@@ -69,6 +113,100 @@ afterEach(async () => {
 });
 
 describe("configured create launch in a real workspace", () => {
+  test.each([true, false])(
+    "propagates a successful tab through the real %s create executor without persisting disposition",
+    async (configured) => {
+      const root = configured
+        ? await createConfiguredRepository("auto")
+        : await createStandaloneRepository();
+      const configPath = join(root, ".arashi", "config.json");
+      const configBefore = configured ? await readFile(configPath, "utf8") : null;
+      const branch = configured ? "feature/configured-real-tab" : "feature/standalone-real-tab";
+      const calls: { command: string[]; cwd: string }[] = [];
+      process.chdir(root);
+
+      const exitCode = await executeCreate(
+        branch,
+        { tab: true },
+        {
+          env: { TERM_PROGRAM: "WezTerm", WEZTERM_PANE: "pane-17" },
+          platform: "linux",
+          runProcess: async (command, options) => {
+            calls.push({ command, cwd: options.cwd });
+            return { exitCode: 0, stderr: "", stdout: "" };
+          },
+        },
+      );
+      const canonicalRoot = await realpath(root);
+      const expectedWorktree = configured
+        ? join(
+            canonicalRoot,
+            ".arashi",
+            "worktrees",
+            `${basename(canonicalRoot)}-feature`,
+            "configured-real-tab",
+          )
+        : join(canonicalRoot, ".worktrees", "feature", "standalone-real-tab");
+      const canonicalExpectedWorktree = await realpath(expectedWorktree);
+
+      expect(exitCode).toBe(0);
+      expect(calls).toHaveLength(1);
+      const [call] = calls;
+      expect(call?.command.slice(0, -1)).toEqual([
+        "wezterm",
+        "cli",
+        "spawn",
+        "--pane-id",
+        "pane-17",
+        "--cwd",
+      ]);
+      expect(call?.command.at(-1)).toBe(call?.cwd);
+      expect(await realpath(call!.cwd)).toBe(canonicalExpectedWorktree);
+      await expect(access(expectedWorktree)).resolves.toBeUndefined();
+      if (configured) {
+        expect(await readFile(configPath, "utf8")).toBe(configBefore);
+        expect(await readFile(configPath, "utf8")).not.toContain("disposition");
+      } else {
+        await expect(access(join(root, ".arashi"))).rejects.toThrow();
+      }
+    },
+    20_000,
+  );
+
+  test("real CLI --tab fails before configured or standalone mutation and never persists disposition", async () => {
+    const configured = await createConfiguredRepository("auto");
+    const configuredConfigPath = join(configured, ".arashi", "config.json");
+    const configBefore = await readFile(configuredConfigPath, "utf8");
+    const configuredResult = await runCli(configured, [
+      "create",
+      "feature/configured-tab",
+      "--tab",
+    ]);
+    expect(configuredResult.exitCode).not.toBe(0);
+    expect(`${configuredResult.stdout}\n${configuredResult.stderr}`).toContain(
+      "does not expose a stable tab target",
+    );
+    expect(await readFile(configuredConfigPath, "utf8")).toBe(configBefore);
+    expect(
+      (await runCapture(configured, ["git", "branch", "--list", "feature/configured-tab"])).stdout,
+    ).toBe("");
+
+    const standalone = await createStandaloneRepository();
+    const standaloneResult = await runCli(standalone, [
+      "create",
+      "feature/standalone-tab",
+      "--tab",
+    ]);
+    expect(standaloneResult.exitCode).not.toBe(0);
+    expect(`${standaloneResult.stdout}\n${standaloneResult.stderr}`).toContain(
+      "does not expose a stable tab target",
+    );
+    await expect(access(join(standalone, ".arashi"))).rejects.toThrow();
+    expect(
+      (await runCapture(standalone, ["git", "branch", "--list", "feature/standalone-tab"])).stdout,
+    ).toBe("");
+  }, 20_000);
+
   test.each(["auto", "sesh", "herdr"] as const)(
     "creates the primary worktree and routes configured %s through the shared launcher",
     async (launch) => {
@@ -83,13 +221,16 @@ describe("configured create launch in a real workspace", () => {
         `feature/${launch}`,
         {},
         {
+          env: launch === "sesh" ? { TMUX: "/tmp/tmux/default" } : {},
           launchSwitchTarget: async (candidate, options) => {
             calls.push({ candidate, options });
             return {
               command: [],
+              disposition: options.disposition,
               mode: launch === "auto" ? "kitty" : launch,
             };
           },
+          runProcess: async () => ({ exitCode: 0, stderr: "", stdout: "/usr/bin/sesh\n" }),
         },
       );
 
@@ -100,6 +241,7 @@ describe("configured create launch in a real workspace", () => {
         repoName: basename(root),
       });
       expect(calls[0]?.options).toEqual({
+        disposition: "window",
         ...(launch === "herdr" ? { herdr: true } : {}),
         sesh: launch === "sesh",
       });
@@ -253,7 +395,7 @@ describe("configured create launch in a real workspace", () => {
       {
         launchSwitchTarget: async () => {
           launchCalls += 1;
-          return { command: [], mode: "sesh" };
+          return { command: [], disposition: "window", mode: "sesh" };
         },
       },
     );

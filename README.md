@@ -131,12 +131,12 @@ Arashi currently provides these commands:
 - `arashi update [--check] [--dry-run] [--yes]`
 - `arashi add <git-url>`
 - `arashi clone [--all]`
-- `arashi create <branch> [--tmux|--sesh|--herdr]`
+- `arashi create <branch> [--tab] [--tmux|--sesh|--herdr]`
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
 - `arashi prune [--dry-run]` - clean stale Git worktree metadata
-- `arashi switch [filter] [--repos|--all] [--cd|--no-cd] [--tmux|--sesh|--herdr] [--no-default-launch]`
+- `arashi switch [filter] [--repos|--all] [--tab] [--cd|--no-cd] [--tmux|--sesh|--herdr] [--no-default-launch]`
 - `arashi shell init <bash|zsh|fish>`
 - `arashi shell install`
 - `arashi pull`
@@ -155,6 +155,7 @@ arashi create feature-auth-refresh
 arashi create feature-auth-refresh --launch
 arashi create feature-auth-refresh --tmux
 arashi create feature-auth-refresh --herdr
+arashi create feature-auth-refresh --tab
 arashi create feature-auth-refresh --no-launch
 arashi shell install
 arashi status
@@ -165,10 +166,13 @@ arashi switch --repos docs                  # repo-name matching in child repos
 arashi switch --cd feature-auth-refresh     # parent-shell cd when shell integration is active
 arashi switch --tmux feature-auth-refresh   # force a new plain tmux window
 arashi switch --herdr feature-auth-refresh  # open or focus a persistent Herdr workspace
+arashi switch --tab feature-auth-refresh    # request a true tab or managed equivalent
 arashi switch --no-default-launch           # bypass configured sesh/Herdr mode once
 ```
 
 Explicit `--tmux` is a per-invocation launcher override for `create` and `switch`; it is not a persisted configuration mode. It requires an active tmux context whose `TMUX` value is non-empty after trimming, uses the selected worktree path as one argv-safe `tmux new-window -c` argument, and does not fall back to another launcher when the prerequisite or launch fails. On `create`, it implies both launch and switch, while validation failures occur before worktree mutation.
+
+`--tab` is a CLI-only launch disposition for `create` and `switch`; it is never persisted. It requests a true terminal tab or documented managed-context equivalent, implies launch (and selection for `create`), overrides automatic parent-shell `cd`, and never degrades to a window or another launcher. Unsupported adapters fail with `TAB_DISPOSITION_UNSUPPORTED`; launch/preflight failures use `LAUNCH_FAILED`. Human-only tab launch is incompatible with `--json`.
 
 ### Managed Git ignore rules
 
@@ -286,7 +290,7 @@ bindkey -s '^s' 'sesh connect $(arashi list | fzf)\n'
 
 You can also use `arashi switch --sesh` directly inside tmux to open the selected worktree in a new tmux window.
 
-`arashi switch` checks managed contexts in this order: tmux → Herdr → cmux → integrated IDE → Kitty. Managed Kitty selection requires both `KITTY_PID` and `KITTY_WINDOW_ID`; `TERM=xterm-kitty` alone remains only generic terminal evidence.
+`arashi switch` checks managed contexts in this order: tmux → Herdr → cmux → integrated IDE → Kitty. Managed Kitty selection applies when any one of `KITTY_PID`, `KITTY_WINDOW_ID`, or `TERM=xterm-kitty` is present after normalization.
 
 Managed Kitty requires Kitty 0.43 or newer plus working `kitten @` remote control. Arashi reuses only its exact worktree marker and focuses that tab before launching a new session-backed tab. Once managed Kitty is selected, missing or unsupported tooling, denied remote control, duplicate markers, and validation failures are reported directly instead of falling back to another launcher.
 
