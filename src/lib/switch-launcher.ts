@@ -1335,7 +1335,7 @@ end run`;
 function iTermAppleScript(disposition: LaunchDisposition): string {
   const action =
     disposition === "tab"
-      ? "set targetWindow to first window whose id as text is targetIdentifier\ntell targetWindow to create tab with profile targetProfile command launchCommand"
+      ? `${exactMacWindowLookupAppleScript()}\ntell targetWindow to create tab with profile targetProfile command launchCommand`
       : `if targetProfile is "" and iTermWasRunning and (count of windows) > 0 then
 set targetProfile to profile name of current session of current window
 end if
@@ -1361,7 +1361,7 @@ end run`;
 function ghosttyAppleScript(disposition: LaunchDisposition): string {
   const action =
     disposition === "tab"
-      ? "set targetWindow to first window whose id as text is targetIdentifier\nnew tab in targetWindow with configuration surfaceConfig"
+      ? `${exactMacWindowLookupAppleScript()}\nnew tab in targetWindow with configuration surfaceConfig`
       : "new window with configuration surfaceConfig";
   return `on run argv
 set targetDirectory to item 1 of argv
@@ -1375,6 +1375,17 @@ ${action}
 activate
 end tell
 end run`;
+}
+
+function exactMacWindowLookupAppleScript(): string {
+  return `set targetWindow to missing value
+repeat with candidateWindow in windows
+if (id of candidateWindow as text) is targetIdentifier then
+set targetWindow to contents of candidateWindow
+exit repeat
+end if
+end repeat
+if targetWindow is missing value then error "ARASHI_TAB_TARGET_UNAVAILABLE" number 42`;
 }
 
 function buildFallbackCommands(

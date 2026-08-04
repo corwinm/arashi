@@ -557,6 +557,17 @@ describe("launch disposition matrix", () => {
       expect(commands[0]?.slice(0, 2)).toEqual(["osascript", "-e"]);
       expect(commands[0]?.[2]).not.toContain(special.worktreePath);
       expect(commands[1]?.slice(0, 2)).toEqual(["osascript", "-e"]);
+      const launchScript = commands[1]?.[2] ?? "";
+      if (launcher !== "terminal") {
+        expect(launchScript).not.toContain("first window whose id as text is targetIdentifier");
+        expect(launchScript).toContain("repeat with candidateWindow in windows");
+        expect(launchScript).toContain(
+          "if (id of candidateWindow as text) is targetIdentifier then",
+        );
+        expect(launchScript).toContain(
+          'if targetWindow is missing value then error "ARASHI_TAB_TARGET_UNAVAILABLE" number 42',
+        );
+      }
       expect(commands[1]?.slice(-5)).toEqual([
         special.worktreePath,
         `/bin/zsh' & unsafe`,
