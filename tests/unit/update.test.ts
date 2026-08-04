@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import {
   compareVersions,
   detectNpmManagedInstall,
@@ -301,6 +302,7 @@ describe("npm-managed update flow", () => {
   test("runs Windows package-manager shims safely through cmd.exe", async () => {
     const spawnCalls: SpawnCall[] = [];
     const rootDir = String.raw`C:\Users\corwin\AppData\Roaming\npm\node_modules\arashi`;
+    const updateCwd = String.raw`C:\Program Files\nodejs`;
 
     const exitCode = await runNpmManagedUpdate(["--yes"], {
       env: {
@@ -325,6 +327,7 @@ describe("npm-managed update flow", () => {
         });
         return { status: 0 };
       },
+      updateCwd,
     });
 
     expect(exitCode).toBe(0);
@@ -338,7 +341,7 @@ describe("npm-managed update flow", () => {
         '"%ARASHI_CMD_ARGUMENT_0% %ARASHI_CMD_ARGUMENT_1% %ARASHI_CMD_ARGUMENT_2% %ARASHI_CMD_ARGUMENT_3%"',
       ],
       command: String.raw`C:\Windows\System32\cmd.exe`,
-      cwd: undefined,
+      cwd: updateCwd,
       windowsVerbatimArguments: true,
     });
     expect(spawnCalls[0].env).toMatchObject({
@@ -354,6 +357,7 @@ describe("npm-managed update flow", () => {
     const spawnCalls: SpawnCall[] = [];
     const oldRoot = String.raw`C:\Users\corwin\AppData\Local\pnpm\global\5\.pnpm\arashi@1.24.0\node_modules\arashi`;
     const activeRoot = String.raw`C:\Users\corwin\AppData\Local\pnpm\global\5\node_modules\arashi`;
+    const updateCwd = String.raw`C:\Program Files\nodejs`;
 
     const exitCode = await runNpmManagedUpdate(["--yes"], {
       env: {
@@ -383,10 +387,12 @@ describe("npm-managed update flow", () => {
         }
         return { status: 0 };
       },
+      updateCwd,
     });
 
     expect(exitCode).toBe(0);
     expect(spawnCalls).toHaveLength(2);
+    expect(spawnCalls.every((call) => call.cwd === updateCwd)).toBe(true);
     expect(spawnCalls[1].env).toMatchObject({
       ARASHI_CMD_ARGUMENT_0: '"pnpm"',
       ARASHI_CMD_ARGUMENT_1: '"root"',
@@ -421,7 +427,7 @@ describe("npm-managed update flow", () => {
 
     expect(exitCode).toBe(0);
     expect(spawnCalls).toEqual([
-      { args: ["install", "-g", "arashi@latest"], command: "npm", cwd: undefined },
+      { args: ["install", "-g", "arashi@latest"], command: "npm", cwd: dirname(process.execPath) },
     ]);
     expect(installCalls).toHaveLength(1);
     expect(installCalls[0].force).toBe(true);

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { getPlatformInfo, installBinary, MANUAL_INSTALL_URL, PACKAGE_NAME } from "./install-binary.js";
@@ -313,6 +313,7 @@ export async function runNpmManagedUpdate(argv = [], options = {}) {
   const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
+  const updateCwd = options.updateCwd ?? dirname(process.execPath);
   const invocation = prepareSpawnCommand(
     [packageManager.command, ...packageManager.args],
     platform,
@@ -320,6 +321,7 @@ export async function runNpmManagedUpdate(argv = [], options = {}) {
     true,
   );
   const result = spawnSyncImpl(invocation.command, invocation.args, {
+    cwd: updateCwd,
     encoding: "utf8",
     env: invocation.env ?? env,
     stdio: "inherit",
@@ -341,6 +343,7 @@ export async function runNpmManagedUpdate(argv = [], options = {}) {
     if (packageManager.command === "pnpm") {
       const rootInvocation = prepareSpawnCommand([packageManager.command, "root", "-g"], platform, env, true);
       const rootResult = spawnSyncImpl(rootInvocation.command, rootInvocation.args, {
+        cwd: updateCwd,
         encoding: "utf8",
         env: rootInvocation.env ?? env,
         windowsVerbatimArguments: rootInvocation.windowsVerbatimArguments,
