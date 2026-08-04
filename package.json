@@ -30,6 +30,7 @@
     "bin/arashi",
     "bin/arashi.js",
     "bin/install-binary.js",
+    "bin/prepare-spawn-command.js",
     "bin/update.js",
     "bin/arashi.bat",
     "bin/arashi.ps1",
