@@ -41,7 +41,17 @@ It also runs a quick `arashi --version` smoke test before declaring success.
 
 If curl installation fails, or if the smoke test reports a bad release artifact, use npm installation below or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
 
-### Option 2: Install with npm
+### Option 2: Install on Windows with PowerShell
+
+PowerShell is the canonical Windows installer:
+
+```powershell
+powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
+```
+
+It verifies and installs `arashi.bin.exe`, the extensionless `arashi` wrapper for Git Bash, `arashi.ps1`, and `arashi.bat` from the same release. The default directory is `%USERPROFILE%\.arashi\bin`; the installer adds it to the persistent user PATH. It does not create or modify `.bashrc` or another shell profile. Open a new Git Bash window before running `arashi --version` so it inherits the PATH change.
+
+### Option 3: Install with npm
 
 ```bash
 npm install -g arashi
@@ -93,12 +103,16 @@ chmod +x arashi
 sudo mv arashi /usr/local/bin/arashi
 ```
 
-Windows (PowerShell):
+Windows (PowerShell and Git Bash):
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/corwinm/arashi/releases/latest/download/arashi-windows-x64.exe" -OutFile "arashi.exe"
-# Move arashi.exe to a folder on your PATH
+# Download arashi-windows-x64.exe, arashi, arashi.ps1, arashi.bat,
+# and arashi-checksums.txt from the same release.
+# Verify all four payload files against arashi-checksums.txt.
+# Rename arashi-windows-x64.exe to arashi.bin.exe and keep the four files together on PATH.
 ```
+
+Windows manual installation requires `arashi-windows-x64.exe`, `arashi`, `arashi.ps1`, `arashi.bat`, and `arashi-checksums.txt` from the same release. Verify all four payload files, rename the executable to `arashi.bin.exe`, and keep the payload together on PATH.
 
 You can also build from source for local development:
 

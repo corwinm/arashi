@@ -39,6 +39,7 @@ cd "$DIST_DIR" && tar czf "arashi-${VERSION}-linux-x64.tar.gz" arashi-linux-x64 
 echo "Packaging Windows (x64)..."
 mkdir -p "$DIST_DIR/arashi-windows-x64"
 cp bin/arashi-windows-x64.exe "$DIST_DIR/arashi-windows-x64/arashi.bin.exe"
+cp bin/arashi "$DIST_DIR/arashi-windows-x64/arashi"
 cp bin/arashi.bat "$DIST_DIR/arashi-windows-x64/arashi.bat"
 cp bin/arashi.ps1 "$DIST_DIR/arashi-windows-x64/arashi.ps1"
 # Create README for Windows users
@@ -52,21 +53,26 @@ Installation:
 
 Usage Options:
 
-Option 1 - Batch File (CMD):
+Option 1 - Git Bash:
+  Add the directory to PATH, open a new Git Bash window, and run:
+    arashi --version
+  The extensionless arashi wrapper executes the adjacent arashi.bin.exe.
+
+Option 2 - Batch File (CMD):
   Add arashi.bat to PATH
   Usage: arashi list | fzf
 
-Option 2 - PowerShell:
+Option 3 - PowerShell:
   Add directory to PATH
   Usage: arashi.ps1 list | fzf
   Or create an alias in your PowerShell profile:
     Set-Alias arashi C:\path\to\arashi.ps1
 
-Option 3 - Direct Binary:
+Option 4 - Direct Binary:
   Use arashi.bin.exe directly
   Note: May not work with fzf due to stdin handling
 
-For fzf compatibility, use the .bat or .ps1 wrappers.
+For fzf compatibility, use the extensionless, .bat, or .ps1 wrapper for your shell.
 EOF
 cd "$DIST_DIR" && zip -r "arashi-${VERSION}-windows-x64.zip" arashi-windows-x64 && cd ..
 
@@ -90,5 +96,5 @@ echo ""
 echo "Windows:"
 echo "  1. Extract arashi-${VERSION}-windows-x64.zip"
 echo "  2. Copy contents to a directory in PATH"
-echo "  3. Use arashi.bat (CMD) or arashi.ps1 (PowerShell)"
+echo "  3. Open a new shell and use arashi (Git Bash), arashi.bat (CMD), or arashi.ps1 (PowerShell)"
 
