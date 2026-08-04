@@ -670,7 +670,20 @@ export async function runDetachedSwitchProcess(
         stdout: "",
       };
     }
+    const startupExitCode = await Promise.race([
+      proc.exited,
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 300);
+      }),
+    ]);
     proc.unref();
+    if (startupExitCode !== null && startupExitCode !== 0) {
+      return {
+        exitCode: startupExitCode,
+        stderr: `${command[0] ?? "process"} exited with code ${startupExitCode} during startup`,
+        stdout: "",
+      };
+    }
     return { exitCode: 0, stderr: "", stdout: "" };
   } catch (error) {
     return {

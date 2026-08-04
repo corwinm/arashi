@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { launchSwitchTarget } from "../../src/lib/switch-launcher.ts";
+import { launchSwitchTarget, runDetachedSwitchProcess } from "../../src/lib/switch-launcher.ts";
 import { tmpdir } from "os";
 
 const roots: string[] = [];
@@ -87,5 +87,23 @@ describe.skipIf(process.platform === "win32")("WezTerm default-window process li
       `start\n--always-new-process\n--cwd\n${root}\n--\n${shell}\n`,
     );
     expect(() => process.kill(childPid, 0)).not.toThrow();
+  });
+
+  test("reports an immediate nonzero WezTerm startup exit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi wezterm-startup-failure-"));
+    roots.push(root);
+    const fakeWezTerm = join(root, "wezterm");
+    await writeFile(
+      fakeWezTerm,
+      ["#!/bin/sh\n", 'if [ "$1" = "cli" ]; then exit 1; fi\n', "exit 23\n"].join(""),
+    );
+    await chmod(fakeWezTerm, 0o755);
+
+    await expect(
+      runDetachedSwitchProcess([fakeWezTerm, "start", "--always-new-process"], {
+        cwd: root,
+        env: {},
+      }),
+    ).resolves.toMatchObject({ exitCode: 23, stderr: expect.stringContaining("during startup") });
   });
 });
