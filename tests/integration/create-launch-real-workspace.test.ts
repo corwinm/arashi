@@ -37,6 +37,7 @@ async function runCapture(cwd: string, command: string[]): Promise<{ stdout: str
 async function runCli(
   cwd: string,
   args: string[],
+  envOverrides: Record<string, string> = {},
 ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
   const child = spawn([process.execPath, CLI_ENTRY, ...args], {
     cwd,
@@ -53,6 +54,7 @@ async function runCli(
       WEZTERM_EXECUTABLE: "",
       WEZTERM_PANE: "",
       WT_SESSION: "",
+      ...envOverrides,
     },
     stderr: "pipe",
     stdout: "pipe",
@@ -173,34 +175,33 @@ describe("configured create launch in a real workspace", () => {
     20_000,
   );
 
-  test("real CLI --tab fails before configured or standalone mutation and never persists disposition", async () => {
+  test("real CLI Terminal.app --tab fails before configured or standalone mutation", async () => {
     const configured = await createConfiguredRepository("auto");
     const configuredConfigPath = join(configured, ".arashi", "config.json");
     const configBefore = await readFile(configuredConfigPath, "utf8");
-    const configuredResult = await runCli(configured, [
-      "create",
-      "feature/configured-tab",
-      "--tab",
-    ]);
-    expect(configuredResult.exitCode).not.toBe(0);
-    expect(`${configuredResult.stdout}\n${configuredResult.stderr}`).toContain(
-      "does not expose a stable tab target",
+    const configuredResult = await runCli(
+      configured,
+      ["create", "feature/configured-tab", "--tab"],
+      { TERM_PROGRAM: "Apple_Terminal" },
     );
+    const configuredOutput = `${configuredResult.stdout}\n${configuredResult.stderr}`;
+    expect(configuredResult.exitCode).not.toBe(0);
+    expect(configuredOutput).toContain("Command-T");
+    expect(configuredOutput).toContain("arashi switch --cd");
+    expect(configuredOutput).toContain("arashi switch --no-cd --no-default-launch");
     expect(await readFile(configuredConfigPath, "utf8")).toBe(configBefore);
     expect(
       (await runCapture(configured, ["git", "branch", "--list", "feature/configured-tab"])).stdout,
     ).toBe("");
 
     const standalone = await createStandaloneRepository();
-    const standaloneResult = await runCli(standalone, [
-      "create",
-      "feature/standalone-tab",
-      "--tab",
-    ]);
-    expect(standaloneResult.exitCode).not.toBe(0);
-    expect(`${standaloneResult.stdout}\n${standaloneResult.stderr}`).toContain(
-      "does not expose a stable tab target",
+    const standaloneResult = await runCli(
+      standalone,
+      ["create", "feature/standalone-tab", "--tab"],
+      { TERM_PROGRAM: "Apple_Terminal" },
     );
+    expect(standaloneResult.exitCode).not.toBe(0);
+    expect(`${standaloneResult.stdout}\n${standaloneResult.stderr}`).toContain("Command-T");
     await expect(access(join(standalone, ".arashi"))).rejects.toThrow();
     expect(
       (await runCapture(standalone, ["git", "branch", "--list", "feature/standalone-tab"])).stdout,
