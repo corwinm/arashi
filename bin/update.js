@@ -320,7 +320,6 @@ export async function runNpmManagedUpdate(argv = [], options = {}) {
     true,
   );
   const result = spawnSyncImpl(invocation.command, invocation.args, {
-    cwd: rootDir,
     encoding: "utf8",
     env: invocation.env ?? env,
     stdio: "inherit",

@@ -338,7 +338,7 @@ describe("npm-managed update flow", () => {
         '"%ARASHI_CMD_ARGUMENT_0% %ARASHI_CMD_ARGUMENT_1% %ARASHI_CMD_ARGUMENT_2% %ARASHI_CMD_ARGUMENT_3%"',
       ],
       command: String.raw`C:\Windows\System32\cmd.exe`,
-      cwd: rootDir,
+      cwd: undefined,
       windowsVerbatimArguments: true,
     });
     expect(spawnCalls[0].env).toMatchObject({
@@ -421,7 +421,7 @@ describe("npm-managed update flow", () => {
 
     expect(exitCode).toBe(0);
     expect(spawnCalls).toEqual([
-      { args: ["install", "-g", "arashi@latest"], command: "npm", cwd: "/pkg" },
+      { args: ["install", "-g", "arashi@latest"], command: "npm", cwd: undefined },
     ]);
     expect(installCalls).toHaveLength(1);
     expect(installCalls[0].force).toBe(true);
