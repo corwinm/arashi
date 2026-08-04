@@ -6,7 +6,7 @@ describe("prepareSpawnCommand", () => {
   test("runs Windows package-manager shims through cmd.exe without enabling a shell", () => {
     expect(
       prepareSpawnCommand(["pnpm.cmd", "install", "package & echo injected"], "win32", {
-        ComSpec: "C:\\Windows\\System32\\cmd.exe",
+        comspec: "C:\\Windows\\System32\\cmd.exe",
       }),
     ).toEqual({
       args: [
@@ -21,7 +21,7 @@ describe("prepareSpawnCommand", () => {
         ARASHI_CMD_ARGUMENT_0: '"pnpm.cmd"',
         ARASHI_CMD_ARGUMENT_1: '"install"',
         ARASHI_CMD_ARGUMENT_2: '"package & echo injected"',
-        ComSpec: "C:\\Windows\\System32\\cmd.exe",
+        comspec: "C:\\Windows\\System32\\cmd.exe",
       },
       windowsVerbatimArguments: true,
     });

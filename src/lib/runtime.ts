@@ -2,6 +2,9 @@ import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_proce
 import { access, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { Readable } from "node:stream";
+import { prepareSpawnCommand } from "../../bin/prepare-spawn-command.js";
+
+export { prepareSpawnCommand };
 
 type IoMode = "pipe" | "inherit" | "ignore";
 type SpawnOptions = {
@@ -14,50 +17,6 @@ type SpawnOptions = {
   timeout?: number;
   killSignal?: NodeJS.Signals;
 };
-
-const WINDOWS_BATCH_FILE = /\.(?:cmd|bat)$/i;
-
-const CMD_ARGUMENT_VARIABLE_PREFIX = "ARASHI_CMD_ARGUMENT_";
-
-// Quote according to CommandLineToArgvW's rules. The result is stored in an
-// environment variable and introduced with ordinary expansion. Cmd expands each
-// fixed %VARIABLE% token once, but does not rescan user-controlled contents as
-// command syntax. Delayed expansion stays disabled so literal ! characters survive.
-const quoteWindowsArgument = (argument: string): string =>
-  `"${argument.replaceAll(/(\\*)"/g, String.raw`$1$1\"`).replace(/(\\*)$/, "$1$1")}"`;
-
-export function prepareSpawnCommand(
-  command: string[],
-  platform: NodeJS.Platform = process.platform,
-  env: Record<string, string | undefined> = process.env,
-): {
-  command: string;
-  args: string[];
-  windowsVerbatimArguments: boolean;
-  env?: Record<string, string | undefined>;
-} {
-  const executable = command[0]!;
-  if (platform !== "win32" || !WINDOWS_BATCH_FILE.test(executable)) {
-    return { args: command.slice(1), command: executable, windowsVerbatimArguments: false };
-  }
-
-  const values = command.map((argument) => quoteWindowsArgument(argument));
-  const variableNames = values.map((_value, index) => `${CMD_ARGUMENT_VARIABLE_PREFIX}${index}`);
-
-  return {
-    args: ["/d", "/v:off", "/s", "/c", `"${variableNames.map((name) => `%${name}%`).join(" ")}"`],
-    command: env.ComSpec ?? env.COMSPEC ?? "cmd.exe",
-    env: {
-      ...Object.fromEntries(
-        Object.entries(env).filter(
-          ([name]) => !name.toUpperCase().startsWith(CMD_ARGUMENT_VARIABLE_PREFIX),
-        ),
-      ),
-      ...Object.fromEntries(variableNames.map((name, index) => [name, values[index]])),
-    },
-    windowsVerbatimArguments: true,
-  };
-}
 
 export function spawn(command: string[], options: SpawnOptions = {}) {
   if (options.cwd && !existsSync(options.cwd)) {

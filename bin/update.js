@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { getPlatformInfo, installBinary, MANUAL_INSTALL_URL, PACKAGE_NAME } from "./install-binary.js";
+import { prepareSpawnCommand } from "./prepare-spawn-command.js";
 
 export const UPDATE_COMMAND_DESCRIPTION = "Check for and apply Arashi updates";
 
@@ -97,15 +98,84 @@ export async function fetchLatestGitHubRelease({ fetchImpl = fetch, repo = "corw
   };
 }
 
+function normalizeInstallPath(value) {
+  return String(value ?? "")
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+function readEnvironmentValue(env, name) {
+  return Object.entries(env).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1] ?? "";
+}
+
+function readEnvironmentPath(env, name) {
+  return normalizeInstallPath(readEnvironmentValue(env, name));
+}
+
+function detectPackageManagerFromInstallRoot(rootDir, env) {
+  const root = normalizeInstallPath(rootDir);
+  if (!root) return null;
+
+  const userProfile = readEnvironmentPath(env, "USERPROFILE");
+  const home = userProfile || readEnvironmentPath(env, "HOME");
+  const appData =
+    readEnvironmentPath(env, "APPDATA") ||
+    (userProfile ? `${userProfile}/appdata/roaming` : "");
+  const localAppData =
+    readEnvironmentPath(env, "LOCALAPPDATA") ||
+    (userProfile ? `${userProfile}/appdata/local` : "");
+
+  if (home && root === `${home}/.vite-plus/packages/${PACKAGE_NAME}/current/package`) {
+    return "vite-plus";
+  }
+  if (appData && root === `${appData}/npm/node_modules/${PACKAGE_NAME}`) return "npm";
+  if (localAppData && root === `${localAppData}/yarn/data/global/node_modules/${PACKAGE_NAME}`) {
+    return "yarn";
+  }
+  if (userProfile && root === `${userProfile}/.bun/install/global/node_modules/${PACKAGE_NAME}`) {
+    return "bun";
+  }
+
+  const pnpmHomes = new Set(
+    [localAppData ? `${localAppData}/pnpm` : "", readEnvironmentPath(env, "PNPM_HOME")].filter(Boolean),
+  );
+  for (const pnpmHome of pnpmHomes) {
+    const relativeRoot = root.startsWith(`${pnpmHome}/`) ? root.slice(pnpmHome.length + 1) : "";
+    if (
+      /^global\/[^/]+\/(?:\.pnpm\/[^/]+\/node_modules|node_modules)\/arashi$/.test(relativeRoot)
+    ) {
+      return "pnpm";
+    }
+  }
+
+  return null;
+}
+
 export function selectPackageManagerCommand({ env = process.env, rootDir } = {}) {
-  const userAgent = env.npm_config_user_agent ?? "";
-  const execPath = env.npm_execpath ?? "";
+  const installRootManager = detectPackageManagerFromInstallRoot(rootDir, env);
+  if (installRootManager === "vite-plus") {
+    return { args: ["update", "-g", PACKAGE_NAME], command: "vp", label: "Vite+" };
+  }
+  if (installRootManager === "pnpm") {
+    return { args: ["add", "-g", `${PACKAGE_NAME}@latest`], command: "pnpm", label: "pnpm" };
+  }
+  if (installRootManager === "yarn") {
+    return { args: ["global", "add", `${PACKAGE_NAME}@latest`], command: "yarn", label: "yarn" };
+  }
+  if (installRootManager === "bun") {
+    return { args: ["add", "-g", `${PACKAGE_NAME}@latest`], command: "bun", label: "bun" };
+  }
+  if (installRootManager === "npm") {
+    return { args: ["install", "-g", `${PACKAGE_NAME}@latest`], command: "npm", label: "npm" };
+  }
+
+  const userAgent = readEnvironmentValue(env, "npm_config_user_agent");
+  const execPath = readEnvironmentValue(env, "npm_execpath");
   const combined = `${userAgent} ${execPath}`.toLowerCase();
-  const normalizedRootDir = String(rootDir ?? "").toLowerCase();
   const looksLikeVitePlus =
-    combined.includes("vite-plus") ||
-    /(^|[\\/\s])vp(?:\.exe)?($|[\\/\s])/.test(combined) ||
-    /(^|[\\/])\.vite-plus([\\/]|$)/.test(normalizedRootDir);
+    combined.includes("vite-plus") || /(^|[\\/\s])vp(?:\.exe)?($|[\\/\s])/.test(combined);
 
   if (looksLikeVitePlus) {
     return { args: ["update", "-g", PACKAGE_NAME], command: "vp", label: "Vite+" };
@@ -240,10 +310,20 @@ export async function runNpmManagedUpdate(argv = [], options = {}) {
   }
 
   const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
-  const result = spawnSyncImpl(packageManager.command, packageManager.args, {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const invocation = prepareSpawnCommand(
+    [packageManager.command, ...packageManager.args],
+    platform,
+    env,
+    true,
+  );
+  const result = spawnSyncImpl(invocation.command, invocation.args, {
     cwd: rootDir,
     encoding: "utf8",
+    env: invocation.env ?? env,
     stdio: "inherit",
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
 
   if (result.error) {
@@ -256,20 +336,38 @@ export async function runNpmManagedUpdate(argv = [], options = {}) {
     return 1;
   }
 
-  let updatedMetadata = metadata;
   try {
-    updatedMetadata = await readPackageMetadata(rootDir, options);
-  } catch {
-    updatedMetadata = { ...metadata, version: latestVersion };
-  }
+    let activeRootDir = rootDir;
+    if (packageManager.command === "pnpm") {
+      const rootInvocation = prepareSpawnCommand([packageManager.command, "root", "-g"], platform, env, true);
+      const rootResult = spawnSyncImpl(rootInvocation.command, rootInvocation.args, {
+        encoding: "utf8",
+        env: rootInvocation.env ?? env,
+        windowsVerbatimArguments: rootInvocation.windowsVerbatimArguments,
+      });
+      if (rootResult.error) throw rootResult.error;
+      if (rootResult.status !== 0) {
+        throw new Error(`pnpm root -g failed with exit code ${rootResult.status ?? "unknown"}`);
+      }
+      const globalRoot = String(rootResult.stdout ?? "").trim();
+      if (!globalRoot) throw new Error("pnpm root -g returned an empty path");
+      const separator = platform === "win32" ? "\\" : "/";
+      activeRootDir = `${globalRoot.replace(/[\\/]+$/, "")}${separator}${PACKAGE_NAME}`;
+    }
 
-  try {
+    let updatedMetadata = metadata;
+    try {
+      updatedMetadata = await readPackageMetadata(activeRootDir, options);
+    } catch {
+      updatedMetadata = { ...metadata, version: latestVersion };
+    }
+
     const installBinaryImpl = options.installBinaryImpl ?? installBinary;
     const installResult = await installBinaryImpl({
       ...options,
       binDir: options.binDir,
       force: true,
-      rootDir,
+      rootDir: activeRootDir,
       version: updatedMetadata.version,
     });
     log(`✓ Updated ${PACKAGE_NAME} from v${metadata.version} to v${updatedMetadata.version}.`);
