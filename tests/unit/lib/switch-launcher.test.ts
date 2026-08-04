@@ -237,27 +237,11 @@ describe("launch disposition matrix", () => {
           : { exitCode: 1, stderr: "no mux server", stdout: "" };
       }),
     ).resolves.toMatchObject({
-      command: [
-        "wezterm",
-        "start",
-        "--always-new-process",
-        "--cwd",
-        candidate.worktreePath,
-        "--",
-        "/bin/zsh",
-      ],
+      command: ["wezterm", "start", "--always-new-process", "--cwd", candidate.worktreePath],
     });
     expect(commands).toEqual([
       ["wezterm", "cli", "spawn", "--new-window", "--cwd", candidate.worktreePath],
-      [
-        "wezterm",
-        "start",
-        "--always-new-process",
-        "--cwd",
-        candidate.worktreePath,
-        "--",
-        "/bin/zsh",
-      ],
+      ["wezterm", "start", "--always-new-process", "--cwd", candidate.worktreePath],
     ]);
   });
 
@@ -586,6 +570,31 @@ describe("launch disposition matrix", () => {
       );
     },
   );
+
+  test("uses authoritative Ghostty preflight version when the environment hint is absent", async () => {
+    const commands: string[][] = [];
+    const result = await preflightLaunchSwitchTarget(
+      { disposition: "tab" },
+      {
+        env: { GHOSTTY_BIN_DIR: "/Applications/Ghostty.app/Contents/MacOS" },
+        platform: "darwin",
+        runProcess: async (command) => {
+          commands.push(command);
+          return {
+            exitCode: 0,
+            stderr: "",
+            stdout: JSON.stringify({ profile: "Default", target: "window-7", version: "1.3.0" }),
+          };
+        },
+      },
+    );
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.slice(0, 2)).toEqual(["osascript", "-e"]);
+    expect(result).toMatchObject({
+      supported: true,
+      macTarget: { target: "window-7", version: "1.3.0" },
+    });
+  });
 
   test.each([
     ["Apple_Terminal", "terminal"],

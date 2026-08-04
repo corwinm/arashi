@@ -296,7 +296,9 @@ export function resolveLaunchPlan(
         "Herdr requires a non-empty HERDR_WORKSPACE_ID to create a tab in the active workspace.";
     } else if (
       launcher === "ghostty" &&
-      (platform !== "darwin" || !versionAtLeast(env.TERM_PROGRAM_VERSION, "1.3.0"))
+      (platform !== "darwin" ||
+        (nonEmpty(env.TERM_PROGRAM_VERSION) !== null &&
+          !versionAtLeast(env.TERM_PROGRAM_VERSION, "1.3.0")))
     ) {
       supported = false;
       reason = "Ghostty tabs require macOS Ghostty 1.3 or newer.";
@@ -1117,15 +1119,7 @@ function buildTerminalAppCommands(
         ]
       : [
           ["wezterm", "cli", "spawn", "--new-window", "--cwd", worktreePath],
-          [
-            "wezterm",
-            "start",
-            "--always-new-process",
-            "--cwd",
-            worktreePath,
-            "--",
-            nonEmpty(env.SHELL) ?? "/bin/zsh",
-          ],
+          ["wezterm", "start", "--always-new-process", "--cwd", worktreePath],
         ];
   }
 

@@ -74,18 +74,8 @@ describe.skipIf(process.platform === "win32")("WezTerm default-window process li
     childPids.push(childPid);
 
     expect(elapsedMs).toBeLessThan(750);
-    expect(result.command).toEqual([
-      "wezterm",
-      "start",
-      "--always-new-process",
-      "--cwd",
-      root,
-      "--",
-      shell,
-    ]);
-    expect(await readEventually(argvPath)).toBe(
-      `start\n--always-new-process\n--cwd\n${root}\n--\n${shell}\n`,
-    );
+    expect(result.command).toEqual(["wezterm", "start", "--always-new-process", "--cwd", root]);
+    expect(await readEventually(argvPath)).toBe(`start\n--always-new-process\n--cwd\n${root}\n`);
     expect(() => process.kill(childPid, 0)).not.toThrow();
   });
 
