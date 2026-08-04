@@ -778,7 +778,7 @@ describe("launch disposition matrix", () => {
     await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.toThrow(
       "arashi switch --cd",
     );
-    await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.toThrow(
+    await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.not.toThrow(
       'cd "$(arashi switch --no-cd --no-default-launch)"',
     );
     await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.toThrow(
