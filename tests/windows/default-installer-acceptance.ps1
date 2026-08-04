@@ -84,6 +84,33 @@ try {
     $expectedVersionOutput = ($expectedVersionLines -join [Environment]::NewLine).Trim()
     Assert-True (-not [string]::IsNullOrWhiteSpace($expectedVersionOutput)) "Fixture binary produced no expected version output"
 
+    $gitBashCheckPath = Join-Path $FixtureDirectory "verify-git-bash.sh"
+    $gitBashCheck = @'
+set -euo pipefail
+resolved="$(command -v arashi)"
+test -n "$resolved"
+test "$(cygpath -am "$resolved")" = "$(cygpath -am "$ARASHI_EXPECTED_WRAPPER")"
+arashi --version
+'@
+    [System.IO.File]::WriteAllText($gitBashCheckPath, (($gitBashCheck -replace "`r`n", "`n") + "`n"), (New-Object System.Text.ASCIIEncoding($false)))
+
+    $powerShellCheckPath = Join-Path $FixtureDirectory "verify-powershell.ps1"
+    @'
+$resolved = (Get-Command arashi.ps1 -ErrorAction Stop).Source
+if ([IO.Path]::GetFullPath($resolved) -ine [IO.Path]::GetFullPath($env:ARASHI_EXPECTED_POWERSHELL)) { throw "Unexpected arashi.ps1: $resolved" }
+& $resolved --version
+exit $LASTEXITCODE
+'@ | Set-Content -LiteralPath $powerShellCheckPath -Encoding Ascii
+
+    $cmdCheckPath = Join-Path $FixtureDirectory "verify-cmd.cmd"
+    @'
+@echo off
+setlocal EnableDelayedExpansion
+for /f "delims=" %%I in ('where arashi.bat') do if not defined RESOLVED set "RESOLVED=%%~fI"
+if /i not "!RESOLVED!"=="%ARASHI_EXPECTED_CMD%" exit /b 41
+call "!RESOLVED!" --version
+'@ | Set-Content -LiteralPath $cmdCheckPath -Encoding Ascii
+
     $env:USERPROFILE = $temporaryUserProfile
     & $InstallerPath
 
@@ -104,8 +131,7 @@ try {
     Invoke-FreshShell -FilePath $gitBash -Arguments @(
         "--noprofile",
         "--norc",
-        "-lc",
-        'resolved="$(command -v arashi)"; test -n "$resolved"; test "$(cygpath -am "$resolved")" = "$(cygpath -am "$ARASHI_EXPECTED_WRAPPER")"; arashi --version'
+        $gitBashCheckPath
     ) -Label "Git Bash" -ExpectedOutput $expectedVersionOutput -FreshPath $freshPath -FreshUserProfile $temporaryUserProfile -AdditionalEnvironment @{
         ARASHI_EXPECTED_WRAPPER = (Join-Path $installDirectory "arashi")
     }
@@ -115,8 +141,8 @@ try {
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
-        "-Command",
-        '$resolved = (Get-Command arashi.ps1 -ErrorAction Stop).Source; if ([IO.Path]::GetFullPath($resolved) -ine [IO.Path]::GetFullPath($env:ARASHI_EXPECTED_POWERSHELL)) { throw "Unexpected arashi.ps1: $resolved" }; & $resolved --version; exit $LASTEXITCODE'
+        "-File",
+        $powerShellCheckPath
     ) -Label "PowerShell" -ExpectedOutput $expectedVersionOutput -FreshPath $freshPath -FreshUserProfile $temporaryUserProfile -AdditionalEnvironment @{
         ARASHI_EXPECTED_POWERSHELL = (Join-Path $installDirectory "arashi.ps1")
     }
@@ -125,7 +151,7 @@ try {
         "/d",
         "/v:on",
         "/c",
-        'for /f "delims=" %I in (''where arashi.bat'') do @if not defined RESOLVED set "RESOLVED=%~fI" & if /i not "!RESOLVED!"=="%ARASHI_EXPECTED_CMD%" exit /b 41 & call "!RESOLVED!" --version'
+        $cmdCheckPath
     ) -Label "Command Prompt" -ExpectedOutput $expectedVersionOutput -FreshPath $freshPath -FreshUserProfile $temporaryUserProfile -AdditionalEnvironment @{
         ARASHI_EXPECTED_CMD = (Join-Path $installDirectory "arashi.bat")
     }
