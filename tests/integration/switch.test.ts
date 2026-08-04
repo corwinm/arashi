@@ -153,8 +153,22 @@ describe("switch command integration", () => {
     expect(command.options.some((option) => option.long === "--cursor")).toBe(true);
     expect(command.options.some((option) => option.long === "--kiro")).toBe(true);
     expect(command.options.some((option) => option.long === "--no-default-launch")).toBe(true);
+    expect(command.options.some((option) => option.long === "--tab")).toBe(true);
     expect(command.options.some((option) => option.long === "--repos")).toBe(true);
     expect(command.options.some((option) => option.long === "--all")).toBe(true);
+  });
+
+  test("renders the default-window and fail-closed tab disposition contract", () => {
+    let help = "";
+    createCommand()
+      .configureOutput({ writeOut: (value) => (help += value) })
+      .outputHelp();
+    expect(help).toContain(
+      "By default, launch opens a new OS window or managed independent-session equivalent.",
+    );
+    expect(help).toContain(
+      "--tab requests a true tab or equivalent; unsupported mappings fail without opening a window.",
+    );
   });
 
   test("passes forced tmux through ahead of configured cd behavior", async () => {
@@ -168,7 +182,7 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async (_candidate, options) => {
           launchOptions.push(options);
-          return { command: ["tmux"], mode: "tmux" };
+          return { command: ["tmux"], disposition: "window", mode: "tmux" };
         },
         loadWorkspaceRepositories: async () => ({
           config: {
@@ -185,7 +199,7 @@ describe("switch command integration", () => {
     );
 
     expect(result.launchMode).toBe("tmux");
-    expect(launchOptions).toEqual([{ tmux: true }]);
+    expect(launchOptions).toEqual([{ disposition: "window", tmux: true }]);
   });
 
   test("direct JSON tmux rejection precedes conflicts, blank context, and discovery", async () => {
@@ -217,6 +231,76 @@ describe("switch command integration", () => {
       ok: false,
     });
     write.mockRestore();
+  });
+
+  test("direct JSON tab rejection precedes conflicts and discovery", async () => {
+    let discoveryCalled = false;
+    const stdout: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+
+    const result = await executeSwitch(
+      undefined,
+      { cd: true, json: true, tab: true },
+      {
+        discoverSwitchCandidates: async () => {
+          discoveryCalled = true;
+          return { candidates: [candidate], skippedCount: 0 };
+        },
+      },
+    );
+
+    expect(result).toBe(2);
+    expect(discoveryCalled).toBe(false);
+    expect(stdout).toHaveLength(1);
+    expect(JSON.parse(stdout[0]!)).toMatchObject({
+      command: "switch",
+      error: { code: "JSON_UNSUPPORTED_FOR_MODE", details: { mode: "launch" } },
+      ok: false,
+    });
+    write.mockRestore();
+  });
+
+  test("tab overrides contextual cd, composes with no-default-launch, and reaches the launcher", async () => {
+    const launchOptions: unknown[] = [];
+    const result = await executeSwitch(
+      undefined,
+      { defaultLaunch: false, tab: true },
+      {
+        discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+        env: { ARASHI_CD_FILE: "/tmp/directive", TMUX: "/tmp/tmux/default" },
+        findWorkspaceRoot: async () => "/workspace",
+        launchSwitchTarget: async (_candidate, options) => {
+          launchOptions.push(options);
+          return { command: ["tmux"], disposition: "tab", mode: "tmux" };
+        },
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("tmux");
+    expect(launchOptions).toEqual([{ disposition: "tab", sesh: false }]);
+  });
+
+  test("tab conflicts only with explicit cd", () => {
+    expect(() =>
+      resolveSwitchResolution({
+        managedContextActive: false,
+        options: { cd: true, tab: true },
+        shellIntegrationActive: true,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "CONFLICTING_SWITCH_OPTIONS" }));
+    expect(() =>
+      resolveSwitchResolution({
+        managedContextActive: false,
+        options: { cd: false, tab: true, vscode: true },
+        shellIntegrationActive: true,
+      }),
+    ).not.toThrow();
   });
 
   test("rejects conflicting explicit launch overrides", async () => {
@@ -257,7 +341,11 @@ describe("switch command integration", () => {
           return { candidates: [candidate], skippedCount: 0 };
         },
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+        launchSwitchTarget: async () => ({
+          command: ["noop"],
+          disposition: "window",
+          mode: "fallback",
+        }),
         loadWorkspaceRepositories: async () => ({ repositories }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
@@ -276,6 +364,7 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async () => ({
           command: ["cmux", "workspace", "create"],
+          disposition: "window",
           mode: "cmux",
         }),
         loadWorkspaceRepositories: async () => ({
@@ -306,7 +395,11 @@ describe("switch command integration", () => {
           return { candidates: [candidate], skippedCount: 0 };
         },
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+        launchSwitchTarget: async () => ({
+          command: ["noop"],
+          disposition: "window",
+          mode: "fallback",
+        }),
         loadWorkspaceRepositories: async () => ({ repositories }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
@@ -337,7 +430,11 @@ describe("switch command integration", () => {
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+        launchSwitchTarget: async () => ({
+          command: ["noop"],
+          disposition: "window",
+          mode: "fallback",
+        }),
         loadWorkspaceRepositories: async () => ({
           repositories: [{ name: "workspace", path: "/workspace" }],
         }),
@@ -435,7 +532,11 @@ describe("switch command integration", () => {
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => "/workspace/current",
-        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+        launchSwitchTarget: async () => ({
+          command: ["noop"],
+          disposition: "window",
+          mode: "fallback",
+        }),
         loadWorkspaceRepositories: async () => ({
           repositories: [
             { name: "workspace", path: "/workspace/current" },
@@ -472,7 +573,11 @@ describe("switch command integration", () => {
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+        launchSwitchTarget: async () => ({
+          command: ["noop"],
+          disposition: "window",
+          mode: "fallback",
+        }),
         loadWorkspaceRepositories: async () => ({
           repositories: [
             { name: "workspace", path: "/workspace" },
@@ -511,7 +616,11 @@ describe("switch command integration", () => {
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+        launchSwitchTarget: async () => ({
+          command: ["noop"],
+          disposition: "window",
+          mode: "fallback",
+        }),
         loadWorkspaceRepositories: async () => ({
           repositories: [
             { name: "workspace", path: "/workspace" },
@@ -550,7 +659,11 @@ describe("switch command integration", () => {
             skippedCount: 0,
           }),
           findWorkspaceRoot: async () => "/workspace",
-          launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+          launchSwitchTarget: async () => ({
+            command: ["noop"],
+            disposition: "window",
+            mode: "fallback",
+          }),
           loadWorkspaceRepositories: async () => ({
             repositories: [
               { name: "workspace", path: "/workspace" },
@@ -584,7 +697,11 @@ describe("switch command integration", () => {
           return { candidates: [candidate], skippedCount: 0 };
         },
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+        launchSwitchTarget: async () => ({
+          command: ["noop"],
+          disposition: "window",
+          mode: "fallback",
+        }),
         loadWorkspaceRepositories: async () => ({ repositories }),
         stdinIsTTY: false,
         stdoutIsTTY: false,
@@ -630,7 +747,11 @@ describe("switch command integration", () => {
           skippedCount: 0,
         }),
         findWorkspaceRoot: async () => "/workspace",
-        launchSwitchTarget: async () => ({ command: ["noop"], mode: "fallback" }),
+        launchSwitchTarget: async () => ({
+          command: ["noop"],
+          disposition: "window",
+          mode: "fallback",
+        }),
         loadWorkspaceRepositories: async () => ({
           repositories: [
             { name: "workspace", path: "/workspace" },
@@ -709,7 +830,7 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async (_candidate, options) => {
           launchOptions.push(options);
-          return { command: ["tmux"], mode: "sesh" };
+          return { command: ["tmux"], disposition: "window", mode: "sesh" };
         },
         loadWorkspaceRepositories: async () => ({
           config: {
@@ -729,7 +850,7 @@ describe("switch command integration", () => {
       },
     );
 
-    expect(launchOptions).toEqual([{ sesh: true }]);
+    expect(launchOptions).toEqual([{ disposition: "window", sesh: true }]);
   });
 
   test("writes a cd directive when --cd is requested through shell integration", async () => {
@@ -753,7 +874,7 @@ describe("switch command integration", () => {
           findWorkspaceRoot: async () => "/workspace",
           launchSwitchTarget: async () => {
             launchCalled = true;
-            return { command: ["open"], mode: "fallback" };
+            return { command: ["open"], disposition: "window", mode: "fallback" };
           },
           loadWorkspaceRepositories: async () => ({ repositories: [] }),
           stdinIsTTY: false,
@@ -847,7 +968,7 @@ describe("switch command integration", () => {
           findWorkspaceRoot: async () => "/workspace",
           launchSwitchTarget: async () => {
             launched = true;
-            return { command: [mode], mode };
+            return { command: [mode], disposition: "window", mode };
           },
           loadWorkspaceRepositories: async () => ({
             config: {
@@ -927,7 +1048,7 @@ describe("switch command integration", () => {
           findWorkspaceRoot: async () => "/workspace",
           launchSwitchTarget: async () => {
             launched = true;
-            return { command: ["open"], mode: "fallback" };
+            return { command: ["open"], disposition: "window", mode: "fallback" };
           },
           loadWorkspaceRepositories: async () => ({
             config: {
@@ -958,7 +1079,7 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async () => {
           launched = true;
-          return { command: ["open"], mode: "fallback" };
+          return { command: ["open"], disposition: "window", mode: "fallback" };
         },
         loadWorkspaceRepositories: async () => ({
           config: {
@@ -988,7 +1109,7 @@ describe("switch command integration", () => {
           findWorkspaceRoot: async () => "/workspace",
           launchSwitchTarget: async (_candidate, launch) => {
             launchOptions.push(launch);
-            return { command: ["open"], mode: "fallback" };
+            return { command: ["open"], disposition: "window", mode: "fallback" };
           },
           loadWorkspaceRepositories: async () => ({
             config: {
@@ -1004,7 +1125,10 @@ describe("switch command integration", () => {
         },
       );
     }
-    expect(launchOptions).toEqual([{ herdr: true, sesh: false }, { sesh: false }]);
+    expect(launchOptions).toEqual([
+      { disposition: "window", herdr: true, sesh: false },
+      { disposition: "window", sesh: false },
+    ]);
   });
 
   test("auto mode falls back to launch behavior when shell integration is inactive", async () => {
@@ -1021,7 +1145,7 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async () => {
           launchCalled = true;
-          return { command: ["open"], mode: "fallback" };
+          return { command: ["open"], disposition: "window", mode: "fallback" };
         },
         loadWorkspaceRepositories: async () => ({
           config: {
@@ -1061,7 +1185,7 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async () => {
           launchCalled = true;
-          return { command: ["kitten", "@", "focus-window"], mode: "kitty" };
+          return { command: ["kitten", "@", "focus-window"], disposition: "window", mode: "kitty" };
         },
         loadWorkspaceRepositories: async () => ({
           config: {
@@ -1100,7 +1224,7 @@ describe("switch command integration", () => {
           findWorkspaceRoot: async () => "/workspace",
           launchSwitchTarget: async () => {
             launchCalled = true;
-            return { command: ["open"], mode: "fallback" };
+            return { command: ["open"], disposition: "window", mode: "fallback" };
           },
           loadWorkspaceRepositories: async () => ({ repositories: [] }),
           stdinIsTTY: false,
@@ -1134,7 +1258,7 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async (_candidate, options) => {
           launchOptions.push(options);
-          return { command: ["tmux"], mode: "sesh" };
+          return { command: ["tmux"], disposition: "window", mode: "sesh" };
         },
         loadWorkspaceRepositories: async () => ({
           config: {
@@ -1154,7 +1278,7 @@ describe("switch command integration", () => {
       },
     );
 
-    expect(launchOptions).toEqual([{ sesh: true }]);
+    expect(launchOptions).toEqual([{ disposition: "window", sesh: true }]);
   });
 
   test("allows opt-out from configured switch launch mode", async () => {
@@ -1171,7 +1295,7 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async (_candidate, options) => {
           launchOptions.push(options);
-          return { command: ["open"], mode: "fallback" };
+          return { command: ["open"], disposition: "window", mode: "fallback" };
         },
         loadWorkspaceRepositories: async () => ({
           config: {
@@ -1191,7 +1315,7 @@ describe("switch command integration", () => {
       },
     );
 
-    expect(launchOptions).toEqual([{ sesh: false }]);
+    expect(launchOptions).toEqual([{ disposition: "window", sesh: false }]);
   });
 
   test("uses explicit IDE overrides ahead of configured launch defaults", async () => {
@@ -1212,7 +1336,7 @@ describe("switch command integration", () => {
         findWorkspaceRoot: async () => "/workspace",
         launchSwitchTarget: async (_candidate, options) => {
           launchOptions.push(options);
-          return { command: ["cursor"], mode: "cursor" };
+          return { command: ["cursor"], disposition: "window", mode: "cursor" };
         },
         loadWorkspaceRepositories: async () => ({
           config: {
@@ -1234,6 +1358,7 @@ describe("switch command integration", () => {
 
     expect(launchOptions).toEqual([
       {
+        disposition: "window",
         preferredIde: "cursor",
         requirePreferredIde: true,
         sesh: false,
@@ -1634,6 +1759,7 @@ describe("switch command integration", () => {
       "wezterm",
       "cli",
       "spawn",
+      "--new-window",
       "--cwd",
       "/workspace/feature-switch-command",
     ]);
@@ -1644,8 +1770,10 @@ describe("switch command integration", () => {
     const runProcess: SwitchProcessRunner = async (command) => {
       invocations.push(command);
 
-      if (command[0] === "open") {
-        return { exitCode: 0, stderr: "", stdout: "" };
+      if (command[0] === "osascript") {
+        return invocations.length === 1
+          ? { exitCode: 0, stderr: "", stdout: "3.5.0\n17\nDefault" }
+          : { exitCode: 0, stderr: "", stdout: "" };
       }
 
       return { exitCode: 1, stderr: "unexpected command", stdout: "" };
@@ -1670,6 +1798,13 @@ describe("switch command integration", () => {
     );
 
     expect(result.launchMode).toBe("fallback");
-    expect(invocations[0]).toEqual(["open", "-a", "iTerm", "/workspace/feature-switch-command"]);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]?.slice(-5)).toEqual([
+      "/workspace/feature-switch-command",
+      "/bin/zsh",
+      "",
+      "",
+      "",
+    ]);
   });
 });

@@ -20,13 +20,20 @@ export interface ZeroConfigCommandPolicy {
 export interface ExplicitOptionPolicy {
   compatibleOptions: string[];
   conflicts: string[];
-  environment: { name: string; nonEmptyAfterTrim: boolean };
+  dryRun?: { runtimeTargetEvidenceRequired: boolean; supported: true };
+  environment?: { name: string; nonEmptyAfterTrim: boolean };
   implies: string[];
   json: {
     guardPrecedence: "before-option-validation";
     mode: string;
     unsupported: true;
   };
+  launcherSupport?: {
+    noFallback: true;
+    supported: string[];
+    unsupported: string[];
+  };
+  overrides?: string[];
   persisted: false;
 }
 export interface CommandSemanticMetadata {
@@ -39,6 +46,25 @@ export interface CommandSemanticMetadata {
   zeroConfig?: ZeroConfigCommandPolicy;
 }
 export type CommandSemantics = Record<string, CommandSemanticMetadata>;
+
+const EXPLICIT_POLICY_KEYS = [
+  "compatibleOptions",
+  "conflicts",
+  "dryRun",
+  "environment",
+  "implies",
+  "json",
+  "launcherSupport",
+  "overrides",
+  "persisted",
+] as const;
+const REQUIRED_EXPLICIT_POLICY_KEYS = [
+  "compatibleOptions",
+  "conflicts",
+  "implies",
+  "json",
+  "persisted",
+] as const;
 
 const unsupported = (reason: string): JsonPolicy => ({ support: "unsupported", reason });
 const required = (): SurfacePolicy => ({ expectation: "required" });
@@ -85,6 +111,50 @@ export const commandSemantics: CommandSemantics = {
       standalone(),
     ),
     optionPolicies: {
+      "--tab": {
+        compatibleOptions: [
+          "--herdr",
+          "--launch",
+          "--no-launch",
+          "--no-switch",
+          "--sesh",
+          "--switch",
+          "--tmux",
+        ],
+        conflicts: [],
+        dryRun: { runtimeTargetEvidenceRequired: false, supported: true },
+        implies: ["launch", "switch"],
+        json: {
+          guardPrecedence: "before-option-validation",
+          mode: "interactive-or-launch",
+          unsupported: true,
+        },
+        launcherSupport: {
+          noFallback: true,
+          supported: [
+            "cmux",
+            "herdr-with-workspace",
+            "macos-ghostty-1.3+",
+            "macos-iterm2",
+            "macos-terminal",
+            "managed-kitty",
+            "sesh",
+            "tmux",
+            "wezterm-with-pane",
+            "windows-terminal-with-session",
+          ],
+          unsupported: [
+            "available-ide",
+            "generic",
+            "git-bash",
+            "linux-ghostty",
+            "macos-ghostty-before-1.3",
+            "unmanaged-kitty",
+          ],
+        },
+        overrides: ["--no-launch", "--no-switch"],
+        persisted: false,
+      },
       "--tmux": {
         compatibleOptions: ["--no-launch", "--no-switch"],
         conflicts: ["--herdr", "--sesh"],
@@ -200,6 +270,50 @@ export const commandSemantics: CommandSemantics = {
       standalone(),
     ),
     optionPolicies: {
+      "--tab": {
+        compatibleOptions: [
+          "--cursor",
+          "--herdr",
+          "--kiro",
+          "--no-cd",
+          "--no-default-launch",
+          "--sesh",
+          "--tmux",
+          "--vscode",
+        ],
+        conflicts: ["--cd"],
+        implies: ["launch"],
+        json: {
+          guardPrecedence: "before-option-validation",
+          mode: "launch",
+          unsupported: true,
+        },
+        launcherSupport: {
+          noFallback: true,
+          supported: [
+            "cmux",
+            "herdr-with-workspace",
+            "macos-ghostty-1.3+",
+            "macos-iterm2",
+            "macos-terminal",
+            "managed-kitty",
+            "sesh",
+            "tmux",
+            "wezterm-with-pane",
+            "windows-terminal-with-session",
+          ],
+          unsupported: [
+            "available-ide",
+            "generic",
+            "git-bash",
+            "linux-ghostty",
+            "macos-ghostty-before-1.3",
+            "unmanaged-kitty",
+          ],
+        },
+        overrides: ["configured-cd", "contextual-cd"],
+        persisted: false,
+      },
       "--tmux": {
         compatibleOptions: ["--no-cd", "--no-default-launch"],
         conflicts: ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
@@ -224,7 +338,11 @@ export const commandSemantics: CommandSemantics = {
   }),
 };
 
-export function validateCommandSemantics(paths: string[], metadata: CommandSemantics): string[] {
+export function validateCommandSemantics(
+  paths: string[],
+  metadata: CommandSemantics,
+  registeredOptions?: ReadonlyMap<string, ReadonlySet<string>>,
+): string[] {
   const errors: string[] = [];
   const pathSet = new Set(paths);
   for (const path of paths)
@@ -248,12 +366,164 @@ export function validateCommandSemantics(paths: string[], metadata: CommandSeman
           `Command "${path}" ${surface} ${policy.expectation === "excluded" ? "exclusion" : "representation"} requires a reason`,
         );
     }
+    for (const [optionName, policy] of Object.entries(item.optionPolicies ?? {})) {
+      if (registeredOptions && !registeredOptions.get(path)?.has(optionName)) {
+        errors.push(
+          `Command "${path}" option policy references unregistered option "${optionName}"`,
+        );
+      }
+      validateExplicitOptionPolicy(path, optionName, policy, errors);
+    }
+    const tmuxPolicy = item.optionPolicies?.["--tmux"] as unknown;
+    if (
+      tmuxPolicy &&
+      (!isRecord(tmuxPolicy) ||
+        !isRecord(tmuxPolicy.environment) ||
+        tmuxPolicy.environment.name !== "TMUX" ||
+        tmuxPolicy.environment.nonEmptyAfterTrim !== true)
+    ) {
+      errors.push(`Command "${path}" --tmux policy requires a non-empty TMUX environment`);
+    }
   }
   return errors;
 }
 
+function validateExplicitOptionPolicy(
+  path: string,
+  optionName: string,
+  value: unknown,
+  errors: string[],
+): void {
+  const label = `Command "${path}" ${optionName} policy`;
+  if (
+    !validateExactObject(value, EXPLICIT_POLICY_KEYS, REQUIRED_EXPLICIT_POLICY_KEYS, label, errors)
+  )
+    return;
+
+  for (const key of ["compatibleOptions", "conflicts", "implies"] as const) {
+    validateUniqueStringArray(value[key], `${label}.${key}`, errors);
+  }
+  if (value.overrides !== undefined) {
+    validateUniqueStringArray(value.overrides, `${label}.overrides`, errors);
+  }
+  if (value.persisted !== false) errors.push(`${label}.persisted must be false`);
+
+  if (
+    validateExactObject(
+      value.json,
+      ["guardPrecedence", "mode", "unsupported"],
+      ["guardPrecedence", "mode", "unsupported"],
+      `${label}.json`,
+      errors,
+    )
+  ) {
+    if (value.json.guardPrecedence !== "before-option-validation")
+      errors.push(`${label}.json.guardPrecedence must be "before-option-validation"`);
+    if (typeof value.json.mode !== "string" || value.json.mode.trim().length === 0)
+      errors.push(`${label}.json.mode must be a non-empty string`);
+    if (value.json.unsupported !== true) errors.push(`${label}.json.unsupported must be true`);
+  }
+
+  if (
+    value.dryRun !== undefined &&
+    validateExactObject(
+      value.dryRun,
+      ["runtimeTargetEvidenceRequired", "supported"],
+      ["runtimeTargetEvidenceRequired", "supported"],
+      `${label}.dryRun`,
+      errors,
+    )
+  ) {
+    if (typeof value.dryRun.runtimeTargetEvidenceRequired !== "boolean")
+      errors.push(`${label}.dryRun.runtimeTargetEvidenceRequired must be boolean`);
+    if (value.dryRun.supported !== true) errors.push(`${label}.dryRun.supported must be true`);
+  }
+
+  if (
+    value.environment !== undefined &&
+    validateExactObject(
+      value.environment,
+      ["name", "nonEmptyAfterTrim"],
+      ["name", "nonEmptyAfterTrim"],
+      `${label}.environment`,
+      errors,
+    )
+  ) {
+    if (typeof value.environment.name !== "string" || value.environment.name.trim().length === 0)
+      errors.push(`${label}.environment.name must be a non-empty string`);
+    if (value.environment.nonEmptyAfterTrim !== true)
+      errors.push(`${label}.environment.nonEmptyAfterTrim must be true`);
+  }
+
+  if (
+    value.launcherSupport !== undefined &&
+    validateExactObject(
+      value.launcherSupport,
+      ["noFallback", "supported", "unsupported"],
+      ["noFallback", "supported", "unsupported"],
+      `${label}.launcherSupport`,
+      errors,
+    )
+  ) {
+    if (value.launcherSupport.noFallback !== true)
+      errors.push(`${label}.launcherSupport.noFallback must be true`);
+    const supported = validateUniqueStringArray(
+      value.launcherSupport.supported,
+      `${label}.launcherSupport.supported`,
+      errors,
+    );
+    const unsupported = validateUniqueStringArray(
+      value.launcherSupport.unsupported,
+      `${label}.launcherSupport.unsupported`,
+      errors,
+    );
+    if (supported && unsupported) {
+      const overlap = supported.filter((launcher) => unsupported.includes(launcher));
+      if (overlap.length > 0)
+        errors.push(
+          `${label}.launcherSupport supported and unsupported must not overlap: ${overlap.join(", ")}`,
+        );
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateExactObject(
+  value: unknown,
+  allowedKeys: readonly string[],
+  requiredKeys: readonly string[],
+  label: string,
+  errors: string[],
+): value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    errors.push(`${label} must be an object`);
+    return false;
+  }
+  const extras = Object.keys(value).filter((key) => !allowedKeys.includes(key));
+  if (extras.length > 0) errors.push(`${label} has unsupported fields: ${extras.join(", ")}`);
+  const missing = requiredKeys.filter((key) => !Object.hasOwn(value, key));
+  if (missing.length > 0) errors.push(`${label} is missing required fields: ${missing.join(", ")}`);
+  return extras.length === 0 && missing.length === 0;
+}
+
+function validateUniqueStringArray(
+  value: unknown,
+  label: string,
+  errors: string[],
+): string[] | null {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    errors.push(`${label} must be an array of strings`);
+    return null;
+  }
+  if (new Set(value).size !== value.length) errors.push(`${label} entries must be unique`);
+  return value;
+}
+
 export interface CliCommandContract {
-  schemaVersion: 3;
+  schemaVersion: 4;
   commands: ContractCommand[];
 }
 interface ContractCommand {
@@ -277,7 +547,19 @@ export function generateCommandContract(
   metadata: CommandSemantics,
 ): CliCommandContract {
   const paths = discoverCommandPaths(program);
-  const errors = validateCommandSemantics(paths, metadata);
+  const registeredOptions = new Map<string, ReadonlySet<string>>();
+  const collectOptions = (parent: Command, prefix: string): void => {
+    for (const command of parent.commands) {
+      const path = prefix ? `${prefix} ${command.name()}` : command.name();
+      registeredOptions.set(
+        path,
+        new Set(command.options.flatMap((option) => (option.long ? [option.long] : []))),
+      );
+      collectOptions(command, path);
+    }
+  };
+  collectOptions(program, "");
+  const errors = validateCommandSemantics(paths, metadata, registeredOptions);
   if (errors.length) throw new Error(`Invalid CLI command semantics:\n${errors.join("\n")}`);
   const commands: ContractCommand[] = [];
   const visit = (parent: Command, prefix: string): void => {
@@ -310,7 +592,7 @@ export function generateCommandContract(
   };
   visit(program, "");
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     commands: commands.toSorted((a, b) => a.path.localeCompare(b.path)),
   };
 }

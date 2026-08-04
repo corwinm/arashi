@@ -202,6 +202,7 @@ describe("real workspace switch mode resolution", () => {
             PATH: fakeBin,
             TERM_PROGRAM: "ghostty",
           },
+          platform: "linux",
           stdinIsTTY: false,
           stdoutIsTTY: false,
         },
@@ -210,7 +211,7 @@ describe("real workspace switch mode resolution", () => {
       expect(result.launchMode).toBe("fallback");
       expect(result.selected.worktreePath).toBe(fixture.worktreePath);
       expect(await readFile(argvPath, "utf8")).toBe(
-        `--working-directory\n${fixture.worktreePath}\n`,
+        `+new-window\n--working-directory\n${fixture.worktreePath}\n-e\n/bin/zsh\n`,
       );
       await expect(access(fixture.configPath)).rejects.toThrow();
       expect(await snapshotWorkspace(fixture)).toEqual(before);

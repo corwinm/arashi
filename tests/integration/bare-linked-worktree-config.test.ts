@@ -450,7 +450,7 @@ describe("configured bare workspace discovery from linked worktrees", () => {
         {
           launchSwitchTarget: async (target) => {
             launchedPath = target.worktreePath;
-            return { command: ["noop"], mode: "fallback" };
+            return { command: ["noop"], disposition: "window", mode: "fallback" };
           },
         },
       );

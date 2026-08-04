@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "commands": [
     {
       "path": "add",
@@ -225,6 +225,13 @@
           "variadic": false
         },
         {
+          "flags": "--tab",
+          "description": "Launch the created worktree in a tab (implies --launch and --switch)",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
           "flags": "--tmux",
           "description": "Launch using plain tmux mode (implies --launch and --switch)",
           "required": false,
@@ -257,6 +264,53 @@
           "expectation": "required"
         },
         "optionPolicies": {
+          "--tab": {
+            "compatibleOptions": [
+              "--herdr",
+              "--launch",
+              "--no-launch",
+              "--no-switch",
+              "--sesh",
+              "--switch",
+              "--tmux"
+            ],
+            "conflicts": [],
+            "dryRun": {
+              "runtimeTargetEvidenceRequired": false,
+              "supported": true
+            },
+            "implies": ["launch", "switch"],
+            "json": {
+              "guardPrecedence": "before-option-validation",
+              "mode": "interactive-or-launch",
+              "unsupported": true
+            },
+            "launcherSupport": {
+              "noFallback": true,
+              "supported": [
+                "cmux",
+                "herdr-with-workspace",
+                "macos-ghostty-1.3+",
+                "macos-iterm2",
+                "macos-terminal",
+                "managed-kitty",
+                "sesh",
+                "tmux",
+                "wezterm-with-pane",
+                "windows-terminal-with-session"
+              ],
+              "unsupported": [
+                "available-ide",
+                "generic",
+                "git-bash",
+                "linux-ghostty",
+                "macos-ghostty-before-1.3",
+                "unmanaged-kitty"
+              ]
+            },
+            "overrides": ["--no-launch", "--no-switch"],
+            "persisted": false
+          },
           "--tmux": {
             "compatibleOptions": ["--no-launch", "--no-switch"],
             "conflicts": ["--herdr", "--sesh"],
@@ -1261,6 +1315,13 @@
           "variadic": false
         },
         {
+          "flags": "--tab",
+          "description": "Open the selected worktree in a tab instead of a new window",
+          "required": false,
+          "optional": false,
+          "variadic": false
+        },
+        {
           "flags": "--tmux",
           "description": "Force launch in a new plain tmux window",
           "required": false,
@@ -1293,6 +1354,50 @@
           "expectation": "required"
         },
         "optionPolicies": {
+          "--tab": {
+            "compatibleOptions": [
+              "--cursor",
+              "--herdr",
+              "--kiro",
+              "--no-cd",
+              "--no-default-launch",
+              "--sesh",
+              "--tmux",
+              "--vscode"
+            ],
+            "conflicts": ["--cd"],
+            "implies": ["launch"],
+            "json": {
+              "guardPrecedence": "before-option-validation",
+              "mode": "launch",
+              "unsupported": true
+            },
+            "launcherSupport": {
+              "noFallback": true,
+              "supported": [
+                "cmux",
+                "herdr-with-workspace",
+                "macos-ghostty-1.3+",
+                "macos-iterm2",
+                "macos-terminal",
+                "managed-kitty",
+                "sesh",
+                "tmux",
+                "wezterm-with-pane",
+                "windows-terminal-with-session"
+              ],
+              "unsupported": [
+                "available-ide",
+                "generic",
+                "git-bash",
+                "linux-ghostty",
+                "macos-ghostty-before-1.3",
+                "unmanaged-kitty"
+              ]
+            },
+            "overrides": ["configured-cd", "contextual-cd"],
+            "persisted": false
+          },
           "--tmux": {
             "compatibleOptions": ["--no-cd", "--no-default-launch"],
             "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],

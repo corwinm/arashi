@@ -15,6 +15,22 @@ describe("resolveCreateDefaults", () => {
     expect(
       createCommand().options.find((option) => option.long === "--tmux")?.description,
     ).toContain("implies --launch and --switch");
+    expect(
+      createCommand().options.find((option) => option.long === "--tab")?.description,
+    ).toContain("tab");
+  });
+
+  test("renders the default-window and fail-closed tab disposition contract", () => {
+    let help = "";
+    createCommand()
+      .configureOutput({ writeOut: (value) => (help += value) })
+      .outputHelp();
+    expect(help).toContain(
+      "By default, launch opens a new OS window or managed independent-session equivalent.",
+    );
+    expect(help).toContain(
+      "--tab requests a true tab or equivalent; unsupported mappings fail without opening a window.",
+    );
   });
 
   test.each([
@@ -30,6 +46,7 @@ describe("resolveCreateDefaults", () => {
       expect(
         resolveCreateDefaults({}, configWithDefaults(create ? { create } : undefined)),
       ).toEqual({
+        disposition: "window",
         launchMode,
         shouldLaunch,
         shouldSwitch,
@@ -40,7 +57,12 @@ describe("resolveCreateDefaults", () => {
   test("keeps switch independent when launch is none", () => {
     expect(
       resolveCreateDefaults({}, configWithDefaults({ create: { launch: "none", switch: true } })),
-    ).toEqual({ launchMode: "auto", shouldLaunch: false, shouldSwitch: true });
+    ).toEqual({
+      disposition: "window",
+      launchMode: "auto",
+      shouldLaunch: false,
+      shouldSwitch: true,
+    });
   });
 
   test("launch implies switch despite explicit switch opt-out", () => {
@@ -49,7 +71,12 @@ describe("resolveCreateDefaults", () => {
         { switch: false },
         configWithDefaults({ create: { launch: "herdr", switch: false } }),
       ),
-    ).toEqual({ launchMode: "herdr", shouldLaunch: true, shouldSwitch: true });
+    ).toEqual({
+      disposition: "window",
+      launchMode: "herdr",
+      shouldLaunch: true,
+      shouldSwitch: true,
+    });
   });
 
   test.each([
@@ -74,7 +101,12 @@ describe("resolveCreateDefaults", () => {
         { editorHost: "cursor" },
         configWithDefaults({ create: { launch: "sesh", switch: true } }),
       ),
-    ).toEqual({ launchMode: "auto", shouldLaunch: false, shouldSwitch: false });
+    ).toEqual({
+      disposition: "window",
+      launchMode: "auto",
+      shouldLaunch: false,
+      shouldSwitch: false,
+    });
   });
 
   test.each([
@@ -110,6 +142,7 @@ describe("resolveCreateDefaults", () => {
     { switch: false, tmux: true },
   ])("explicit tmux implies launch and switch despite opt-out %#", (options) => {
     expect(resolveCreateDefaults(options, configWithDefaults())).toEqual({
+      disposition: "window",
       launchMode: "tmux",
       shouldLaunch: true,
       shouldSwitch: true,

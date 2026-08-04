@@ -44,7 +44,15 @@ import {
   filterRepositories as filterWorkspaceRepositories,
   findEmptyRepositoryFilters,
 } from "../lib/repo-filter.ts";
-import { isTmuxSession, launchSwitchTarget } from "../lib/switch-launcher.ts";
+import {
+  isTmuxSession,
+  launchSwitchTarget,
+  preflightLaunchSwitchTarget,
+  type LaunchDisposition,
+  type LaunchPreflight,
+  type LaunchSwitchDependencies,
+  type LaunchSwitchOptions,
+} from "../lib/switch-launcher.ts";
 import {
   reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
@@ -87,6 +95,7 @@ interface ApplyPostCreateDefaultsOptions {
   context: CreateInvocationContext;
   defaults: ResolvedCreateDefaults;
   deps: CreateCommandDependencies;
+  preflight: LaunchPreflight | null;
   summary: OperationSummary;
 }
 
@@ -222,7 +231,7 @@ const createSummaryJsonData = ({
   totalRepositories: summary.totalRepositories,
 });
 
-interface CreateCommandOptions {
+export interface CreateCommandOptions {
   /** Only create worktrees in specified repositories (comma-separated) */
   only?: string;
 
@@ -249,6 +258,9 @@ interface CreateCommandOptions {
   /** Launch terminal/editor context for newly created parent worktree */
   json?: boolean;
   launch?: boolean;
+
+  /** Request a tab disposition and imply launch plus switch */
+  tab?: boolean;
 
   /** Force sesh launch mode when launching */
   sesh?: boolean;
@@ -284,6 +296,7 @@ const resolveConfiguredCreateDefaults = (
 };
 
 export interface ResolvedCreateDefaults {
+  disposition: LaunchDisposition;
   shouldSwitch: boolean;
   shouldLaunch: boolean;
   launchMode: LaunchMode;
@@ -306,12 +319,8 @@ export interface CreateCommandDependencies {
   pathExists?: (path: string) => boolean;
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
-    options: { herdr?: boolean; sesh?: boolean; tmux?: boolean },
-    deps: {
-      env: Record<string, string | undefined>;
-      platform: NodeJS.Platform;
-      runProcess?: SwitchProcessRunner;
-    },
+    options: LaunchSwitchOptions,
+    deps: LaunchSwitchDependencies,
   ) => Promise<LaunchSwitchResult>;
   env?: Record<string, string | undefined>;
   platform?: NodeJS.Platform;
@@ -554,9 +563,10 @@ export function resolveCreateDefaults(
   if (options.tmux === true) launchMode = TMUX_LAUNCH_MODE;
   else if (resolvedLaunch === "sesh" || resolvedLaunch === "herdr") launchMode = resolvedLaunch;
   return {
+    disposition: options.tab === true ? "tab" : "window",
     launchMode,
-    shouldLaunch,
-    shouldSwitch: shouldLaunch || resolvedSwitch,
+    shouldLaunch: options.tab === true || shouldLaunch,
+    shouldSwitch: options.tab === true || shouldLaunch || resolvedSwitch,
   };
 }
 
@@ -582,7 +592,8 @@ const isUnsupportedCreateJsonMode = (options: CreateCommandOptions): boolean =>
     options.tmux === true ||
     options.sesh === true ||
     options.herdr === true ||
-    options.switch === true);
+    options.switch === true ||
+    options.tab === true);
 
 const isExplicitTmuxJsonMode = (options: CreateCommandOptions): boolean =>
   options.json === true && options.tmux === true;
@@ -602,6 +613,26 @@ const selectPrimaryCreateResult = (
   const executionRepoName = basename(resolve(context.executionPath));
   const primary = successfulResults.find((result) => result.repository.name === executionRepoName);
   return primary ?? successfulResults[0] ?? null;
+};
+
+const createLaunchOptions = (defaults: ResolvedCreateDefaults): LaunchSwitchOptions => ({
+  disposition: defaults.disposition,
+  ...(defaults.launchMode === HERDR_LAUNCH_MODE ? { herdr: true } : {}),
+  sesh: defaults.launchMode === SESH_LAUNCH_MODE,
+  ...(defaults.launchMode === TMUX_LAUNCH_MODE ? { tmux: true } : {}),
+});
+
+const preflightCreateLaunch = (
+  defaults: ResolvedCreateDefaults,
+  options: CreateCommandOptions,
+  deps: CreateCommandDependencies,
+): Promise<LaunchPreflight | null> => {
+  if (!defaults.shouldLaunch || options.dryRun === true) return Promise.resolve(null);
+  return preflightLaunchSwitchTarget(createLaunchOptions(defaults), {
+    env: deps.env ?? process.env,
+    platform: deps.platform ?? process.platform,
+    runProcess: deps.runProcess,
+  });
 };
 
 interface DirtyGuidanceContext {
@@ -633,6 +664,7 @@ const applyPostCreateDefaults = async ({
   context,
   defaults,
   deps,
+  preflight,
   summary,
 }: ApplyPostCreateDefaultsOptions): Promise<void> => {
   if (!defaults.shouldSwitch) {
@@ -661,14 +693,11 @@ const applyPostCreateDefaults = async ({
       repoName: primaryResult.repository.name,
       worktreePath: primaryResult.worktreePath,
     },
-    {
-      ...(defaults.launchMode === HERDR_LAUNCH_MODE ? { herdr: true } : {}),
-      sesh: defaults.launchMode === SESH_LAUNCH_MODE,
-      ...(defaults.launchMode === TMUX_LAUNCH_MODE ? { tmux: true } : {}),
-    },
+    createLaunchOptions(defaults),
     {
       env: deps.env ?? process.env,
       platform: deps.platform ?? process.platform,
+      preflight,
       resolveGitMainWorktree: deps.resolveGitMainWorktree,
       runProcess: deps.runProcess,
     },
@@ -684,6 +713,7 @@ const applyStandaloneCreateOverrides = async (options: {
   commandOptions: CreateCommandOptions;
   context: Extract<Awaited<ReturnType<typeof resolveWorkspaceContext>>, { mode: "standalone" }>;
   deps: CreateCommandDependencies;
+  preflight: LaunchPreflight | null;
   worktreePath: string;
 }): Promise<void> => {
   if (options.commandOptions.dryRun) {
@@ -707,14 +737,11 @@ const applyStandaloneCreateOverrides = async (options: {
       repoName: options.context.repository.name,
       worktreePath: options.worktreePath,
     },
-    {
-      ...(defaults.launchMode === HERDR_LAUNCH_MODE ? { herdr: true } : {}),
-      sesh: defaults.launchMode === SESH_LAUNCH_MODE,
-      ...(defaults.launchMode === TMUX_LAUNCH_MODE ? { tmux: true } : {}),
-    },
+    createLaunchOptions(defaults),
     {
       env: options.deps.env ?? process.env,
       platform: options.deps.platform ?? process.platform,
+      preflight: options.preflight,
       resolveGitMainWorktree: options.deps.resolveGitMainWorktree,
       runProcess: options.deps.runProcess,
     },
@@ -742,6 +769,7 @@ export function createCommand(): Command {
     .option("--no-switch", "Disable configured create switch defaults for this invocation")
     .option("--launch", "Launch terminal/editor context after create")
     .option("--no-launch", "Disable configured create launch defaults for this invocation")
+    .option("--tab", "Launch the created worktree in a tab (implies --launch and --switch)")
     .option("--sesh", "Launch using sesh mode (implies --launch)")
     .option("--herdr", "Launch using Herdr mode (implies --launch)")
     .option("--tmux", "Launch using plain tmux mode (implies --launch and --switch)")
@@ -772,11 +800,17 @@ Examples:
 Configured create launch values: none | auto | sesh | herdr
 Precedence: --tmux/--sesh/--herdr, --launch, --no-launch, matching configured scope, then none.
 Any enabled launch implies post-create switch handling.
+By default, launch opens a new OS window or managed independent-session equivalent.
+--tab requests a true tab or equivalent; unsupported mappings fail without opening a window.
 `,
     )
     .action(async (branchName: string, parsedOptions: CreateCommandOptions, command: Command) => {
       const rawArgs = command.parent?.args ?? process.argv.slice(2);
       const options = applyCreateLaunchFlagPrecedence(parsedOptions, rawArgs);
+      if (options.json && options.tab) {
+        writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
+        process.exit(ERROR_EXIT_CODE);
+      }
       if (isExplicitTmuxJsonMode(options)) {
         writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
         process.exit(ERROR_EXIT_CODE);
@@ -853,6 +887,10 @@ export async function executeCreate(
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
 ): Promise<number> {
+  if (options.json && options.tab) {
+    writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
+    return ERROR_EXIT_CODE;
+  }
   if (isExplicitTmuxJsonMode(options)) {
     writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
     return ERROR_EXIT_CODE;
@@ -879,6 +917,10 @@ export async function executeCreate(
     if (options.json && standaloneDefaults.shouldLaunch) {
       writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
       return ERROR_EXIT_CODE;
+    }
+    const launchPreflight = await preflightCreateLaunch(standaloneDefaults, options, deps);
+    if (options.dryRun && options.tab && !options.json) {
+      info("Post-create launch preview: tab");
     }
     if (options.only || options.group || options.interactive) {
       throw new CreateSetupError(
@@ -913,6 +955,7 @@ export async function executeCreate(
       commandOptions: options,
       context: workspaceContext,
       deps,
+      preflight: launchPreflight,
       worktreePath: standaloneResult.worktreePath,
     });
     return ZERO;
@@ -961,6 +1004,10 @@ export async function executeCreate(
   if (options.json && createDefaults.shouldLaunch) {
     writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
     return ERROR_EXIT_CODE;
+  }
+  const launchPreflight = await preflightCreateLaunch(createDefaults, options, deps);
+  if (options.dryRun && options.tab && !options.json) {
+    info("Post-create launch preview: tab");
   }
   const reposDirAbsolute = resolve(currentDir, arashiConfig.reposDir);
   const discoveryResult = await discoverWorkspaceRepositories(reposDirAbsolute);
@@ -1226,7 +1273,7 @@ export async function executeCreate(
   if (options.dryRun) {
     if (!summary.dryRunOutcome) {
       error("Dry-run did not produce a plan");
-      process.exit(ERROR_EXIT_CODE);
+      return ERROR_EXIT_CODE;
     }
 
     const { plannedWorktrees, conflicts, overallStatus, summaryCounts } = summary.dryRunOutcome;
@@ -1255,12 +1302,12 @@ export async function executeCreate(
     if (overallStatus === "actionable") {
       success(`Plan status: ${statusLabel} (${summaryLabel})`);
       info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
-      process.exit(ZERO);
+      return ZERO;
     }
 
     error(`Plan status: ${statusLabel} (${summaryLabel})`);
     info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
-    process.exit(ERROR_EXIT_CODE);
+    return ERROR_EXIT_CODE;
   }
 
   if (summary.rolledBack) {
@@ -1338,7 +1385,13 @@ export async function executeCreate(
     }
   }
 
-  await applyPostCreateDefaults({ context, defaults: createDefaults, deps, summary });
+  await applyPostCreateDefaults({
+    context,
+    defaults: createDefaults,
+    deps,
+    preflight: launchPreflight,
+    summary,
+  });
 
   console.log("");
   info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
