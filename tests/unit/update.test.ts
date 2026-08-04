@@ -260,6 +260,22 @@ describe("npm-managed update flow", () => {
     expect(logs.join("\n")).toContain("bun add -g arashi@latest");
   });
 
+  test("uses the computed install root to select a Windows package manager", async () => {
+    const logs: string[] = [];
+
+    const exitCode = await runNpmManagedUpdate(["--dry-run"], {
+      binDir: "C:/Users/corwin/AppData/Roaming/npm/node_modules/arashi/bin",
+      env: { APPDATA: "C:/Users/corwin/AppData/Roaming" },
+      latestVersion: "2.0.0",
+      log: (message: string) => logs.push(message),
+      metadata: { name: "arashi", version: "1.0.0" },
+      platform: "win32",
+    });
+
+    expect(exitCode).toBe(0);
+    expect(logs).toContain("Selected update command: npm install -g arashi@latest");
+  });
+
   test("non-interactive mutation requires --yes", async () => {
     const errors: string[] = [];
     let spawned = false;

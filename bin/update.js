@@ -282,7 +282,8 @@ export async function runNpmManagedUpdate(argv = [], options = {}) {
     return 0;
   }
 
-  const packageManager = options.packageManager ?? selectPackageManagerCommand(options);
+  const packageManager =
+    options.packageManager ?? selectPackageManagerCommand({ ...options, rootDir });
   log(`Update available: ${PACKAGE_NAME} v${metadata.version} -> v${latestVersion}`);
 
   if (flags.check) {
