@@ -394,6 +394,7 @@ describe("npm-managed update flow", () => {
       latestVersion: "2.0.0",
       log: () => {},
       metadata: { name: "arashi", version: "1.0.0" },
+      platform: "linux",
       readFileImpl: () => Promise.resolve(JSON.stringify({ name: "arashi", version: "2.0.0" })),
       rootDir: "/pkg",
       spawnSyncImpl: (command: string, args: string[], options: SpawnOptions) => {
