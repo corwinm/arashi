@@ -161,6 +161,61 @@ describe("launch disposition matrix", () => {
     );
   });
 
+  test.each(["window", "tab"] as const)(
+    "routes Windows Terminal %s launches through the detached GUI runner",
+    async (disposition) => {
+      const path = String.raw`C:\\work trees\\x & 'y`;
+      const target = { ...candidate, worktreePath: path };
+      const env = { WT_PROFILE_ID: " {profile} ", WT_SESSION: "session" };
+      const regularCommands: string[][] = [];
+      const detachedCommands: string[][] = [];
+
+      await expect(
+        launchSwitchTarget(
+          target,
+          { disposition },
+          {
+            env,
+            platform: "win32",
+            runDetachedProcess: async (command) => {
+              detachedCommands.push(command);
+              return { exitCode: 0, stderr: "", stdout: "" };
+            },
+            runProcess: async (command) => {
+              regularCommands.push(command);
+              return { exitCode: 9, stderr: "piped runner must not handle wt.exe", stdout: "" };
+            },
+          },
+        ),
+      ).resolves.toMatchObject({
+        command: [
+          "wt.exe",
+          "-w",
+          disposition === "tab" ? "0" : "new",
+          "new-tab",
+          "-p",
+          "{profile}",
+          "-d",
+          path,
+        ],
+        disposition,
+      });
+      expect(regularCommands).toEqual([]);
+      expect(detachedCommands).toEqual([
+        [
+          "wt.exe",
+          "-w",
+          disposition === "tab" ? "0" : "new",
+          "new-tab",
+          "-p",
+          "{profile}",
+          "-d",
+          path,
+        ],
+      ]);
+    },
+  );
+
   test("maps Windows Terminal exactly and never falls back after tab failure", async () => {
     const path = String.raw`C:\\work trees\\x & 'y`;
     const target = { ...candidate, worktreePath: path };
