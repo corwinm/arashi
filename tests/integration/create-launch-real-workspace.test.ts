@@ -150,20 +150,18 @@ describe("configured create launch in a real workspace", () => {
       const canonicalExpectedWorktree = await realpath(expectedWorktree);
 
       expect(exitCode).toBe(0);
-      expect(calls).toEqual([
-        {
-          command: [
-            "wezterm",
-            "cli",
-            "spawn",
-            "--pane-id",
-            "pane-17",
-            "--cwd",
-            canonicalExpectedWorktree,
-          ],
-          cwd: canonicalExpectedWorktree,
-        },
+      expect(calls).toHaveLength(1);
+      const [call] = calls;
+      expect(call?.command.slice(0, -1)).toEqual([
+        "wezterm",
+        "cli",
+        "spawn",
+        "--pane-id",
+        "pane-17",
+        "--cwd",
       ]);
+      expect(call?.command.at(-1)).toBe(call?.cwd);
+      expect(await realpath(call!.cwd)).toBe(canonicalExpectedWorktree);
       await expect(access(expectedWorktree)).resolves.toBeUndefined();
       if (configured) {
         expect(await readFile(configPath, "utf8")).toBe(configBefore);
