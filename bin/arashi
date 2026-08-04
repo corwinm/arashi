@@ -14,23 +14,36 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 BINARY="$SCRIPT_DIR/arashi.bin"
 
-# Use platform-specific binary if main binary doesn't exist
+# Use the Windows binary only with explicit Git-for-Windows/MSYS/Cygwin evidence.
+# arashi.bin always retains precedence when both binaries are present.
 if [ ! -f "$BINARY" ]; then
   PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
   ARCH=$(uname -m)
-  
-  case "$PLATFORM-$ARCH" in
-    darwin-arm64)
-      BINARY="$SCRIPT_DIR/arashi-macos-arm64"
-      ;;
-    linux-x86_64)
-      BINARY="$SCRIPT_DIR/arashi-linux-x64"
-      ;;
-    *)
-      echo "Error: Unsupported platform $PLATFORM-$ARCH" >&2
-      exit 1
-      ;;
+  WINDOWS_SHELL="false"
+
+  case "${MSYSTEM:-}" in
+    MINGW*|MSYS*) WINDOWS_SHELL="true" ;;
   esac
+  case "$PLATFORM" in
+    mingw*|msys*|cygwin*) WINDOWS_SHELL="true" ;;
+  esac
+
+  if [ "$WINDOWS_SHELL" = "true" ]; then
+    BINARY="$SCRIPT_DIR/arashi.bin.exe"
+  else
+    case "$PLATFORM-$ARCH" in
+      darwin-arm64)
+        BINARY="$SCRIPT_DIR/arashi-macos-arm64"
+        ;;
+      linux-x86_64)
+        BINARY="$SCRIPT_DIR/arashi-linux-x64"
+        ;;
+      *)
+        echo "Error: Unsupported platform $PLATFORM-$ARCH" >&2
+        exit 1
+        ;;
+    esac
+  fi
 fi
 
 if [ ! -f "$BINARY" ]; then
@@ -49,7 +62,11 @@ for arg in "$@"; do
       esac
       continue
       ;;
-    *) command="$arg"; break ;;
+    *)
+      if [ -z "$command" ]; then
+        command="$arg"
+      fi
+      ;;
   esac
 done
 

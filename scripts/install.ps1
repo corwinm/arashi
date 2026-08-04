@@ -23,6 +23,7 @@ $ErrorActionPreference = "Stop"
 $Repository = "corwinm/arashi"
 $ProjectName = "arashi"
 $WindowsBinaryAsset = "arashi-windows-x64.exe"
+$BashWrapperAsset = "arashi"
 $PowerShellWrapperAsset = "arashi.ps1"
 $CmdWrapperAsset = "arashi.bat"
 $ChecksumManifestAsset = "arashi-checksums.txt"
@@ -41,8 +42,8 @@ function Write-WarningMessage {
 
 function Fail-Install {
     param([Parameter(Mandatory = $true)][string]$Message)
-    Write-Error $Message
-    Write-Error "Manual fallback: download $WindowsBinaryAsset, $PowerShellWrapperAsset, and $CmdWrapperAsset from $ReleaseFallbackUrl into one directory on PATH."
+    [Console]::Error.WriteLine($Message)
+    [Console]::Error.WriteLine("Manual fallback: download $WindowsBinaryAsset, $PowerShellWrapperAsset, and $CmdWrapperAsset, plus $BashWrapperAsset, from $ReleaseFallbackUrl into one directory on PATH; rename the executable to $InstalledBinaryName.")
     exit 1
 }
 
@@ -187,9 +188,89 @@ function Install-ArashiStagedAsset {
         [Parameter(Mandatory = $true)][string]$DestinationPath
     )
 
-    $temporaryPath = "$DestinationPath.tmp"
-    Copy-Item -LiteralPath $SourcePath -Destination $temporaryPath -Force
-    Move-Item -LiteralPath $temporaryPath -Destination $DestinationPath -Force
+    $destinationDirectory = Split-Path -Parent $DestinationPath
+    $destinationName = [System.IO.Path]::GetFileName($DestinationPath)
+    $temporaryPath = Join-Path $destinationDirectory ".$destinationName.arashi-install-$([System.Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        Copy-Item -LiteralPath $SourcePath -Destination $temporaryPath
+        Move-Item -LiteralPath $temporaryPath -Destination $DestinationPath -Force
+    } finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Install-ArashiPayloadTransaction {
+    param(
+        [Parameter(Mandatory = $true)][array]$Payload,
+        [Parameter(Mandatory = $true)][string]$BinaryPath,
+        [scriptblock]$SmokeTest = { param($path) Invoke-ArashiSmokeTest -BinaryPath $path },
+        [scriptblock]$ReplaceAsset = { param($source, $destination) Install-ArashiStagedAsset -SourcePath $source -DestinationPath $destination },
+        [scriptblock]$RestoreAsset = { param($backup, $destination) Install-ArashiStagedAsset -SourcePath $backup -DestinationPath $destination }
+    )
+
+    $backupDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "arashi-payload-backup-$([System.Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
+    $records = @()
+
+    try {
+        $index = 0
+        foreach ($item in $Payload) {
+            $existed = Test-Path -LiteralPath $item.DestinationPath
+            if ($existed) {
+                $destinationItem = Get-Item -LiteralPath $item.DestinationPath -Force
+                $isReparsePoint = ($destinationItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+                if ($destinationItem.PSIsContainer -or $isReparsePoint) {
+                    throw "Managed destination $($item.DestinationPath) exists but is not a regular file. Move it aside and rerun the installer."
+                }
+            }
+            $backupPath = Join-Path $backupDirectory "$index-$([System.IO.Path]::GetFileName($item.DestinationPath))"
+            if ($existed) {
+                Copy-Item -LiteralPath $item.DestinationPath -Destination $backupPath -Force
+            }
+            $records += [PSCustomObject]@{
+                BackupPath = $backupPath
+                DestinationPath = $item.DestinationPath
+                Existed = $existed
+            }
+            $index++
+        }
+    } catch {
+        Remove-Item -LiteralPath $backupDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        throw "Installation failed during backup before replacement began: $($_.Exception.Message)"
+    }
+
+    $phase = "replacement"
+    try {
+        foreach ($item in $Payload) {
+            & $ReplaceAsset $item.SourcePath $item.DestinationPath
+        }
+
+        $phase = "smoke test"
+        & $SmokeTest $BinaryPath
+        Remove-Item -LiteralPath $backupDirectory -Recurse -Force
+    } catch {
+        $originalFailure = $_.Exception.Message
+        $rollbackErrors = @()
+
+        foreach ($record in $records) {
+            try {
+                if ($record.Existed) {
+                    & $RestoreAsset $record.BackupPath $record.DestinationPath
+                } elseif (Test-Path -LiteralPath $record.DestinationPath) {
+                    Remove-Item -LiteralPath $record.DestinationPath -Force
+                }
+            } catch {
+                $rollbackErrors += "$($record.DestinationPath): $($_.Exception.Message)"
+            }
+        }
+
+        if ($rollbackErrors.Count -gt 0) {
+            throw "Installation failed during $phase ($originalFailure). Rollback failed: $($rollbackErrors -join '; '). Recoverable backups retained at: $backupDirectory. Restore the matching files manually, remove managed files that were previously absent, then rerun the installer."
+        }
+
+        Remove-Item -LiteralPath $backupDirectory -Recurse -Force
+        throw "Installation failed during $phase ($originalFailure). Rollback completed and restored the previous managed payload."
+    }
 }
 
 function Add-ArashiUserPath {
@@ -228,7 +309,7 @@ public static class NativeMethods {
         Write-WarningMessage "Could not broadcast the PATH update to running applications."
     }
 
-    Write-Host "Open a new terminal for the updated PATH to take effect."
+    Write-Host "Open a new terminal, including a new Git Bash window, for the updated PATH to take effect."
 }
 
 function Invoke-ArashiSmokeTest {
@@ -241,10 +322,10 @@ function Invoke-ArashiSmokeTest {
         $exitCode = 0
     }
     if ($exitCode -ne 0) {
-        Fail-Install "Smoke test failed: $BinaryPath --version exited with $exitCode. Output: $output"
+        throw "Smoke test failed: $BinaryPath --version exited with $exitCode. Output: $output"
     }
     if ([string]::IsNullOrWhiteSpace(($output | Out-String))) {
-        Fail-Install "Smoke test succeeded but did not print an Arashi version."
+        throw "Smoke test succeeded but did not print an Arashi version."
     }
 
     Write-Step "Verified arashi executable ($($output | Select-Object -First 1))"
@@ -266,28 +347,30 @@ function Install-Arashi {
     New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
     try {
-        $assets = @($WindowsBinaryAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $ChecksumManifestAsset)
+        $assets = @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $ChecksumManifestAsset)
         foreach ($asset in $assets) {
             Invoke-ArashiDownload -Url "$releaseBaseUrl/$asset" -Destination (Join-Path $stagingDir $asset) -Label $asset
         }
 
         $manifestPath = Join-Path $stagingDir $ChecksumManifestAsset
-        foreach ($asset in @($WindowsBinaryAsset, $PowerShellWrapperAsset, $CmdWrapperAsset)) {
+        foreach ($asset in @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset)) {
             Assert-ArashiChecksum -ManifestPath $manifestPath -AssetPath (Join-Path $stagingDir $asset) -AssetName $asset
         }
         Write-Step "Verified SHA-256 checksums"
 
         New-Item -ItemType Directory -Path $targetInstallDir -Force | Out-Null
-        Install-ArashiStagedAsset -SourcePath (Join-Path $stagingDir $WindowsBinaryAsset) -DestinationPath (Join-Path $targetInstallDir $InstalledBinaryName)
-        Install-ArashiStagedAsset -SourcePath (Join-Path $stagingDir $PowerShellWrapperAsset) -DestinationPath (Join-Path $targetInstallDir $PowerShellWrapperAsset)
-        Install-ArashiStagedAsset -SourcePath (Join-Path $stagingDir $CmdWrapperAsset) -DestinationPath (Join-Path $targetInstallDir $CmdWrapperAsset)
-        Write-Step "Installed Arashi files"
-
+        $payload = @(
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $WindowsBinaryAsset; DestinationPath = Join-Path $targetInstallDir $InstalledBinaryName },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $BashWrapperAsset; DestinationPath = Join-Path $targetInstallDir $BashWrapperAsset },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $PowerShellWrapperAsset; DestinationPath = Join-Path $targetInstallDir $PowerShellWrapperAsset },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $CmdWrapperAsset; DestinationPath = Join-Path $targetInstallDir $CmdWrapperAsset }
+        )
         $installedBinary = Join-Path $targetInstallDir $InstalledBinaryName
-        Invoke-ArashiSmokeTest -BinaryPath $installedBinary
+        Install-ArashiPayloadTransaction -Payload $payload -BinaryPath $installedBinary
+        Write-Step "Installed and verified Arashi files"
 
         if ($skipPathModification) {
-            Write-WarningMessage "PATH modification disabled. Add this directory to your user PATH: $targetInstallDir"
+            Write-WarningMessage "PATH modification disabled. Add this directory to your persistent user PATH, then open a new Git Bash window or other terminal: $targetInstallDir"
         } else {
             Add-ArashiUserPath -Directory $targetInstallDir
         }
@@ -296,6 +379,8 @@ function Install-Arashi {
         Write-Host "Arashi installed successfully."
         Write-Host "Install directory: $targetInstallDir"
         Write-Host "Run 'arashi --version' from a new terminal to verify PATH setup."
+    } catch {
+        Fail-Install $_.Exception.Message
     } finally {
         Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
     }

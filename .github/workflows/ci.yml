@@ -199,3 +199,27 @@ jobs:
           else
             ./${{ matrix.artifact }} --version
           fi
+
+  windows-installer-acceptance:
+    name: Windows Installer Acceptance
+    runs-on: windows-latest
+    timeout-minutes: 10
+    needs: [build]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v8
+        with:
+          name: arashi-windows-x64.exe
+          path: bin
+
+      - name: Exercise transactional replacement and rollback
+        shell: powershell
+        run: ./tests/windows/install-transaction.ps1
+
+      - name: Install with canonical defaults and verify fresh shells
+        shell: powershell
+        run: ./tests/windows/default-installer-acceptance.ps1

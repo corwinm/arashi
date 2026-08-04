@@ -60,14 +60,17 @@ The Windows PowerShell installer (`scripts/install.ps1`) is also bound to GitHub
   - Windows x64 -> `arashi-windows-x64.exe`
 - Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies these assets with `Get-FileHash -Algorithm SHA256` before install:
   - `arashi-windows-x64.exe`
+  - `arashi`
   - `arashi.ps1`
   - `arashi.bat`
 - Default install placement is `%USERPROFILE%\.arashi\bin` unless overridden with `ARASHI_INSTALL_DIR` or `-InstallDir`.
 - Install placement uses staged downloads and installs files together as:
   - `arashi.bin.exe`
+  - `arashi`
   - `arashi.ps1`
   - `arashi.bat`
-- The installer adds the install directory to the persistent user PATH by default, avoids duplicate PATH entries, and tells the user to open a new terminal.
+- The installer adds the install directory to the persistent user PATH by default, avoids duplicate PATH entries, and tells the user to open a new Git Bash window or other terminal. The extensionless `arashi` wrapper lets Git Bash execute the adjacent `arashi.bin.exe`.
+- The installer does not create or modify `.bashrc`, `.bash_profile`, `.profile`, or another shell profile.
 - Use `ARASHI_NO_MODIFY_PATH=1` or `-NoModifyPath` to skip PATH modification.
 - Runtime verification: after installing the wrapper and binary, the installer runs `arashi.bin.exe --version` as a smoke test so the default install path does not depend on PowerShell execution policy.
 
@@ -109,7 +112,7 @@ powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 - Permission denied writing install location: rerun with `-InstallDir` or `ARASHI_INSTALL_DIR` pointing to a user-writable directory.
 - Download/network errors: retry the command; if failures persist, use npm installation or manual releases.
 - Checksum mismatch: treat as a blocked install, retry once, then fall back to npm/manual and report the issue.
-- PATH changes do not appear in the current shell: open a new terminal, or add `%USERPROFILE%\.arashi\bin` to PATH manually when using no-modify-PATH mode.
+- PATH changes do not appear in the current shell: open a new Git Bash window or other terminal, or add `%USERPROFILE%\.arashi\bin` to the persistent user PATH manually when using no-modify-PATH mode. Do not add an installer-managed entry to `.bashrc` or another shell profile.
 - Smoke test failure: rerun with a pinned release using `ARASHI_VERSION=<version>` or `-Version <version>`, then use npm/manual release assets while reporting the bad release artifact.
 - Unsupported Windows architecture: use npm when available, or wait for a matching release asset.
 
@@ -129,13 +132,14 @@ If you do not want to pipe a remote script into PowerShell or the installer fail
 1. Open <https://github.com/corwinm/arashi/releases/latest>.
 2. Download these assets from the same release:
    - `arashi-windows-x64.exe`
+   - `arashi`
    - `arashi.ps1`
    - `arashi.bat`
    - `arashi-checksums.txt`
 3. Verify each downloaded asset against `arashi-checksums.txt` with `Get-FileHash -Algorithm SHA256`.
-4. Put the files in one directory on PATH.
+4. Put the four payload files in one directory on PATH.
 5. Rename `arashi-windows-x64.exe` to `arashi.bin.exe` so both wrappers find the binary.
-6. Open a new terminal and run `arashi --version`.
+6. Open a new Git Bash window and run `arashi --version`, or verify through `arashi.ps1` in PowerShell / `arashi.bat` in Command Prompt.
 
 ## Why a Wrapper?
 
