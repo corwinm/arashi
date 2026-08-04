@@ -20,9 +20,14 @@ const makeTempDir = async (): Promise<string> => {
   return path;
 };
 
-const runArashi = async (cwd: string, args: string[]): Promise<CommandResult> => {
+const runArashi = async (
+  cwd: string,
+  args: string[],
+  envOverrides: Record<string, string | undefined> = {},
+): Promise<CommandResult> => {
   const proc = runtime.spawn([process.execPath, CLI_ENTRY, ...args], {
     cwd,
+    env: { ...process.env, ...envOverrides },
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -189,7 +194,9 @@ describe("CLI JSON output contract", () => {
     config.defaults = { switch: { launch_mode: "herdr", mode: "launch" } };
     await writeFile(configPath, JSON.stringify(config, null, 2));
 
-    const result = await runArashi(workspaceRoot, ["status", "--json"]);
+    const result = await runArashi(workspaceRoot, ["status", "--json"], {
+      NO_COLOR: undefined,
+    });
 
     expect(result.exitCode).toBe(0);
     expect(parseSingleJsonDocument(result.stdout)).toMatchObject({

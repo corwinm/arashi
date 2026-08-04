@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 type IoMode = "pipe" | "inherit" | "ignore";
 type SpawnOptions = {
   cwd?: string;
+  detached?: boolean;
   env?: Record<string, string | undefined>;
   stdin?: IoMode;
   stdout?: IoMode;
@@ -65,6 +66,7 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
   const invocation = prepareSpawnCommand(command, process.platform, options.env ?? process.env);
   const child = nodeSpawn(invocation.command, invocation.args, {
     cwd: options.cwd,
+    detached: options.detached,
     env: invocation.env ?? options.env,
     killSignal: options.killSignal,
     timeout: options.timeout,
@@ -74,6 +76,10 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
   let exitCode: number | null = null;
   let signalCode: NodeJS.Signals | null = null;
   let spawnError: Error | null = null;
+  const spawned = new Promise<boolean>((resolve) => {
+    child.once("spawn", () => resolve(true));
+    child.once("error", () => resolve(false));
+  });
   const exited = new Promise<number>((resolve) => {
     child.once("error", (error) => {
       exitCode = 1;
@@ -88,6 +94,7 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
   });
   return {
     exited,
+    spawned,
     get exitCode() {
       return exitCode;
     },
@@ -101,6 +108,7 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
       return child.killed;
     },
     kill: (signal?: NodeJS.Signals) => child.kill(signal),
+    unref: () => child.unref(),
     stdin: child.stdin,
     stdout: child.stdout ? Readable.toWeb(child.stdout) : new ReadableStream(),
     stderr: child.stderr ? Readable.toWeb(child.stderr) : new ReadableStream(),

@@ -67,7 +67,7 @@ describe("Herdr source resolution", () => {
     const sourcePath = await realpath(main);
     const launch = await launchSwitchTarget(
       result.candidates[1]!,
-      { herdr: true },
+      { disposition: "window", herdr: true },
       {
         env: {},
         runProcess: async () => herdrSuccess,
@@ -92,7 +92,7 @@ describe("Herdr source resolution", () => {
     await expect(
       launchSwitchTarget(
         result.candidates[0]!,
-        { herdr: true },
+        { disposition: "window", herdr: true },
         {
           env: {},
           runProcess: async () => {
@@ -129,7 +129,7 @@ describe("Herdr source resolution", () => {
     await expect(
       launchSwitchTarget(
         result.candidates[0]!,
-        { herdr: true },
+        { disposition: "window", herdr: true },
         {
           env: {},
           runProcess: async () => {
@@ -169,7 +169,7 @@ describe("Herdr source resolution", () => {
     for (const candidate of result.candidates) {
       await launchSwitchTarget(
         candidate,
-        { herdr: true },
+        { disposition: "window", herdr: true },
         {
           env: {},
           resolveGitMainWorktree: async (path) =>

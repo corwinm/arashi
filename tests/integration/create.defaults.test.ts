@@ -1,7 +1,7 @@
 import type { Config, LoadedConfig } from "../../src/lib/config.ts";
 import { describe, expect, test, vi } from "vitest";
 import type { OperationSummary } from "../../src/core/worktree.ts";
-import { executeCreate } from "../../src/commands/create.ts";
+import { executeCreate, resolveCreateDefaults } from "../../src/commands/create.ts";
 type CreateCommandDependencies = NonNullable<Parameters<typeof executeCreate>[2]>;
 
 const workspaceRoot = "/workspace";
@@ -103,6 +103,7 @@ describe("create defaults integration", () => {
     { sesh: true },
     { herdr: true },
     { switch: true },
+    { tab: true },
     { sesh: true, tmux: true },
   ])("direct JSON rejection precedes validation and creation for %#", async (launchOptions) => {
     let creationCalled = false;
@@ -138,6 +139,173 @@ describe("create defaults integration", () => {
     write.mockRestore();
   });
 
+  test("tab implies launch and switch and wins over negative flags", () => {
+    expect(
+      resolveCreateDefaults(
+        { launch: false, switch: false, tab: true },
+        createLoadedConfig().config,
+      ),
+    ).toEqual({
+      disposition: "tab",
+      launchMode: "auto",
+      shouldLaunch: true,
+      shouldSwitch: true,
+    });
+  });
+
+  test("dry-run previews tab without requiring runtime target evidence", async () => {
+    let reconciled = false;
+    let created = false;
+    await expect(
+      executeCreate(
+        branchName,
+        { dryRun: true, tab: true },
+        baseDeps({
+          env: {},
+          reconcileManagedIgnore: async (options) => {
+            reconciled = true;
+            return baseDeps().reconcileManagedIgnore!(options);
+          },
+          createCoordinatedWorktrees: async (...args) => {
+            created = true;
+            const summary = await baseDeps().createCoordinatedWorktrees!(...args);
+            return {
+              ...summary,
+              dryRunOutcome: {
+                conflicts: [],
+                overallStatus: "actionable" as const,
+                plannedWorktrees: [],
+                summaryCounts: { blockingTotal: 0, conflictTotal: 0, plannedTotal: 0 },
+              },
+              isDryRun: true,
+            };
+          },
+        }),
+      ),
+    ).resolves.toBe(0);
+    expect(reconciled).toBe(true);
+    expect(created).toBe(true);
+  });
+
+  test("preflights a knowably unsupported tab before managed ignore or creation", async () => {
+    let reconciled = false;
+    let created = false;
+    await expect(
+      executeCreate(
+        branchName,
+        { tab: true },
+        baseDeps({
+          env: {},
+          platform: "linux",
+          reconcileManagedIgnore: async (...args) => {
+            reconciled = true;
+            return baseDeps().reconcileManagedIgnore!(...args);
+          },
+          createCoordinatedWorktrees: async (...args) => {
+            created = true;
+            return baseDeps().createCoordinatedWorktrees!(...args);
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "TAB_DISPOSITION_UNSUPPORTED" });
+    expect(reconciled).toBe(false);
+    expect(created).toBe(false);
+  });
+
+  test("rejects an available auto IDE tab before managed ignore, hooks, branches, or worktrees", async () => {
+    const events: string[] = [];
+    await expect(
+      executeCreate(
+        branchName,
+        { tab: true },
+        baseDeps({
+          env: { TERM_PROGRAM: "vscode" },
+          platform: "darwin",
+          runProcess: async (command) => {
+            events.push(command.join(" "));
+            return { exitCode: 0, stderr: "", stdout: "/usr/bin/code\n" };
+          },
+          reconcileManagedIgnore: async (...args) => {
+            events.push("MUTATION managed-ignore");
+            return baseDeps().reconcileManagedIgnore!(...args);
+          },
+          createCoordinatedWorktrees: async (...args) => {
+            events.push("MUTATION create");
+            return baseDeps().createCoordinatedWorktrees!(...args);
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "TAB_DISPOSITION_UNSUPPORTED" });
+    expect(events).toEqual(["which code"]);
+  });
+
+  test("lets an unavailable auto IDE fall through to the canonical platform tab mapping", async () => {
+    const events: string[] = [];
+    await expect(
+      executeCreate(
+        branchName,
+        { tab: true },
+        baseDeps({
+          env: { TERM_PROGRAM: "vscode", WT_SESSION: "session" },
+          platform: "win32",
+          runProcess: async (command) => {
+            events.push(command.join(" "));
+            return { exitCode: 1, stderr: "missing", stdout: "" };
+          },
+          reconcileManagedIgnore: async (...args) => {
+            events.push("MUTATION managed-ignore");
+            return baseDeps().reconcileManagedIgnore!(...args);
+          },
+          createCoordinatedWorktrees: async (...args) => {
+            events.push("MUTATION create");
+            return baseDeps().createCoordinatedWorktrees!(...args);
+          },
+          launchSwitchTarget: async (_candidate, options) => ({
+            command: ["wt.exe"],
+            disposition: options.disposition,
+            mode: "fallback",
+          }),
+        }),
+      ),
+    ).resolves.toBe(0);
+    expect(events[0]).toBe("where code");
+    expect(events).toContain("MUTATION managed-ignore");
+    expect(events).toContain("MUTATION create");
+  });
+
+  test.each([
+    ["missing target", { exitCode: 0, stderr: "", stdout: "" }, "TAB_DISPOSITION_UNSUPPORTED"],
+    ["denied automation", { exitCode: 1, stderr: "Not authorized", stdout: "" }, "LAUNCH_FAILED"],
+  ] as const)(
+    "keeps create mutation-free when Terminal.app preflight reports %s",
+    async (_label, processResult, code) => {
+      const events: string[] = [];
+      await expect(
+        executeCreate(
+          branchName,
+          { tab: true },
+          baseDeps({
+            env: { SHELL: "/bin/zsh", TERM_PROGRAM: "Apple_Terminal" },
+            platform: "darwin",
+            runProcess: async (command) => {
+              events.push(command[0] ?? "unknown");
+              return processResult;
+            },
+            reconcileManagedIgnore: async (...args) => {
+              events.push("MUTATION managed-ignore");
+              return baseDeps().reconcileManagedIgnore!(...args);
+            },
+            createCoordinatedWorktrees: async (...args) => {
+              events.push("MUTATION create");
+              return baseDeps().createCoordinatedWorktrees!(...args);
+            },
+          }),
+        ),
+      ).rejects.toMatchObject({ code });
+      expect(events).toEqual(["osascript"]);
+    },
+  );
+
   test.each([undefined, "", "   "])(
     "rejects explicit tmux context %s before configured creation",
     async (tmuxValue) => {
@@ -159,6 +327,73 @@ describe("create defaults integration", () => {
     },
   );
 
+  test.each([
+    {
+      code: "SESH_REQUIRES_TMUX",
+      env: { TMUX: "   " },
+      expectedEvents: [],
+      lookupExitCode: 0,
+    },
+    {
+      code: "SESH_NOT_FOUND",
+      env: { TMUX: "/tmp/tmux" },
+      expectedEvents: ["which sesh"],
+      lookupExitCode: 1,
+    },
+  ])("rejects sesh $code before managed-ignore, hooks, branches, or worktrees", async (fixture) => {
+    const events: string[] = [];
+    await expect(
+      executeCreate(
+        branchName,
+        { sesh: true },
+        baseDeps({
+          env: fixture.env,
+          runProcess: async (command) => {
+            events.push(command.join(" "));
+            return { exitCode: fixture.lookupExitCode, stderr: "missing", stdout: "" };
+          },
+          reconcileManagedIgnore: async (...args) => {
+            events.push("MUTATION managed-ignore");
+            return baseDeps().reconcileManagedIgnore!(...args);
+          },
+          createCoordinatedWorktrees: async (...args) => {
+            events.push("MUTATION branch-worktree-hooks");
+            return baseDeps().createCoordinatedWorktrees!(...args);
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: fixture.code });
+    expect(events).toEqual(fixture.expectedEvents);
+  });
+
+  test("dry-run sesh skips runtime prerequisite execution", async () => {
+    const commands: string[][] = [];
+    await expect(
+      executeCreate(
+        branchName,
+        { dryRun: true, sesh: true },
+        baseDeps({
+          env: {},
+          runProcess: async (command) => {
+            commands.push(command);
+            return { exitCode: 1, stderr: "missing", stdout: "" };
+          },
+          createCoordinatedWorktrees: async () => ({
+            ...createSummary(),
+            dryRunOutcome: {
+              conflicts: [],
+              overallStatus: "actionable",
+              plannedWorktrees: [],
+              summaryCounts: { blockingTotal: 0, conflictTotal: 0, plannedTotal: 0 },
+            },
+            isDryRun: true,
+          }),
+        }),
+      ),
+    ).resolves.toBe(0);
+    expect(commands).toEqual([]);
+  });
+
   test("explicit tmux overrides configured create mode", async () => {
     const launchCalls = createLaunchCalls();
 
@@ -169,7 +404,7 @@ describe("create defaults integration", () => {
         env: { TMUX: "/tmp/tmux/default" },
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { command: ["tmux"], mode: "tmux" };
+          return { command: ["tmux"], disposition: "window", mode: "tmux" };
         },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
@@ -178,7 +413,7 @@ describe("create defaults integration", () => {
       }),
     );
 
-    expect(launchCalls).toEqual([{ sesh: false, tmux: true }]);
+    expect(launchCalls).toEqual([{ disposition: "window", sesh: false, tmux: true }]);
   });
 
   test("preserves configured worktrees when explicit tmux process launch fails", async () => {
@@ -214,9 +449,10 @@ describe("create defaults integration", () => {
       branchName,
       {},
       baseDeps({
+        env: { TMUX: "/tmp/tmux/default" },
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { command: ["tmux"], mode: "sesh" };
+          return { command: ["tmux"], disposition: "window", mode: "sesh" };
         },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
@@ -227,10 +463,11 @@ describe("create defaults integration", () => {
               },
             },
           }),
+        runProcess: async () => ({ exitCode: 0, stderr: "", stdout: "/usr/bin/sesh\n" }),
       }),
     );
 
-    expect(launchCalls).toEqual([{ sesh: true }]);
+    expect(launchCalls).toEqual([{ disposition: "window", sesh: true }]);
   });
 
   test("preserves cmux launch mode for configured post-create launch", async () => {
@@ -242,7 +479,7 @@ describe("create defaults integration", () => {
       baseDeps({
         launchSwitchTarget: async (candidate) => {
           launchCandidates.push(candidate.worktreePath);
-          return { command: ["cmux", "workspace", "create"], mode: "cmux" };
+          return { command: ["cmux", "workspace", "create"], disposition: "window", mode: "cmux" };
         },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
@@ -288,9 +525,10 @@ describe("create defaults integration", () => {
       branchName,
       { editorHost: "vscode" },
       baseDeps({
+        env: { TMUX: "/tmp/tmux/default" },
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { command: ["tmux"], mode: "sesh" };
+          return { command: ["tmux"], disposition: "window", mode: "sesh" };
         },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
@@ -308,10 +546,11 @@ describe("create defaults integration", () => {
               },
             },
           }),
+        runProcess: async () => ({ exitCode: 0, stderr: "", stdout: "/usr/bin/sesh\n" }),
       }),
     );
 
-    expect(launchCalls).toEqual([{ sesh: true }]);
+    expect(launchCalls).toEqual([{ disposition: "window", sesh: true }]);
   });
 
   test("allows one-off opt-out from configured create launch defaults", async () => {
@@ -323,7 +562,7 @@ describe("create defaults integration", () => {
       baseDeps({
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { command: ["tmux"], mode: "sesh" };
+          return { command: ["tmux"], disposition: "window", mode: "sesh" };
         },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
@@ -349,7 +588,7 @@ describe("create defaults integration", () => {
       baseDeps({
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { command: ["open"], mode: "fallback" };
+          return { command: ["open"], disposition: "window", mode: "fallback" };
         },
       }),
     );
@@ -366,7 +605,7 @@ describe("create defaults integration", () => {
       baseDeps({
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { command: ["tmux"], mode: "sesh" };
+          return { command: ["tmux"], disposition: "window", mode: "sesh" };
         },
         loadConfigWithFallback: async () =>
           createLoadedConfig({
@@ -392,12 +631,12 @@ describe("create defaults integration", () => {
       baseDeps({
         launchSwitchTarget: async (_candidate, options) => {
           launchCalls.push(options);
-          return { command: ["open"], mode: "fallback" };
+          return { command: ["open"], disposition: "window", mode: "fallback" };
         },
       }),
     );
 
-    expect(launchCalls).toEqual([{ sesh: false }]);
+    expect(launchCalls).toEqual([{ disposition: "window", sesh: false }]);
   });
 
   test("rejects configured launch in JSON mode before repository discovery", async () => {

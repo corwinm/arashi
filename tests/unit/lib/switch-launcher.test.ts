@@ -4,7 +4,10 @@ import {
   detectManagedSwitchContext,
   detectTerminalApp,
   isCmuxSession,
+  isKittySession,
   launchSwitchTarget,
+  preflightLaunchSwitchTarget,
+  resolveLaunchPlan,
 } from "../../../src/lib/switch-launcher.ts";
 import type { SwitchCandidate } from "../../../src/core/switch.ts";
 import { SwitchCommandErrorCode } from "../../../src/types/switch.ts";
@@ -22,6 +25,11 @@ const candidate: SwitchCandidate = {
 const failingRunProcess: SwitchProcessRunner = async () => ({
   exitCode: 1,
   stderr: "launch failed",
+  stdout: "",
+});
+const successfulRunProcess: SwitchProcessRunner = async () => ({
+  exitCode: 0,
+  stderr: "",
   stdout: "",
 });
 
@@ -55,9 +63,6 @@ describe("detectManagedSwitchContext", () => {
     { TERM_PROGRAM: "Apple_Terminal" },
     { TERM_PROGRAM: "unsupported-ide" },
     { TERM: "xterm-256color" },
-    { KITTY_PID: "123" },
-    { KITTY_WINDOW_ID: "73" },
-    { TERM: "xterm-kitty" },
     { KITTY_PID: "", KITTY_WINDOW_ID: "   ", TERM: "xterm-kitty-extra" },
     { TERM: "not-xterm-kitty" },
   ])("rejects weak or generic evidence %#", (env) => {
@@ -95,6 +100,609 @@ describe("detectManagedSwitchContext", () => {
   });
 });
 
+describe("launch disposition matrix", () => {
+  const launch = async (
+    disposition: "window" | "tab",
+    env: Record<string, string | undefined>,
+    platform: NodeJS.Platform,
+    runProcess: SwitchProcessRunner = successfulRunProcess,
+  ) => launchSwitchTarget(candidate, { disposition }, { env, platform, runProcess });
+
+  test("exposes a pure support plan and reports the resolved disposition", async () => {
+    expect(resolveLaunchPlan("tmux", "tab", {}, "linux")).toEqual({
+      disposition: "tab",
+      launcher: "tmux",
+      supported: true,
+    });
+    await expect(launch("window", { TMUX: "/tmp/tmux" }, "linux")).resolves.toMatchObject({
+      disposition: "window",
+      mode: "tmux",
+    });
+  });
+
+  test.each([
+    [{ KITTY_PID: " 1 " }, true],
+    [{ KITTY_WINDOW_ID: " 2 " }, true],
+    [{ TERM: " XTERM-KITTY " }, true],
+    [{ KITTY_PID: " ", KITTY_WINDOW_ID: "", TERM: "xterm-kitty-extra" }, false],
+  ] as const)("uses canonical one-of managed Kitty evidence %#", (env, expected) => {
+    expect(isKittySession(env)).toBe(expected);
+  });
+
+  test.each([
+    [{ TMUX: "/tmp/tmux", TERM_PROGRAM: "ghostty" }, ["tmux", "new-window"]],
+    [{ HERDR_ENV: "1", HERDR_WORKSPACE_ID: "ws-7", TERM_PROGRAM: "ghostty" }, ["herdr", "tab"]],
+    [{ CMUX_WORKSPACE_ID: "ws-1", TERM_PROGRAM: "ghostty" }, ["cmux", "workspace"]],
+  ] as const)("keeps managed context ahead of containing Ghostty %#", async (env, prefix) => {
+    const commands: string[][] = [];
+    await launchSwitchTarget(
+      candidate,
+      { disposition: "tab" },
+      {
+        env,
+        platform: "darwin",
+        runProcess: async (command) => {
+          commands.push(command);
+          if (command[0] === "herdr")
+            return {
+              exitCode: 0,
+              stderr: "",
+              stdout: '{"result":{"tab":{"tab_id":"t1","root_pane_id":"p1"}}}',
+            };
+          if (command[0] === "cmux")
+            return { exitCode: 0, stderr: "", stdout: '{"workspace_ref":"workspace:7"}' };
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+    expect(commands[0]?.slice(0, 2)).toEqual(prefix);
+    expect(commands.some((command) => command[0] === "osascript" || command[0] === "ghostty")).toBe(
+      false,
+    );
+  });
+
+  test("maps Windows Terminal exactly and never falls back after tab failure", async () => {
+    const path = String.raw`C:\\work trees\\x & 'y`;
+    const target = { ...candidate, worktreePath: path };
+    const env = { WT_SESSION: "session", WT_PROFILE_ID: " {profile} " };
+    await expect(
+      launchSwitchTarget(
+        target,
+        { disposition: "window" },
+        { env, platform: "win32", runProcess: successfulRunProcess },
+      ),
+    ).resolves.toMatchObject({
+      command: ["wt.exe", "-w", "new", "new-tab", "-p", "{profile}", "-d", path],
+      disposition: "window",
+    });
+    const commands: string[][] = [];
+    await expect(
+      launchSwitchTarget(
+        target,
+        { disposition: "tab" },
+        {
+          env,
+          platform: "win32",
+          runProcess: async (command) => {
+            commands.push(command);
+            return { exitCode: 9, stderr: "denied", stdout: "" };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.LAUNCH_FAILED });
+    expect(commands).toEqual([["wt.exe", "-w", "0", "new-tab", "-p", "{profile}", "-d", path]]);
+  });
+
+  test.each([
+    ["standalone Git Bash", { MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" }, "win32"],
+    ["generic Linux", {}, "linux"],
+    ["generic macOS", {}, "darwin"],
+    ["unmanaged Kitty", { TERM_PROGRAM: "kitty" }, "linux"],
+    ["Linux Ghostty", { TERM_PROGRAM: "ghostty" }, "linux"],
+  ] as const)(
+    "rejects unsupported tab for %s before process execution",
+    async (_name, env, platform) => {
+      const commands: string[][] = [];
+      await expect(
+        launch("tab", env, platform, async (command) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        }),
+      ).rejects.toMatchObject({ code: SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED });
+      expect(commands).toEqual([]);
+    },
+  );
+
+  test("uses disposition-specific WezTerm argv and requires an exact pane", async () => {
+    await expect(launch("window", { TERM_PROGRAM: "WezTerm" }, "linux")).resolves.toMatchObject({
+      command: ["wezterm", "cli", "spawn", "--new-window", "--cwd", candidate.worktreePath],
+    });
+    await expect(
+      launch("tab", { TERM_PROGRAM: "WezTerm", WEZTERM_PANE: " 41 " }, "linux"),
+    ).resolves.toMatchObject({
+      command: ["wezterm", "cli", "spawn", "--pane-id", "41", "--cwd", candidate.worktreePath],
+    });
+    await expect(launch("tab", { TERM_PROGRAM: "WezTerm" }, "linux")).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED,
+    });
+  });
+
+  test("falls back from WezTerm CLI window spawn to an explicitly independent process window", async () => {
+    const commands: string[][] = [];
+    await expect(
+      launch("window", { TERM_PROGRAM: "WezTerm" }, "linux", async (command) => {
+        commands.push(command);
+        return command[1] === "start"
+          ? { exitCode: 0, stderr: "", stdout: "" }
+          : { exitCode: 1, stderr: "no mux server", stdout: "" };
+      }),
+    ).resolves.toMatchObject({
+      command: [
+        "wezterm",
+        "start",
+        "--always-new-process",
+        "--cwd",
+        candidate.worktreePath,
+        "--",
+        "/bin/zsh",
+      ],
+    });
+    expect(commands).toEqual([
+      ["wezterm", "cli", "spawn", "--new-window", "--cwd", candidate.worktreePath],
+      [
+        "wezterm",
+        "start",
+        "--always-new-process",
+        "--cwd",
+        candidate.worktreePath,
+        "--",
+        "/bin/zsh",
+      ],
+    ]);
+  });
+
+  test("uses a new Kitty OS window only for unmanaged window disposition", async () => {
+    await expect(launch("window", { TERM_PROGRAM: "kitty" }, "linux")).resolves.toMatchObject({
+      command: ["kitty", "--detach", "--directory", candidate.worktreePath],
+      disposition: "window",
+    });
+    await expect(launch("window", { TERM_PROGRAM: "kitty" }, "darwin")).resolves.toMatchObject({
+      command: ["open", "-na", "kitty.app", "--args", "--directory", candidate.worktreePath],
+      disposition: "window",
+    });
+  });
+
+  test("never probes or remote-controls unrelated Kitty instances in unmanaged mode", async () => {
+    const commands: string[][] = [];
+    await launch("window", { TERM_PROGRAM: "kitty" }, "linux", async (command) => {
+      commands.push(command);
+      return { exitCode: 0, stderr: "", stdout: "" };
+    });
+    expect(commands).toEqual([["kitty", "--detach", "--directory", candidate.worktreePath]]);
+    expect(commands.flat()).not.toContain("@");
+    expect(commands.flat()).not.toContain("--wait-for-single-instance-window-close");
+  });
+
+  test("treats tmux, sesh, and cmux primitives as both dispositions", async () => {
+    await expect(launch("tab", { TMUX: "/tmp/tmux" }, "linux")).resolves.toMatchObject({
+      disposition: "tab",
+      mode: "tmux",
+    });
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        { disposition: "tab", sesh: true },
+        { env: { TMUX: "/tmp/tmux" }, platform: "linux", runProcess: successfulRunProcess },
+      ),
+    ).resolves.toMatchObject({ disposition: "tab", mode: "sesh" });
+    await expect(
+      launch("tab", { CMUX_WORKSPACE_ID: "ws" }, "darwin", async () => ({
+        exitCode: 0,
+        stderr: "",
+        stdout: '{"workspace_id":"new"}',
+      })),
+    ).resolves.toMatchObject({ disposition: "tab", mode: "cmux" });
+  });
+
+  test("creates and validates a Herdr tab without resolving a source checkout", async () => {
+    let resolved = false;
+    const commands: string[][] = [];
+    const result = await launchSwitchTarget(
+      candidate,
+      { disposition: "tab", herdr: true },
+      {
+        env: { HERDR_WORKSPACE_ID: " workspace-9 " },
+        platform: "darwin",
+        resolveGitMainWorktree: async () => {
+          resolved = true;
+          return null;
+        },
+        runProcess: async (command) => {
+          commands.push(command);
+          return {
+            exitCode: 0,
+            stderr: "",
+            stdout: '{"result":{"tab":{"tab_id":"tab-1","root_pane_id":"pane-1"}}}',
+          };
+        },
+      },
+    );
+    expect(resolved).toBe(false);
+    expect(result).toEqual({
+      command: [
+        "herdr",
+        "tab",
+        "create",
+        "--workspace",
+        "workspace-9",
+        "--cwd",
+        candidate.worktreePath,
+        "--label",
+        "workspace: feature/auth",
+        "--focus",
+        "--json",
+      ],
+      disposition: "tab",
+      mode: "herdr",
+    });
+    expect(commands).toEqual([result.command]);
+  });
+
+  test("rejects missing/invalid Herdr tab targets without fallback", async () => {
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        { disposition: "tab", herdr: true },
+        { env: {}, platform: "darwin", runProcess: successfulRunProcess },
+      ),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED });
+    const commands: string[][] = [];
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        { disposition: "tab", herdr: true },
+        {
+          env: { HERDR_WORKSPACE_ID: "ws" },
+          platform: "darwin",
+          runProcess: async (command) => {
+            commands.push(command);
+            return {
+              exitCode: 0,
+              stderr: "",
+              stdout: '{"result":{"tab":{"tab_id":"","root_pane_id":"p"}}}',
+            };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.LAUNCH_FAILED });
+    expect(commands).toHaveLength(1);
+  });
+
+  test("rejects an available IDE tab but lets an unavailable auto IDE reach fallback capability", async () => {
+    const availableCalls: string[][] = [];
+    await expect(
+      launch("tab", { TERM_PROGRAM: "vscode" }, "darwin", async (command) => {
+        availableCalls.push(command);
+        return { exitCode: 0, stderr: "", stdout: "/bin/code" };
+      }),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED });
+    expect(availableCalls).toEqual([["which", "code"]]);
+    const unavailableCalls: string[][] = [];
+    await expect(
+      launch("tab", { TERM_PROGRAM: "vscode" }, "darwin", async (command) => {
+        unavailableCalls.push(command);
+        return { exitCode: 1, stderr: "missing", stdout: "" };
+      }),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED });
+    expect(unavailableCalls).toEqual([["which", "code"]]);
+  });
+
+  test.each(["vscode", "cursor", "kiro"] as const)(
+    "rejects explicitly selected %s tabs before checking CLI availability",
+    async (ide) => {
+      const commands: string[][] = [];
+      await expect(
+        launchSwitchTarget(
+          candidate,
+          { disposition: "tab", preferredIde: ide, requirePreferredIde: true },
+          {
+            env: {},
+            platform: "darwin",
+            runProcess: async (command) => {
+              commands.push(command);
+              return { exitCode: 1, stderr: "not installed", stdout: "" };
+            },
+          },
+        ),
+      ).rejects.toMatchObject({ code: SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED });
+      expect(commands).toEqual([]);
+    },
+  );
+
+  test("preflights auto IDE availability with execution-equivalent detection before resolving fallback", async () => {
+    const availableCalls: string[][] = [];
+    await expect(
+      preflightLaunchSwitchTarget(
+        { disposition: "tab" },
+        {
+          env: { TERM_PROGRAM: "vscode" },
+          platform: "darwin",
+          runProcess: async (command) => {
+            availableCalls.push(command);
+            return { exitCode: 0, stderr: "", stdout: "/usr/bin/code\n" };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED });
+    expect(availableCalls).toEqual([["which", "code"]]);
+
+    const unavailableCalls: string[][] = [];
+    await expect(
+      preflightLaunchSwitchTarget(
+        { disposition: "tab" },
+        {
+          env: { TERM_PROGRAM: "vscode", WT_SESSION: "session" },
+          platform: "win32",
+          runProcess: async (command) => {
+            unavailableCalls.push(command);
+            return { exitCode: 1, stderr: "not installed", stdout: "" };
+          },
+        },
+      ),
+    ).resolves.toMatchObject({ launcher: "windows-terminal", supported: true });
+    expect(unavailableCalls).toEqual([["where", "code"]]);
+  });
+
+  test.each([undefined, "", "   "])(
+    "preflight rejects sesh with trimmed TMUX context %s without probing executables",
+    async (tmuxValue) => {
+      const commands: string[][] = [];
+      await expect(
+        preflightLaunchSwitchTarget(
+          { disposition: "window", sesh: true },
+          {
+            env: { TMUX: tmuxValue },
+            platform: "linux",
+            runProcess: async (command) => {
+              commands.push(command);
+              return successfulRunProcess(command, { cwd: candidate.worktreePath, env: {} });
+            },
+          },
+        ),
+      ).rejects.toMatchObject({ code: SwitchCommandErrorCode.SESH_REQUIRES_TMUX });
+      expect(commands).toEqual([]);
+    },
+  );
+
+  test("preflight rejects sesh when its executable is unavailable", async () => {
+    const commands: string[][] = [];
+    await expect(
+      preflightLaunchSwitchTarget(
+        { disposition: "window", sesh: true },
+        {
+          env: { TMUX: " /tmp/tmux " },
+          platform: "linux",
+          runProcess: async (command) => {
+            commands.push(command);
+            return { exitCode: 1, stderr: "missing", stdout: "" };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.SESH_NOT_FOUND });
+    expect(commands).toEqual([["which", "sesh"]]);
+  });
+
+  test("uses static AppleScript source and passes adversarial cwd and shell only as data", async () => {
+    const special = { ...candidate, worktreePath: `/tmp/a' & do shell script "pwn"` };
+    for (const env of [
+      { TERM_PROGRAM: "Apple_Terminal", SHELL: `/bin/zsh' & pwn` },
+      { TERM_PROGRAM: "iTerm.app", SHELL: `/bin/zsh' & pwn` },
+      { TERM_PROGRAM: "ghostty", TERM_PROGRAM_VERSION: "1.3.0", SHELL: `/bin/zsh' & pwn` },
+    ]) {
+      const commands: string[][] = [];
+      const result = await launchSwitchTarget(
+        special,
+        { disposition: "tab" },
+        {
+          env,
+          platform: "darwin",
+          runProcess: async (command) => {
+            commands.push(command);
+            return commands.length === 1
+              ? {
+                  exitCode: 0,
+                  stderr: "",
+                  stdout: JSON.stringify({ profile: "Exact", target: "17", version: "3.5.0" }),
+                }
+              : successfulRunProcess(command, { cwd: special.worktreePath, env });
+          },
+        },
+      );
+      expect(result.command.slice(0, 2)).toEqual(["osascript", "-e"]);
+      expect(result.command[2]).not.toContain(special.worktreePath);
+      expect(result.command[2]).not.toContain(env.SHELL);
+      expect(result.command.slice(-5)).toEqual([
+        special.worktreePath,
+        env.SHELL,
+        "17",
+        "Exact",
+        "3.5.0",
+      ]);
+      expect(commands).toHaveLength(2);
+      expect(result.disposition).toBe("tab");
+    }
+  });
+
+  test.each([
+    ["Apple_Terminal", undefined, "terminal"],
+    ["iTerm.app", "3.5.0", "iterm2"],
+    ["ghostty", "1.3.0", "ghostty"],
+  ] as const)(
+    "performs read-only %s target preflight and launches the exact returned target",
+    async (termProgram, version, launcher) => {
+      const special = { ...candidate, worktreePath: `/tmp/preflight ' & unsafe` };
+      const commands: string[][] = [];
+      const result = await launchSwitchTarget(
+        special,
+        { disposition: "tab" },
+        {
+          env: {
+            SHELL: `/bin/zsh' & unsafe`,
+            TERM_PROGRAM: termProgram,
+            ...(version ? { TERM_PROGRAM_VERSION: version } : {}),
+          },
+          platform: "darwin",
+          runProcess: async (command) => {
+            commands.push(command);
+            if (commands.length === 1) {
+              return {
+                exitCode: 0,
+                stderr: "",
+                stdout: JSON.stringify({
+                  profile: "Exact Profile",
+                  target: "window-17",
+                  version: version ?? "2.14",
+                }),
+              };
+            }
+            return { exitCode: 0, stderr: "", stdout: "" };
+          },
+        },
+      );
+      expect(commands).toHaveLength(2);
+      expect(commands[0]?.slice(0, 2)).toEqual(["osascript", "-e"]);
+      expect(commands[0]?.[2]).not.toContain(special.worktreePath);
+      expect(commands[1]?.slice(0, 2)).toEqual(["osascript", "-e"]);
+      expect(commands[1]?.slice(-5)).toEqual([
+        special.worktreePath,
+        `/bin/zsh' & unsafe`,
+        "window-17",
+        "Exact Profile",
+        version ?? "2.14",
+      ]);
+      expect(result).toMatchObject({ disposition: "tab" });
+      expect(JSON.stringify(commands)).toContain(
+        launcher === "terminal" ? "Terminal" : launcher === "iterm2" ? "iTerm2" : "Ghostty",
+      );
+    },
+  );
+
+  test.each([
+    ["Apple_Terminal", "terminal"],
+    ["iTerm.app", "iterm2"],
+  ] as const)(
+    "launches a default %s window without tab-only target evidence",
+    async (termProgram, launcher) => {
+      const commands: string[][] = [];
+      const result = await launch(
+        "window",
+        { SHELL: "/bin/fish", TERM_PROGRAM: termProgram },
+        "darwin",
+        async (command) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      );
+
+      expect(commands).toHaveLength(1);
+      expect(commands[0]?.slice(0, 2)).toEqual(["osascript", "-e"]);
+      expect(commands[0]?.slice(-5)).toEqual([candidate.worktreePath, "/bin/fish", "", "", ""]);
+      expect(JSON.stringify(commands[0])).toContain(
+        launcher === "terminal" ? "Terminal" : "iTerm2",
+      );
+      expect(result).toMatchObject({ disposition: "window" });
+    },
+  );
+
+  test("maps macOS Ghostty windows by version without exact target preflight", async () => {
+    const modernCommands: string[][] = [];
+    await expect(
+      launch(
+        "window",
+        { SHELL: "/bin/fish", TERM_PROGRAM: "ghostty", TERM_PROGRAM_VERSION: "1.3.0" },
+        "darwin",
+        async (command) => {
+          modernCommands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      ),
+    ).resolves.toMatchObject({
+      command: expect.arrayContaining([candidate.worktreePath, "/bin/fish"]),
+    });
+    expect(modernCommands).toHaveLength(1);
+    expect(modernCommands[0]?.slice(0, 2)).toEqual(["osascript", "-e"]);
+
+    const legacyCommands: string[][] = [];
+    await expect(
+      launch(
+        "window",
+        { SHELL: "/bin/fish", TERM_PROGRAM: "ghostty", TERM_PROGRAM_VERSION: "1.2.9" },
+        "darwin",
+        async (command) => {
+          legacyCommands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      ),
+    ).resolves.toMatchObject({
+      command: [
+        "open",
+        "-na",
+        "Ghostty.app",
+        "--args",
+        "--working-directory",
+        candidate.worktreePath,
+        "-e",
+        "/bin/fish",
+      ],
+    });
+    expect(legacyCommands).toHaveLength(1);
+  });
+
+  test("maps macOS missing targets and automation failures without fallback", async () => {
+    for (const processResult of [
+      { exitCode: 42, stderr: "ARASHI_TAB_TARGET_UNAVAILABLE", stdout: "" },
+      { exitCode: 1, stderr: "Not authorized", stdout: "" },
+    ]) {
+      const commands: string[][] = [];
+      await expect(
+        launch(
+          "tab",
+          { TERM_PROGRAM: "Apple_Terminal", SHELL: "/bin/zsh" },
+          "darwin",
+          async (command) => {
+            commands.push(command);
+            return processResult;
+          },
+        ),
+      ).rejects.toMatchObject({
+        code:
+          processResult.exitCode === 42
+            ? SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED
+            : SwitchCommandErrorCode.LAUNCH_FAILED,
+      });
+      expect(commands).toHaveLength(1);
+    }
+  });
+
+  test("uses Linux Ghostty +new-window and rejects old macOS Ghostty tabs", async () => {
+    await expect(
+      launch("window", { SHELL: "/bin/fish", TERM_PROGRAM: "ghostty" }, "linux"),
+    ).resolves.toMatchObject({
+      command: [
+        "ghostty",
+        "+new-window",
+        "--working-directory",
+        candidate.worktreePath,
+        "-e",
+        "/bin/fish",
+      ],
+    });
+    await expect(
+      launch("tab", { TERM_PROGRAM: "ghostty", TERM_PROGRAM_VERSION: "1.2.9" }, "darwin"),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED });
+  });
+});
+
 describe("launchSwitchTarget", () => {
   test("prioritizes --sesh in tmux over VS Code handling", async () => {
     const commands: string[][] = [];
@@ -114,7 +722,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       candidate,
-      { sesh: true },
+      { disposition: "window", sesh: true },
       {
         env: { TERM_PROGRAM: "vscode", TMUX: "/tmp/tmux-1000/default" },
         platform: "darwin",
@@ -130,7 +738,11 @@ describe("launchSwitchTarget", () => {
 
   test("returns actionable error when --sesh is used outside tmux", async () => {
     await expect(
-      launchSwitchTarget(candidate, { sesh: true }, { env: {}, platform: "darwin" }),
+      launchSwitchTarget(
+        candidate,
+        { disposition: "window", sesh: true },
+        { env: {}, platform: "darwin" },
+      ),
     ).rejects.toMatchObject({
       code: SwitchCommandErrorCode.SESH_REQUIRES_TMUX,
     });
@@ -154,7 +766,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { TERM_PROGRAM: "vscode" },
         platform: "darwin",
@@ -194,7 +806,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       windowsCandidate,
-      {},
+      { disposition: "window" },
       {
         env: { TERM_PROGRAM: "vscode" },
         platform: "win32",
@@ -241,7 +853,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       windowsCandidate,
-      {},
+      { disposition: "window" },
       {
         env: { TERM_PROGRAM: "vscode" },
         platform: "win32",
@@ -285,7 +897,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       candidate,
-      { preferredIde: "cursor", requirePreferredIde: true },
+      { disposition: "window", preferredIde: "cursor", requirePreferredIde: true },
       {
         env: currentEnv,
         platform: "darwin",
@@ -304,7 +916,7 @@ describe("launchSwitchTarget", () => {
     await expect(
       launchSwitchTarget(
         candidate,
-        { preferredIde: "kiro", requirePreferredIde: true },
+        { disposition: "window", preferredIde: "kiro", requirePreferredIde: true },
         {
           env: {},
           platform: "darwin",
@@ -340,7 +952,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: {
           TERM_PROGRAM: "vscode",
@@ -374,7 +986,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: {
           TERM_PROGRAM: "vscode",
@@ -408,7 +1020,7 @@ describe("launchSwitchTarget", () => {
     await expect(
       launchSwitchTarget(
         candidate,
-        {},
+        { disposition: "window" },
         { env: { TERM_PROGRAM: "vscode" }, platform: "darwin", runProcess },
       ),
     ).rejects.toMatchObject({
@@ -443,7 +1055,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { TERM_PROGRAM: "vscode" },
         platform: "darwin",
@@ -464,7 +1076,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       specialCandidate,
-      { tmux: true },
+      { disposition: "window", tmux: true },
       {
         env: { HERDR_ENV: "1", TERM_PROGRAM: "vscode", TMUX: " /tmp/tmux/default " },
         platform: "darwin",
@@ -477,6 +1089,7 @@ describe("launchSwitchTarget", () => {
 
     expect(result).toEqual({
       command: ["tmux", "new-window", "-c", specialCandidate.worktreePath],
+      disposition: "window",
       mode: "tmux",
     });
     expect(commands).toEqual([result.command]);
@@ -489,7 +1102,7 @@ describe("launchSwitchTarget", () => {
       await expect(
         launchSwitchTarget(
           candidate,
-          { tmux: true },
+          { disposition: "window", tmux: true },
           {
             env: { HERDR_ENV: "1", TMUX: tmuxValue },
             platform: "darwin",
@@ -512,7 +1125,7 @@ describe("launchSwitchTarget", () => {
     await expect(
       launchSwitchTarget(
         candidate,
-        { tmux: true },
+        { disposition: "window", tmux: true },
         {
           env: { HERDR_ENV: "1", TMUX: "/tmp/tmux/default" },
           platform: "darwin",
@@ -543,7 +1156,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { TERM_PROGRAM: "vscode", TMUX: "/tmp/tmux-1000/default" },
         platform: "darwin",
@@ -566,7 +1179,7 @@ describe("launchSwitchTarget", () => {
     await expect(
       launchSwitchTarget(
         candidate,
-        {},
+        { disposition: "window" },
         {
           env: { TERM_PROGRAM: "vscode", TMUX: "/tmp/tmux-1000/default" },
           platform: "darwin",
@@ -589,7 +1202,7 @@ describe("launchSwitchTarget", () => {
     await expect(
       launchSwitchTarget(
         { ...candidate, worktreePath: process.cwd() },
-        {},
+        { disposition: "window" },
         {
           env: { KITTY_PID: "123", KITTY_WINDOW_ID: "73", TERM: "xterm-kitty" },
           pathExists: async () => false,
@@ -613,7 +1226,7 @@ describe("launchSwitchTarget", () => {
     await expect(
       launchSwitchTarget(
         { ...candidate, worktreePath: process.cwd() },
-        {},
+        { disposition: "window" },
         {
           env: { KITTY_PID: "123", KITTY_WINDOW_ID: "73", TERM_PROGRAM: "vscode" },
           pathExists: async () => false,
@@ -636,17 +1249,12 @@ describe("launchSwitchTarget", () => {
     const commands: string[][] = [];
     const runProcess: SwitchProcessRunner = async (command) => {
       commands.push(command);
-
-      if (command[0] === "ghostty") {
-        return { exitCode: 0, stderr: "", stdout: "" };
-      }
-
-      return { exitCode: 1, stderr: "unexpected", stdout: "" };
+      return { exitCode: 0, stderr: "", stdout: "" };
     };
 
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { TERM_PROGRAM: "ghostty" },
         platform: "darwin",
@@ -655,7 +1263,18 @@ describe("launchSwitchTarget", () => {
     );
 
     expect(result.mode).toBe("fallback");
-    expect(commands[0]).toEqual(["ghostty", "--working-directory", "/workspace/feature-auth"]);
+    expect(commands).toEqual([
+      [
+        "open",
+        "-na",
+        "Ghostty.app",
+        "--args",
+        "--working-directory",
+        candidate.worktreePath,
+        "-e",
+        "/bin/zsh",
+      ],
+    ]);
   });
 
   test("uses wezterm launch commands when running in wezterm", async () => {
@@ -672,7 +1291,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { TERM_PROGRAM: "WezTerm" },
         platform: "linux",
@@ -681,7 +1300,14 @@ describe("launchSwitchTarget", () => {
     );
 
     expect(result.mode).toBe("fallback");
-    expect(commands[0]).toEqual(["wezterm", "cli", "spawn", "--cwd", "/workspace/feature-auth"]);
+    expect(commands[0]).toEqual([
+      "wezterm",
+      "cli",
+      "spawn",
+      "--new-window",
+      "--cwd",
+      "/workspace/feature-auth",
+    ]);
   });
 
   test("uses iTerm launch command when running in iTerm2", async () => {
@@ -689,7 +1315,10 @@ describe("launchSwitchTarget", () => {
     const runProcess: SwitchProcessRunner = async (command) => {
       commands.push(command);
 
-      if (command[0] === "open" && command[3] === "/workspace/feature-auth") {
+      if (commands.length === 1 && command[0] === "osascript") {
+        return { exitCode: 0, stderr: "", stdout: "3.5.0\n17\nDefault" };
+      }
+      if (command[0] === "osascript") {
         return { exitCode: 0, stderr: "", stdout: "" };
       }
 
@@ -698,7 +1327,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { TERM_PROGRAM: "iTerm.app" },
         platform: "darwin",
@@ -707,7 +1336,8 @@ describe("launchSwitchTarget", () => {
     );
 
     expect(result.mode).toBe("fallback");
-    expect(commands[0]).toEqual(["open", "-a", "iTerm", "/workspace/feature-auth"]);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.slice(-5)).toEqual(["/workspace/feature-auth", "/bin/zsh", "", "", ""]);
   });
 
   test("launches a cmux workspace with an argv-safe exact worktree path", async () => {
@@ -727,7 +1357,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       specialCandidate,
-      {},
+      { disposition: "window" },
       {
         env: {
           CMUX_SURFACE_ID: "surface:2",
@@ -756,7 +1386,7 @@ describe("launchSwitchTarget", () => {
   test("accepts cmux workspace UUID output", async () => {
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { CMUX_WORKSPACE_ID: "workspace:1", TERM_PROGRAM: "ghostty" },
         platform: "darwin",
@@ -775,7 +1405,7 @@ describe("launchSwitchTarget", () => {
     const commands: string[][] = [];
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { CMUX_SOCKET_PATH: "/tmp/cmux.sock", TERM_PROGRAM: "ghostty" },
         platform: "darwin",
@@ -787,14 +1417,15 @@ describe("launchSwitchTarget", () => {
     );
 
     expect(result.mode).toBe("fallback");
-    expect(commands[0]).toEqual(["ghostty", "--working-directory", candidate.worktreePath]);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.slice(0, 4)).toEqual(["open", "-na", "Ghostty.app", "--args"]);
   });
 
   test("preserves nested tmux precedence inside cmux", async () => {
     const commands: string[][] = [];
     const result = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: {
           CMUX_WORKSPACE_ID: "workspace:1",
@@ -817,7 +1448,7 @@ describe("launchSwitchTarget", () => {
     const commands: string[][] = [];
     const result = await launchSwitchTarget(
       candidate,
-      { preferredIde: "vscode", requirePreferredIde: true },
+      { disposition: "window", preferredIde: "vscode", requirePreferredIde: true },
       {
         env: { CMUX_WORKSPACE_ID: "workspace:1", TERM_PROGRAM: "ghostty" },
         platform: "darwin",
@@ -858,7 +1489,7 @@ describe("launchSwitchTarget", () => {
     await expect(
       launchSwitchTarget(
         candidate,
-        {},
+        { disposition: "window" },
         {
           env: { CMUX_WORKSPACE_ID: "workspace:1", TERM_PROGRAM: "ghostty" },
           platform: "darwin",
@@ -899,7 +1530,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       windowsCandidate,
-      {},
+      { disposition: "window" },
       {
         env: {
           MSYSTEM: "MINGW64",
@@ -926,6 +1557,7 @@ describe("launchSwitchTarget", () => {
         "-d",
         windowsCandidate.worktreePath,
       ],
+      disposition: "window",
       mode: "fallback",
     });
     expect(commands).toEqual([result.command]);
@@ -941,7 +1573,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       windowsCandidate,
-      {},
+      { disposition: "window" },
       {
         env: { MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" },
         platform: "win32",
@@ -961,6 +1593,7 @@ describe("launchSwitchTarget", () => {
         "-Command",
         "$directory = Split-Path -Parent (Get-Command git.exe -ErrorAction Stop).Source; while ($directory) { $gitBash = Join-Path $directory 'git-bash.exe'; if (Test-Path -LiteralPath $gitBash) { Start-Process -FilePath $gitBash -ArgumentList '--no-cd' -WorkingDirectory $env:ARASHI_SWITCH_WORKTREE -ErrorAction Stop; exit 0 }; $parent = Split-Path -Parent $directory; if ($parent -eq $directory) { break }; $directory = $parent }; exit 1",
       ],
+      disposition: "window",
       mode: "fallback",
     });
     expect(commands).toEqual([result.command]);
@@ -993,7 +1626,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       windowsCandidate,
-      {},
+      { disposition: "window" },
       {
         env: baseEnv,
         platform: "win32",
@@ -1055,7 +1688,7 @@ describe("launchSwitchTarget", () => {
 
     const result = await launchSwitchTarget(
       windowsCandidate,
-      {},
+      { disposition: "window" },
       {
         env: {},
         platform: "win32",
@@ -1086,7 +1719,7 @@ describe("launchSwitchTarget", () => {
     await expect(
       launchSwitchTarget(
         candidate,
-        {},
+        { disposition: "window" },
         { env: {}, platform: "linux", runProcess: failingRunProcess },
       ),
     ).rejects.toMatchObject({
@@ -1130,8 +1763,8 @@ describe("detectTerminalApp", () => {
     expect(detectTerminalApp({ TERM_PROGRAM: "iTerm.app" })).toBe("iterm2");
   });
 
-  test("returns null for unknown terminal apps", () => {
-    expect(detectTerminalApp({ TERM_PROGRAM: "Apple_Terminal" })).toBeNull();
+  test("detects Terminal.app", () => {
+    expect(detectTerminalApp({ TERM_PROGRAM: "Apple_Terminal" })).toBe("terminal");
   });
 });
 

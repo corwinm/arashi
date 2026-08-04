@@ -578,16 +578,19 @@ describe("standalone lifecycle", () => {
     const originalLog = console.log;
     console.log = (...values: unknown[]) => output.push(values.map(String).join(" "));
     const dependencies = {
+      env: { TMUX: "/tmp/tmux/default" },
       launchSwitchTarget: async (
         candidate: { branchName: string },
-        options: { sesh?: boolean },
+        options: { disposition: "window" | "tab"; sesh?: boolean },
       ) => {
         launches.push({ branchName: candidate.branchName, sesh: options.sesh });
         return {
           command: ["test-launch"],
+          disposition: options.disposition,
           mode: options.sesh ? ("sesh" as const) : ("fallback" as const),
         };
       },
+      runProcess: async () => ({ exitCode: 0, stderr: "", stdout: "/usr/bin/sesh\n" }),
     };
     try {
       expect(await executeCreate("explicit-launch", { launch: true }, dependencies)).toBe(0);

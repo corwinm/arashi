@@ -17,6 +17,7 @@ import { basename, dirname, isAbsolute, join, normalize, parse, sep } from "node
 import type { SwitchCandidate } from "../core/switch.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import type {
+  LaunchDisposition,
   LaunchSwitchResult,
   SwitchProcessRunner,
   SwitchProcessRunOptions,
@@ -272,6 +273,7 @@ function requireNonNegativeNumber(value: unknown): number {
 
 export async function launchManagedKitty(
   candidate: SwitchCandidate,
+  disposition: LaunchDisposition,
   deps: LaunchManagedKittyDependencies,
 ): Promise<LaunchSwitchResult> {
   const env = deps.env ?? process.env;
@@ -291,7 +293,7 @@ export async function launchManagedKitty(
   });
   let result: LaunchSwitchResult;
   try {
-    result = await inspectFocusOrLaunch(kitten, metadata, env, deps.runProcess);
+    result = await inspectFocusOrLaunch(kitten, metadata, disposition, env, deps.runProcess);
   } catch (error) {
     try {
       await lock.release();
@@ -334,12 +336,13 @@ async function preflightVersion(
 async function inspectFocusOrLaunch(
   kitten: string,
   metadata: KittyWorktreeMetadata,
+  disposition: LaunchDisposition,
   env: Record<string, string | undefined>,
   runProcess: SwitchProcessRunner,
 ): Promise<LaunchSwitchResult> {
   const initial = await inspectKitty(kitten, metadata.canonicalPath, env, runProcess);
   const match = selectIdentityMatch(initial, metadata);
-  if (!match) return launchAndValidate(kitten, metadata, env, runProcess);
+  if (!match) return launchAndValidate(kitten, metadata, disposition, env, runProcess);
 
   const focusCommand = buildFocusCommand(kitten, match.id);
   const focusResult = await runProcess(focusCommand, processOptions(metadata.canonicalPath, env));
@@ -347,13 +350,13 @@ async function inspectFocusOrLaunch(
     const afterFocus = await inspectKitty(kitten, metadata.canonicalPath, env, runProcess);
     const validated = selectIdentityMatch(afterFocus, metadata);
     if (validated?.id === match.id && validated.isFocused) {
-      return { command: focusCommand, mode: "kitty" };
+      return { command: focusCommand, disposition, mode: "kitty" };
     }
     if (validated === null) {
-      return launchAndValidate(kitten, metadata, env, runProcess);
+      return launchAndValidate(kitten, metadata, disposition, env, runProcess);
     }
     if (validated.id !== match.id) {
-      return focusReplacementOnce(kitten, metadata, env, runProcess, afterFocus);
+      return focusReplacementOnce(kitten, metadata, disposition, env, runProcess, afterFocus);
     }
     throwKittyFailure(
       "focus-validation",
@@ -365,23 +368,24 @@ async function inspectFocusOrLaunch(
   const afterFailure = await inspectKitty(kitten, metadata.canonicalPath, env, runProcess);
   const afterFailureMatch = selectIdentityMatch(afterFailure, metadata);
   if (afterFailureMatch === null) {
-    return launchAndValidate(kitten, metadata, env, runProcess);
+    return launchAndValidate(kitten, metadata, disposition, env, runProcess);
   }
   if (afterFailureMatch.id === match.id) {
     throwProcessFailure("focus", metadata.canonicalPath, focusCommand, focusResult);
   }
-  return focusReplacementOnce(kitten, metadata, env, runProcess, afterFailure);
+  return focusReplacementOnce(kitten, metadata, disposition, env, runProcess, afterFailure);
 }
 
 async function focusReplacementOnce(
   kitten: string,
   metadata: KittyWorktreeMetadata,
+  disposition: LaunchDisposition,
   env: Record<string, string | undefined>,
   runProcess: SwitchProcessRunner,
   state: KittyWindowState[],
 ): Promise<LaunchSwitchResult> {
   const replacement = selectIdentityMatch(state, metadata);
-  if (!replacement) return launchAndValidate(kitten, metadata, env, runProcess);
+  if (!replacement) return launchAndValidate(kitten, metadata, disposition, env, runProcess);
   const command = buildFocusCommand(kitten, replacement.id);
   const result = await runProcess(command, processOptions(metadata.canonicalPath, env));
   if (result.exitCode !== 0)
@@ -398,12 +402,13 @@ async function focusReplacementOnce(
       },
     );
   }
-  return { command, mode: "kitty" };
+  return { command, disposition, mode: "kitty" };
 }
 
 async function launchAndValidate(
   kitten: string,
   metadata: KittyWorktreeMetadata,
+  disposition: LaunchDisposition,
   env: Record<string, string | undefined>,
   runProcess: SwitchProcessRunner,
 ): Promise<LaunchSwitchResult> {
@@ -457,7 +462,7 @@ async function launchAndValidate(
       { command, path: metadata.canonicalPath, windowId: launchedId },
     );
   }
-  return { command, mode: "kitty" };
+  return { command, disposition, mode: "kitty" };
 }
 
 function parseLaunchId(stdout: string): number | null {

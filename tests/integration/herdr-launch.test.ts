@@ -134,7 +134,7 @@ describe("Herdr launcher", () => {
     const commands: string[][] = [];
     const result = await launchSwitchTarget(
       { ...candidate, herdrSource: undefined },
-      { herdr: true },
+      { disposition: "window", herdr: true },
       {
         env: {},
         platform: "darwin",
@@ -165,7 +165,7 @@ describe("Herdr launcher", () => {
     const commands: string[][] = [];
     const result = await launchSwitchTarget(
       special,
-      { herdr: true },
+      { disposition: "window", herdr: true },
       {
         env: {},
         platform: "darwin",
@@ -189,6 +189,7 @@ describe("Herdr launcher", () => {
         "--focus",
         "--json",
       ],
+      disposition: "window",
       mode: "herdr",
     });
     expect(commands).toEqual([result.command]);
@@ -199,7 +200,7 @@ describe("Herdr launcher", () => {
     async (alreadyOpen) => {
       const result = await launchSwitchTarget(
         candidate,
-        { herdr: true },
+        { disposition: "window", herdr: true },
         { env: {}, platform: "darwin", runProcess: async () => herdrSuccess(alreadyOpen) },
       );
       expect(result.mode).toBe("herdr");
@@ -242,7 +243,7 @@ describe("Herdr launcher", () => {
     await expect(
       launchSwitchTarget(
         candidate,
-        { herdr: true },
+        { disposition: "window", herdr: true },
         {
           env: { TERM_PROGRAM: "vscode" },
           platform: "darwin",
@@ -265,7 +266,7 @@ describe("Herdr launcher", () => {
     await expect(
       launchSwitchTarget(
         { ...candidate, herdrSource: { status: "unavailable" } },
-        { herdr: true },
+        { disposition: "window", herdr: true },
         {
           env: {},
           platform: "darwin",
@@ -296,7 +297,7 @@ describe("Herdr launcher", () => {
   test("automatic tmux precedes Herdr, while Herdr precedes IDE", async () => {
     const tmux = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { HERDR_ENV: "1", TMUX: "/tmp/tmux" },
         platform: "darwin",
@@ -306,7 +307,7 @@ describe("Herdr launcher", () => {
     expect(tmux.mode).toBe("tmux");
     const herdr = await launchSwitchTarget(
       candidate,
-      {},
+      { disposition: "window" },
       {
         env: { HERDR_ENV: "1", TERM_PROGRAM: "vscode" },
         platform: "darwin",
@@ -352,6 +353,7 @@ describe("Herdr configuration and command resolution", () => {
 
   test("explicit create Herdr implies launch and overrides --no-launch", () => {
     expect(resolveCreateDefaults({ herdr: true, launch: false }, baseConfig())).toEqual({
+      disposition: "window",
       launchMode: "herdr",
       shouldLaunch: true,
       shouldSwitch: true,
@@ -362,6 +364,7 @@ describe("Herdr configuration and command resolution", () => {
     const config = baseConfig();
     config.defaults = { create: { launch: "herdr" } };
     expect(resolveCreateDefaults({ launch: false }, config)).toEqual({
+      disposition: "window",
       launchMode: "auto",
       shouldLaunch: false,
       shouldSwitch: false,
@@ -413,7 +416,11 @@ describe("Herdr configuration and command resolution", () => {
         findWorkspaceRoot: async () => workspaceRoot,
         launchSwitchTarget: async (_selected, launchOptions) => {
           calls.push(launchOptions);
-          return { command: ["noop"], mode: launchOptions.herdr ? "herdr" : "fallback" };
+          return {
+            command: ["noop"],
+            disposition: "window",
+            mode: launchOptions.herdr ? "herdr" : "fallback",
+          };
         },
         loadWorkspaceRepositories: async () => ({
           config: {
