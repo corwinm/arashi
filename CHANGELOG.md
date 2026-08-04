@@ -1,3 +1,14 @@
+## [1.24.0](https://github.com/corwinm/arashi/compare/v1.23.0...v1.24.0) (2026-08-04)
+
+### Features
+
+- add tab launch disposition ([#108](https://github.com/corwinm/arashi/issues/108)) ([4fc34fd](https://github.com/corwinm/arashi/commit/4fc34fd2623ba378078b522c6913eac6571e3257))
+- support Git Bash Windows installs ([#107](https://github.com/corwinm/arashi/issues/107)) ([7e5d9e1](https://github.com/corwinm/arashi/commit/7e5d9e18487a6b69f0c401ad13d257d8e735de91))
+
+### Bug Fixes
+
+- preserve Windows terminal context when switching ([#106](https://github.com/corwinm/arashi/issues/106)) ([a7e7b24](https://github.com/corwinm/arashi/commit/a7e7b247836a1a491b70b4cf562743d12b3834d6))
+
 ## [1.23.0](https://github.com/corwinm/arashi/compare/v1.22.0...v1.23.0) (2026-07-30)
 
 ### Features
