@@ -1,3 +1,12 @@
+## [1.24.1](https://github.com/corwinm/arashi/compare/v1.24.0...v1.24.1) (2026-08-04)
+
+### Bug Fixes
+
+- detach Windows Terminal launches ([#112](https://github.com/corwinm/arashi/issues/112)) ([1d6c8d9](https://github.com/corwinm/arashi/commit/1d6c8d9bf315b5982646666050cc11daa9137c02))
+- detect Windows update package managers ([#111](https://github.com/corwinm/arashi/issues/111)) ([8705e92](https://github.com/corwinm/arashi/commit/8705e9268523da3e4469b7220e3145f51df05029))
+- reject unsupported Terminal tabs ([#113](https://github.com/corwinm/arashi/issues/113)) ([978975e](https://github.com/corwinm/arashi/commit/978975e463409a6769d6796982f0f2751ed2bf19))
+- resolve exact macOS terminal tab targets ([#110](https://github.com/corwinm/arashi/issues/110)) ([e0f7eed](https://github.com/corwinm/arashi/commit/e0f7eed14b64bcd348d17edee5337c4376501dc8))
+
 ## [1.24.0](https://github.com/corwinm/arashi/compare/v1.23.0...v1.24.0) (2026-08-04)
 
 ### Features
