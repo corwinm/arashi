@@ -92,7 +92,7 @@ test -n "$resolved"
 test "$(cygpath -am "$resolved")" = "$(cygpath -am "$ARASHI_EXPECTED_WRAPPER")"
 arashi --version
 '@
-    [System.IO.File]::WriteAllText($gitBashCheckPath, (($gitBashCheck -replace "`r`n", "`n") + "`n"), (New-Object System.Text.ASCIIEncoding($false)))
+    [System.IO.File]::WriteAllText($gitBashCheckPath, (($gitBashCheck -replace "`r`n", "`n") + "`n"), [System.Text.Encoding]::ASCII)
 
     $powerShellCheckPath = Join-Path $FixtureDirectory "verify-powershell.ps1"
     @'
