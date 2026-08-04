@@ -890,6 +890,198 @@ describe("launchSwitchTarget", () => {
     expect(commands[0]?.[0]).toBe("cmux");
   });
 
+  test("opens a new window with the current profile inside Windows Terminal", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      ...candidate,
+      worktreePath: String.raw`C:\workspace\feature auth's`,
+    };
+    const commands: string[][] = [];
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: {
+          MSYSTEM: "MINGW64",
+          SHELL: "/usr/bin/bash",
+          WT_PROFILE_ID: "{00000000-0000-0000-0000-000000000001}",
+          WT_SESSION: "00000000-0000-0000-0000-000000000002",
+        },
+        platform: "win32",
+        runProcess: async (command) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      command: [
+        "wt.exe",
+        "-w",
+        "new",
+        "new-tab",
+        "-p",
+        "{00000000-0000-0000-0000-000000000001}",
+        "-d",
+        windowsCandidate.worktreePath,
+      ],
+      mode: "fallback",
+    });
+    expect(commands).toEqual([result.command]);
+  });
+
+  test("uses the configured Git Bash launcher so MinTTY or ConHost is preserved", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      ...candidate,
+      worktreePath: String.raw`C:\workspace\feature auth's`,
+    };
+    const commands: string[][] = [];
+    const environments: Record<string, string | undefined>[] = [];
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: { MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" },
+        platform: "win32",
+        runProcess: async (command, options) => {
+          commands.push(command);
+          environments.push(options.env);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      command: [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$directory = Split-Path -Parent (Get-Command git.exe -ErrorAction Stop).Source; while ($directory) { $gitBash = Join-Path $directory 'git-bash.exe'; if (Test-Path -LiteralPath $gitBash) { Start-Process -FilePath $gitBash -ArgumentList '--no-cd' -WorkingDirectory $env:ARASHI_SWITCH_WORKTREE -ErrorAction Stop; exit 0 }; $parent = Split-Path -Parent $directory; if ($parent -eq $directory) { break }; $directory = $parent }; exit 1",
+      ],
+      mode: "fallback",
+    });
+    expect(commands).toEqual([result.command]);
+    expect(result.command).not.toContain(windowsCandidate.worktreePath);
+    expect(environments).toEqual([
+      {
+        ARASHI_SWITCH_WORKTREE: windowsCandidate.worktreePath,
+        CHERE_INVOKING: "1",
+        MSYSTEM: "MINGW64",
+        SHELL: "/usr/bin/bash",
+      },
+    ]);
+  });
+
+  test("falls back from Windows Terminal through configured Git Bash to MinTTY without leaking attempt variables", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      ...candidate,
+      worktreePath: String.raw`C:\workspace\feature & release`,
+    };
+    const baseEnv = {
+      MSYSTEM: "MINGW64",
+      SHELL: "/usr/bin/bash",
+      WT_PROFILE_ID: "{00000000-0000-0000-0000-000000000001}",
+      WT_SESSION: "00000000-0000-0000-0000-000000000002",
+    };
+    const attempts: Array<{
+      command: string[];
+      env: Record<string, string | undefined>;
+    }> = [];
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: baseEnv,
+        platform: "win32",
+        runProcess: async (command, options) => {
+          attempts.push({ command, env: options.env });
+          return {
+            exitCode: command[0] === "mintty.exe" ? 0 : 1,
+            stderr: "simulated failure",
+            stdout: "",
+          };
+        },
+      },
+    );
+
+    expect(attempts).toHaveLength(3);
+    expect(attempts[0]).toEqual({
+      command: [
+        "wt.exe",
+        "-w",
+        "new",
+        "new-tab",
+        "-p",
+        baseEnv.WT_PROFILE_ID,
+        "-d",
+        windowsCandidate.worktreePath,
+      ],
+      env: baseEnv,
+    });
+    expect(attempts[1]?.command[4]).toContain("git-bash.exe");
+    expect(attempts[1]?.env).toEqual({
+      ...baseEnv,
+      ARASHI_SWITCH_WORKTREE: windowsCandidate.worktreePath,
+      CHERE_INVOKING: "1",
+    });
+    expect(attempts[2]).toEqual({
+      command: [
+        "mintty.exe",
+        "--daemon",
+        "--dir",
+        windowsCandidate.worktreePath,
+        "/usr/bin/bash",
+        "--login",
+        "-i",
+      ],
+      env: { ...baseEnv, CHERE_INVOKING: "1" },
+    });
+    expect(result.command).toEqual(attempts[2]?.command);
+  });
+
+  test("launches the generic Windows fallback without cmd.exe reparsing the worktree path", async () => {
+    const windowsCandidate: SwitchCandidate = {
+      ...candidate,
+      worktreePath: String.raw`C:\workspace\feature & release|^%TEMP%`,
+    };
+    const attempts: Array<{
+      command: string[];
+      env: Record<string, string | undefined>;
+    }> = [];
+
+    const result = await launchSwitchTarget(
+      windowsCandidate,
+      {},
+      {
+        env: {},
+        platform: "win32",
+        runProcess: async (command, options) => {
+          attempts.push({ command, env: options.env });
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result.command).toEqual([
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Start-Process -FilePath cmd.exe -WorkingDirectory $env:ARASHI_SWITCH_WORKTREE",
+    ]);
+    expect(result.command).not.toContain(windowsCandidate.worktreePath);
+    expect(attempts).toEqual([
+      {
+        command: result.command,
+        env: { ARASHI_SWITCH_WORKTREE: windowsCandidate.worktreePath },
+      },
+    ]);
+  });
+
   test("throws launch failure when all fallback commands fail", async () => {
     await expect(
       launchSwitchTarget(

@@ -25,6 +25,9 @@ const IDE_COMMANDS: Record<SupportedIde, string> = {
 };
 
 const WINDOWS_SHELL = "cmd.exe";
+const WINDOWS_SWITCH_WORKTREE_ENV = "ARASHI_SWITCH_WORKTREE";
+const WINDOWS_GIT_BASH_LAUNCH =
+  "$directory = Split-Path -Parent (Get-Command git.exe -ErrorAction Stop).Source; while ($directory) { $gitBash = Join-Path $directory 'git-bash.exe'; if (Test-Path -LiteralPath $gitBash) { Start-Process -FilePath $gitBash -ArgumentList '--no-cd' -WorkingDirectory $env:ARASHI_SWITCH_WORKTREE -ErrorAction Stop; exit 0 }; $parent = Split-Path -Parent $directory; if ($parent -eq $directory) { break }; $directory = $parent }; exit 1";
 const CMUX_MINIMUM_VERSION = "0.64.18";
 
 export interface SwitchProcessResult {
@@ -551,13 +554,14 @@ async function launchWithFallback(
     runProcess: SwitchProcessRunner;
   },
 ): Promise<LaunchSwitchResult> {
-  const fallbackCommands = buildFallbackCommands(candidate.worktreePath, deps.platform);
+  const fallbackCommands = buildFallbackCommands(candidate.worktreePath, deps.platform, deps.env);
   const attempts: string[] = [];
 
   for (const command of fallbackCommands) {
+    const attemptEnv = buildFallbackAttemptEnvironment(command, candidate.worktreePath, deps.env);
     const result = await deps.runProcess(command, {
       cwd: candidate.worktreePath,
-      env: deps.env,
+      env: attemptEnv,
     });
 
     if (result.exitCode === 0) {
@@ -700,13 +704,58 @@ function buildTerminalAppCommands(worktreePath: string, terminalApp: TerminalApp
   return [["ghostty", "--working-directory", worktreePath]];
 }
 
-function buildFallbackCommands(worktreePath: string, platform: NodeJS.Platform): string[][] {
+function buildFallbackCommands(
+  worktreePath: string,
+  platform: NodeJS.Platform,
+  env: Record<string, string | undefined>,
+): string[][] {
   if (platform === "darwin") {
     return [["open", "-a", "Terminal", worktreePath]];
   }
 
   if (platform === "win32") {
-    return [["cmd.exe", "/c", "start", "", "/D", worktreePath, "cmd.exe"]];
+    const cmdFallback = [
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `Start-Process -FilePath ${WINDOWS_SHELL} -WorkingDirectory $env:${WINDOWS_SWITCH_WORKTREE_ENV}`,
+    ];
+    const configuredGitBashFallback = [
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      WINDOWS_GIT_BASH_LAUNCH,
+    ];
+    const minttyFallback = [
+      "mintty.exe",
+      "--daemon",
+      "--dir",
+      worktreePath,
+      "/usr/bin/bash",
+      "--login",
+      "-i",
+    ];
+    const windowsTerminalSession = env.WT_SESSION?.trim();
+    if (windowsTerminalSession) {
+      const windowsTerminal = ["wt.exe", "-w", "new", "new-tab"];
+      const profileId = env.WT_PROFILE_ID?.trim();
+      if (profileId) {
+        windowsTerminal.push("-p", profileId);
+      }
+      windowsTerminal.push("-d", worktreePath);
+
+      return isMsysBashSession(env)
+        ? [windowsTerminal, configuredGitBashFallback, minttyFallback, cmdFallback]
+        : [windowsTerminal, cmdFallback];
+    }
+
+    if (isMsysBashSession(env)) {
+      return [configuredGitBashFallback, minttyFallback, cmdFallback];
+    }
+
+    return [cmdFallback];
   }
 
   return [
@@ -714,6 +763,36 @@ function buildFallbackCommands(worktreePath: string, platform: NodeJS.Platform):
     ["gnome-terminal", "--working-directory", worktreePath],
     ["konsole", "--workdir", worktreePath],
   ];
+}
+
+function isMsysBashSession(env: Record<string, string | undefined>): boolean {
+  const msystem = env.MSYSTEM?.trim();
+  const shell = env.SHELL?.trim();
+  return Boolean(msystem && shell && /(?:^|[\\/])bash(?:\.exe)?$/i.test(shell));
+}
+
+function buildFallbackAttemptEnvironment(
+  command: string[],
+  worktreePath: string,
+  env: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  if (command[4] === WINDOWS_GIT_BASH_LAUNCH) {
+    return {
+      ...env,
+      CHERE_INVOKING: "1",
+      [WINDOWS_SWITCH_WORKTREE_ENV]: worktreePath,
+    };
+  }
+
+  if (command[0] === "mintty.exe") {
+    return { ...env, CHERE_INVOKING: "1" };
+  }
+
+  if (command[0] === "powershell.exe") {
+    return { ...env, [WINDOWS_SWITCH_WORKTREE_ENV]: worktreePath };
+  }
+
+  return env;
 }
 
 function throwLaunchFailure(worktreePath: string, command: string[], reason: string): never {
