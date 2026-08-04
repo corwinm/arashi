@@ -614,6 +614,39 @@ describe("launch disposition matrix", () => {
     },
   );
 
+  test("falls back after macOS window AppleScript failures", async () => {
+    const cases = [
+      [{ TERM_PROGRAM: "Apple_Terminal" }, ["open", "-a", "Terminal", candidate.worktreePath]],
+      [{ TERM_PROGRAM: "iTerm.app" }, ["open", "-a", "iTerm", candidate.worktreePath]],
+      [
+        { TERM_PROGRAM: "ghostty", TERM_PROGRAM_VERSION: "1.3.0" },
+        [
+          "open",
+          "-na",
+          "Ghostty.app",
+          "--args",
+          "--working-directory",
+          candidate.worktreePath,
+          "-e",
+          "/bin/zsh",
+        ],
+      ],
+    ] as const;
+    for (const [env, fallback] of cases) {
+      const commands: string[][] = [];
+      const result = await launch("window", env, "darwin", async (command) => {
+        commands.push(command);
+        return command[0] === "osascript"
+          ? { exitCode: 1, stderr: "Not authorized", stdout: "" }
+          : { exitCode: 0, stderr: "", stdout: "" };
+      });
+      expect(commands).toHaveLength(2);
+      expect(commands[0]?.slice(0, 2)).toEqual(["osascript", "-e"]);
+      expect(commands[1]).toEqual(fallback);
+      expect(result.command).toEqual(fallback);
+    }
+  });
+
   test("maps macOS Ghostty windows by version without exact target preflight", async () => {
     const modernCommands: string[][] = [];
     await expect(

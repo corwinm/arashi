@@ -1078,7 +1078,7 @@ async function launchWithDetectedTerminalApp(
         mode: "fallback",
       };
     }
-    if (deps.disposition === "tab" || command[0] === "osascript") {
+    if (deps.disposition === "tab") {
       const detail = result.stderr || result.stdout;
       if (result.exitCode === 42 || detail.includes("ARASHI_TAB_TARGET_UNAVAILABLE")) {
         throw new SwitchCommandError(
@@ -1137,34 +1137,40 @@ function buildTerminalAppCommands(
 
   const shell = nonEmpty(env.SHELL) ?? "/bin/zsh";
   if (terminalApp === "terminal" && platform === "darwin") {
-    return [
-      [
-        "osascript",
-        "-e",
-        terminalAppleScript(disposition),
-        "--",
-        worktreePath,
-        shell,
-        macTarget?.target ?? "",
-        macTarget?.profile ?? "",
-        macTarget?.version ?? "",
-      ],
+    const appleScriptCommand = [
+      "osascript",
+      "-e",
+      terminalAppleScript(disposition),
+      "--",
+      worktreePath,
+      shell,
+      macTarget?.target ?? "",
+      macTarget?.profile ?? "",
+      macTarget?.version ?? "",
     ];
+    return disposition === "tab"
+      ? [appleScriptCommand]
+      : [appleScriptCommand, ["open", "-a", "Terminal", worktreePath]];
   }
   if (terminalApp === "iterm2" && platform === "darwin") {
-    return [
-      [
-        "osascript",
-        "-e",
-        iTermAppleScript(disposition),
-        "--",
-        worktreePath,
-        shell,
-        macTarget?.target ?? "",
-        macTarget?.profile ?? "",
-        macTarget?.version ?? "",
-      ],
+    const appleScriptCommand = [
+      "osascript",
+      "-e",
+      iTermAppleScript(disposition),
+      "--",
+      worktreePath,
+      shell,
+      macTarget?.target ?? "",
+      macTarget?.profile ?? "",
+      macTarget?.version ?? "",
     ];
+    return disposition === "tab"
+      ? [appleScriptCommand]
+      : [
+          appleScriptCommand,
+          ["open", "-a", "iTerm", worktreePath],
+          ["open", "-a", "iTerm2", worktreePath],
+        ];
   }
   if (
     terminalApp === "ghostty" &&
@@ -1172,19 +1178,32 @@ function buildTerminalAppCommands(
     ((macTarget && versionAtLeast(macTarget.version, "1.3.0")) ||
       (disposition === "window" && versionAtLeast(env.TERM_PROGRAM_VERSION, "1.3.0")))
   ) {
-    return [
-      [
-        "osascript",
-        "-e",
-        ghosttyAppleScript(disposition),
-        "--",
-        worktreePath,
-        shell,
-        macTarget?.target ?? "",
-        macTarget?.profile ?? "",
-        macTarget?.version ?? env.TERM_PROGRAM_VERSION ?? "",
-      ],
+    const appleScriptCommand = [
+      "osascript",
+      "-e",
+      ghosttyAppleScript(disposition),
+      "--",
+      worktreePath,
+      shell,
+      macTarget?.target ?? "",
+      macTarget?.profile ?? "",
+      macTarget?.version ?? env.TERM_PROGRAM_VERSION ?? "",
     ];
+    return disposition === "tab"
+      ? [appleScriptCommand]
+      : [
+          appleScriptCommand,
+          [
+            "open",
+            "-na",
+            "Ghostty.app",
+            "--args",
+            "--working-directory",
+            worktreePath,
+            "-e",
+            shell,
+          ],
+        ];
   }
   if (platform === "linux") {
     return [["ghostty", "+new-window", "--working-directory", worktreePath, "-e", shell]];
