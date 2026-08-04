@@ -265,6 +265,7 @@ export async function launchSwitchTarget(
   return launchWithFallback(candidate, {
     env: childEnv,
     platform,
+    runDetachedProcess,
     runProcess,
     disposition,
   });
@@ -921,6 +922,7 @@ async function launchWithFallback(
     disposition: LaunchDisposition;
     env: Record<string, string | undefined>;
     platform: NodeJS.Platform;
+    runDetachedProcess: SwitchProcessRunner;
     runProcess: SwitchProcessRunner;
   },
 ): Promise<LaunchSwitchResult> {
@@ -939,7 +941,8 @@ async function launchWithFallback(
 
   for (const command of commands) {
     const attemptEnv = buildFallbackAttemptEnvironment(command, candidate.worktreePath, deps.env);
-    const result = await deps.runProcess(command, {
+    const runner = command[0] === "wt.exe" ? deps.runDetachedProcess : deps.runProcess;
+    const result = await runner(command, {
       cwd: candidate.worktreePath,
       env: attemptEnv,
     });
