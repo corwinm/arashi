@@ -273,38 +273,36 @@ describe("create defaults integration", () => {
     expect(events).toContain("MUTATION create");
   });
 
-  test.each([
-    ["missing target", { exitCode: 0, stderr: "", stdout: "" }, "TAB_DISPOSITION_UNSUPPORTED"],
-    ["denied automation", { exitCode: 1, stderr: "Not authorized", stdout: "" }, "LAUNCH_FAILED"],
-  ] as const)(
-    "keeps create mutation-free when Terminal.app preflight reports %s",
-    async (_label, processResult, code) => {
-      const events: string[] = [];
-      await expect(
-        executeCreate(
-          branchName,
-          { tab: true },
-          baseDeps({
-            env: { SHELL: "/bin/zsh", TERM_PROGRAM: "Apple_Terminal" },
-            platform: "darwin",
-            runProcess: async (command) => {
-              events.push(command[0] ?? "unknown");
-              return processResult;
-            },
-            reconcileManagedIgnore: async (...args) => {
-              events.push("MUTATION managed-ignore");
-              return baseDeps().reconcileManagedIgnore!(...args);
-            },
-            createCoordinatedWorktrees: async (...args) => {
-              events.push("MUTATION create");
-              return baseDeps().createCoordinatedWorktrees!(...args);
-            },
-          }),
-        ),
-      ).rejects.toMatchObject({ code });
-      expect(events).toEqual(["osascript"]);
-    },
-  );
+  test("keeps configured create mutation-free when Terminal.app tabs are unsupported", async () => {
+    const events: string[] = [];
+    await expect(
+      executeCreate(
+        branchName,
+        { tab: true },
+        baseDeps({
+          env: { SHELL: "/bin/zsh", TERM_PROGRAM: "Apple_Terminal" },
+          platform: "darwin",
+          runProcess: async (command) => {
+            events.push(command[0] ?? "unknown");
+            return { exitCode: 0, stderr: "", stdout: "" };
+          },
+          reconcileManagedIgnore: async (...args) => {
+            events.push("MUTATION managed-ignore");
+            return baseDeps().reconcileManagedIgnore!(...args);
+          },
+          createCoordinatedWorktrees: async (...args) => {
+            events.push("MUTATION create");
+            return baseDeps().createCoordinatedWorktrees!(...args);
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "TAB_DISPOSITION_UNSUPPORTED",
+      context: { disposition: "tab", launcher: "terminal" },
+      message: expect.stringContaining("Command-T"),
+    });
+    expect(events).toEqual([]);
+  });
 
   test.each([undefined, "", "   "])(
     "rejects explicit tmux context %s before configured creation",

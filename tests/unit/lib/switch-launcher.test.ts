@@ -534,7 +534,6 @@ describe("launch disposition matrix", () => {
   test("uses static AppleScript source and passes adversarial cwd and shell only as data", async () => {
     const special = { ...candidate, worktreePath: `/tmp/a' & do shell script "pwn"` };
     for (const env of [
-      { TERM_PROGRAM: "Apple_Terminal", SHELL: `/bin/zsh' & pwn` },
       { TERM_PROGRAM: "iTerm.app", SHELL: `/bin/zsh' & pwn` },
       { TERM_PROGRAM: "ghostty", TERM_PROGRAM_VERSION: "1.3.0", SHELL: `/bin/zsh' & pwn` },
     ]) {
@@ -573,7 +572,6 @@ describe("launch disposition matrix", () => {
   });
 
   test.each([
-    ["Apple_Terminal", undefined, "terminal"],
     ["iTerm.app", "3.5.0", "iterm2"],
     ["ghostty", "1.3.0", "ghostty"],
   ] as const)(
@@ -613,16 +611,12 @@ describe("launch disposition matrix", () => {
       expect(commands[0]?.[2]).not.toContain(special.worktreePath);
       expect(commands[1]?.slice(0, 2)).toEqual(["osascript", "-e"]);
       const launchScript = commands[1]?.[2] ?? "";
-      if (launcher !== "terminal") {
-        expect(launchScript).not.toContain("first window whose id as text is targetIdentifier");
-        expect(launchScript).toContain("repeat with candidateWindow in windows");
-        expect(launchScript).toContain(
-          "if (id of candidateWindow as text) is targetIdentifier then",
-        );
-        expect(launchScript).toContain(
-          'if targetWindow is missing value then error "ARASHI_TAB_TARGET_UNAVAILABLE" number 42',
-        );
-      }
+      expect(launchScript).not.toContain("first window whose id as text is targetIdentifier");
+      expect(launchScript).toContain("repeat with candidateWindow in windows");
+      expect(launchScript).toContain("if (id of candidateWindow as text) is targetIdentifier then");
+      expect(launchScript).toContain(
+        'if targetWindow is missing value then error "ARASHI_TAB_TARGET_UNAVAILABLE" number 42',
+      );
       expect(commands[1]?.slice(-5)).toEqual([
         special.worktreePath,
         `/bin/zsh' & unsafe`,
@@ -631,9 +625,7 @@ describe("launch disposition matrix", () => {
         version ?? "2.14",
       ]);
       expect(result).toMatchObject({ disposition: "tab" });
-      expect(JSON.stringify(commands)).toContain(
-        launcher === "terminal" ? "Terminal" : launcher === "iterm2" ? "iTerm2" : "Ghostty",
-      );
+      expect(JSON.stringify(commands)).toContain(launcher === "iterm2" ? "iTerm2" : "Ghostty");
     },
   );
 
@@ -766,7 +758,36 @@ describe("launch disposition matrix", () => {
     expect(legacyCommands).toHaveLength(1);
   });
 
-  test("maps macOS missing targets and automation failures without fallback", async () => {
+  test("rejects Terminal.app tabs before target preflight, AppleScript, or fallback", async () => {
+    const commands: string[][] = [];
+    await expect(
+      launch(
+        "tab",
+        { TERM_PROGRAM: "Apple_Terminal", SHELL: "/bin/zsh" },
+        "darwin",
+        async (command) => {
+          commands.push(command);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: SwitchCommandErrorCode.TAB_DISPOSITION_UNSUPPORTED,
+      context: { disposition: "tab", launcher: "terminal" },
+      message: expect.stringContaining("Command-T"),
+    });
+    await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.toThrow(
+      "arashi switch --cd",
+    );
+    await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.toThrow(
+      'cd "$(arashi switch --no-cd --no-default-launch)"',
+    );
+    await expect(launch("tab", { TERM_PROGRAM: "Apple_Terminal" }, "darwin")).rejects.toThrow(
+      "arashi switch --no-cd --no-default-launch",
+    );
+    expect(commands).toEqual([]);
+  });
+
+  test("maps iTerm2 missing targets and automation failures without fallback", async () => {
     for (const processResult of [
       { exitCode: 42, stderr: "ARASHI_TAB_TARGET_UNAVAILABLE", stdout: "" },
       { exitCode: 1, stderr: "Not authorized", stdout: "" },
@@ -775,7 +796,7 @@ describe("launch disposition matrix", () => {
       await expect(
         launch(
           "tab",
-          { TERM_PROGRAM: "Apple_Terminal", SHELL: "/bin/zsh" },
+          { TERM_PROGRAM: "iTerm.app", SHELL: "/bin/zsh" },
           "darwin",
           async (command) => {
             commands.push(command);

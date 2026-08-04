@@ -280,12 +280,16 @@ export function resolveLaunchPlan(
   let supported = true;
   let reason: string | undefined;
   if (disposition === "tab") {
-    if (
+    if (launcher === "terminal") {
+      supported = false;
+      reason =
+        'Terminal.app cannot safely create a true tab through its supported automation. Press Command-T, then run `arashi switch --cd` in the new tab (requires active Arashi shell integration). Without shell integration, run `cd "$(arashi switch --no-cd --no-default-launch)"`. To force normal automatic launch resolution, run `arashi switch --no-cd --no-default-launch`; when automatic launcher resolution selects Terminal.app, it opens a new window.';
+    } else if (
       launcher === "ide" ||
       launcher === "git-bash" ||
       launcher === "kitty-unmanaged" ||
       launcher === "fallback" ||
-      ((launcher === "terminal" || launcher === "iterm2") && platform !== "darwin")
+      (launcher === "iterm2" && platform !== "darwin")
     ) {
       supported = false;
     } else if (launcher === "wezterm" && !nonEmpty(env.WEZTERM_PANE)) {
