@@ -728,7 +728,15 @@ function buildFallbackCommands(
       "-Command",
       WINDOWS_GIT_BASH_LAUNCH,
     ];
-    const minttyFallback = ["mintty.exe", "--dir", worktreePath, "/usr/bin/bash", "--login", "-i"];
+    const minttyFallback = [
+      "mintty.exe",
+      "--daemon",
+      "--dir",
+      worktreePath,
+      "/usr/bin/bash",
+      "--login",
+      "-i",
+    ];
     const windowsTerminalSession = env.WT_SESSION?.trim();
     if (windowsTerminalSession) {
       const windowsTerminal = ["wt.exe", "-w", "new", "new-tab"];

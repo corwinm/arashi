@@ -1031,6 +1031,7 @@ describe("launchSwitchTarget", () => {
     expect(attempts[2]).toEqual({
       command: [
         "mintty.exe",
+        "--daemon",
         "--dir",
         windowsCandidate.worktreePath,
         "/usr/bin/bash",
