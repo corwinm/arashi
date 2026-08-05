@@ -228,6 +228,9 @@ interface InitDependencies {
 
   /** Override stdin tty detection for tests */
   stdinIsTTY?: boolean;
+
+  /** Override native lifecycle platform for tests */
+  platform?: NodeJS.Platform;
 }
 
 interface HookTemplate {
@@ -680,29 +683,29 @@ const collectDiscoveredRepos = (
 // Hook Templates
 // ============================================================================
 
-const HOOK_TEMPLATES: HookTemplate[] = [
+const POSIX_HOOK_TEMPLATES: HookTemplate[] = [
   {
     content: `#!/usr/bin/env bash
 # Pre-Create Hook Example
 #
-# This hook runs BEFORE creating a worktree in each repository.
-# Use it to validate preconditions or prepare the environment.
+# This workspace hook runs once BEFORE branch or worktree mutation.
+# Use only workspace-level context here.
 #
 # Environment variables:
-#   ARASHI_BRANCH     - Branch name being created
-#   ARASHI_REPO_NAME  - Repository name
-#   ARASHI_REPO_PATH  - Repository path
+#   ARASHI_BRANCH_NAME         - Branch name being created
+#   ARASHI_MAIN_REPO_PATH      - Configured workspace root
+#   ARASHI_HOOK_EXECUTION_PATH - Workspace root (also the process cwd)
 #
 # Exit codes:
 #   0 - Success, continue with worktree creation
-#   Non-zero - Abort worktree creation for this repository
+#   Non-zero - Abort the coordinated create operation
 
 set -e
 
 echo "Pre-create hook: Validating branch name..."
 
 # Example: Enforce branch naming convention
-if [[ ! "$ARASHI_BRANCH" =~ ^(feature|bugfix|hotfix)/.+ ]]; then
+if [[ ! "$ARASHI_BRANCH_NAME" =~ ^(feature|bugfix|hotfix)/.+ ]]; then
   echo "Error: Branch name must start with feature/, bugfix/, or hotfix/"
   exit 1
 fi
@@ -716,37 +719,25 @@ exit 0
     content: `#!/usr/bin/env bash
 # Post-Create Hook Example
 #
-# This hook runs AFTER successfully creating a worktree in each repository.
-# Use it to perform setup tasks like installing dependencies or running scripts.
+# This workspace hook runs once after coordinated Git creation and before move/switch/launch.
 #
 # Environment variables:
-#   ARASHI_BRANCH       - Branch name created
-#   ARASHI_REPO_NAME    - Repository name
-#   ARASHI_REPO_PATH    - Repository path
-#   ARASHI_WORKTREE_PATH - Worktree path
+#   ARASHI_BRANCH_NAME         - Branch name created
+#   ARASHI_MAIN_REPO_PATH      - Configured workspace root
+#   ARASHI_HOOK_EXECUTION_PATH - Workspace root (also the process cwd)
 #
 # Exit codes:
 #   0 - Success
-#   Non-zero - Warning logged, does not abort operation
+#   Non-zero - Fail the owning operation
 
 set -e
 
-echo "Post-create hook: Setting up worktree..."
+echo "Post-create hook: Finalizing coordinated create..."
 
-# Example: Install dependencies
-cd "$ARASHI_WORKTREE_PATH"
+# Dependency setup belongs in post-create.<repo>.sh. Follow that repository's
+# committed packageManager and lockfile; do not infer npm from package.json.
 
-if [ -f "package.json" ]; then
-  echo "Installing npm dependencies..."
-  npm install
-fi
-
-if [ -f "Gemfile" ]; then
-  echo "Installing ruby gems..."
-  bundle install
-fi
-
-echo "Post-create hook: Setup complete"
+echo "Post-create hook: Finalization complete"
 exit 0
 `,
     filename: "post-create.sh.example",
@@ -766,6 +757,7 @@ exit 0
 #   ARASHI_REMOVE_TARGET_BRANCHES    - Comma-separated target branches
 #   ARASHI_REMOVE_TARGET_WORKTREES   - Comma-separated target worktree paths
 #   ARASHI_REMOVE_TARGET_REPOSITORIES - Comma-separated target repositories
+#   ARASHI_REMOVE_TARGETS_JSON        - Canonical structured targets
 #
 # Exit codes:
 #   0 - Success, continue removal
@@ -775,10 +767,9 @@ set -e
 
 echo "Pre-remove hook: preparing to remove worktrees"
 
-# Example: stop a tmux session tied to branch name
-if [ -n "$ARASHI_BRANCH_NAME" ]; then
-  tmux has-session -t "$ARASHI_BRANCH_NAME" 2>/dev/null && tmux kill-session -t "$ARASHI_BRANCH_NAME" || true
-fi
+# Parse ARASHI_REMOVE_TARGETS_JSON for command-wide cleanup. Scalar branch and
+# worktree variables describe only this repository invocation and may be absent.
+printf '%s\n' "$ARASHI_REMOVE_TARGETS_JSON"
 
 exit 0
 `,
@@ -799,6 +790,7 @@ exit 0
 #   ARASHI_REMOVE_TARGET_BRANCHES    - Comma-separated target branches
 #   ARASHI_REMOVE_TARGET_WORKTREES   - Comma-separated target worktree paths
 #   ARASHI_REMOVE_TARGET_REPOSITORIES - Comma-separated target repositories
+#   ARASHI_REMOVE_TARGETS_JSON        - Canonical structured targets
 #
 # Exit codes:
 #   0 - Success
@@ -813,40 +805,97 @@ exit 0
   },
   {
     content: `#!/usr/bin/env bash
+# Repository-specific Pre-Create Example
+# Runs after <repo>'s worktree is materialized and before its setup.
+set -e
+: "\${ARASHI_BRANCH_NAME:?missing branch}"
+: "\${ARASHI_HOOK_TARGET_REPOSITORY:?missing target repository}"
+: "\${ARASHI_HOOK_TARGET_WORKTREE_PATH:?missing target worktree}"
+test "$PWD" = "$ARASHI_HOOK_TARGET_WORKTREE_PATH"
+`,
+    filename: "pre-create.<repo>.sh.example",
+  },
+  {
+    content: `#!/usr/bin/env bash
+# Repository-specific Post-Create Example
+# Replace <repo> in the filename, then follow that repository's packageManager and lockfile.
+set -e
+: "\${ARASHI_HOOK_TARGET_WORKTREE_PATH:?missing target worktree}"
+test "$PWD" = "$ARASHI_HOOK_TARGET_WORKTREE_PATH"
+# For a pinned pnpm child in a coordinated workspace:
+# CI=true corepack pnpm --ignore-workspace install --frozen-lockfile
+`,
+    filename: "post-create.<repo>.sh.example",
+  },
+  {
+    content: `#!/usr/bin/env bash
 # Setup Hook Example
 #
-# This hook runs during repository initialization.
-# Use it to perform one-time setup tasks for newly discovered repositories.
-#
-# Environment variables:
-#   ARASHI_REPO_NAME    - Repository name
-#   ARASHI_REPO_PATH    - Repository path
+# This setup script runs from the repository being set up. Setup discovery is
+# separate from lifecycle hooks and does not promise lifecycle environment variables.
 #
 # Exit codes:
 #   0 - Success
-#   Non-zero - Warning logged, does not abort operation
+#   Non-zero - Fail the owning operation
 
 set -e
 
-echo "Setup hook: Initializing repository..."
-
-cd "$ARASHI_REPO_PATH"
-
-# Example: Configure git settings
-git config core.hooksPath .arashi/hooks
+echo "Setup hook: Initializing repository from $PWD..."
 
 echo "Setup hook: Initialization complete"
 exit 0
 `,
-    filename: "setup.sh.example",
+    filename: "../setup.sh.example",
   },
 ];
+
+const WINDOWS_LIFECYCLE_NAMES = [
+  "pre-create",
+  "post-create",
+  "pre-remove",
+  "post-remove",
+  "pre-create.<repo>",
+  "post-create.<repo>",
+] as const;
+
+const windowsHookContent = (hookName: (typeof WINDOWS_LIFECYCLE_NAMES)[number]): string => {
+  const repositorySpecific = hookName.includes(".<repo>");
+  const lifecycle = hookName.split(".")[0];
+  const targetAssertions = repositorySpecific
+    ? `$required = @("ARASHI_HOOK_TARGET_REPOSITORY", "ARASHI_HOOK_TARGET_REPO_PATH", "ARASHI_HOOK_TARGET_WORKTREE_PATH", "ARASHI_PARENT_REPO_PATH")\nforeach ($name in $required) { if (-not (Test-Path "Env:$name")) { throw "Missing $name" } }\nif ((Get-Location).Path -ne $env:ARASHI_HOOK_TARGET_WORKTREE_PATH) { throw "Unexpected hook cwd" }`
+    : "# Workspace create hooks are untargeted; remove hooks receive one current target.";
+  const packageExample =
+    hookName === "post-create.<repo>"
+      ? '# Follow the repository\'s committed packageManager and lockfile.\n# For a pinned pnpm child:\n# $env:CI = "true"\n# corepack pnpm --ignore-workspace install --frozen-lockfile'
+      : "";
+  const branchAssertion = lifecycle.includes("create")
+    ? 'if (-not $env:ARASHI_BRANCH_NAME) { throw "Missing ARASHI_BRANCH_NAME" }'
+    : "# Remove branch/worktree scalars are omitted when ambiguous; parse ARASHI_REMOVE_TARGETS_JSON.";
+  return `# ${hookName} lifecycle hook example
+# Copy this one file without .example to activate it.
+$ErrorActionPreference = "Stop"
+${branchAssertion}
+${targetAssertions}
+${packageExample}
+Write-Output "${lifecycle} hook complete"
+`;
+};
+
+export const getInitHookTemplates = (
+  platform: NodeJS.Platform = process.platform,
+): HookTemplate[] =>
+  platform === "win32"
+    ? WINDOWS_LIFECYCLE_NAMES.map((hookName) => ({
+        content: windowsHookContent(hookName),
+        filename: `${hookName.replace(".<repo>", ".REPO")}.ps1.example`,
+      }))
+    : POSIX_HOOK_TEMPLATES;
 
 /**
  * Write hook template files to hooks directory
  */
-const writeHookTemplates = async (hooksDir: string): Promise<void> => {
-  for (const template of HOOK_TEMPLATES) {
+const writeHookTemplates = async (hooksDir: string, templates: HookTemplate[]): Promise<void> => {
+  for (const template of templates) {
     const templatePath = join(hooksDir, template.filename);
 
     if (!(await fileExists(templatePath))) {
@@ -882,6 +931,7 @@ export const executeInit = async (
   const cwd = deps.cwd ?? process.cwd();
   const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
   const createDirectory = deps.ensureDir ?? ensureDir;
+  const hookTemplates = getInitHookTemplates(deps.platform);
   let resolvedWorkspaceRoot = cwd;
 
   operations.length = ZERO;
@@ -1145,14 +1195,14 @@ export const executeInit = async (
 
     // 7. Write hook templates
     if (options.dryRun) {
-      for (const template of HOOK_TEMPLATES) {
+      for (const template of hookTemplates) {
         const templatePath = join(hooksDir, template.filename);
         logDryRun("WRITE_FILE", `${templatePath} (${template.content.length} bytes)`, options);
       }
     } else {
-      logVerbose(`Writing ${HOOK_TEMPLATES.length} hook templates...`, options);
+      logVerbose(`Writing ${hookTemplates.length} hook templates...`, options);
       try {
-        await writeHookTemplates(hooksDir);
+        await writeHookTemplates(hooksDir, hookTemplates);
         logVerbose("✓ Hook templates written", options);
       } catch (error) {
         await executeRollback(options.quiet, error);
@@ -1388,7 +1438,19 @@ const displaySuccess = (result: InitResult, options: InitOptions): void => {
     console.log("  • Add repositories: arashi add <path>");
   }
   console.log("  • View configuration: cat .arashi/config.json");
-  console.log("  • Customize hooks: cp .arashi/hooks/*.example .arashi/hooks/<name>.sh");
+  if (process.platform === "win32") {
+    console.log(
+      "  • Activate one lifecycle hook: Copy-Item .arashi/hooks/pre-create.ps1.example .arashi/hooks/pre-create.ps1",
+    );
+    console.log(
+      "  • Setup remains POSIX-only; see docs/commands/init.md for current setup support",
+    );
+  } else {
+    console.log(
+      "  • Activate one lifecycle hook: install -m 755 .arashi/hooks/pre-create.sh.example .arashi/hooks/pre-create.sh",
+    );
+    console.log("  • Activate setup: install -m 755 .arashi/setup.sh.example .arashi/setup.sh");
+  }
 };
 
 /**

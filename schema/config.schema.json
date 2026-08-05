@@ -34,7 +34,10 @@
           "description": "Optional workspace-level hooks settings",
           "properties": {
             "timeout": {
-              "description": "Timeout in milliseconds for long-running operations",
+              "description": "Lifecycle-hook timeout in milliseconds (default: 300000)",
+              "maximum": 2147483647,
+              "minimum": 1,
+              "multipleOf": 1,
               "type": "number"
             }
           },

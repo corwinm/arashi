@@ -68,7 +68,12 @@ export interface Config {
   worktreesDir?: string;
   /** Optional workspace-level hooks settings */
   hooks?: {
-    /** Timeout in milliseconds for long-running operations */
+    /**
+     * Lifecycle-hook timeout in milliseconds (default: 300000)
+     * @minimum 1
+     * @maximum 2147483647
+     * @multipleOf 1
+     */
     timeout?: number;
   };
   /** Optional sync command settings */
@@ -601,8 +606,13 @@ const normalizeWorkspaceHooks = (
     return undefined;
   }
 
-  if (typeof timeout !== "number" || !Number.isFinite(timeout) || timeout <= 0) {
-    errors.push(`${prefix}.timeout: must be a positive number if present`);
+  if (
+    typeof timeout !== "number" ||
+    !Number.isInteger(timeout) ||
+    timeout < 1 ||
+    timeout > 2_147_483_647
+  ) {
+    errors.push(`${prefix}.timeout: must be an integer from 1 through 2147483647 if present`);
     return undefined;
   }
 

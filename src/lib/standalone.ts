@@ -2,7 +2,15 @@ import { access, rmdir } from "fs/promises";
 import { dirname, join, relative, resolve } from "path";
 import { exec } from "./git.ts";
 import { parseGitIgnoreVerbose } from "./git-ignore.ts";
-import { executeHook, resolveScopedLifecycleHooks } from "./hooks.ts";
+import {
+  executeHook,
+  buildRemoveHookOperationData,
+  mapHookExecutionResult,
+  mapHookSkippedOutcome,
+  resolveScopedLifecycleHookLocations,
+  validateHook,
+} from "./hooks.ts";
+import type { LifecycleHookOutcome } from "./hooks.ts";
 import type { StandaloneWorkspaceContext } from "./workspace-context.ts";
 
 export class StandaloneDestinationNotIgnoredError extends Error {
@@ -36,11 +44,11 @@ export class StandaloneDestinationNotIgnoredError extends Error {
 
 export class StandaloneHookError extends Error {
   readonly code = "STANDALONE_HOOK_FAILED";
-  readonly details: { hookName: string; scriptPath: string };
+  readonly details: { hookName: string; hookOutcomes: LifecycleHookOutcome[]; scriptPath: string };
 
-  constructor(hookName: string, scriptPath: string) {
+  constructor(hookName: string, scriptPath: string, hookOutcomes: LifecycleHookOutcome[]) {
     super(`Standalone ${hookName} hook failed: ${scriptPath}`);
-    this.details = { hookName, scriptPath };
+    this.details = { hookName, hookOutcomes, scriptPath };
     this.name = "StandaloneHookError";
   }
 }
@@ -48,50 +56,178 @@ export class StandaloneHookError extends Error {
 export async function runStandaloneGlobalHooks(
   context: StandaloneWorkspaceContext,
   hookName: string,
-  branch: string,
+  branch: string | null,
   worktreePath: string,
   skipHooks: boolean,
   quiet = false,
   continueOnFailure = false,
-): Promise<{ hookName: string; message: string }[]> {
+): Promise<LifecycleHookOutcome[]> {
   if (skipHooks) return [];
-  const failures: { hookName: string; message: string }[] = [];
-  const hooks = await resolveScopedLifecycleHooks({
+  const outcomes: LifecycleHookOutcome[] = [];
+  const locations = await resolveScopedLifecycleHookLocations({
+    globalOnly: true,
     hookName,
     targetRepositories: [context.repository],
     workspaceRoot: context.mainRoot,
   });
-  for (const hook of hooks.filter((candidate) => candidate.scope.startsWith("global-"))) {
-    try {
-      const result = await executeHook({
-        context: {
-          hookName,
-          hookScope: hook.scope,
-          operationData: {
-            BRANCH_NAME: branch,
-            REPO_NAME: context.repository.name,
-            WORKSPACE_MODE: "standalone",
-            WORKTREE_PATH: worktreePath,
-          },
-          repoPath: context.mainRoot,
-          sourceScriptPath: hook.sourceScriptPath,
-          targetRepoName: context.repository.name,
-          targetRepoPath: context.mainRoot,
-        },
+  for (const hook of locations.filter((candidate) => candidate.scope.startsWith("global-"))) {
+    if (!hook.scriptPath) {
+      const mapping = mapHookSkippedOutcome("not_found", "Hook script not found");
+      outcomes.push({
+        executionPath: hook.executionPath,
         hookName,
-        quiet,
-        scriptPath: hook.scriptPath,
+        hookStatus: mapping.hookStatus,
+        message: mapping.message,
+        reasonCode: mapping.reasonCode,
+        repositoryId: context.repository.name,
+        scope: hook.scope,
+        sourceScriptPath: null,
+        targetRepositoryName: context.repository.name,
+        targetRepositoryPath: context.mainRoot,
+        targetWorktreePath: worktreePath,
+        workspaceMode: "standalone",
       });
-      if (!result.success) throw new StandaloneHookError(hookName, hook.scriptPath);
-    } catch (error) {
-      if (!continueOnFailure) throw error;
-      failures.push({
+      continue;
+    }
+
+    const validation = await validateHook(hook.scriptPath);
+    if (!validation.valid) {
+      const outcome: LifecycleHookOutcome = {
+        executionPath: hook.executionPath,
         hookName,
-        message: error instanceof Error ? error.message : String(error),
-      });
+        hookStatus: "failure",
+        message: validation.error ?? "Hook validation failed",
+        reasonCode: validation.reasonCode ?? "validation_failed",
+        repositoryId: context.repository.name,
+        scope: hook.scope,
+        sourceScriptPath: hook.scriptPath,
+        targetRepositoryName: context.repository.name,
+        targetRepositoryPath: context.mainRoot,
+        targetWorktreePath: worktreePath,
+        workspaceMode: "standalone",
+      };
+      outcomes.push(outcome);
+      if (!continueOnFailure) throw new StandaloneHookError(hookName, hook.scriptPath, outcomes);
+      continue;
+    }
+
+    const operationData = hookName.endsWith("-remove")
+      ? buildRemoveHookOperationData({
+          mainRepoPath: context.mainRoot,
+          targets: [
+            {
+              branchName: branch,
+              repository: context.repository.name,
+              worktreePath,
+            },
+          ],
+        })
+      : {
+          BRANCH_NAME: branch ?? "",
+          REPO_NAME: context.repository.name,
+          WORKSPACE_MODE: "standalone",
+          WORKTREE_PATH: worktreePath,
+        };
+    if (branch === null) delete operationData.BRANCH_NAME;
+    operationData.REPO_NAME = context.repository.name;
+    operationData.REPO_PATH = context.mainRoot;
+    operationData.WORKTREE_PATH = worktreePath;
+    const result = await executeHook({
+      context: {
+        hookName,
+        hookScope: hook.scope,
+        operationData,
+        repoPath: context.mainRoot,
+        sourceScriptPath: hook.scriptPath,
+        mainRepoPath: context.mainRoot,
+        targetRepoName: context.repository.name,
+        targetRepoPath: context.mainRoot,
+        targetWorktreePath: worktreePath,
+        workspaceMode: "standalone",
+      },
+      hookName,
+      quiet,
+      scriptPath: hook.scriptPath,
+    });
+    const mapping = mapHookExecutionResult(result);
+    outcomes.push({
+      durationMs: mapping.durationMs,
+      executionPath: hook.executionPath,
+      hookName,
+      hookStatus: mapping.hookStatus,
+      message:
+        mapping.hookStatus === "failure" && result.stderr.trim()
+          ? result.stderr.trim()
+          : mapping.message,
+      reasonCode: mapping.reasonCode,
+      repositoryId: context.repository.name,
+      scope: hook.scope,
+      sourceScriptPath: hook.scriptPath,
+      targetRepositoryName: context.repository.name,
+      targetRepositoryPath: context.mainRoot,
+      targetWorktreePath: worktreePath,
+      workspaceMode: "standalone",
+    });
+    if (!result.success && !continueOnFailure) {
+      throw new StandaloneHookError(hookName, hook.scriptPath, outcomes);
     }
   }
-  return failures;
+  return outcomes;
+}
+
+export async function preflightStandaloneGlobalHooks(
+  context: StandaloneWorkspaceContext,
+  hookNames: string[],
+  branch: string | null,
+  worktreePath: string,
+): Promise<void> {
+  for (const hookName of hookNames) {
+    let locations;
+    try {
+      locations = await resolveScopedLifecycleHookLocations({
+        globalOnly: true,
+        hookName,
+        targetRepositories: [context.repository],
+        workspaceRoot: context.mainRoot,
+      });
+    } catch (error) {
+      const outcome: LifecycleHookOutcome = {
+        executionPath: context.mainRoot,
+        hookName,
+        hookStatus: "failure",
+        message: error instanceof Error ? error.message : String(error),
+        reasonCode: "validation_failed",
+        repositoryId: context.repository.name,
+        scope: "global-shared",
+        sourceScriptPath: null,
+        targetRepositoryName: context.repository.name,
+        targetRepositoryPath: context.mainRoot,
+        targetWorktreePath: worktreePath,
+        workspaceMode: "standalone",
+      };
+      throw new StandaloneHookError(hookName, "", [outcome]);
+    }
+    for (const location of locations.filter((candidate) => candidate.scope.startsWith("global-"))) {
+      if (!location.scriptPath) continue;
+      const validation = await validateHook(location.scriptPath);
+      if (validation.valid) continue;
+      const outcome: LifecycleHookOutcome = {
+        executionPath: location.executionPath,
+        hookName,
+        hookStatus: "failure",
+        message: validation.error ?? "Hook validation failed",
+        reasonCode: validation.reasonCode ?? "validation_failed",
+        repositoryId: context.repository.name,
+        scope: location.scope,
+        sourceScriptPath: location.scriptPath,
+        targetRepositoryName: context.repository.name,
+        targetRepositoryPath: context.mainRoot,
+        targetWorktreePath: worktreePath,
+        workspaceMode: "standalone",
+      };
+      throw new StandaloneHookError(hookName, location.scriptPath, [outcome]);
+    }
+  }
 }
 
 export async function standaloneWorktrees(context: StandaloneWorkspaceContext) {
@@ -198,15 +334,33 @@ export async function createStandaloneWorktree(
     join(context.mainRoot, ".worktrees"),
     destination,
   );
+  const hookOutcomes: LifecycleHookOutcome[] = [];
   if (!dryRun) {
-    await runStandaloneGlobalHooks(
-      context,
-      "pre-create",
-      branch,
-      destination,
-      options.skipHooks === true,
-      options.quiet === true,
-    );
+    if (options.skipHooks !== true) {
+      await preflightStandaloneGlobalHooks(
+        context,
+        ["pre-create", "post-create"],
+        branch,
+        destination,
+      );
+    }
+    try {
+      hookOutcomes.push(
+        ...(await runStandaloneGlobalHooks(
+          context,
+          "pre-create",
+          branch,
+          destination,
+          options.skipHooks === true,
+          options.quiet === true,
+        )),
+      );
+    } catch (error) {
+      if (error instanceof StandaloneHookError) {
+        error.details.hookOutcomes = [...hookOutcomes, ...error.details.hookOutcomes];
+      }
+      throw error;
+    }
     try {
       await exec(
         existing
@@ -216,13 +370,15 @@ export async function createStandaloneWorktree(
             : ["worktree", "add", "-b", branch, destination],
         context.mainRoot,
       );
-      await runStandaloneGlobalHooks(
-        context,
-        "post-create",
-        branch,
-        destination,
-        options.skipHooks === true,
-        options.quiet === true,
+      hookOutcomes.push(
+        ...(await runStandaloneGlobalHooks(
+          context,
+          "post-create",
+          branch,
+          destination,
+          options.skipHooks === true,
+          options.quiet === true,
+        )),
       );
     } catch (error) {
       try {
@@ -244,6 +400,9 @@ export async function createStandaloneWorktree(
           // Preserve non-empty, pre-existing, or surviving-worktree parent paths.
         }
       }
+      if (error instanceof StandaloneHookError) {
+        error.details.hookOutcomes = [...hookOutcomes, ...error.details.hookOutcomes];
+      }
       throw error;
     }
   }
@@ -257,5 +416,6 @@ export async function createStandaloneWorktree(
     workspaceRoot: context.mainRoot,
     worktreePath: destination,
     effectiveIgnore,
+    hookOutcomes,
   };
 }

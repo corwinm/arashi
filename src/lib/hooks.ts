@@ -1,13 +1,13 @@
 import { runtime } from "./runtime.ts";
-import { access, stat } from "fs/promises";
+import { access, readdir, stat } from "fs/promises";
 import { constants } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { isAbsolute, join, normalize, resolve } from "path";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 
 const ZERO = 0;
 const ONE = 1;
-const DEFAULT_HOOK_TIMEOUT = 300_000;
+export const DEFAULT_LIFECYCLE_HOOK_TIMEOUT = 300_000;
 
 // ============================================================================
 // Type Definitions
@@ -27,6 +27,10 @@ export interface HookContext {
   sourceScriptPath?: string;
   targetRepoName?: string;
   targetRepoPath?: string;
+  targetWorktreePath?: string;
+  workspaceMode?: "configured" | "standalone";
+  mainRepoPath?: string;
+  parentRepoPath?: string;
 }
 
 export interface LifecyclePoint {
@@ -63,12 +67,66 @@ export interface ResolvedLifecycleHook {
   targetRepositoryPath: string;
 }
 
+export interface LifecycleHookLocation {
+  hookName: string;
+  scope: HookScope;
+  scriptPath: string | null;
+  executionPath: string;
+  targetRepositoryName: string;
+  targetRepositoryPath: string;
+}
+
+export class LifecycleHookDiscoveryError extends Error {
+  readonly executionPath: string;
+  readonly hookName: string;
+  readonly scope: HookScope;
+  readonly targetRepositoryName: string;
+  readonly targetRepositoryPath: string;
+
+  constructor(options: {
+    cause: unknown;
+    executionPath: string;
+    hookName: string;
+    scope: HookScope;
+    targetRepositoryName: string;
+    targetRepositoryPath: string;
+  }) {
+    super(options.cause instanceof Error ? options.cause.message : String(options.cause), {
+      cause: options.cause,
+    });
+    this.name = "LifecycleHookDiscoveryError";
+    this.executionPath = options.executionPath;
+    this.hookName = options.hookName;
+    this.scope = options.scope;
+    this.targetRepositoryName = options.targetRepositoryName;
+    this.targetRepositoryPath = options.targetRepositoryPath;
+  }
+}
+
+export interface LifecycleHookOutcome {
+  hookName: string;
+  scope: HookScope;
+  workspaceMode: "configured" | "standalone";
+  hookStatus: HookOutcomeStatus;
+  reasonCode: HookOutcomeReasonCode;
+  message: string;
+  repositoryId: string;
+  sourceScriptPath: string | null;
+  executionPath: string | null;
+  targetRepositoryName: string | null;
+  targetRepositoryPath: string | null;
+  targetWorktreePath: string | null;
+  durationMs?: number;
+}
+
 export type HookOutcomeStatus = "success" | "failure" | "skipped";
 
 export type HookOutcomeReasonCode =
   | "none"
   | "not_found"
   | "disabled"
+  | "validation_failed"
+  | "interpreter_unavailable"
   | "timeout"
   | "exit_non_zero"
   | "not_applicable";
@@ -114,6 +172,7 @@ type RunLifecycleHookArgs =
 export interface ValidationResult {
   valid: boolean;
   error?: string;
+  reasonCode?: "validation_failed" | "interpreter_unavailable";
 }
 
 export const GLOBAL_HOOKS = {
@@ -182,31 +241,100 @@ export const buildHookOperationData = (options: {
 };
 
 export interface RemoveHookOperationDataOptions {
-  branchNames: string[];
-  worktreePaths: string[];
-  repositoryNames: string[];
+  branchNames?: string[];
+  worktreePaths?: string[];
+  repositoryNames?: string[];
+  targets?: RemoveHookTarget[];
   mainRepoPath: string;
 }
+
+export interface RemoveHookTarget {
+  repository: string;
+  branchName: string | null;
+  worktreePath: string | null;
+}
+
+export const compareUnicodeScalars = (left: string, right: string): number => {
+  const leftPoints = [...left].map((value) => value.codePointAt(0) ?? ZERO);
+  const rightPoints = [...right].map((value) => value.codePointAt(0) ?? ZERO);
+  for (let index = ZERO; index < Math.min(leftPoints.length, rightPoints.length); index += ONE) {
+    if (leftPoints[index] !== rightPoints[index]) return leftPoints[index] - rightPoints[index];
+  }
+  return leftPoints.length - rightPoints.length;
+};
+
+export const normalizeLifecyclePath = (value: string): string => {
+  const windows = /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+  if (windows) {
+    const normalized = value.replaceAll("\\", "/");
+    const unc = normalized.startsWith("//");
+    const prefix = unc ? "//" : `${normalized[0].toUpperCase()}:`;
+    const rest = normalized.slice(2);
+    const parts: string[] = [];
+    for (const part of rest.split("/")) {
+      if (!part || part === ".") continue;
+      if (part === "..") {
+        const minimumParts = unc ? 2 : 0;
+        if (parts.length > minimumParts) parts.pop();
+      } else parts.push(part);
+    }
+    if (unc) return `//${parts.join("/")}`;
+    return `${prefix}/${parts.join("/")}`;
+  }
+  const absolute = isAbsolute(value) ? value : resolve(value);
+  return normalize(absolute)
+    .replaceAll("\\", "/")
+    .replace(/(?<!^)\/$/, "");
+};
 
 export const buildRemoveHookOperationData = (
   options: RemoveHookOperationDataOptions,
 ): Record<string, string> => {
-  const uniqueBranches = [...new Set(options.branchNames.filter((value) => value.length > ZERO))];
-  const uniqueWorktreePaths = [
-    ...new Set(options.worktreePaths.filter((value) => value.length > ZERO)),
-  ];
-  const uniqueRepositories = [
-    ...new Set(options.repositoryNames.filter((value) => value.length > ZERO)),
-  ];
+  const inputTargets =
+    options.targets ??
+    (options.repositoryNames ?? []).map((repository, index) => ({
+      branchName: options.branchNames?.[index] ?? null,
+      repository,
+      worktreePath: options.worktreePaths?.[index] ?? null,
+    }));
+  const targetMap = new Map<string, RemoveHookTarget>();
+  for (const target of inputTargets) {
+    if (!target.repository) continue;
+    const canonical = {
+      branchName: target.branchName || null,
+      repository: target.repository,
+      worktreePath: target.worktreePath ? normalizeLifecyclePath(target.worktreePath) : null,
+    };
+    targetMap.set(JSON.stringify(canonical), canonical);
+  }
+  const targets = [...targetMap.values()].toSorted((left, right) => {
+    const repository = compareUnicodeScalars(left.repository, right.repository);
+    if (repository !== ZERO) return repository;
+    if (left.worktreePath === null && right.worktreePath !== null) return -ONE;
+    if (left.worktreePath !== null && right.worktreePath === null) return ONE;
+    const worktree = compareUnicodeScalars(left.worktreePath ?? "", right.worktreePath ?? "");
+    if (worktree !== ZERO) return worktree;
+    if (left.branchName === null && right.branchName !== null) return -ONE;
+    if (left.branchName !== null && right.branchName === null) return ONE;
+    return compareUnicodeScalars(left.branchName ?? "", right.branchName ?? "");
+  });
+  const sortedDistinct = (values: Array<string | null>): string[] =>
+    [
+      ...new Set(values.filter((value): value is string => value !== null && value.length > ZERO)),
+    ].toSorted(compareUnicodeScalars);
+  const uniqueBranches = sortedDistinct(targets.map((target) => target.branchName));
+  const uniqueWorktreePaths = sortedDistinct(targets.map((target) => target.worktreePath));
+  const uniqueRepositories = sortedDistinct(targets.map((target) => target.repository));
 
   const operationData = buildHookOperationData({
-    branchName: uniqueBranches[0],
+    branchName: uniqueBranches.length === ONE ? uniqueBranches[0] : undefined,
     mainRepoPath: options.mainRepoPath,
-    repoName: uniqueRepositories[0],
-    worktreePath: uniqueWorktreePaths[0],
+    repoName: uniqueRepositories.length === ONE ? uniqueRepositories[0] : undefined,
+    worktreePath: uniqueWorktreePaths.length === ONE ? uniqueWorktreePaths[0] : undefined,
   });
 
   operationData.OPERATION = "remove";
+  operationData.REMOVE_TARGETS_JSON = JSON.stringify(targets);
   operationData.REMOVE_TARGET_BRANCHES = uniqueBranches.join(",");
   operationData.REMOVE_TARGET_WORKTREES = uniqueWorktreePaths.join(",");
   operationData.REMOVE_TARGET_REPOSITORIES = uniqueRepositories.join(",");
@@ -265,13 +393,36 @@ export const mapHookExecutionResult = (result: HookResult): HookOutcomeMapping =
 /**
  * Returns platform-appropriate shell command for executing scripts.
  */
-const getShellCommand = (scriptPath: string): string[] => {
-  if (process.platform === "win32") {
-    if (scriptPath.endsWith(".ps1")) {
-      return ["powershell.exe", "-File", scriptPath];
-    }
+export const encodeCmdScriptPath = (scriptPath: string): string => {
+  if (
+    scriptPath.includes("\r") ||
+    scriptPath.includes("\n") ||
+    scriptPath.includes("\0") ||
+    scriptPath.includes('"')
+  ) {
+    throw new Error(`Unsafe command hook path: ${scriptPath}`);
+  }
+  return `"${scriptPath.replaceAll("%", "%%")}"`;
+};
 
-    return ["cmd.exe", "/c", scriptPath];
+export const getHookSpawnCommand = (
+  scriptPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] => {
+  if (platform === "win32") {
+    if (scriptPath.toLowerCase().endsWith(".ps1")) {
+      return [
+        "powershell.exe",
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        scriptPath,
+      ];
+    }
+    return ["cmd.exe", "/d", "/e:on", "/v:off", "/c", "call", scriptPath];
   }
 
   return [scriptPath];
@@ -280,12 +431,15 @@ const getShellCommand = (scriptPath: string): string[] => {
 /**
  * Constructs environment variables from hook context.
  */
-const buildEnvironment = (context: HookContext): Record<string, string> => {
+export const buildHookEnvironment = (context: HookContext): Record<string, string> => {
   const env: Record<string, string> = {
     ...normalizeSpawnEnvironment(process.env),
-    ARASHI_HOOK_NAME: context.hookName,
-    ARASHI_REPO_PATH: context.repoPath,
   };
+
+  for (const [key, value] of Object.entries(context.operationData)) env[`ARASHI_${key}`] = value;
+
+  env.ARASHI_HOOK_NAME = context.hookName;
+  env.ARASHI_HOOK_EXECUTION_PATH = context.repoPath;
 
   if (context.hookScope) {
     env.ARASHI_HOOK_SCOPE = context.hookScope;
@@ -302,10 +456,15 @@ const buildEnvironment = (context: HookContext): Record<string, string> => {
   if (context.targetRepoPath) {
     env.ARASHI_HOOK_TARGET_REPO_PATH = context.targetRepoPath;
   }
+  if (context.targetWorktreePath) env.ARASHI_HOOK_TARGET_WORKTREE_PATH = context.targetWorktreePath;
+  if (context.workspaceMode) env.ARASHI_HOOK_WORKSPACE_MODE = context.workspaceMode;
+  if (context.mainRepoPath) env.ARASHI_MAIN_REPO_PATH = context.mainRepoPath;
+  if (context.parentRepoPath) env.ARASHI_PARENT_REPO_PATH = context.parentRepoPath;
 
-  // Add operation-specific data with ARASHI_ prefix
-  for (const [key, value] of Object.entries(context.operationData)) {
-    env[`ARASHI_${key}`] = value;
+  // Historical aliases are lifecycle-specific. Callers provide REPO_PATH when its
+  // compatibility value differs from the process cwd.
+  if (!env.ARASHI_REPO_PATH) {
+    env.ARASHI_REPO_PATH = context.targetRepoPath ?? context.repoPath;
   }
 
   return env;
@@ -358,92 +517,152 @@ const streamOutput = async (
  * @returns Absolute path to hook script if found, null if not found
  */
 export const findHook = async (hookName: string, repoPath: string): Promise<string | null> => {
-  const hookPath = join(repoPath, ".arashi", "hooks", `${hookName}.sh`);
+  return discoverLifecycleHook(hookName, repoPath);
+};
 
+export const lifecycleHookExtensions = (
+  platform: NodeJS.Platform = process.platform,
+): readonly string[] => (platform === "win32" ? [".ps1", ".cmd", ".bat"] : [".sh"]);
+
+export const discoverLifecycleHookInDirectory = async (
+  hookName: string,
+  hooksDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string | null> => {
+  const extensions = lifecycleHookExtensions(platform);
+  let entries: string[];
   try {
-    await access(hookPath, constants.F_OK);
-    return hookPath;
+    entries = await readdir(hooksDirectory);
   } catch {
     return null;
   }
+  const expectedNames = extensions.map((extension) => `${hookName}${extension}`.toLowerCase());
+  const candidates = entries
+    .filter((entry) =>
+      platform === "win32"
+        ? expectedNames.includes(entry.toLowerCase())
+        : entry === `${hookName}.sh`,
+    )
+    .map((entry) => resolve(hooksDirectory, entry))
+    .toSorted(compareUnicodeScalars);
+  if (candidates.length > ONE) {
+    throw new Error(`Ambiguous lifecycle hook '${hookName}': ${candidates.join(", ")}`);
+  }
+  return candidates[ZERO] ?? null;
 };
 
-const pathExists = async (path: string): Promise<boolean> => {
-  try {
-    await access(path, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
+export const discoverLifecycleHook = async (
+  hookName: string,
+  repoPath: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string | null> => {
+  const hooksDirectory = join(repoPath, ".arashi", "hooks");
+  return discoverLifecycleHookInDirectory(hookName, hooksDirectory, platform);
 };
 
 export const resolveScopedLifecycleHooks = async (options: {
   hookName: string;
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
+  globalOnly?: boolean;
 }): Promise<ResolvedLifecycleHook[]> => {
-  const resolved: ResolvedLifecycleHook[] = [];
+  const locations = await resolveScopedLifecycleHookLocations(options);
+  return locations
+    .filter((location): location is LifecycleHookLocation & { scriptPath: string } =>
+      Boolean(location.scriptPath),
+    )
+    .map((location) => ({
+      ...location,
+      scriptPath: location.scriptPath,
+      sourceScriptPath: location.scriptPath,
+    }));
+};
+
+export const resolveScopedLifecycleHookLocations = async (options: {
+  hookName: string;
+  workspaceRoot: string;
+  targetRepositories: HookTargetRepository[];
+  globalOnly?: boolean;
+}): Promise<LifecycleHookLocation[]> => {
+  const resolved: LifecycleHookLocation[] = [];
   const userHome = process.env.HOME ?? homedir();
   const globalHooksDir = join(userHome, ".arashi", "hooks");
 
   for (const target of options.targetRepositories) {
-    const repositoryHookPath = join(target.path, ".arashi", "hooks", `${options.hookName}.sh`);
-    const workspaceHookPath = join(
-      options.workspaceRoot,
-      ".arashi",
-      "hooks",
-      `${options.hookName}.sh`,
+    const discoverScoped = async (
+      scope: HookScope,
+      hooksDirectory: string,
+      executionPath: string,
+    ): Promise<string | null> => {
+      try {
+        return await discoverLifecycleHookInDirectory(options.hookName, hooksDirectory);
+      } catch (cause) {
+        throw new LifecycleHookDiscoveryError({
+          cause,
+          executionPath,
+          hookName: options.hookName,
+          scope,
+          targetRepositoryName: target.name,
+          targetRepositoryPath: target.path,
+        });
+      }
+    };
+    const repositoryHookPath = options.globalOnly
+      ? null
+      : await discoverScoped("repository", join(target.path, ".arashi", "hooks"), target.path);
+    const workspaceHookPath = options.globalOnly
+      ? null
+      : await discoverScoped(
+          "workspace",
+          join(options.workspaceRoot, ".arashi", "hooks"),
+          options.workspaceRoot,
+        );
+    const globalRepositoryHookPath = await discoverScoped(
+      "global-repository",
+      join(globalHooksDir, target.name),
+      target.path,
     );
-    const globalRepositoryHookPath = join(globalHooksDir, target.name, `${options.hookName}.sh`);
-    const globalSharedHookPath = join(globalHooksDir, `${options.hookName}.sh`);
+    const globalSharedHookPath = await discoverScoped("global-shared", globalHooksDir, target.path);
 
-    if (target.path !== options.workspaceRoot && (await pathExists(repositoryHookPath))) {
+    if (!options.globalOnly && target.path !== options.workspaceRoot) {
       resolved.push({
         executionPath: target.path,
         hookName: options.hookName,
         scope: "repository",
         scriptPath: repositoryHookPath,
-        sourceScriptPath: repositoryHookPath,
         targetRepositoryName: target.name,
         targetRepositoryPath: target.path,
       });
     }
 
-    if (await pathExists(workspaceHookPath)) {
+    if (!options.globalOnly) {
       resolved.push({
         executionPath: options.workspaceRoot,
         hookName: options.hookName,
         scope: "workspace",
         scriptPath: workspaceHookPath,
-        sourceScriptPath: workspaceHookPath,
         targetRepositoryName: target.name,
         targetRepositoryPath: target.path,
       });
     }
 
-    if (await pathExists(globalRepositoryHookPath)) {
-      resolved.push({
-        executionPath: target.path,
-        hookName: options.hookName,
-        scope: "global-repository",
-        scriptPath: globalRepositoryHookPath,
-        sourceScriptPath: globalRepositoryHookPath,
-        targetRepositoryName: target.name,
-        targetRepositoryPath: target.path,
-      });
-    }
+    resolved.push({
+      executionPath: target.path,
+      hookName: options.hookName,
+      scope: "global-repository",
+      scriptPath: globalRepositoryHookPath,
+      targetRepositoryName: target.name,
+      targetRepositoryPath: target.path,
+    });
 
-    if (await pathExists(globalSharedHookPath)) {
-      resolved.push({
-        executionPath: target.path,
-        hookName: options.hookName,
-        scope: "global-shared",
-        scriptPath: globalSharedHookPath,
-        sourceScriptPath: globalSharedHookPath,
-        targetRepositoryName: target.name,
-        targetRepositoryPath: target.path,
-      });
-    }
+    resolved.push({
+      executionPath: target.path,
+      hookName: options.hookName,
+      scope: "global-shared",
+      scriptPath: globalSharedHookPath,
+      targetRepositoryName: target.name,
+      targetRepositoryPath: target.path,
+    });
   }
 
   return resolved;
@@ -460,7 +679,11 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
     const stats = await stat(hookPath);
 
     if (!stats.isFile()) {
-      return { error: `Hook is not a file: ${hookPath}`, valid: false };
+      return {
+        error: `Hook is not a file: ${hookPath}`,
+        reasonCode: "validation_failed",
+        valid: false,
+      };
     }
 
     // Check execute permissions on Unix
@@ -470,6 +693,31 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
       } catch {
         return {
           error: `Hook is not executable: ${hookPath}. Run: chmod +x ${hookPath}`,
+          reasonCode: "validation_failed",
+          valid: false,
+        };
+      }
+    }
+
+    if (process.platform === "win32") {
+      let command: string[];
+      try {
+        command = getHookSpawnCommand(hookPath);
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error.message : String(error),
+          reasonCode: "interpreter_unavailable",
+          valid: false,
+        };
+      }
+      const lookup = runtime.spawnSync(["where.exe", command[ZERO]], {
+        stderr: "ignore",
+        stdout: "ignore",
+      });
+      if (lookup.exitCode !== ZERO) {
+        return {
+          error: `Required hook interpreter is unavailable: ${command[ZERO]}`,
+          reasonCode: "interpreter_unavailable",
           valid: false,
         };
       }
@@ -477,7 +725,11 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
 
     return { valid: true };
   } catch (error) {
-    return { error: `Failed to validate hook: ${error}`, valid: false };
+    return {
+      error: `Failed to validate hook: ${error}`,
+      reasonCode: "validation_failed",
+      valid: false,
+    };
   }
 };
 
@@ -489,16 +741,16 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
  */
 export const executeHook = async (options: HookExecutionOptions): Promise<HookResult> => {
   const startTime = Date.now();
-  const timeout = options.timeout ?? DEFAULT_HOOK_TIMEOUT;
+  const timeout = options.timeout ?? DEFAULT_LIFECYCLE_HOOK_TIMEOUT;
 
   if (!options.quiet) {
     console.log(`🪝 Executing hook: ${options.hookName}`);
   }
 
   try {
-    const proc = runtime.spawn(getShellCommand(options.scriptPath), {
+    const proc = runtime.spawn(getHookSpawnCommand(options.scriptPath), {
       cwd: options.context.repoPath,
-      env: buildEnvironment(options.context),
+      env: buildHookEnvironment(options.context),
       killSignal: "SIGTERM",
       stderr: "pipe",
       stdout: "pipe",

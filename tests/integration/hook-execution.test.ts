@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
 import {
   cleanupTestRepo,
   createHookInRepo,
@@ -6,7 +8,12 @@ import {
   createTestContext,
   createTestRepo,
 } from "../helpers/hooks";
-import { executeHook, runLifecycleHook, validateHook } from "../../src/lib/hooks";
+import {
+  discoverLifecycleHookInDirectory,
+  executeHook,
+  runLifecycleHook,
+  validateHook,
+} from "../../src/lib/hooks";
 
 describe("hook execution integration", () => {
   let testRepo: string;
@@ -50,6 +57,47 @@ describe("hook execution integration", () => {
     expect(result.valid).toBe(false);
     expect(result.error).toContain("Failed to validate hook");
   });
+
+  test.runIf(process.platform === "win32")(
+    "executes native PowerShell, cmd, and bat lifecycle hooks",
+    async () => {
+      const hooksDirectory = join(testRepo, ".arashi", "hooks");
+      mkdirSync(hooksDirectory, { recursive: true });
+      for (const [extension, content] of [
+        ["ps1", "Write-Output $env:ARASHI_BRANCH_NAME\n"],
+        ["cmd", "@echo off\r\necho %ARASHI_BRANCH_NAME%\r\n"],
+        ["bat", "@echo off\r\necho %ARASHI_BRANCH_NAME%\r\n"],
+      ] as const) {
+        const scriptPath = join(hooksDirectory, `native-${extension}.${extension}`);
+        writeFileSync(scriptPath, content);
+        const result = await executeHook({
+          context: createTestContext({
+            operationData: { BRANCH_NAME: `native-${extension}` },
+            repoPath: testRepo,
+          }),
+          hookName: `native-${extension}`,
+          quiet: true,
+          scriptPath,
+        });
+        expect(result.success).toBe(true);
+        expect(result.stdout).toContain(`native-${extension}`);
+      }
+    },
+  );
+
+  test.runIf(process.platform === "win32")(
+    "fails closed when multiple native lifecycle definitions exist",
+    async () => {
+      const hooksDirectory = join(testRepo, ".arashi", "hooks");
+      mkdirSync(hooksDirectory, { recursive: true });
+      writeFileSync(join(hooksDirectory, "pre-create.ps1"), "exit 0\n");
+      writeFileSync(join(hooksDirectory, "pre-create.cmd"), "@exit /b 0\r\n");
+
+      await expect(discoverLifecycleHookInDirectory("pre-create", hooksDirectory)).rejects.toThrow(
+        "Ambiguous lifecycle hook",
+      );
+    },
+  );
 
   test("executes hooks and captures stdout and stderr", async () => {
     const hookPath = createMockHook("echo 'stdout message' && echo 'stderr message' >&2");
@@ -163,12 +211,12 @@ describe("hook execution integration", () => {
   });
 
   test("runLifecycleHook executes hooks with operation data", async () => {
-    createHookInRepo(testRepo, "pre-create", 'echo "Branch: $ARASHI_BRANCH"');
+    createHookInRepo(testRepo, "pre-create", 'echo "Branch: $ARASHI_BRANCH_NAME"');
 
     const result = await runLifecycleHook({
       lifecyclePoint: "pre-create",
       operationData: {
-        BRANCH: "feature-123",
+        BRANCH_NAME: "feature-123",
       },
       repoPath: testRepo,
     });

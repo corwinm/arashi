@@ -55,13 +55,16 @@ arashi remove feature-login --json
 
 ## Remove Lifecycle Hooks
 
-Remove hooks can be defined at three scopes:
+Remove hooks can be defined at four scopes:
 
-- Repository scope: `repos/<repo>/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
-- Workspace-root scope: `.arashi/hooks/pre-remove.sh` and `post-remove.sh`
+- Repository scope: `repos/<repo>/.arashi/hooks/pre-remove<ext>` and `post-remove<ext>`
+- Workspace-root scope: `.arashi/hooks/pre-remove<ext>` and `post-remove<ext>`
 - Global scope:
-  - repository-targeted: `~/.arashi/hooks/<repo>/pre-remove.sh` and `post-remove.sh`
-  - shared: `~/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
+  - repository-targeted: `~/.arashi/hooks/<repo>/pre-remove<ext>` and `post-remove<ext>`
+  - shared: `~/.arashi/hooks/pre-remove<ext>` and `post-remove<ext>`
+
+`<ext>` is `.sh` on POSIX or one case-insensitive `.ps1`, `.cmd`, or `.bat` on Windows. Multiple
+native candidates fail preflight before removal mutation.
 
 Behavior:
 
@@ -72,5 +75,12 @@ Behavior:
 - `post-remove.sh` runs after remove operations are attempted, including partial-failure runs.
 - If any discovered `post-remove` hook fails, the command reports hook errors and exits non-zero.
 - Hook scope metadata is available via `ARASHI_HOOK_SCOPE` and `ARASHI_HOOK_SOURCE_PATH`.
+- Hook context is target-consistent for each repository invocation. Parse
+  `ARASHI_REMOVE_TARGETS_JSON` for the canonical command-wide target list; comma-separated aggregate
+  fields are lossy 1.x compatibility values.
+- Hooks default to 300000 ms; configured workspaces may set `hooks.timeout` to an integer from 1
+  through 2147483647.
+- JSON success stores the ordered ledger at `data.hookOutcomes`; failure stores it at
+  `error.details.hookOutcomes` alongside removal errors.
 
 Common use cases include session teardown (for example tmux cleanup), external cache cleanup, and follow-up notifications.

@@ -41,3 +41,33 @@ committed without a linked worktree, or unborn.
 `--dry-run` previews the resolved config and managed-path classifications without changing config,
 hooks, repositories, worktrees, ignore files, or clone-local preference state. JSON mode returns the
 same normalized `worktreesDir` and managed-ignore result in a single output envelope.
+
+## Generated examples
+
+Lifecycle examples are inert. On POSIX, activate exactly one example and set its executable mode:
+
+```sh
+install -m 755 .arashi/hooks/pre-create.sh.example .arashi/hooks/pre-create.sh
+```
+
+Repository-specific examples use names such as `post-create.<repo>.sh.example`; replace `<repo>` in
+the active destination and copy only the lifecycle you intend to trust:
+
+```sh
+install -m 755 '.arashi/hooks/post-create.<repo>.sh.example' .arashi/hooks/post-create.api.sh
+```
+
+Windows init produces inert PowerShell lifecycle examples, including `post-create.REPO.ps1.example`.
+Replace `REPO` in repository-specific destinations and activate one with `Copy-Item`:
+
+```powershell
+Copy-Item .arashi/hooks/pre-create.ps1.example .arashi/hooks/pre-create.ps1
+Copy-Item .arashi/hooks/post-create.REPO.ps1.example .arashi/hooks/post-create.api.ps1
+```
+
+Runtime discovery also supports a user-authored `.cmd` or `.bat` candidate instead of `.ps1`; only
+one native candidate may exist for a logical location.
+
+The POSIX setup example is `.arashi/setup.sh.example`; activating it as `.arashi/setup.sh` uses the
+existing setup discovery path. Windows init omits this POSIX-only setup example. Setup is distinct
+from lifecycle hooks and does not promise lifecycle environment variables or alter `core.hooksPath`.
