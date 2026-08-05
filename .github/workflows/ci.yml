@@ -30,16 +30,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v1
         with:
           version: 11.20.0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24.18.0
-          cache: pnpm
+          runtime: node@24.18.0
+          cache: true
+          install: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -89,16 +86,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v1
         with:
           version: 11.20.0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24.18.0
-          cache: pnpm
+          runtime: node@24.18.0
+          cache: true
+          install: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -139,16 +133,13 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v1
         with:
           version: 11.20.0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24.18.0
-          cache: pnpm
+          runtime: node@24.18.0
+          cache: true
+          install: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
