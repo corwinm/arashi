@@ -45,6 +45,36 @@ describe("shell directives", () => {
     ).toEqual({ HOME: "/tmp/home" });
   });
 
+  test("canonicalizes an uppercase Windows PATH key for Bun executable lookup", () => {
+    expect(
+      normalizeSpawnEnvironment(
+        {
+          HOME: String.raw`C:\\Users\\Corwi`,
+          PATH: String.raw`C:\\Windows;C:\\Users\\Corwi\\AppData\\Local\\Microsoft\\WindowsApps`,
+        },
+        "win32",
+      ),
+    ).toEqual({
+      HOME: String.raw`C:\\Users\\Corwi`,
+      Path: String.raw`C:\\Windows;C:\\Users\\Corwi\\AppData\\Local\\Microsoft\\WindowsApps`,
+    });
+  });
+
+  test("collapses Windows path key variants to one canonical key", () => {
+    expect(
+      normalizeSpawnEnvironment(
+        { PATH: String.raw`C:\\old`, Path: String.raw`C:\\canonical`, pAtH: undefined },
+        "win32",
+      ),
+    ).toEqual({ Path: String.raw`C:\\canonical` });
+  });
+
+  test("preserves non-Windows PATH casing", () => {
+    expect(normalizeSpawnEnvironment({ PATH: "/usr/local/bin:/usr/bin" }, "linux")).toEqual({
+      PATH: "/usr/local/bin:/usr/bin",
+    });
+  });
+
   test("escapes bash directives with single quotes", () => {
     expect(buildCdDirective("/tmp/it'\"s here", "bash")).toBe("cd -- '/tmp/it'\\''\"s here'\n");
   });

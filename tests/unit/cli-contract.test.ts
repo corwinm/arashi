@@ -198,7 +198,7 @@ describe("CLI command contract", () => {
           "unmanaged-kitty",
         ],
       },
-      overrides: ["configured-cd", "contextual-cd"],
+      overrides: ["configured-cd", "configured-launcher", "contextual-cd"],
       persisted: false,
     });
     expect(
