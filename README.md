@@ -172,7 +172,7 @@ arashi switch --no-default-launch           # bypass configured sesh/Herdr mode 
 
 Explicit `--tmux` is a per-invocation launcher override for `create` and `switch`; it is not a persisted configuration mode. It requires an active tmux context whose `TMUX` value is non-empty after trimming, uses the selected worktree path as one argv-safe `tmux new-window -c` argument, and does not fall back to another launcher when the prerequisite or launch fails. On `create`, it implies both launch and switch, while validation failures occur before worktree mutation.
 
-`--tab` is a CLI-only launch disposition for `create` and `switch`; it is never persisted. It requests a true terminal tab or documented managed-context equivalent, implies launch (and selection for `create`), overrides automatic parent-shell `cd`, and never degrades to a window or another launcher. Unsupported adapters fail with `TAB_DISPOSITION_UNSUPPORTED`; launch/preflight failures use `LAUNCH_FAILED`. Human-only tab launch is incompatible with `--json`.
+`--tab` is a CLI-only launch disposition for `create` and `switch`; it is never persisted. It requests a true terminal tab or documented managed-context equivalent, implies launch (and selection for `create`), overrides automatic parent-shell `cd`, and never degrades to a window or another launcher. For switch, it bypasses configured `sesh` or `herdr` launch defaults; for create, it bypasses configured generic or editor-scoped launch defaults. An explicit launcher selector remains authoritative. Unsupported adapters fail with `TAB_DISPOSITION_UNSUPPORTED`; launch/preflight failures use `LAUNCH_FAILED`. Human-only tab launch is incompatible with `--json`.
 
 ### Managed Git ignore rules
 
@@ -351,7 +351,7 @@ Legacy switch-only `launchMode` and `launch_mode` fields remain readable for a b
 
 Use `defaults.create` for terminal `arashi create` behavior. Use `defaults.editors.<host>.create` for editor-specific overrides such as VS Code extension create flows. Supported hosts are `vscode`, `cursor`, and `kiro`. Each scope has one canonical `launch` choice: `none` | `auto` | `sesh` | `herdr`. `switch` stays independent, while any enabled launch implies switch handling for the newly created primary worktree.
 
-Create precedence is: reject `--sesh` plus `--herdr`; then explicit `--sesh` / `--herdr`; `--launch`; `--no-launch`; the matching configured scope; and built-in `none`. An editor-hosted invocation does not fall back to terminal or another editor scope.
+Create precedence is: reject `--sesh` plus `--herdr`; then explicit `--sesh` / `--herdr`; `--tab` or `--launch`; `--no-launch`; the matching configured scope; and built-in `none`. `--tab` bypasses the matching configured scope unless an explicit launcher selector is present. An editor-hosted invocation does not fall back to terminal or another editor scope.
 
 Legacy create booleans plus `launchMode` / `launch_mode` remain readable for a bounded compatibility window. Accepted combinations warn on stderr with the exact canonical replacement and do not rewrite the file. Disabled launch plus a launcher, conflicting aliases, and conflicting canonical/legacy choices are rejected before workspace mutation.
 

@@ -170,6 +170,16 @@ describe("resolveCreateDefaults", () => {
     ).toContain("bypasses configured launch defaults");
   });
 
+  test("includes --tab in the rendered create precedence help", () => {
+    let help = "";
+    createCommand()
+      .configureOutput({ writeOut: (value) => (help += value) })
+      .outputHelp();
+    expect(help).toContain(
+      "Precedence: --tmux/--sesh/--herdr, --tab/--launch, --no-launch, matching configured scope, then none.",
+    );
+  });
+
   test("applies --launch before --no-launch regardless of argument order", () => {
     for (const rawArgs of [
       ["--launch", "--no-launch"],

@@ -801,7 +801,7 @@ Examples:
   $ arashi create feature-branch --no-launch --no-switch --json
 
 Configured create launch values: none | auto | sesh | herdr
-Precedence: --tmux/--sesh/--herdr, --launch, --no-launch, matching configured scope, then none.
+Precedence: --tmux/--sesh/--herdr, --tab/--launch, --no-launch, matching configured scope, then none.
 Any enabled launch implies post-create switch handling.
 By default, launch opens a new OS window or managed independent-session equivalent.
 --tab requests a true tab or equivalent; unsupported mappings fail without opening a window.
