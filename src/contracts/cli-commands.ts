@@ -152,7 +152,7 @@ export const commandSemantics: CommandSemantics = {
             "unmanaged-kitty",
           ],
         },
-        overrides: ["--no-launch", "--no-switch"],
+        overrides: ["--no-launch", "--no-switch", "configured-launcher"],
         persisted: false,
       },
       "--tmux": {

@@ -102,6 +102,20 @@ describe("unified switch resolution", () => {
     });
   });
 
+  test.each(["sesh", "herdr"] as const)(
+    "--cd remains authoritative over configured %s launch behavior",
+    (configMode) => {
+      expect(
+        resolveSwitchResolution({
+          configMode,
+          managedContextActive: true,
+          options: { cd: true },
+          shellIntegrationActive: true,
+        }).behavior.mode,
+      ).toBe("cd");
+    },
+  );
+
   test("--no-default-launch opts out only a configured explicit launcher", () => {
     expect(
       resolveSwitchResolution({

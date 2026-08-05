@@ -246,7 +246,7 @@ describe("CLI command contract", () => {
           "unmanaged-kitty",
         ],
       },
-      overrides: ["--no-launch", "--no-switch"],
+      overrides: ["--no-launch", "--no-switch", "configured-launcher"],
       persisted: false,
     });
   });

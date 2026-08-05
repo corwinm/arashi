@@ -551,7 +551,7 @@ export function resolveCreateDefaults(
   let resolvedLaunch = createDefaults?.launch ?? "none";
   if (options.herdr === true) resolvedLaunch = "herdr";
   else if (options.sesh === true) resolvedLaunch = "sesh";
-  else if (options.launch === true) resolvedLaunch = "auto";
+  else if (options.launch === true || options.tab === true) resolvedLaunch = "auto";
   else if (options.launch === false) resolvedLaunch = "none";
 
   let resolvedSwitch = createDefaults?.switch ?? false;
@@ -769,7 +769,10 @@ export function createCommand(): Command {
     .option("--no-switch", "Disable configured create switch defaults for this invocation")
     .option("--launch", "Launch terminal/editor context after create")
     .option("--no-launch", "Disable configured create launch defaults for this invocation")
-    .option("--tab", "Launch the created worktree in a tab (implies --launch and --switch)")
+    .option(
+      "--tab",
+      "Launch the created worktree in a tab; bypasses configured launch defaults and implies --launch and --switch",
+    )
     .option("--sesh", "Launch using sesh mode (implies --launch)")
     .option("--herdr", "Launch using Herdr mode (implies --launch)")
     .option("--tmux", "Launch using plain tmux mode (implies --launch and --switch)")
