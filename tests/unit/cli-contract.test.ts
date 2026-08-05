@@ -1,12 +1,15 @@
 import { describe, expect, test } from "vitest";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import pkg from "../../package.json";
 import { buildProgram, discoverCommandPaths } from "../../src/cli-program.ts";
 import {
   commandSemantics,
   generateCommandContract,
+  optionAuditPolicies,
   serializeCommandContract,
   validateCommandSemantics,
+  validateOptionAudit,
+  validateOptionSemanticPolicy,
 } from "../../src/contracts/cli-commands.ts";
 
 const expectedPaths = [
@@ -33,6 +36,29 @@ const expectedPaths = [
   "sync",
   "update",
 ];
+
+const selectorFixturePolicy = (
+  kind: "repository" | "group",
+  counterpart: "--only" | "--group",
+) => ({
+  ownership: "command" as const,
+  persisted: false as const,
+  selector: {
+    accepts: ["repeated", "comma-separated", "mixed"] as string[],
+    blankSegments: "ignored-beside-values",
+    combination: { empty: "error", mode: "intersection", with: counterpart },
+    deduplicate: "first-occurrence",
+    explicitEmpty: "error",
+    flatten: "encounter-order",
+    kind,
+    omitted: "default-selection",
+    standalone: "configured-only",
+    supplied: "distinct-from-omitted",
+    trim: true,
+    unknown: "error",
+    validationPrecedence: "before-repository-work",
+  },
+});
 
 describe("CLI command contract", () => {
   test("constructs a fresh reusable program without parsing or process side effects", () => {
@@ -138,7 +164,12 @@ describe("CLI command contract", () => {
       persisted: false,
     });
     expect(switchCommand?.semantics.optionPolicies?.["--tmux"]).toEqual({
-      compatibleOptions: ["--no-cd", "--no-default-launch"],
+      compatibleOptions: [
+        "--ignore-configured-launcher",
+        "--launch",
+        "--no-cd",
+        "--no-default-launch",
+      ],
       conflicts: ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
       environment: { name: "TMUX", nonEmptyAfterTrim: true },
       implies: ["launch"],
@@ -151,12 +182,231 @@ describe("CLI command contract", () => {
     });
   });
 
-  test("publishes schema-v4 tab policies without an environment prerequisite", () => {
+  test("publishes real canonical switch compatibility policies", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+      optionAuditPolicies,
+    );
+    const options = contract.commands.find((command) => command.path === "switch")?.options;
+
+    expect(options?.find((option) => option.long === "--launch")?.semanticPolicy).toMatchObject({
+      compatibility: {
+        alternatives: ["--no-cd"],
+        canonical: { option: "--launch" },
+        deprecatedAlternatives: true,
+        removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+      },
+      conflicts: ["--cd"],
+      implies: ["launch"],
+      ownership: "command",
+      persisted: false,
+    });
+    expect(
+      options?.find((option) => option.long === "--ignore-configured-launcher")?.semanticPolicy,
+    ).toMatchObject({
+      compatibility: {
+        alternatives: ["--no-default-launch"],
+        canonical: { option: "--ignore-configured-launcher" },
+        deprecatedAlternatives: true,
+        removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+      },
+      conflicts: [],
+      implies: [],
+      ownership: "command",
+      persisted: false,
+    });
+  });
+
+  test("publishes typed redundant handoff compatibility and removal policy", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+      optionAuditPolicies,
+    );
+    const markdown = contract.commands
+      .find((command) => command.path === "handoff")
+      ?.options.find((option) => option.long === "--markdown");
+
+    expect(markdown).toMatchObject({
+      deprecated: true,
+      hidden: true,
+      semanticPolicy: {
+        compatibility: {
+          alternatives: ["--markdown"],
+          canonical: { behavior: "markdown", omittedDefault: true },
+          deprecatedAlternatives: true,
+          removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+        },
+        ownership: "command",
+        persisted: false,
+        role: "redundant-compatibility",
+      },
+      semanticPolicyOwner: "command",
+    });
+  });
+
+  test("publishes reciprocal update inspection conflicts for human and JSON paths", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+      optionAuditPolicies,
+    );
+    const options = contract.commands.find((command) => command.path === "update")?.options;
+    expect(options?.find((option) => option.long === "--check")?.semanticPolicy).toEqual({
+      conflicts: ["--dry-run"],
+      inspection: { executionPaths: ["human", "json"] },
+      ownership: "command",
+    });
+    expect(options?.find((option) => option.long === "--dry-run")?.semanticPolicy).toEqual({
+      conflicts: ["--check"],
+      inspection: { executionPaths: ["human", "json"] },
+      ownership: "command",
+    });
+  });
+
+  test("publishes the exact deterministic selector policy for every registered selector", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+      optionAuditPolicies,
+    );
+    const standaloneByCommand = {
+      create: "unsupported",
+      exec: "configured-only",
+      pull: "configured-only",
+      push: "configured-only",
+      setup: "configured-only",
+      status: "unsupported",
+      sync: "configured-only",
+    } as const;
+    const expectedRegistrations: string[] = [];
+
+    for (const [path, standalone] of Object.entries(standaloneByCommand)) {
+      const command = contract.commands.find((candidate) => candidate.path === path);
+      for (const [optionName, kind, counterpart] of [
+        ["--only", "repository", "--group"],
+        ["--group", "group", "--only"],
+      ] as const) {
+        expectedRegistrations.push(`${path} ${optionName}`);
+        expect(
+          command?.options.find((option) => option.long === optionName)?.semanticPolicy,
+          `${path} ${optionName}`,
+        ).toEqual({
+          ownership: "command",
+          persisted: false,
+          selector: {
+            accepts: ["repeated", "comma-separated", "mixed"],
+            blankSegments: "ignored-beside-values",
+            combination: { empty: "error", mode: "intersection", with: counterpart },
+            deduplicate: "first-occurrence",
+            explicitEmpty: "error",
+            flatten: "encounter-order",
+            kind,
+            omitted: "default-selection",
+            standalone,
+            supplied: "distinct-from-omitted",
+            trim: true,
+            unknown: "error",
+            validationPrecedence: "before-repository-work",
+          },
+        });
+      }
+    }
+
+    const actualRegistrations = contract.commands.flatMap((command) =>
+      command.options
+        .filter((option) => option.long === "--only" || option.long === "--group")
+        .map((option) => `${command.path} ${option.long}`),
+    );
+    expect(actualRegistrations.toSorted()).toEqual(expectedRegistrations.toSorted());
+  });
+
+  test("publishes complete typed switch mode, interaction, and conflict policy", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+      optionAuditPolicies,
+    );
+    const options = contract.commands.find((command) => command.path === "switch")?.options;
+    const policyFor = (name: string) =>
+      options?.find((option) => option.long === name)?.semanticPolicy;
+    const launchInteractions = {
+      explicitLauncher: { authoritative: true, compatible: true, noFallback: "preserved" },
+      jsonGuardPrecedence: "before-option-and-conflict-validation",
+      tab: { bypassesConfiguredDefaults: true, compatible: true, disposition: "tab" },
+    } as const;
+
+    expect(policyFor("--launch")?.switch).toEqual({
+      configuredModeEffects: {
+        auto: "launch",
+        cd: "launch",
+        herdr: "preserve-named-launcher",
+        launch: "launch",
+        sesh: "preserve-named-launcher",
+      },
+      ...launchInteractions,
+    });
+    expect(policyFor("--no-cd")?.switch).toEqual(policyFor("--launch")?.switch);
+    expect(policyFor("--ignore-configured-launcher")?.switch).toEqual({
+      configuredModeEffects: {
+        auto: "preserve-configured-or-contextual-behavior",
+        cd: "preserve-configured-or-contextual-behavior",
+        herdr: "automatic-launch",
+        launch: "preserve-configured-or-contextual-behavior",
+        sesh: "automatic-launch",
+      },
+      ...launchInteractions,
+    });
+    expect(policyFor("--no-default-launch")?.switch).toEqual(
+      policyFor("--ignore-configured-launcher")?.switch,
+    );
+
+    const expectedConflicts = {
+      "--cd": [
+        "--cursor",
+        "--herdr",
+        "--kiro",
+        "--launch",
+        "--no-cd",
+        "--sesh",
+        "--tab",
+        "--tmux",
+        "--vscode",
+      ],
+      "--cursor": ["--cd", "--herdr", "--kiro", "--sesh", "--tmux", "--vscode"],
+      "--herdr": ["--cd", "--cursor", "--kiro", "--sesh", "--tmux", "--vscode"],
+      "--kiro": ["--cd", "--cursor", "--herdr", "--sesh", "--tmux", "--vscode"],
+      "--launch": ["--cd"],
+      "--no-cd": ["--cd"],
+      "--sesh": ["--cd", "--cursor", "--herdr", "--kiro", "--tmux", "--vscode"],
+      "--tab": ["--cd"],
+      "--tmux": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
+      "--vscode": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--tmux"],
+    } as const;
+    for (const [name, conflicts] of Object.entries(expectedConflicts)) {
+      expect(policyFor(name), `${name} must publish switch policy`).toMatchObject({
+        conflicts,
+        ownership: "command",
+        persisted: false,
+      });
+    }
+    expect(policyFor("--ignore-configured-launcher")).toMatchObject({ conflicts: [] });
+    expect(policyFor("--no-default-launch")).toMatchObject({ conflicts: [] });
+    for (const name of ["--cursor", "--herdr", "--kiro", "--sesh", "--tmux", "--vscode"])
+      expect(policyFor(name)?.switch).toMatchObject({
+        explicitLauncher: { authoritative: true, compatible: true, noFallback: "preserved" },
+        jsonGuardPrecedence: "before-option-and-conflict-validation",
+        tab: { bypassesConfiguredDefaults: true, compatible: true, disposition: "tab" },
+      });
+  });
+
+  test("publishes schema-v5 tab policies without an environment prerequisite", () => {
     const contract = generateCommandContract(
       buildProgram({ includeHelpBanner: false }),
       commandSemantics,
     );
-    expect(contract.schemaVersion).toBe(4);
+    expect(contract.schemaVersion).toBe(5);
     expect(
       contract.commands.find((command) => command.path === "switch")?.semantics.optionPolicies?.[
         "--tab"
@@ -165,7 +415,9 @@ describe("CLI command contract", () => {
       compatibleOptions: [
         "--cursor",
         "--herdr",
+        "--ignore-configured-launcher",
         "--kiro",
+        "--launch",
         "--no-cd",
         "--no-default-launch",
         "--sesh",
@@ -393,6 +645,421 @@ describe("CLI command contract", () => {
     ).toThrow("Invalid CLI command semantics");
   });
 
+  test("audits the complete baseline option surface with normalized structural fields", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+    );
+    const options = contract.commands.flatMap((command) => command.options);
+
+    expect(contract.commands).toHaveLength(22);
+    expect(options).toHaveLength(108);
+    expect(new Set(options.map((option) => option.long))).toHaveLength(58);
+    expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
+    expect(
+      contract.commands
+        .find((command) => command.path === "add")
+        ?.options.find((option) => option.long === "--json"),
+    ).toMatchObject({
+      deprecated: false,
+      hidden: false,
+      long: "--json",
+      semanticPolicyOwner: "structural",
+      short: "-j",
+      valueShape: "boolean",
+    });
+    expect(
+      contract.commands
+        .find((command) => command.path === "switch")
+        ?.options.filter((option) =>
+          ["--launch", "--ignore-configured-launcher", "--no-cd", "--no-default-launch"].includes(
+            option.long,
+          ),
+        ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ deprecated: false, hidden: false, long: "--launch" }),
+        expect.objectContaining({
+          deprecated: false,
+          hidden: false,
+          long: "--ignore-configured-launcher",
+        }),
+        expect.objectContaining({ deprecated: true, hidden: true, long: "--no-cd" }),
+        expect.objectContaining({ deprecated: true, hidden: true, long: "--no-default-launch" }),
+      ]),
+    );
+  });
+
+  test("rejects command-local alias collisions and stale option policy ownership", () => {
+    const colliding = new Command().name("arashi");
+    const sample = new Command("sample").option("-j, --json");
+    (sample.options as Option[]).push(new Option("-j, --jobs <count>"));
+    colliding.addCommand(sample);
+    expect(validateOptionAudit(colliding, {})).toContain(
+      'Command "sample" short alias "-j" collides between "--jobs" and "--json"',
+    );
+
+    const program = new Command().name("arashi");
+    program.addCommand(new Command("sample").option("--json"));
+    expect(
+      validateOptionAudit(program, {
+        sample: { "--stale": { ownership: "command" } },
+      }),
+    ).toContain('Command "sample" option policy references unregistered option "--stale"');
+  });
+
+  test("validates typed compatibility, switch, selector, and inspection policy shapes", () => {
+    expect(
+      validateOptionSemanticPolicy("switch", "--launch", {
+        ownership: "command",
+        compatibility: {
+          alternatives: ["--no-cd"],
+          canonical: { option: "--launch" },
+          deprecatedAlternatives: true,
+          removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+        },
+        conflicts: ["--cd"],
+        implies: ["launch"],
+        persisted: false,
+      }),
+    ).toEqual([]);
+    expect(
+      validateOptionSemanticPolicy("handoff", "--markdown", {
+        ownership: "command",
+        compatibility: {
+          alternatives: ["--markdown"],
+          canonical: { behavior: "markdown", omittedDefault: true },
+          deprecatedAlternatives: true,
+          removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+        },
+        persisted: false,
+        role: "redundant-compatibility",
+      }),
+    ).toEqual([]);
+    expect(
+      validateOptionSemanticPolicy("pull", "--only", {
+        ownership: "command",
+        selector: {
+          commaSeparated: true,
+          explicitEmpty: "distinct",
+          repeated: true,
+          standalone: "configured-only",
+        },
+      }),
+    ).not.toEqual([]);
+    expect(
+      validateOptionSemanticPolicy("update", "--check", {
+        ownership: "command",
+        conflicts: ["--dry-run"],
+        inspection: { executionPaths: ["human", "json"] },
+      }),
+    ).toEqual([]);
+
+    expect(
+      validateOptionSemanticPolicy("update", "--check", {
+        ownership: "command",
+        conflicts: ["--dry-run", "--dry-run"],
+        inspection: { executionPaths: ["human"] },
+      }),
+    ).toEqual([
+      'Command "update" --check policy.conflicts entries must be unique',
+      'Command "update" --check policy.inspection.executionPaths must contain human and json',
+    ]);
+    expect(
+      validateOptionSemanticPolicy("pull", "--only", {
+        ownership: "command",
+        selector: {
+          commaSeparated: true,
+          explicitEmpty: "omitted",
+          repeated: true,
+          standalone: "configured-only",
+        },
+      }),
+    ).not.toEqual([]);
+  });
+
+  test("rejects missing, misplaced, stale, wrong-kind, and incomplete selector policies", () => {
+    const program = new Command().name("arashi");
+    program.addCommand(
+      new Command("sample")
+        .option("-o, --only <repo>")
+        .option("-g, --group <group>")
+        .option("-j, --json"),
+    );
+    const complete = {
+      sample: {
+        "--group": selectorFixturePolicy("group", "--only"),
+        "--only": selectorFixturePolicy("repository", "--group"),
+      },
+    };
+
+    const audit = (policies: unknown) =>
+      validateOptionAudit(program, policies as Parameters<typeof validateOptionAudit>[1]);
+
+    expect(audit(complete)).toEqual([]);
+    expect(audit({ sample: { "--only": complete.sample["--only"] } })).toContain(
+      'Command "sample" registered selector "--group" requires a complete selector policy',
+    );
+    expect(
+      audit({
+        sample: { ...complete.sample, "--json": selectorFixturePolicy("repository", "--group") },
+      }),
+    ).toContain('Command "sample" non-selector option "--json" must not declare selector policy');
+
+    const wrongKind = structuredClone(complete);
+    wrongKind.sample["--only"].selector.kind = "group";
+    expect(audit(wrongKind)).toContain(
+      'Command "sample" --only selector kind must be "repository"',
+    );
+    expect(audit({ stale: complete.sample })).toEqual(
+      expect.arrayContaining([
+        'Option policy references unregistered command path "stale"',
+        'Command "sample" registered selector "--only" requires a complete selector policy',
+        'Command "sample" registered selector "--group" requires a complete selector policy',
+      ]),
+    );
+  });
+
+  test("rejects malformed selector enums, arrays, literals, and interaction shape", () => {
+    const valid = {
+      ownership: "command" as const,
+      persisted: false as const,
+      selector: {
+        accepts: ["repeated", "comma-separated", "mixed"],
+        blankSegments: "ignored-beside-values",
+        combination: { empty: "error", mode: "intersection", with: "--group" },
+        deduplicate: "first-occurrence",
+        explicitEmpty: "error",
+        flatten: "encounter-order",
+        kind: "repository",
+        omitted: "default-selection",
+        standalone: "configured-only",
+        supplied: "distinct-from-omitted",
+        trim: true,
+        unknown: "error",
+        validationPrecedence: "before-repository-work",
+      },
+    };
+    expect(validateOptionSemanticPolicy("pull", "--only", valid)).toEqual([]);
+
+    for (const mutate of [
+      (selector: Record<string, unknown>) => (selector.accepts = "mixed"),
+      (selector: Record<string, unknown>) => (selector.accepts = ["repeated", "mixed"]),
+      (selector: Record<string, unknown>) => (selector.flatten = "sorted"),
+      (selector: Record<string, unknown>) => (selector.trim = false),
+      (selector: Record<string, unknown>) => (selector.explicitEmpty = "omitted"),
+      (selector: Record<string, unknown>) => (selector.unknown = "ignored"),
+      (selector: Record<string, unknown>) => {
+        (selector.combination as Record<string, unknown>).mode = "union";
+      },
+      (selector: Record<string, unknown>) => {
+        delete (selector.combination as Record<string, unknown>).empty;
+      },
+    ]) {
+      const invalid = structuredClone(valid) as unknown as Record<string, unknown>;
+      mutate(invalid.selector as Record<string, unknown>);
+      expect(validateOptionSemanticPolicy("pull", "--only", invalid)).not.toEqual([]);
+    }
+  });
+
+  test("validates the exact typed switch policy shape and configured-mode effects", () => {
+    const policy = {
+      ownership: "command" as const,
+      persisted: false as const,
+      switch: {
+        configuredModeEffects: {
+          auto: "launch",
+          cd: "launch",
+          herdr: "preserve-named-launcher",
+          launch: "launch",
+          sesh: "preserve-named-launcher",
+        },
+        explicitLauncher: { authoritative: true, compatible: true, noFallback: "preserved" },
+        jsonGuardPrecedence: "before-option-and-conflict-validation",
+        tab: { bypassesConfiguredDefaults: true, compatible: true, disposition: "tab" },
+      },
+    };
+
+    expect(validateOptionSemanticPolicy("switch", "--launch", policy)).toEqual([]);
+    for (const mutate of [
+      (value: Record<string, unknown>) => {
+        value.extra = true;
+      },
+      (value: Record<string, unknown>) => {
+        const effects = value.configuredModeEffects as Record<string, unknown>;
+        delete effects.herdr;
+      },
+      (value: Record<string, unknown>) => {
+        value.jsonGuardPrecedence = "after-option-validation";
+      },
+      (value: Record<string, unknown>) => {
+        const explicitLauncher = value.explicitLauncher as Record<string, unknown>;
+        explicitLauncher.noFallback = false;
+      },
+      (value: Record<string, unknown>) => {
+        const tab = value.tab as Record<string, unknown>;
+        tab.disposition = "window";
+      },
+    ]) {
+      const invalid = structuredClone(policy) as unknown as Record<string, unknown>;
+      mutate(invalid.switch as Record<string, unknown>);
+      expect(validateOptionSemanticPolicy("switch", "--launch", invalid)).not.toEqual([]);
+    }
+  });
+
+  test("rejects unregistered conflict and option implication references without rejecting semantic tokens", () => {
+    const program = new Command().name("arashi");
+    program.addCommand(new Command("sample").option("--alpha").option("--beta").option("--gamma"));
+
+    expect(
+      validateOptionAudit(program, {
+        sample: {
+          "--alpha": {
+            conflicts: ["--missing-conflict"],
+            implies: ["launch", "--missing-implication"],
+            ownership: "command",
+          },
+        },
+      }),
+    ).toEqual([
+      'Command "sample" --alpha conflict "--missing-conflict" is not registered',
+      'Command "sample" --alpha implication "--missing-implication" is not registered',
+    ]);
+  });
+
+  test("requires registered conflicts to be reciprocal", () => {
+    const program = new Command().name("arashi");
+    program.addCommand(new Command("sample").option("--alpha").option("--beta"));
+
+    expect(
+      validateOptionAudit(program, {
+        sample: {
+          "--alpha": { conflicts: ["--beta"], ownership: "command" },
+          "--beta": { conflicts: [], ownership: "command" },
+        },
+      }),
+    ).toContain('Command "sample" conflict "--alpha" -> "--beta" must be reciprocal');
+  });
+
+  test("requires compatibility removal to start no earlier than major 2", () => {
+    expect(
+      validateOptionSemanticPolicy("switch", "--launch", {
+        ownership: "command",
+        compatibility: {
+          alternatives: ["--no-cd"],
+          canonical: { option: "--launch" },
+          deprecatedAlternatives: true,
+          removal: { earliestMajor: 1, requiresApprovedBreakingChange: true },
+        },
+      }),
+    ).toContain(
+      'Command "switch" --launch policy.compatibility.removal.earliestMajor must be an integer greater than or equal to 2',
+    );
+  });
+
+  test("requires redundant compatibility to encode non-persistence and omitted default behavior", () => {
+    expect(
+      validateOptionSemanticPolicy("handoff", "--markdown", {
+        ownership: "command",
+        compatibility: {
+          alternatives: ["--markdown"],
+          canonical: { omittedDefault: true },
+          deprecatedAlternatives: true,
+          removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+        },
+        role: "redundant-compatibility",
+      }),
+    ).toEqual([
+      'Command "handoff" --markdown policy.persisted must be false for redundant compatibility',
+      'Command "handoff" --markdown policy.compatibility.canonical.behavior must be a non-empty string',
+    ]);
+  });
+
+  test("requires omitted-default compatibility to declare its redundant role", () => {
+    expect(
+      validateOptionSemanticPolicy("handoff", "--markdown", {
+        ownership: "command",
+        compatibility: {
+          alternatives: ["--markdown"],
+          canonical: { behavior: "markdown", omittedDefault: true },
+          deprecatedAlternatives: true,
+          removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+        },
+        persisted: false,
+      }),
+    ).toContain(
+      'Command "handoff" --markdown policy.role must be "redundant-compatibility" for an omitted default',
+    );
+  });
+
+  test("requires compatibility alternatives to use long option names", () => {
+    expect(
+      validateOptionSemanticPolicy("switch", "--launch", {
+        ownership: "command",
+        compatibility: {
+          alternatives: ["-n"],
+          canonical: { option: "--launch" },
+          deprecatedAlternatives: true,
+          removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+        },
+      }),
+    ).toContain(
+      'Command "switch" --launch policy.compatibility.alternatives entries must be long option names',
+    );
+  });
+
+  test("requires compatibility options to be registered with canonical visibility and deprecated alternatives", () => {
+    const program = new Command().name("arashi");
+    const sample = new Command("sample");
+    const canonical = new Option("--launch").hideHelp();
+    const alternative = new Option("--no-cd");
+    sample.addOption(canonical).addOption(alternative);
+    program.addCommand(sample);
+    const compatibility = {
+      ownership: "command" as const,
+      compatibility: {
+        alternatives: ["--no-cd"],
+        canonical: { option: "--launch" },
+        deprecatedAlternatives: true as const,
+        removal: { earliestMajor: 2, requiresApprovedBreakingChange: true as const },
+      },
+    };
+
+    expect(validateOptionAudit(program, { sample: { "--launch": compatibility } })).toEqual([
+      'Command "sample" --launch compatibility canonical option "--launch" must be visible',
+      'Command "sample" --launch compatibility alternative "--no-cd" must be hidden and deprecated',
+    ]);
+
+    canonical.hidden = false;
+    alternative.hidden = true;
+    (alternative as Option & { deprecated?: boolean }).deprecated = true;
+    expect(validateOptionAudit(program, { sample: { "--launch": compatibility } })).toEqual([]);
+
+    compatibility.compatibility.canonical = { option: "--missing" };
+    expect(validateOptionAudit(program, { sample: { "--launch": compatibility } })).toContain(
+      'Command "sample" --launch compatibility canonical option "--missing" is not registered',
+    );
+  });
+
+  test("produces typed option policy in the generated contract", () => {
+    const policy = {
+      ownership: "command" as const,
+      conflicts: ["--dry-run"],
+      inspection: { executionPaths: ["human", "json"] as Array<"human" | "json"> },
+    };
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+      { ...optionAuditPolicies, update: { "--check": policy } },
+    );
+
+    expect(
+      contract.commands
+        .find((command) => command.path === "update")
+        ?.options.find((option) => option.long === "--check"),
+    ).toMatchObject({ semanticPolicy: policy, semanticPolicyOwner: "command" });
+  });
+
   test("serializes deterministically with structural metadata", () => {
     const program = buildProgram({ includeHelpBanner: false });
     const first = serializeCommandContract(generateCommandContract(program, commandSemantics));
@@ -401,7 +1068,7 @@ describe("CLI command contract", () => {
     );
     expect(first).toBe(second);
     const contract = JSON.parse(first);
-    expect(contract.schemaVersion).toBe(4);
+    expect(contract.schemaVersion).toBe(5);
     expect(contract).not.toHaveProperty("cliVersion");
     expect(contract.commands.map((command: { path: string }) => command.path)).toEqual(
       expectedPaths,

@@ -47,6 +47,228 @@ export interface CommandSemanticMetadata {
 }
 export type CommandSemantics = Record<string, CommandSemanticMetadata>;
 
+export type SwitchConfiguredModeEffect =
+  | "automatic-launch"
+  | "launch"
+  | "preserve-configured-or-contextual-behavior"
+  | "preserve-named-launcher";
+export interface SwitchOptionSemanticPolicy {
+  configuredModeEffects?: Record<
+    "auto" | "cd" | "launch" | "sesh" | "herdr",
+    SwitchConfiguredModeEffect
+  >;
+  explicitLauncher: { authoritative: true; compatible: true; noFallback: "preserved" };
+  jsonGuardPrecedence: "before-option-and-conflict-validation";
+  tab: { bypassesConfiguredDefaults: true; compatible: true; disposition: "tab" };
+}
+export interface SelectorOptionSemanticPolicy {
+  accepts: ["repeated", "comma-separated", "mixed"];
+  blankSegments: "ignored-beside-values";
+  combination: {
+    empty: "error";
+    mode: "intersection";
+    with: "--only" | "--group";
+  };
+  deduplicate: "first-occurrence";
+  explicitEmpty: "error";
+  flatten: "encounter-order";
+  kind: "repository" | "group";
+  omitted: "default-selection";
+  standalone: "configured-only" | "unsupported";
+  supplied: "distinct-from-omitted";
+  trim: true;
+  unknown: "error";
+  validationPrecedence: "before-repository-work";
+}
+export interface OptionSemanticPolicy {
+  ownership: "structural" | "command";
+  compatibility?: {
+    alternatives: string[];
+    canonical: { option: string } | { behavior: string; omittedDefault: true };
+    deprecatedAlternatives: true;
+    removal: { earliestMajor: number; requiresApprovedBreakingChange: true };
+  };
+  conflicts?: string[];
+  implies?: string[];
+  inspection?: { executionPaths: Array<"human" | "json"> };
+  persisted?: false;
+  role?: "redundant-compatibility";
+  selector?: SelectorOptionSemanticPolicy;
+  switch?: SwitchOptionSemanticPolicy;
+}
+export type OptionAuditPolicies = Record<string, Record<string, OptionSemanticPolicy>>;
+
+const switchLaunchInteractions: SwitchOptionSemanticPolicy = {
+  explicitLauncher: { authoritative: true, compatible: true, noFallback: "preserved" },
+  jsonGuardPrecedence: "before-option-and-conflict-validation",
+  tab: { bypassesConfiguredDefaults: true, compatible: true, disposition: "tab" },
+};
+const explicitSwitchLaunchers = [
+  "--cursor",
+  "--herdr",
+  "--kiro",
+  "--sesh",
+  "--tmux",
+  "--vscode",
+] as const;
+const explicitLauncherConflicts = (option: (typeof explicitSwitchLaunchers)[number]): string[] => [
+  "--cd",
+  ...explicitSwitchLaunchers.filter((candidate) => candidate !== option),
+];
+const launchModeEffects: SwitchOptionSemanticPolicy["configuredModeEffects"] = {
+  auto: "launch",
+  cd: "launch",
+  herdr: "preserve-named-launcher",
+  launch: "launch",
+  sesh: "preserve-named-launcher",
+};
+const ignoreConfiguredLauncherModeEffects: SwitchOptionSemanticPolicy["configuredModeEffects"] = {
+  auto: "preserve-configured-or-contextual-behavior",
+  cd: "preserve-configured-or-contextual-behavior",
+  herdr: "automatic-launch",
+  launch: "preserve-configured-or-contextual-behavior",
+  sesh: "automatic-launch",
+};
+const launchClassPolicy = (
+  conflicts: string[],
+  configuredModeEffects?: SwitchOptionSemanticPolicy["configuredModeEffects"],
+): OptionSemanticPolicy => ({
+  conflicts,
+  implies: ["launch"],
+  ownership: "command",
+  persisted: false,
+  switch: { ...switchLaunchInteractions, configuredModeEffects },
+});
+
+const selectorPolicy = (
+  kind: SelectorOptionSemanticPolicy["kind"],
+  standalone: SelectorOptionSemanticPolicy["standalone"],
+): OptionSemanticPolicy => ({
+  ownership: "command",
+  persisted: false,
+  selector: {
+    accepts: ["repeated", "comma-separated", "mixed"],
+    blankSegments: "ignored-beside-values",
+    combination: {
+      empty: "error",
+      mode: "intersection",
+      with: kind === "repository" ? "--group" : "--only",
+    },
+    deduplicate: "first-occurrence",
+    explicitEmpty: "error",
+    flatten: "encounter-order",
+    kind,
+    omitted: "default-selection",
+    standalone,
+    supplied: "distinct-from-omitted",
+    trim: true,
+    unknown: "error",
+    validationPrecedence: "before-repository-work",
+  },
+});
+const selectorPolicies = (
+  standalone: SelectorOptionSemanticPolicy["standalone"],
+): Record<"--group" | "--only", OptionSemanticPolicy> => ({
+  "--group": selectorPolicy("group", standalone),
+  "--only": selectorPolicy("repository", standalone),
+});
+
+export const optionAuditPolicies: OptionAuditPolicies = {
+  create: selectorPolicies("unsupported"),
+  exec: selectorPolicies("configured-only"),
+  handoff: {
+    "--markdown": {
+      compatibility: {
+        alternatives: ["--markdown"],
+        canonical: { behavior: "markdown", omittedDefault: true },
+        deprecatedAlternatives: true,
+        removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+      },
+      ownership: "command",
+      persisted: false,
+      role: "redundant-compatibility",
+    },
+  },
+  pull: selectorPolicies("configured-only"),
+  push: selectorPolicies("configured-only"),
+  setup: selectorPolicies("configured-only"),
+  status: selectorPolicies("unsupported"),
+  sync: selectorPolicies("configured-only"),
+  update: {
+    "--check": {
+      conflicts: ["--dry-run"],
+      inspection: { executionPaths: ["human", "json"] },
+      ownership: "command",
+    },
+    "--dry-run": {
+      conflicts: ["--check"],
+      inspection: { executionPaths: ["human", "json"] },
+      ownership: "command",
+    },
+  },
+  switch: {
+    "--cd": {
+      conflicts: [
+        "--cursor",
+        "--herdr",
+        "--kiro",
+        "--launch",
+        "--no-cd",
+        "--sesh",
+        "--tab",
+        "--tmux",
+        "--vscode",
+      ],
+      implies: ["cd"],
+      ownership: "command",
+      persisted: false,
+    },
+    "--cursor": launchClassPolicy(explicitLauncherConflicts("--cursor")),
+    "--herdr": launchClassPolicy(explicitLauncherConflicts("--herdr")),
+    "--ignore-configured-launcher": {
+      compatibility: {
+        alternatives: ["--no-default-launch"],
+        canonical: { option: "--ignore-configured-launcher" },
+        deprecatedAlternatives: true,
+        removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+      },
+      conflicts: [],
+      implies: [],
+      ownership: "command",
+      persisted: false,
+      switch: {
+        ...switchLaunchInteractions,
+        configuredModeEffects: ignoreConfiguredLauncherModeEffects,
+      },
+    },
+    "--kiro": launchClassPolicy(explicitLauncherConflicts("--kiro")),
+    "--launch": {
+      ...launchClassPolicy(["--cd"], launchModeEffects),
+      compatibility: {
+        alternatives: ["--no-cd"],
+        canonical: { option: "--launch" },
+        deprecatedAlternatives: true,
+        removal: { earliestMajor: 2, requiresApprovedBreakingChange: true },
+      },
+    },
+    "--no-cd": launchClassPolicy(["--cd"], launchModeEffects),
+    "--no-default-launch": {
+      conflicts: [],
+      implies: [],
+      ownership: "command",
+      persisted: false,
+      switch: {
+        ...switchLaunchInteractions,
+        configuredModeEffects: ignoreConfiguredLauncherModeEffects,
+      },
+    },
+    "--sesh": launchClassPolicy(explicitLauncherConflicts("--sesh")),
+    "--tab": launchClassPolicy(["--cd"]),
+    "--tmux": launchClassPolicy(explicitLauncherConflicts("--tmux")),
+    "--vscode": launchClassPolicy(explicitLauncherConflicts("--vscode")),
+  },
+};
+
 const EXPLICIT_POLICY_KEYS = [
   "compatibleOptions",
   "conflicts",
@@ -274,7 +496,9 @@ export const commandSemantics: CommandSemantics = {
         compatibleOptions: [
           "--cursor",
           "--herdr",
+          "--ignore-configured-launcher",
           "--kiro",
+          "--launch",
           "--no-cd",
           "--no-default-launch",
           "--sesh",
@@ -315,7 +539,12 @@ export const commandSemantics: CommandSemantics = {
         persisted: false,
       },
       "--tmux": {
-        compatibleOptions: ["--no-cd", "--no-default-launch"],
+        compatibleOptions: [
+          "--ignore-configured-launcher",
+          "--launch",
+          "--no-cd",
+          "--no-default-launch",
+        ],
         conflicts: ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
         environment: { name: "TMUX", nonEmptyAfterTrim: true },
         implies: ["launch"],
@@ -522,8 +751,456 @@ function validateUniqueStringArray(
   return value;
 }
 
+export function validateOptionSemanticPolicy(
+  path: string,
+  optionName: string,
+  value: unknown,
+): string[] {
+  const errors: string[] = [];
+  const label = `Command "${path}" ${optionName} policy`;
+  if (
+    !validateExactObject(
+      value,
+      [
+        "compatibility",
+        "conflicts",
+        "implies",
+        "inspection",
+        "ownership",
+        "persisted",
+        "role",
+        "selector",
+        "switch",
+      ],
+      ["ownership"],
+      label,
+      errors,
+    )
+  )
+    return errors;
+
+  if (value.ownership !== "structural" && value.ownership !== "command")
+    errors.push(`${label}.ownership must be "structural" or "command"`);
+  for (const key of ["conflicts", "implies"] as const) {
+    if (value[key] !== undefined) validateUniqueStringArray(value[key], `${label}.${key}`, errors);
+  }
+  if (value.persisted !== undefined && value.persisted !== false)
+    errors.push(`${label}.persisted must be false`);
+  if (value.role !== undefined && value.role !== "redundant-compatibility")
+    errors.push(`${label}.role must be "redundant-compatibility"`);
+  if (value.role === "redundant-compatibility" && value.persisted !== false)
+    errors.push(`${label}.persisted must be false for redundant compatibility`);
+
+  if (
+    value.compatibility !== undefined &&
+    validateExactObject(
+      value.compatibility,
+      ["alternatives", "canonical", "deprecatedAlternatives", "removal"],
+      ["alternatives", "canonical", "deprecatedAlternatives", "removal"],
+      `${label}.compatibility`,
+      errors,
+    )
+  ) {
+    const alternatives = validateUniqueStringArray(
+      value.compatibility.alternatives,
+      `${label}.compatibility.alternatives`,
+      errors,
+    );
+    if (alternatives?.some((alternative) => !alternative.startsWith("--")))
+      errors.push(`${label}.compatibility.alternatives entries must be long option names`);
+    const canonical = value.compatibility.canonical;
+    if (!isRecord(canonical)) {
+      errors.push(`${label}.compatibility.canonical must be an object`);
+    } else if (Object.hasOwn(canonical, "option")) {
+      if (
+        !validateExactObject(
+          canonical,
+          ["option"],
+          ["option"],
+          `${label}.compatibility.canonical`,
+          errors,
+        ) ||
+        typeof canonical.option !== "string" ||
+        !canonical.option.startsWith("--")
+      )
+        errors.push(`${label}.compatibility.canonical.option must be a long option name`);
+    } else {
+      if (value.role !== "redundant-compatibility")
+        errors.push(`${label}.role must be "redundant-compatibility" for an omitted default`);
+      if (
+        !validateExactObject(
+          canonical,
+          ["behavior", "omittedDefault"],
+          ["omittedDefault"],
+          `${label}.compatibility.canonical`,
+          errors,
+        ) ||
+        canonical.omittedDefault !== true
+      ) {
+        errors.push(`${label}.compatibility.canonical.omittedDefault must be true`);
+      } else if (typeof canonical.behavior !== "string" || canonical.behavior.trim().length === 0) {
+        errors.push(`${label}.compatibility.canonical.behavior must be a non-empty string`);
+      }
+    }
+    if (value.compatibility.deprecatedAlternatives !== true)
+      errors.push(`${label}.compatibility.deprecatedAlternatives must be true`);
+    if (
+      validateExactObject(
+        value.compatibility.removal,
+        ["earliestMajor", "requiresApprovedBreakingChange"],
+        ["earliestMajor", "requiresApprovedBreakingChange"],
+        `${label}.compatibility.removal`,
+        errors,
+      )
+    ) {
+      if (
+        typeof value.compatibility.removal.earliestMajor !== "number" ||
+        !Number.isInteger(value.compatibility.removal.earliestMajor) ||
+        value.compatibility.removal.earliestMajor < 2
+      )
+        errors.push(
+          `${label}.compatibility.removal.earliestMajor must be an integer greater than or equal to 2`,
+        );
+      if (value.compatibility.removal.requiresApprovedBreakingChange !== true)
+        errors.push(`${label}.compatibility.removal.requiresApprovedBreakingChange must be true`);
+    }
+  }
+
+  if (value.selector !== undefined) {
+    if (value.ownership !== "command")
+      errors.push(`${label}.ownership must be "command" for selector policy`);
+    if (value.persisted !== false)
+      errors.push(`${label}.persisted must be false for selector policy`);
+    if (
+      validateExactObject(
+        value.selector,
+        [
+          "accepts",
+          "blankSegments",
+          "combination",
+          "deduplicate",
+          "explicitEmpty",
+          "flatten",
+          "kind",
+          "omitted",
+          "standalone",
+          "supplied",
+          "trim",
+          "unknown",
+          "validationPrecedence",
+        ],
+        [
+          "accepts",
+          "blankSegments",
+          "combination",
+          "deduplicate",
+          "explicitEmpty",
+          "flatten",
+          "kind",
+          "omitted",
+          "standalone",
+          "supplied",
+          "trim",
+          "unknown",
+          "validationPrecedence",
+        ],
+        `${label}.selector`,
+        errors,
+      )
+    ) {
+      const expectedAccepts = ["repeated", "comma-separated", "mixed"];
+      if (
+        !Array.isArray(value.selector.accepts) ||
+        value.selector.accepts.length !== expectedAccepts.length ||
+        value.selector.accepts.some((entry, index) => entry !== expectedAccepts[index])
+      )
+        errors.push(
+          `${label}.selector.accepts must equal ["repeated", "comma-separated", "mixed"]`,
+        );
+      const literals = [
+        ["blankSegments", "ignored-beside-values"],
+        ["deduplicate", "first-occurrence"],
+        ["explicitEmpty", "error"],
+        ["flatten", "encounter-order"],
+        ["omitted", "default-selection"],
+        ["supplied", "distinct-from-omitted"],
+        ["unknown", "error"],
+        ["validationPrecedence", "before-repository-work"],
+      ] as const;
+      for (const [field, expected] of literals) {
+        if (value.selector[field] !== expected)
+          errors.push(`${label}.selector.${field} must be "${expected}"`);
+      }
+      if (value.selector.trim !== true) errors.push(`${label}.selector.trim must be true`);
+      if (value.selector.kind !== "repository" && value.selector.kind !== "group")
+        errors.push(`${label}.selector.kind must be "repository" or "group"`);
+      if (!["configured-only", "unsupported"].includes(String(value.selector.standalone)))
+        errors.push(`${label}.selector.standalone must be "configured-only" or "unsupported"`);
+      if (
+        validateExactObject(
+          value.selector.combination,
+          ["empty", "mode", "with"],
+          ["empty", "mode", "with"],
+          `${label}.selector.combination`,
+          errors,
+        )
+      ) {
+        if (value.selector.combination.empty !== "error")
+          errors.push(`${label}.selector.combination.empty must be "error"`);
+        if (value.selector.combination.mode !== "intersection")
+          errors.push(`${label}.selector.combination.mode must be "intersection"`);
+        if (
+          value.selector.combination.with !== "--only" &&
+          value.selector.combination.with !== "--group"
+        )
+          errors.push(`${label}.selector.combination.with must be "--only" or "--group"`);
+      }
+    }
+  }
+
+  if (
+    value.inspection !== undefined &&
+    validateExactObject(
+      value.inspection,
+      ["executionPaths"],
+      ["executionPaths"],
+      `${label}.inspection`,
+      errors,
+    )
+  ) {
+    const paths = validateUniqueStringArray(
+      value.inspection.executionPaths,
+      `${label}.inspection.executionPaths`,
+      errors,
+    );
+    if (paths && (paths.length !== 2 || !paths.includes("human") || !paths.includes("json")))
+      errors.push(`${label}.inspection.executionPaths must contain human and json`);
+  }
+
+  if (
+    value.switch !== undefined &&
+    validateExactObject(
+      value.switch,
+      ["configuredModeEffects", "explicitLauncher", "jsonGuardPrecedence", "tab"],
+      ["explicitLauncher", "jsonGuardPrecedence", "tab"],
+      `${label}.switch`,
+      errors,
+    )
+  ) {
+    if (
+      value.switch.configuredModeEffects !== undefined &&
+      validateExactObject(
+        value.switch.configuredModeEffects,
+        ["auto", "cd", "herdr", "launch", "sesh"],
+        ["auto", "cd", "herdr", "launch", "sesh"],
+        `${label}.switch.configuredModeEffects`,
+        errors,
+      )
+    ) {
+      const effects = new Set<SwitchConfiguredModeEffect>([
+        "automatic-launch",
+        "launch",
+        "preserve-configured-or-contextual-behavior",
+        "preserve-named-launcher",
+      ]);
+      for (const mode of ["auto", "cd", "herdr", "launch", "sesh"] as const) {
+        if (!effects.has(value.switch.configuredModeEffects[mode] as SwitchConfiguredModeEffect))
+          errors.push(`${label}.switch.configuredModeEffects.${mode} has an unsupported effect`);
+      }
+    }
+    if (
+      validateExactObject(
+        value.switch.explicitLauncher,
+        ["authoritative", "compatible", "noFallback"],
+        ["authoritative", "compatible", "noFallback"],
+        `${label}.switch.explicitLauncher`,
+        errors,
+      ) &&
+      (value.switch.explicitLauncher.authoritative !== true ||
+        value.switch.explicitLauncher.compatible !== true ||
+        value.switch.explicitLauncher.noFallback !== "preserved")
+    )
+      errors.push(
+        `${label}.switch.explicitLauncher must be compatible, authoritative, and preserve no-fallback behavior`,
+      );
+    if (value.switch.jsonGuardPrecedence !== "before-option-and-conflict-validation")
+      errors.push(
+        `${label}.switch.jsonGuardPrecedence must be "before-option-and-conflict-validation"`,
+      );
+    if (
+      validateExactObject(
+        value.switch.tab,
+        ["bypassesConfiguredDefaults", "compatible", "disposition"],
+        ["bypassesConfiguredDefaults", "compatible", "disposition"],
+        `${label}.switch.tab`,
+        errors,
+      ) &&
+      (value.switch.tab.bypassesConfiguredDefaults !== true ||
+        value.switch.tab.compatible !== true ||
+        value.switch.tab.disposition !== "tab")
+    )
+      errors.push(
+        `${label}.switch.tab must be compatible and bypass configured defaults with tab disposition`,
+      );
+  }
+  return errors;
+}
+
+const COMMON_OPTION_ALIASES = {
+  "--dry-run": "-n",
+  "--force": "-f",
+  "--group": "-g",
+  "--json": "-j",
+  "--only": "-o",
+  "--verbose": "-v",
+} as const;
+const RESERVED_COMMON_ALIAS_EXCEPTIONS = new Set(["add\u0000--name\u0000-n"]);
+
+export function validateOptionAudit(program: Command, policies: OptionAuditPolicies): string[] {
+  const errors: string[] = [];
+  const visit = (parent: Command, prefix: string): void => {
+    for (const command of parent.commands) {
+      const path = prefix ? `${prefix} ${command.name()}` : command.name();
+      const optionsByLong = new Map(
+        command.options.flatMap((option) => (option.long ? [[option.long, option] as const] : [])),
+      );
+      const longs = new Set(optionsByLong.keys());
+      const aliases = new Map<string, string>();
+      const commonLongByAlias = new Map<string, string>(
+        Object.entries(COMMON_OPTION_ALIASES).map(([long, short]) => [short, long]),
+      );
+      for (const option of command.options) {
+        if (!option.long)
+          errors.push(`Command "${path}" option "${option.flags}" requires a long name`);
+        if (option.long && option.long in COMMON_OPTION_ALIASES) {
+          const expectedAlias =
+            COMMON_OPTION_ALIASES[option.long as keyof typeof COMMON_OPTION_ALIASES];
+          if (option.short !== expectedAlias)
+            errors.push(
+              `Command "${path}" common option "${option.long}" requires short alias "${expectedAlias}"`,
+            );
+        }
+        if (option.short && option.long) {
+          const expectedLong = commonLongByAlias.get(option.short);
+          const isReserved = RESERVED_COMMON_ALIAS_EXCEPTIONS.has(
+            `${path}\u0000${option.long}\u0000${option.short}`,
+          );
+          if (expectedLong && option.long !== expectedLong && !isReserved)
+            errors.push(
+              `Command "${path}" short alias "${option.short}" is reserved for common option "${expectedLong}", not "${option.long}"`,
+            );
+          const previous = aliases.get(option.short);
+          if (previous) {
+            const options = [previous, option.long].toSorted();
+            errors.push(
+              `Command "${path}" short alias "${option.short}" collides between "${options[0]}" and "${options[1]}"`,
+            );
+          } else aliases.set(option.short, option.long);
+        }
+      }
+      for (const [optionName, policy] of Object.entries(policies[path] ?? {})) {
+        if (!longs.has(optionName))
+          errors.push(
+            `Command "${path}" option policy references unregistered option "${optionName}"`,
+          );
+        errors.push(...validateOptionSemanticPolicy(path, optionName, policy));
+        const compatibility = policy.compatibility;
+        if (compatibility) {
+          if ("option" in compatibility.canonical) {
+            const canonical = optionsByLong.get(compatibility.canonical.option);
+            if (!canonical)
+              errors.push(
+                `Command "${path}" ${optionName} compatibility canonical option "${compatibility.canonical.option}" is not registered`,
+              );
+            else if (canonical.hidden)
+              errors.push(
+                `Command "${path}" ${optionName} compatibility canonical option "${compatibility.canonical.option}" must be visible`,
+              );
+          }
+          for (const alternativeName of compatibility.alternatives) {
+            const alternative = optionsByLong.get(alternativeName);
+            if (!alternative)
+              errors.push(
+                `Command "${path}" ${optionName} compatibility alternative "${alternativeName}" is not registered`,
+              );
+            else if (
+              !alternative.hidden ||
+              !(alternative as typeof alternative & { deprecated?: boolean }).deprecated
+            )
+              errors.push(
+                `Command "${path}" ${optionName} compatibility alternative "${alternativeName}" must be hidden and deprecated`,
+              );
+          }
+        }
+        for (const conflict of Array.isArray(policy.conflicts) ? policy.conflicts : []) {
+          if (typeof conflict === "string" && !longs.has(conflict))
+            errors.push(`Command "${path}" ${optionName} conflict "${conflict}" is not registered`);
+        }
+        for (const implication of Array.isArray(policy.implies) ? policy.implies : []) {
+          if (
+            typeof implication === "string" &&
+            implication.startsWith("--") &&
+            !longs.has(implication)
+          )
+            errors.push(
+              `Command "${path}" ${optionName} implication "${implication}" is not registered`,
+            );
+        }
+      }
+      const commandPolicies = policies[path] ?? {};
+      for (const selectorName of ["--only", "--group"] as const) {
+        if (longs.has(selectorName) && commandPolicies[selectorName]?.selector === undefined)
+          errors.push(
+            `Command "${path}" registered selector "${selectorName}" requires a complete selector policy`,
+          );
+      }
+      for (const [optionName, policy] of Object.entries(commandPolicies)) {
+        if (policy.selector !== undefined) {
+          if (optionName !== "--only" && optionName !== "--group") {
+            errors.push(
+              `Command "${path}" non-selector option "${optionName}" must not declare selector policy`,
+            );
+          } else if (isRecord(policy.selector)) {
+            const expectedKind = optionName === "--only" ? "repository" : "group";
+            const expectedCounterpart = optionName === "--only" ? "--group" : "--only";
+            if (policy.selector.kind !== expectedKind)
+              errors.push(
+                `Command "${path}" ${optionName} selector kind must be "${expectedKind}"`,
+              );
+            if (
+              isRecord(policy.selector.combination) &&
+              policy.selector.combination.with !== expectedCounterpart
+            )
+              errors.push(
+                `Command "${path}" ${optionName} selector combination must reference "${expectedCounterpart}"`,
+              );
+          }
+        }
+        for (const conflict of Array.isArray(policy.conflicts) ? policy.conflicts : []) {
+          if (
+            typeof conflict === "string" &&
+            longs.has(conflict) &&
+            commandPolicies[conflict] !== undefined &&
+            !commandPolicies[conflict].conflicts?.includes(optionName)
+          )
+            errors.push(
+              `Command "${path}" conflict "${optionName}" -> "${conflict}" must be reciprocal`,
+            );
+        }
+      }
+      visit(command, path);
+    }
+  };
+  visit(program, "");
+  for (const path of Object.keys(policies).toSorted()) {
+    if (!discoverCommandPaths(program).includes(path))
+      errors.push(`Option policy references unregistered command path "${path}"`);
+  }
+  return errors;
+}
+
 export interface CliCommandContract {
-  schemaVersion: 4;
+  schemaVersion: 5;
   commands: ContractCommand[];
 }
 interface ContractCommand {
@@ -533,10 +1210,17 @@ interface ContractCommand {
   hidden: boolean;
   arguments: Array<{ name: string; required: boolean; variadic: boolean; description: string }>;
   options: Array<{
-    flags: string;
+    deprecated: boolean;
     description: string;
+    flags: string;
+    hidden: boolean;
+    long: string;
     required: boolean;
     optional: boolean;
+    semanticPolicy?: OptionSemanticPolicy;
+    semanticPolicyOwner: "structural" | "command";
+    short: string | null;
+    valueShape: "boolean" | "optional" | "required";
     variadic: boolean;
   }>;
   semantics: CommandSemanticMetadata;
@@ -545,6 +1229,7 @@ interface ContractCommand {
 export function generateCommandContract(
   program: Command,
   metadata: CommandSemantics,
+  optionPolicies: OptionAuditPolicies = optionAuditPolicies,
 ): CliCommandContract {
   const paths = discoverCommandPaths(program);
   const registeredOptions = new Map<string, ReadonlySet<string>>();
@@ -559,7 +1244,10 @@ export function generateCommandContract(
     }
   };
   collectOptions(program, "");
-  const errors = validateCommandSemantics(paths, metadata, registeredOptions);
+  const errors = [
+    ...validateCommandSemantics(paths, metadata, registeredOptions),
+    ...validateOptionAudit(program, optionPolicies),
+  ];
   if (errors.length) throw new Error(`Invalid CLI command semantics:\n${errors.join("\n")}`);
   const commands: ContractCommand[] = [];
   const visit = (parent: Command, prefix: string): void => {
@@ -578,10 +1266,25 @@ export function generateCommandContract(
         })),
         options: command.options
           .map((option) => ({
+            deprecated: Boolean((option as typeof option & { deprecated?: boolean }).deprecated),
             flags: option.flags,
             description: option.description,
+            hidden: option.hidden,
+            long: option.long ?? "",
             required: option.required,
             optional: option.optional,
+            semanticPolicy: optionPolicies[path]?.[option.long ?? ""],
+            semanticPolicyOwner: optionPolicies[path]?.[option.long ?? ""]
+              ? optionPolicies[path]![option.long ?? ""]!.ownership
+              : metadata[path]!.optionPolicies?.[option.long ?? ""]
+                ? ("command" as const)
+                : ("structural" as const),
+            short: option.short ?? null,
+            valueShape: option.required
+              ? ("required" as const)
+              : option.optional
+                ? ("optional" as const)
+                : ("boolean" as const),
             variadic: option.variadic,
           }))
           .toSorted((a, b) => a.flags.localeCompare(b.flags)),
@@ -592,7 +1295,7 @@ export function generateCommandContract(
   };
   visit(program, "");
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     commands: commands.toSorted((a, b) => a.path.localeCompare(b.path)),
   };
 }

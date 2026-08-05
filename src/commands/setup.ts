@@ -19,7 +19,11 @@ import {
 import { loadWorkspaceRepositories, type WorkspaceRepositoryRoots } from "../lib/config.ts";
 import { info, error as logError } from "../lib/logger.ts";
 import { Command } from "commander";
-import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
+import {
+  collectRepositoryFilterValues,
+  EmptyRepositoryFiltersError,
+  filterRepositories,
+} from "../lib/repo-filter.ts";
 import { runSetupTarget } from "../lib/setup-runner.ts";
 import {
   ConfiguredWorkspaceRequiredError,
@@ -145,17 +149,17 @@ export function createCommand(): Command {
   return new Command("setup")
     .description("Run setup scripts across workspace repositories")
     .option(
-      "--only <repo>",
+      "-o, --only <repo>",
       "Only include a specific repository (repeatable)",
-      (value, previous: string[] = []) => [...previous, value],
+      collectRepositoryFilterValues,
     )
     .option(
-      "--group <group>",
+      "-g, --group <group>",
       "Only include repositories in the requested group (repeatable)",
-      (value, previous: string[] = []) => [...previous, value],
+      collectRepositoryFilterValues,
     )
     .option("-v, --verbose", "Show full setup script output")
-    .option("--json", "Output result as JSON")
+    .option("-j, --json", "Output result as JSON")
     .action(async (options: SetupCommandOptions) => {
       try {
         const summary = await executeSetup(options);

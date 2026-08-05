@@ -115,7 +115,7 @@ export function createCommand(): Command {
     .description("Move uncommitted changes between coordinated worktrees")
     .option("--from <workspace>", "Source branch, worktree name, or path")
     .option("--to <workspace>", "Target branch, worktree name, or path")
-    .option("--json", "Return structured JSON output")
+    .option("-j, --json", "Return structured JSON output")
     .addHelpText(
       "after",
       `

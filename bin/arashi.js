@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { formatInstallError, getPlatformInfo, installBinary } from "./install-binary.js";
 import { runNpmManagedUpdate } from "./update.js";
+import { stringifyWrapperJsonEnvelope } from "./update-options.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -84,12 +85,35 @@ export function isExplicitUpdateCommand(argv) {
   return argv[0] === "update";
 }
 
-async function runExplicitInstall(options) {
+async function runExplicitInstall(argv, options) {
   const binDir = options.binDir ?? __dirname;
   const rootDir = options.rootDir ?? join(binDir, "..");
   const installBinaryImpl = options.installBinaryImpl ?? installBinary;
+  const json = argv.includes("--json") || argv.includes("-j");
+  const log = options.log ?? console.log;
 
-  await installBinaryImpl({ ...options, binDir, rootDir });
+  try {
+    const result = await installBinaryImpl({
+      ...options,
+      binDir,
+      log: json ? () => {} : options.log,
+      rootDir,
+    });
+    if (json) log(stringifyWrapperJsonEnvelope("install", { data: result, ok: true }));
+    return 0;
+  } catch (error) {
+    if (!json) throw error;
+    log(
+      stringifyWrapperJsonEnvelope("install", {
+        error: {
+          code: "INSTALL_FAILED",
+          message: error instanceof Error ? error.message : String(error),
+        },
+        ok: false,
+      }),
+    );
+    return 1;
+  }
 }
 
 function spawnArashi(argv, options = {}) {
@@ -135,8 +159,7 @@ export async function runEntrypoint(argv = process.argv.slice(2), options = {}) 
 
   try {
     if (isExplicitInstallCommand(argv)) {
-      await runExplicitInstall(options);
-      return 0;
+      return runExplicitInstall(argv.slice(1), options);
     }
 
     if (isExplicitUpdateCommand(argv)) {

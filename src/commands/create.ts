@@ -40,6 +40,7 @@ import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec } from "../lib/git.ts";
 import {
+  collectRepositoryFilterValues,
   EmptyRepositoryFiltersError,
   filterRepositories as filterWorkspaceRepositories,
   findEmptyRepositoryFilters,
@@ -232,11 +233,11 @@ const createSummaryJsonData = ({
 });
 
 export interface CreateCommandOptions {
-  /** Only create worktrees in specified repositories (comma-separated) */
-  only?: string;
+  /** Only create worktrees in specified repositories */
+  only?: string[];
 
   /** Only create worktrees in repositories belonging to requested groups */
-  group?: string;
+  group?: string[];
 
   /** Interactively select repositories */
   interactive?: boolean;
@@ -762,8 +763,16 @@ export function createCommand(): Command {
   return new Command("create")
     .description("Create coordinated worktrees across multiple repositories")
     .argument("<branch>", "Branch name to create across repositories")
-    .option("--only <repos>", "Only create in specified repositories (comma-separated)")
-    .option("--group <groups>", "Only create in repositories in requested groups (comma-separated)")
+    .option(
+      "-o, --only <repos>",
+      "Only create in specified repositories (repeatable, comma-separated)",
+      collectRepositoryFilterValues,
+    )
+    .option(
+      "-g, --group <groups>",
+      "Only create in repositories in requested groups (repeatable, comma-separated)",
+      collectRepositoryFilterValues,
+    )
     .option("-i, --interactive", "Interactively select repositories")
     .option("--switch", "Switch to the created parent worktree after create")
     .option("--no-switch", "Disable configured create switch defaults for this invocation")
@@ -782,12 +791,12 @@ export function createCommand(): Command {
     )
     .option("--no-hooks", "Disable hook execution")
     .option("--no-progress", "Hide progress indicators")
-    .option("--dry-run", "Show what would be done without making changes")
+    .option("-n, --dry-run", "Show what would be done without making changes")
     .option(
       "--move-changes",
       "Move compatible uncommitted changes from the current workspace after create",
     )
-    .option("--json", "Return structured JSON output for non-interactive create operations")
+    .option("-j, --json", "Return structured JSON output for non-interactive create operations")
     .addOption(editorHostOption)
     .addHelpText(
       "after",
@@ -1013,7 +1022,9 @@ export async function executeCreate(
     info("Post-create launch preview: tab");
   }
   const reposDirAbsolute = resolve(currentDir, arashiConfig.reposDir);
-  const discoveryResult = await discoverWorkspaceRepositories(reposDirAbsolute);
+  const discoveryResult = await discoverWorkspaceRepositories(reposDirAbsolute, {
+    quiet: options.json === true,
+  });
 
   // 3. Include the meta-repo itself in the repository list
   // The meta-repo needs to have its worktree created first, then child repos are nested inside it

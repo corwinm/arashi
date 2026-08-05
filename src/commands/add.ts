@@ -636,7 +636,7 @@ export function createCommand(): Command {
     .option("-n, --name <name>", "Custom repository name")
     .option("--create-setup", "Create setup.sh template if no setup script found", false)
     .option("-f, --force", "Skip confirmation prompts", false)
-    .option("--json", "Output result as JSON", false)
+    .option("-j, --json", "Output result as JSON", false)
     .action(async (gitUrl: string, options: AddCommandOptions) => {
       let workspaceRoots: WorkspaceRoots | null = null;
       try {

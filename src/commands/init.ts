@@ -1459,11 +1459,11 @@ export function createCommand(): Command {
     )
     .option("--ignore-scope <scope>", "Managed Git ignore scope: local (default), tracked, or none")
     .option("--zero-config", "Prepare implicit standalone mode without creating configuration")
-    .option("--force", "Overwrite existing configuration if present")
+    .option("-f, --force", "Overwrite existing configuration if present")
     .option("--no-discover", "Skip automatic repository discovery")
-    .option("--dry-run", "Show what would be done without making changes")
-    .option("--verbose", "Show detailed information during initialization")
-    .option("--json", "Output result as JSON")
+    .option("-n, --dry-run", "Show what would be done without making changes")
+    .option("-v, --verbose", "Show detailed information during initialization")
+    .option("-j, --json", "Output result as JSON")
     .addHelpText(
       "after",
       `

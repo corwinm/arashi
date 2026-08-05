@@ -1,7 +1,13 @@
+import { Command } from "commander";
 import { describe, expect, test } from "vitest";
-import { createCommand as createSwitchCommand } from "../../src/commands/switch.ts";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { buildProgram } from "../../src/cli-program.ts";
+import {
+  commandSemantics,
+  generateCommandContract,
+  optionAuditPolicies,
+} from "../../src/contracts/cli-commands.ts";
 
 const readProjectFile = (path: string): string =>
   readFileSync(resolve(process.cwd(), path), "utf8");
@@ -13,6 +19,12 @@ const maintainedSwitchDocs = [
   "docs/commands/shell.md",
 ] as const;
 
+const canonicalSwitchDocs = [
+  "README.md",
+  "docs/configuration.md",
+  "docs/commands/switch.md",
+] as const;
+
 describe("unified switch mode documentation contract", () => {
   test("uses one canonical switch mode vocabulary without stale switch launch fields", () => {
     for (const path of maintainedSwitchDocs) {
@@ -21,9 +33,36 @@ describe("unified switch mode documentation contract", () => {
       expect(contents, path).not.toMatch(/"switch"\s*:\s*\{[^}]*"launchMode"/s);
     }
 
-    for (const path of ["README.md", "docs/configuration.md", "docs/commands/switch.md"] as const) {
+    for (const path of canonicalSwitchDocs) {
       expect(readProjectFile(path), path).toContain("auto` | `cd` | `launch` | `sesh` | `herdr");
     }
+  });
+
+  test("uses canonical switch spellings for actionable guidance while retaining migration metadata", () => {
+    for (const path of canonicalSwitchDocs) {
+      const contents = readProjectFile(path);
+      expect(contents, path).toContain("--launch");
+      expect(contents, path).toContain("--ignore-configured-launcher");
+      const lines = contents.split("\n");
+      for (const line of lines.filter((candidate) => candidate.includes("arashi switch"))) {
+        expect(line, `${path}: ${line}`).not.toContain("--no-cd");
+        expect(line, `${path}: ${line}`).not.toContain("--no-default-launch");
+      }
+      for (const line of lines.filter((candidate) =>
+        /--no-(?:cd|default-launch)/.test(candidate),
+      )) {
+        expect(line.toLowerCase(), `${path}: ${line}`).toContain("deprecated");
+        expect(line.toLowerCase(), `${path}: ${line}`).toContain("compatibility");
+      }
+    }
+
+    const switchDocs = readProjectFile("docs/commands/switch.md");
+    expect(switchDocs).toContain("`--no-cd` is a deprecated compatibility spelling for `--launch`");
+    expect(switchDocs).toContain(
+      "`--no-default-launch` is a deprecated compatibility spelling for `--ignore-configured-launcher`",
+    );
+    const optionsSection = switchDocs.split("## Options")[1]?.split("## Examples")[0] ?? "";
+    expect(optionsSection).not.toMatch(/^- `--no-(?:cd|default-launch)`/m);
   });
 
   test("documents contextual auto ordering, fallbacks, and absent compatibility", () => {
@@ -58,22 +97,25 @@ describe("unified switch mode documentation contract", () => {
   test("publishes explicit switch flag precedence in docs and CLI help", () => {
     const configuration = readProjectFile("docs/configuration.md");
     expect(configuration).toContain(
-      "Explicit launcher flags > `--cd` / `--no-cd` > configured mode > automatic context detection",
+      "Explicit launcher flags > `--cd` / `--launch` > configured mode > automatic context detection",
     );
 
-    const command = createSwitchCommand();
-    expect(command.description()).toBe(
+    const program = buildProgram({ includeHelpBanner: false });
+    const command = program.commands.find((candidate: Command) => candidate.name() === "switch");
+    expect(command?.description()).toBe(
       "Switch to an existing worktree using explicit, configured, or contextual modes",
     );
+    expect(command?.options.find((option) => option.long === "--launch")?.description).toBe(
+      "Launch the selected worktree while preserving a configured launcher",
+    );
     expect(
-      command.options.find(
-        (option: { description: string; long?: string }) => option.long === "--no-default-launch",
-      )?.description,
-    ).toBe("Bypass a configured sesh or Herdr mode for this invocation");
+      command?.options.find((option) => option.long === "--ignore-configured-launcher")
+        ?.description,
+    ).toBe("Bypass a configured sesh or Herdr launcher for this invocation");
   });
 
   test("documents tab as bypassing configured launchers on every maintained switch surface", () => {
-    for (const path of ["README.md", "docs/configuration.md", "docs/commands/switch.md"] as const) {
+    for (const path of canonicalSwitchDocs) {
       const contents = readProjectFile(path);
       expect(contents, path).toContain("bypasses configured `sesh` or `herdr` launch defaults");
       expect(contents, path).toContain("explicit launcher selector remains authoritative");
@@ -91,9 +133,40 @@ describe("unified switch mode documentation contract", () => {
       expect(contents).toContain("does not fall back");
       expect(contents).toContain("per-invocation");
     }
-    expect(configuration).toContain("`--tmux` + `--no-cd`");
-    expect(configuration).toContain("`--tmux` + `--no-default-launch`");
+    expect(configuration).toContain("`--tmux` + `--launch`");
+    expect(configuration).toContain("`--tmux` + `--ignore-configured-launcher`");
     expect(switchDocs).toContain("--tmux --sesh");
     expect(switchDocs).toContain("JSON_UNSUPPORTED_FOR_MODE");
+  });
+
+  test("publishes canonical descriptions and explicit legacy deprecation metadata", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+      optionAuditPolicies,
+    );
+    const options = contract.commands.find((command) => command.path === "switch")?.options;
+    const byLong = (long: string) => options?.find((option) => option.long === long);
+
+    expect(byLong("--launch")).toMatchObject({
+      deprecated: false,
+      description: "Launch the selected worktree while preserving a configured launcher",
+      hidden: false,
+    });
+    expect(byLong("--ignore-configured-launcher")).toMatchObject({
+      deprecated: false,
+      description: "Bypass a configured sesh or Herdr launcher for this invocation",
+      hidden: false,
+    });
+    expect(byLong("--no-cd")).toMatchObject({
+      deprecated: true,
+      description: "Deprecated compatibility spelling for --launch",
+      hidden: true,
+    });
+    expect(byLong("--no-default-launch")).toMatchObject({
+      deprecated: true,
+      description: "Deprecated compatibility spelling for --ignore-configured-launcher",
+      hidden: true,
+    });
   });
 });

@@ -235,7 +235,7 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
 export const createCommand = (): Command =>
   new Command("doctor")
     .description("Run non-mutating Arashi workspace diagnostics")
-    .option("--json", "Output a structured JSON envelope")
+    .option("-j, --json", "Output a structured JSON envelope")
     .addHelpText(
       "after",
       `

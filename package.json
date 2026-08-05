@@ -32,6 +32,7 @@
     "bin/install-binary.js",
     "bin/prepare-spawn-command.js",
     "bin/update.js",
+    "bin/update-options.js",
     "bin/arashi.bat",
     "bin/arashi.ps1",
     "schema/config.schema.json",

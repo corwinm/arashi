@@ -22,10 +22,10 @@ import { loadWorkspaceRepositories } from "../lib/config.ts";
 import { exec as gitExec } from "../lib/git.ts";
 import { findConfiguredWorkspaceRoots, resolveWorkspaceContext } from "../lib/workspace-context.ts";
 import { standaloneWorktrees } from "../lib/standalone.ts";
-import { info, error as logError } from "../lib/logger.ts";
+import { info, error as logError, warn } from "../lib/logger.ts";
 import { basename, join, relative, resolve } from "path";
 import { realpath } from "fs/promises";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 type JsonWarning = NonNullable<Parameters<typeof createJsonSuccessEnvelope>[2]>[number];
 type RepoStatus = Awaited<ReturnType<typeof checkAllRepos>>[number];
@@ -41,6 +41,7 @@ export interface HandoffOptions {
   risk?: string[];
   todo?: string[];
   validation?: string[];
+  markdown?: boolean;
 }
 
 interface HandoffContext {
@@ -338,6 +339,9 @@ ${commandBlock ? `${commandBlock}\n` : "- No next commands suggested.\n"}
 };
 
 const runHandoff = async (options: HandoffOptions): Promise<void> => {
+  if (!options.json && options.markdown) {
+    warn("--markdown is deprecated; omit --markdown and use the default Markdown output.");
+  }
   let context;
   try {
     context = await resolveWorkspaceContext();
@@ -477,11 +481,17 @@ const runHandoff = async (options: HandoffOptions): Promise<void> => {
 
 const collectRepeated = (value: string, previous: string[] = []): string[] => [...previous, value];
 
-export const createCommand = (): Command =>
-  new Command("handoff")
+export const createCommand = (): Command => {
+  const deprecatedMarkdown = new Option(
+    "--markdown",
+    "Deprecated compatibility spelling for the default Markdown output",
+  ).hideHelp();
+  (deprecatedMarkdown as Option & { deprecated?: boolean }).deprecated = true;
+
+  return new Command("handoff")
     .description("Generate a Markdown or JSON handoff report for the current workspace")
-    .option("--json", "Output a structured JSON envelope instead of Markdown")
-    .option("--markdown", "Output Markdown (default)")
+    .option("-j, --json", "Output a structured JSON envelope instead of Markdown")
+    .addOption(deprecatedMarkdown)
     .option(
       "--link <link>",
       "Related issue, PR, spec, or reference link (repeatable)",
@@ -517,3 +527,4 @@ Examples:
       `,
     )
     .action(runHandoff);
+};

@@ -15,8 +15,8 @@ arashi switch [filter] [options]
 - `--herdr` Open or focus the selected worktree in Herdr
 - `--tab` Request a true terminal tab or managed-context equivalent for this invocation
 - `--cd` Request parent-shell directory switching for this invocation
-- `--no-cd` Disable parent-shell directory switching for this invocation
-- `--no-default-launch` Bypass a configured `sesh` or `herdr` mode for one invocation
+- `--launch` Launch the selected worktree while preserving a configured launcher
+- `--ignore-configured-launcher` Bypass a configured `sesh` or `herdr` launcher for one invocation
 - `--repos` Search child repositories in the current workspace only
 - `--all` Search parent + child repositories
 
@@ -54,10 +54,13 @@ arashi switch feature-auth --tab
 arashi switch feature-auth --cd
 
 # Force launch behavior even if switch defaults prefer cd
-arashi switch feature-auth --no-cd
+arashi switch feature-auth --launch
 
 # Bypass a configured sesh or Herdr mode for one run
-arashi switch --no-default-launch
+arashi switch --ignore-configured-launcher
+
+# Force generic automatic launch, bypassing configured sesh or Herdr
+arashi switch --launch --ignore-configured-launcher
 ```
 
 ## Notes
@@ -71,7 +74,7 @@ arashi switch --no-default-launch
 - In `--repos` mode, filter text matches repository names first (exact match wins; a unique partial match is auto-selected).
 - If `--repos` has no repository matches, Arashi prints available child repositories.
 - Inside tmux, Arashi opens a new tmux window automatically.
-- Explicit `--tmux` is per-invocation only, requires `TMUX` to be non-empty after trimming, and does not fall back to another launcher. It conflicts with `--cd`, `--tmux --sesh`, `--herdr`, `--vscode`, `--cursor`, and `--kiro`; `--no-cd` and `--no-default-launch` are compatible and redundant because explicit tmux wins.
+- Explicit `--tmux` is per-invocation only, requires `TMUX` to be non-empty after trimming, and does not fall back to another launcher. It conflicts with `--cd`, `--tmux --sesh`, `--herdr`, `--vscode`, `--cursor`, and `--kiro`; `--launch` and `--ignore-configured-launcher` are compatible and redundant because explicit tmux wins.
 - `--json --tmux` returns one `JSON_UNSUPPORTED_FOR_MODE` envelope with the existing `launch` mode label before conflict or tmux-context validation.
 - Inside a Herdr-launched shell (`HERDR_ENV=1`), Arashi automatically opens or focuses the selected target in Herdr unless an explicit launcher or active tmux takes precedence.
 - Herdr launch requires the `herdr` CLI, a reachable default Herdr server/socket, and a Git-resolvable non-bare main checkout. Arashi calls `herdr worktree open`; it does not delegate Git worktree creation or removal to Herdr.
@@ -83,8 +86,9 @@ arashi switch --no-default-launch
 - Configure one default under `defaults.switch.mode`: `auto` | `cd` | `launch` | `sesh` | `herdr`.
 - `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE → managed Kitty. If none is detected, it uses parent-shell `cd` when available, then terminal/platform launch fallback.
 - An absent mode preserves built-in automatic `launch` behavior and does not newly prefer `cd`.
-- Explicit launcher flags take precedence over `--cd` / `--no-cd`, configured modes, and automatic context detection. Conflicting explicit launchers and `--cd` plus any explicit launcher are rejected.
+- Explicit launcher flags take precedence over `--cd` / `--launch`, configured modes, and automatic context detection. Conflicting explicit launchers and `--cd` plus any launch intent are rejected.
 - `--tab` is CLI-only and never persisted. It expresses launch intent, overrides automatic/configured parent-shell `cd`, and bypasses configured `sesh` or `herdr` launch defaults. An explicit launcher selector remains authoritative and composes with tab disposition. Tab launch never falls back to a window or another launcher. Unsupported selected adapters return `TAB_DISPOSITION_UNSUPPORTED`; runtime/preflight launch failures return `LAUNCH_FAILED`. `--tab --json` returns `JSON_UNSUPPORTED_FOR_MODE` before contextual validation.
 - Legacy switch `launchMode` and `launch_mode` fields are accepted only for a bounded compatibility window. Follow the exact replacement warning on stderr; ambiguous or conflicting combinations are rejected before switching.
+- `--no-cd` is a deprecated compatibility spelling for `--launch`; `--no-default-launch` is a deprecated compatibility spelling for `--ignore-configured-launcher`. Both remain accepted throughout Arashi 1.x, are hidden from normal help, and emit human-only stderr warnings. Their earliest removal is Arashi 2.0 and requires a separately approved breaking-change issue.
 - If `--cd` is used without active shell integration, Arashi warns and skips launch fallback for that invocation.
 - If `defaults.switch.mode: "cd"` is configured without active shell integration, Arashi warns and then follows normal launch resolution.

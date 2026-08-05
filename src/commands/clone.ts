@@ -95,7 +95,7 @@ export function createCommand(): Command {
   return new Command("clone")
     .description("Clone missing configured repositories")
     .option("--all", "Clone all missing repositories without interactive selection")
-    .option("--json", "Output result as JSON; requires --all")
+    .option("-j, --json", "Output result as JSON; requires --all")
     .action(async (options: CloneCommandOptions) => {
       if (options.json && !options.all) {
         writeJsonEnvelope(unsupportedJsonModeError("clone", "interactive-selection"));

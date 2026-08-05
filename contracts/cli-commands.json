@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "commands": [
     {
       "path": "add",
@@ -16,31 +16,55 @@
       ],
       "options": [
         {
+          "deprecated": false,
           "flags": "--create-setup",
           "description": "Create setup.sh template if no setup script found",
+          "hidden": false,
+          "long": "--create-setup",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--json",
-          "description": "Output result as JSON",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "-f, --force",
           "description": "Skip confirmation prompts",
+          "hidden": false,
+          "long": "--force",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-f",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
           "flags": "-n, --name <name>",
           "description": "Custom repository name",
+          "hidden": false,
+          "long": "--name",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "required",
           "variadic": false
         }
       ],
@@ -71,17 +95,29 @@
       "arguments": [],
       "options": [
         {
+          "deprecated": false,
           "flags": "--all",
           "description": "Clone all missing repositories without interactive selection",
+          "hidden": false,
+          "long": "--all",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output result as JSON; requires --all",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -120,129 +156,283 @@
       ],
       "options": [
         {
+          "deprecated": false,
           "flags": "--conflict <strategy>",
           "description": "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
+          "hidden": false,
+          "long": "--conflict",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--dry-run",
-          "description": "Show what would be done without making changes",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--editor-host <host>",
           "description": "Internal editor host context for create default resolution",
+          "hidden": true,
+          "long": "--editor-host",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--group <groups>",
-          "description": "Only create in repositories in requested groups (comma-separated)",
-          "required": true,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--herdr",
           "description": "Launch using Herdr mode (implies --launch)",
+          "hidden": false,
+          "long": "--herdr",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--json",
-          "description": "Return structured JSON output for non-interactive create operations",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--launch",
           "description": "Launch terminal/editor context after create",
+          "hidden": false,
+          "long": "--launch",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--move-changes",
           "description": "Move compatible uncommitted changes from the current workspace after create",
+          "hidden": false,
+          "long": "--move-changes",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--no-hooks",
           "description": "Disable hook execution",
+          "hidden": false,
+          "long": "--no-hooks",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--no-launch",
           "description": "Disable configured create launch defaults for this invocation",
+          "hidden": false,
+          "long": "--no-launch",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--no-progress",
           "description": "Hide progress indicators",
+          "hidden": false,
+          "long": "--no-progress",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--no-switch",
           "description": "Disable configured create switch defaults for this invocation",
+          "hidden": false,
+          "long": "--no-switch",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--only <repos>",
-          "description": "Only create in specified repositories (comma-separated)",
-          "required": true,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--sesh",
           "description": "Launch using sesh mode (implies --launch)",
+          "hidden": false,
+          "long": "--sesh",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--switch",
           "description": "Switch to the created parent worktree after create",
+          "hidden": false,
+          "long": "--switch",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--tab",
           "description": "Launch the created worktree in a tab; bypasses configured launch defaults and implies --launch and --switch",
+          "hidden": false,
+          "long": "--tab",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--tmux",
           "description": "Launch using plain tmux mode (implies --launch and --switch)",
+          "hidden": false,
+          "long": "--tmux",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
+          "flags": "-g, --group <groups>",
+          "description": "Only create in repositories in requested groups (repeatable, comma-separated)",
+          "hidden": false,
+          "long": "--group",
+          "required": true,
+          "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--only"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "group",
+              "omitted": "default-selection",
+              "standalone": "unsupported",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-g",
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
           "flags": "-i, --interactive",
           "description": "Interactively select repositories",
+          "hidden": false,
+          "long": "--interactive",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-i",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Return structured JSON output for non-interactive create operations",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "Show what would be done without making changes",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-o, --only <repos>",
+          "description": "Only create in specified repositories (repeatable, comma-separated)",
+          "hidden": false,
+          "long": "--only",
+          "required": true,
+          "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--group"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "repository",
+              "omitted": "default-selection",
+              "standalone": "unsupported",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-o",
+          "valueShape": "required",
           "variadic": false
         }
       ],
@@ -337,10 +527,16 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output a structured JSON envelope",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -378,45 +574,127 @@
       ],
       "options": [
         {
+          "deprecated": false,
           "flags": "--dirty",
           "description": "Only include repositories with uncommitted changes",
+          "hidden": false,
+          "long": "--dirty",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--fail-fast",
           "description": "Stop starting new commands after the first failure",
+          "hidden": false,
+          "long": "--fail-fast",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--group <group>",
-          "description": "Only include repositories in the requested group (repeatable)",
-          "required": true,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--jobs <positive-int>",
           "description": "Maximum repositories to run concurrently",
+          "hidden": false,
+          "long": "--jobs",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-g, --group <group>",
+          "description": "Only include repositories in the requested group (repeatable)",
+          "hidden": false,
+          "long": "--group",
+          "required": true,
+          "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--only"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "group",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-g",
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--only <repo>",
+          "deprecated": false,
+          "flags": "-o, --only <repo>",
           "description": "Only include a specific repository (repeatable)",
+          "hidden": false,
+          "long": "--only",
           "required": true,
           "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--group"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "repository",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-o",
+          "valueShape": "required",
           "variadic": false
         }
       ],
@@ -448,52 +726,111 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--json",
-          "description": "Output a structured JSON envelope instead of Markdown",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--link <link>",
           "description": "Related issue, PR, spec, or reference link (repeatable)",
+          "hidden": false,
+          "long": "--link",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
+          "deprecated": true,
           "flags": "--markdown",
-          "description": "Output Markdown (default)",
+          "description": "Deprecated compatibility spelling for the default Markdown output",
+          "hidden": true,
+          "long": "--markdown",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "compatibility": {
+              "alternatives": ["--markdown"],
+              "canonical": {
+                "behavior": "markdown",
+                "omittedDefault": true
+              },
+              "deprecatedAlternatives": true,
+              "removal": {
+                "earliestMajor": 2,
+                "requiresApprovedBreakingChange": true
+              }
+            },
+            "ownership": "command",
+            "persisted": false,
+            "role": "redundant-compatibility"
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--next-command <command>",
           "description": "Suggested next command, not executed (repeatable)",
+          "hidden": false,
+          "long": "--next-command",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--risk <item>",
           "description": "Known risk or blocker to include in the report (repeatable)",
+          "hidden": false,
+          "long": "--risk",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--todo <item>",
           "description": "Remaining work item to include as a checklist entry (repeatable)",
+          "hidden": false,
+          "long": "--todo",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--validation <entry>",
           "description": "Validation command and result evidence, e.g. 'pnpm run test — passed' (repeatable)",
+          "hidden": false,
+          "long": "--validation",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Output a structured JSON envelope instead of Markdown",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -524,66 +861,120 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--dry-run",
-          "description": "Show what would be done without making changes",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
-          "flags": "--force",
-          "description": "Overwrite existing configuration if present",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--ignore-scope <scope>",
           "description": "Managed Git ignore scope: local (default), tracked, or none",
+          "hidden": false,
+          "long": "--ignore-scope",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--json",
-          "description": "Output result as JSON",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--no-discover",
           "description": "Skip automatic repository discovery",
+          "hidden": false,
+          "long": "--no-discover",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--repos-dir <path>",
           "description": "Custom location for managed repositories",
+          "hidden": false,
+          "long": "--repos-dir",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--verbose",
-          "description": "Show detailed information during initialization",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--worktrees-dir <path>",
           "description": "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
+          "hidden": false,
+          "long": "--worktrees-dir",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--zero-config",
           "description": "Prepare implicit standalone mode without creating configuration",
+          "hidden": false,
+          "long": "--zero-config",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-f, --force",
+          "description": "Overwrite existing configuration if present",
+          "hidden": false,
+          "long": "--force",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-f",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "Show what would be done without making changes",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-v, --verbose",
+          "description": "Show detailed information during initialization",
+          "hidden": false,
+          "long": "--verbose",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-v",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -634,10 +1025,16 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -670,31 +1067,55 @@
       "arguments": [],
       "options": [
         {
+          "deprecated": false,
           "flags": "--max-depth <depth>",
           "description": "Maximum depth for sub-repo discovery (default: 3)",
+          "hidden": false,
+          "long": "--max-depth",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "-j, --json",
           "description": "Output in JSON format",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "-t, --table",
           "description": "Show table format with headers (default: simple list)",
+          "hidden": false,
+          "long": "--table",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-t",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show detailed sub-repository information",
+          "hidden": false,
+          "long": "--verbose",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-v",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -725,24 +1146,42 @@
       "arguments": [],
       "options": [
         {
+          "deprecated": false,
           "flags": "--from <workspace>",
           "description": "Source branch, worktree name, or path",
+          "hidden": false,
+          "long": "--from",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--json",
-          "description": "Return structured JSON output",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--to <workspace>",
           "description": "Target branch, worktree name, or path",
+          "hidden": false,
+          "long": "--to",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Return structured JSON output",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -772,24 +1211,42 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--dry-run",
-          "description": "Report stale worktree metadata without pruning",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--expire <time>",
           "description": "Git worktree prune expiry time",
+          "hidden": false,
+          "long": "--expire",
           "required": true,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output a structured JSON envelope",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "Report stale worktree metadata without pruning",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -819,31 +1276,101 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--group <group>",
+          "deprecated": false,
+          "flags": "-g, --group <group>",
           "description": "Only include repositories in the requested group (repeatable)",
+          "hidden": false,
+          "long": "--group",
           "required": true,
           "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--only"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "group",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-g",
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--only <repo>",
+          "deprecated": false,
+          "flags": "-o, --only <repo>",
           "description": "Only include a specific repository (repeatable)",
+          "hidden": false,
+          "long": "--only",
           "required": true,
           "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--group"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "repository",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-o",
+          "valueShape": "required",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show verbose git output",
+          "hidden": false,
+          "long": "--verbose",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-v",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -874,38 +1401,114 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--dry-run",
-          "description": "Preview push operations without mutating remotes",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
-          "flags": "--group <group>",
-          "description": "Only include repositories in the requested group (repeatable)",
-          "required": true,
-          "optional": false,
-          "variadic": false
-        },
-        {
-          "flags": "--json",
-          "description": "Output result as JSON",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
-          "flags": "--only <repo>",
-          "description": "Only include a specific repository (repeatable)",
-          "required": true,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--set-upstream",
           "description": "Set upstream tracking when publishing new branches",
+          "hidden": false,
+          "long": "--set-upstream",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-g, --group <group>",
+          "description": "Only include repositories in the requested group (repeatable)",
+          "hidden": false,
+          "long": "--group",
+          "required": true,
+          "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--only"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "group",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-g",
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "Preview push operations without mutating remotes",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-o, --only <repo>",
+          "description": "Only include a specific repository (repeatable)",
+          "hidden": false,
+          "long": "--only",
+          "required": true,
+          "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--group"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "repository",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-o",
+          "valueShape": "required",
           "variadic": false
         }
       ],
@@ -944,52 +1547,94 @@
       ],
       "options": [
         {
-          "flags": "--dry-run",
-          "description": "Preview planned removals without mutating worktrees or branches",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
-          "flags": "--json",
-          "description": "Output results as JSON",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
+          "deprecated": false,
           "flags": "--keep-branches",
           "description": "Remove worktrees but keep git branches",
+          "hidden": false,
+          "long": "--keep-branches",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--keep-worktrees",
           "description": "Delete branches but keep worktree directories",
+          "hidden": false,
+          "long": "--keep-worktrees",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--no-check-dirty",
           "description": "Skip uncommitted changes check",
+          "hidden": false,
+          "long": "--no-check-dirty",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--path",
           "description": "Treat argument as worktree path",
+          "hidden": false,
+          "long": "--path",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "-f, --force",
           "description": "Skip confirmation prompts",
+          "hidden": false,
+          "long": "--force",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-f",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Output results as JSON",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "Preview planned removals without mutating worktrees or branches",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -1020,31 +1665,101 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--group <group>",
+          "deprecated": false,
+          "flags": "-g, --group <group>",
           "description": "Only include repositories in the requested group (repeatable)",
+          "hidden": false,
+          "long": "--group",
           "required": true,
           "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--only"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "group",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-g",
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--only <repo>",
+          "deprecated": false,
+          "flags": "-o, --only <repo>",
           "description": "Only include a specific repository (repeatable)",
+          "hidden": false,
+          "long": "--only",
           "required": true,
           "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--group"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "repository",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-o",
+          "valueShape": "required",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show full setup script output",
+          "hidden": false,
+          "long": "--verbose",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-v",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -1109,10 +1824,16 @@
       ],
       "options": [
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Return a structured unsupported-mode error instead of shell code",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -1177,31 +1898,114 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--group <group>",
-          "description": "Only include repositories in the requested group (repeatable)",
+          "deprecated": false,
+          "flags": "-g, --group <group>",
+          "description": "Only include repositories in the requested group (repeatable, comma-separated)",
+          "hidden": false,
+          "long": "--group",
           "required": true,
           "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--only"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "group",
+              "omitted": "default-selection",
+              "standalone": "unsupported",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-g",
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output a structured JSON envelope",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
+          "flags": "-o, --only <repo>",
+          "description": "Only include a configured child repository (repeatable, comma-separated)",
+          "hidden": false,
+          "long": "--only",
+          "required": true,
+          "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--group"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "repository",
+              "omitted": "default-selection",
+              "standalone": "unsupported",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-o",
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
           "flags": "-s, --short",
           "description": "Show one-line summary per repository",
+          "hidden": false,
+          "long": "--short",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-s",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show full git status output",
+          "hidden": false,
+          "long": "--verbose",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-v",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -1238,101 +2042,486 @@
       ],
       "options": [
         {
+          "deprecated": false,
           "flags": "--all",
           "description": "Use both parent and child repositories",
+          "hidden": false,
+          "long": "--all",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--cd",
           "description": "Change the current shell directory when shell integration is active",
+          "hidden": false,
+          "long": "--cd",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": [
+              "--cursor",
+              "--herdr",
+              "--kiro",
+              "--launch",
+              "--no-cd",
+              "--sesh",
+              "--tab",
+              "--tmux",
+              "--vscode"
+            ],
+            "implies": ["cd"],
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--cursor",
           "description": "Open the selected worktree in Cursor",
+          "hidden": false,
+          "long": "--cursor",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--cd", "--herdr", "--kiro", "--sesh", "--tmux", "--vscode"],
+            "implies": ["launch"],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--herdr",
           "description": "Open or focus the selected worktree in Herdr",
+          "hidden": false,
+          "long": "--herdr",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--cd", "--cursor", "--kiro", "--sesh", "--tmux", "--vscode"],
+            "implies": ["launch"],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--json",
-          "description": "Return a structured unsupported-mode error instead of launching or switching",
+          "deprecated": false,
+          "flags": "--ignore-configured-launcher",
+          "description": "Bypass a configured sesh or Herdr launcher for this invocation",
+          "hidden": false,
+          "long": "--ignore-configured-launcher",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "compatibility": {
+              "alternatives": ["--no-default-launch"],
+              "canonical": {
+                "option": "--ignore-configured-launcher"
+              },
+              "deprecatedAlternatives": true,
+              "removal": {
+                "earliestMajor": 2,
+                "requiresApprovedBreakingChange": true
+              }
+            },
+            "conflicts": [],
+            "implies": [],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              },
+              "configuredModeEffects": {
+                "auto": "preserve-configured-or-contextual-behavior",
+                "cd": "preserve-configured-or-contextual-behavior",
+                "herdr": "automatic-launch",
+                "launch": "preserve-configured-or-contextual-behavior",
+                "sesh": "automatic-launch"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--kiro",
           "description": "Open the selected worktree in Kiro",
+          "hidden": false,
+          "long": "--kiro",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--cd", "--cursor", "--herdr", "--sesh", "--tmux", "--vscode"],
+            "implies": ["launch"],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
+          "flags": "--launch",
+          "description": "Launch the selected worktree while preserving a configured launcher",
+          "hidden": false,
+          "long": "--launch",
+          "required": false,
+          "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--cd"],
+            "implies": ["launch"],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              },
+              "configuredModeEffects": {
+                "auto": "launch",
+                "cd": "launch",
+                "herdr": "preserve-named-launcher",
+                "launch": "launch",
+                "sesh": "preserve-named-launcher"
+              }
+            },
+            "compatibility": {
+              "alternatives": ["--no-cd"],
+              "canonical": {
+                "option": "--launch"
+              },
+              "deprecatedAlternatives": true,
+              "removal": {
+                "earliestMajor": 2,
+                "requiresApprovedBreakingChange": true
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": true,
           "flags": "--no-cd",
-          "description": "Disable parent-shell directory switching for this invocation",
+          "description": "Deprecated compatibility spelling for --launch",
+          "hidden": true,
+          "long": "--no-cd",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--cd"],
+            "implies": ["launch"],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              },
+              "configuredModeEffects": {
+                "auto": "launch",
+                "cd": "launch",
+                "herdr": "preserve-named-launcher",
+                "launch": "launch",
+                "sesh": "preserve-named-launcher"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": true,
           "flags": "--no-default-launch",
-          "description": "Bypass a configured sesh or Herdr mode for this invocation",
+          "description": "Deprecated compatibility spelling for --ignore-configured-launcher",
+          "hidden": true,
+          "long": "--no-default-launch",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": [],
+            "implies": [],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              },
+              "configuredModeEffects": {
+                "auto": "preserve-configured-or-contextual-behavior",
+                "cd": "preserve-configured-or-contextual-behavior",
+                "herdr": "automatic-launch",
+                "launch": "preserve-configured-or-contextual-behavior",
+                "sesh": "automatic-launch"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--path",
           "description": "Treat argument as exact worktree path",
+          "hidden": false,
+          "long": "--path",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--repos",
           "description": "Use child repositories only",
+          "hidden": false,
+          "long": "--repos",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--sesh",
           "description": "Use sesh in tmux mode",
+          "hidden": false,
+          "long": "--sesh",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--tmux", "--vscode"],
+            "implies": ["launch"],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--tab",
           "description": "Opens the selected worktree in a tab and bypasses configured launch defaults",
+          "hidden": false,
+          "long": "--tab",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--cd"],
+            "implies": ["launch"],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--tmux",
           "description": "Force launch in a new plain tmux window",
+          "hidden": false,
+          "long": "--tmux",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
+            "implies": ["launch"],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "--vscode",
           "description": "Open the selected worktree in VS Code",
+          "hidden": false,
+          "long": "--vscode",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--tmux"],
+            "implies": ["launch"],
+            "ownership": "command",
+            "persisted": false,
+            "switch": {
+              "explicitLauncher": {
+                "authoritative": true,
+                "compatible": true,
+                "noFallback": "preserved"
+              },
+              "jsonGuardPrecedence": "before-option-and-conflict-validation",
+              "tab": {
+                "bypassesConfiguredDefaults": true,
+                "compatible": true,
+                "disposition": "tab"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Return a structured unsupported-mode error instead of launching or switching",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -1358,7 +2547,9 @@
             "compatibleOptions": [
               "--cursor",
               "--herdr",
+              "--ignore-configured-launcher",
               "--kiro",
+              "--launch",
               "--no-cd",
               "--no-default-launch",
               "--sesh",
@@ -1399,7 +2590,12 @@
             "persisted": false
           },
           "--tmux": {
-            "compatibleOptions": ["--no-cd", "--no-default-launch"],
+            "compatibleOptions": [
+              "--ignore-configured-launcher",
+              "--launch",
+              "--no-cd",
+              "--no-default-launch"
+            ],
             "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
             "environment": {
               "name": "TMUX",
@@ -1424,31 +2620,101 @@
       "arguments": [],
       "options": [
         {
-          "flags": "--group <groups>",
-          "description": "Only sync repositories in the requested group (comma-separated)",
+          "deprecated": false,
+          "flags": "-g, --group <groups>",
+          "description": "Only sync repositories in requested groups (repeatable, comma-separated)",
+          "hidden": false,
+          "long": "--group",
           "required": true,
           "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--only"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "group",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-g",
+          "valueShape": "required",
           "variadic": false
         },
         {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--only <repos>",
-          "description": "Only sync specified repositories (comma-separated)",
+          "deprecated": false,
+          "flags": "-o, --only <repos>",
+          "description": "Only sync specified repositories (repeatable, comma-separated)",
+          "hidden": false,
+          "long": "--only",
           "required": true,
           "optional": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "selector": {
+              "accepts": ["repeated", "comma-separated", "mixed"],
+              "blankSegments": "ignored-beside-values",
+              "combination": {
+                "empty": "error",
+                "mode": "intersection",
+                "with": "--group"
+              },
+              "deduplicate": "first-occurrence",
+              "explicitEmpty": "error",
+              "flatten": "encounter-order",
+              "kind": "repository",
+              "omitted": "default-selection",
+              "standalone": "configured-only",
+              "supplied": "distinct-from-omitted",
+              "trim": true,
+              "unknown": "error",
+              "validationPrecedence": "before-repository-work"
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-o",
+          "valueShape": "required",
           "variadic": false
         },
         {
+          "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show detailed output for each repository",
+          "hidden": false,
+          "long": "--verbose",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-v",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],
@@ -1479,31 +2745,69 @@
       "arguments": [],
       "options": [
         {
+          "deprecated": false,
           "flags": "--check",
           "description": "check whether an update is available without changing files",
+          "hidden": false,
+          "long": "--check",
           "required": false,
           "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--dry-run"],
+            "inspection": {
+              "executionPaths": ["human", "json"]
+            },
+            "ownership": "command"
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
           "variadic": false
         },
         {
-          "flags": "--dry-run",
-          "description": "show the installer update plan without changing files",
-          "required": false,
-          "optional": false,
-          "variadic": false
-        },
-        {
-          "flags": "--json",
+          "deprecated": false,
+          "flags": "-j, --json",
           "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
           "variadic": false
         },
         {
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "show the installer update plan without changing files",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "semanticPolicy": {
+            "conflicts": ["--check"],
+            "inspection": {
+              "executionPaths": ["human", "json"]
+            },
+            "ownership": "command"
+          },
+          "semanticPolicyOwner": "command",
+          "short": "-n",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "deprecated": false,
           "flags": "-y, --yes",
           "description": "apply the update without prompting",
+          "hidden": false,
+          "long": "--yes",
           "required": false,
           "optional": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-y",
+          "valueShape": "boolean",
           "variadic": false
         }
       ],

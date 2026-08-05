@@ -12,7 +12,7 @@ import { Command } from "commander";
 import { alignRepositoryBranch } from "../lib/git/sync-branch.ts";
 import { exec } from "../lib/git.ts";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
-import { EmptyRepositoryFiltersError } from "../lib/repo-filter.ts";
+import { collectRepositoryFilterValues, EmptyRepositoryFiltersError } from "../lib/repo-filter.ts";
 import { resolve } from "path";
 import { findConfiguredWorkspaceRoots } from "../lib/workspace-context.ts";
 
@@ -27,19 +27,27 @@ const DEFAULT_TIMEOUT_MS = 300_000;
 const DETACHED_HEAD = "HEAD";
 
 interface SyncCommandOptions {
-  group?: string;
+  group?: string | string[];
   json?: boolean;
-  only?: string;
+  only?: string | string[];
   verbose?: boolean;
 }
 
 export function createCommand(): Command {
   return new Command("sync")
     .description("Align managed repositories to the parent branch")
-    .option("--only <repos>", "Only sync specified repositories (comma-separated)")
-    .option("--group <groups>", "Only sync repositories in the requested group (comma-separated)")
+    .option(
+      "-o, --only <repos>",
+      "Only sync specified repositories (repeatable, comma-separated)",
+      collectRepositoryFilterValues,
+    )
+    .option(
+      "-g, --group <groups>",
+      "Only sync repositories in requested groups (repeatable, comma-separated)",
+      collectRepositoryFilterValues,
+    )
     .option("-v, --verbose", "Show detailed output for each repository")
-    .option("--json", "Output result as JSON")
+    .option("-j, --json", "Output result as JSON")
     .action(async (options: SyncCommandOptions) => {
       try {
         const summary = await executeSync(options);

@@ -5,6 +5,7 @@ import { buildProgram } from "../../src/cli-program.ts";
 import {
   commandSemantics,
   generateCommandContract,
+  optionAuditPolicies,
   serializeCommandContract,
 } from "../../src/contracts/cli-commands.ts";
 
@@ -13,7 +14,11 @@ const outputPath = resolve(
   "../../contracts/cli-commands.json",
 );
 const generated = serializeCommandContract(
-  generateCommandContract(buildProgram({ includeHelpBanner: false }), commandSemantics),
+  generateCommandContract(
+    buildProgram({ includeHelpBanner: false }),
+    commandSemantics,
+    optionAuditPolicies,
+  ),
 );
 
 if (process.argv.includes("--check")) {

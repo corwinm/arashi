@@ -13,6 +13,19 @@ import type { SwitchProcessRunner } from "../../src/lib/switch-launcher.ts";
 import type { WorkspaceRepository } from "../../src/lib/config.ts";
 import { tmpdir } from "os";
 
+type RationalizedSwitchOptions = SwitchCommandOptions & {
+  ignoreConfiguredLauncher?: boolean;
+  legacyNoCd?: boolean;
+  legacyNoDefaultLaunch?: boolean;
+  launch?: boolean;
+};
+
+const parseSwitchOptions = (argv: string[]): RationalizedSwitchOptions => {
+  const command = createCommand();
+  command.parseOptions(argv);
+  return command.opts<RationalizedSwitchOptions>();
+};
+
 const candidate: SwitchCandidate = {
   branchName: "feature/switch-command",
   repoName: "workspace",
@@ -59,6 +72,68 @@ describe("unified switch resolution", () => {
       ).toThrowError(/Conflicting switch behavior overrides/);
     },
   );
+
+  test("normalizes canonical and legacy launch intent across configured modes", () => {
+    const resolveMode = (
+      mode: "auto" | "cd" | "launch" | "sesh" | "herdr",
+      options: RationalizedSwitchOptions,
+    ) =>
+      resolveSwitchResolution({
+        configMode: mode,
+        managedContextActive: false,
+        options,
+        shellIntegrationActive: true,
+      });
+
+    for (const mode of ["auto", "cd", "launch", "sesh", "herdr"] as const) {
+      expect(resolveMode(mode, { launch: true })).toEqual(resolveMode(mode, { cd: false }));
+      expect(resolveMode(mode, { ignoreConfiguredLauncher: true })).toEqual(
+        resolveMode(mode, { defaultLaunch: false }),
+      );
+      expect(resolveMode(mode, { launch: true, cd: false })).toEqual(
+        resolveMode(mode, { launch: true }),
+      );
+      expect(resolveMode(mode, { ignoreConfiguredLauncher: true, defaultLaunch: false })).toEqual(
+        resolveMode(mode, { ignoreConfiguredLauncher: true }),
+      );
+    }
+
+    expect(resolveMode("sesh", { launch: true })).toMatchObject({
+      behavior: { mode: "launch" },
+      launch: { sesh: true },
+    });
+    expect(resolveMode("herdr", { launch: true })).toMatchObject({
+      behavior: { mode: "launch" },
+      launch: { herdr: true },
+    });
+    expect(resolveMode("auto", { ignoreConfiguredLauncher: true }).behavior.mode).toBe("cd");
+    expect(resolveMode("cd", { ignoreConfiguredLauncher: true }).behavior.mode).toBe("cd");
+    expect(resolveMode("launch", { ignoreConfiguredLauncher: true }).behavior.mode).toBe("launch");
+    for (const mode of ["sesh", "herdr"] as const) {
+      expect(resolveMode(mode, { ignoreConfiguredLauncher: true })).toEqual({
+        behavior: {
+          mode: "launch",
+          skipLaunchWhenUnavailable: false,
+          warnOnMissingIntegration: false,
+        },
+        launch: { disposition: "window", sesh: false },
+      });
+      expect(resolveMode(mode, { ignoreConfiguredLauncher: true, launch: true })).toEqual(
+        resolveMode(mode, { ignoreConfiguredLauncher: true }),
+      );
+    }
+  });
+
+  test("rejects canonical --launch with explicit --cd", () => {
+    expect(() =>
+      resolveSwitchResolution({
+        configMode: "auto",
+        managedContextActive: false,
+        options: { cd: true, launch: true },
+        shellIntegrationActive: true,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "CONFLICTING_SWITCH_OPTIONS" }));
+  });
 
   test.each(["sesh", "herdr", "vscode", "cursor", "kiro"] as const)(
     "rejects --tmux with explicit --%s and reports both launchers",
@@ -175,6 +250,269 @@ describe("unified switch resolution", () => {
 });
 
 describe("switch command integration", () => {
+  test.each([
+    ["--cd", "--no-cd"],
+    ["--no-cd", "--cd"],
+  ])("rejects parsed legacy launch intent with --cd in either order: %s %s", async (...argv) => {
+    const errors: string[] = [];
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`EXIT:${code}`);
+    });
+    const error = vi.spyOn(console, "error").mockImplementation((...values) => {
+      errors.push(values.map(String).join(" "));
+    });
+
+    await expect(createCommand().parseAsync(argv, { from: "user" })).rejects.toThrow("EXIT:2");
+    expect(errors.join("\n")).toContain("Conflicting switch behavior overrides");
+    expect(exit).toHaveBeenCalledWith(2);
+    error.mockRestore();
+    exit.mockRestore();
+  });
+
+  test("preserves separate Commander presence for canonical cd and legacy no-cd", () => {
+    expect(parseSwitchOptions(["--cd", "--no-cd"])).toMatchObject({
+      cd: true,
+      legacyNoCd: true,
+    });
+    expect(parseSwitchOptions(["--no-cd", "--cd"])).toMatchObject({
+      cd: true,
+      legacyNoCd: true,
+    });
+  });
+
+  test("rejects direct executor legacy no-cd conflict before discovery", async () => {
+    let discoveryCalled = false;
+    await expect(
+      executeSwitch(undefined, { cd: true, legacyNoCd: true } as RationalizedSwitchOptions, {
+        discoverSwitchCandidates: async () => {
+          discoveryCalled = true;
+          return { candidates: [candidate], skippedCount: 0 };
+        },
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICTING_SWITCH_OPTIONS" });
+    expect(discoveryCalled).toBe(false);
+  });
+
+  test("emits legacy warnings only on stderr while canonical spellings stay quiet", async () => {
+    const errors: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((...values) => {
+      errors.push(values.map(String).join(" "));
+    });
+    const deps = {
+      discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+      env: {},
+      findWorkspaceRoot: async () => "/workspace",
+      launchSwitchTarget: async () => ({
+        command: ["terminal"],
+        disposition: "window" as const,
+        mode: "fallback" as const,
+      }),
+      loadWorkspaceRepositories: async () => ({ repositories: [] }),
+      stdinIsTTY: false,
+      stdoutIsTTY: false,
+    };
+
+    await executeSwitch(undefined, { legacyNoCd: true } as RationalizedSwitchOptions, deps);
+    await executeSwitch(
+      undefined,
+      { legacyNoDefaultLaunch: true } as RationalizedSwitchOptions,
+      deps,
+    );
+    expect(errors.join("\n")).toContain("--no-cd is deprecated; use --launch instead.");
+    expect(errors.join("\n")).toContain(
+      "--no-default-launch is deprecated; use --ignore-configured-launcher instead.",
+    );
+
+    errors.length = 0;
+    await executeSwitch(undefined, { launch: true }, deps);
+    await executeSwitch(undefined, { ignoreConfiguredLauncher: true }, deps);
+    expect(errors).toEqual([]);
+    error.mockRestore();
+  });
+
+  test("JSON guard suppresses legacy deprecation warning and writes exactly one stdout document", async () => {
+    const errors: string[] = [];
+    const stdout: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((...values) => {
+      errors.push(values.map(String).join(" "));
+    });
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+
+    const result = await executeSwitch(undefined, {
+      json: true,
+      legacyNoCd: true,
+      legacyNoDefaultLaunch: true,
+    } as RationalizedSwitchOptions & { json: true });
+
+    expect(result).toBe(2);
+    expect(errors.join("\n")).not.toContain("deprecated");
+    expect(stdout).toHaveLength(1);
+    expect(JSON.parse(stdout[0]!)).toMatchObject({
+      command: "switch",
+      error: { code: "JSON_UNSUPPORTED_FOR_MODE" },
+      ok: false,
+    });
+    error.mockRestore();
+    write.mockRestore();
+  });
+
+  test("parses canonical, legacy, and redundant spellings equivalently across the complete configured-context matrix", () => {
+    const modes = ["auto", "cd", "launch", "sesh", "herdr"] as const;
+    const booleanBranches = [false, true] as const;
+    const spellingGroups = [
+      {
+        canonical: ["--launch"],
+        equivalents: [["--no-cd"], ["--launch", "--no-cd"], ["--no-cd", "--launch"]],
+      },
+      {
+        canonical: ["--ignore-configured-launcher"],
+        equivalents: [
+          ["--no-default-launch"],
+          ["--ignore-configured-launcher", "--no-default-launch"],
+          ["--no-default-launch", "--ignore-configured-launcher"],
+        ],
+      },
+    ] as const;
+    let comparedCases = 0;
+
+    for (const mode of modes) {
+      for (const shellIntegrationActive of booleanBranches) {
+        for (const managedContextActive of booleanBranches) {
+          for (const { canonical, equivalents } of spellingGroups) {
+            const canonicalResolution = resolveSwitchResolution({
+              configMode: mode,
+              managedContextActive,
+              options: parseSwitchOptions([...canonical]),
+              shellIntegrationActive,
+            });
+
+            for (const equivalent of equivalents) {
+              expect(
+                resolveSwitchResolution({
+                  configMode: mode,
+                  managedContextActive,
+                  options: parseSwitchOptions([...equivalent]),
+                  shellIntegrationActive,
+                }),
+                `${equivalent.join(" ")} must equal ${canonical.join(" ")} for mode=${mode}, shell=${shellIntegrationActive}, managed=${managedContextActive}`,
+              ).toEqual(canonicalResolution);
+              comparedCases += 1;
+            }
+          }
+        }
+      }
+    }
+
+    expect(comparedCases).toBe(5 * 2 * 2 * 2 * 3);
+  });
+
+  test("executes parsed canonical launch and launcher-ignore options across every configured mode", async () => {
+    const cases = [
+      { argv: ["--launch"], managed: false, mode: "auto", shell: true },
+      { argv: ["--launch"], managed: true, mode: "cd", shell: true },
+      { argv: ["--launch"], managed: false, mode: "launch", shell: false },
+      { argv: ["--launch"], managed: true, mode: "sesh", shell: true },
+      { argv: ["--launch"], managed: false, mode: "herdr", shell: false },
+      {
+        argv: ["--ignore-configured-launcher"],
+        expectedCd: true,
+        managed: false,
+        mode: "auto",
+        shell: true,
+      },
+      {
+        argv: ["--ignore-configured-launcher"],
+        managed: true,
+        mode: "auto",
+        shell: true,
+      },
+      {
+        argv: ["--ignore-configured-launcher"],
+        expectedCd: true,
+        managed: false,
+        mode: "cd",
+        shell: true,
+      },
+      {
+        argv: ["--ignore-configured-launcher"],
+        managed: false,
+        mode: "launch",
+        shell: false,
+      },
+      {
+        argv: ["--ignore-configured-launcher"],
+        managed: true,
+        mode: "sesh",
+        shell: true,
+      },
+      {
+        argv: ["--ignore-configured-launcher"],
+        managed: false,
+        mode: "herdr",
+        shell: false,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const tempDir = await mkdtemp(join(tmpdir(), "arashi-switch-canonical-matrix-"));
+      const directivePath = join(tempDir, "directive");
+      const launchOptions: unknown[] = [];
+      const env: Record<string, string> = {};
+      if (testCase.shell) {
+        env.ARASHI_DIRECTIVE_FILE = directivePath;
+        env.ARASHI_SHELL = "bash";
+      }
+      if (testCase.managed) {
+        env.TMUX = "/tmp/tmux/default";
+      }
+
+      try {
+        const result = await executeSwitch(
+          undefined,
+          { ...parseSwitchOptions([...testCase.argv]), json: false },
+          {
+            discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+            env,
+            findWorkspaceRoot: async () => "/workspace",
+            launchSwitchTarget: async (_selected, options) => {
+              launchOptions.push(options);
+              return { command: ["terminal"], disposition: "window", mode: "fallback" };
+            },
+            loadWorkspaceRepositories: async () => ({
+              config: {
+                defaults: { switch: { mode: testCase.mode } },
+                repos: {},
+                reposDir: "./repos",
+                version: "1.0.0",
+              },
+              repositories: [],
+            }),
+            stdinIsTTY: false,
+            stdoutIsTTY: false,
+          },
+        );
+
+        if ("expectedCd" in testCase && testCase.expectedCd) {
+          expect(result.launchMode).toBe("cd");
+          expect(launchOptions).toEqual([]);
+          expect(await runtime.file(directivePath).text()).toContain(candidate.worktreePath);
+        } else {
+          expect(result.launchMode).toBe("fallback");
+          expect(launchOptions).toHaveLength(1);
+          if (testCase.argv[0] === "--ignore-configured-launcher") {
+            expect(launchOptions[0]).toMatchObject({ sesh: false });
+            expect(launchOptions[0]).not.toHaveProperty("herdr", true);
+          }
+        }
+      } finally {
+        await rm(tempDir, { force: true, recursive: true });
+      }
+    }
+  });
+
   test("types direct JSON, human, and widened switch execution results accurately", () => {
     const assertTypes = () => {
       expectTypeOf(executeSwitch(undefined, { json: true })).toEqualTypeOf<Promise<number>>();
@@ -189,7 +527,7 @@ describe("switch command integration", () => {
     expectTypeOf(assertTypes).toBeFunction();
   });
 
-  test("registers switch command with explicit plain tmux option", () => {
+  test("registers canonical switch options while hiding deprecated compatibility spellings", () => {
     const command = createCommand();
     expect(command.name()).toBe("switch");
     expect(command.options.some((option) => option.long === "--path")).toBe(true);
@@ -198,10 +536,23 @@ describe("switch command integration", () => {
       "plain tmux",
     );
     expect(command.options.some((option) => option.long === "--cd")).toBe(true);
+    expect(command.options.find((option) => option.long === "--launch")).toMatchObject({
+      hidden: false,
+    });
+    expect(
+      command.options.find((option) => option.long === "--ignore-configured-launcher"),
+    ).toMatchObject({ hidden: false });
     expect(command.options.some((option) => option.long === "--vscode")).toBe(true);
     expect(command.options.some((option) => option.long === "--cursor")).toBe(true);
     expect(command.options.some((option) => option.long === "--kiro")).toBe(true);
-    expect(command.options.some((option) => option.long === "--no-default-launch")).toBe(true);
+    expect(command.options.find((option) => option.long === "--no-cd")).toMatchObject({
+      deprecated: true,
+      hidden: true,
+    });
+    expect(command.options.find((option) => option.long === "--no-default-launch")).toMatchObject({
+      deprecated: true,
+      hidden: true,
+    });
     expect(command.options.find((option) => option.long === "--tab")?.description).toContain(
       "bypasses configured launch defaults",
     );
@@ -220,6 +571,10 @@ describe("switch command integration", () => {
     expect(help).toContain(
       "--tab requests a true tab or equivalent; unsupported mappings fail without opening a window.",
     );
+    expect(help).toContain("--launch");
+    expect(help).toContain("--ignore-configured-launcher");
+    expect(help).not.toContain("--no-cd");
+    expect(help).not.toContain("--no-default-launch");
   });
 
   test("passes forced tmux through ahead of configured cd behavior", async () => {
@@ -313,6 +668,35 @@ describe("switch command integration", () => {
     });
     write.mockRestore();
   });
+
+  test.each([
+    { launch: true },
+    { tab: true },
+    { tmux: true },
+    { sesh: true },
+    { herdr: true },
+    { vscode: true },
+    { cursor: true },
+    { kiro: true },
+  ] as RationalizedSwitchOptions[])(
+    "rejects --cd launch intent before discovery: %#",
+    async (intent) => {
+      let discoveryCalled = false;
+      await expect(
+        executeSwitch(
+          undefined,
+          { cd: true, ...intent },
+          {
+            discoverSwitchCandidates: async () => {
+              discoveryCalled = true;
+              return { candidates: [candidate], skippedCount: 0 };
+            },
+          },
+        ),
+      ).rejects.toMatchObject({ code: "CONFLICTING_SWITCH_OPTIONS" });
+      expect(discoveryCalled).toBe(false);
+    },
+  );
 
   test("tab overrides contextual cd, composes with no-default-launch, and reaches the launcher", async () => {
     const launchOptions: unknown[] = [];

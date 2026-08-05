@@ -21,7 +21,11 @@ import {
 import { loadWorkspaceRepositories, type WorkspaceRepositoryRoots } from "../lib/config.ts";
 import { Command } from "commander";
 import { checkRemoteChanges } from "../lib/git-remote.ts";
-import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
+import {
+  collectRepositoryFilterValues,
+  EmptyRepositoryFiltersError,
+  filterRepositories,
+} from "../lib/repo-filter.ts";
 import { info } from "../lib/logger.ts";
 import { runPullWithRollback } from "../lib/pull-runner.ts";
 import { reconcileRepositoryManagedIgnore } from "../lib/managed-ignore.ts";
@@ -281,17 +285,17 @@ export function createCommand(): Command {
   return new Command("pull")
     .description("Pull remote changes across eligible repositories")
     .option(
-      "--only <repo>",
+      "-o, --only <repo>",
       "Only include a specific repository (repeatable)",
-      (value, previous: string[] = []) => [...previous, value],
+      collectRepositoryFilterValues,
     )
     .option(
-      "--group <group>",
+      "-g, --group <group>",
       "Only include repositories in the requested group (repeatable)",
-      (value, previous: string[] = []) => [...previous, value],
+      collectRepositoryFilterValues,
     )
     .option("-v, --verbose", "Show verbose git output")
-    .option("--json", "Output result as JSON")
+    .option("-j, --json", "Output result as JSON")
     .action(async (options: PullCommandOptions) => {
       try {
         const summary = await executePull(options);

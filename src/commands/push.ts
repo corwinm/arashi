@@ -18,7 +18,11 @@ import {
   findConfiguredWorkspaceRoots,
 } from "../lib/workspace-context.ts";
 import { Command } from "commander";
-import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
+import {
+  collectRepositoryFilterValues,
+  EmptyRepositoryFiltersError,
+  filterRepositories,
+} from "../lib/repo-filter.ts";
 import { info } from "../lib/logger.ts";
 
 const ZERO = 0;
@@ -132,18 +136,18 @@ export function createCommand(): Command {
   return new Command("push")
     .description("Push coordinated branches across eligible repositories")
     .option(
-      "--only <repo>",
+      "-o, --only <repo>",
       "Only include a specific repository (repeatable)",
-      (value, previous: string[] = []) => [...previous, value],
+      collectRepositoryFilterValues,
     )
     .option(
-      "--group <group>",
+      "-g, --group <group>",
       "Only include repositories in the requested group (repeatable)",
-      (value, previous: string[] = []) => [...previous, value],
+      collectRepositoryFilterValues,
     )
     .option("--set-upstream", "Set upstream tracking when publishing new branches")
-    .option("--dry-run", "Preview push operations without mutating remotes")
-    .option("--json", "Output result as JSON")
+    .option("-n, --dry-run", "Preview push operations without mutating remotes")
+    .option("-j, --json", "Output result as JSON")
     .action(async (options: PushCommandOptions) => {
       try {
         const summary = await executePush(options);

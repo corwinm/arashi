@@ -195,8 +195,8 @@ export function createCommand(): Command {
     .option("--keep-branches", "Remove worktrees but keep git branches")
     .option("-f, --force", "Skip confirmation prompts")
     .option("--path", "Treat argument as worktree path")
-    .option("--json", "Output results as JSON")
-    .option("--dry-run", "Preview planned removals without mutating worktrees or branches")
+    .option("-j, --json", "Output results as JSON")
+    .option("-n, --dry-run", "Preview planned removals without mutating worktrees or branches")
     .action(async (branch?: string, options?: CliOptions) => {
       try {
         const exitCode = await executeRemove(branch, options || {});
