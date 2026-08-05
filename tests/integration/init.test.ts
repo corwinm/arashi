@@ -162,7 +162,7 @@ describe("init command - success cases", () => {
 
     const preCreateExample = await readTextFile(join(hooksDir, `pre-create.${extension}.example`));
     const postCreateExample = await readTextFile(
-      join(hooksDir, `post-create.${extension}.example`),
+      join(hooksDir, `post-create.${repositoryToken}.${extension}.example`),
     );
     expect(preCreateExample).toContain("ARASHI_BRANCH_NAME");
     expect(preCreateExample).not.toMatch(/ARASHI_BRANCH(?!_NAME)/);

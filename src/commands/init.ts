@@ -866,7 +866,7 @@ const windowsHookContent = (hookName: (typeof WINDOWS_LIFECYCLE_NAMES)[number]):
     : "# Workspace create hooks are untargeted; remove hooks receive one current target.";
   const packageExample =
     hookName === "post-create.<repo>"
-      ? '# For a pinned pnpm child:\n# $env:CI = "true"\n# corepack pnpm --ignore-workspace install --frozen-lockfile'
+      ? '# Follow the repository\'s committed packageManager and lockfile.\n# For a pinned pnpm child:\n# $env:CI = "true"\n# corepack pnpm --ignore-workspace install --frozen-lockfile'
       : "";
   const branchAssertion = lifecycle.includes("create")
     ? 'if (-not $env:ARASHI_BRANCH_NAME) { throw "Missing ARASHI_BRANCH_NAME" }'
