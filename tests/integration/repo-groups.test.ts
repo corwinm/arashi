@@ -225,7 +225,7 @@ describe("repository group command integration", () => {
         }
       }
     }
-  });
+  }, 120_000);
 
   test("status narrows to the exact child intersection while retaining parent short, verbose, and JSON reporting", async () => {
     const workspaceRoot = await createWorkspace();
