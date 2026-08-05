@@ -225,7 +225,7 @@ describe("standalone lifecycle", () => {
     }
   });
 
-  test("standalone explicit detached path preserves the hook target label", async () => {
+  test("standalone detached remove omits ambiguous branch context", async () => {
     const root = await repository();
     await arashi(root, ["init", "--zero-config"]);
     const relativeTarget = join(".worktrees", "detached-remove");
@@ -248,7 +248,7 @@ describe("standalone lifecycle", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(await readFile(record, "utf8")).toBe(relativeTarget);
+    expect(await readFile(record, "utf8")).toBe("");
     await expect(access(linked)).rejects.toThrow();
   });
 

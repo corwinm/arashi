@@ -163,12 +163,12 @@ describe("hook execution integration", () => {
   });
 
   test("runLifecycleHook executes hooks with operation data", async () => {
-    createHookInRepo(testRepo, "pre-create", 'echo "Branch: $ARASHI_BRANCH"');
+    createHookInRepo(testRepo, "pre-create", 'echo "Branch: $ARASHI_BRANCH_NAME"');
 
     const result = await runLifecycleHook({
       lifecyclePoint: "pre-create",
       operationData: {
-        BRANCH: "feature-123",
+        BRANCH_NAME: "feature-123",
       },
       repoPath: testRepo,
     });

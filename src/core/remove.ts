@@ -322,6 +322,7 @@ export const createRemovalSummary = (
 ): RemovalSummary => ({
   duration: ZERO,
   errors: [],
+  hookOutcomes: [],
   operations: [],
   successfulBranches: ZERO,
   successfulWorktrees: ZERO,
@@ -477,6 +478,7 @@ export const formatRemovalSummaryJson = (
   const payload: Record<string, unknown> = {
     dryRun: summary.dryRun === true,
     errors: summary.errors,
+    hookOutcomes: summary.hookOutcomes,
     operations: summary.operations,
     success: summary.errors.length === ZERO,
     summary: {

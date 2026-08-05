@@ -7,7 +7,7 @@ import { runtime, spawn } from "../helpers/node-runtime.ts";
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "fs/promises";
 import { fileExists, readTextFile, writeTextFile } from "../../src/lib/filesystem";
 import { getConfigPath, loadConfig, saveConfig } from "../../src/lib/config";
 import { executeInit } from "../../src/commands/init.ts";
@@ -119,6 +119,9 @@ describe("init command - success cases", () => {
 
     // Verify output contains success message
     expect(result.stdout).toContain("Initialized Arashi workspace");
+    expect(result.stdout).toContain(
+      "install -m 755 .arashi/hooks/pre-create.sh.example .arashi/hooks/pre-create.sh",
+    );
 
     // Verify .arashi directory created
     expect(await fileExists(join(testDir, ".arashi"))).toBe(true);
@@ -142,7 +145,18 @@ describe("init command - success cases", () => {
     expect(await fileExists(join(hooksDir, "post-create.sh.example"))).toBe(true);
     expect(await fileExists(join(hooksDir, "pre-remove.sh.example"))).toBe(true);
     expect(await fileExists(join(hooksDir, "post-remove.sh.example"))).toBe(true);
-    expect(await fileExists(join(hooksDir, "setup.sh.example"))).toBe(true);
+    expect(await fileExists(join(hooksDir, "pre-create.<repo>.sh.example"))).toBe(true);
+    expect(await fileExists(join(hooksDir, "post-create.<repo>.sh.example"))).toBe(true);
+    expect(await fileExists(join(testDir, ".arashi", "setup.sh.example"))).toBe(true);
+    expect(await fileExists(join(hooksDir, "setup.sh.example"))).toBe(false);
+
+    const preCreateExample = await readTextFile(join(hooksDir, "pre-create.sh.example"));
+    const postCreateExample = await readTextFile(join(hooksDir, "post-create.sh.example"));
+    expect(preCreateExample).toContain("ARASHI_BRANCH_NAME");
+    expect(preCreateExample).not.toMatch(/ARASHI_BRANCH(?!_NAME)/);
+    expect(postCreateExample).not.toContain("npm install");
+    expect(postCreateExample).toContain("packageManager");
+    expect((await stat(join(hooksDir, "pre-create.sh.example"))).mode & 0o111).toBe(0);
 
     // Verify repos directory created
     expect(await fileExists(join(testDir, "repos"))).toBe(true);
@@ -153,6 +167,27 @@ describe("init command - success cases", () => {
     const localExcludeContent = await readTextFile(join(testDir, ".git", "info", "exclude"));
     expect(localExcludeContent).toContain("repos/");
     expect(localExcludeContent).toContain(".arashi/worktrees/");
+  });
+
+  test("generates only native lifecycle examples and omits setup on Windows", async () => {
+    const result = await executeInit(
+      { noDiscover: true, quiet: true },
+      { cwd: testDir, platform: "win32" },
+    );
+    expect(result.success).toBe(true);
+    const hooksDir = join(testDir, ".arashi", "hooks");
+    for (const name of [
+      "pre-create.ps1.example",
+      "post-create.ps1.example",
+      "pre-remove.ps1.example",
+      "post-remove.ps1.example",
+      "pre-create.REPO.ps1.example",
+      "post-create.REPO.ps1.example",
+    ]) {
+      expect(await fileExists(join(hooksDir, name))).toBe(true);
+    }
+    expect(await fileExists(join(testDir, ".arashi", "setup.sh.example"))).toBe(false);
+    expect(await fileExists(join(hooksDir, "pre-create.sh.example"))).toBe(false);
   });
 
   test("JSON reports managed-ignore inspection failures with stable phase details", async () => {
@@ -1057,7 +1092,7 @@ describe("init command - verbose mode", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[VERBOSE]");
-    expect(result.stdout).toContain("Writing 5 hook templates");
+    expect(result.stdout).toContain("Writing 7 hook templates");
     expect(result.stdout).toContain("✓ Hook templates written");
   });
 

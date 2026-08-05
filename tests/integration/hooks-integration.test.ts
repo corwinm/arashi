@@ -100,9 +100,8 @@ describe("Hook System Integration", () => {
       `
 			echo "Hook Name: $ARASHI_HOOK_NAME"
 			echo "Repo Path: $ARASHI_REPO_PATH"
-			echo "Branch: $ARASHI_BRANCH"
+			echo "Branch: $ARASHI_BRANCH_NAME"
 			echo "Worktree Path: $ARASHI_WORKTREE_PATH"
-			echo "Base Branch: $ARASHI_BASE_BRANCH"
 			
 			# Test that variables are accessible
 			if [ -z "$ARASHI_HOOK_NAME" ]; then
@@ -110,8 +109,8 @@ describe("Hook System Integration", () => {
 				exit 1
 			fi
 			
-			if [ -z "$ARASHI_BRANCH" ]; then
-				echo "ERROR: ARASHI_BRANCH not set" >&2
+			if [ -z "$ARASHI_BRANCH_NAME" ]; then
+				echo "ERROR: ARASHI_BRANCH_NAME not set" >&2
 				exit 1
 			fi
 			
@@ -122,8 +121,7 @@ describe("Hook System Integration", () => {
     const result = await runLifecycleHook({
       lifecyclePoint: "pre-create",
       operationData: {
-        BASE_BRANCH: "main",
-        BRANCH: "feature-456",
+        BRANCH_NAME: "feature-456",
         WORKTREE_PATH: "/path/to/worktree",
       },
       repoPath: testRepo,
@@ -135,7 +133,6 @@ describe("Hook System Integration", () => {
     expect(result?.stdout).toContain(`Repo Path: ${testRepo}`);
     expect(result?.stdout).toContain("Branch: feature-456");
     expect(result?.stdout).toContain("Worktree Path: /path/to/worktree");
-    expect(result?.stdout).toContain("Base Branch: main");
     expect(result?.stdout).toContain("All environment variables validated");
   });
 
@@ -179,7 +176,7 @@ describe("Hook System Integration", () => {
     expect(result?.stderr).toContain("ERROR: This is an error");
   });
 
-  test("continues command execution even when hook fails", async () => {
+  test("returns the nonzero hook result to command orchestration", async () => {
     createHookInRepo(
       testRepo,
       "pre-create",
@@ -189,7 +186,6 @@ describe("Hook System Integration", () => {
 		`,
     );
 
-    // This should not throw
     const result = await runLifecycleHook({
       lifecyclePoint: "pre-create",
       operationData: {},
@@ -199,10 +195,6 @@ describe("Hook System Integration", () => {
     expect(result).not.toBeNull();
     expect(result?.success).toBe(false);
     expect(result?.exitCode).toBe(42);
-
-    // Simulate continuing with command - this demonstrates non-fatal behavior
-    const commandContinued = true;
-    expect(commandContinued).toBe(true);
   });
 
   test("handles multiple hooks in sequence", async () => {

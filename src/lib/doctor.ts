@@ -1,6 +1,8 @@
 import {
   GLOBAL_HOOKS,
+  discoverLifecycleHook,
   getRepoSpecificHookName,
+  lifecycleHookExtensions,
   resolveScopedLifecycleHooks,
   validateHook,
 } from "./hooks.ts";
@@ -416,10 +418,17 @@ const collectWorktreeFindings = async (
 };
 
 const allowedHookFileNames = (repoNames: string[]): Set<string> => {
-  const names = new Set<string>(Object.values(GLOBAL_HOOKS).map((hookName) => `${hookName}.sh`));
+  const extensions = lifecycleHookExtensions();
+  const names = new Set<string>(
+    Object.values(GLOBAL_HOOKS).flatMap((hookName) =>
+      extensions.map((extension) => `${hookName}${extension}`.toLowerCase()),
+    ),
+  );
   for (const repoName of repoNames) {
-    names.add(`${getRepoSpecificHookName("pre-create", repoName)}.sh`);
-    names.add(`${getRepoSpecificHookName("post-create", repoName)}.sh`);
+    for (const extension of extensions) {
+      names.add(`${getRepoSpecificHookName("pre-create", repoName)}${extension}`.toLowerCase());
+      names.add(`${getRepoSpecificHookName("post-create", repoName)}${extension}`.toLowerCase());
+    }
   }
   return names;
 };
@@ -438,7 +447,7 @@ const scanHookDirectoryForUnsupportedFiles = async (
         continue;
       }
       const hookFile = join(hookDir, entry.name);
-      if (!allowed.has(entry.name)) {
+      if (!allowed.has(entry.name.toLowerCase())) {
         findings.push(
           createFinding({
             category: "hook",
@@ -483,24 +492,45 @@ const collectHookFindings = async (
   const targetRepositories = createRepositoryTargets(executionRoot, config);
   const repoNames = Object.keys(config.repos);
   const findings: DoctorFinding[] = [];
-  const hookNames = Object.values(GLOBAL_HOOKS);
+  const hookNames = [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove];
 
   for (const hookName of hookNames) {
-    const resolvedHooks = await resolveScopedLifecycleHooks({
-      hookName,
-      targetRepositories,
-      workspaceRoot: configurationRoot,
-    });
+    let resolvedHooks;
+    try {
+      resolvedHooks = await resolveScopedLifecycleHooks({
+        hookName,
+        targetRepositories,
+        workspaceRoot: configurationRoot,
+      });
+    } catch (error) {
+      findings.push(
+        createFinding({
+          category: "hook",
+          code: "HOOK_AMBIGUOUS",
+          details: { error: error instanceof Error ? error.message : String(error), hookName },
+          message: error instanceof Error ? error.message : String(error),
+          scope: `hook:remove:${hookName}`,
+          severity: "error",
+          suggestedCommands: ["Remove all but one platform-native hook candidate"],
+        }),
+      );
+      continue;
+    }
     for (const hook of resolvedHooks) {
       const validation = await validateHook(hook.scriptPath);
       if (validation.valid) {
         continue;
       }
       const permissionIssue = validation.error?.includes("not executable") === true;
+      const interpreterIssue = validation.reasonCode === "interpreter_unavailable";
       findings.push(
         createFinding({
           category: "hook",
-          code: permissionIssue ? "HOOK_NOT_EXECUTABLE" : "HOOK_INVALID",
+          code: permissionIssue
+            ? "HOOK_NOT_EXECUTABLE"
+            : interpreterIssue
+              ? "HOOK_INTERPRETER_UNAVAILABLE"
+              : "HOOK_INVALID",
           details: {
             error: validation.error,
             hookName: hook.hookName,
@@ -517,6 +547,73 @@ const collectHookFindings = async (
         }),
       );
     }
+  }
+
+  const configuredCreateLocations = [
+    { hookName: GLOBAL_HOOKS.preCreate, repository: "workspace", scope: "workspace" },
+    ...repoNames.flatMap((repository) => [
+      {
+        hookName: getRepoSpecificHookName("pre-create", repository),
+        repository,
+        scope: "repository",
+      },
+      {
+        hookName: getRepoSpecificHookName("post-create", repository),
+        repository,
+        scope: "repository",
+      },
+    ]),
+    { hookName: GLOBAL_HOOKS.postCreate, repository: "workspace", scope: "workspace" },
+  ];
+  for (const location of configuredCreateLocations) {
+    let hookPath: string | null = null;
+    try {
+      hookPath = await discoverLifecycleHook(location.hookName, configurationRoot);
+    } catch (error) {
+      findings.push(
+        createFinding({
+          category: "hook",
+          code: "HOOK_AMBIGUOUS",
+          details: {
+            error: error instanceof Error ? error.message : String(error),
+            hookName: location.hookName,
+            repository: location.repository,
+            scope: location.scope,
+          },
+          message: error instanceof Error ? error.message : String(error),
+          scope: `hook:${location.scope}:${location.repository}:${location.hookName}`,
+          severity: "error",
+          suggestedCommands: ["Remove all but one platform-native hook candidate"],
+        }),
+      );
+      continue;
+    }
+    if (!hookPath) continue;
+    const validation = await validateHook(hookPath);
+    if (validation.valid) continue;
+    const permissionIssue = validation.error?.includes("not executable") === true;
+    const interpreterIssue = validation.reasonCode === "interpreter_unavailable";
+    findings.push(
+      createFinding({
+        category: "hook",
+        code: permissionIssue
+          ? "HOOK_NOT_EXECUTABLE"
+          : interpreterIssue
+            ? "HOOK_INTERPRETER_UNAVAILABLE"
+            : "HOOK_INVALID",
+        details: {
+          error: validation.error,
+          hookName: location.hookName,
+          path: hookPath,
+          repository: location.repository,
+          scope: location.scope,
+        },
+        message: `Hook '${location.hookName}' for '${location.repository}' is invalid: ${validation.error ?? "unknown error"}`,
+        scope: `hook:${location.scope}:${location.repository}:${location.hookName}`,
+        severity: permissionIssue ? "warning" : "error",
+        suggestedCommands: permissionIssue ? [`chmod +x ${hookPath}`] : ["arashi init --help"],
+      }),
+    );
   }
 
   findings.push(

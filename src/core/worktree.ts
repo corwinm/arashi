@@ -16,6 +16,7 @@ import { ConfigNotFoundError, loadConfig } from "../lib/config.ts";
 import type { DirtyStatus, WorktreeEntry, WorktreeInfo } from "../types/remove.ts";
 import {
   GLOBAL_HOOKS,
+  DEFAULT_LIFECYCLE_HOOK_TIMEOUT,
   buildHookOperationData,
   executeHook,
   findHook,
@@ -24,6 +25,7 @@ import {
   mapHookSkippedOutcome,
   validateHook,
 } from "../lib/hooks.ts";
+import type { HookScope, LifecycleHookOutcome } from "../lib/hooks.ts";
 import { basename, join, parse, resolve, sep } from "path";
 import { exec, isBareRepo } from "../lib/git.ts";
 import { multiSelect, select } from "../lib/prompts.ts";
@@ -46,6 +48,8 @@ type HookOutcomeReasonCode =
   | "none"
   | "not_found"
   | "disabled"
+  | "validation_failed"
+  | "interpreter_unavailable"
   | "timeout"
   | "exit_non_zero"
   | "not_applicable";
@@ -59,7 +63,7 @@ interface HookOutcomeMapping {
 
 const ZERO = 0;
 const ONE = 1;
-const DEFAULT_HOOK_TIMEOUT = 60_000;
+
 const PARENT_PATH_OFFSET = 2;
 const GRANDPARENT_PATH_OFFSET = 3;
 const LOCK_VALIDATION_EXIT_CODE = -1;
@@ -183,6 +187,8 @@ export interface WorktreeOperationOptions {
 
   /** Timeout in milliseconds for hook execution (default: 60000) */
   hookTimeout?: number;
+  /** Suppress hook process output (required for JSON stdout isolation) */
+  quietHooks?: boolean;
 
   /** Whether to use interactive repository selection (default: false) */
   interactive?: boolean;
@@ -206,6 +212,7 @@ export interface WorktreeOperationOptions {
 interface NormalizedWorktreeOptions {
   executeHooks: boolean;
   hookTimeout: number;
+  quietHooks: boolean;
   interactive: boolean;
   conflictResolution: ConflictResolutionStrategy | null;
   showProgress: boolean;
@@ -305,14 +312,7 @@ export interface ConflictCheckResult {
   nonConflictingRepositories: Repository[];
 }
 
-export interface HookOutcomeRecord {
-  repositoryId: string;
-  hookName: string;
-  hookStatus: HookOutcomeStatus;
-  reasonCode: HookOutcomeReasonCode;
-  message: string;
-  durationMs?: number;
-}
+export type HookOutcomeRecord = LifecycleHookOutcome;
 
 // ============================================================================
 // Repository Result (T009)
@@ -587,17 +587,42 @@ interface HookExecutionRunResult {
   error: HookExecutionError | null;
 }
 
+class ConfiguredHookPreflightError extends Error {
+  readonly outcome: HookOutcomeRecord;
+
+  constructor(outcome: HookOutcomeRecord) {
+    super(outcome.message);
+    this.name = "ConfiguredHookPreflightError";
+    this.outcome = outcome;
+  }
+}
+
 const toHookOutcomeRecord = (
-  repositoryId: string,
-  hookName: string,
+  options: {
+    executionPath: string;
+    hookName: string;
+    repositoryId: string;
+    scope: HookScope;
+    sourceScriptPath: string | null;
+    targetRepositoryName?: string;
+    targetRepositoryPath?: string;
+    targetWorktreePath?: string;
+  },
   mapping: HookOutcomeMapping,
 ): HookOutcomeRecord => ({
   durationMs: mapping.durationMs,
-  hookName,
+  executionPath: options.executionPath,
+  hookName: options.hookName,
   hookStatus: mapping.hookStatus,
   message: mapping.message,
   reasonCode: mapping.reasonCode,
-  repositoryId,
+  repositoryId: options.repositoryId,
+  scope: options.scope,
+  sourceScriptPath: options.sourceScriptPath,
+  targetRepositoryName: options.targetRepositoryName ?? null,
+  targetRepositoryPath: options.targetRepositoryPath ?? null,
+  targetWorktreePath: options.targetWorktreePath ?? null,
+  workspaceMode: "configured",
 });
 
 const runHookIfPresent = async (options: {
@@ -608,14 +633,30 @@ const runHookIfPresent = async (options: {
   operationData: Record<string, string>;
   timeout: number;
   repository: Repository;
+  repositoryId: string;
+  scope: HookScope;
+  targetRepositoryName?: string;
+  targetRepositoryPath?: string;
+  targetWorktreePath?: string;
+  parentRepoPath?: string;
+  quiet?: boolean;
 }): Promise<HookExecutionRunResult> => {
   const hookPath = await findHook(options.hookName, options.hookRootPath);
+  const outcomeContext = {
+    executionPath: options.repoContextPath,
+    hookName: options.hookName,
+    repositoryId: options.repositoryId,
+    scope: options.scope,
+    sourceScriptPath: hookPath,
+    targetRepositoryName: options.targetRepositoryName,
+    targetRepositoryPath: options.targetRepositoryPath,
+    targetWorktreePath: options.targetWorktreePath,
+  };
   if (!hookPath) {
     return {
       error: NULL_HOOK_ERROR,
       outcome: toHookOutcomeRecord(
-        options.repository.name,
-        options.hookName,
+        outcomeContext,
         mapHookSkippedOutcome("not_found", "Hook script not found"),
       ),
     };
@@ -632,10 +673,10 @@ const runHookIfPresent = async (options: {
     });
     return {
       error,
-      outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
+      outcome: toHookOutcomeRecord(outcomeContext, {
         hookStatus: "failure",
         message: validation.error ?? "Hook validation failed",
-        reasonCode: "exit_non_zero",
+        reasonCode: validation.reasonCode ?? "validation_failed",
       }),
     };
   }
@@ -643,10 +684,19 @@ const runHookIfPresent = async (options: {
   const result = await executeHook({
     context: {
       hookName: options.hookName,
+      hookScope: options.scope,
+      mainRepoPath: options.operationData.MAIN_REPO_PATH,
       operationData: options.operationData,
+      parentRepoPath: options.parentRepoPath,
       repoPath: options.repoContextPath,
+      sourceScriptPath: hookPath,
+      targetRepoName: options.targetRepositoryName,
+      targetRepoPath: options.targetRepositoryPath,
+      targetWorktreePath: options.targetWorktreePath,
+      workspaceMode: "configured",
     },
     hookName: options.hookName,
+    quiet: options.quiet,
     scriptPath: hookPath,
     timeout: options.timeout,
   });
@@ -661,7 +711,7 @@ const runHookIfPresent = async (options: {
         repository: options.repository,
         stderr: result.stderr,
       }),
-      outcome: toHookOutcomeRecord(options.repository.name, options.hookName, {
+      outcome: toHookOutcomeRecord(outcomeContext, {
         ...mapping,
         message: result.stderr.trim().length > ZERO ? result.stderr.trim() : mapping.message,
       }),
@@ -670,8 +720,70 @@ const runHookIfPresent = async (options: {
 
   return {
     error: NULL_HOOK_ERROR,
-    outcome: toHookOutcomeRecord(options.repository.name, options.hookName, mapping),
+    outcome: toHookOutcomeRecord(outcomeContext, mapping),
   };
+};
+
+const preflightConfiguredCreateHooks = async (
+  mainRepoPath: string,
+  repositories: Repository[],
+): Promise<void> => {
+  const locations = [
+    {
+      executionPath: mainRepoPath,
+      hookName: GLOBAL_HOOKS.preCreate,
+      repositoryId: "workspace",
+      scope: "workspace" as const,
+    },
+    ...repositories.flatMap((repository) =>
+      (["pre-create", "post-create"] as const).map((lifecycle) => ({
+        executionPath: repository.path,
+        hookName: getRepoSpecificHookName(lifecycle, repository.name),
+        repositoryId: repository.name,
+        scope: "repository" as const,
+        targetRepositoryName: repository.name,
+        targetRepositoryPath: repository.path,
+      })),
+    ),
+    {
+      executionPath: mainRepoPath,
+      hookName: GLOBAL_HOOKS.postCreate,
+      repositoryId: "workspace",
+      scope: "workspace" as const,
+    },
+  ];
+
+  for (const location of locations) {
+    let hookPath: string | null = null;
+    try {
+      hookPath = await findHook(location.hookName, mainRepoPath);
+    } catch (error) {
+      throw new ConfiguredHookPreflightError(
+        toHookOutcomeRecord(
+          { ...location, sourceScriptPath: null },
+          {
+            hookStatus: "failure",
+            message: error instanceof Error ? error.message : String(error),
+            reasonCode: "validation_failed",
+          },
+        ),
+      );
+    }
+    if (!hookPath) continue;
+    const validation = await validateHook(hookPath);
+    if (!validation.valid) {
+      throw new ConfiguredHookPreflightError(
+        toHookOutcomeRecord(
+          { ...location, sourceScriptPath: hookPath },
+          {
+            hookStatus: "failure",
+            message: validation.error ?? "Hook validation failed",
+            reasonCode: validation.reasonCode ?? "validation_failed",
+          },
+        ),
+      );
+    }
+  }
 };
 
 // ============================================================================
@@ -1193,18 +1305,15 @@ const buildDryRunOutcome = async ({
   };
 };
 
-const collectSortedHookOutcomes = (results: RepositoryResult[]): HookOutcomeRecord[] => {
-  const hookOutcomes = results.flatMap((result) => result.hookOutcomes);
-  hookOutcomes.sort((left: HookOutcomeRecord, right: HookOutcomeRecord) => {
-    const repositoryCompare = left.repositoryId.localeCompare(right.repositoryId);
-    if (repositoryCompare !== ZERO) {
-      return repositoryCompare;
-    }
-    return left.hookName.localeCompare(right.hookName);
-  });
-
-  return hookOutcomes;
-};
+const collectHookOutcomes = (
+  workspacePre: HookOutcomeRecord[],
+  results: RepositoryResult[],
+  workspacePost: HookOutcomeRecord[],
+): HookOutcomeRecord[] => [
+  ...workspacePre,
+  ...results.flatMap((result) => result.hookOutcomes),
+  ...workspacePost,
+];
 
 const buildHookRecoveryGuidance = (hookOutcomes: HookOutcomeRecord[]): string[] => {
   const guidance = new Set<string>();
@@ -1249,6 +1358,9 @@ export const createCoordinatedWorktrees = async (
   const startTime = Date.now();
   const operationLog = new OperationLog();
   const results: RepositoryResult[] = [];
+  const workspacePreHookOutcomes: HookOutcomeRecord[] = [];
+  const workspacePostHookOutcomes: HookOutcomeRecord[] = [];
+  const preflightHookOutcomes: HookOutcomeRecord[] = [];
   const mainRepoPath = resolve(options.workspaceRoot ?? ".");
 
   // Set default options
@@ -1256,7 +1368,8 @@ export const createCoordinatedWorktrees = async (
     conflictResolution: options.conflictResolution ?? NULL_CONFLICT_STRATEGY,
     dryRun: options.dryRun ?? false,
     executeHooks: options.executeHooks ?? true,
-    hookTimeout: options.hookTimeout ?? DEFAULT_HOOK_TIMEOUT,
+    hookTimeout: options.hookTimeout ?? DEFAULT_LIFECYCLE_HOOK_TIMEOUT,
+    quietHooks: options.quietHooks ?? false,
     interactive: options.interactive ?? false,
     showProgress: options.showProgress ?? true,
   };
@@ -1278,6 +1391,10 @@ export const createCoordinatedWorktrees = async (
 
     // 3. Load canonical workspace configuration
     const config = await loadResolvedConfig(mainRepoPath, options.resolvedConfig);
+
+    if (opts.executeHooks && !opts.dryRun) {
+      await preflightConfiguredCreateHooks(mainRepoPath, repositories);
+    }
 
     // 4. T039: Pre-flight conflict check
     const conflictCheck = await checkBranchConflicts(branchName, repositories);
@@ -1329,12 +1446,15 @@ export const createCoordinatedWorktrees = async (
         operationData: buildHookOperationData({
           branchName,
           mainRepoPath,
-          parentRepoPath: mainRepoPath,
         }),
         repoContextPath: mainRepoPath,
         repository: repositories[ZERO],
+        repositoryId: "workspace",
+        scope: "workspace",
+        quiet: opts.quietHooks,
         timeout: opts.hookTimeout,
       });
+      workspacePreHookOutcomes.push(preHookResult.outcome);
 
       if (preHookResult.error) {
         throw preHookResult.error;
@@ -1370,19 +1490,25 @@ export const createCoordinatedWorktrees = async (
         operationData: buildHookOperationData({
           branchName,
           mainRepoPath,
-          parentRepoPath: mainRepoPath,
         }),
         repoContextPath: mainRepoPath,
         repository: repositories[ZERO],
+        repositoryId: "workspace",
+        scope: "workspace",
+        quiet: opts.quietHooks,
         timeout: opts.hookTimeout,
       });
+      workspacePostHookOutcomes.push(postHookResult.outcome);
 
       if (postHookResult.error) {
         throw postHookResult.error;
       }
     }
 
-    const hookOutcomes = collectSortedHookOutcomes(results);
+    const hookOutcomes = [
+      ...preflightHookOutcomes,
+      ...collectHookOutcomes(workspacePreHookOutcomes, results, workspacePostHookOutcomes),
+    ];
 
     // 8. Build successful operation summary (T024)
     return {
@@ -1399,6 +1525,9 @@ export const createCoordinatedWorktrees = async (
       totalRepositories: repositories.length,
     };
   } catch (error) {
+    if (error instanceof ConfiguredHookPreflightError) {
+      preflightHookOutcomes.push(error.outcome);
+    }
     // Automatic rollback on any error (T023)
     const rollbackResult = await operationLog.rollback();
     const residualWorktrees = results
@@ -1413,7 +1542,10 @@ export const createCoordinatedWorktrees = async (
       rollbackNote += ` Residual worktrees detected: ${residualWorktrees.join(", ")}.`;
     }
 
-    const hookOutcomes = collectSortedHookOutcomes(results);
+    const hookOutcomes = [
+      ...preflightHookOutcomes,
+      ...collectHookOutcomes(workspacePreHookOutcomes, results, workspacePostHookOutcomes),
+    ];
     let errorMessage = String(error);
     if (error instanceof Error) {
       errorMessage = error.message;
@@ -1598,6 +1730,7 @@ const processRepository = async ({
         repoName: repo.name,
         worktreePath,
       });
+      repoOperationData.REPO_PATH = worktreePath;
 
       if (spinnerInstance) {
         spinnerInstance.text = `Running repo-specific pre-create hook for ${repo.name}...`;
@@ -1610,6 +1743,13 @@ const processRepository = async ({
         operationData: repoOperationData,
         repoContextPath: worktreePath,
         repository: repo,
+        repositoryId: repo.name,
+        scope: "repository",
+        targetRepositoryName: repo.name,
+        targetRepositoryPath: repo.path,
+        targetWorktreePath: worktreePath,
+        parentRepoPath,
+        quiet: options.quietHooks,
         timeout: options.hookTimeout,
       });
       hookOutcomes.push(preHookResult.outcome);
@@ -1628,6 +1768,13 @@ const processRepository = async ({
         operationData: repoOperationData,
         repoContextPath: worktreePath,
         repository: repo,
+        repositoryId: repo.name,
+        scope: "repository",
+        targetRepositoryName: repo.name,
+        targetRepositoryPath: repo.path,
+        targetWorktreePath: worktreePath,
+        parentRepoPath,
+        quiet: options.quietHooks,
         timeout: options.hookTimeout,
       });
       hookOutcomes.push(postHookResult.outcome);

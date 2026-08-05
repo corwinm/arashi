@@ -1,5 +1,5 @@
 import { runtime, spawn } from "../helpers/node-runtime.ts";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import {
   createRemoveWorkspace,
@@ -275,6 +275,57 @@ exit 9`,
     expect(exitCode).toBe(1);
     expect(existsSync(worktrees["repo-a"])).toBe(false);
     expect(await gitBranchExists(workspace.repos[0].path, branchName)).toBe(false);
+  });
+
+  test("JSON success exposes the complete target/scope ordered outcome ledger", async () => {
+    if (process.platform === "win32") return;
+    const branchName = "feature-remove-json-ledger";
+    await createWorktreesForBranch(workspace, branchName, false);
+    await createWorkspaceHook(workspace.rootPath, "pre-remove", 'echo "pre:$ARASHI_REPO_NAME"');
+    await createWorkspaceHook(workspace.rootPath, "post-remove", 'echo "post:$ARASHI_REPO_NAME"');
+    const writes: string[] = [];
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+      });
+    const originalCwd = process.cwd();
+    process.chdir(workspace.rootPath);
+    let exitCode: number;
+    try {
+      exitCode = await executeRemove(branchName, { force: true, json: true });
+    } finally {
+      process.chdir(originalCwd);
+      stdout.mockRestore();
+    }
+    expect(exitCode).toBe(0);
+    const envelope = JSON.parse(writes.join(""));
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.hookOutcomes).toHaveLength(16);
+    expect(
+      envelope.data.hookOutcomes.map(
+        (outcome: { hookName: string; repositoryId: string; scope: string }) =>
+          `${outcome.hookName}:${outcome.repositoryId}:${outcome.scope}`,
+      ),
+    ).toEqual([
+      "pre-remove:repo-a:repository",
+      "pre-remove:repo-a:workspace",
+      "pre-remove:repo-a:global-repository",
+      "pre-remove:repo-a:global-shared",
+      "pre-remove:repo-b:repository",
+      "pre-remove:repo-b:workspace",
+      "pre-remove:repo-b:global-repository",
+      "pre-remove:repo-b:global-shared",
+      "post-remove:repo-a:repository",
+      "post-remove:repo-a:workspace",
+      "post-remove:repo-a:global-repository",
+      "post-remove:repo-a:global-shared",
+      "post-remove:repo-b:repository",
+      "post-remove:repo-b:workspace",
+      "post-remove:repo-b:global-repository",
+      "post-remove:repo-b:global-shared",
+    ]);
   });
 });
 

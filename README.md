@@ -229,24 +229,16 @@ For automated installs, set `ARASHI_SHELL_INTEGRATION=yes` to enable it without 
 
 ## Hooks
 
-Arashi can run lifecycle hooks during `arashi create` and `arashi remove`.
+Arashi can run lifecycle hooks during `arashi create` and `arashi remove`. Configured create uses
+workspace `pre-create`/`post-create` plus repository-specific `pre-create.<repo>` and
+`post-create.<repo>` files. Configured remove evaluates repository, workspace, user-global targeted,
+and user-global shared scopes once per target repository. Standalone mode activates only targeted
+and shared user-global hooks.
 
-- Global hooks in `.arashi/hooks/`:
-  - `pre-create.sh`
-  - `post-create.sh`
-  - `pre-remove.sh`
-  - `post-remove.sh`
-- Repository-specific hooks:
-  - `pre-create.<repo>.sh`
-  - `post-create.<repo>.sh`
-- Scoped remove hooks:
-  - repository scope: `repos/<repo>/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
-  - global shared: `~/.arashi/hooks/pre-remove.sh` and `post-remove.sh`
-  - global targeted: `~/.arashi/hooks/<repo>/pre-remove.sh` and `post-remove.sh`
-
-For `arashi remove`, hook execution order is: repository scope -> workspace-root scope -> global targeted scope -> global shared scope.
-
-`pre-remove.sh` is useful for teardown before deletion (for example, stopping tmux sessions), and `post-remove.sh` can run final cleanup after remove operations complete.
+POSIX uses executable `.sh` files. Windows uses one case-insensitive `.ps1`, `.cmd`, or `.bat`
+candidate per location and never runs `.sh` implicitly. Hook failures participate in create rollback
+or remove finalization, all hooks default to a 300000 ms timeout, and JSON results expose the ordered
+ledger at `data.hookOutcomes` on success or `error.details.hookOutcomes` on failure.
 
 See [`docs/hooks.md`](./docs/hooks.md) for hook behavior, environment variables, and examples.
 
