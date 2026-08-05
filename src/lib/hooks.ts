@@ -76,6 +76,33 @@ export interface LifecycleHookLocation {
   targetRepositoryPath: string;
 }
 
+export class LifecycleHookDiscoveryError extends Error {
+  readonly executionPath: string;
+  readonly hookName: string;
+  readonly scope: HookScope;
+  readonly targetRepositoryName: string;
+  readonly targetRepositoryPath: string;
+
+  constructor(options: {
+    cause: unknown;
+    executionPath: string;
+    hookName: string;
+    scope: HookScope;
+    targetRepositoryName: string;
+    targetRepositoryPath: string;
+  }) {
+    super(options.cause instanceof Error ? options.cause.message : String(options.cause), {
+      cause: options.cause,
+    });
+    this.name = "LifecycleHookDiscoveryError";
+    this.executionPath = options.executionPath;
+    this.hookName = options.hookName;
+    this.scope = options.scope;
+    this.targetRepositoryName = options.targetRepositoryName;
+    this.targetRepositoryPath = options.targetRepositoryPath;
+  }
+}
+
 export interface LifecycleHookOutcome {
   hookName: string;
   scope: HookScope;
@@ -562,20 +589,40 @@ export const resolveScopedLifecycleHookLocations = async (options: {
   const globalHooksDir = join(userHome, ".arashi", "hooks");
 
   for (const target of options.targetRepositories) {
+    const discoverScoped = async (
+      scope: HookScope,
+      hooksDirectory: string,
+      executionPath: string,
+    ): Promise<string | null> => {
+      try {
+        return await discoverLifecycleHookInDirectory(options.hookName, hooksDirectory);
+      } catch (cause) {
+        throw new LifecycleHookDiscoveryError({
+          cause,
+          executionPath,
+          hookName: options.hookName,
+          scope,
+          targetRepositoryName: target.name,
+          targetRepositoryPath: target.path,
+        });
+      }
+    };
     const repositoryHookPath = options.globalOnly
       ? null
-      : await discoverLifecycleHook(options.hookName, target.path);
+      : await discoverScoped("repository", join(target.path, ".arashi", "hooks"), target.path);
     const workspaceHookPath = options.globalOnly
       ? null
-      : await discoverLifecycleHook(options.hookName, options.workspaceRoot);
-    const globalRepositoryHookPath = await discoverLifecycleHookInDirectory(
-      options.hookName,
+      : await discoverScoped(
+          "workspace",
+          join(options.workspaceRoot, ".arashi", "hooks"),
+          options.workspaceRoot,
+        );
+    const globalRepositoryHookPath = await discoverScoped(
+      "global-repository",
       join(globalHooksDir, target.name),
+      target.path,
     );
-    const globalSharedHookPath = await discoverLifecycleHookInDirectory(
-      options.hookName,
-      globalHooksDir,
-    );
+    const globalSharedHookPath = await discoverScoped("global-shared", globalHooksDir, target.path);
 
     if (!options.globalOnly && target.path !== options.workspaceRoot) {
       resolved.push({
