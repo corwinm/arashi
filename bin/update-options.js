@@ -12,11 +12,19 @@ export class UpdateInspectionConflictError extends Error {
 }
 
 export function parseUpdateArgs(argv = []) {
+  const delimiter = argv.indexOf("--");
+  const optionArgv = delimiter === -1 ? argv : argv.slice(0, delimiter);
+  const groupedShorts = new Set(
+    optionArgv
+      .filter((token) => /^-[^-].+/.test(token))
+      .flatMap((token) => token.slice(1).split("")),
+  );
+  const has = (long, short) => optionArgv.includes(long) || optionArgv.includes(short) || groupedShorts.has(short.slice(1));
   return {
-    check: argv.includes("--check"),
-    dryRun: argv.includes("--dry-run") || argv.includes("-n"),
-    json: argv.includes("--json") || argv.includes("-j"),
-    yes: argv.includes("--yes") || argv.includes("-y"),
+    check: optionArgv.includes("--check"),
+    dryRun: has("--dry-run", "-n"),
+    json: has("--json", "-j"),
+    yes: has("--yes", "-y"),
   };
 }
 

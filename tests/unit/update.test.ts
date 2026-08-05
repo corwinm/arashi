@@ -54,6 +54,9 @@ const selectCommand = selectPackageManagerCommand as (options?: {
 describe("update helpers", () => {
   test("parses update JSON and dry-run aliases with long-form parity", () => {
     expect(parseUpdateArgs(["-j", "-n"])).toEqual(parseUpdateArgs(["--json", "--dry-run"]));
+    expect(parseUpdateArgs(["-jn"])).toEqual(parseUpdateArgs(["--json", "--dry-run"]));
+    expect(parseUpdateArgs(["-nj"])).toEqual(parseUpdateArgs(["--dry-run", "--json"]));
+    expect(parseUpdateArgs(["-jy"])).toEqual(parseUpdateArgs(["--json", "--yes"]));
     expect(parseUpdateArgs(["-j", "--json", "-n", "--dry-run"])).toMatchObject({
       dryRun: true,
       json: true,
@@ -264,12 +267,15 @@ describe("npm-managed update flow", () => {
     }
   });
 
-  test("JSON apply mode is rejected once without lookup or mutation", async () => {
+  test.each([
+    ["separate", ["-j", "--yes"]],
+    ["grouped", ["-jy"]],
+  ])("JSON apply mode is rejected once without lookup or mutation (%s)", async (_label, argv) => {
     const stdout: string[] = [];
     const stderr: string[] = [];
     let lookupCount = 0;
     let mutationCount = 0;
-    const exitCode = await runNpmManagedUpdate(["-j", "--yes"], {
+    const exitCode = await runNpmManagedUpdate(argv, {
       error: (line: string) => stderr.push(line),
       fetchImpl: async () => {
         lookupCount += 1;
@@ -309,6 +315,7 @@ describe("npm-managed update flow", () => {
     ["human short", ["--check", "-n"], false],
     ["JSON long", ["--check", "--dry-run", "--json"], true],
     ["JSON short", ["--check", "-n", "-j"], true],
+    ["JSON grouped", ["--check", "-jn"], true],
     ["JSON apply long", ["--check", "--dry-run", "--json", "--yes"], true],
     ["JSON apply short", ["--check", "-n", "-j", "-y"], true],
   ])(
