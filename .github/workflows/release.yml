@@ -58,16 +58,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v1
         with:
-          version: 10.15.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
+          version: 11.20.0
+          runtime: node@24.18.0
+          cache: true
+          install: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
