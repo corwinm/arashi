@@ -395,15 +395,7 @@ export const getHookSpawnCommand = (
         scriptPath,
       ];
     }
-    return [
-      "cmd.exe",
-      "/d",
-      "/e:on",
-      "/v:off",
-      "/s",
-      "/c",
-      `call ${encodeCmdScriptPath(scriptPath)}`,
-    ];
+    return ["cmd.exe", "/d", "/e:on", "/v:off", "/c", "call", scriptPath];
   }
 
   return [scriptPath];

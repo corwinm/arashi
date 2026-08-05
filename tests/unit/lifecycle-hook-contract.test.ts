@@ -168,9 +168,9 @@ describe("lifecycle hook contract", () => {
       "/d",
       "/e:on",
       "/v:off",
-      "/s",
       "/c",
-      'call "C:\\hooks\\pre-remove.cmd"',
+      "call",
+      "C:\\hooks\\pre-remove.cmd",
     ]);
   });
 });
