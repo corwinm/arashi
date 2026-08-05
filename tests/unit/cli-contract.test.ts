@@ -263,6 +263,15 @@ describe("CLI command contract", () => {
       inspection: { executionPaths: ["human", "json"] },
       ownership: "command",
     });
+    expect(options?.find((option) => option.long === "--json")?.semanticPolicy).toEqual({
+      jsonExecution: {
+        apply: "unsupported",
+        bare: "inspection-only",
+        mutation: false,
+        prompt: false,
+      },
+      ownership: "command",
+    });
   });
 
   test("publishes the exact deterministic selector policy for every registered selector", () => {

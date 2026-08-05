@@ -223,6 +223,47 @@ describe("update helpers", () => {
 });
 
 describe("npm-managed update flow", () => {
+  test("bare JSON is inspection-only in an interactive npm wrapper", async () => {
+    const stdout: string[] = [];
+    let mutationCount = 0;
+    let promptCount = 0;
+    const originalIsTTY = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    try {
+      const exitCode = await runNpmManagedUpdate(["--json"], {
+        env: { npm_config_user_agent: "npm/10" },
+        installBinaryImpl: async () => {
+          mutationCount += 1;
+          return {};
+        },
+        latestVersion: "2.0.0",
+        log: (line: string) => stdout.push(line),
+        metadata: { name: "arashi", version: "1.0.0" },
+        promptImpl: async () => {
+          promptCount += 1;
+          return true;
+        },
+        rootDir: "/pkg",
+        spawnSyncImpl: () => {
+          mutationCount += 1;
+          return { status: 0 };
+        },
+      });
+
+      expect(exitCode).toBe(0);
+      expect(promptCount).toBe(0);
+      expect(mutationCount).toBe(0);
+      expect(stdout).toHaveLength(1);
+      expect(JSON.parse(stdout[0])).toMatchObject({
+        command: "update",
+        data: { messages: expect.arrayContaining(["JSON inspection: no changes made."]) },
+        ok: true,
+      });
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalIsTTY });
+    }
+  });
+
   test("JSON apply mode is rejected once without lookup or mutation", async () => {
     const stdout: string[] = [];
     const stderr: string[] = [];

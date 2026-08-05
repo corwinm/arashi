@@ -91,6 +91,12 @@ export interface OptionSemanticPolicy {
   conflicts?: string[];
   implies?: string[];
   inspection?: { executionPaths: Array<"human" | "json"> };
+  jsonExecution?: {
+    apply: "unsupported";
+    bare: "inspection-only";
+    mutation: false;
+    prompt: false;
+  };
   persisted?: false;
   role?: "redundant-compatibility";
   selector?: SelectorOptionSemanticPolicy;
@@ -203,6 +209,15 @@ export const optionAuditPolicies: OptionAuditPolicies = {
     "--dry-run": {
       conflicts: ["--check"],
       inspection: { executionPaths: ["human", "json"] },
+      ownership: "command",
+    },
+    "--json": {
+      jsonExecution: {
+        apply: "unsupported",
+        bare: "inspection-only",
+        mutation: false,
+        prompt: false,
+      },
       ownership: "command",
     },
   },
@@ -766,6 +781,7 @@ export function validateOptionSemanticPolicy(
         "conflicts",
         "implies",
         "inspection",
+        "jsonExecution",
         "ownership",
         "persisted",
         "role",
@@ -975,6 +991,29 @@ export function validateOptionSemanticPolicy(
     );
     if (paths && (paths.length !== 2 || !paths.includes("human") || !paths.includes("json")))
       errors.push(`${label}.inspection.executionPaths must contain human and json`);
+  }
+
+  if (value.jsonExecution !== undefined) {
+    if (value.ownership !== "command")
+      errors.push(`${label}.ownership must be "command" for JSON execution policy`);
+    if (
+      validateExactObject(
+        value.jsonExecution,
+        ["apply", "bare", "mutation", "prompt"],
+        ["apply", "bare", "mutation", "prompt"],
+        `${label}.jsonExecution`,
+        errors,
+      )
+    ) {
+      if (value.jsonExecution.apply !== "unsupported")
+        errors.push(`${label}.jsonExecution.apply must be "unsupported"`);
+      if (value.jsonExecution.bare !== "inspection-only")
+        errors.push(`${label}.jsonExecution.bare must be "inspection-only"`);
+      if (value.jsonExecution.mutation !== false)
+        errors.push(`${label}.jsonExecution.mutation must be false`);
+      if (value.jsonExecution.prompt !== false)
+        errors.push(`${label}.jsonExecution.prompt must be false`);
+    }
   }
 
   if (

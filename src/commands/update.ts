@@ -240,6 +240,10 @@ export async function runDirectUpdate(
     log("Dry run: no changes made.");
     return;
   }
+  if (options.json) {
+    log("JSON inspection: no changes made.");
+    return;
+  }
   if (!options.yes) {
     const isInteractive = deps?.isInteractive ?? process.stdin.isTTY;
     if (!isInteractive) {

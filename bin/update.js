@@ -304,6 +304,11 @@ async function runNpmManagedUpdateCore(argv = [], options = {}) {
     return 0;
   }
 
+  if (flags.json) {
+    log("JSON inspection: no changes made.");
+    return 0;
+  }
+
   if (!(await confirmUpdate({ promptImpl: options.promptImpl, yes: flags.yes }))) {
     errorLog("Update skipped. Rerun with --yes for non-interactive updates or use --dry-run to inspect the plan.");
     return 1;

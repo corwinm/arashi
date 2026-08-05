@@ -2772,7 +2772,16 @@
           "long": "--json",
           "required": false,
           "optional": false,
-          "semanticPolicyOwner": "structural",
+          "semanticPolicy": {
+            "jsonExecution": {
+              "apply": "unsupported",
+              "bare": "inspection-only",
+              "mutation": false,
+              "prompt": false
+            },
+            "ownership": "command"
+          },
+          "semanticPolicyOwner": "command",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false

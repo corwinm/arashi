@@ -175,6 +175,36 @@ describe("update command", () => {
     expect(output).toContain("Dry run");
   });
 
+  test("bare JSON is inspection-only in an interactive direct update", async () => {
+    const logs: string[] = [];
+    let mutationCount = 0;
+    let promptCount = 0;
+
+    await runDirectUpdate(
+      { json: true },
+      {
+        confirmImpl: async () => {
+          promptCount += 1;
+          return { status: "ok", value: true };
+        },
+        currentVersion: "1.0.0",
+        execPath: "/home/user/.arashi/bin/arashi",
+        fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
+        isInteractive: true,
+        log: (message) => logs.push(message),
+        platform: "linux",
+        spawnSyncImpl: (() => {
+          mutationCount += 1;
+          return { status: 0 };
+        }) as unknown as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(promptCount).toBe(0);
+    expect(mutationCount).toBe(0);
+    expect(logs).toContain("JSON inspection: no changes made.");
+  });
+
   test("prompts before running official installer in interactive direct-binary updates", async () => {
     const logs: string[] = [];
     const calls: { args: string[]; command: string; env?: NodeJS.ProcessEnv }[] = [];
