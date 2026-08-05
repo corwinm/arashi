@@ -36,13 +36,21 @@ export function stripDirectiveEnvironment(
 
 export function normalizeSpawnEnvironment(
   env: Record<string, string | undefined>,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
   const normalized: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(stripDirectiveEnvironment(env))) {
-    if (typeof value === "string") {
-      normalized[key] = value;
+    if (typeof value !== "string") {
+      continue;
     }
+
+    if (platform === "win32" && key.toLowerCase() === "path") {
+      normalized.Path = value;
+      continue;
+    }
+
+    normalized[key] = value;
   }
 
   return normalized;

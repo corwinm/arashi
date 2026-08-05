@@ -102,6 +102,20 @@ describe("unified switch resolution", () => {
     });
   });
 
+  test.each(["sesh", "herdr"] as const)(
+    "--cd remains authoritative over configured %s launch behavior",
+    (configMode) => {
+      expect(
+        resolveSwitchResolution({
+          configMode,
+          managedContextActive: true,
+          options: { cd: true },
+          shellIntegrationActive: true,
+        }).behavior.mode,
+      ).toBe("cd");
+    },
+  );
+
   test("--no-default-launch opts out only a configured explicit launcher", () => {
     expect(
       resolveSwitchResolution({
@@ -122,6 +136,41 @@ describe("unified switch resolution", () => {
         shellIntegrationActive: true,
       }).behavior.mode,
     ).toBe("cd");
+  });
+
+  test.each(["sesh", "herdr"] as const)(
+    "--tab bypasses a configured %s launcher without a redundant opt-out",
+    (configMode) => {
+      expect(
+        resolveSwitchResolution({
+          configMode,
+          managedContextActive: true,
+          options: { tab: true },
+          shellIntegrationActive: true,
+        }),
+      ).toEqual({
+        behavior: {
+          mode: "launch",
+          skipLaunchWhenUnavailable: false,
+          warnOnMissingIntegration: false,
+        },
+        launch: { disposition: "tab", sesh: false },
+      });
+    },
+  );
+
+  test("--tab preserves an explicit launcher over a different configured launcher", () => {
+    expect(
+      resolveSwitchResolution({
+        configMode: "sesh",
+        managedContextActive: true,
+        options: { herdr: true, tab: true },
+        shellIntegrationActive: true,
+      }),
+    ).toMatchObject({
+      behavior: { mode: "launch" },
+      launch: { disposition: "tab", herdr: true, sesh: false },
+    });
   });
 });
 
@@ -153,7 +202,9 @@ describe("switch command integration", () => {
     expect(command.options.some((option) => option.long === "--cursor")).toBe(true);
     expect(command.options.some((option) => option.long === "--kiro")).toBe(true);
     expect(command.options.some((option) => option.long === "--no-default-launch")).toBe(true);
-    expect(command.options.some((option) => option.long === "--tab")).toBe(true);
+    expect(command.options.find((option) => option.long === "--tab")?.description).toContain(
+      "bypasses configured launch defaults",
+    );
     expect(command.options.some((option) => option.long === "--repos")).toBe(true);
     expect(command.options.some((option) => option.long === "--all")).toBe(true);
   });

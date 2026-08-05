@@ -72,6 +72,14 @@ describe("unified switch mode documentation contract", () => {
     ).toBe("Bypass a configured sesh or Herdr mode for this invocation");
   });
 
+  test("documents tab as bypassing configured launchers on every maintained switch surface", () => {
+    for (const path of ["README.md", "docs/configuration.md", "docs/commands/switch.md"] as const) {
+      const contents = readProjectFile(path);
+      expect(contents, path).toContain("bypasses configured `sesh` or `herdr` launch defaults");
+      expect(contents, path).toContain("explicit launcher selector remains authoritative");
+    }
+  });
+
   test("documents explicit tmux switch and create launch without changing config modes", () => {
     const readme = readProjectFile("README.md");
     const configuration = readProjectFile("docs/configuration.md");

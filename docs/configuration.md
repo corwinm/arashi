@@ -144,9 +144,11 @@ Equal `launchMode` and `launch_mode` aliases collapse to one value; different al
 
 ## Precedence Rules
 
-For `arashi create`, reject `--sesh` plus `--herdr` first. Otherwise explicit `--sesh` / `--herdr` wins (and implies launch), followed by `--launch`, `--no-launch`, the matching configured scope, and built-in `none`. `--switch` / `--no-switch` resolves independently, but launch implies switch. An editor-hosted create uses only its matching scope and does not fall back to terminal or another editor scope.
+For `arashi create`, reject `--sesh` plus `--herdr` first. Otherwise explicit `--sesh` / `--herdr` wins (and implies launch), followed by `--tab` / `--launch`, `--no-launch`, the matching configured scope, and built-in `none`. `--tab` bypasses the matching configured scope, implies launch and switch, and remains subordinate to an explicit launcher selector. `--switch` / `--no-switch` resolves independently when tab is absent, but launch implies switch. An editor-hosted create uses only its matching scope and does not fall back to terminal or another editor scope.
 
 For `arashi switch`, the effective order is: Explicit launcher flags > `--cd` / `--no-cd` > configured mode > automatic context detection. Conflicting explicit launchers, or `--cd` combined with any explicit launcher, are rejected before switching.
+
+For switch, `--tab` bypasses configured `sesh` or `herdr` launch defaults and uses automatic launcher resolution. An explicit launcher selector remains authoritative and composes with tab disposition.
 
 `--tmux` is a per-invocation explicit launcher for both `switch` and `create`; it is not part of either persisted mode vocabulary. It requires `TMUX` to be non-empty after trimming and does not fall back when the prerequisite or tmux subprocess fails. For switch, `--tmux` conflicts with `--cd`, `--sesh`, `--herdr`, `--vscode`, `--cursor`, and `--kiro`; `--tmux` + `--no-cd` and `--tmux` + `--no-default-launch` remain valid because the explicit launcher wins. For create, `--tmux` conflicts with `--sesh` and `--herdr`, implies launch and switch, and overrides `--no-launch` and `--no-switch`. JSON mode rejects explicit tmux before conflict or context validation and before mutation.
 

@@ -126,6 +126,60 @@ describe("resolveCreateDefaults", () => {
     expect(resolved.shouldSwitch).toBe(resolved.shouldLaunch);
   });
 
+  test.each(["sesh", "herdr"] as const)(
+    "--tab bypasses configured create %s without repeating --launch",
+    (launch) => {
+      expect(
+        resolveCreateDefaults(
+          { tab: true },
+          configWithDefaults({ create: { launch, switch: false } }),
+        ),
+      ).toEqual({
+        disposition: "tab",
+        launchMode: "auto",
+        shouldLaunch: true,
+        shouldSwitch: true,
+      });
+    },
+  );
+
+  test("--tab bypasses editor-scoped configured launchers", () => {
+    expect(
+      resolveCreateDefaults(
+        { editorHost: "vscode", tab: true },
+        configWithDefaults({ editors: { vscode: { create: { launch: "herdr" } } } }),
+      ),
+    ).toMatchObject({ disposition: "tab", launchMode: "auto" });
+  });
+
+  test.each(["sesh", "herdr", "tmux"] as const)(
+    "--tab preserves explicit create launcher --%s",
+    (launcher) => {
+      expect(
+        resolveCreateDefaults(
+          { [launcher]: true, tab: true },
+          configWithDefaults({ create: { launch: launcher === "sesh" ? "herdr" : "sesh" } }),
+        ),
+      ).toMatchObject({ disposition: "tab", launchMode: launcher });
+    },
+  );
+
+  test("describes --tab as bypassing configured create launchers", () => {
+    expect(
+      createCommand().options.find((option) => option.long === "--tab")?.description,
+    ).toContain("bypasses configured launch defaults");
+  });
+
+  test("includes --tab in the rendered create precedence help", () => {
+    let help = "";
+    createCommand()
+      .configureOutput({ writeOut: (value) => (help += value) })
+      .outputHelp();
+    expect(help).toContain(
+      "Precedence: --tmux/--sesh/--herdr, --tab/--launch, --no-launch, matching configured scope, then none.",
+    );
+  });
+
   test("applies --launch before --no-launch regardless of argument order", () => {
     for (const rawArgs of [
       ["--launch", "--no-launch"],

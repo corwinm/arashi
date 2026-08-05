@@ -154,7 +154,7 @@ export function createCommand(): Command {
     .option("--sesh", "Use sesh in tmux mode")
     .option("--tmux", "Force launch in a new plain tmux window")
     .option("--herdr", "Open or focus the selected worktree in Herdr")
-    .option("--tab", "Open the selected worktree in a tab instead of a new window")
+    .option("--tab", "Opens the selected worktree in a tab and bypasses configured launch defaults")
     .option("--cd", "Change the current shell directory when shell integration is active")
     .option("--no-cd", "Disable parent-shell directory switching for this invocation")
     .option("--vscode", "Open the selected worktree in VS Code")
@@ -721,7 +721,7 @@ const resolveLaunchOptions = (
     configValue: configLaunchMode,
     explicitValue: SESH_LAUNCH_MODE,
     hasExplicitValue: explicitLauncher === SESH_LAUNCH_MODE,
-    optOut: options.defaultLaunch === false,
+    optOut: options.defaultLaunch === false || options.tab === true,
   });
 
   if (resolvedLaunchMode.value === HERDR_LAUNCH_MODE) {

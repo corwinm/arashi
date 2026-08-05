@@ -226,7 +226,7 @@
         },
         {
           "flags": "--tab",
-          "description": "Launch the created worktree in a tab (implies --launch and --switch)",
+          "description": "Launch the created worktree in a tab; bypasses configured launch defaults and implies --launch and --switch",
           "required": false,
           "optional": false,
           "variadic": false
@@ -308,7 +308,7 @@
                 "unmanaged-kitty"
               ]
             },
-            "overrides": ["--no-launch", "--no-switch"],
+            "overrides": ["--no-launch", "--no-switch", "configured-launcher"],
             "persisted": false
           },
           "--tmux": {
@@ -1316,7 +1316,7 @@
         },
         {
           "flags": "--tab",
-          "description": "Open the selected worktree in a tab instead of a new window",
+          "description": "Opens the selected worktree in a tab and bypasses configured launch defaults",
           "required": false,
           "optional": false,
           "variadic": false
@@ -1395,7 +1395,7 @@
                 "unmanaged-kitty"
               ]
             },
-            "overrides": ["configured-cd", "contextual-cd"],
+            "overrides": ["configured-cd", "configured-launcher", "contextual-cd"],
             "persisted": false
           },
           "--tmux": {
