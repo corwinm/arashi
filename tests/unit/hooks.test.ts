@@ -101,9 +101,9 @@ describe("remove lifecycle helpers", () => {
     });
 
     expect(operationData.OPERATION).toBe("remove");
-    expect(operationData.BRANCH_NAME).toBe("feature-a");
-    expect(operationData.WORKTREE_PATH).toBe("/tmp/wt-a");
-    expect(operationData.REPO_NAME).toBe("repo-a");
+    expect(operationData).not.toHaveProperty("BRANCH_NAME");
+    expect(operationData).not.toHaveProperty("WORKTREE_PATH");
+    expect(operationData).not.toHaveProperty("REPO_NAME");
     expect(operationData.MAIN_REPO_PATH).toBe("/tmp/workspace");
     expect(operationData.REMOVE_TARGET_BRANCHES).toBe("feature-a,feature-b");
     expect(operationData.REMOVE_TARGET_WORKTREES).toBe("/tmp/wt-a,/tmp/wt-b");
@@ -111,6 +111,10 @@ describe("remove lifecycle helpers", () => {
     expect(operationData.REMOVE_TOTAL_BRANCHES).toBe("2");
     expect(operationData.REMOVE_TOTAL_WORKTREES).toBe("2");
     expect(operationData.REMOVE_TOTAL_REPOSITORIES).toBe("2");
+    expect(JSON.parse(operationData.REMOVE_TARGETS_JSON)).toEqual([
+      { branchName: "feature-a", repository: "repo-a", worktreePath: "/tmp/wt-a" },
+      { branchName: "feature-b", repository: "repo-b", worktreePath: "/tmp/wt-b" },
+    ]);
   });
 
   test("buildHookOperationData includes only defined values", () => {

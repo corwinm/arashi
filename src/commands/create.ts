@@ -6,7 +6,12 @@
  */
 
 import { Command, Option } from "commander";
-import { ConfigNotFoundError, findWorkspaceRoot, loadConfigWithFallback } from "../lib/config.ts";
+import {
+  ConfigNotFoundError,
+  ConfigValidationError,
+  findWorkspaceRoot,
+  loadConfigWithFallback,
+} from "../lib/config.ts";
 import {
   ConflictAbortedError,
   InvalidBranchNameError,
@@ -133,6 +138,9 @@ const createCommandErrorCode = (createError: unknown): string => {
   if (createError instanceof RepositoryValidationError) {
     return "REPOSITORY_VALIDATION_ERROR";
   }
+  if (createError instanceof ConfigValidationError) {
+    return "CONFIG_VALIDATION_ERROR";
+  }
   if (createError instanceof CreateSetupError) {
     return "WORKSPACE_CONFIG_NOT_FOUND";
   }
@@ -156,6 +164,9 @@ const createCommandErrorCode = (createError: unknown): string => {
 };
 
 const createCommandErrorDetails = (createError: unknown): Record<string, unknown> | undefined => {
+  if (createError instanceof ConfigValidationError) {
+    return createError.context;
+  }
   if (createError instanceof StandaloneDestinationNotIgnoredError) {
     return createError.details;
   }
@@ -1171,6 +1182,7 @@ export async function executeCreate(
     dryRun: options.dryRun || false,
     executeHooks: hooksEnabled,
     hookTimeout: arashiConfig.hooks?.timeout,
+    quietHooks: options.json === true,
     interactive: options.interactive || false,
     resolvedConfig: arashiConfig,
     showProgress: options.json ? false : progressEnabled,
@@ -1256,30 +1268,33 @@ export async function executeCreate(
 
   // 7. Display results
   if (options.json) {
-    writeJsonEnvelope(
-      createJsonSuccessEnvelope(
-        "create",
-        createSummaryJsonData({
-          branchName,
-          dirtyWorkspaceGuidance,
-          managedIgnore,
-          moveSummary,
-          summary,
-          workspaceMetadata: {
-            mode: "configured",
-            repositoriesBase: resolve(context.workspaceRoot, arashiConfig.reposDir),
-            workspaceRoot: context.workspaceRoot,
-            worktreesBase: resolve(
-              context.workspaceRoot,
-              arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-            ),
-          },
-        }),
-      ),
-    );
+    const details = createSummaryJsonData({
+      branchName,
+      dirtyWorkspaceGuidance,
+      managedIgnore,
+      moveSummary,
+      summary,
+      workspaceMetadata: {
+        mode: "configured",
+        repositoriesBase: resolve(context.workspaceRoot, arashiConfig.reposDir),
+        workspaceRoot: context.workspaceRoot,
+        worktreesBase: resolve(
+          context.workspaceRoot,
+          arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+        ),
+      },
+    });
     if (summary.rolledBack || summary.failureCount > ZERO) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("create", {
+          code: "CREATE_FAILED",
+          details,
+          message: summary.errorSummary ?? "Create failed",
+        }),
+      );
       return ERROR_EXIT_CODE;
     }
+    writeJsonEnvelope(createJsonSuccessEnvelope("create", details));
     return ZERO;
   }
 

@@ -10,6 +10,8 @@ import { existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
+const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
+
 describe("remove command - lifecycle hooks", () => {
   let workspace: Awaited<ReturnType<typeof createRemoveWorkspace>>;
   let homePath: string;
@@ -276,6 +278,112 @@ exit 9`,
     expect(existsSync(worktrees["repo-a"])).toBe(false);
     expect(await gitBranchExists(workspace.repos[0].path, branchName)).toBe(false);
   });
+
+  test("JSON success exposes the complete target/scope ordered outcome ledger", async () => {
+    if (process.platform === "win32") return;
+    const branchName = "feature-remove-json-ledger";
+    await createWorktreesForBranch(workspace, branchName, false);
+    await createWorkspaceHook(workspace.rootPath, "pre-remove", 'echo "pre:$ARASHI_REPO_NAME"');
+    await createWorkspaceHook(workspace.rootPath, "post-remove", 'echo "post:$ARASHI_REPO_NAME"');
+    const result = await runCli(workspace.rootPath, ["remove", branchName, "--force", "--json"]);
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.hookOutcomes).toHaveLength(16);
+    expect(
+      envelope.data.hookOutcomes.map(
+        (outcome: { hookName: string; repositoryId: string; scope: string }) =>
+          `${outcome.hookName}:${outcome.repositoryId}:${outcome.scope}`,
+      ),
+    ).toEqual([
+      "pre-remove:repo-a:repository",
+      "pre-remove:repo-a:workspace",
+      "pre-remove:repo-a:global-repository",
+      "pre-remove:repo-a:global-shared",
+      "pre-remove:repo-b:repository",
+      "pre-remove:repo-b:workspace",
+      "pre-remove:repo-b:global-repository",
+      "pre-remove:repo-b:global-shared",
+      "post-remove:repo-a:repository",
+      "post-remove:repo-a:workspace",
+      "post-remove:repo-a:global-repository",
+      "post-remove:repo-a:global-shared",
+      "post-remove:repo-b:repository",
+      "post-remove:repo-b:workspace",
+      "post-remove:repo-b:global-repository",
+      "post-remove:repo-b:global-shared",
+    ]);
+  });
+
+  test("preserves distinct worktree paths for the same repository and branch", async () => {
+    if (process.platform === "win32") return;
+    const branchName = "feature-remove-duplicate-worktrees";
+    const worktrees = await createWorktreesForBranch(workspace, branchName, false);
+    const duplicatePath = join(workspace.rootPath, ".arashi", "worktrees", "repo-a-duplicate");
+    const addDuplicate = spawn(["git", "worktree", "add", "--force", duplicatePath, branchName], {
+      cwd: workspace.repos[0].path,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(await addDuplicate.exited).toBe(0);
+    const targetsPath = join(workspace.rootPath, ".arashi", "repo-a-remove-targets.json");
+    await createWorkspaceHook(
+      workspace.rootPath,
+      "pre-remove",
+      `if [ "$ARASHI_REPO_NAME" = "repo-a" ]; then
+  printf '%s' "$ARASHI_REMOVE_TARGETS_JSON" > "$ARASHI_MAIN_REPO_PATH/.arashi/repo-a-remove-targets.json"
+fi`,
+    );
+
+    const result = await runCli(workspace.rootPath, ["remove", branchName, "--force", "--json"]);
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const targets = JSON.parse(await runtime.file(targetsPath).text()) as Array<{
+      branchName: string | null;
+      repository: string;
+      worktreePath: string | null;
+    }>;
+    expect(targets).toHaveLength(3);
+    expect(targets.filter((target) => target.repository === "repo-a")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          branchName,
+          worktreePath: expect.stringContaining("repo-a-feature-remove-duplicate-worktrees"),
+        }),
+        expect.objectContaining({
+          branchName,
+          worktreePath: expect.stringContaining("repo-a-duplicate"),
+        }),
+      ]),
+    );
+    expect(worktrees["repo-a"]).toContain("repo-a-feature-remove-duplicate-worktrees");
+  });
+
+  test.runIf(process.platform === "win32")(
+    "records configured remove discovery ambiguity in the JSON hook ledger",
+    async () => {
+      const branchName = "feature-remove-ambiguity-ledger";
+      await createWorktreesForBranch(workspace, branchName, false);
+      const hooksDir = join(workspace.rootPath, ".arashi", "hooks");
+      await mkdir(hooksDir, { recursive: true });
+      await writeFile(join(hooksDir, "pre-remove.ps1"), "exit 0\n");
+      await writeFile(join(hooksDir, "pre-remove.cmd"), "@exit /b 0\r\n");
+
+      const result = await runCli(workspace.rootPath, ["remove", branchName, "--force", "--json"]);
+      expect(result.exitCode).toBe(1);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.error.code).toBe("HOOK_CONFIGURATION_INVALID");
+      expect(envelope.error.details.hookOutcomes).toEqual([
+        expect.objectContaining({
+          hookName: "pre-remove",
+          hookStatus: "failure",
+          reasonCode: "validation_failed",
+          scope: "workspace",
+          sourceScriptPath: null,
+          workspaceMode: "configured",
+        }),
+      ]);
+    },
+  );
 });
 
 async function createWorkspaceHook(
@@ -332,4 +440,18 @@ async function gitBranchExists(repoPath: string, branchName: string): Promise<bo
   });
   const exitCode = await proc.exited;
   return exitCode === 0;
+}
+
+async function runCli(cwd: string, args: string[]) {
+  const command = runtime.spawn([process.execPath, CLI_ENTRY, ...args], {
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    command.exited,
+    new Response(command.stdout).text(),
+    new Response(command.stderr).text(),
+  ]);
+  return { exitCode, stderr, stdout };
 }

@@ -7,7 +7,7 @@ import { runtime, spawn } from "../helpers/node-runtime.ts";
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "fs/promises";
 import { fileExists, readTextFile, writeTextFile } from "../../src/lib/filesystem";
 import { getConfigPath, loadConfig, saveConfig } from "../../src/lib/config";
 import { executeInit } from "../../src/commands/init.ts";
@@ -119,6 +119,11 @@ describe("init command - success cases", () => {
 
     // Verify output contains success message
     expect(result.stdout).toContain("Initialized Arashi workspace");
+    expect(result.stdout).toContain(
+      process.platform === "win32"
+        ? "Copy-Item .arashi/hooks/pre-create.ps1.example .arashi/hooks/pre-create.ps1"
+        : "install -m 755 .arashi/hooks/pre-create.sh.example .arashi/hooks/pre-create.sh",
+    );
 
     // Verify .arashi directory created
     expect(await fileExists(join(testDir, ".arashi"))).toBe(true);
@@ -138,11 +143,32 @@ describe("init command - success cases", () => {
     expect(await fileExists(hooksDir)).toBe(true);
 
     // Verify hook templates created
-    expect(await fileExists(join(hooksDir, "pre-create.sh.example"))).toBe(true);
-    expect(await fileExists(join(hooksDir, "post-create.sh.example"))).toBe(true);
-    expect(await fileExists(join(hooksDir, "pre-remove.sh.example"))).toBe(true);
-    expect(await fileExists(join(hooksDir, "post-remove.sh.example"))).toBe(true);
-    expect(await fileExists(join(hooksDir, "setup.sh.example"))).toBe(true);
+    const extension = process.platform === "win32" ? "ps1" : "sh";
+    const repositoryToken = process.platform === "win32" ? "REPO" : "<repo>";
+    expect(await fileExists(join(hooksDir, `pre-create.${extension}.example`))).toBe(true);
+    expect(await fileExists(join(hooksDir, `post-create.${extension}.example`))).toBe(true);
+    expect(await fileExists(join(hooksDir, `pre-remove.${extension}.example`))).toBe(true);
+    expect(await fileExists(join(hooksDir, `post-remove.${extension}.example`))).toBe(true);
+    expect(
+      await fileExists(join(hooksDir, `pre-create.${repositoryToken}.${extension}.example`)),
+    ).toBe(true);
+    expect(
+      await fileExists(join(hooksDir, `post-create.${repositoryToken}.${extension}.example`)),
+    ).toBe(true);
+    expect(await fileExists(join(testDir, ".arashi", "setup.sh.example"))).toBe(
+      process.platform !== "win32",
+    );
+    expect(await fileExists(join(hooksDir, "setup.sh.example"))).toBe(false);
+
+    const preCreateExample = await readTextFile(join(hooksDir, `pre-create.${extension}.example`));
+    const postCreateExample = await readTextFile(
+      join(hooksDir, `post-create.${repositoryToken}.${extension}.example`),
+    );
+    expect(preCreateExample).toContain("ARASHI_BRANCH_NAME");
+    expect(preCreateExample).not.toMatch(/ARASHI_BRANCH(?!_NAME)/);
+    expect(postCreateExample).not.toContain("npm install");
+    expect(postCreateExample).toContain("packageManager");
+    expect((await stat(join(hooksDir, `pre-create.${extension}.example`))).mode & 0o111).toBe(0);
 
     // Verify repos directory created
     expect(await fileExists(join(testDir, "repos"))).toBe(true);
@@ -155,24 +181,48 @@ describe("init command - success cases", () => {
     expect(localExcludeContent).toContain(".arashi/worktrees/");
   });
 
-  test("JSON reports managed-ignore inspection failures with stable phase details", async () => {
-    await runCommand(testDir, ["git", "config", "--local", "core.excludesFile", testDir]);
-
-    const result = await runInitCommand(testDir, ["--json", "--no-discover"]);
-    const envelope = JSON.parse(result.stdout) as {
-      error: { code: string; details: { attempted: boolean; phase: string; restored: boolean } };
-      ok: boolean;
-    };
-
-    expect(result.exitCode).toBe(99);
-    expect(envelope).toMatchObject({
-      error: {
-        code: "MANAGED_IGNORE_RECONCILIATION_FAILED",
-        details: { attempted: false, phase: "inspection", restored: false },
-      },
-      ok: false,
-    });
+  test("generates only native lifecycle examples and omits setup on Windows", async () => {
+    const result = await executeInit(
+      { noDiscover: true, quiet: true },
+      { cwd: testDir, platform: "win32" },
+    );
+    expect(result.success).toBe(true);
+    const hooksDir = join(testDir, ".arashi", "hooks");
+    for (const name of [
+      "pre-create.ps1.example",
+      "post-create.ps1.example",
+      "pre-remove.ps1.example",
+      "post-remove.ps1.example",
+      "pre-create.REPO.ps1.example",
+      "post-create.REPO.ps1.example",
+    ]) {
+      expect(await fileExists(join(hooksDir, name))).toBe(true);
+    }
+    expect(await fileExists(join(testDir, ".arashi", "setup.sh.example"))).toBe(false);
+    expect(await fileExists(join(hooksDir, "pre-create.sh.example"))).toBe(false);
   });
+
+  test.skipIf(process.platform === "win32")(
+    "JSON reports managed-ignore inspection failures with stable phase details",
+    async () => {
+      await runCommand(testDir, ["git", "config", "--local", "core.excludesFile", testDir]);
+
+      const result = await runInitCommand(testDir, ["--json", "--no-discover"]);
+      const envelope = JSON.parse(result.stdout) as {
+        error: { code: string; details: { attempted: boolean; phase: string; restored: boolean } };
+        ok: boolean;
+      };
+
+      expect(result.exitCode).toBe(99);
+      expect(envelope).toMatchObject({
+        error: {
+          code: "MANAGED_IGNORE_RECONCILIATION_FAILED",
+          details: { attempted: false, phase: "inspection", restored: false },
+        },
+        ok: false,
+      });
+    },
+  );
 
   test("init with custom repos directory", async () => {
     const result = await runInitCommand(testDir, [
@@ -1001,11 +1051,12 @@ describe("init command - dry-run mode", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[DRY RUN]");
     expect(result.stdout).toContain("[DRY RUN] WRITE_FILE:");
-    expect(result.stdout).toContain("pre-create.sh.example");
-    expect(result.stdout).toContain("post-create.sh.example");
-    expect(result.stdout).toContain("pre-remove.sh.example");
-    expect(result.stdout).toContain("post-remove.sh.example");
-    expect(result.stdout).toContain("setup.sh.example");
+    const extension = process.platform === "win32" ? "ps1" : "sh";
+    expect(result.stdout).toContain(`pre-create.${extension}.example`);
+    expect(result.stdout).toContain(`post-create.${extension}.example`);
+    expect(result.stdout).toContain(`pre-remove.${extension}.example`);
+    expect(result.stdout).toContain(`post-remove.${extension}.example`);
+    expect(result.stdout.includes("setup.sh.example")).toBe(process.platform !== "win32");
   });
 
   test("--dry-run shows managed ignore update", async () => {
@@ -1014,7 +1065,7 @@ describe("init command - dry-run mode", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[DRY RUN]");
     expect(result.stdout).toContain("[DRY RUN] UPDATE_FILE:");
-    expect(result.stdout).toContain("info/exclude");
+    expect(result.stdout).toContain(join("info", "exclude"));
   });
 });
 
@@ -1057,7 +1108,9 @@ describe("init command - verbose mode", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[VERBOSE]");
-    expect(result.stdout).toContain("Writing 5 hook templates");
+    expect(result.stdout).toContain(
+      `Writing ${process.platform === "win32" ? 6 : 7} hook templates`,
+    );
     expect(result.stdout).toContain("✓ Hook templates written");
   });
 

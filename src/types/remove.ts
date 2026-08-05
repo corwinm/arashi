@@ -2,6 +2,8 @@
  * Types for the remove command
  */
 
+import type { LifecycleHookOutcome } from "../lib/hooks.ts";
+
 export interface DirtyStatus {
   /** True if any uncommitted changes exist */
   isDirty: boolean;
@@ -113,6 +115,8 @@ export interface RemovalSummary {
   dirtyWorktrees?: WorktreeEntry[];
   /** Lifecycle hooks that would be considered by a real remove */
   hookPreviews?: RemoveHookPreview[];
+  /** Complete ordered lifecycle-hook outcome ledger */
+  hookOutcomes: LifecycleHookOutcome[];
 }
 
 export interface RemoveCommandOptions {

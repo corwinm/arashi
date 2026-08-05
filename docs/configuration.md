@@ -62,6 +62,21 @@ Newly written config files use camelCase keys:
 
 Legacy snake_case keys are still accepted when loading existing workspaces, and Arashi rewrites them to canonical camelCase when the config is saved.
 
+## Lifecycle hook timeout
+
+All lifecycle hooks default to `300000` milliseconds (five minutes). To override the timeout for
+configured create and remove hooks, set an integer from 1 through 2147483647:
+
+```json
+{
+  "hooks": { "timeout": 300000 }
+}
+```
+
+Zero, negative, fractional, non-numeric, and out-of-range values are rejected before hook discovery
+or lifecycle mutation. See [the lifecycle hook contract](hooks.md) for timing, scope, environment,
+rollback/finalization, native-platform discovery, and JSON outcome details.
+
 ## Command Defaults
 
 You can set command-scoped defaults under `defaults`.

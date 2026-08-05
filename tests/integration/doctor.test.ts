@@ -298,7 +298,7 @@ describe("arashi doctor", () => {
       expect.objectContaining({ code: "WORKTREE_STALE_METADATA", severity: "warning" }),
     );
     const listOutput = await runGit(workspaceRoot, ["worktree", "list", "--porcelain"]);
-    expect(listOutput).toContain(stalePath);
+    expect(listOutput).toContain(stalePath.replaceAll("\\", "/"));
     expect(listOutput).toContain("prunable");
   });
 
@@ -306,9 +306,12 @@ describe("arashi doctor", () => {
     const workspaceRoot = await createHealthyRemoteBackedWorkspace();
     const hookDir = join(workspaceRoot, ".arashi", "hooks");
     await mkdir(hookDir, { recursive: true });
-    const hookPath = join(hookDir, "pre-create.sh");
-    await writeFile(hookPath, "#!/bin/sh\nexit 0\n");
-    await chmod(hookPath, 0o644);
+    const hookPath = join(
+      hookDir,
+      process.platform === "win32" ? "pre-create.ps1" : "pre-create.sh",
+    );
+    await writeFile(hookPath, process.platform === "win32" ? "exit 0\n" : "#!/bin/sh\nexit 0\n");
+    if (process.platform !== "win32") await chmod(hookPath, 0o644);
     await writeFile(join(hookDir, "unsupported-hook.sh"), "#!/bin/sh\nexit 0\n");
 
     const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
@@ -317,7 +320,7 @@ describe("arashi doctor", () => {
     const codes = jsonFindings(parseSingleJsonDocument(result.stdout)).map(
       (finding) => finding.code,
     );
-    expect(codes).toContain("HOOK_NOT_EXECUTABLE");
+    if (process.platform !== "win32") expect(codes).toContain("HOOK_NOT_EXECUTABLE");
     expect(codes).toContain("HOOK_UNSUPPORTED_DEFINITION");
   });
 });

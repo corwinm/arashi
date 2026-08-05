@@ -1,3 +1,13 @@
+## [1.25.0](https://github.com/corwinm/arashi/compare/v1.24.1...v1.25.0) (2026-08-05)
+
+### Features
+
+- repair lifecycle hook contracts ([#117](https://github.com/corwinm/arashi/issues/117)) ([eb23848](https://github.com/corwinm/arashi/commit/eb238483915aae036bd4a85ba687043ee38b482a))
+
+### Bug Fixes
+
+- make tab override configured launch defaults ([#115](https://github.com/corwinm/arashi/issues/115)) ([7a83139](https://github.com/corwinm/arashi/commit/7a83139665c4c5d5b8b7a089a0740c03ac5f6990))
+
 ## [1.24.1](https://github.com/corwinm/arashi/compare/v1.24.0...v1.24.1) (2026-08-04)
 
 ### Bug Fixes
