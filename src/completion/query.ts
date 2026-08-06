@@ -202,7 +202,12 @@ function staticCandidates(
 interface WorkspaceData {
   configured: boolean;
   groups: string[];
-  repositories: Array<{ name: string; path: string; primaryPath: string | null }>;
+  repositories: Array<{
+    name: string;
+    path: string;
+    primaryPath: string | null;
+    syntheticParent: boolean;
+  }>;
   root: string;
 }
 
@@ -230,7 +235,7 @@ function gitOutput(start: string, arguments_: string[], deadline: number): strin
     timeout: remaining,
   });
   if (result.status !== 0 || result.error || performance.now() >= deadline) return null;
-  return result.stdout.trim();
+  return result.stdout.replace(/\r?\n$/, "");
 }
 
 function readCompletionConfig(configPath: string, deadline: number): CompletionConfig | null {
@@ -280,11 +285,13 @@ function workspaceFromRoots(
         name: basename(configurationRoot),
         path: executionRoot,
         primaryPath: bareRoot ? null : configurationRoot,
+        syntheticParent: true,
       },
       ...entries.map(([name, repository]) => ({
         name,
         path: resolve(executionRoot, repository.path),
         primaryPath: resolve(configurationRoot, repository.path),
+        syntheticParent: false,
       })),
     ],
     root: executionRoot,
@@ -361,7 +368,14 @@ function findWorkspace(start: string, deadline: number): WorkspaceData | null {
   return {
     configured: false,
     groups: [],
-    repositories: [{ name: basename(mainRoot), path: mainRoot, primaryPath: mainRoot }],
+    repositories: [
+      {
+        name: basename(mainRoot),
+        path: mainRoot,
+        primaryPath: mainRoot,
+        syntheticParent: false,
+      },
+    ],
     root: mainRoot,
   };
 }
@@ -463,9 +477,7 @@ function dynamicCandidates(
     const commandName = context.command?.path.split(" ")[0] ?? "";
     const repositories =
       commandName === "status" || commandName === "sync"
-        ? workspace.repositories.filter(
-            (repository) => resolve(repository.path) !== resolve(workspace.root),
-          )
+        ? workspace.repositories.filter((repository) => !repository.syntheticParent)
         : workspace.repositories;
     return prefixCandidates(
       repositories.map(({ name }) => ({

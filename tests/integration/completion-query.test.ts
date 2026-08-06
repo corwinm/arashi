@@ -38,6 +38,7 @@ describe("lossless bounded dynamic completion query", () => {
         version: "1.0.0",
         reposDir: "repos",
         repos: {
+          main: { path: "." },
           "repo one": { path: "repos/repo one", groups: [" docs team "] },
           [sensitiveRepository]: { path: "repos/odd", groups: ["DOCS TEAM"] },
         },
@@ -67,6 +68,7 @@ describe("lossless bounded dynamic completion query", () => {
         ({ value }) => value,
       );
       expect(selectors).toContain("repo one");
+      expect(selectors).toContain("main");
       expect(selectors).not.toContain(basename(root));
     }
   });
@@ -222,7 +224,7 @@ describe("lossless bounded dynamic completion query", () => {
       const root = mkdtempSync(join(tmpdir(), "arashi-completion-external-linked-"));
       temporaryDirectories.push(root);
       const main = join(root, "main");
-      const linked = join(root, "external");
+      const linked = join(root, "external ");
       mkdirSync(main);
       const git = (arguments_: string[], cwd = main) => {
         const result = spawnSync("git", arguments_, {
@@ -256,6 +258,11 @@ describe("lossless bounded dynamic completion query", () => {
         runQuery(linked, ["arashi", "create", "topic", "--only", "a"]).stdout,
       ).map(({ value }) => value);
       expect(repositories).toContain("app");
+
+      const worktrees = records(runQuery(linked, ["arashi", "move", "--from", ""]).stdout).map(
+        ({ value }) => value,
+      );
+      expect(worktrees).toContain(realpathSync(linked));
     },
   );
 
