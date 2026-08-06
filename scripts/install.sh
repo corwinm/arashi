@@ -627,11 +627,37 @@ has_managed_shell_integration() {
   awk -v marker="$SHELL_INTEGRATION_START" '$0 == marker { found=1 } END { exit !found }' "$rc_file"
 }
 
+resolve_symlink_target() {
+  local path="$1"
+  local output_variable="$2"
+  local link_target
+  local hops=0
+
+  while [ -L "$path" ]; do
+    hops="$((hops + 1))"
+    if [ "$hops" -gt 40 ]; then
+      return 1
+    fi
+    link_target="$(readlink "$path")" || return 1
+    case "$link_target" in
+      /*)
+        path="$link_target"
+        ;;
+      *)
+        path="$(dirname "$path")/$link_target"
+        ;;
+    esac
+  done
+
+  printf -v "$output_variable" '%s' "$path"
+}
+
 upsert_shell_integration_block() {
   local rc_file="$1"
   local integration_block="$2"
   local temporary_file
   local replacement_file
+  local target_file="$rc_file"
   local final_newline
 
   if ! has_managed_shell_integration "$rc_file"; then
@@ -642,6 +668,8 @@ upsert_shell_integration_block() {
     } >> "$rc_file"
     return
   fi
+
+  resolve_symlink_target "$rc_file" target_file || return 1
 
   temporary_file="$(mktemp)" || return 1
   replacement_file="$(mktemp)" || {
@@ -654,7 +682,7 @@ upsert_shell_integration_block() {
   }
 
   final_newline=0
-  if [ "$(tail -c 1 "$rc_file" | od -An -t u1 | tr -d ' ')" = "10" ]; then
+  if [ "$(tail -c 1 "$target_file" | od -An -t u1 | tr -d ' ')" = "10" ]; then
     final_newline=1
   fi
 
@@ -688,12 +716,12 @@ upsert_shell_integration_block() {
          emit_line(lines[line_number], is_last)
        }
        if (managed) exit 2
-     }' "$rc_file" > "$temporary_file" || {
+     }' "$target_file" > "$temporary_file" || {
       rm -f "$temporary_file" "$replacement_file"
       return 1
     }
   rm -f "$replacement_file"
-  mv "$temporary_file" "$rc_file"
+  mv "$temporary_file" "$target_file"
 }
 
 prompt_shell_integration() {

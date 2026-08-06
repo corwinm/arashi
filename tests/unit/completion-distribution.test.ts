@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -50,6 +50,35 @@ describe("completion distribution and installer wiring", () => {
       rmSync(root, { force: true, recursive: true });
     }
   });
+
+  test.skipIf(process.platform === "win32")(
+    "release installer upgrades through a symlink without replacing it",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "arashi-release-shell-symlink-"));
+      const rcFile = join(root, ".bashrc");
+      const targetFile = join(root, "versioned-bashrc");
+      const oldBlock =
+        '# >>> arashi shell integration >>>\neval "$(arashi shell init bash)"\n# <<< arashi shell integration <<<';
+      writeFileSync(targetFile, `${oldBlock}\n`);
+      symlinkSync("versioned-bashrc", rcFile);
+
+      try {
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            'ARASHI_INSTALLER_SOURCE_ONLY=1 source scripts/install.sh; integration_block="$(build_shell_integration_block bash)"; upsert_shell_integration_block "$RC_FILE" "$integration_block"',
+          ],
+          { encoding: "utf8", env: { ...process.env, RC_FILE: rcFile } },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(lstatSync(rcFile).isSymbolicLink()).toBe(true);
+        expect(readFileSync(targetFile, "utf8")).toBe(`${buildShellInstallBlock("bash")}\n`);
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
+    },
+  );
 
   test("build, publish, and contract paths enforce generated freshness", () => {
     expect(packageJson.scripts["completion:generate"]).toBeTruthy();
