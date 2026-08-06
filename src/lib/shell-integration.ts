@@ -87,14 +87,14 @@ export async function installShellIntegration(
 
   if (!shell) {
     throw new Error(
-      "Unable to detect a supported shell for `arashi shell install`. Use `arashi shell init <bash|zsh|fish>` for manual setup.",
+      "Unable to detect a supported shell for `arashi shell install`. Use `arashi shell init <bash|zsh|fish>` for manual setup. Then run `arashi completion <bash|zsh|fish>` to activate completion.",
     );
   }
 
   const startupFilePath = await resolveStartupFilePath(shell, env);
   if (!startupFilePath) {
     throw new Error(
-      `Unable to determine a writable startup file for ${shell}. Use \`arashi shell init ${shell}\` for manual setup.`,
+      `Unable to determine a writable startup file for ${shell}. Use \`arashi shell init ${shell}\` and \`arashi completion ${shell}\` for manual setup.`,
     );
   }
 
@@ -104,8 +104,16 @@ export async function installShellIntegration(
   const block = buildShellInstallBlock(shell);
   const nextContents = upsertManagedBlock(currentContents, block);
 
-  await mkdir(dirname(startupFilePath), { recursive: true });
-  await runtime.write(startupFilePath, nextContents);
+  if (currentContents !== nextContents) {
+    try {
+      await mkdir(dirname(startupFilePath), { recursive: true });
+      await runtime.write(startupFilePath, nextContents);
+    } catch {
+      throw new Error(
+        `Unable to write ${startupFilePath}. Use \`arashi shell init ${shell}\` and \`arashi completion ${shell}\` for manual setup.`,
+      );
+    }
+  }
 
   return {
     created: !existed,
@@ -154,8 +162,8 @@ function getStartupFileCandidates(home: string, shell: SupportedShell): string[]
 export function buildShellInstallBlock(shell: SupportedShell): string {
   const body =
     shell === "fish"
-      ? "command arashi shell init fish | source"
-      : `eval "$(command arashi shell init ${shell})"`;
+      ? "command arashi shell init fish | source\ncommand arashi completion fish | source"
+      : `eval "$(command arashi shell init ${shell})"\nsource <(command arashi completion ${shell})`;
 
   return `${START_MARKER}\n${body}\n${END_MARKER}`;
 }

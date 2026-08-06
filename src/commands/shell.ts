@@ -6,7 +6,7 @@ import {
 } from "../lib/shell-integration.ts";
 import { info, error as logError, success } from "../lib/logger.ts";
 import { unsupportedJsonModeError, writeJsonEnvelope } from "../lib/json-output.ts";
-import { Command } from "commander";
+import { Argument, Command } from "commander";
 
 const ERROR_EXIT_CODE = 1;
 const USAGE_EXIT_CODE = 2;
@@ -19,7 +19,11 @@ export function createCommand(): Command {
   shellCommand
     .command("init")
     .description("Print shell wrapper code")
-    .argument("[shell]", `Shell name (${SUPPORTED_SHELLS.join(", ")})`)
+    .addArgument(
+      new Argument("[shell]", `Shell name (${SUPPORTED_SHELLS.join(", ")})`).choices([
+        ...SUPPORTED_SHELLS,
+      ]),
+    )
     .option("-j, --json", "Return a structured unsupported-mode error instead of shell code")
     .action((shellName: string | undefined, options: { json?: boolean }) => {
       try {
@@ -48,7 +52,7 @@ export function createCommand(): Command {
         success(
           `Installed Arashi shell integration for ${result.shell} in ${result.startupFilePath}`,
         );
-        info("Restart your shell or source the startup file to enable parent-shell switching.");
+        info("Restart your shell or source the startup file to enable switching and completion.");
         process.exit(0);
       } catch (error) {
         handleShellCommandError(error);

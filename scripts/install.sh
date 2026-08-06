@@ -606,15 +606,15 @@ configure_shell_path() {
   warn "Open a new shell or run: export PATH=\"$install_dir:\$PATH\""
 }
 
-build_shell_integration_line() {
+build_shell_integration_block() {
   local shell_name="$1"
 
   case "$shell_name" in
     fish)
-      printf 'command arashi shell init fish | source'
+      printf 'command arashi shell init fish | source\ncommand arashi completion fish | source'
       ;;
     bash|zsh)
-      printf 'eval "$(command arashi shell init %s)"' "$shell_name"
+      printf 'eval "$(command arashi shell init %s)"\nsource <(command arashi completion %s)' "$shell_name" "$shell_name"
       ;;
     *)
       return 1
@@ -622,9 +622,37 @@ build_shell_integration_line() {
   esac
 }
 
-shell_integration_installed() {
+has_managed_shell_integration() {
   local rc_file="$1"
-  grep -F "$SHELL_INTEGRATION_START" "$rc_file" >/dev/null 2>&1
+  awk -v marker="$SHELL_INTEGRATION_START" '$0 == marker { found=1 } END { exit !found }' "$rc_file"
+}
+
+upsert_shell_integration_block() {
+  local rc_file="$1"
+  local integration_block="$2"
+  local temporary_file
+
+  if ! has_managed_shell_integration "$rc_file"; then
+    {
+      printf '\n%s\n' "$SHELL_INTEGRATION_START"
+      printf '%s\n' "$integration_block"
+      printf '%s\n' "$SHELL_INTEGRATION_END"
+    } >> "$rc_file"
+    return
+  fi
+
+  temporary_file="$(mktemp)" || return 1
+  awk \
+    -v start="$SHELL_INTEGRATION_START" \
+    -v end="$SHELL_INTEGRATION_END" \
+    -v block="$integration_block" \
+    '$0 == start { print start; print block; managed=1; next }
+     managed && $0 == end { print end; managed=0; next }
+     !managed { print }' "$rc_file" > "$temporary_file" || {
+      rm -f "$temporary_file"
+      return 1
+    }
+  mv "$temporary_file" "$rc_file"
 }
 
 prompt_shell_integration() {
@@ -672,7 +700,7 @@ prompt_shell_integration() {
 configure_shell_integration() {
   local shell_name
   local rc_file
-  local integration_line
+  local integration_block
 
   shell_name="$(detect_shell_name)"
   if ! is_supported_shell "$shell_name"; then
@@ -681,7 +709,7 @@ configure_shell_integration() {
   fi
 
   rc_file="$(resolve_shell_rc_file "$shell_name")"
-  integration_line="$(build_shell_integration_line "$shell_name")" || {
+  integration_block="$(build_shell_integration_block "$shell_name")" || {
     warn "Could not build shell integration line for $shell_name"
     return
   }
@@ -700,21 +728,12 @@ configure_shell_integration() {
     }
   fi
 
-  if shell_integration_installed "$rc_file"; then
-    log "Shell integration already configured in $rc_file"
-    return
-  fi
-
-  if ! prompt_shell_integration "$shell_name"; then
+  if ! has_managed_shell_integration "$rc_file" && ! prompt_shell_integration "$shell_name"; then
     log "Skipping shell integration setup"
     return
   fi
 
-  {
-    printf '\n%s\n' "$SHELL_INTEGRATION_START"
-    printf '%s\n' "$integration_line"
-    printf '%s\n' "$SHELL_INTEGRATION_END"
-  } >> "$rc_file" || {
+  upsert_shell_integration_block "$rc_file" "$integration_block" || {
     warn "Failed to update shell integration in $rc_file"
     warn "Run 'arashi shell install' manually after installation"
     return

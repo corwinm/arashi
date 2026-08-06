@@ -47,6 +47,9 @@ jobs:
       - name: Validate CLI command contract
         run: pnpm run contract:check
 
+      - name: Validate generated shell completions
+        run: pnpm run completion:check
+
       - name: Validate README documentation link target
         run: |
           if grep -qF "arashi-docs.netlify.app" README.md; then
@@ -93,6 +96,12 @@ jobs:
           runtime: node@24.18.0
           cache: true
           install: false
+
+      - name: Install native completion shells
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes fish zsh
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -182,14 +191,15 @@ jobs:
         if: runner.os != 'Windows'
         run: chmod +x ${{ matrix.artifact }}
 
-      - name: Run version check
+      - name: Run version and completion checks
         shell: bash
         run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            ./${{ matrix.artifact }} --version
-          else
-            ./${{ matrix.artifact }} --version
-          fi
+          ./${{ matrix.artifact }} --version
+          for shell in bash zsh fish; do
+            ./${{ matrix.artifact }} completion "$shell" > "completion-$shell"
+            test -s "completion-$shell"
+            grep -q 'arashi-completion-contract-v6:' "completion-$shell"
+          done
 
   windows-installer-acceptance:
     name: Windows Installer Acceptance

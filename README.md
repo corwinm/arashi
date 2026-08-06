@@ -138,6 +138,7 @@ Arashi currently provides these commands:
 - `arashi remove <branch|path>`
 - `arashi prune [--dry-run]` - clean stale Git worktree metadata
 - `arashi switch [filter] [--repos|--all] [--tab] [--cd|--launch] [--tmux|--sesh|--herdr] [--ignore-configured-launcher]`
+- `arashi completion <bash|zsh|fish>`
 - `arashi shell init <bash|zsh|fish>`
 - `arashi shell install`
 - `arashi pull`
@@ -208,7 +209,7 @@ For contributors working on Arashi itself, the project planning workflow in the 
 
 ## Shell Integration
 
-Use shell integration when you want `arashi switch` to change the current shell directory instead of only opening a new terminal or editor context.
+Use shell integration for parent-shell directory switching and native tab completion. Bash, Zsh, and Fish are supported.
 
 The official curl installer can offer this automatically. If you skip it or use npm, install it for the active shell with:
 
@@ -216,13 +217,27 @@ The official curl installer can offer this automatically. If you skip it or use 
 arashi shell install
 ```
 
-Or print wrapper code for manual setup:
+`arashi shell install` adds a managed pair to the active shell startup file: the parent-shell wrapper first and completion activation second. Repeating the command is idempotent and upgrades older wrapper-only blocks.
+
+For manual setup, activate the wrapper and completion independently:
 
 ```bash
-arashi shell init bash
-arashi shell init zsh
-arashi shell init fish
+# Bash
+eval "$(command arashi shell init bash)"
+source <(command arashi completion bash)
+
+# Zsh
+eval "$(command arashi shell init zsh)"
+source <(command arashi completion zsh)
+
+# Fish
+command arashi shell init fish | source
+command arashi completion fish | source
 ```
+
+`arashi shell init <shell>` remains wrapper-only. `arashi completion <shell>` emits only deterministic sourceable shell code, including on npm first use when the platform binary must be installed.
+
+Completion covers commands, aliases, options, finite choices, conflicts, and positional boundaries. In an Arashi workspace it also resolves configured repository and group selector segments, switch/remove worktrees and paths, and move source/target references. Dynamic lookup is local and read-only, silent on unavailable or broken metadata, and limited to a 200 ms whole-query budget; it performs no network requests, hooks, prompts, workspace mutations, or child operations. Static completion remains available outside a workspace.
 
 Once installed, you can use `arashi switch --cd <filter>` for one-off parent-shell switching or set `.arashi/config.json` `defaults.switch.mode` to `"cd"` or contextual `"auto"`. The canonical modes are `auto` | `cd` | `launch` | `sesh` | `herdr`.
 

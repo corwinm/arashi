@@ -798,6 +798,11 @@ export function createCommand(): Command {
     .choices([...CREATE_DEFAULT_EDITOR_HOSTS])
     .hideHelp();
 
+  const conflictOption = new Option(
+    "--conflict <strategy>",
+    "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
+  ).choices(["ABORT", "REUSE_EXISTING"]);
+
   return new Command("create")
     .description("Create coordinated worktrees across multiple repositories")
     .argument("<branch>", "Branch name to create across repositories")
@@ -823,10 +828,7 @@ export function createCommand(): Command {
     .option("--sesh", "Launch using sesh mode (implies --launch)")
     .option("--herdr", "Launch using Herdr mode (implies --launch)")
     .option("--tmux", "Launch using plain tmux mode (implies --launch and --switch)")
-    .option(
-      "--conflict <strategy>",
-      "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
-    )
+    .addOption(conflictOption)
     .option("--no-hooks", "Disable hook execution")
     .option("--no-progress", "Hide progress indicators")
     .option("-n, --dry-run", "Show what would be done without making changes")
