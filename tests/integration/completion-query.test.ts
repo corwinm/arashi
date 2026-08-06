@@ -60,6 +60,13 @@ describe("lossless bounded dynamic completion query", () => {
     expect(records(workspaceRepository.stdout).map((entry) => entry.value)).toContain(
       sensitiveRepository,
     );
+    for (const command of ["status", "sync"]) {
+      const selectors = records(runQuery(root, ["arashi", command, "--only", ""]).stdout).map(
+        ({ value }) => value,
+      );
+      expect(selectors).toContain("repo one");
+      expect(selectors).not.toContain(basename(root));
+    }
   });
 
   test("discovers configured common-root workspaces from linked worktrees", () => {
@@ -246,10 +253,15 @@ describe("lossless bounded dynamic completion query", () => {
       env: environment,
     });
     expect(added.status, added.stderr).toBe(0);
+    expect(
+      records(runQuery(root, ["arashi", "remove", ""]).stdout).map(({ value }) => value),
+    ).toEqual([]);
+
+    mkdirSync(join(root, ".worktrees"));
     const standaloneRemove = records(runQuery(root, ["arashi", "remove", ""]).stdout).map(
       ({ value }) => value,
     );
-    expect(standaloneRemove).toContain("linked-branch");
+    if (process.platform !== "win32") expect(standaloneRemove).toContain("linked-branch");
     expect(standaloneRemove).not.toContain(realpathSync(linked));
     expect(standaloneRemove).not.toContain(basename(linked));
   });

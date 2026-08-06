@@ -1,5 +1,13 @@
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import type {
   CliCommandContract,
@@ -298,14 +306,26 @@ function findWorkspace(start: string, deadline: number): WorkspaceData | null {
   }
 
   const root = gitOutput(start, ["rev-parse", "--show-toplevel"], deadline);
-  return root
-    ? {
-        configured: false,
-        groups: [],
-        repositories: [{ name: basename(root), path: root }],
-        root,
-      }
-    : null;
+  if (!root) return null;
+  const commonDirectory = gitOutput(
+    start,
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    deadline,
+  );
+  if (!commonDirectory) return null;
+  const mainRoot =
+    basename(commonDirectory) === ".git" ? dirname(commonDirectory) : commonDirectory;
+  try {
+    if (!statSync(resolve(mainRoot, ".worktrees")).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  return {
+    configured: false,
+    groups: [],
+    repositories: [{ name: basename(mainRoot), path: mainRoot }],
+    root: mainRoot,
+  };
 }
 
 function worktreeCandidates(
@@ -394,8 +414,15 @@ function dynamicCandidates(
   if (!workspace || performance.now() >= deadline) return [];
   if (kind === "repository") {
     if (!workspace.configured) return [];
+    const commandName = context.command?.path.split(" ")[0] ?? "";
+    const repositories =
+      commandName === "status" || commandName === "sync"
+        ? workspace.repositories.filter(
+            (repository) => resolve(repository.path) !== resolve(workspace.root),
+          )
+        : workspace.repositories;
     return prefixCandidates(
-      workspace.repositories.map(({ name }) => ({
+      repositories.map(({ name }) => ({
         description: "Configured repository",
         value: name,
       })),
