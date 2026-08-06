@@ -11,10 +11,21 @@ export function renderCompletion(shell: SupportedShell, contract: CliCommandCont
     return `${marker}
 _arashi() {
   local value description
+  local cursor="$COMP_CWORD"
+  local -a words=("\${COMP_WORDS[@]}")
+  if (( cursor >= 1 )) && [[ "\${words[cursor]}" == "=" && "\${words[cursor - 1]}" == -* ]]; then
+    local assignment="\${words[cursor - 1]}="
+    words=("\${words[@]:0:cursor - 1}" "$assignment" "\${words[@]:cursor + 1}")
+    cursor=$((cursor - 1))
+  elif (( cursor >= 2 )) && [[ "\${words[cursor - 1]}" == "=" && "\${words[cursor - 2]}" == -* ]]; then
+    local assignment="\${words[cursor - 2]}=\${words[cursor]}"
+    words=("\${words[@]:0:cursor - 2}" "$assignment" "\${words[@]:cursor + 1}")
+    cursor=$((cursor - 2))
+  fi
   COMPREPLY=()
   while IFS= read -r -d '' value && IFS= read -r -d '' description; do
     COMPREPLY+=("$value")
-  done < <(command arashi completion __query "$COMP_CWORD" -- "\${COMP_WORDS[@]}")
+  done < <(command arashi completion __query "$cursor" -- "\${words[@]}")
 }
 complete -F _arashi arashi
 `;

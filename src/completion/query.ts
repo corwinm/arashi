@@ -18,11 +18,11 @@ const prefixCandidates = (values: CompletionCandidate[], prefix: string): Comple
   const comma = prefix.lastIndexOf(",");
   const leading = comma < 0 ? "" : prefix.slice(0, comma + 1);
   const segment = comma < 0 ? prefix : prefix.slice(comma + 1);
-  const normalized = segment.toLocaleLowerCase();
+  const normalized = segment.toLowerCase();
   return values
-    .filter((candidate) => candidate.value.toLocaleLowerCase().startsWith(normalized))
+    .filter((candidate) => candidate.value.toLowerCase().startsWith(normalized))
     .map((candidate) => ({ ...candidate, value: `${leading}${candidate.value}` }))
-    .toSorted((left, right) => left.value.localeCompare(right.value));
+    .toSorted((left, right) => (left.value < right.value ? -1 : left.value > right.value ? 1 : 0));
 };
 
 interface ParsedContext {
@@ -296,24 +296,30 @@ function findWorkspace(start: string, deadline: number): WorkspaceData | null {
 }
 
 function worktreeCandidates(
-  workspace: WorkspaceData,
+  repositories: WorkspaceData["repositories"],
   pathsOnly: boolean,
+  excludePrimary: boolean,
   deadline: number,
 ): CompletionCandidate[] {
   const found = new Map<string, CompletionCandidate>();
-  for (const repository of workspace.repositories) {
+  for (const repository of repositories) {
     const remaining = Math.floor(deadline - performance.now());
     if (remaining <= 0) return [];
-    const result = spawnSync("git", ["-C", repository.path, "worktree", "list", "--porcelain"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: remaining,
-    });
+    const result = spawnSync(
+      "git",
+      ["-C", repository.path, "worktree", "list", "--porcelain", "-z"],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: remaining,
+      },
+    );
     if (result.status !== 0 || result.error) continue;
     let path = "";
     let branch = "";
     const add = () => {
       if (!path) return;
+      if (excludePrimary && resolve(path) === resolve(repository.path)) return;
       const values = pathsOnly ? [path] : [branch, basename(path), path];
       for (const value of values.filter(Boolean)) {
         found.set(value, {
@@ -322,7 +328,7 @@ function worktreeCandidates(
         });
       }
     };
-    for (const line of result.stdout.split("\n")) {
+    for (const line of result.stdout.split("\0")) {
       if (line === "") {
         add();
         path = "";
@@ -333,6 +339,22 @@ function worktreeCandidates(
     add();
   }
   return [...found.values()];
+}
+
+function worktreeRepositories(
+  workspace: WorkspaceData,
+  context: ParsedContext,
+): WorkspaceData["repositories"] {
+  if (context.command?.path !== "switch") return workspace.repositories;
+  if (context.wordsBeforeCursor.includes("--all")) return workspace.repositories;
+  const parent = workspace.repositories.filter(
+    (repository) => resolve(repository.path) === resolve(workspace.root),
+  );
+  const children = workspace.repositories.filter(
+    (repository) => resolve(repository.path) !== resolve(workspace.root),
+  );
+  if (context.wordsBeforeCursor.includes("--repos")) return children;
+  return parent.length > 0 ? parent : workspace.repositories.slice(0, 1);
 }
 
 function dynamicCandidates(
@@ -361,7 +383,13 @@ function dynamicCandidates(
     );
   }
   const pathsOnly = kind === "worktree" && context.wordsBeforeCursor.includes("--path");
-  const candidates = worktreeCandidates(workspace, pathsOnly, deadline);
+  const excludePrimary = context.command?.path === "remove" && pathsOnly;
+  const candidates = worktreeCandidates(
+    worktreeRepositories(workspace, context),
+    pathsOnly,
+    excludePrimary,
+    deadline,
+  );
   if (performance.now() >= deadline) return [];
   return prefixCandidates(candidates, context.current);
 }

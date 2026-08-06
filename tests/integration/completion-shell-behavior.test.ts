@@ -181,7 +181,10 @@ run_completion repository arashi create topic --only repo
 run_completion repositoryShort arashi create topic -o repo
 run_completion group arashi create topic --group docs
 run_completion groupShort arashi create topic -g docs
+run_completion inlineAssignmentEmpty arashi create topic --conflict =
+run_completion inlineAssignment arashi create topic --conflict = R
 run_completion switch arashi switch repo
+run_completion switchRepos arashi switch --repos repo
 run_completion remove arashi remove repo
 run_completion moveFrom arashi move --from repo
 run_completion moveTo arashi move --to repo
@@ -207,7 +210,7 @@ run_sensitive_completion sensitive arashi create topic --only ''
       for (const label of [
         "repository",
         "repositoryShort",
-        "switch",
+        "switchRepos",
         "remove",
         "moveFrom",
         "moveTo",
@@ -215,6 +218,11 @@ run_sensitive_completion sensitive arashi create topic --only ''
         expect(output.get(label)).toContain("repo one");
       expect(output.get("group")).toContain("docs team");
       expect(output.get("groupShort")).toContain("docs team");
+      expect(output.get("inlineAssignmentEmpty")).toEqual([
+        "--conflict=ABORT",
+        "--conflict=REUSE_EXISTING",
+      ]);
+      expect(output.get("inlineAssignment")).toEqual(["--conflict=REUSE_EXISTING"]);
       expect(output.get("path")?.every((value) => value.startsWith("/"))).toBe(true);
       expect(output.get("sensitive")).toContain(sensitiveRepositoryBase64);
     },
@@ -277,6 +285,7 @@ run_completion repositoryShort arashi create topic -o repo
 run_completion group arashi create topic --group docs
 run_completion groupShort arashi create topic -g docs
 run_completion switch arashi switch repo
+run_completion switchRepos arashi switch --repos repo
 run_completion remove arashi remove repo
 run_completion moveFrom arashi move --from repo
 run_completion moveTo arashi move --to repo
@@ -302,7 +311,7 @@ run_sensitive_completion sensitive arashi create topic --only ''
       for (const label of [
         "repository",
         "repositoryShort",
-        "switch",
+        "switchRepos",
         "remove",
         "moveFrom",
         "moveTo",
@@ -353,6 +362,7 @@ run_completion repositoryShort 'arashi create topic -o repo'
 run_completion group 'arashi create topic --group docs'
 run_completion groupShort 'arashi create topic -g docs'
 run_completion switch 'arashi switch repo'
+run_completion switchRepos 'arashi switch --repos repo'
 run_completion remove 'arashi remove repo'
 run_completion moveFrom 'arashi move --from repo'
 run_completion moveTo 'arashi move --to repo'
@@ -380,7 +390,7 @@ run_completion sensitive 'arashi create topic --only '
       for (const label of [
         "repository",
         "repositoryShort",
-        "switch",
+        "switchRepos",
         "remove",
         "moveFrom",
         "moveTo",

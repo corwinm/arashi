@@ -116,6 +116,68 @@ describe("lossless bounded dynamic completion query", () => {
     expect(worktrees).toContain(realpathSync(repository));
   });
 
+  test.skipIf(process.platform === "win32")(
+    "preserves NUL-delimited worktree paths and follows command repository scope",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "arashi-completion-scope-"));
+      temporaryDirectories.push(root);
+      const workspace = join(root, "workspace");
+      const child = join(workspace, "repos", "child");
+      const parentWorktree = join(root, "parent line\nbreak");
+      const childWorktree = join(root, "child-worktree");
+      const gitEnvironment = {
+        ...process.env,
+        GIT_AUTHOR_EMAIL: "completion@example.test",
+        GIT_AUTHOR_NAME: "Completion Test",
+        GIT_COMMITTER_EMAIL: "completion@example.test",
+        GIT_COMMITTER_NAME: "Completion Test",
+      };
+      const git = (cwd: string, arguments_: string[]) => {
+        const result = spawnSync("git", arguments_, { cwd, encoding: "utf8", env: gitEnvironment });
+        expect(result.status, result.stderr).toBe(0);
+      };
+      const initialize = (repository: string) => {
+        mkdirSync(repository, { recursive: true });
+        git(repository, ["init", "--initial-branch=main"]);
+        writeFileSync(join(repository, "README.md"), "fixture\n");
+        git(repository, ["add", "README.md"]);
+        git(repository, ["commit", "-m", "fixture"]);
+      };
+
+      initialize(workspace);
+      initialize(child);
+      mkdirSync(join(workspace, ".arashi"));
+      writeFileSync(
+        join(workspace, ".arashi", "config.json"),
+        JSON.stringify({ repos: { child: { path: "repos/child" } }, version: "1.0.0" }),
+      );
+      git(workspace, ["worktree", "add", "-b", "parent-feature", parentWorktree]);
+      git(child, ["worktree", "add", "-b", "child-feature", childWorktree]);
+      const canonicalParentWorktree = realpathSync(parentWorktree);
+      const canonicalChildWorktree = realpathSync(childWorktree);
+
+      const values = (words: string[]) =>
+        records(runQuery(workspace, words).stdout).map(({ value }) => value);
+      const parent = values(["arashi", "switch", ""]);
+      expect(parent).toContain(canonicalParentWorktree);
+      expect(parent).not.toContain(canonicalChildWorktree);
+      const children = values(["arashi", "switch", "--repos", ""]);
+      expect(children).toContain(canonicalChildWorktree);
+      expect(children).not.toContain(canonicalParentWorktree);
+      const all = values(["arashi", "switch", "--all", ""]);
+      expect(all).toEqual(
+        expect.arrayContaining([canonicalParentWorktree, canonicalChildWorktree]),
+      );
+
+      const removablePaths = values(["arashi", "remove", "--path", ""]);
+      expect(removablePaths).toEqual(
+        expect.arrayContaining([canonicalParentWorktree, canonicalChildWorktree]),
+      );
+      expect(removablePaths).not.toContain(realpathSync(workspace));
+      expect(removablePaths).not.toContain(realpathSync(child));
+    },
+  );
+
   test("returns exact finite choices only for their owning slots", () => {
     const cwd = process.cwd();
     expect(
