@@ -34,13 +34,42 @@ _arashi() {
       break
     fi
   done
-  local current_word="\${words[cursor]}" dequoted_word="" char
+  local current_word="\${words[cursor]}" dequoted_word="" char next_char quote_state=""
   local index
   for ((index = 0; index < \${#current_word}; index++)); do
     char="\${current_word:index:1}"
-    if [[ "$char" == "\\\\" ]] && ((index + 1 < \${#current_word})); then
+    if [[ "$quote_state" == "single" ]]; then
+      if [[ "$char" == "'" ]]; then
+        quote_state=""
+      else
+        dequoted_word+="$char"
+      fi
+    elif [[ "$quote_state" == "double" ]]; then
+      if [[ "$char" == '"' ]]; then
+        quote_state=""
+      elif [[ "$char" == "\\\\" ]] && ((index + 1 < \${#current_word})); then
+        next_char="\${current_word:index+1:1}"
+        if [[ "$next_char" == '$' || "$next_char" == '"' || "$next_char" == "\\\\" || "$next_char" == $'\\x60' ]]; then
+          index=$((index + 1))
+          dequoted_word+="$next_char"
+        elif [[ "$next_char" == $'\\n' ]]; then
+          index=$((index + 1))
+        else
+          dequoted_word+="$char"
+        fi
+      else
+        dequoted_word+="$char"
+      fi
+    elif [[ "$char" == "'" ]]; then
+      quote_state="single"
+    elif [[ "$char" == '"' ]]; then
+      quote_state="double"
+    elif [[ "$char" == "\\\\" ]] && ((index + 1 < \${#current_word})); then
       index=$((index + 1))
-      dequoted_word+="\${current_word:index:1}"
+      next_char="\${current_word:index:1}"
+      if [[ "$next_char" != $'\\n' ]]; then
+        dequoted_word+="$next_char"
+      fi
     else
       dequoted_word+="$char"
     fi
