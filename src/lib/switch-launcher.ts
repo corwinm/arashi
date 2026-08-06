@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { posix } from "node:path";
 import { runtime } from "./runtime.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { normalizeSpawnEnvironment, stripDirectiveEnvironment } from "./shell-directives.ts";
@@ -703,8 +703,8 @@ export async function resolveIdeLauncherTarget(
   const pathExists = deps.pathExists ?? bundleLauncherExists;
   const home = (deps.homeDirectory ?? homedir)();
   const candidates = [
-    join("/Applications", bundleLauncher),
-    ...(home ? [join(home, "Applications", bundleLauncher)] : []),
+    posix.join("/Applications", bundleLauncher),
+    ...(home ? [posix.join(home, "Applications", bundleLauncher)] : []),
   ];
   for (const candidate of candidates) {
     if (await pathExists(candidate)) {
