@@ -61,14 +61,20 @@ describe("completion command and generated artifacts", () => {
         writeFileSync(completion, run(["completion", "bash"]).stdout);
         writeFileSync(
           executable,
-          `#!/bin/bash\nif [[ "$*" == "completion __query 3 -- arashi switch --path C:/work" ]]; then printf 'C:/worktree\\0Path\\0'; fi\n`,
+          `#!/bin/bash
+if [[ "$*" == "completion __query 3 -- arashi switch --path C:/work" ]]; then
+  printf 'C:/worktree\\0Path\\0'
+elif [[ "$*" == "completion __query 2 -- arashi move --from=C:/work" ]]; then
+  printf 'C:/workspace\\0Workspace\\0'
+fi
+`,
         );
         chmodSync(executable, 0o755);
         const result = spawnSync(
           "bash",
           [
             "-c",
-            'source "$1"; COMP_WORDS=(arashi switch --path C : /work); COMP_CWORD=5; _arashi; printf "%s\\n" "${COMPREPLY[@]}"',
+            'source "$1"; COMP_WORDS=(arashi switch --path C : /work); COMP_CWORD=5; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"; COMP_WORDS=(arashi move --from = C : /work); COMP_CWORD=6; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"',
             "bash",
             completion,
           ],
@@ -78,7 +84,7 @@ describe("completion command and generated artifacts", () => {
           },
         );
         expect(result.status, result.stderr).toBe(0);
-        expect(result.stdout).toBe("C:/worktree\n");
+        expect(result.stdout).toBe("C:/worktree\nC:/workspace\n");
       } finally {
         rmSync(root, { force: true, recursive: true });
       }

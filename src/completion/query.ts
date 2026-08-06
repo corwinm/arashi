@@ -334,8 +334,9 @@ function worktreeCandidates(
     if (result.status !== 0 || result.error) continue;
     let path = "";
     let branch = "";
+    let bare = false;
     const add = () => {
-      if (!path) return;
+      if (!path || bare) return;
       if (excludePrimary && resolve(path) === resolve(repository.path)) return;
       const forms = formsFor(repository);
       const values = [
@@ -355,8 +356,10 @@ function worktreeCandidates(
         add();
         path = "";
         branch = "";
+        bare = false;
       } else if (line.startsWith("worktree ")) path = line.slice(9);
       else if (line.startsWith("branch refs/heads/")) branch = line.slice(18);
+      else if (line === "bare") bare = true;
     }
     add();
   }

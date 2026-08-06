@@ -13,23 +13,27 @@ _arashi() {
   local value description
   local cursor="$COMP_CWORD"
   local -a words=("\${COMP_WORDS[@]}")
-  if (( cursor >= 1 )) && [[ "\${words[cursor]}" == "=" && "\${words[cursor - 1]}" == -* ]]; then
-    local assignment="\${words[cursor - 1]}="
-    words=("\${words[@]:0:cursor - 1}" "$assignment" "\${words[@]:cursor + 1}")
-    cursor=$((cursor - 1))
-  elif (( cursor >= 2 )) && [[ "\${words[cursor - 1]}" == "=" && "\${words[cursor - 2]}" == -* ]]; then
-    local assignment="\${words[cursor - 2]}=\${words[cursor]}"
-    words=("\${words[@]:0:cursor - 2}" "$assignment" "\${words[@]:cursor + 1}")
-    cursor=$((cursor - 2))
-  elif (( cursor >= 1 )) && [[ "\${words[cursor]}" == ":" ]]; then
-    local path_word="\${words[cursor - 1]}:"
-    words=("\${words[@]:0:cursor - 1}" "$path_word" "\${words[@]:cursor + 1}")
-    cursor=$((cursor - 1))
-  elif (( cursor >= 2 )) && [[ "\${words[cursor - 1]}" == ":" ]]; then
-    local path_word="\${words[cursor - 2]}:\${words[cursor]}"
-    words=("\${words[@]:0:cursor - 2}" "$path_word" "\${words[@]:cursor + 1}")
-    cursor=$((cursor - 2))
-  fi
+  while true; do
+    if (( cursor >= 1 )) && [[ "\${words[cursor]}" == "=" && "\${words[cursor - 1]}" == -* ]]; then
+      local assignment="\${words[cursor - 1]}="
+      words=("\${words[@]:0:cursor - 1}" "$assignment" "\${words[@]:cursor + 1}")
+      cursor=$((cursor - 1))
+    elif (( cursor >= 2 )) && [[ "\${words[cursor - 1]}" == "=" && "\${words[cursor - 2]}" == -* ]]; then
+      local assignment="\${words[cursor - 2]}=\${words[cursor]}"
+      words=("\${words[@]:0:cursor - 2}" "$assignment" "\${words[@]:cursor + 1}")
+      cursor=$((cursor - 2))
+    elif (( cursor >= 1 )) && [[ "\${words[cursor]}" == ":" ]]; then
+      local path_word="\${words[cursor - 1]}:"
+      words=("\${words[@]:0:cursor - 1}" "$path_word" "\${words[@]:cursor + 1}")
+      cursor=$((cursor - 1))
+    elif (( cursor >= 2 )) && [[ "\${words[cursor - 1]}" == ":" ]]; then
+      local path_word="\${words[cursor - 2]}:\${words[cursor]}"
+      words=("\${words[@]:0:cursor - 2}" "$path_word" "\${words[@]:cursor + 1}")
+      cursor=$((cursor - 2))
+    else
+      break
+    fi
+  done
   COMPREPLY=()
   while IFS= read -r -d '' value && IFS= read -r -d '' description; do
     COMPREPLY+=("$value")

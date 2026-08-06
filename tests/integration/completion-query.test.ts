@@ -123,6 +123,7 @@ describe("lossless bounded dynamic completion query", () => {
       temporaryDirectories.push(root);
       const workspace = join(root, "workspace");
       const child = join(workspace, "repos", "child");
+      const bare = join(workspace, "repos", "bare.git");
       const parentWorktree = join(root, "parent, line\nbreak");
       const childWorktree = join(root, "child-worktree");
       const gitEnvironment = {
@@ -146,10 +147,15 @@ describe("lossless bounded dynamic completion query", () => {
 
       initialize(workspace);
       initialize(child);
+      mkdirSync(bare);
+      git(bare, ["init", "--bare"]);
       mkdirSync(join(workspace, ".arashi"));
       writeFileSync(
         join(workspace, ".arashi", "config.json"),
-        JSON.stringify({ repos: { child: { path: "repos/child" } }, version: "1.0.0" }),
+        JSON.stringify({
+          repos: { bare: { path: "repos/bare.git" }, child: { path: "repos/child" } },
+          version: "1.0.0",
+        }),
       );
       git(workspace, ["worktree", "add", "-b", "parent,feature", parentWorktree]);
       git(child, ["worktree", "add", "-b", "child-feature", childWorktree]);
@@ -168,6 +174,8 @@ describe("lossless bounded dynamic completion query", () => {
       expect(all).toEqual(
         expect.arrayContaining([canonicalParentWorktree, canonicalChildWorktree]),
       );
+      expect(all).not.toContain(realpathSync(bare));
+      expect(all).not.toContain(basename(bare));
 
       const removablePaths = values(["arashi", "remove", "--path", ""]);
       expect(removablePaths).toEqual(
