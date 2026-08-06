@@ -197,6 +197,12 @@ run_sensitive_completion sensitive arashi create topic --only ''
       });
       expect(result.status, result.stderr).toBe(0);
       const output = sections(result.stdout);
+      const quotedSensitive = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-c", "printf '%q' \"$1\"", "bash", sensitiveRepository],
+        { encoding: "utf8" },
+      ).stdout;
+      const quotedSensitiveBase64 = Buffer.from(quotedSensitive).toString("base64");
       expect(output.get("directRoot")).toContain("create");
       expect(output.get("directRoot")).not.toContain("__query");
       expect(output.get("wrappedRoot")).toContain("create");
@@ -208,16 +214,16 @@ run_sensitive_completion sensitive arashi create topic --only ''
       expect(output.get("boundary")).toEqual([]);
       expect(output.get("variadic")).toEqual([]);
       for (const label of ["repository", "repositoryShort", "switchRepos"])
-        expect(output.get(label)).toContain("repo one");
-      expect(output.get("group")).toContain("docs team");
-      expect(output.get("groupShort")).toContain("docs team");
+        expect(output.get(label)).toContain("repo\\ one");
+      expect(output.get("group")).toContain("docs\\ team");
+      expect(output.get("groupShort")).toContain("docs\\ team");
       expect(output.get("inlineAssignmentEmpty")).toEqual([
         "--conflict=ABORT",
         "--conflict=REUSE_EXISTING",
       ]);
       expect(output.get("inlineAssignment")).toEqual(["--conflict=REUSE_EXISTING"]);
       expect(output.get("path")?.every((value) => value.startsWith("/"))).toBe(true);
-      expect(output.get("sensitive")).toContain(sensitiveRepositoryBase64);
+      expect(output.get("sensitive")).toContain(quotedSensitiveBase64);
     },
   );
 

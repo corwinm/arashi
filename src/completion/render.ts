@@ -10,7 +10,7 @@ export function renderCompletion(shell: SupportedShell, contract: CliCommandCont
   if (shell === "bash")
     return `${marker}
 _arashi() {
-  local value description
+  local value description quoted
   local cursor="$COMP_CWORD"
   local -a words=("\${COMP_WORDS[@]}")
   while true; do
@@ -36,10 +36,11 @@ _arashi() {
   done
   COMPREPLY=()
   while IFS= read -r -d '' value && IFS= read -r -d '' description; do
-    COMPREPLY+=("$value")
+    printf -v quoted '%q' "$value"
+    COMPREPLY+=("$quoted")
   done < <(command arashi completion __query "$cursor" -- "\${words[@]}")
 }
-complete -o filenames -F _arashi arashi
+complete -F _arashi arashi
 `;
   if (shell === "zsh")
     return `${marker}

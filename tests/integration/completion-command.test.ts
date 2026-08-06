@@ -20,7 +20,9 @@ describe("completion command and generated artifacts", () => {
     expect(result.stdout).toContain("command arashi");
     expect(result.stdout).not.toMatch(/Downloading|Installing|WARNING|Arashi v/);
     if (shell === "bash") {
-      expect(result.stdout).toContain("complete -o filenames -F _arashi arashi");
+      expect(result.stdout).toContain("printf -v quoted '%q' \"$value\"");
+      expect(result.stdout).toContain("complete -F _arashi arashi");
+      expect(result.stdout).not.toContain("complete -o filenames");
       expect(spawnSync("bash", ["-n"], { input: result.stdout }).status).toBe(0);
     } else if (shell === "zsh") {
       expect(result.stdout).toContain("autoload -Uz compinit && compinit -i");
