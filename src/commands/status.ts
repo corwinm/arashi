@@ -25,7 +25,7 @@ import { exec as gitExec, getFullGitStatus, getGitStatus } from "../lib/git.ts";
 import { info, error as logError, spinner } from "../lib/logger.ts";
 import { Command } from "commander";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
-import { EmptyRepositoryFiltersError } from "../lib/repo-filter.ts";
+import { collectRepositoryFilterValues, EmptyRepositoryFiltersError } from "../lib/repo-filter.ts";
 import { basename, join, resolve } from "path";
 import { realpath, stat } from "fs/promises";
 
@@ -79,6 +79,8 @@ export const summarizeStatuses = (statuses: RepoStatus[]) => {
 export interface StatusOptions {
   /** Filter to repositories in specified groups */
   group?: string[];
+  /** Filter to explicitly named configured child repositories */
+  only?: string[];
   /** Show full git status output for each repository */
   verbose?: boolean;
   /** Show one-line summary per repository */
@@ -808,8 +810,12 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     process.exit(USAGE_EXIT_CODE);
   }
   if (workspaceContext.mode === "standalone") {
-    if (options.group) {
-      const message = "--group is not meaningful in standalone mode";
+    if (options.only !== undefined || options.group !== undefined) {
+      const suppliedFilters = [
+        ...(options.only !== undefined ? ["--only"] : []),
+        ...(options.group !== undefined ? ["--group"] : []),
+      ];
+      const message = `${suppliedFilters.join(" and ")} ${suppliedFilters.length === ONE ? "is" : "are"} not meaningful in standalone mode`;
       if (options.json)
         writeJsonEnvelope(
           createJsonErrorEnvelope("status", { code: "STANDALONE_FILTER_UNSUPPORTED", message }),
@@ -898,13 +904,31 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
   const repositoryRoot = workspaceRoots.executionRoot;
 
   const statusSpinner = options.json ? null : spinner("Checking repository status...");
-  const filterResult = filterRepositories(config.repos, undefined, options.group);
+  const filterResult = filterRepositories(config.repos, options.only, options.group);
   if (filterResult.emptyFilters.length > ZERO) {
     const filterError = new EmptyRepositoryFiltersError(filterResult.emptyFilters);
     if (options.json) {
       writeJsonEnvelope(createJsonErrorEnvelope("status", unknownErrorToJsonError(filterError)));
     } else {
       logError(filterError.message);
+    }
+    process.exit(USAGE_EXIT_CODE);
+  }
+  if (filterResult.missing.length > ZERO) {
+    const message = `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`;
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("status", {
+          code: "UNKNOWN_REPOSITORIES",
+          details: {
+            repositories: filterResult.filters.only,
+            unknownRepositories: filterResult.missing,
+          },
+          message,
+        }),
+      );
+    } else {
+      logError(message);
     }
     process.exit(USAGE_EXIT_CODE);
   }
@@ -945,7 +969,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
   const configForStatus: Config = {
     ...config,
     repos:
-      filterResult.filters.groups.length > ZERO
+      filterResult.filters.only.length > ZERO || filterResult.filters.groups.length > ZERO
         ? Object.fromEntries(filterResult.repositories.map((repo) => [repo.name, repo.config]))
         : config.repos,
   };
@@ -1009,11 +1033,16 @@ export const createCommand = (): Command =>
     .option("-v, --verbose", "Show full git status output")
     .option("-s, --short", "Show one-line summary per repository")
     .option(
-      "--group <group>",
-      "Only include repositories in the requested group (repeatable)",
-      (value, previous: string[] = []) => [...previous, value],
+      "-o, --only <repo>",
+      "Only include a configured child repository (repeatable, comma-separated)",
+      collectRepositoryFilterValues,
     )
-    .option("--json", "Output a structured JSON envelope")
+    .option(
+      "-g, --group <group>",
+      "Only include repositories in the requested group (repeatable, comma-separated)",
+      collectRepositoryFilterValues,
+    )
+    .option("-j, --json", "Output a structured JSON envelope")
     .addHelpText(
       "after",
       `

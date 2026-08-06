@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { basename, join } from "path";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
+import { createCommand } from "../../src/commands/handoff.ts";
 
 const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
 
@@ -102,11 +103,75 @@ const parseJson = (stdout: string): Record<string, unknown> => {
   return parsed;
 };
 
+const captureWorkspaceGitState = async (workspaceRoot: string): Promise<string[]> =>
+  await Promise.all(
+    [
+      workspaceRoot,
+      join(workspaceRoot, "repos", "repo-a"),
+      join(workspaceRoot, "repos", "repo-b"),
+    ].map(async (repository) =>
+      [
+        await runGit(repository, ["rev-parse", "HEAD"]),
+        await runGit(repository, ["branch", "--show-current"]),
+        await runGit(repository, ["status", "--porcelain=v1", "--untracked-files=all"]),
+      ].join("\n"),
+    ),
+  );
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
 describe("handoff command", () => {
+  test("registers --markdown as hidden deprecated compatibility syntax and omits it from help", () => {
+    const command = createCommand();
+    expect(command.options.find((option) => option.long === "--markdown")).toMatchObject({
+      deprecated: true,
+      hidden: true,
+    });
+
+    let help = "";
+    command.configureOutput({ writeOut: (value) => (help += value) }).outputHelp();
+    expect(help).not.toContain("--markdown");
+    expect(help).toContain("--json");
+  });
+
+  test("keeps explicit --markdown equivalent and non-mutating while warning only for deprecated syntax", async () => {
+    const workspaceRoot = await createWorkspace();
+    await writeFile(join(workspaceRoot, "repos", "repo-b", "dirty.txt"), "dirty\n");
+    const before = await captureWorkspaceGitState(workspaceRoot);
+
+    const omitted = await runArashi(workspaceRoot, ["handoff"]);
+    const explicit = await runArashi(workspaceRoot, ["handoff", "--markdown"]);
+
+    expect(omitted.exitCode).toBe(0);
+    expect(explicit.exitCode).toBe(omitted.exitCode);
+    expect(explicit.stdout).toBe(omitted.stdout);
+    expect(omitted.stderr).toBe("");
+    expect(explicit.stderr).toBe(
+      "⚠ --markdown is deprecated; omit --markdown and use the default Markdown output.\n",
+    );
+    expect(await captureWorkspaceGitState(workspaceRoot)).toEqual(before);
+  });
+
+  test("gives JSON precedence over deprecated --markdown without human leakage", async () => {
+    const workspaceRoot = await createWorkspace();
+    const before = await captureWorkspaceGitState(workspaceRoot);
+
+    const result = await runArashi(workspaceRoot, ["handoff", "--markdown", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).not.toContain("deprecated");
+    expect(result.stdout).not.toContain("# Arashi Handoff Report");
+    expect(parseJson(result.stdout)).toMatchObject({
+      command: "handoff",
+      ok: true,
+      schemaVersion: 1,
+    });
+    expect(await captureWorkspaceGitState(workspaceRoot)).toEqual(before);
+  });
+
   test("generates a Markdown workspace handoff report with supplied context", async () => {
     const workspaceRoot = await createWorkspace();
     const resolvedWorkspaceRoot = await realpath(workspaceRoot);

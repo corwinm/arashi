@@ -45,6 +45,7 @@ import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec } from "../lib/git.ts";
 import {
+  collectRepositoryFilterValues,
   EmptyRepositoryFiltersError,
   filterRepositories as filterWorkspaceRepositories,
   findEmptyRepositoryFilters,
@@ -114,6 +115,32 @@ const AUTO_LAUNCH_MODE: LaunchMode = "auto";
 const SESH_LAUNCH_MODE: LaunchMode = "sesh";
 const HERDR_LAUNCH_MODE: LaunchMode = "herdr";
 const TMUX_LAUNCH_MODE: LaunchMode = "tmux";
+
+const assertValidCreateRepositoryFilters = (
+  filterResult: ReturnType<typeof filterWorkspaceRepositories>,
+): void => {
+  if (filterResult.emptyFilters.length > ZERO) {
+    throw new EmptyRepositoryFiltersError(filterResult.emptyFilters);
+  }
+  if (filterResult.missing.length > ZERO) {
+    throw new RepositoryValidationError(
+      `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
+      filterResult.missing[ZERO] ?? "",
+    );
+  }
+  if (filterResult.unknownGroups.length > ZERO) {
+    throw new RepositoryValidationError(
+      `Unknown repository groups in --group filter: ${filterResult.unknownGroups.join(", ")}`,
+      filterResult.unknownGroups[ZERO] ?? "",
+    );
+  }
+  if (filterResult.emptyIntersection) {
+    throw new RepositoryValidationError(
+      "No repositories matched the combined --only/--group filters",
+      "",
+    );
+  }
+};
 
 const describeConflictScope = (existsLocally: boolean, existsRemotely: boolean): string => {
   if (existsLocally && existsRemotely) {
@@ -243,11 +270,11 @@ const createSummaryJsonData = ({
 });
 
 export interface CreateCommandOptions {
-  /** Only create worktrees in specified repositories (comma-separated) */
-  only?: string;
+  /** Only create worktrees in specified repositories */
+  only?: string[];
 
   /** Only create worktrees in repositories belonging to requested groups */
-  group?: string;
+  group?: string[];
 
   /** Interactively select repositories */
   interactive?: boolean;
@@ -314,6 +341,7 @@ export interface ResolvedCreateDefaults {
 }
 
 export interface CreateCommandDependencies {
+  resolveWorkspaceContext?: typeof resolveWorkspaceContext;
   resolveCreateInvocationContext?: (invocationPath?: string) => Promise<CreateInvocationContext>;
   resolveManagedIgnoreWorkspaceRoot?: (
     context: CreateInvocationContext,
@@ -773,8 +801,16 @@ export function createCommand(): Command {
   return new Command("create")
     .description("Create coordinated worktrees across multiple repositories")
     .argument("<branch>", "Branch name to create across repositories")
-    .option("--only <repos>", "Only create in specified repositories (comma-separated)")
-    .option("--group <groups>", "Only create in repositories in requested groups (comma-separated)")
+    .option(
+      "-o, --only <repos>",
+      "Only create in specified repositories (repeatable, comma-separated)",
+      collectRepositoryFilterValues,
+    )
+    .option(
+      "-g, --group <groups>",
+      "Only create in repositories in requested groups (repeatable, comma-separated)",
+      collectRepositoryFilterValues,
+    )
     .option("-i, --interactive", "Interactively select repositories")
     .option("--switch", "Switch to the created parent worktree after create")
     .option("--no-switch", "Disable configured create switch defaults for this invocation")
@@ -793,12 +829,12 @@ export function createCommand(): Command {
     )
     .option("--no-hooks", "Disable hook execution")
     .option("--no-progress", "Hide progress indicators")
-    .option("--dry-run", "Show what would be done without making changes")
+    .option("-n, --dry-run", "Show what would be done without making changes")
     .option(
       "--move-changes",
       "Move compatible uncommitted changes from the current workspace after create",
     )
-    .option("--json", "Return structured JSON output for non-interactive create operations")
+    .option("-j, --json", "Return structured JSON output for non-interactive create operations")
     .addOption(editorHostOption)
     .addHelpText(
       "after",
@@ -925,7 +961,7 @@ export async function executeCreate(
     throw new EmptyRepositoryFiltersError(emptyFilters);
   }
 
-  const workspaceContext = await resolveWorkspaceContext();
+  const workspaceContext = await (deps.resolveWorkspaceContext ?? resolveWorkspaceContext)();
   if (workspaceContext.mode === "standalone") {
     const standaloneDefaults = resolveCreateDefaults(options, workspaceContext.config);
     if (options.json && standaloneDefaults.shouldLaunch) {
@@ -1014,6 +1050,24 @@ export async function executeCreate(
   // 2. Discover repositories (child repos in reposDir)
   // Convert reposDir to absolute path since it may be relative (e.g., "./repos")
   const currentDir = context.executionPath;
+  if (options.only || options.group) {
+    const configuredRepositories = Object.entries(arashiConfig.repos).map(([name, repository]) => ({
+      groups: repository.groups,
+      name,
+      path: resolve(currentDir, arashiConfig.reposDir, repository.path),
+    }));
+    const parentName = basename(currentDir);
+    if (!configuredRepositories.some((repository) => repository.name === parentName)) {
+      configuredRepositories.push({
+        groups: arashiConfig.repos[parentName]?.groups,
+        name: parentName,
+        path: currentDir,
+      });
+    }
+    assertValidCreateRepositoryFilters(
+      filterWorkspaceRepositories(configuredRepositories, options.only, options.group),
+    );
+  }
   const createDefaults = resolveCreateDefaults(options, arashiConfig);
   if (options.json && createDefaults.shouldLaunch) {
     writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
@@ -1024,7 +1078,9 @@ export async function executeCreate(
     info("Post-create launch preview: tab");
   }
   const reposDirAbsolute = resolve(currentDir, arashiConfig.reposDir);
-  const discoveryResult = await discoverWorkspaceRepositories(reposDirAbsolute);
+  const discoveryResult = await discoverWorkspaceRepositories(reposDirAbsolute, {
+    quiet: options.json === true,
+  });
 
   // 3. Include the meta-repo itself in the repository list
   // The meta-repo needs to have its worktree created first, then child repos are nested inside it
@@ -1091,27 +1147,7 @@ export async function executeCreate(
     options.only,
     options.group,
   );
-  if (groupFilterResult.emptyFilters.length > ZERO) {
-    throw new EmptyRepositoryFiltersError(groupFilterResult.emptyFilters);
-  }
-  if (groupFilterResult.missing.length > ZERO) {
-    throw new RepositoryValidationError(
-      `Unknown repositories in --only filter: ${groupFilterResult.missing.join(", ")}`,
-      groupFilterResult.missing[ZERO] ?? "",
-    );
-  }
-  if (groupFilterResult.unknownGroups.length > ZERO) {
-    throw new RepositoryValidationError(
-      `Unknown repository groups in --group filter: ${groupFilterResult.unknownGroups.join(", ")}`,
-      groupFilterResult.unknownGroups[ZERO] ?? "",
-    );
-  }
-  if (groupFilterResult.emptyIntersection) {
-    throw new RepositoryValidationError(
-      "No repositories matched the combined --only/--group filters",
-      "",
-    );
-  }
+  assertValidCreateRepositoryFilters(groupFilterResult);
 
   const filteredRepositories = groupFilterResult.selected;
   let filterMode: RepositoryFilter["mode"] = "all";

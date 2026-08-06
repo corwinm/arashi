@@ -10,7 +10,7 @@ import { type SwitchMode, findWorkspaceRoot, loadWorkspaceRepositories } from ".
 import { getDirectiveContext, writeCdDirective } from "../lib/shell-directives.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
 import { unsupportedJsonModeError, writeJsonEnvelope } from "../lib/json-output.ts";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { exec } from "../lib/git.ts";
 import {
   detectManagedSwitchContext,
@@ -62,7 +62,25 @@ export interface SwitchCommandOptions {
   repos?: boolean;
   all?: boolean;
   defaultLaunch?: boolean;
+  ignoreConfiguredLauncher?: boolean;
   json?: boolean;
+  legacyNoCd?: boolean;
+  legacyNoDefaultLaunch?: boolean;
+  launch?: boolean;
+}
+
+class LegacyCompatibilityOption extends Option {
+  readonly #attributeName: string;
+
+  constructor(flags: string, description: string, attributeName: string) {
+    super(flags, description);
+    this.#attributeName = attributeName;
+    this.negate = false;
+  }
+
+  override attributeName(): string {
+    return this.#attributeName;
+  }
 }
 
 interface LaunchResolution {
@@ -147,6 +165,19 @@ export interface SwitchExecutionResult {
 }
 
 export function createCommand(): Command {
+  const deprecatedNoCd = new LegacyCompatibilityOption(
+    "--no-cd",
+    "Deprecated compatibility spelling for --launch",
+    "legacyNoCd",
+  ).hideHelp();
+  const deprecatedNoDefaultLaunch = new LegacyCompatibilityOption(
+    "--no-default-launch",
+    "Deprecated compatibility spelling for --ignore-configured-launcher",
+    "legacyNoDefaultLaunch",
+  ).hideHelp();
+  (deprecatedNoCd as Option & { deprecated?: boolean }).deprecated = true;
+  (deprecatedNoDefaultLaunch as Option & { deprecated?: boolean }).deprecated = true;
+
   return new Command("switch")
     .description("Switch to an existing worktree using explicit, configured, or contextual modes")
     .argument("[filter]", "Filter targets by branch name or worktree path")
@@ -156,15 +187,20 @@ export function createCommand(): Command {
     .option("--herdr", "Open or focus the selected worktree in Herdr")
     .option("--tab", "Opens the selected worktree in a tab and bypasses configured launch defaults")
     .option("--cd", "Change the current shell directory when shell integration is active")
-    .option("--no-cd", "Disable parent-shell directory switching for this invocation")
+    .option("--launch", "Launch the selected worktree while preserving a configured launcher")
+    .addOption(deprecatedNoCd)
     .option("--vscode", "Open the selected worktree in VS Code")
     .option("--cursor", "Open the selected worktree in Cursor")
     .option("--kiro", "Open the selected worktree in Kiro")
-    .option("--no-default-launch", "Bypass a configured sesh or Herdr mode for this invocation")
+    .option(
+      "--ignore-configured-launcher",
+      "Bypass a configured sesh or Herdr launcher for this invocation",
+    )
+    .addOption(deprecatedNoDefaultLaunch)
     .option("--repos", "Use child repositories only")
     .option("--all", "Use both parent and child repositories")
     .option(
-      "--json",
+      "-j, --json",
       "Return a structured unsupported-mode error instead of launching or switching",
     )
     .addHelpText(
@@ -173,7 +209,7 @@ export function createCommand(): Command {
 Examples:
   $ arashi switch
   $ arashi switch --repos
-  $ arashi switch --no-default-launch
+  $ arashi switch --ignore-configured-launcher
   $ arashi switch --all feature-auth
   $ arashi switch --cursor feature-auth
   $ arashi switch --path /path/to/worktree
@@ -181,7 +217,7 @@ Examples:
   $ arashi switch repo-a --sesh
 
 Configured modes: auto | cd | launch | sesh | herdr
-Precedence: explicit launcher flags, --cd/--no-cd, configured mode, then automatic context detection.
+Precedence: explicit launcher flags, --cd/--launch, configured mode, then automatic context detection.
 By default, launch opens a new OS window or managed independent-session equivalent.
 --tab requests a true tab or equivalent; unsupported mappings fail without opening a window.
 `,
@@ -192,6 +228,7 @@ By default, launch opens a new OS window or managed independent-session equivale
           writeJsonEnvelope(unsupportedJsonModeError("switch", "launch"));
           process.exit(USAGE_EXIT_CODE);
         }
+        validateSwitchOptions(options);
         await executeSwitch(filter, options);
         process.exit(SUCCESS_EXIT_CODE);
       } catch (error) {
@@ -224,6 +261,8 @@ export async function executeSwitch(
     writeJsonEnvelope(unsupportedJsonModeError("switch", "launch"));
     return USAGE_EXIT_CODE;
   }
+  validateSwitchOptions(options);
+  emitSwitchDeprecationWarnings(options);
   const resolveWorkspaceRoot = deps.findWorkspaceRoot ?? findWorkspaceRoot;
   const resolveWorkspaceRepositories = deps.loadWorkspaceRepositories ?? loadWorkspaceRepositories;
   const discoverCandidates = deps.discoverSwitchCandidates ?? discoverSwitchCandidates;
@@ -662,19 +701,45 @@ const buildPathNoMatchMessage = (filter: string | undefined): string => {
   return `No worktree exists at exact path \`${resolve(filter.trim())}\`. Run \`arashi list\` to see available worktree paths.`;
 };
 
+const validateSwitchOptions = (options: SwitchCommandOptions): void => {
+  const explicitLauncher = resolveExplicitLauncher(options);
+  const hasLaunchIntent = Boolean(
+    options.launch === true || hasLegacyNoCd(options) || options.tab === true || explicitLauncher,
+  );
+  if (options.cd === true && hasLaunchIntent) {
+    throw new SwitchCommandError(
+      "Conflicting switch behavior overrides provided (--cd with an explicit launch override). Choose either parent-shell switching or a launch target.",
+      SwitchCommandErrorCode.CONFLICTING_SWITCH_OPTIONS,
+    );
+  }
+};
+
+const emitSwitchDeprecationWarnings = (options: SwitchCommandOptions): void => {
+  if (hasLegacyNoCd(options)) {
+    warn("--no-cd is deprecated; use --launch instead.");
+  }
+  if (hasLegacyNoDefaultLaunch(options)) {
+    warn("--no-default-launch is deprecated; use --ignore-configured-launcher instead.");
+  }
+};
+
+const hasLegacyNoCd = (options: SwitchCommandOptions): boolean =>
+  options.legacyNoCd === true || options.cd === false;
+
+const hasLegacyNoDefaultLaunch = (options: SwitchCommandOptions): boolean =>
+  options.legacyNoDefaultLaunch === true || options.defaultLaunch === false;
+
 export const resolveSwitchResolution = ({
   configMode,
   managedContextActive,
   options,
   shellIntegrationActive,
 }: SwitchResolutionInput): SwitchResolution => {
+  validateSwitchOptions(options);
   const explicitLauncher = resolveExplicitLauncher(options);
-  if (options.cd === true && (explicitLauncher || options.tab === true)) {
-    throw new SwitchCommandError(
-      "Conflicting switch behavior overrides provided (--cd with an explicit launch override). Choose either parent-shell switching or a launch target.",
-      SwitchCommandErrorCode.CONFLICTING_SWITCH_OPTIONS,
-    );
-  }
+  const hasLaunchIntent = options.launch === true || hasLegacyNoCd(options);
+  const ignoreConfiguredLauncher =
+    options.ignoreConfiguredLauncher === true || hasLegacyNoDefaultLaunch(options);
 
   const configLaunchMode: LaunchMode | undefined =
     configMode === SESH_LAUNCH_MODE || configMode === HERDR_LAUNCH_MODE ? configMode : undefined;
@@ -686,12 +751,18 @@ export const resolveSwitchResolution = ({
   return {
     behavior: resolveSwitchBehavior({
       configMode: configBehaviorMode,
-      hasExplicitLaunchOverride: explicitLauncher !== undefined || options.tab === true,
+      hasExplicitLaunchOverride:
+        explicitLauncher !== undefined || options.tab === true || hasLaunchIntent,
       managedContextActive,
       options,
       shellIntegrationActive,
     }),
-    launch: resolveLaunchOptions(options, configLaunchMode, explicitLauncher),
+    launch: resolveLaunchOptions(
+      options,
+      configLaunchMode,
+      explicitLauncher,
+      ignoreConfiguredLauncher,
+    ),
   };
 };
 
@@ -699,6 +770,7 @@ const resolveLaunchOptions = (
   options: SwitchCommandOptions,
   configLaunchMode: LaunchMode | undefined,
   explicitLauncher: SupportedIde | "tmux" | "sesh" | "herdr" | undefined,
+  ignoreConfiguredLauncher: boolean,
 ): LaunchResolution => {
   const disposition: LaunchDisposition = options.tab === true ? "tab" : "window";
   if (explicitLauncher === "tmux") {
@@ -721,7 +793,7 @@ const resolveLaunchOptions = (
     configValue: configLaunchMode,
     explicitValue: SESH_LAUNCH_MODE,
     hasExplicitValue: explicitLauncher === SESH_LAUNCH_MODE,
-    optOut: options.defaultLaunch === false || options.tab === true,
+    optOut: ignoreConfiguredLauncher || options.tab === true,
   });
 
   if (resolvedLaunchMode.value === HERDR_LAUNCH_MODE) {

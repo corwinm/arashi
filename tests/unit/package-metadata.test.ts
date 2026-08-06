@@ -13,6 +13,7 @@ describe("npm package metadata", () => {
     expect(pkg.files).toContain("bin/arashi.bat");
     expect(pkg.files).toContain("bin/arashi.ps1");
     expect(pkg.files).toContain("bin/install-binary.js");
+    expect(pkg.files).toContain("bin/update-options.js");
     expect(pkg.files).not.toContain("scripts/postinstall.js");
   });
 });

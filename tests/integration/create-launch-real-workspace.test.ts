@@ -188,7 +188,7 @@ describe("configured create launch in a real workspace", () => {
     expect(configuredResult.exitCode).not.toBe(0);
     expect(configuredOutput).toContain("Command-T");
     expect(configuredOutput).toContain("arashi switch --cd");
-    expect(configuredOutput).toContain("arashi switch --no-cd --no-default-launch");
+    expect(configuredOutput).toContain("arashi switch --launch --ignore-configured-launcher");
     expect(await readFile(configuredConfigPath, "utf8")).toBe(configBefore);
     expect(
       (await runCapture(configured, ["git", "branch", "--list", "feature/configured-tab"])).stdout,

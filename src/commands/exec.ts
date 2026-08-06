@@ -18,7 +18,11 @@ import {
   findConfiguredWorkspaceRoots,
 } from "../lib/workspace-context.ts";
 import { Command } from "commander";
-import { EmptyRepositoryFiltersError, filterRepositories } from "../lib/repo-filter.ts";
+import {
+  collectRepositoryFilterValues,
+  EmptyRepositoryFiltersError,
+  filterRepositories,
+} from "../lib/repo-filter.ts";
 import { normalizeSpawnEnvironment } from "../lib/shell-directives.ts";
 
 const ZERO = 0;
@@ -382,14 +386,14 @@ export function createCommand(): Command {
     .description("Run a command once per selected managed repository")
     .argument("[command...]", "Command to run after --")
     .option(
-      "--only <repo>",
+      "-o, --only <repo>",
       "Only include a specific repository (repeatable)",
-      (value, previous: string[] = []) => [...previous, value],
+      collectRepositoryFilterValues,
     )
     .option(
-      "--group <group>",
+      "-g, --group <group>",
       "Only include repositories in the requested group (repeatable)",
-      (value, previous: string[] = []) => [...previous, value],
+      collectRepositoryFilterValues,
     )
     .option("--dirty", "Only include repositories with uncommitted changes")
     .option(
@@ -398,7 +402,7 @@ export function createCommand(): Command {
       String(DEFAULT_JOBS),
     )
     .option("--fail-fast", "Stop starting new commands after the first failure")
-    .option("--json", "Output result as JSON")
+    .option("-j, --json", "Output result as JSON")
     .allowUnknownOption(true)
     .action(async (childCommand: string[], options: ExecCommandOptions) => {
       try {

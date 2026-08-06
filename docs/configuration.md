@@ -157,15 +157,17 @@ The switch-only `launchMode` and `launch_mode` fields are accepted for a bounded
 
 Equal `launchMode` and `launch_mode` aliases collapse to one value; different aliases are rejected. Accepted legacy fields emit one warning with the exact guidance `use defaults.switch.mode: "<replacement>" instead`. Migration warnings are written to stderr, so JSON stdout remains one structured document. Rejected combinations name the conflicting fields and values and stop before target selection or mutation.
 
+The CLI spellings `--no-cd` and `--no-default-launch` remain accepted throughout Arashi 1.x as deprecated compatibility aliases for `--launch` and `--ignore-configured-launcher`, respectively. They are hidden from normal help, emit human-only migration warnings on stderr, and are not preferred usage. Their earliest removal is Arashi 2.0 and requires a separately approved breaking-change issue.
+
 ## Precedence Rules
 
 For `arashi create`, reject `--sesh` plus `--herdr` first. Otherwise explicit `--sesh` / `--herdr` wins (and implies launch), followed by `--tab` / `--launch`, `--no-launch`, the matching configured scope, and built-in `none`. `--tab` bypasses the matching configured scope, implies launch and switch, and remains subordinate to an explicit launcher selector. `--switch` / `--no-switch` resolves independently when tab is absent, but launch implies switch. An editor-hosted create uses only its matching scope and does not fall back to terminal or another editor scope.
 
-For `arashi switch`, the effective order is: Explicit launcher flags > `--cd` / `--no-cd` > configured mode > automatic context detection. Conflicting explicit launchers, or `--cd` combined with any explicit launcher, are rejected before switching.
+For `arashi switch`, the effective order is: Explicit launcher flags > `--cd` / `--launch` > configured mode > automatic context detection. Conflicting explicit launchers, or `--cd` combined with any launch intent, are rejected before switching.
 
 For switch, `--tab` bypasses configured `sesh` or `herdr` launch defaults and uses automatic launcher resolution. An explicit launcher selector remains authoritative and composes with tab disposition.
 
-`--tmux` is a per-invocation explicit launcher for both `switch` and `create`; it is not part of either persisted mode vocabulary. It requires `TMUX` to be non-empty after trimming and does not fall back when the prerequisite or tmux subprocess fails. For switch, `--tmux` conflicts with `--cd`, `--sesh`, `--herdr`, `--vscode`, `--cursor`, and `--kiro`; `--tmux` + `--no-cd` and `--tmux` + `--no-default-launch` remain valid because the explicit launcher wins. For create, `--tmux` conflicts with `--sesh` and `--herdr`, implies launch and switch, and overrides `--no-launch` and `--no-switch`. JSON mode rejects explicit tmux before conflict or context validation and before mutation.
+`--tmux` is a per-invocation explicit launcher for both `switch` and `create`; it is not part of either persisted mode vocabulary. It requires `TMUX` to be non-empty after trimming and does not fall back when the prerequisite or tmux subprocess fails. For switch, `--tmux` conflicts with `--cd`, `--sesh`, `--herdr`, `--vscode`, `--cursor`, and `--kiro`; `--tmux` + `--launch` and `--tmux` + `--ignore-configured-launcher` remain valid because the explicit launcher wins. For create, `--tmux` conflicts with `--sesh` and `--herdr`, implies launch and switch, and overrides `--no-launch` and `--no-switch`. JSON mode rejects explicit tmux before conflict or context validation and before mutation.
 
 Across command defaults generally, Arashi resolves values in this order:
 
@@ -180,5 +182,6 @@ Examples:
 - `arashi create feature-auth --no-launch` disables configured create launch defaults for that run.
 - Extension-driven `arashi create` uses `defaults.editors.<host>.create` when present and otherwise skips post-create defaults.
 - `arashi switch feature-auth --cd` overrides config to request parent-shell directory switching for that run.
-- `arashi switch feature-auth --no-cd` forces launch behavior for that run even when switch defaults prefer `cd`.
-- `arashi switch --no-default-launch` bypasses a configured `sesh` or `herdr` mode for that run; it does not erase configured `auto`, `cd`, or `launch` behavior.
+- `arashi switch feature-auth --launch` forces launch behavior for that run even when switch defaults prefer `cd`, while preserving a configured launcher.
+- `arashi switch --ignore-configured-launcher` bypasses a configured `sesh` or `herdr` mode for that run; it does not erase configured `auto`, `cd`, or `launch` behavior.
+- `arashi switch --launch --ignore-configured-launcher` forces generic automatic launch.

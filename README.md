@@ -137,7 +137,7 @@ Arashi currently provides these commands:
 - `arashi status`
 - `arashi remove <branch|path>`
 - `arashi prune [--dry-run]` - clean stale Git worktree metadata
-- `arashi switch [filter] [--repos|--all] [--tab] [--cd|--no-cd] [--tmux|--sesh|--herdr] [--no-default-launch]`
+- `arashi switch [filter] [--repos|--all] [--tab] [--cd|--launch] [--tmux|--sesh|--herdr] [--ignore-configured-launcher]`
 - `arashi shell init <bash|zsh|fish>`
 - `arashi shell install`
 - `arashi pull`
@@ -165,10 +165,12 @@ arashi switch --repos feature-auth-refresh  # child repo worktrees in current wo
 arashi switch --all feature-auth-refresh    # all repos
 arashi switch --repos docs                  # repo-name matching in child repos
 arashi switch --cd feature-auth-refresh     # parent-shell cd when shell integration is active
+arashi switch --launch feature-auth-refresh # force launch while preserving a configured launcher
 arashi switch --tmux feature-auth-refresh   # force a new plain tmux window
 arashi switch --herdr feature-auth-refresh  # open or focus a persistent Herdr workspace
 arashi switch --tab feature-auth-refresh    # request a true tab or managed equivalent
-arashi switch --no-default-launch           # bypass configured sesh/Herdr mode once
+arashi switch --ignore-configured-launcher  # bypass configured sesh/Herdr mode once
+arashi switch --launch --ignore-configured-launcher # force generic automatic launch
 ```
 
 Explicit `--tmux` is a per-invocation launcher override for `create` and `switch`; it is not a persisted configuration mode. It requires an active tmux context whose `TMUX` value is non-empty after trimming, uses the selected worktree path as one argv-safe `tmux new-window -c` argument, and does not fall back to another launcher when the prerequisite or launch fails. On `create`, it implies both launch and switch, while validation failures occur before worktree mutation.
@@ -338,7 +340,7 @@ Example config header:
 
 `defaults.switch.mode` accepts `auto` | `cd` | `launch` | `sesh` | `herdr`. Contextual `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE → managed Kitty, then uses parent-shell `cd` when shell integration is active, and otherwise follows terminal/platform launch fallback. An absent mode preserves the built-in automatic `launch` behavior rather than newly preferring `cd`.
 
-Explicit launcher flags take precedence over `--cd` / `--no-cd`, which take precedence over the configured mode and automatic context detection. `--no-default-launch` bypasses only configured `sesh` or `herdr`. `--herdr` remains available on both `create` and `switch`; Herdr launch uses `herdr worktree open` with the Git-resolved non-bare main checkout and selected worktree.
+Explicit launcher flags take precedence over `--cd` / `--launch`, which take precedence over the configured mode and automatic context detection. `--launch` forces launch while preserving a configured launcher. `--ignore-configured-launcher` bypasses only configured `sesh` or `herdr`; combine both canonical flags to force generic automatic launch. `--herdr` remains available on both `create` and `switch`; Herdr launch uses `herdr worktree open` with the Git-resolved non-bare main checkout and selected worktree.
 
 Legacy switch-only `launchMode` and `launch_mode` fields remain readable for a bounded compatibility window. Arashi warns with the exact replacement `defaults.switch.mode` on stderr; migrate promptly. Ambiguous `cd` plus an explicit legacy launcher and conflicting legacy aliases are rejected.
 

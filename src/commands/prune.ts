@@ -271,9 +271,9 @@ export const executePrune = async (options: PruneOptions): Promise<number> => {
 export const createCommand = (): Command =>
   new Command("prune")
     .description("Clean stale Git worktree metadata across the workspace")
-    .option("--dry-run", "Report stale worktree metadata without pruning")
+    .option("-n, --dry-run", "Report stale worktree metadata without pruning")
     .option("--expire <time>", "Git worktree prune expiry time", "now")
-    .option("--json", "Output a structured JSON envelope")
+    .option("-j, --json", "Output a structured JSON envelope")
     .addHelpText(
       "after",
       `

@@ -5,7 +5,7 @@ import {
   fetchLatestRelease,
   runDirectUpdate,
 } from "../../../src/commands/update.ts";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 interface MockResponse {
   json: () => Promise<{ html_url: string; tag_name: string }>;
@@ -55,6 +55,69 @@ describe("update command", () => {
       htmlUrl: "https://github.com/corwinm/arashi/releases/tag/v2.0.0",
       version: "2.0.0",
     });
+  });
+
+  test("exported direct updater rejects conflicting inspection modes before release lookup", async () => {
+    let lookupCount = 0;
+    let mutationCount = 0;
+    await expect(
+      runDirectUpdate(
+        { check: true, dryRun: true },
+        {
+          fetchImpl: async () => {
+            lookupCount += 1;
+            throw new Error("network sentinel");
+          },
+          spawnSyncImpl: (() => {
+            mutationCount += 1;
+            return { status: 0 };
+          }) as unknown as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+        },
+      ),
+    ).rejects.toMatchObject({ code: "UPDATE_INSPECTION_CONFLICT" });
+    expect(lookupCount).toBe(0);
+    expect(mutationCount).toBe(0);
+  });
+
+  test.each([
+    ["human long", ["--check", "--dry-run"], false],
+    ["human short", ["--check", "-n"], false],
+    ["JSON long", ["--check", "--dry-run", "--json"], true],
+    ["JSON short", ["--check", "-n", "-j"], true],
+    ["JSON apply long", ["--check", "--dry-run", "--json", "--yes"], true],
+    ["JSON apply short", ["--check", "-n", "-j", "-y"], true],
+  ])("Commander rejects conflicting inspection modes in %s mode", async (_name, argv, json) => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const originalExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const output = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk).trim());
+      return true;
+    });
+    const error = vi.spyOn(console, "error").mockImplementation((...values) => {
+      stderr.push(values.map(String).join(" "));
+    });
+    try {
+      await createCommand("1.0.0").parseAsync(argv as string[], { from: "user" });
+      expect(process.exitCode).toBe(2);
+      if (json) {
+        expect(stderr).toEqual([]);
+        expect(stdout).toHaveLength(1);
+        expect(JSON.parse(stdout[0])).toMatchObject({
+          command: "update",
+          error: { code: "UPDATE_INSPECTION_CONFLICT" },
+          ok: false,
+        });
+      } else {
+        expect(stdout).toEqual([]);
+        expect(stderr.join("\n")).toContain("--check cannot be combined with --dry-run");
+      }
+    } finally {
+      output.mockRestore();
+      error.mockRestore();
+      process.exitCode = originalExitCode;
+    }
   });
 
   test("builds installer update plan for POSIX direct binaries", () => {
@@ -110,6 +173,36 @@ describe("update command", () => {
     expect(output).toContain("official POSIX installer");
     expect(output).toContain("/home/user/.arashi/bin");
     expect(output).toContain("Dry run");
+  });
+
+  test("bare JSON is inspection-only in an interactive direct update", async () => {
+    const logs: string[] = [];
+    let mutationCount = 0;
+    let promptCount = 0;
+
+    await runDirectUpdate(
+      { json: true },
+      {
+        confirmImpl: async () => {
+          promptCount += 1;
+          return { status: "ok", value: true };
+        },
+        currentVersion: "1.0.0",
+        execPath: "/home/user/.arashi/bin/arashi",
+        fetchImpl: async () => createResponse("2.0.0") as unknown as Response,
+        isInteractive: true,
+        log: (message) => logs.push(message),
+        platform: "linux",
+        spawnSyncImpl: (() => {
+          mutationCount += 1;
+          return { status: 0 };
+        }) as unknown as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(promptCount).toBe(0);
+    expect(mutationCount).toBe(0);
+    expect(logs).toContain("JSON inspection: no changes made.");
   });
 
   test("prompts before running official installer in interactive direct-binary updates", async () => {

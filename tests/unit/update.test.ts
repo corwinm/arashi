@@ -4,6 +4,7 @@ import {
   detectNpmManagedInstall,
   fetchLatestPackageVersion,
   formatManualUpdateGuidance,
+  parseUpdateArgs,
   runNpmManagedUpdate,
   selectPackageManagerCommand,
 } from "../../bin/update.js";
@@ -51,6 +52,27 @@ const selectCommand = selectPackageManagerCommand as (options?: {
 }) => { args: string[]; command: string; label: string } | null;
 
 describe("update helpers", () => {
+  test("parses update JSON and dry-run aliases with long-form parity", () => {
+    expect(parseUpdateArgs(["-j", "-n"])).toEqual(parseUpdateArgs(["--json", "--dry-run"]));
+    expect(parseUpdateArgs(["-jn"])).toEqual(parseUpdateArgs(["--json", "--dry-run"]));
+    expect(parseUpdateArgs(["-nj"])).toEqual(parseUpdateArgs(["--dry-run", "--json"]));
+    expect(parseUpdateArgs(["-jy"])).toEqual(parseUpdateArgs(["--json", "--yes"]));
+    expect(parseUpdateArgs(["-xy"])).toMatchObject({
+      json: false,
+      unknownOptions: ["-xy"],
+      yes: false,
+    });
+    expect(parseUpdateArgs(["--bogus"])).toMatchObject({ unknownOptions: ["--bogus"] });
+    expect(parseUpdateArgs(["--", "-xy"])).toMatchObject({
+      unknownOptions: [],
+      yes: false,
+    });
+    expect(parseUpdateArgs(["-j", "--json", "-n", "--dry-run"])).toMatchObject({
+      dryRun: true,
+      json: true,
+    });
+  });
+
   test("compares semantic versions", () => {
     expect(compareVersions("1.2.3", "1.2.4")).toBe(-1);
     expect(compareVersions("v2.0.0", "1.9.9")).toBe(1);
@@ -214,6 +236,167 @@ describe("update helpers", () => {
 });
 
 describe("npm-managed update flow", () => {
+  test("bare JSON is inspection-only in an interactive npm wrapper", async () => {
+    const stdout: string[] = [];
+    let mutationCount = 0;
+    let promptCount = 0;
+    const originalIsTTY = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    try {
+      const exitCode = await runNpmManagedUpdate(["--json"], {
+        env: { npm_config_user_agent: "npm/10" },
+        installBinaryImpl: async () => {
+          mutationCount += 1;
+          return {};
+        },
+        latestVersion: "2.0.0",
+        log: (line: string) => stdout.push(line),
+        metadata: { name: "arashi", version: "1.0.0" },
+        promptImpl: async () => {
+          promptCount += 1;
+          return true;
+        },
+        rootDir: "/pkg",
+        spawnSyncImpl: () => {
+          mutationCount += 1;
+          return { status: 0 };
+        },
+      });
+
+      expect(exitCode).toBe(0);
+      expect(promptCount).toBe(0);
+      expect(mutationCount).toBe(0);
+      expect(stdout).toHaveLength(1);
+      expect(JSON.parse(stdout[0])).toMatchObject({
+        command: "update",
+        data: { messages: expect.arrayContaining(["JSON inspection: no changes made."]) },
+        ok: true,
+      });
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalIsTTY });
+    }
+  });
+
+  test.each([
+    ["separate", ["-j", "--yes"]],
+    ["grouped", ["-jy"]],
+  ])("JSON apply mode is rejected once without lookup or mutation (%s)", async (_label, argv) => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    let lookupCount = 0;
+    let mutationCount = 0;
+    const exitCode = await runNpmManagedUpdate(argv, {
+      error: (line: string) => stderr.push(line),
+      fetchImpl: async () => {
+        lookupCount += 1;
+        throw new Error("network sentinel");
+      },
+      installBinaryImpl: async () => {
+        mutationCount += 1;
+        return {};
+      },
+      log: (line: string) => stdout.push(line),
+      metadata: { name: "arashi", version: "1.0.0" },
+      rootDir: "/pkg",
+      spawnSyncImpl: () => {
+        mutationCount += 1;
+        return { status: 0 };
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(lookupCount).toBe(0);
+    expect(mutationCount).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout).toHaveLength(1);
+    expect(JSON.parse(stdout[0])).toMatchObject({
+      command: "update",
+      error: {
+        code: "JSON_UNSUPPORTED_FOR_MODE",
+        details: { mode: "installer-apply" },
+        message: "JSON output is not supported for installer-apply.",
+      },
+      ok: false,
+    });
+  });
+
+  test.each([
+    ["human long", ["--check", "--dry-run"], false],
+    ["human short", ["--check", "-n"], false],
+    ["JSON long", ["--check", "--dry-run", "--json"], true],
+    ["JSON short", ["--check", "-n", "-j"], true],
+    ["JSON grouped", ["--check", "-jn"], true],
+    ["JSON apply long", ["--check", "--dry-run", "--json", "--yes"], true],
+    ["JSON apply short", ["--check", "-n", "-j", "-y"], true],
+  ])(
+    "rejects conflicting inspection modes before lookup or mutation in %s mode",
+    async (_name, argv, json) => {
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      let lookupCount = 0;
+      let mutationCount = 0;
+      const exitCode = await runNpmManagedUpdate(argv as string[], {
+        error: (line: string) => stderr.push(line),
+        fetchImpl: async () => {
+          lookupCount += 1;
+          throw new Error("network sentinel");
+        },
+        installBinaryImpl: async () => {
+          mutationCount += 1;
+          return {};
+        },
+        log: (line: string) => stdout.push(line),
+        metadata: { name: "arashi", version: "1.0.0" },
+        rootDir: "/pkg",
+        spawnSyncImpl: () => {
+          mutationCount += 1;
+          return { status: 0 };
+        },
+      });
+
+      expect(exitCode).toBe(2);
+      expect(lookupCount).toBe(0);
+      expect(mutationCount).toBe(0);
+      if (json) {
+        expect(stderr).toEqual([]);
+        expect(stdout).toHaveLength(1);
+        expect(JSON.parse(stdout[0])).toMatchObject({
+          command: "update",
+          error: { code: "UPDATE_INSPECTION_CONFLICT" },
+          ok: false,
+          schemaVersion: 1,
+        });
+      } else {
+        expect(stdout).toEqual([]);
+        expect(stderr.join("\n")).toContain("--check cannot be combined with --dry-run");
+      }
+    },
+  );
+
+  test("rejects an invalid grouped update token before lookup or mutation", async () => {
+    const stderr: string[] = [];
+    let lookupCount = 0;
+    let mutationCount = 0;
+    const exitCode = await runNpmManagedUpdate(["-xy"], {
+      error: (line: string) => stderr.push(line),
+      fetchImpl: async () => {
+        lookupCount += 1;
+        throw new Error("lookup sentinel");
+      },
+      installBinaryImpl: async () => {
+        mutationCount += 1;
+        return {};
+      },
+      metadata: { name: "arashi", version: "1.0.0" },
+      rootDir: "/pkg",
+    });
+
+    expect(exitCode).toBe(2);
+    expect(lookupCount).toBe(0);
+    expect(mutationCount).toBe(0);
+    expect(stderr).toEqual(["Unknown option: -xy"]);
+  });
+
   test("check mode reports available update without mutating", async () => {
     const logs: string[] = [];
     let spawned = false;

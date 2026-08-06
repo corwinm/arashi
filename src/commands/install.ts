@@ -7,7 +7,7 @@ export const INSTALL_COMMAND_DESCRIPTION = "Install the npm-managed Arashi platf
 export function createCommand(): Command {
   return new Command("install")
     .description(INSTALL_COMMAND_DESCRIPTION)
-    .option("--json", "Output result as JSON")
+    .option("-j, --json", "Output result as JSON")
     .action((options: { json?: boolean }) => {
       const message = "No npm-managed binary installation is needed in this direct binary context.";
       const npmEntrypointMessage =

@@ -1,7 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { filterRepositories as filterConfigRepositories } from "../../src/lib/config/filter-repos.ts";
 import type { WorkspaceRepository } from "../../src/lib/config.ts";
-import { filterRepositories, normalizeFilterList } from "../../src/lib/repo-filter.ts";
+import {
+  collectRepositoryFilterValues,
+  filterRepositories,
+  normalizeFilterList,
+} from "../../src/lib/repo-filter.ts";
 
 const repositories: WorkspaceRepository[] = [
   { groups: ["core", "agents"], name: "arashi", path: "/workspace/repos/arashi" },
@@ -17,6 +21,14 @@ describe("normalizeFilterList", () => {
       "docs",
       "extensions",
     ]);
+  });
+
+  test("collects repeated option occurrences through the shared normalization boundary", () => {
+    const first = collectRepositoryFilterValues(" repo-a, repo-b ");
+    const mixed = collectRepositoryFilterValues("repo-c,repo-a,,", first);
+
+    expect(mixed).toEqual(["repo-a", "repo-b", "repo-c"]);
+    expect(collectRepositoryFilterValues(" , ")).toEqual([]);
   });
 });
 

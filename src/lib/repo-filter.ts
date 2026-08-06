@@ -51,6 +51,10 @@ export function normalizeFilterList(values?: string | string[]): string[] {
   return result;
 }
 
+export function collectRepositoryFilterValues(value: string, previous: string[] = []): string[] {
+  return normalizeFilterList([...previous, value]);
+}
+
 export function findEmptyRepositoryFilters(
   only?: string | string[],
   groups?: string | string[],

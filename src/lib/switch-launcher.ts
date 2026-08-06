@@ -283,7 +283,7 @@ export function resolveLaunchPlan(
     if (launcher === "terminal") {
       supported = false;
       reason =
-        "Terminal.app cannot safely create a true tab through its supported automation. Press Command-T, then run `arashi switch --cd` in the new tab (requires active Arashi shell integration). To force normal automatic launch resolution, run `arashi switch --no-cd --no-default-launch`; when automatic launcher resolution selects Terminal.app, it opens a new window.";
+        "Terminal.app cannot safely create a true tab through its supported automation. Press Command-T, then run `arashi switch --cd` in the new tab (requires active Arashi shell integration). To force normal automatic launch resolution, run `arashi switch --launch --ignore-configured-launcher`; when automatic launcher resolution selects Terminal.app, it opens a new window.";
     } else if (
       launcher === "ide" ||
       launcher === "git-bash" ||

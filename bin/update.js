@@ -5,16 +5,15 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { getPlatformInfo, installBinary, MANUAL_INSTALL_URL, PACKAGE_NAME } from "./install-binary.js";
 import { prepareSpawnCommand } from "./prepare-spawn-command.js";
+import {
+  assertValidUpdateInspectionOptions,
+  parseUpdateArgs,
+  stringifyWrapperJsonEnvelope,
+} from "./update-options.js";
 
 export const UPDATE_COMMAND_DESCRIPTION = "Check for and apply Arashi updates";
 
-export function parseUpdateArgs(argv = []) {
-  return {
-    check: argv.includes("--check"),
-    dryRun: argv.includes("--dry-run"),
-    yes: argv.includes("--yes") || argv.includes("-y"),
-  };
-}
+export { parseUpdateArgs } from "./update-options.js";
 
 function normalizeVersion(version) {
   return String(version ?? "").trim().replace(/^v/, "").split("+")[0];
@@ -247,7 +246,7 @@ function defaultRootDir(binDir) {
   return join(binDir ?? fileURLToPath(new URL(".", import.meta.url)), "..");
 }
 
-export async function runNpmManagedUpdate(argv = [], options = {}) {
+async function runNpmManagedUpdateCore(argv = [], options = {}) {
   const flags = parseUpdateArgs(argv);
   const log = options.log ?? console.log;
   const errorLog = options.error ?? console.error;
@@ -302,6 +301,11 @@ export async function runNpmManagedUpdate(argv = [], options = {}) {
 
   if (flags.dryRun) {
     log("Dry run: no changes made.");
+    return 0;
+  }
+
+  if (flags.json) {
+    log("JSON inspection: no changes made.");
     return 0;
   }
 
@@ -384,11 +388,88 @@ export async function runNpmManagedUpdate(argv = [], options = {}) {
   }
 }
 
+export async function runNpmManagedUpdate(argv = [], options = {}) {
+  const flags = parseUpdateArgs(argv);
+  const log = options.log ?? console.log;
+  const errorLog = options.error ?? console.error;
+
+  try {
+    assertValidUpdateInspectionOptions(flags);
+  } catch (error) {
+    if (flags.json) {
+      log(
+        stringifyWrapperJsonEnvelope("update", {
+          error: { code: error.code, details: error.details, message: error.message },
+          ok: false,
+        }),
+      );
+    } else {
+      errorLog(error.message);
+    }
+    return 2;
+  }
+
+  if (flags.json && flags.yes) {
+    log(
+      stringifyWrapperJsonEnvelope("update", {
+        error: {
+          code: "JSON_UNSUPPORTED_FOR_MODE",
+          details: { mode: "installer-apply" },
+          message: "JSON output is not supported for installer-apply.",
+        },
+        ok: false,
+      }),
+    );
+    return 1;
+  }
+
+  if (!flags.json) return runNpmManagedUpdateCore(argv, options);
+
+  const messages = [];
+  const errors = [];
+  const exitCode = await runNpmManagedUpdateCore(argv, {
+    ...options,
+    error: (message) => errors.push(message),
+    log: (message) => messages.push(message),
+  });
+  if (exitCode === 0) {
+    log(stringifyWrapperJsonEnvelope("update", { data: { messages }, ok: true }));
+  } else {
+    log(
+      stringifyWrapperJsonEnvelope("update", {
+        error: {
+          code: "UPDATE_FAILED",
+          details: { messages },
+          message: errors.join("\n") || "Update failed.",
+        },
+        ok: false,
+      }),
+    );
+  }
+  return exitCode;
+}
+
 export async function runDirectBinaryUpdate(argv = [], options = {}) {
   const flags = parseUpdateArgs(argv);
   const log = options.log ?? console.log;
   const errorLog = options.error ?? console.error;
   const currentVersion = options.currentVersion;
+
+  try {
+    assertValidUpdateInspectionOptions(flags);
+  } catch (error) {
+    if (flags.json) {
+      log(
+        stringifyWrapperJsonEnvelope("update", {
+          error: { code: error.code, details: error.details, message: error.message },
+          ok: false,
+        }),
+      );
+    } else {
+      errorLog(error.message);
+    }
+    return 2;
+  }
 
   let release;
   try {

@@ -81,6 +81,49 @@ describe("npm JavaScript entrypoint", () => {
     expect(spawn.calls).toEqual([]);
   });
 
+  test("explicit install formats asynchronous failures inside the entrypoint", async () => {
+    const errors: string[] = [];
+    const exitCode = await runEntrypoint(["install"], {
+      error: (line: string) => errors.push(line),
+      installBinaryImpl: async () => {
+        await Promise.resolve();
+        throw new Error("async install sentinel");
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("✗ Failed to install arashi: async install sentinel");
+  });
+
+  test.each([["-j"], ["--json"], ["-j", "--json"]])(
+    "explicit install %s emits one JSON document and installs exactly once",
+    async (...flags) => {
+      const output: string[] = [];
+      let installCount = 0;
+      const exitCode = await runEntrypoint(["install", ...flags], {
+        installBinaryImpl: async () => {
+          installCount += 1;
+          return {
+            binaryPath: "/package/bin/arashi-linux-x64",
+            status: "installed",
+            version: "2.0.0",
+          };
+        },
+        log: (line: string) => output.push(line),
+      });
+
+      expect(exitCode).toBe(0);
+      expect(installCount).toBe(1);
+      expect(output).toHaveLength(1);
+      expect(JSON.parse(output[0])).toMatchObject({
+        command: "install",
+        ok: true,
+        schemaVersion: 1,
+      });
+    },
+  );
+
   test("explicit update is handled without spawning the native binary", async () => {
     const spawn = createSuccessfulSpawn();
     let installed = false;
@@ -105,6 +148,32 @@ describe("npm JavaScript entrypoint", () => {
     expect(installed).toBe(false);
     expect(spawn.calls).toEqual([]);
   });
+
+  test.each([["-j"], ["--json"], ["-j", "--json"]])(
+    "explicit update %s emits one JSON document and delegates exactly once",
+    async (...flags) => {
+      const output: string[] = [];
+      let lookupCount = 0;
+      const exitCode = await runEntrypoint(["update", "--check", ...flags], {
+        fetchImpl: async () => {
+          lookupCount += 1;
+          return { json: async () => ({ version: "2.0.0" }), ok: true };
+        },
+        log: (line: string) => output.push(line),
+        metadata: { name: "arashi", version: "1.0.0" },
+        rootDir: "/package",
+      });
+
+      expect(exitCode).toBe(0);
+      expect(lookupCount).toBe(1);
+      expect(output).toHaveLength(1);
+      expect(JSON.parse(output[0])).toMatchObject({
+        command: "update",
+        ok: true,
+        schemaVersion: 1,
+      });
+    },
+  );
 
   test("ensureInstalled is a no-op when a runnable binary already exists", async () => {
     let installCalled = false;

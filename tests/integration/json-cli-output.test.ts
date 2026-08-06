@@ -624,23 +624,26 @@ describe("CLI JSON output contract", () => {
     }
   });
 
-  test("install --json returns a structured success envelope", async () => {
-    const cwd = await makeTempDir();
+  test.each([["--json"], ["-j"], ["-j", "--json"]])(
+    "install %s returns one structured success envelope",
+    async (...flags) => {
+      const cwd = await makeTempDir();
 
-    const result = await runArashi(cwd, ["install", "--json"]);
+      const result = await runArashi(cwd, ["install", ...flags]);
 
-    expect(result.exitCode).toBe(0);
-    const parsed = parseSingleJsonDocument(result.stdout);
-    expect(parsed).toMatchObject({
-      command: "install",
-      data: {
-        releasesUrl: "https://github.com/corwinm/arashi/releases",
-      },
-      ok: true,
-      schemaVersion: 1,
-      warnings: [],
-    });
-  });
+      expect(result.exitCode).toBe(0);
+      const parsed = parseSingleJsonDocument(result.stdout);
+      expect(parsed).toMatchObject({
+        command: "install",
+        data: {
+          releasesUrl: "https://github.com/corwinm/arashi/releases",
+        },
+        ok: true,
+        schemaVersion: 1,
+        warnings: [],
+      });
+    },
+  );
 
   test("init --json suppresses verbose human output", async () => {
     const cwd = await makeTempDir();
@@ -679,6 +682,60 @@ describe("CLI JSON output contract", () => {
     expect(parsed).toMatchObject({ command: "add", ok: true, schemaVersion: 1 });
     expect(jsonData(parsed).managedIgnore).toMatchObject({ changed: true, scope: "local" });
     expect(result.stderr).toBe("");
+  });
+
+  test("common JSON aliases preserve exact output, duplicate acceptance, and unsupported modes", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    const long = await runArashi(workspaceRoot, ["status", "--json"]);
+    const short = await runArashi(workspaceRoot, ["status", "-j"]);
+    const combined = await runArashi(workspaceRoot, ["status", "-j", "--json"]);
+
+    expect(short).toEqual(long);
+    expect(combined).toEqual(long);
+    expect(parseSingleJsonDocument(combined.stdout)).toMatchObject({
+      command: "status",
+      ok: true,
+    });
+
+    const unsupportedLong = await runArashi(workspaceRoot, ["switch", "--json"]);
+    const unsupportedShort = await runArashi(workspaceRoot, ["switch", "-j"]);
+    expect(unsupportedShort).toEqual(unsupportedLong);
+    expect(parseSingleJsonDocument(unsupportedShort.stdout)).toMatchObject({
+      command: "switch",
+      error: { code: "JSON_UNSUPPORTED_FOR_MODE" },
+      ok: false,
+    });
+  });
+
+  test("short and long dry-run aliases preserve exact non-mutating JSON behavior", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    const args = ["create", "feature-alias-dry-run", "--no-launch", "--no-switch"];
+    const long = await runArashi(workspaceRoot, [...args, "--dry-run", "--json"]);
+    const short = await runArashi(workspaceRoot, [...args, "-n", "-j"]);
+    const longDocument = parseSingleJsonDocument(long.stdout);
+    const shortDocument = parseSingleJsonDocument(short.stdout);
+    const longData = jsonData(longDocument);
+    const shortData = jsonData(shortDocument);
+
+    expect(short.exitCode).toBe(long.exitCode);
+    expect(short.stderr).toBe(long.stderr);
+    expect(longData.totalDuration).toEqual(expect.any(Number));
+    expect(shortData.totalDuration).toEqual(expect.any(Number));
+    expect({ ...shortDocument, data: { ...shortData, totalDuration: 0 } }).toEqual({
+      ...longDocument,
+      data: { ...longData, totalDuration: 0 },
+    });
+    expect(shortDocument).toMatchObject({
+      command: "create",
+      ok: true,
+    });
+    for (const repositoryPath of [
+      workspaceRoot,
+      join(workspaceRoot, "repos", "repo-a"),
+      join(workspaceRoot, "repos", "repo-b"),
+    ]) {
+      expect(await runGit(repositoryPath, ["branch", "--list", "feature-alias-dry-run"])).toBe("");
+    }
   });
 
   test("remove --json rejects interactive selection mode with one envelope", async () => {

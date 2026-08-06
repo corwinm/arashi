@@ -96,6 +96,8 @@ export interface DiscoveryOptions {
   excludePatterns?: string[];
   /** Setup script file patterns to detect (default: ["setup.sh"]) */
   setupScriptPatterns?: string[];
+  /** Suppress progress output for machine-readable callers */
+  quiet?: boolean;
 }
 
 /**
@@ -381,7 +383,7 @@ export const discoverRepositories = async (
 
   // T027: Add progress spinner
   const discoverySpinner = createSpinner("Discovering repositories...");
-  discoverySpinner.start();
+  if (!options.quiet) discoverySpinner.start();
 
   const scanDirectory = async (dirPath: string, depth: number): Promise<void> => {
     if (depth > maxDepth) {
@@ -437,7 +439,7 @@ export const discoverRepositories = async (
       repositoryLabel = "repository";
     }
 
-    discoverySpinner.succeed(`Found ${repositories.length} ${repositoryLabel}`);
+    if (!options.quiet) discoverySpinner.succeed(`Found ${repositories.length} ${repositoryLabel}`);
 
     repositories.sort(comparePaths);
     errors.sort(comparePaths);
@@ -451,7 +453,7 @@ export const discoverRepositories = async (
       workspacePath,
     };
   } catch (error) {
-    discoverySpinner.fail("Discovery failed");
+    if (!options.quiet) discoverySpinner.fail("Discovery failed");
     throw error;
   }
 };

@@ -1,6 +1,6 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -100,106 +100,324 @@ const parseJson = (stdout: string): Record<string, unknown> => {
   return JSON.parse(stdout) as Record<string, unknown>;
 };
 
+type SelectorCommand = "create" | "exec" | "pull" | "push" | "setup" | "status" | "sync";
+
+const selectorCommandArgs = (
+  command: SelectorCommand,
+  selectors: string[],
+  json: boolean,
+  suffix: string,
+): string[] => {
+  const jsonArgs = json ? ["--json"] : [];
+  switch (command) {
+    case "create":
+      return ["create", `feature/selector-${suffix}`, ...selectors, ...jsonArgs];
+    case "exec":
+      return ["exec", ...selectors, ...jsonArgs, "--", "pwd"];
+    case "push":
+      return ["push", ...selectors, "--dry-run", ...jsonArgs];
+    default:
+      return [command, ...selectors, ...jsonArgs];
+  }
+};
+
+const replaceChildrenWithSentinels = async (workspaceRoot: string): Promise<string[]> => {
+  const sentinels = [
+    join(workspaceRoot, "repos", "repo-a"),
+    join(workspaceRoot, "repos", "repo-b"),
+  ];
+  for (const path of sentinels) {
+    await rm(path, { force: true, recursive: true });
+    await writeFile(path, "repository operations must not reach this sentinel\n");
+  }
+  return sentinels;
+};
+
+const expectSentinelsUntouched = async (sentinels: string[]): Promise<void> => {
+  for (const path of sentinels) {
+    await expect(readFile(path, "utf8")).resolves.toBe(
+      "repository operations must not reach this sentinel\n",
+    );
+  }
+};
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
 describe("repository group command integration", () => {
-  test("all seven repository-filter consumers reject explicitly empty filters", async () => {
+  test("configured selector failures are fail-closed for every consumer in human and JSON modes", async () => {
+    const createWorkspaceRoot = await createWorkspace();
+    const sentinelWorkspaceRoot = await createWorkspace();
+    const sentinels = await replaceChildrenWithSentinels(sentinelWorkspaceRoot);
+    const commands: SelectorCommand[] = [
+      "create",
+      "exec",
+      "pull",
+      "push",
+      "setup",
+      "status",
+      "sync",
+    ];
+    const failures = [
+      {
+        human: "Unknown repositories in --only filter: missing",
+        name: "unknown-repository",
+        selectors: ["--only", "missing"],
+        syncHuman: "Repositories not found: missing",
+      },
+      {
+        human: "Unknown repository groups in --group filter: missing",
+        name: "unknown-group",
+        selectors: ["--group", "missing"],
+        syncHuman: "Unknown repository groups: missing",
+      },
+      {
+        human: "Explicitly empty repository filter: --only",
+        name: "explicit-empty",
+        selectors: ["--only", ","],
+        syncHuman: "Explicitly empty repository filter: --only",
+      },
+      {
+        human: "No repositories matched the combined --only/--group filters",
+        name: "empty-intersection",
+        selectors: ["--only", "repo-a", "--group", "docs"],
+        syncHuman: "No repositories matched the combined --only/--group filters",
+      },
+    ] as const;
+
+    for (const command of commands) {
+      for (const failure of failures) {
+        for (const json of [false, true]) {
+          const label = `${command}/${failure.name}/${json ? "json" : "human"}`;
+          const suffix = label.replaceAll("/", "-");
+          const expectedMessage = command === "sync" ? failure.syncHuman : failure.human;
+          const result = await runArashi(
+            command === "create" ? createWorkspaceRoot : sentinelWorkspaceRoot,
+            selectorCommandArgs(command, [...failure.selectors], json, suffix),
+          );
+          expect(result.exitCode, `${label}: ${result.stderr}${result.stdout}`).not.toBe(0);
+          if (json) {
+            expect(result.stderr, label).toBe("");
+            const envelope = parseJson(result.stdout);
+            expect(envelope, label).toMatchObject({
+              command,
+              error: { message: expectedMessage },
+              ok: false,
+            });
+            expect((envelope.error as { code: unknown }).code, label).toEqual(expect.any(String));
+          } else {
+            expect(result.stderr + result.stdout, label).toContain(expectedMessage);
+          }
+          if (command === "create") {
+            for (const repositoryPath of [
+              createWorkspaceRoot,
+              join(createWorkspaceRoot, "repos", "repo-a"),
+              join(createWorkspaceRoot, "repos", "repo-b"),
+            ]) {
+              expect(
+                await runGit(repositoryPath, ["branch", "--list", `feature/selector-${suffix}`]),
+              ).toBe("");
+            }
+          } else {
+            await expectSentinelsUntouched(sentinels);
+          }
+        }
+      }
+    }
+  }, 120_000);
+
+  test("status narrows to the exact child intersection while retaining parent short, verbose, and JSON reporting", async () => {
+    const workspaceRoot = await createWorkspace();
+    await rm(join(workspaceRoot, "repos", "repo-b", ".git"), { force: true, recursive: true });
+
+    const selectors = ["--only", "repo-a,repo-b", "--group", "core"];
+    const short = await runArashi(workspaceRoot, ["status", ...selectors, "--short"]);
+    expect(short.exitCode, short.stderr).toBe(0);
+    expect(short.stdout).toContain(`${workspaceRoot} (main):`);
+    expect(short.stdout).toContain(`${join(workspaceRoot, "repos", "repo-a")} (main):`);
+    expect(short.stdout).not.toContain(join(workspaceRoot, "repos", "repo-b"));
+    expect(short.stdout).toContain("Summary: 2 clean, 0 dirty");
+
+    await writeFile(join(workspaceRoot, "repos", "repo-a", "README.md"), "dirty status detail\n");
+    const verbose = await runArashi(workspaceRoot, ["status", ...selectors, "--verbose"]);
+    expect(verbose.exitCode, verbose.stderr).toBe(0);
+    expect(verbose.stdout).toContain("Main Repository");
+    expect(verbose.stdout).toContain("repo-a");
+    expect(verbose.stdout).not.toContain("repo-b");
+    expect(verbose.stdout).toContain("Changes not staged for commit:");
+    expect(verbose.stdout).toContain("modified:   README.md");
+    expect(verbose.stdout).toContain("Summary: 1 clean, 1 dirty (2 total)");
+
+    const json = await runArashi(workspaceRoot, ["status", ...selectors, "--json"]);
+    expect(json.exitCode, json.stderr).toBe(0);
+    expect(json.stderr).toBe("");
+    const envelope = parseJson(json.stdout);
+    expect(envelope).toMatchObject({
+      command: "status",
+      data: {
+        filters: { groups: ["core"], only: ["repo-a", "repo-b"] },
+        summary: { cleanCount: 1, dirtyCount: 1, total: 2 },
+      },
+      ok: true,
+    });
+    expect(
+      (envelope.data as { repositories: { name: string }[] }).repositories.map(({ name }) => name),
+    ).toEqual(["Main Repository", "repo-a"]);
+  });
+
+  test("short and long selectors produce exact status behavior and output", async () => {
+    const workspaceRoot = await createWorkspace();
+    const long = await runArashi(workspaceRoot, [
+      "status",
+      "--only",
+      " repo-a, repo-b, ",
+      "--only",
+      "repo-a",
+      "--group",
+      " shared, core ",
+      "--short",
+    ]);
+    const short = await runArashi(workspaceRoot, [
+      "status",
+      "-o",
+      " repo-a, repo-b, ",
+      "-o",
+      "repo-a",
+      "-g",
+      " shared, core ",
+      "--short",
+    ]);
+
+    expect(short).toEqual(long);
+    expect(short.exitCode).toBe(0);
+  });
+
+  test("all selector commands accept repeated, comma-separated short-form values", async () => {
     const workspaceRoot = await createWorkspace();
     const cases: Array<[string, string[]]> = [
-      ["create", ["create", "feature/empty-create", "--group", ",", "--dry-run"]],
-      ["exec", ["exec", "--group", ",", "--", "pwd"]],
-      ["pull", ["pull", "--group", ","]],
-      ["push", ["push", "--group", ","]],
-      ["setup", ["setup", "--group", ","]],
-      ["status", ["status", "--group", ","]],
-      ["sync", ["sync", "--group", ","]],
+      [
+        "create",
+        [
+          "create",
+          "feature/normalized-create",
+          "-o",
+          " repo-a, repo-b, ",
+          "-o",
+          "repo-a",
+          "-g",
+          " shared, core ",
+          "-n",
+        ],
+      ],
+      ["exec", ["exec", "-o", " repo-a, ", "-o", "repo-a", "-g", " shared, ", "--", "pwd"]],
+      ["pull", ["pull", "-o", " repo-a, ", "-o", "repo-a", "-g", " shared, "]],
+      ["push", ["push", "-o", " repo-a, ", "-o", "repo-a", "-g", " shared, ", "-n"]],
+      ["setup", ["setup", "-o", " repo-a, ", "-o", "repo-a", "-g", " shared, "]],
+      ["status", ["status", "-o", " repo-a, ", "-o", "repo-a", "-g", " shared, ", "--short"]],
+      ["sync", ["sync", "-o", " repo-a, ", "-o", "repo-a", "-g", " shared, "]],
     ];
 
     for (const [name, args] of cases) {
       const result = await runArashi(workspaceRoot, args);
-      expect(result.exitCode, name).toBe(2);
-      expect(result.stderr + result.stdout, name).toContain("--group");
-      expect(result.stderr + result.stdout, name).toContain("empty");
+      if (name === "pull") {
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toContain("[1/1] repo-a");
+        expect(result.stderr + result.stdout).not.toContain("Unknown repositories");
+      } else {
+        expect(result.exitCode, `${name}: ${result.stderr}${result.stdout}`).toBe(0);
+      }
     }
-
-    const execOnly = await runArashi(workspaceRoot, ["exec", "--only", ",", "--", "pwd"]);
-    expect(execOnly.exitCode).toBe(2);
-    expect(execOnly.stderr + execOnly.stdout).toContain("--only");
-    expect(execOnly.stdout).not.toContain("[repo-a]");
   });
 
-  test("JSON errors are one envelope with structured empty-filter details and precedence", async () => {
-    const workspaceRoot = await createWorkspace();
-    const cases: Array<{ args: string[]; emptyFilters: string[] }> = [
-      {
-        args: ["create", "feature/empty-json", "--group", ",", "--dry-run", "--json"],
-        emptyFilters: ["group"],
-      },
-      { args: ["exec", "--group", ",", "--json", "--", "pwd"], emptyFilters: ["group"] },
-      { args: ["pull", "--group", ",", "--json"], emptyFilters: ["group"] },
-      { args: ["push", "--group", ",", "--json"], emptyFilters: ["group"] },
-      { args: ["setup", "--group", ",", "--json"], emptyFilters: ["group"] },
-      { args: ["status", "--group", ",", "--json"], emptyFilters: ["group"] },
-      {
-        args: ["sync", "--only", ",", "--group", ",", "--json"],
-        emptyFilters: ["only", "group"],
-      },
-      {
-        args: ["sync", "--only", ",", "--group", "missing", "--json"],
-        emptyFilters: ["only"],
-      },
+  test("standalone mode rejects create selectors and configured-only selector commands in human and JSON modes", async () => {
+    const standaloneRoot = await makeTempDir();
+    await initializeGitRepository(standaloneRoot);
+    expect((await runArashi(standaloneRoot, ["init", "--zero-config"])).exitCode).toBe(0);
+
+    for (const json of [false, true]) {
+      const create = await runArashi(standaloneRoot, [
+        "create",
+        `feature/standalone-selector-${json ? "json" : "human"}`,
+        "--only",
+        "repo-a",
+        "--dry-run",
+        ...(json ? ["--json"] : []),
+      ]);
+      expect(create.exitCode).not.toBe(0);
+      if (json) {
+        expect(create.stderr).toBe("");
+        expect(parseJson(create.stdout)).toMatchObject({
+          command: "create",
+          error: {
+            message:
+              "Repository selection is not meaningful in standalone mode; omit --only, --group, and --interactive.",
+          },
+          ok: false,
+        });
+      } else {
+        expect(create.stdout).toBe("");
+        expect(create.stderr).toContain(
+          "Repository selection is not meaningful in standalone mode",
+        );
+      }
+
+      for (const command of ["exec", "pull", "push", "setup", "sync"] as const) {
+        const result = await runArashi(
+          standaloneRoot,
+          selectorCommandArgs(command, ["--only", "repo-a"], json, `standalone-${command}`),
+        );
+        expect(result.exitCode, `${command}: ${result.stderr}${result.stdout}`).not.toBe(0);
+        if (json) {
+          expect(result.stderr, command).toBe("");
+          expect(parseJson(result.stdout), command).toMatchObject({
+            command,
+            error: { code: "CONFIGURED_WORKSPACE_REQUIRED" },
+            ok: false,
+          });
+        } else {
+          expect(result.stderr + result.stdout, command).toContain(
+            `arashi ${command} requires a configured workspace`,
+          );
+        }
+      }
+    }
+  });
+
+  test("status rejects --only, --group, and their combination in standalone human and JSON modes", async () => {
+    const standaloneRoot = await makeTempDir();
+    await initializeGitRepository(standaloneRoot);
+    expect((await runArashi(standaloneRoot, ["init", "--zero-config"])).exitCode).toBe(0);
+
+    const selectorCases = [
+      ["--only", "main"],
+      ["--group", "core"],
+      ["--only", "main", "--group", "core"],
     ];
-
-    for (const { args, emptyFilters } of cases) {
-      const result = await runArashi(workspaceRoot, args);
-      expect(result.exitCode, args[0]).toBe(2);
-      expect(result.stderr, args[0]).toBe("");
-      const envelope = parseJson(result.stdout);
-      expect(envelope, args[0]).toMatchObject({
-        error: {
-          code: "EMPTY_REPOSITORY_FILTERS",
-          details: { emptyFilters },
-        },
-        ok: false,
-      });
+    for (const selectors of selectorCases) {
+      for (const json of [false, true]) {
+        const result = await runArashi(standaloneRoot, [
+          "status",
+          ...selectors,
+          ...(json ? ["--json"] : []),
+        ]);
+        expect(result.exitCode).toBe(2);
+        if (json) {
+          expect(result.stderr).toBe("");
+          expect(parseJson(result.stdout)).toMatchObject({
+            command: "status",
+            error: { code: "STANDALONE_FILTER_UNSUPPORTED" },
+            ok: false,
+          });
+        } else {
+          expect(result.stdout).toBe("");
+          expect(result.stderr).toContain("not meaningful in standalone mode");
+          for (const option of selectors.filter((value) => value.startsWith("--"))) {
+            expect(result.stderr).toContain(option);
+          }
+        }
+      }
     }
-  });
-
-  test("status --group filters human and JSON output and reports unknown groups", async () => {
-    const workspaceRoot = await createWorkspace();
-
-    const human = await runArashi(workspaceRoot, ["status", "--group", "core"]);
-    expect(human.exitCode).toBe(0);
-    expect(human.stdout).toContain("repo-a");
-    expect(human.stdout).not.toContain("repo-b");
-    expect(human.stdout).toContain("Summary: 2 clean, 0 dirty (2 total)");
-
-    const json = await runArashi(workspaceRoot, ["status", "--group", "docs", "--json"]);
-    expect(json.exitCode).toBe(0);
-    const envelope = parseJson(json.stdout);
-    expect(envelope).toMatchObject({ command: "status", ok: true });
-    expect(envelope.data).toMatchObject({
-      filters: { groups: ["docs"], only: [] },
-      summary: { cleanCount: 2, dirtyCount: 0, total: 2 },
-    });
-    const jsonRepositoryNames = (
-      envelope.data as { repositories: { name: string }[] }
-    ).repositories.map((repo) => repo.name);
-    expect(jsonRepositoryNames).toContain("repo-b");
-    expect(jsonRepositoryNames).not.toContain("repo-a");
-
-    const unknown = await runArashi(workspaceRoot, ["status", "--group", "missing", "--json"]);
-    expect(unknown.exitCode).toBe(2);
-    expect(parseJson(unknown.stdout)).toMatchObject({
-      command: "status",
-      error: {
-        code: "UNKNOWN_REPOSITORY_GROUPS",
-        details: { groups: ["missing"], unknownGroups: ["missing"] },
-      },
-      ok: false,
-    });
   });
 
   test("create --group supports dry-run planning and rejects empty intersections before mutation", async () => {

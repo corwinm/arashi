@@ -10,6 +10,10 @@ import { Command } from "commander";
 import { dirname } from "node:path";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
 import { spawnSync } from "node:child_process";
+import {
+  assertValidUpdateInspectionOptions,
+  UPDATE_INSPECTION_CONFLICT_CODE,
+} from "../../bin/update-options.js";
 
 export const UPDATE_COMMAND_DESCRIPTION = "Check for and apply Arashi updates";
 const RELEASES_URL = "https://github.com/corwinm/arashi/releases";
@@ -199,6 +203,7 @@ export async function runDirectUpdate(
   options: UpdateOptions,
   deps?: DirectUpdateDeps,
 ): Promise<void> {
+  assertValidUpdateInspectionOptions(options);
   const { currentVersion = "", fetchImpl, log = info } = deps ?? { currentVersion: "" };
   const latest = await fetchLatestRelease(fetchImpl);
 
@@ -233,6 +238,10 @@ export async function runDirectUpdate(
   }
   if (options.dryRun) {
     log("Dry run: no changes made.");
+    return;
+  }
+  if (options.json) {
+    log("JSON inspection: no changes made.");
     return;
   }
   if (!options.yes) {
@@ -284,17 +293,18 @@ export function createCommand(currentVersion = ""): Command {
   return new Command("update")
     .description(UPDATE_COMMAND_DESCRIPTION)
     .option("--check", "check whether an update is available without changing files")
-    .option("--dry-run", "show the installer update plan without changing files")
+    .option("-n, --dry-run", "show the installer update plan without changing files")
     .option("-y, --yes", "apply the update without prompting")
-    .option("--json", "Output result as JSON")
+    .option("-j, --json", "Output result as JSON")
     .action(async (options: UpdateOptions) => {
-      if (options.json && options.yes) {
-        writeJsonEnvelope(unsupportedJsonModeError("update", "installer-apply"));
-        process.exitCode = 1;
-        return;
-      }
-
       try {
+        assertValidUpdateInspectionOptions(options);
+        if (options.json && options.yes) {
+          writeJsonEnvelope(unsupportedJsonModeError("update", "installer-apply"));
+          process.exitCode = 1;
+          return;
+        }
+
         if (options.json) {
           const messages: string[] = [];
           await runDirectUpdate(options, {
@@ -306,14 +316,22 @@ export function createCommand(currentVersion = ""): Command {
           await runDirectUpdate(options, { currentVersion });
         }
       } catch (error) {
+        const isInspectionConflict =
+          error instanceof Error &&
+          "code" in error &&
+          error.code === UPDATE_INSPECTION_CONFLICT_CODE;
         if (options.json) {
           writeJsonEnvelope(createJsonErrorEnvelope("update", unknownErrorToJsonError(error)));
         } else {
           const message = error instanceof Error ? error.message : String(error);
-          logError(`Failed to check latest arashi release: ${message}`);
-          info(`Manual releases: ${RELEASES_URL}`);
+          if (isInspectionConflict) {
+            logError(message);
+          } else {
+            logError(`Failed to check latest arashi release: ${message}`);
+            info(`Manual releases: ${RELEASES_URL}`);
+          }
         }
-        process.exitCode = 1;
+        process.exitCode = isInspectionConflict ? 2 : 1;
       }
     });
 }
