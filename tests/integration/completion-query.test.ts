@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
@@ -28,6 +28,7 @@ afterEach(() => {
 
 describe("lossless bounded dynamic completion query", () => {
   test("returns alternating NUL records and preserves shell-sensitive configured values", () => {
+    const sensitiveRepository = "quote'glob*\\tab\tline\nrepo";
     const root = mkdtempSync(join(tmpdir(), "arashi-completion-"));
     temporaryDirectories.push(root);
     mkdirSync(join(root, ".arashi"));
@@ -38,7 +39,7 @@ describe("lossless bounded dynamic completion query", () => {
         reposDir: "repos",
         repos: {
           "repo one": { path: "repos/repo one", groups: ["docs team"] },
-          "quote'glob*\\tab\tline\nrepo": { path: "repos/odd" },
+          [sensitiveRepository]: { path: "repos/odd" },
         },
       }),
     );
@@ -52,6 +53,13 @@ describe("lossless bounded dynamic completion query", () => {
     expect(records(group.stdout).map((entry) => entry.value)).toContain("docs team");
     const comma = runQuery(root, ["arashi", "create", "topic", "--only", "other,repo"]);
     expect(records(comma.stdout).map((entry) => entry.value)).toContain("other,repo one");
+    const workspaceRepository = runQuery(root, ["arashi", "create", "topic", "--only", ""]);
+    expect(records(workspaceRepository.stdout).map((entry) => entry.value)).toContain(
+      basename(root),
+    );
+    expect(records(workspaceRepository.stdout).map((entry) => entry.value)).toContain(
+      sensitiveRepository,
+    );
   });
 
   test("discovers configured common-root workspaces from linked worktrees", () => {

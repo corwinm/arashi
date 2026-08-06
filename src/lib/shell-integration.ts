@@ -175,12 +175,7 @@ function upsertManagedBlock(currentContents: string, block: string): string {
 
   if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
     const blockEnd = endIndex + END_MARKER.length;
-    const prefix = currentContents.slice(0, startIndex).replace(/\s*$/, "");
-    const suffix = currentContents.slice(blockEnd).replace(/^\s*/, "");
-    return [prefix, trimmedBlock.trimEnd(), suffix]
-      .filter((value) => value.length > 0)
-      .join("\n\n")
-      .concat("\n");
+    return `${currentContents.slice(0, startIndex)}${block.trim()}${currentContents.slice(blockEnd)}`;
   }
 
   const trimmedCurrent = currentContents.trimEnd();

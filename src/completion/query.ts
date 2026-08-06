@@ -347,9 +347,10 @@ function dynamicCandidates(
   if (!workspace || performance.now() >= deadline) return [];
   if (kind === "repository") {
     return prefixCandidates(
-      workspace.repositories
-        .slice(1)
-        .map(({ name }) => ({ description: "Configured repository", value: name })),
+      workspace.repositories.map(({ name }) => ({
+        description: "Configured repository",
+        value: name,
+      })),
       context.current,
     );
   }

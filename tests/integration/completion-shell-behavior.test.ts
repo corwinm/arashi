@@ -15,6 +15,8 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const cliPath = join(repositoryRoot, "src/index.ts");
+const sensitiveRepository = "quote'glob*[x]\\slash\tline\nnext";
+const sensitiveRepositoryBase64 = Buffer.from(sensitiveRepository).toString("base64");
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
 const available = (command: string): boolean =>
   process.platform !== "win32" &&
@@ -80,6 +82,7 @@ beforeAll(() => {
       repos: {
         "repo one": { groups: ["docs team"], path: "repos/repo one" },
         "repo-one": { groups: ["docs-team"], path: "repos/repo-one" },
+        [sensitiveRepository]: { path: "repos/sensitive" },
       },
       reposDir: "repos",
       version: "1.0.0",
@@ -106,6 +109,7 @@ beforeAll(() => {
     HOME: homeRoot,
     NO_COLOR: "1",
     PATH: `${temporaryRoot}${delimiter}${process.env.PATH ?? ""}`,
+    SENSITIVE_REPOSITORY_BASE64: sensitiveRepositoryBase64,
     XDG_CONFIG_HOME: join(homeRoot, ".config"),
   };
   for (const shell of ["bash", "zsh", "fish"]) {
@@ -145,6 +149,19 @@ run_completion() {
   _arashi
   printf '%s\\n' "\${COMPREPLY[@]}"
 }
+run_sensitive_completion() {
+  local label="$1"
+  shift
+  printf '@@%s\\n' "$label"
+  COMP_WORDS=("$@")
+  COMP_CWORD=$(($# - 1))
+  COMPREPLY=()
+  _arashi
+  for candidate in "\${COMPREPLY[@]}"; do
+    printf '%s' "$candidate" | base64
+    printf '\\n'
+  done
+}
 cd ${shellQuote(outsideRoot)}
 run_completion directRoot arashi cr
 run_completion nested arashi shell i
@@ -166,6 +183,7 @@ run_completion remove arashi remove repo
 run_completion moveFrom arashi move --from repo
 run_completion moveTo arashi move --to repo
 run_completion path arashi switch --path ''
+run_sensitive_completion sensitive arashi create topic --only ''
 `;
       const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
         encoding: "utf8",
@@ -195,6 +213,7 @@ run_completion path arashi switch --path ''
       expect(output.get("group")).toContain("docs team");
       expect(output.get("groupShort")).toContain("docs team");
       expect(output.get("path")?.every((value) => value.startsWith("/"))).toBe(true);
+      expect(output.get("sensitive")).toContain(sensitiveRepositoryBase64);
     },
   );
 
@@ -208,7 +227,14 @@ compadd() {
   local emit=0 argument description
   for description in "\${descriptions[@]}"; do print -r -- "description:$description"; done
   for argument in "$@"; do
-    if (( emit )); then print -r -- "$argument"; fi
+    if (( emit )); then
+      if (( ENCODE_VALUES )); then
+        printf '%s' "$argument" | base64
+        printf '\\n'
+      else
+        print -r -- "$argument"
+      fi
+    fi
     [[ "$argument" == -- ]] && emit=1
   done
   return 0
@@ -220,6 +246,16 @@ run_completion() {
   words=("$@")
   CURRENT=$#
   _arashi
+}
+run_sensitive_completion() {
+  local label="$1"
+  shift
+  print -r -- "@@$label"
+  words=("$@")
+  CURRENT=$#
+  ENCODE_VALUES=1
+  _arashi
+  ENCODE_VALUES=0
 }
 cd ${shellQuote(outsideRoot)}
 run_completion directRoot arashi cr
@@ -242,6 +278,7 @@ run_completion remove arashi remove repo
 run_completion moveFrom arashi move --from repo
 run_completion moveTo arashi move --to repo
 run_completion path arashi switch --path ''
+run_sensitive_completion sensitive arashi create topic --only ''
 `;
       const result = spawnSync("zsh", ["-f", "-c", script], {
         encoding: "utf8",
@@ -276,6 +313,7 @@ run_completion path arashi switch --path ''
           ?.filter((value) => !value.startsWith("description:"))
           .every((value) => value.startsWith("/")),
       ).toBe(true);
+      expect(output.get("sensitive")).toContain(sensitiveRepositoryBase64);
     },
   );
 
@@ -305,6 +343,16 @@ printf '@@remove\\n'; complete -C 'arashi remove repo'
 printf '@@moveFrom\\n'; complete -C 'arashi move --from repo'
 printf '@@moveTo\\n'; complete -C 'arashi move --to repo'
 printf '@@path\\n'; complete -C 'arashi switch --path '
+set -l sensitive (node -e 'process.stdout.write(Buffer.from(process.env.SENSITIVE_REPOSITORY_BASE64, "base64"))' | string collect)
+set -l escaped_sensitive (string escape -- "$sensitive")
+set -l sensitive_found 0
+for candidate_record in (complete -C 'arashi create topic --only ')
+    set -l candidate (string split -m 1 \\t -- "$candidate_record")[1]
+    if test "$candidate" = "$escaped_sensitive"
+        set sensitive_found 1
+    end
+end
+printf '@@sensitive\\n%s\\n' "$sensitive_found"
 `;
       const result = spawnSync("fish", ["--no-config", "-c", script], {
         encoding: "utf8",
@@ -338,6 +386,7 @@ printf '@@path\\n'; complete -C 'arashi switch --path '
       expect(
         candidateValues(output.get("path") ?? []).every((value) => value.startsWith("/")),
       ).toBe(true);
+      expect(output.get("sensitive")).toEqual(["1"]);
     },
   );
 });
