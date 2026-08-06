@@ -20,9 +20,9 @@ export function createCommand(): Command {
     .command("init")
     .description("Print shell wrapper code")
     .addArgument(
-      new Argument("[shell]", `Shell name (${SUPPORTED_SHELLS.join(", ")})`).choices([
-        ...SUPPORTED_SHELLS,
-      ]),
+      new Argument("[shell]", `Shell name (${SUPPORTED_SHELLS.join(", ")})`)
+        .choices([...SUPPORTED_SHELLS])
+        .argParser((value) => value.trim().toLowerCase()),
     )
     .option("-j, --json", "Return a structured unsupported-mode error instead of shell code")
     .action((shellName: string | undefined, options: { json?: boolean }) => {

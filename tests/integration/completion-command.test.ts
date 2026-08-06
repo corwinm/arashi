@@ -43,9 +43,12 @@ describe("completion command and generated artifacts", () => {
     expect(result.stderr).toContain("bash, zsh, fish");
   });
 
-  test("keeps wrapper generation separate from completion", () => {
+  test("keeps normalized wrapper generation separate from completion", () => {
     const wrapper = run(["shell", "init", "bash"]);
+    const normalizedWrapper = run(["shell", "init", " BASH "]);
     expect(wrapper.status).toBe(0);
+    expect(normalizedWrapper.status, normalizedWrapper.stderr).toBe(0);
+    expect(normalizedWrapper.stdout).toBe(wrapper.stdout);
     expect(wrapper.stdout).toContain("ARASHI_DIRECTIVE_FILE");
     expect(wrapper.stdout).not.toContain("complete -F");
     expect(wrapper.stdout).not.toContain("arashi completion");
