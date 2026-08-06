@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildProgram } from "../src/cli-program.ts";
+import { normalizeGeneratedSource } from "../src/completion/generated-source.ts";
 import {
   commandSemantics,
   generateCommandContract,
@@ -34,7 +35,9 @@ if (errors.length > 0) {
 }
 
 if (process.argv.includes("--check")) {
-  const current = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
+  const current = existsSync(outputPath)
+    ? normalizeGeneratedSource(readFileSync(outputPath, "utf8"))
+    : "";
   if (current !== generated) {
     console.error("Generated shell completions are stale. Run `pnpm run completion:generate`.");
     process.exit(1);
