@@ -73,6 +73,10 @@ elif [[ "$*" == "completion __query 2 -- arashi switch feature@v" ]]; then
   printf 'feature@v2\\0Branch\\0'
 elif [[ "$*" == "completion __query 4 -- arashi create topic --only repo@v" ]]; then
   printf 'repo@v2\\0Repository\\0'
+elif [[ "$*" == "completion __query 2 -- arashi switch feature=v" ]]; then
+  printf 'feature=v2\\0Branch\\0'
+elif [[ "$*" == "completion __query 4 -- arashi create topic --only repo=v" ]]; then
+  printf 'repo=v2\\0Repository\\0'
 fi
 `,
         );
@@ -81,7 +85,7 @@ fi
           "bash",
           [
             "-c",
-            'source "$1"; COMP_WORDS=(arashi switch --path C : /work); COMP_CWORD=5; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"; COMP_WORDS=(arashi move --from = C : /work); COMP_CWORD=6; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"; COMP_WORDS=(arashi switch feature @ v); COMP_CWORD=4; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"; COMP_WORDS=(arashi create topic --only repo @ v); COMP_CWORD=6; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"',
+            'source "$1"; COMP_WORDS=(arashi switch --path C : /work); COMP_CWORD=5; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"; COMP_WORDS=(arashi move --from = C : /work); COMP_CWORD=6; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"; COMP_WORDS=(arashi switch feature @ v); COMP_CWORD=4; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"; COMP_WORDS=(arashi create topic --only repo @ v); COMP_CWORD=6; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"; COMP_WORDS=(arashi switch feature = v); COMP_CWORD=4; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"; COMP_WORDS=(arashi create topic --only repo = v); COMP_CWORD=6; _arashi; printf \'%s\\n\' "${COMPREPLY[@]}"',
             "bash",
             completion,
           ],
@@ -91,7 +95,9 @@ fi
           },
         );
         expect(result.status, result.stderr).toBe(0);
-        expect(result.stdout).toBe("C:/worktree\nC:/workspace\nfeature@v2\nrepo@v2\n");
+        expect(result.stdout).toBe(
+          "C:/worktree\nC:/workspace\nfeature@v2\nrepo@v2\nfeature=v2\nrepo=v2\n",
+        );
       } finally {
         rmSync(root, { force: true, recursive: true });
       }
