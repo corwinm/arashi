@@ -116,6 +116,32 @@ const SESH_LAUNCH_MODE: LaunchMode = "sesh";
 const HERDR_LAUNCH_MODE: LaunchMode = "herdr";
 const TMUX_LAUNCH_MODE: LaunchMode = "tmux";
 
+const assertValidCreateRepositoryFilters = (
+  filterResult: ReturnType<typeof filterWorkspaceRepositories>,
+): void => {
+  if (filterResult.emptyFilters.length > ZERO) {
+    throw new EmptyRepositoryFiltersError(filterResult.emptyFilters);
+  }
+  if (filterResult.missing.length > ZERO) {
+    throw new RepositoryValidationError(
+      `Unknown repositories in --only filter: ${filterResult.missing.join(", ")}`,
+      filterResult.missing[ZERO] ?? "",
+    );
+  }
+  if (filterResult.unknownGroups.length > ZERO) {
+    throw new RepositoryValidationError(
+      `Unknown repository groups in --group filter: ${filterResult.unknownGroups.join(", ")}`,
+      filterResult.unknownGroups[ZERO] ?? "",
+    );
+  }
+  if (filterResult.emptyIntersection) {
+    throw new RepositoryValidationError(
+      "No repositories matched the combined --only/--group filters",
+      "",
+    );
+  }
+};
+
 const describeConflictScope = (existsLocally: boolean, existsRemotely: boolean): string => {
   if (existsLocally && existsRemotely) {
     return "local and remote";
@@ -315,6 +341,7 @@ export interface ResolvedCreateDefaults {
 }
 
 export interface CreateCommandDependencies {
+  resolveWorkspaceContext?: typeof resolveWorkspaceContext;
   resolveCreateInvocationContext?: (invocationPath?: string) => Promise<CreateInvocationContext>;
   resolveManagedIgnoreWorkspaceRoot?: (
     context: CreateInvocationContext,
@@ -934,7 +961,7 @@ export async function executeCreate(
     throw new EmptyRepositoryFiltersError(emptyFilters);
   }
 
-  const workspaceContext = await resolveWorkspaceContext();
+  const workspaceContext = await (deps.resolveWorkspaceContext ?? resolveWorkspaceContext)();
   if (workspaceContext.mode === "standalone") {
     const standaloneDefaults = resolveCreateDefaults(options, workspaceContext.config);
     if (options.json && standaloneDefaults.shouldLaunch) {
@@ -1023,6 +1050,24 @@ export async function executeCreate(
   // 2. Discover repositories (child repos in reposDir)
   // Convert reposDir to absolute path since it may be relative (e.g., "./repos")
   const currentDir = context.executionPath;
+  if (options.only || options.group) {
+    const configuredRepositories = Object.entries(arashiConfig.repos).map(([name, repository]) => ({
+      groups: repository.groups,
+      name,
+      path: resolve(currentDir, arashiConfig.reposDir, repository.path),
+    }));
+    const parentName = basename(currentDir);
+    if (!configuredRepositories.some((repository) => repository.name === parentName)) {
+      configuredRepositories.push({
+        groups: arashiConfig.repos[parentName]?.groups,
+        name: parentName,
+        path: currentDir,
+      });
+    }
+    assertValidCreateRepositoryFilters(
+      filterWorkspaceRepositories(configuredRepositories, options.only, options.group),
+    );
+  }
   const createDefaults = resolveCreateDefaults(options, arashiConfig);
   if (options.json && createDefaults.shouldLaunch) {
     writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
@@ -1102,27 +1147,7 @@ export async function executeCreate(
     options.only,
     options.group,
   );
-  if (groupFilterResult.emptyFilters.length > ZERO) {
-    throw new EmptyRepositoryFiltersError(groupFilterResult.emptyFilters);
-  }
-  if (groupFilterResult.missing.length > ZERO) {
-    throw new RepositoryValidationError(
-      `Unknown repositories in --only filter: ${groupFilterResult.missing.join(", ")}`,
-      groupFilterResult.missing[ZERO] ?? "",
-    );
-  }
-  if (groupFilterResult.unknownGroups.length > ZERO) {
-    throw new RepositoryValidationError(
-      `Unknown repository groups in --group filter: ${groupFilterResult.unknownGroups.join(", ")}`,
-      groupFilterResult.unknownGroups[ZERO] ?? "",
-    );
-  }
-  if (groupFilterResult.emptyIntersection) {
-    throw new RepositoryValidationError(
-      "No repositories matched the combined --only/--group filters",
-      "",
-    );
-  }
+  assertValidCreateRepositoryFilters(groupFilterResult);
 
   const filteredRepositories = groupFilterResult.selected;
   let filterMode: RepositoryFilter["mode"] = "all";

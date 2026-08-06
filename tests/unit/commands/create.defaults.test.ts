@@ -3,6 +3,8 @@ import type { Config } from "../../../src/lib/config.ts";
 import {
   applyCreateLaunchFlagPrecedence,
   createCommand,
+  type CreateCommandOptions,
+  executeCreate,
   resolveCreateDefaults,
 } from "../../../src/commands/create.ts";
 
@@ -217,4 +219,51 @@ describe("resolveCreateDefaults", () => {
       "Choose exactly one explicit create launcher",
     );
   });
+});
+
+describe("configured create selector precedence", () => {
+  test.each([
+    [{ only: ["missing"] }, "Unknown repositories in --only filter: missing"],
+    [{ group: ["missing"] }, "Unknown repository groups in --group filter: missing"],
+  ] as Array<[CreateCommandOptions, string]>)(
+    "rejects %# before repository discovery or Git inspection",
+    async (options, message) => {
+      const config: Config = {
+        repos: { child: { groups: ["core"], path: "child" } },
+        reposDir: "./repos",
+        version: "1.0.0",
+      };
+      let repositoryWorkReached = false;
+      await expect(
+        executeCreate("feature/selector-precedence", options, {
+          discoverRepositories: async () => {
+            repositoryWorkReached = true;
+            throw new Error("repository discovery sentinel");
+          },
+          isGitRepository: async () => {
+            repositoryWorkReached = true;
+            throw new Error("Git inspection sentinel");
+          },
+          loadConfigWithFallback: async () => ({
+            config,
+            configPath: "/workspace/.arashi/config.json",
+            source: "local-file",
+          }),
+          resolveCreateInvocationContext: async () => ({
+            executionPath: "/workspace",
+            invocationPath: "/workspace",
+            repositoryType: "non-bare",
+            workspaceRoot: "/workspace",
+          }),
+          resolveWorkspaceContext: async () => ({
+            config,
+            invocationPath: "/workspace",
+            mode: "configured",
+            workspaceRoot: "/workspace",
+          }),
+        }),
+      ).rejects.toThrow(message);
+      expect(repositoryWorkReached).toBe(false);
+    },
+  );
 });
