@@ -34,6 +34,18 @@ _arashi() {
       break
     fi
   done
+  local current_word="\${words[cursor]}" dequoted_word="" char
+  local index
+  for ((index = 0; index < \${#current_word}; index++)); do
+    char="\${current_word:index:1}"
+    if [[ "$char" == "\\\\" ]] && ((index + 1 < \${#current_word})); then
+      index=$((index + 1))
+      dequoted_word+="\${current_word:index:1}"
+    else
+      dequoted_word+="$char"
+    fi
+  done
+  words[cursor]="$dequoted_word"
   COMPREPLY=()
   while IFS= read -r -d '' value && IFS= read -r -d '' description; do
     printf -v quoted '%q' "$value"

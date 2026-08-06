@@ -71,6 +71,10 @@ describe("lossless bounded dynamic completion query", () => {
       expect(selectors).toContain("main");
       expect(selectors).not.toContain(basename(root));
     }
+    const ignoreScopes = records(
+      runQuery(root, ["arashi", "init", "--ignore-scope", ""]).stdout,
+    ).map(({ value }) => value);
+    expect(ignoreScopes).toEqual(["local", "none", "tracked"]);
   });
 
   test.each(["discoveredRepos", "discovered_repos"])(

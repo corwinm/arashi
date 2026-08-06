@@ -1181,6 +1181,7 @@
       "arguments": [],
       "options": [
         {
+          "choices": ["local", "none", "tracked"],
           "conflicts": [],
           "deprecated": false,
           "flags": "--ignore-scope <scope>",
