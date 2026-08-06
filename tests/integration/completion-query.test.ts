@@ -123,7 +123,7 @@ describe("lossless bounded dynamic completion query", () => {
       temporaryDirectories.push(root);
       const workspace = join(root, "workspace");
       const child = join(workspace, "repos", "child");
-      const parentWorktree = join(root, "parent line\nbreak");
+      const parentWorktree = join(root, "parent, line\nbreak");
       const childWorktree = join(root, "child-worktree");
       const gitEnvironment = {
         ...process.env,
@@ -151,7 +151,7 @@ describe("lossless bounded dynamic completion query", () => {
         join(workspace, ".arashi", "config.json"),
         JSON.stringify({ repos: { child: { path: "repos/child" } }, version: "1.0.0" }),
       );
-      git(workspace, ["worktree", "add", "-b", "parent-feature", parentWorktree]);
+      git(workspace, ["worktree", "add", "-b", "parent,feature", parentWorktree]);
       git(child, ["worktree", "add", "-b", "child-feature", childWorktree]);
       const canonicalParentWorktree = realpathSync(parentWorktree);
       const canonicalChildWorktree = realpathSync(childWorktree);
@@ -175,8 +175,25 @@ describe("lossless bounded dynamic completion query", () => {
       );
       expect(removablePaths).not.toContain(realpathSync(workspace));
       expect(removablePaths).not.toContain(realpathSync(child));
+
+      expect(values(["arashi", "switch", "parent,"])).toContain("parent,feature");
+      expect(
+        values(["arashi", "switch", "--path", `${canonicalParentWorktree.slice(0, -5)}`]),
+      ).toContain(canonicalParentWorktree);
     },
   );
+
+  test("suppresses configured selectors in standalone repositories", () => {
+    const root = mkdtempSync(join(tmpdir(), "arashi-completion-standalone-"));
+    temporaryDirectories.push(root);
+    const initialized = spawnSync("git", ["init"], { cwd: root, encoding: "utf8" });
+    expect(initialized.status, initialized.stderr).toBe(0);
+
+    expect(records(runQuery(root, ["arashi", "create", "topic", "--only", ""]).stdout)).toEqual([]);
+    expect(records(runQuery(root, ["arashi", "create", "topic", "--group", ""]).stdout)).toEqual(
+      [],
+    );
+  });
 
   test("returns exact finite choices only for their owning slots", () => {
     const cwd = process.cwd();

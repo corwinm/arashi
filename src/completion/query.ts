@@ -14,8 +14,12 @@ const MAX_COMPLETION_CONFIG_BYTES = 1024 * 1024;
 const optionSpellings = (option: ContractOption): string[] =>
   [option.short, option.long].filter((value): value is string => Boolean(value));
 
-const prefixCandidates = (values: CompletionCandidate[], prefix: string): CompletionCandidate[] => {
-  const comma = prefix.lastIndexOf(",");
+const prefixCandidates = (
+  values: CompletionCandidate[],
+  prefix: string,
+  commaSegments = false,
+): CompletionCandidate[] => {
+  const comma = commaSegments ? prefix.lastIndexOf(",") : -1;
   const leading = comma < 0 ? "" : prefix.slice(0, comma + 1);
   const segment = comma < 0 ? prefix : prefix.slice(comma + 1);
   const normalized = segment.toLowerCase();
@@ -185,6 +189,7 @@ function staticCandidates(
 }
 
 interface WorkspaceData {
+  configured: boolean;
   groups: string[];
   repositories: Array<{ name: string; path: string }>;
   root: string;
@@ -232,6 +237,7 @@ function workspaceFromRoots(
   if (!parsed) return null;
   const entries = Object.entries(parsed.repos ?? {});
   return {
+    configured: true,
     groups: [...new Set(entries.flatMap(([, repository]) => repository.groups ?? []))],
     repositories: [
       { name: basename(configurationRoot), path: executionRoot },
@@ -292,7 +298,14 @@ function findWorkspace(start: string, deadline: number): WorkspaceData | null {
   }
 
   const root = gitOutput(start, ["rev-parse", "--show-toplevel"], deadline);
-  return root ? { groups: [], repositories: [{ name: basename(root), path: root }], root } : null;
+  return root
+    ? {
+        configured: false,
+        groups: [],
+        repositories: [{ name: basename(root), path: root }],
+        root,
+      }
+    : null;
 }
 
 function worktreeCandidates(
@@ -368,18 +381,22 @@ function dynamicCandidates(
   const workspace = findWorkspace(cwd, deadline);
   if (!workspace || performance.now() >= deadline) return [];
   if (kind === "repository") {
+    if (!workspace.configured) return [];
     return prefixCandidates(
       workspace.repositories.map(({ name }) => ({
         description: "Configured repository",
         value: name,
       })),
       context.current,
+      true,
     );
   }
   if (kind === "group") {
+    if (!workspace.configured) return [];
     return prefixCandidates(
       workspace.groups.map((value) => ({ description: "Repository group", value })),
       context.current,
+      true,
     );
   }
   const pathsOnly = kind === "worktree" && context.wordsBeforeCursor.includes("--path");
