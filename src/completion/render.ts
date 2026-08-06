@@ -22,13 +22,13 @@ _arashi() {
       local assignment="\${words[cursor - 2]}=\${words[cursor]}"
       words=("\${words[@]:0:cursor - 2}" "$assignment" "\${words[@]:cursor + 1}")
       cursor=$((cursor - 2))
-    elif (( cursor >= 1 )) && [[ "\${words[cursor]}" == ":" ]]; then
-      local path_word="\${words[cursor - 1]}:"
-      words=("\${words[@]:0:cursor - 1}" "$path_word" "\${words[@]:cursor + 1}")
+    elif (( cursor >= 1 )) && [[ "\${words[cursor]}" == ":" || "\${words[cursor]}" == "@" ]]; then
+      local combined_word="\${words[cursor - 1]}\${words[cursor]}"
+      words=("\${words[@]:0:cursor - 1}" "$combined_word" "\${words[@]:cursor + 1}")
       cursor=$((cursor - 1))
-    elif (( cursor >= 2 )) && [[ "\${words[cursor - 1]}" == ":" ]]; then
-      local path_word="\${words[cursor - 2]}:\${words[cursor]}"
-      words=("\${words[@]:0:cursor - 2}" "$path_word" "\${words[@]:cursor + 1}")
+    elif (( cursor >= 2 )) && [[ "\${words[cursor - 1]}" == ":" || "\${words[cursor - 1]}" == "@" ]]; then
+      local combined_word="\${words[cursor - 2]}\${words[cursor - 1]}\${words[cursor]}"
+      words=("\${words[@]:0:cursor - 2}" "$combined_word" "\${words[@]:cursor + 1}")
       cursor=$((cursor - 2))
     else
       break

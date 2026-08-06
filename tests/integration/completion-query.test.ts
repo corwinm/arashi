@@ -76,6 +76,7 @@ describe("lossless bounded dynamic completion query", () => {
     const bare = join(root, "workspace.git");
     const seed = join(root, "seed");
     const linked = join(root, "linked");
+    const primaryRepository = join(bare, "repos", "app");
     const repository = join(linked, "repos", "app");
     const git = (arguments_: string[], cwd = root) => {
       const result = spawnSync("git", arguments_, {
@@ -109,8 +110,13 @@ describe("lossless bounded dynamic completion query", () => {
         version: "1.0.0",
       }),
     );
-    mkdirSync(repository, { recursive: true });
-    git(["init"], repository);
+    mkdirSync(primaryRepository, { recursive: true });
+    git(["init", "--initial-branch=main"], primaryRepository);
+    writeFileSync(join(primaryRepository, "README.md"), "child fixture\n");
+    git(["add", "README.md"], primaryRepository);
+    git(["commit", "-m", "child fixture"], primaryRepository);
+    mkdirSync(join(linked, "repos"), { recursive: true });
+    git(["worktree", "add", "-b", "linked-child", repository], primaryRepository);
 
     const repositories = records(
       runQuery(linked, ["arashi", "create", "topic", "--only", "a"]).stdout,
@@ -121,7 +127,56 @@ describe("lossless bounded dynamic completion query", () => {
       runQuery(linked, ["arashi", "move", "topic", "--from", ""]).stdout,
     ).map(({ value }) => value);
     expect(worktrees).toContain(realpathSync(repository));
+
+    const removable = records(runQuery(linked, ["arashi", "remove", "--path", ""]).stdout).map(
+      ({ value }) => value,
+    );
+    expect(removable).toContain(realpathSync(linked));
+    expect(removable).toContain(realpathSync(repository));
   });
+
+  test.skipIf(process.platform === "win32")(
+    "recovers configured non-bare workspaces from external linked worktrees",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "arashi-completion-external-linked-"));
+      temporaryDirectories.push(root);
+      const main = join(root, "main");
+      const linked = join(root, "external");
+      mkdirSync(main);
+      const git = (arguments_: string[], cwd = main) => {
+        const result = spawnSync("git", arguments_, {
+          cwd,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            GIT_AUTHOR_EMAIL: "completion@example.test",
+            GIT_AUTHOR_NAME: "Completion Test",
+            GIT_COMMITTER_EMAIL: "completion@example.test",
+            GIT_COMMITTER_NAME: "Completion Test",
+          },
+        });
+        expect(result.status, result.stderr).toBe(0);
+      };
+      git(["init", "--initial-branch=main"]);
+      writeFileSync(join(main, "README.md"), "fixture\n");
+      git(["add", "README.md"]);
+      git(["commit", "-m", "fixture"]);
+      mkdirSync(join(main, ".arashi"));
+      writeFileSync(
+        join(main, ".arashi", "config.json"),
+        JSON.stringify({ repos: { app: { path: "repos/app" } }, version: "1.0.0" }),
+      );
+      git(["worktree", "add", "-b", "external", linked]);
+      const app = join(linked, "repos", "app");
+      mkdirSync(app, { recursive: true });
+      git(["init"], app);
+
+      const repositories = records(
+        runQuery(linked, ["arashi", "create", "topic", "--only", "a"]).stdout,
+      ).map(({ value }) => value);
+      expect(repositories).toContain("app");
+    },
+  );
 
   test.skipIf(process.platform === "win32")(
     "preserves NUL-delimited worktree paths and follows command repository scope",
@@ -277,6 +332,19 @@ describe("lossless bounded dynamic completion query", () => {
       ),
     ).toEqual(["REUSE_EXISTING"]);
     expect(records(runQuery(cwd, ["arashi", "status", "R"]).stdout)).toEqual([]);
+    const completedInline = records(
+      runQuery(cwd, ["arashi", "create", "topic", "--conflict=ABORT", ""]).stdout,
+    ).map((entry) => entry.value);
+    expect(completedInline).not.toContain("ABORT");
+    expect(completedInline).not.toContain("REUSE_EXISTING");
+  });
+
+  test("keeps repeatable handoff options available after an occurrence", () => {
+    const values = records(
+      runQuery(process.cwd(), ["arashi", "handoff", "--risk", "first", "--"]).stdout,
+    ).map(({ value }) => value);
+    expect(values).toContain("--risk");
+    expect(values).toContain("--link");
   });
 
   test("suppresses options that conflict with an already selected option", () => {

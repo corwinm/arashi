@@ -99,11 +99,12 @@ function parseContext(contract: CliCommandContract, argv: string[], cursor: numb
 
   if (!endOfOptions && before.length > 0) {
     const prior = before.at(-1)!;
-    const spelling = prior.includes("=") ? prior.slice(0, prior.indexOf("=")) : prior;
-    activeOption =
-      options.find(
-        (item) => item.valueShape !== "boolean" && optionSpellings(item).includes(spelling),
-      ) ?? null;
+    if (!prior.includes("=")) {
+      activeOption =
+        options.find(
+          (item) => item.valueShape !== "boolean" && optionSpellings(item).includes(prior),
+        ) ?? null;
+    }
   }
 
   if (!endOfOptions && current.startsWith("-") && current.includes("=")) {
@@ -181,7 +182,8 @@ function staticCandidates(
       for (const conflict of registered?.conflicts ?? []) blockedByPresentOptions.add(conflict);
     }
     for (const option of options) {
-      const alreadyPresent = present.has(option.long) && !option.semanticPolicy?.selector;
+      const alreadyPresent =
+        present.has(option.long) && !option.semanticPolicy?.selector && !option.repeatable;
       if (
         option.hidden ||
         alreadyPresent ||
@@ -199,7 +201,7 @@ function staticCandidates(
 interface WorkspaceData {
   configured: boolean;
   groups: string[];
-  repositories: Array<{ name: string; path: string }>;
+  repositories: Array<{ name: string; path: string; primaryPath: string | null }>;
   root: string;
 }
 
@@ -237,6 +239,7 @@ function workspaceFromRoots(
   configurationRoot: string,
   executionRoot: string,
   deadline: number,
+  bareRoot = false,
 ): WorkspaceData | null {
   const parsed = readCompletionConfig(
     resolve(configurationRoot, ".arashi", "config.json"),
@@ -248,10 +251,15 @@ function workspaceFromRoots(
     configured: true,
     groups: [...new Set(entries.flatMap(([, repository]) => repository.groups ?? []))],
     repositories: [
-      { name: basename(configurationRoot), path: executionRoot },
+      {
+        name: basename(configurationRoot),
+        path: executionRoot,
+        primaryPath: bareRoot ? null : configurationRoot,
+      },
       ...entries.map(([name, repository]) => ({
         name,
         path: resolve(executionRoot, repository.path),
+        primaryPath: resolve(configurationRoot, repository.path),
       })),
     ],
     root: executionRoot,
@@ -261,22 +269,26 @@ function workspaceFromRoots(
 function configuredCommonRoot(
   start: string,
   deadline: number,
-): { configurationRoot: string; executionRoot: string } | null {
+): { bareRoot: boolean; configurationRoot: string; executionRoot: string } | null {
   const checked = new Set<string>();
   let directory = resolve(start);
   while (performance.now() < deadline) {
     const rawCommon = gitOutput(directory, ["rev-parse", "--git-common-dir"], deadline);
     if (rawCommon) {
       const commonRoot = resolve(isAbsolute(rawCommon) ? rawCommon : resolve(directory, rawCommon));
-      const configPath = resolve(commonRoot, ".arashi", "config.json");
-      if (!checked.has(commonRoot) && existsSync(configPath)) {
-        checked.add(commonRoot);
-        const bare = gitOutput(directory, ["rev-parse", "--is-bare-repository"], deadline);
+      const bareRoot = basename(commonRoot) !== ".git";
+      const configurationRoot = bareRoot ? commonRoot : dirname(commonRoot);
+      const configPath = resolve(configurationRoot, ".arashi", "config.json");
+      if (!checked.has(configurationRoot) && existsSync(configPath)) {
+        checked.add(configurationRoot);
         const topLevel =
-          bare === "true"
-            ? commonRoot
-            : gitOutput(directory, ["rev-parse", "--show-toplevel"], deadline);
-        if (topLevel) return { configurationRoot: commonRoot, executionRoot: resolve(topLevel) };
+          gitOutput(directory, ["rev-parse", "--show-toplevel"], deadline) ?? commonRoot;
+        if (topLevel)
+          return {
+            bareRoot,
+            configurationRoot,
+            executionRoot: resolve(topLevel),
+          };
       }
     }
     const parent = dirname(directory);
@@ -302,6 +314,7 @@ function findWorkspace(start: string, deadline: number): WorkspaceData | null {
       configuredRoots.configurationRoot,
       configuredRoots.executionRoot,
       deadline,
+      configuredRoots.bareRoot,
     );
   }
 
@@ -323,7 +336,7 @@ function findWorkspace(start: string, deadline: number): WorkspaceData | null {
   return {
     configured: false,
     groups: [],
-    repositories: [{ name: basename(mainRoot), path: mainRoot }],
+    repositories: [{ name: basename(mainRoot), path: mainRoot, primaryPath: mainRoot }],
     root: mainRoot,
   };
 }
@@ -357,7 +370,12 @@ function worktreeCandidates(
     let bare = false;
     const add = () => {
       if (!path || bare) return;
-      if (excludePrimary && resolve(path) === resolve(repository.path)) return;
+      if (
+        excludePrimary &&
+        repository.primaryPath !== null &&
+        resolve(path) === resolve(repository.primaryPath)
+      )
+        return;
       const forms = formsFor(repository);
       const values = [
         forms.branch ? branch : "",

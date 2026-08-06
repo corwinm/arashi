@@ -1278,6 +1278,7 @@ export interface ContractOption {
   long: string;
   required: boolean;
   optional: boolean;
+  repeatable: boolean;
   semanticPolicy?: OptionSemanticPolicy;
   semanticPolicyOwner: "structural" | "command";
   short: string | null;
@@ -1349,6 +1350,8 @@ function contractOption(
     long: option.long ?? "",
     required: option.required,
     optional: option.optional,
+    repeatable:
+      option.variadic || Boolean((option as Option & { repeatable?: boolean }).repeatable),
     semanticPolicy,
     semanticPolicyOwner: semanticPolicy
       ? semanticPolicy.ownership

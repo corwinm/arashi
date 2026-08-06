@@ -52,6 +52,16 @@ describe("completion canonical contract", () => {
       "--launch",
     );
     expect(switchCommand?.options.find((option) => option.long === "--no-cd")?.hidden).toBe(true);
+    const handoff = contract.commands.find((command) => command.path === "handoff");
+    for (const option of ["--link", "--validation", "--todo", "--risk", "--next-command"]) {
+      expect(
+        (
+          handoff?.options.find((candidate) => candidate.long === option) as
+            | { repeatable?: boolean }
+            | undefined
+        )?.repeatable,
+      ).toBe(true);
+    }
   });
 
   test("serializes deterministically and includes completion-critical fields", () => {
