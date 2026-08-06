@@ -159,7 +159,7 @@ export async function runEntrypoint(argv = process.argv.slice(2), options = {}) 
 
   try {
     if (isExplicitInstallCommand(argv)) {
-      return runExplicitInstall(argv.slice(1), options);
+      return await runExplicitInstall(argv.slice(1), options);
     }
 
     if (isExplicitUpdateCommand(argv)) {

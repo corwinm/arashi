@@ -81,6 +81,21 @@ describe("npm JavaScript entrypoint", () => {
     expect(spawn.calls).toEqual([]);
   });
 
+  test("explicit install formats asynchronous failures inside the entrypoint", async () => {
+    const errors: string[] = [];
+    const exitCode = await runEntrypoint(["install"], {
+      error: (line: string) => errors.push(line),
+      installBinaryImpl: async () => {
+        await Promise.resolve();
+        throw new Error("async install sentinel");
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("✗ Failed to install arashi: async install sentinel");
+  });
+
   test.each([["-j"], ["--json"], ["-j", "--json"]])(
     "explicit install %s emits one JSON document and installs exactly once",
     async (...flags) => {

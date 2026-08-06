@@ -57,6 +57,16 @@ describe("update helpers", () => {
     expect(parseUpdateArgs(["-jn"])).toEqual(parseUpdateArgs(["--json", "--dry-run"]));
     expect(parseUpdateArgs(["-nj"])).toEqual(parseUpdateArgs(["--dry-run", "--json"]));
     expect(parseUpdateArgs(["-jy"])).toEqual(parseUpdateArgs(["--json", "--yes"]));
+    expect(parseUpdateArgs(["-xy"])).toMatchObject({
+      json: false,
+      unknownOptions: ["-xy"],
+      yes: false,
+    });
+    expect(parseUpdateArgs(["--bogus"])).toMatchObject({ unknownOptions: ["--bogus"] });
+    expect(parseUpdateArgs(["--", "-xy"])).toMatchObject({
+      unknownOptions: [],
+      yes: false,
+    });
     expect(parseUpdateArgs(["-j", "--json", "-n", "--dry-run"])).toMatchObject({
       dryRun: true,
       json: true,
@@ -362,6 +372,30 @@ describe("npm-managed update flow", () => {
       }
     },
   );
+
+  test("rejects an invalid grouped update token before lookup or mutation", async () => {
+    const stderr: string[] = [];
+    let lookupCount = 0;
+    let mutationCount = 0;
+    const exitCode = await runNpmManagedUpdate(["-xy"], {
+      error: (line: string) => stderr.push(line),
+      fetchImpl: async () => {
+        lookupCount += 1;
+        throw new Error("lookup sentinel");
+      },
+      installBinaryImpl: async () => {
+        mutationCount += 1;
+        return {};
+      },
+      metadata: { name: "arashi", version: "1.0.0" },
+      rootDir: "/pkg",
+    });
+
+    expect(exitCode).toBe(2);
+    expect(lookupCount).toBe(0);
+    expect(mutationCount).toBe(0);
+    expect(stderr).toEqual(["Unknown option: -xy"]);
+  });
 
   test("check mode reports available update without mutating", async () => {
     const logs: string[] = [];
