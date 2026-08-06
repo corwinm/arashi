@@ -30,7 +30,7 @@ const prefixCandidates = (
 ): CompletionCandidate[] => {
   const comma = commaSegments ? prefix.lastIndexOf(",") : -1;
   const leading = comma < 0 ? "" : prefix.slice(0, comma + 1);
-  const segment = comma < 0 ? prefix : prefix.slice(comma + 1);
+  const segment = comma < 0 ? prefix : prefix.slice(comma + 1).trim();
   const normalized = segment.toLowerCase();
   return values
     .filter((candidate) => candidate.value.toLowerCase().startsWith(normalized))
@@ -263,9 +263,18 @@ function workspaceFromRoots(
   const entries = Object.entries(
     parsed.repos ?? parsed.discoveredRepos ?? parsed.discovered_repos ?? {},
   );
+  const seenGroups = new Set<string>();
+  const groups: string[] = [];
+  for (const rawGroup of entries.flatMap(([, repository]) => repository.groups ?? [])) {
+    const group = rawGroup.trim();
+    const normalizedGroup = group.toLowerCase();
+    if (!group || seenGroups.has(normalizedGroup)) continue;
+    seenGroups.add(normalizedGroup);
+    groups.push(group);
+  }
   return {
     configured: true,
-    groups: [...new Set(entries.flatMap(([, repository]) => repository.groups ?? []))],
+    groups,
     repositories: [
       {
         name: basename(configurationRoot),

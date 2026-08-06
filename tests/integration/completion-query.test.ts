@@ -38,8 +38,8 @@ describe("lossless bounded dynamic completion query", () => {
         version: "1.0.0",
         reposDir: "repos",
         repos: {
-          "repo one": { path: "repos/repo one", groups: ["docs team"] },
-          [sensitiveRepository]: { path: "repos/odd" },
+          "repo one": { path: "repos/repo one", groups: [" docs team "] },
+          [sensitiveRepository]: { path: "repos/odd", groups: ["DOCS TEAM"] },
         },
       }),
     );
@@ -49,10 +49,12 @@ describe("lossless bounded dynamic completion query", () => {
     expect(records(only.stdout)).toEqual(
       expect.arrayContaining([{ value: "repo one", description: expect.any(String) }]),
     );
-    const group = runQuery(root, ["arashi", "create", "topic", "--group", "docs"]);
-    expect(records(group.stdout).map((entry) => entry.value)).toContain("docs team");
     const comma = runQuery(root, ["arashi", "create", "topic", "--only", "other,repo"]);
     expect(records(comma.stdout).map((entry) => entry.value)).toContain("other,repo one");
+    const spacedComma = runQuery(root, ["arashi", "create", "topic", "--only", "other, repo"]);
+    expect(records(spacedComma.stdout).map((entry) => entry.value)).toContain("other,repo one");
+    const group = runQuery(root, ["arashi", "create", "topic", "--group", "docs"]);
+    expect(records(group.stdout).map((entry) => entry.value)).toEqual(["docs team"]);
     const workspaceRepository = runQuery(root, ["arashi", "create", "topic", "--only", ""]);
     expect(records(workspaceRepository.stdout).map((entry) => entry.value)).toContain(
       basename(root),
