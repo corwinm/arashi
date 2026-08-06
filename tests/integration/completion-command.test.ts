@@ -20,9 +20,12 @@ describe("completion command and generated artifacts", () => {
       expect(result.stdout).toContain("complete -F _arashi arashi");
       expect(spawnSync("bash", ["-n"], { input: result.stdout }).status).toBe(0);
     } else if (shell === "zsh") {
+      expect(result.stdout).toContain("autoload -Uz compinit && compinit -i");
       expect(result.stdout).toContain("compdef _arashi arashi");
       expect(spawnSync("zsh", ["-n"], { input: result.stdout }).status).toBe(0);
     } else {
+      expect(result.stdout).toContain('string escape --no-quoted -- "$fields[$index]"');
+      expect(result.stdout).toContain('"$fields[$description_index]"');
       expect(result.stdout).toContain("complete -c arashi");
     }
   });

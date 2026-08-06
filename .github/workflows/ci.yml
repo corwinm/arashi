@@ -97,6 +97,11 @@ jobs:
           cache: true
           install: false
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
       - name: Install native completion shells
         if: runner.os == 'Linux'
         run: |

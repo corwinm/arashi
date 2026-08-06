@@ -44,7 +44,8 @@ const sections = (stdout: string): Map<string, string[]> => {
   return result;
 };
 
-const candidateValues = (lines: string[]): string[] => lines.map((line) => line.split("\t")[0]);
+const candidateValues = (lines: string[]): string[] =>
+  lines.map((line) => Buffer.from(line.split("\t")[0], "base64").toString());
 
 const workspaceState = (): string => {
   const repositories = [
@@ -75,6 +76,8 @@ beforeAll(() => {
   homeRoot = join(temporaryRoot, "home");
   mkdirSync(outsideRoot);
   mkdirSync(homeRoot);
+  mkdirSync(join(homeRoot, ".config", "fish"), { recursive: true });
+  writeFileSync(join(homeRoot, ".config", "fish", "config.fish"), "");
   mkdirSync(join(workspaceRoot, ".arashi"), { recursive: true });
   writeFileSync(
     join(workspaceRoot, ".arashi", "config.json"),
@@ -322,37 +325,39 @@ run_sensitive_completion sensitive arashi create topic --only ''
     () => {
       const script = `
 source ${shellQuote(completionFiles.get("fish")!)}
-cd ${shellQuote(outsideRoot)}
-printf '@@directRoot\\n'; complete -C 'arashi cr'
-printf '@@nested\\n'; complete -C 'arashi shell i'
-printf '@@shortOption\\n'; complete -C 'arashi create topic -'
-command arashi shell init fish | source
-functions -q arashi; or exit 8
-printf '@@wrappedRoot\\n'; complete -C 'arashi cr'
-printf '@@choice\\n'; complete -C 'arashi completion b'
-printf '@@conflict\\n'; complete -C 'arashi create topic --tmux '
-printf '@@boundary\\n'; complete -C 'arashi create topic -- '
-printf '@@variadic\\n'; complete -C 'arashi exec printf '
-cd ${shellQuote(workspaceRoot)}
-printf '@@repository\\n'; complete -C 'arashi create topic --only repo'
-printf '@@repositoryShort\\n'; complete -C 'arashi create topic -o repo'
-printf '@@group\\n'; complete -C 'arashi create topic --group docs'
-printf '@@groupShort\\n'; complete -C 'arashi create topic -g docs'
-printf '@@switch\\n'; complete -C 'arashi switch repo'
-printf '@@remove\\n'; complete -C 'arashi remove repo'
-printf '@@moveFrom\\n'; complete -C 'arashi move --from repo'
-printf '@@moveTo\\n'; complete -C 'arashi move --to repo'
-printf '@@path\\n'; complete -C 'arashi switch --path '
-set -l sensitive (node -e 'process.stdout.write(Buffer.from(process.env.SENSITIVE_REPOSITORY_BASE64, "base64"))' | string collect)
-set -l escaped_sensitive (string escape -- "$sensitive")
-set -l sensitive_found 0
-for candidate_record in (complete -C 'arashi create topic --only ')
-    set -l candidate (string split -m 1 \\t -- "$candidate_record")[1]
-    if test "$candidate" = "$escaped_sensitive"
-        set sensitive_found 1
+function run_completion
+    set -l label $argv[1]
+    set -l command_line $argv[2]
+    printf '@@%s\\n' "$label"
+    for candidate_record in (complete -C "$command_line")
+        set -l fields (string split -m 1 \\t -- "$candidate_record")
+        set -l candidate (string unescape -- "$fields[1]" | string collect)
+        set -l encoded (node -e 'process.stdout.write(Buffer.from(process.argv[1]).toString("base64"))' -- "$candidate")
+        printf '%s\\t%s\\n' "$encoded" "$fields[2]"
     end
 end
-printf '@@sensitive\\n%s\\n' "$sensitive_found"
+cd ${shellQuote(outsideRoot)}
+run_completion directRoot 'arashi cr'
+run_completion nested 'arashi shell i'
+run_completion shortOption 'arashi create topic -'
+command arashi shell init fish | source
+functions -q arashi; or exit 8
+run_completion wrappedRoot 'arashi cr'
+run_completion choice 'arashi completion b'
+run_completion conflict 'arashi create topic --tmux '
+run_completion boundary 'arashi create topic -- '
+run_completion variadic 'arashi exec printf '
+cd ${shellQuote(workspaceRoot)}
+run_completion repository 'arashi create topic --only repo'
+run_completion repositoryShort 'arashi create topic -o repo'
+run_completion group 'arashi create topic --group docs'
+run_completion groupShort 'arashi create topic -g docs'
+run_completion switch 'arashi switch repo'
+run_completion remove 'arashi remove repo'
+run_completion moveFrom 'arashi move --from repo'
+run_completion moveTo 'arashi move --to repo'
+run_completion path 'arashi switch --path '
+run_completion sensitive 'arashi create topic --only '
 `;
       const result = spawnSync("fish", ["--no-config", "-c", script], {
         encoding: "utf8",
@@ -386,7 +391,7 @@ printf '@@sensitive\\n%s\\n' "$sensitive_found"
       expect(
         candidateValues(output.get("path") ?? []).every((value) => value.startsWith("/")),
       ).toBe(true);
-      expect(output.get("sensitive")).toEqual(["1"]);
+      expect(candidateValues(output.get("sensitive") ?? [])).toContain(sensitiveRepository);
     },
   );
 });

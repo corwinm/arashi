@@ -21,7 +21,7 @@ complete -F _arashi arashi
   if (shell === "zsh")
     return `${marker}
 if ! (( $+functions[compdef] )); then
-  autoload -Uz compinit && compinit
+  autoload -Uz compinit && compinit -i
 fi
 _arashi() {
   local value description
@@ -44,7 +44,7 @@ function __arashi_complete
     if test (count $fields) -ge 2
         for index in (seq 1 2 (count $fields))
             set -l description_index (math $index + 1)
-            printf '%s\\t%s\\n' (string escape -- $fields[$index]) (string escape -- $fields[$description_index])
+            printf '%s\\t%s\\n' (string escape --no-quoted -- "$fields[$index]") "$fields[$description_index]"
         end
     end
 end
