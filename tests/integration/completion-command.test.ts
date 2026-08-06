@@ -22,7 +22,8 @@ describe("completion command and generated artifacts", () => {
     } else if (shell === "zsh") {
       expect(result.stdout).toContain("autoload -Uz compinit && compinit -i");
       expect(result.stdout).toContain("compdef _arashi arashi");
-      expect(spawnSync("zsh", ["-n"], { input: result.stdout }).status).toBe(0);
+      if (process.platform !== "win32")
+        expect(spawnSync("zsh", ["-n"], { input: result.stdout }).status).toBe(0);
     } else {
       expect(result.stdout).toContain('string escape --no-quoted -- "$fields[$index]"');
       expect(result.stdout).toContain('"$fields[$description_index]"');

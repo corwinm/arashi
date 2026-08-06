@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatInstallError, getPlatformInfo, installBinary } from "./install-binary.js";
 import { runNpmManagedUpdate } from "./update.js";
@@ -122,7 +122,7 @@ function spawnArashi(argv, options = {}) {
   const platform = options.platform ?? currentPlatform;
   const windows = platform === "win32";
   const spawnImpl = options.spawnImpl ?? spawn;
-  const wrapperPath = join(binDir, getWrapperName(platform));
+  const wrapperPath = (windows ? win32 : posix).join(binDir, getWrapperName(platform));
   const binaryPath = resolveBinaryPath({
     arch: options.arch,
     binDir,
