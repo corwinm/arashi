@@ -21,6 +21,14 @@ _arashi() {
     local assignment="\${words[cursor - 2]}=\${words[cursor]}"
     words=("\${words[@]:0:cursor - 2}" "$assignment" "\${words[@]:cursor + 1}")
     cursor=$((cursor - 2))
+  elif (( cursor >= 1 )) && [[ "\${words[cursor]}" == ":" ]]; then
+    local path_word="\${words[cursor - 1]}:"
+    words=("\${words[@]:0:cursor - 1}" "$path_word" "\${words[@]:cursor + 1}")
+    cursor=$((cursor - 1))
+  elif (( cursor >= 2 )) && [[ "\${words[cursor - 1]}" == ":" ]]; then
+    local path_word="\${words[cursor - 2]}:\${words[cursor]}"
+    words=("\${words[@]:0:cursor - 2}" "$path_word" "\${words[@]:cursor + 1}")
+    cursor=$((cursor - 2))
   fi
   COMPREPLY=()
   while IFS= read -r -d '' value && IFS= read -r -d '' description; do
@@ -55,7 +63,8 @@ function __arashi_complete
     if test (count $fields) -ge 2
         for index in (seq 1 2 (count $fields))
             set -l description_index (math $index + 1)
-            printf '%s\\t%s\\n' (string escape --no-quoted -- "$fields[$index]") "$fields[$description_index]"
+            set -l description (string replace -ar '[\\t\\r\\n]' ' ' -- "$fields[$description_index]")
+            printf '%s\\t%s\\n' (string escape --no-quoted -- "$fields[$index]") "$description"
         end
     end
 end

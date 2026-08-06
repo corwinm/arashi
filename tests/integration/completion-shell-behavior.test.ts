@@ -85,7 +85,7 @@ beforeAll(() => {
       repos: {
         "repo one": { groups: ["docs team"], path: "repos/repo one" },
         "repo-one": { groups: ["docs-team"], path: "repos/repo-one" },
-        [sensitiveRepository]: { path: "repos/sensitive" },
+        [sensitiveRepository]: { path: "repos/repo one" },
       },
       reposDir: "repos",
       version: "1.0.0",
@@ -402,6 +402,7 @@ run_completion sensitive 'arashi create topic --only '
         candidateValues(output.get("path") ?? []).every((value) => value.startsWith("/")),
       ).toBe(true);
       expect(candidateValues(output.get("sensitive") ?? [])).toContain(sensitiveRepository);
+      expect(output.get("switch")?.every((line) => line.split("\t").length === 2)).toBe(true);
     },
   );
 });

@@ -90,6 +90,7 @@ afterAll(() => {
 
 describe.skipIf(!supported).sequential("packed npm and standalone completion distributions", () => {
   test("installs a missing binary on first completion use without contaminating stdout", () => {
+    rmSync(installedBinary, { force: true });
     const expected = run(standaloneBinary, ["completion", "bash"], fixtureRoot);
     expect(expected.status, expected.stderr).toBe(0);
     expect(expected.stderr).toBe("");
@@ -98,6 +99,20 @@ describe.skipIf(!supported).sequential("packed npm and standalone completion dis
     expect(firstUse.status, firstUse.stderr).toBe(0);
     expect(firstUse.stderr).toBe("");
     expect(firstUse.stdout).toBe(expected.stdout);
+    expect(existsSync(installedBinary)).toBe(true);
+  }, 30_000);
+
+  test("installs a missing binary on first shell init use without contaminating stdout", () => {
+    rmSync(installedBinary, { force: true });
+    const expected = run(standaloneBinary, ["shell", "init", "bash"], fixtureRoot);
+    expect(expected.status, expected.stderr).toBe(0);
+    expect(expected.stderr).toBe("");
+
+    const firstUse = run(process.execPath, [firstUseRunner, "shell", "init", "bash"], fixtureRoot);
+    expect(firstUse.status, firstUse.stderr).toBe(0);
+    expect(firstUse.stderr).toBe("");
+    expect(firstUse.stdout).toBe(expected.stdout);
+    expect(firstUse.stdout).toContain("ARASHI_DIRECTIVE_FILE");
     expect(existsSync(installedBinary)).toBe(true);
   }, 30_000);
 

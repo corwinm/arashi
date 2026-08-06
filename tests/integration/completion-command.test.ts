@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 const cli = ["src/index.ts"];
@@ -26,7 +29,9 @@ describe("completion command and generated artifacts", () => {
         expect(spawnSync("zsh", ["-n"], { input: result.stdout }).status).toBe(0);
     } else {
       expect(result.stdout).toContain('string escape --no-quoted -- "$fields[$index]"');
-      expect(result.stdout).toContain('"$fields[$description_index]"');
+      expect(result.stdout).toContain(
+        "string replace -ar '[\\t\\r\\n]' ' ' -- \"$fields[$description_index]\"",
+      );
       expect(result.stdout).toContain("complete -c arashi");
     }
   });
@@ -45,6 +50,40 @@ describe("completion command and generated artifacts", () => {
     expect(wrapper.stdout).not.toContain("complete -F");
     expect(wrapper.stdout).not.toContain("arashi completion");
   });
+
+  test.skipIf(process.platform === "win32")(
+    "reconstructs Bash drive-path word breaks before querying",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "arashi-bash-drive-completion-"));
+      try {
+        const completion = join(root, "arashi.bash");
+        const executable = join(root, "arashi");
+        writeFileSync(completion, run(["completion", "bash"]).stdout);
+        writeFileSync(
+          executable,
+          `#!/bin/bash\nif [[ "$*" == "completion __query 3 -- arashi switch --path C:/work" ]]; then printf 'C:/worktree\\0Path\\0'; fi\n`,
+        );
+        chmodSync(executable, 0o755);
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            'source "$1"; COMP_WORDS=(arashi switch --path C : /work); COMP_CWORD=5; _arashi; printf "%s\\n" "${COMPREPLY[@]}"',
+            "bash",
+            completion,
+          ],
+          {
+            encoding: "utf8",
+            env: { ...process.env, PATH: `${root}${delimiter}${process.env.PATH ?? ""}` },
+          },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toBe("C:/worktree\n");
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
+    },
+  );
 
   test("registers public completion and excludes the hidden query from help", () => {
     const root = run(["--help"]);

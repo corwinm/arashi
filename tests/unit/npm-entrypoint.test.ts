@@ -59,6 +59,23 @@ describe("npm JavaScript entrypoint", () => {
     expect(spawn.calls[0].command).toBe("/bin/bash");
   });
 
+  test.each([
+    ["completion", "bash"],
+    ["shell", "init", "bash"],
+  ])("keeps source-output first use silent for %s", async (...argv) => {
+    const output: string[] = [];
+    await ensureInstalled({
+      argv,
+      existsSyncImpl: () => false,
+      installBinaryImpl: async (options: { log: (line: string) => void }) => {
+        options.log("installer progress");
+        return { status: "installed" };
+      },
+      log: (line: string) => output.push(line),
+    });
+    expect(output).toEqual([]);
+  });
+
   test("explicit install downloads without spawning the native binary", async () => {
     const installed: string[] = [];
     const spawn = createSuccessfulSpawn();

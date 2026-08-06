@@ -66,8 +66,10 @@ export async function ensureInstalled(options = {}) {
   const rootDir = options.rootDir ?? join(binDir, "..");
   const platform = options.platform ?? currentPlatform;
   const arch = options.arch ?? currentArch;
-  const completionFirstUse = options.argv?.[0] === "completion";
-  const log = completionFirstUse ? () => {} : (options.log ?? console.log);
+  const sourceOutputFirstUse =
+    options.argv?.[0] === "completion" ||
+    (options.argv?.[0] === "shell" && options.argv?.[1] === "init");
+  const log = sourceOutputFirstUse ? () => {} : (options.log ?? console.log);
   const installBinaryImpl = options.installBinaryImpl ?? installBinary;
 
   if (hasRunnableBinary({ arch, binDir, existsSyncImpl: options.existsSyncImpl, platform })) {
