@@ -145,11 +145,15 @@ export interface SwitchCommandDependencies {
     options: LaunchSwitchOptions,
     deps: {
       env: Record<string, string | undefined>;
+      homeDirectory?: () => string | undefined;
+      pathExists?: (path: string) => Promise<boolean>;
       platform: NodeJS.Platform;
       runProcess?: SwitchProcessRunner;
     },
   ) => Promise<LaunchSwitchResult>;
   env?: Record<string, string | undefined>;
+  homeDirectory?: () => string | undefined;
+  pathExists?: (path: string) => Promise<boolean>;
   platform?: NodeJS.Platform;
   stdinIsTTY?: boolean;
   stdoutIsTTY?: boolean;
@@ -420,6 +424,8 @@ export async function executeSwitch(
 
   const launchResult = await launchCandidate(selected, resolvedLaunch, {
     env: commandEnv,
+    homeDirectory: deps.homeDirectory,
+    pathExists: deps.pathExists,
     platform: deps.platform ?? process.platform,
     runProcess: deps.runProcess,
   });

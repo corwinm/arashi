@@ -1801,6 +1801,81 @@ describe("switch command integration", () => {
     ]);
   });
 
+  test("launches a configured-workspace explicit Cursor request through its macOS bundle", async () => {
+    const bundleLauncher = "/Applications/Cursor.app/Contents/Resources/app/bin/cursor";
+    const invocations: string[][] = [];
+
+    const result = await executeSwitch(
+      undefined,
+      { cursor: true },
+      {
+        discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+        env: {},
+        findWorkspaceRoot: async () => "/workspace",
+        homeDirectory: () => "/Users/example",
+        loadWorkspaceRepositories: async () => ({
+          config: {
+            defaults: { switch: { mode: "sesh" } },
+            repos: {},
+            reposDir: "./repos",
+            version: "1.0.0",
+          },
+          repositories: [],
+        }),
+        pathExists: async (path) => path === bundleLauncher,
+        platform: "darwin",
+        runProcess: async (command) => {
+          invocations.push(command);
+          return command[0] === "which"
+            ? { exitCode: 1, stderr: "missing", stdout: "" }
+            : { exitCode: 0, stderr: "", stdout: "" };
+        },
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("cursor");
+    expect(invocations).toEqual([
+      ["which", "cursor"],
+      [bundleLauncher, "--new-window", candidate.worktreePath],
+    ]);
+  });
+
+  test("uses a resolved VS Code bundle for a zero-config explicit switch", async () => {
+    const bundleLauncher =
+      "/Users/Space User/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
+    const invocations: string[][] = [];
+
+    const result = await executeSwitch(
+      undefined,
+      { vscode: true },
+      {
+        discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+        env: {},
+        findWorkspaceRoot: async () => "/workspace",
+        homeDirectory: () => "/Users/Space User",
+        loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        pathExists: async (path) => path === bundleLauncher,
+        platform: "darwin",
+        runProcess: async (command) => {
+          invocations.push(command);
+          return command[0] === "which"
+            ? { exitCode: 1, stderr: "missing", stdout: "" }
+            : { exitCode: 0, stderr: "", stdout: "" };
+        },
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+      },
+    );
+
+    expect(result.launchMode).toBe("vscode");
+    expect(invocations).toEqual([
+      ["which", "code"],
+      [bundleLauncher, "--new-window", candidate.worktreePath],
+    ]);
+  });
+
   test("invokes VS Code runner path in VS Code terminals", async () => {
     const invocations: string[][] = [];
     const runProcess: SwitchProcessRunner = async (command) => {
@@ -1976,6 +2051,9 @@ describe("switch command integration", () => {
         env: { TERM_PROGRAM: "vscode" },
         findWorkspaceRoot: async () => "/workspace",
         loadWorkspaceRepositories: async () => ({ repositories: [] }),
+        pathExists: async () => {
+          throw new Error("automatic IDE detection must not probe app bundles");
+        },
         platform: "darwin",
         runProcess,
         stdinIsTTY: false,
