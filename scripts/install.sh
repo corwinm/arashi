@@ -631,6 +631,8 @@ upsert_shell_integration_block() {
   local rc_file="$1"
   local integration_block="$2"
   local temporary_file
+  local replacement_file
+  local final_newline
 
   if ! has_managed_shell_integration "$rc_file"; then
     {
@@ -642,16 +644,55 @@ upsert_shell_integration_block() {
   fi
 
   temporary_file="$(mktemp)" || return 1
+  replacement_file="$(mktemp)" || {
+    rm -f "$temporary_file"
+    return 1
+  }
+  printf '%s\n' "$integration_block" > "$replacement_file" || {
+    rm -f "$temporary_file" "$replacement_file"
+    return 1
+  }
+
+  final_newline=0
+  if [ "$(tail -c 1 "$rc_file" | od -An -t u1 | tr -d ' ')" = "10" ]; then
+    final_newline=1
+  fi
+
   awk \
     -v start="$SHELL_INTEGRATION_START" \
     -v end="$SHELL_INTEGRATION_END" \
-    -v block="$integration_block" \
-    '$0 == start { print start; print block; managed=1; next }
-     managed && $0 == end { print end; managed=0; next }
-     !managed { print }' "$rc_file" > "$temporary_file" || {
-      rm -f "$temporary_file"
+    -v replacement_file="$replacement_file" \
+    -v final_newline="$final_newline" \
+    'function emit_line(line, is_last) {
+       printf "%s", line
+       if (!is_last || final_newline) printf "\n"
+     }
+     { lines[NR] = $0 }
+     END {
+       for (line_number = 1; line_number <= NR; line_number++) {
+         is_last = line_number == NR
+         if (!managed && lines[line_number] == start) {
+           print start
+           while ((getline replacement_line < replacement_file) > 0) print replacement_line
+           close(replacement_file)
+           managed = 1
+           continue
+         }
+         if (managed) {
+           if (lines[line_number] == end) {
+             emit_line(end, is_last)
+             managed = 0
+           }
+           continue
+         }
+         emit_line(lines[line_number], is_last)
+       }
+       if (managed) exit 2
+     }' "$rc_file" > "$temporary_file" || {
+      rm -f "$temporary_file" "$replacement_file"
       return 1
     }
+  rm -f "$replacement_file"
   mv "$temporary_file" "$rc_file"
 }
 
@@ -835,4 +876,6 @@ main() {
   print_post_install_notes "$install_dir" "$target_wrapper_path" "$target_binary_path"
 }
 
-main "$@"
+if [ "${ARASHI_INSTALLER_SOURCE_ONLY:-}" != "1" ]; then
+  main "$@"
+fi
