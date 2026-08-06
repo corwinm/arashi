@@ -6,6 +6,7 @@ import {
   fstatSync,
   openSync,
   readFileSync,
+  realpathSync,
   statSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -205,7 +206,20 @@ interface WorkspaceData {
   root: string;
 }
 
-type CompletionConfig = { repos?: Record<string, { groups?: string[]; path: string }> };
+type CompletionRepositoryConfig = Record<string, { groups?: string[]; path: string }>;
+type CompletionConfig = {
+  discovered_repos?: CompletionRepositoryConfig;
+  discoveredRepos?: CompletionRepositoryConfig;
+  repos?: CompletionRepositoryConfig;
+};
+
+const canonicalPath = (path: string): string => {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
+};
 
 function gitOutput(start: string, arguments_: string[], deadline: number): string | null {
   const remaining = Math.floor(deadline - performance.now());
@@ -246,7 +260,9 @@ function workspaceFromRoots(
     deadline,
   );
   if (!parsed) return null;
-  const entries = Object.entries(parsed.repos ?? {});
+  const entries = Object.entries(
+    parsed.repos ?? parsed.discoveredRepos ?? parsed.discovered_repos ?? {},
+  );
   return {
     configured: true,
     groups: [...new Set(entries.flatMap(([, repository]) => repository.groups ?? []))],
@@ -368,12 +384,13 @@ function worktreeCandidates(
     let path = "";
     let branch = "";
     let bare = false;
+    let prunable = false;
     const add = () => {
-      if (!path || bare) return;
+      if (!path || bare || prunable) return;
       if (
         excludePrimary &&
         repository.primaryPath !== null &&
-        resolve(path) === resolve(repository.primaryPath)
+        canonicalPath(path) === canonicalPath(repository.primaryPath)
       )
         return;
       const forms = formsFor(repository);
@@ -395,9 +412,11 @@ function worktreeCandidates(
         path = "";
         branch = "";
         bare = false;
+        prunable = false;
       } else if (line.startsWith("worktree ")) path = line.slice(9);
       else if (line.startsWith("branch refs/heads/")) branch = line.slice(18);
       else if (line === "bare") bare = true;
+      else if (line === "prunable" || line.startsWith("prunable ")) prunable = true;
     }
     add();
   }

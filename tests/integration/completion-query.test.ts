@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,6 +68,85 @@ describe("lossless bounded dynamic completion query", () => {
       expect(selectors).not.toContain(basename(root));
     }
   });
+
+  test.each(["discoveredRepos", "discovered_repos"])(
+    "normalizes configured repositories from the legacy %s key",
+    (repositoryKey) => {
+      const root = mkdtempSync(join(tmpdir(), "arashi-completion-legacy-config-"));
+      temporaryDirectories.push(root);
+      mkdirSync(join(root, ".arashi"));
+      writeFileSync(
+        join(root, ".arashi", "config.json"),
+        JSON.stringify({
+          [repositoryKey]: { legacy: { groups: ["legacy-group"], path: "repos/legacy" } },
+          version: "1.0.0",
+        }),
+      );
+
+      expect(
+        records(runQuery(root, ["arashi", "create", "topic", "--only", "leg"]).stdout).map(
+          ({ value }) => value,
+        ),
+      ).toContain("legacy");
+      expect(
+        records(runQuery(root, ["arashi", "create", "topic", "--group", "leg"]).stdout).map(
+          ({ value }) => value,
+        ),
+      ).toContain("legacy-group");
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "canonicalizes primary paths and excludes prunable worktrees from remove completion",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "arashi-completion-remove-filter-"));
+      temporaryDirectories.push(root);
+      const workspace = join(root, "workspace");
+      const realChild = join(root, "real-child");
+      const configuredChild = join(workspace, "repos", "child");
+      const linkedChild = join(root, "linked-child");
+      const prunableChild = join(root, "prunable-child");
+      const gitEnvironment = {
+        ...process.env,
+        GIT_AUTHOR_EMAIL: "completion@example.test",
+        GIT_AUTHOR_NAME: "Completion Test",
+        GIT_COMMITTER_EMAIL: "completion@example.test",
+        GIT_COMMITTER_NAME: "Completion Test",
+      };
+      const git = (cwd: string, arguments_: string[]) => {
+        const result = spawnSync("git", arguments_, { cwd, encoding: "utf8", env: gitEnvironment });
+        expect(result.status, result.stderr).toBe(0);
+      };
+      const initialize = (repository: string) => {
+        mkdirSync(repository, { recursive: true });
+        git(repository, ["init", "--initial-branch=main"]);
+        writeFileSync(join(repository, "README.md"), "fixture\n");
+        git(repository, ["add", "README.md"]);
+        git(repository, ["commit", "-m", "fixture"]);
+      };
+
+      initialize(workspace);
+      initialize(realChild);
+      mkdirSync(join(workspace, "repos"), { recursive: true });
+      symlinkSync(realChild, configuredChild);
+      mkdirSync(join(workspace, ".arashi"));
+      writeFileSync(
+        join(workspace, ".arashi", "config.json"),
+        JSON.stringify({ repos: { child: { path: "repos/child" } }, version: "1.0.0" }),
+      );
+      git(realChild, ["worktree", "add", "-b", "linked", linkedChild]);
+      git(realChild, ["worktree", "add", "-b", "prunable", prunableChild]);
+      const canonicalPrunableChild = realpathSync(prunableChild);
+      rmSync(prunableChild, { recursive: true });
+
+      const removable = records(runQuery(workspace, ["arashi", "remove", "--path", ""]).stdout).map(
+        ({ value }) => value,
+      );
+      expect(removable).toContain(realpathSync(linkedChild));
+      expect(removable).not.toContain(realpathSync(realChild));
+      expect(removable).not.toContain(canonicalPrunableChild);
+    },
+  );
 
   test("discovers configured common-root workspaces from linked worktrees", () => {
     if (process.platform === "win32") return;

@@ -39,7 +39,7 @@ _arashi() {
     COMPREPLY+=("$value")
   done < <(command arashi completion __query "$cursor" -- "\${words[@]}")
 }
-complete -F _arashi arashi
+complete -o filenames -F _arashi arashi
 `;
   if (shell === "zsh")
     return `${marker}
