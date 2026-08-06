@@ -1,3 +1,7 @@
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
+import { homedir } from "node:os";
+import { posix } from "node:path";
 import { runtime } from "./runtime.ts";
 import { SwitchCommandError, SwitchCommandErrorCode } from "../types/switch.ts";
 import { normalizeSpawnEnvironment, stripDirectiveEnvironment } from "./shell-directives.ts";
@@ -49,6 +53,7 @@ interface MacTargetEvidence {
 
 export interface LaunchPreflight extends LaunchPlan {
   autoIde?: { available: boolean; ide: SupportedIde };
+  ideTarget?: { ide: SupportedIde; target: IdeLauncherTarget };
   macTarget?: MacTargetEvidence;
   seshAvailable?: true;
 }
@@ -57,6 +62,11 @@ const IDE_COMMANDS: Record<SupportedIde, string> = {
   cursor: "cursor",
   kiro: "kiro",
   vscode: "code",
+};
+
+const MAC_IDE_BUNDLE_LAUNCHERS: Partial<Record<SupportedIde, string>> = {
+  cursor: "Cursor.app/Contents/Resources/app/bin/cursor",
+  vscode: "Visual Studio Code.app/Contents/Resources/app/bin/code",
 };
 
 const WINDOWS_SHELL = "cmd.exe";
@@ -92,6 +102,7 @@ export interface LaunchSwitchOptions {
 
 export interface LaunchSwitchDependencies {
   env?: Record<string, string | undefined>;
+  homeDirectory?: () => string | undefined;
   platform?: NodeJS.Platform;
   resolveGitMainWorktree?: (path: string) => Promise<string | null>;
   runProcess?: SwitchProcessRunner;
@@ -105,6 +116,19 @@ export interface LaunchSwitchResult {
   mode: SwitchLaunchMode;
   command: string[];
   disposition: LaunchDisposition;
+}
+
+export interface IdeLauncherTarget {
+  command: string;
+  source: "bundle" | "path";
+}
+
+export interface IdeLauncherResolutionDependencies {
+  env?: Record<string, string | undefined>;
+  homeDirectory?: () => string | undefined;
+  pathExists?: (path: string) => Promise<boolean>;
+  platform?: NodeJS.Platform;
+  runProcess?: SwitchProcessRunner;
 }
 
 export async function launchSwitchTarget(
@@ -123,6 +147,8 @@ export async function launchSwitchTarget(
     deps.preflight ??
     (await preflightLaunchSwitchTarget(options, {
       env,
+      homeDirectory: deps.homeDirectory,
+      pathExists: deps.pathExists,
       platform,
       runProcess,
     }));
@@ -192,12 +218,14 @@ export async function launchSwitchTarget(
   if (options.preferredIde) {
     const launchResult = await launchWithPreferredIde(candidate, options.preferredIde, {
       env: childEnv,
+      homeDirectory: deps.homeDirectory,
+      pathExists: deps.pathExists,
       platform,
       requireAvailability: options.requirePreferredIde === true,
       runProcess,
       disposition,
-      availability:
-        preflight?.autoIde?.ide === options.preferredIde ? preflight.autoIde.available : undefined,
+      target:
+        preflight?.ideTarget?.ide === options.preferredIde ? preflight.ideTarget.target : undefined,
     });
     if (launchResult) {
       return launchResult;
@@ -232,8 +260,14 @@ export async function launchSwitchTarget(
       requireAvailability: false,
       runProcess,
       disposition,
-      availability:
-        preflight?.autoIde?.ide === managedContext ? preflight.autoIde.available : undefined,
+      target:
+        preflight?.ideTarget?.ide === managedContext
+          ? preflight.ideTarget.target
+          : preflight?.autoIde?.ide === managedContext && !preflight.autoIde.available
+            ? null
+            : undefined,
+      homeDirectory: deps.homeDirectory,
+      pathExists: deps.pathExists,
     });
     if (launchResult) {
       return launchResult;
@@ -345,6 +379,8 @@ export async function preflightLaunchSwitchTarget(
   options: LaunchSwitchOptions,
   deps: {
     env: Record<string, string | undefined>;
+    homeDirectory?: () => string | undefined;
+    pathExists?: (path: string) => Promise<boolean>;
     platform: NodeJS.Platform;
     runProcess?: SwitchProcessRunner;
   },
@@ -374,6 +410,25 @@ export async function preflightLaunchSwitchTarget(
     ensureLaunchSupported("ide", options.disposition, deps.env, deps.platform);
   }
 
+  if (options.preferredIde) {
+    const target = await resolveIdeLauncherTarget(options.preferredIde, {
+      env: stripDirectiveEnvironment(deps.env),
+      homeDirectory: deps.homeDirectory,
+      pathExists: deps.pathExists,
+      platform: deps.platform,
+      runProcess,
+    });
+    if (!target && options.requirePreferredIde) {
+      throwIdeNotFound(options.preferredIde);
+    }
+    if (target) {
+      return {
+        ...resolveLaunchPlan("ide", options.disposition, deps.env, deps.platform),
+        ideTarget: { ide: options.preferredIde, target },
+      };
+    }
+  }
+
   const managed = detectManagedSwitchContext(deps.env);
   if (
     !options.tmux &&
@@ -391,7 +446,11 @@ export async function preflightLaunchSwitchTarget(
       ensureLaunchSupported("ide", options.disposition, deps.env, deps.platform);
       return {
         ...resolveLaunchPlan("ide", options.disposition, deps.env, deps.platform),
-        autoIde: { available, ide: managed },
+        autoIde: { available: true, ide: managed },
+        ideTarget: {
+          ide: managed,
+          target: { command: IDE_COMMANDS[managed], source: "path" },
+        },
       };
     }
   }
@@ -624,6 +683,44 @@ export async function isCommandAvailable(
     env,
   });
   return result.exitCode === 0;
+}
+
+export async function resolveIdeLauncherTarget(
+  ide: SupportedIde,
+  deps: IdeLauncherResolutionDependencies = {},
+): Promise<IdeLauncherTarget | null> {
+  const env = deps.env ?? process.env;
+  const platform = deps.platform ?? process.platform;
+  const runProcess = deps.runProcess ?? runSwitchProcess;
+  const command = IDE_COMMANDS[ide];
+  if (await isCommandAvailable(command, { env, platform, runProcess })) {
+    return { command, source: "path" };
+  }
+
+  const bundleLauncher = MAC_IDE_BUNDLE_LAUNCHERS[ide];
+  if (platform !== "darwin" || !bundleLauncher) return null;
+
+  const pathExists = deps.pathExists ?? bundleLauncherExists;
+  const home = (deps.homeDirectory ?? homedir)();
+  const candidates = [
+    posix.join("/Applications", bundleLauncher),
+    ...(home ? [posix.join(home, "Applications", bundleLauncher)] : []),
+  ];
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      return { command: candidate, source: "bundle" };
+    }
+  }
+  return null;
+}
+
+async function bundleLauncherExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function runSwitchProcess(
@@ -984,42 +1081,36 @@ async function launchWithPreferredIde(
   deps: {
     disposition: LaunchDisposition;
     env: Record<string, string | undefined>;
+    homeDirectory?: () => string | undefined;
+    pathExists?: (path: string) => Promise<boolean>;
     platform: NodeJS.Platform;
     requireAvailability: boolean;
     runProcess: SwitchProcessRunner;
-    availability?: boolean;
+    target?: IdeLauncherTarget | null;
   },
 ): Promise<LaunchSwitchResult | null> {
-  const commandName = IDE_COMMANDS[ide];
   if (deps.disposition === "tab") {
     ensureLaunchSupported("ide", deps.disposition, deps.env, deps.platform);
   }
-  const ideAvailable =
-    deps.availability ??
-    (await isCommandAvailable(commandName, {
-      env: deps.env,
-      platform: deps.platform,
-      runProcess: deps.runProcess,
-    }));
+  const target =
+    deps.target === undefined
+      ? await resolveIdeLauncherTarget(ide, {
+          env: deps.env,
+          homeDirectory: deps.homeDirectory,
+          pathExists: deps.pathExists,
+          platform: deps.platform,
+          runProcess: deps.runProcess,
+        })
+      : deps.target;
 
-  if (!ideAvailable) {
-    if (!deps.requireAvailability) {
-      return null;
-    }
-
-    throw new SwitchCommandError(
-      `The \`${commandName}\` launcher is required for --${ide}. Install ${commandName} or choose a different switch mode.`,
-      SwitchCommandErrorCode.IDE_NOT_FOUND,
-      {
-        ide,
-        launcher: commandName,
-      },
-    );
+  if (!target) {
+    if (!deps.requireAvailability) return null;
+    throwIdeNotFound(ide);
   }
 
   ensureLaunchSupported("ide", deps.disposition, deps.env, deps.platform);
 
-  const ideCommand = buildIdeCommand(commandName, candidate.worktreePath, deps.platform);
+  const ideCommand = buildIdeCommand(target.command, candidate.worktreePath, deps.platform);
   const ideResult = await deps.runProcess(ideCommand, {
     cwd: candidate.worktreePath,
     env: deps.env,
@@ -1034,6 +1125,18 @@ async function launchWithPreferredIde(
     disposition: deps.disposition,
     mode: ide,
   };
+}
+
+function throwIdeNotFound(ide: SupportedIde): never {
+  const commandName = IDE_COMMANDS[ide];
+  throw new SwitchCommandError(
+    `The \`${commandName}\` launcher is required for --${ide}. Install ${commandName} or choose a different switch mode.`,
+    SwitchCommandErrorCode.IDE_NOT_FOUND,
+    {
+      ide,
+      launcher: commandName,
+    },
+  );
 }
 
 function buildIdeCommand(

@@ -7,6 +7,7 @@ import {
   isKittySession,
   launchSwitchTarget,
   preflightLaunchSwitchTarget,
+  resolveIdeLauncherTarget,
   resolveLaunchPlan,
 } from "../../../src/lib/switch-launcher.ts";
 import type { SwitchCandidate } from "../../../src/core/switch.ts";
@@ -31,6 +32,114 @@ const successfulRunProcess: SwitchProcessRunner = async () => ({
   exitCode: 0,
   stderr: "",
   stdout: "",
+});
+
+describe("resolveIdeLauncherTarget", () => {
+  test("prefers the canonical PATH command without probing macOS bundles", async () => {
+    const checkedPaths: string[] = [];
+
+    await expect(
+      resolveIdeLauncherTarget("vscode", {
+        env: { PATH: "/custom/bin" },
+        homeDirectory: () => "/Users/example",
+        pathExists: async (path) => {
+          checkedPaths.push(path);
+          return true;
+        },
+        platform: "darwin",
+        runProcess: async (command) => {
+          expect(command).toEqual(["which", "code"]);
+          return { exitCode: 0, stderr: "", stdout: "/custom/bin/code\n" };
+        },
+      }),
+    ).resolves.toEqual({ command: "code", source: "path" });
+    expect(checkedPaths).toEqual([]);
+  });
+
+  test.each([
+    ["vscode", "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"],
+    ["cursor", "/Applications/Cursor.app/Contents/Resources/app/bin/cursor"],
+  ] as const)("resolves the verified system bundle launcher for %s", async (ide, bundlePath) => {
+    const checkedPaths: string[] = [];
+    await expect(
+      resolveIdeLauncherTarget(ide, {
+        env: {},
+        homeDirectory: () => "/Users/example",
+        pathExists: async (path) => {
+          checkedPaths.push(path);
+          return path === bundlePath;
+        },
+        platform: "darwin",
+        runProcess: async () => ({ exitCode: 1, stderr: "missing", stdout: "" }),
+      }),
+    ).resolves.toEqual({ command: bundlePath, source: "bundle" });
+    expect(checkedPaths[0]).toBe(bundlePath);
+  });
+
+  test("resolves a per-user Cursor bundle after the system candidate", async () => {
+    const userLauncher =
+      "/Users/Space User/Applications/Cursor.app/Contents/Resources/app/bin/cursor";
+    const checkedPaths: string[] = [];
+    await expect(
+      resolveIdeLauncherTarget("cursor", {
+        env: {},
+        homeDirectory: () => "/Users/Space User",
+        pathExists: async (path) => {
+          checkedPaths.push(path);
+          return path === userLauncher;
+        },
+        platform: "darwin",
+        runProcess: async () => ({ exitCode: 1, stderr: "missing", stdout: "" }),
+      }),
+    ).resolves.toEqual({ command: userLauncher, source: "bundle" });
+    expect(checkedPaths).toEqual([
+      "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+      userLauncher,
+    ]);
+  });
+
+  test.each([
+    { ide: "kiro", platform: "darwin" },
+    { ide: "vscode", platform: "linux" },
+    { ide: "cursor", platform: "win32" },
+  ] as const)(
+    "keeps bundle discovery isolated for $ide on $platform",
+    async ({ ide, platform }) => {
+      const checkedPaths: string[] = [];
+      await expect(
+        resolveIdeLauncherTarget(ide, {
+          env: {},
+          homeDirectory: () => "/Users/example",
+          pathExists: async (path) => {
+            checkedPaths.push(path);
+            return true;
+          },
+          platform,
+          runProcess: async () => ({ exitCode: 1, stderr: "missing", stdout: "" }),
+        }),
+      ).resolves.toBeNull();
+      expect(checkedPaths).toEqual([]);
+    },
+  );
+
+  test("skips the user candidate when no home directory is available", async () => {
+    const checkedPaths: string[] = [];
+    await expect(
+      resolveIdeLauncherTarget("vscode", {
+        env: {},
+        homeDirectory: () => undefined,
+        pathExists: async (path) => {
+          checkedPaths.push(path);
+          return false;
+        },
+        platform: "darwin",
+        runProcess: async () => ({ exitCode: 1, stderr: "missing", stdout: "" }),
+      }),
+    ).resolves.toBeNull();
+    expect(checkedPaths).toEqual([
+      "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+    ]);
+  });
 });
 
 describe("detectManagedSwitchContext", () => {
@@ -1041,6 +1150,107 @@ describe("launchSwitchTarget", () => {
     expect(envs[1]?.ARASHI_SHELL).toBeUndefined();
   });
 
+  test("launches an explicit VS Code system bundle with executable and worktree spaces as separate argv", async () => {
+    const bundleLauncher = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
+    const target = { ...candidate, worktreePath: "/workspace/feature with spaces" };
+    const commands: string[][] = [];
+
+    const result = await launchSwitchTarget(
+      target,
+      { disposition: "window", preferredIde: "vscode", requirePreferredIde: true },
+      {
+        env: {},
+        homeDirectory: () => "/Users/example",
+        pathExists: async (path) => path === bundleLauncher,
+        platform: "darwin",
+        runProcess: async (command) => {
+          commands.push(command);
+          return command[0] === "which"
+            ? { exitCode: 1, stderr: "missing", stdout: "" }
+            : { exitCode: 0, stderr: "", stdout: "" };
+        },
+      },
+    );
+
+    expect(result.command).toEqual([bundleLauncher, "--new-window", target.worktreePath]);
+    expect(commands).toEqual([
+      ["which", "code"],
+      [bundleLauncher, "--new-window", target.worktreePath],
+    ]);
+  });
+
+  test("carries the preflight-resolved bundle target into launch without rediscovery", async () => {
+    const bundleLauncher = "/Applications/Cursor.app/Contents/Resources/app/bin/cursor";
+    let pathChecks = 0;
+    const commands: string[][] = [];
+    const options = {
+      disposition: "window" as const,
+      preferredIde: "cursor" as const,
+      requirePreferredIde: true,
+    };
+    const preflight = await preflightLaunchSwitchTarget(options, {
+      env: {},
+      homeDirectory: () => "/Users/example",
+      pathExists: async (path) => {
+        pathChecks += 1;
+        return path === bundleLauncher;
+      },
+      platform: "darwin",
+      runProcess: async () => ({ exitCode: 1, stderr: "missing", stdout: "" }),
+    });
+
+    const result = await launchSwitchTarget(candidate, options, {
+      env: {},
+      homeDirectory: () => "/Users/example",
+      pathExists: async () => {
+        throw new Error("launch must not repeat bundle discovery");
+      },
+      platform: "darwin",
+      preflight,
+      runProcess: async (command) => {
+        commands.push(command);
+        return { exitCode: 0, stderr: "", stdout: "" };
+      },
+    });
+
+    expect(pathChecks).toBe(1);
+    expect(result.command).toEqual([bundleLauncher, "--new-window", candidate.worktreePath]);
+    expect(commands).toEqual([[bundleLauncher, "--new-window", candidate.worktreePath]]);
+  });
+
+  test("does not try another bundle, IDE, or terminal when an existing bundle launcher is not executable", async () => {
+    const systemLauncher = "/Applications/Cursor.app/Contents/Resources/app/bin/cursor";
+    const commands: string[][] = [];
+    const checkedPaths: string[] = [];
+
+    await expect(
+      launchSwitchTarget(
+        candidate,
+        { disposition: "window", preferredIde: "cursor", requirePreferredIde: true },
+        {
+          env: { TERM_PROGRAM: "ghostty" },
+          homeDirectory: () => "/Users/example",
+          pathExists: async (path) => {
+            checkedPaths.push(path);
+            return true;
+          },
+          platform: "darwin",
+          runProcess: async (command) => {
+            commands.push(command);
+            return command[0] === "which"
+              ? { exitCode: 1, stderr: "missing", stdout: "" }
+              : { exitCode: 1, stderr: "permission denied", stdout: "" };
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: SwitchCommandErrorCode.LAUNCH_FAILED });
+    expect(checkedPaths).toEqual([systemLauncher]);
+    expect(commands).toEqual([
+      ["which", "cursor"],
+      [systemLauncher, "--new-window", candidate.worktreePath],
+    ]);
+  });
+
   test("returns actionable error when an explicit IDE launcher is unavailable", async () => {
     await expect(
       launchSwitchTarget(
@@ -1121,6 +1331,7 @@ describe("launchSwitchTarget", () => {
           TERM_PROGRAM: "vscode",
           VSCODE_GIT_ASKPASS_NODE: "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
         },
+        pathExists: async () => false,
         platform: "darwin",
         runProcess,
       },
@@ -1187,6 +1398,7 @@ describe("launchSwitchTarget", () => {
       { disposition: "window" },
       {
         env: { TERM_PROGRAM: "vscode" },
+        pathExists: async () => false,
         platform: "darwin",
         runProcess,
       },
