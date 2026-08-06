@@ -176,6 +176,24 @@ describe("lossless bounded dynamic completion query", () => {
       expect(removablePaths).not.toContain(realpathSync(workspace));
       expect(removablePaths).not.toContain(realpathSync(child));
 
+      const moveReferences = values(["arashi", "move", "--from", ""]);
+      expect(moveReferences).toEqual(
+        expect.arrayContaining([
+          "parent,feature",
+          "child-feature",
+          basename(canonicalParentWorktree),
+          canonicalParentWorktree,
+          canonicalChildWorktree,
+        ]),
+      );
+      expect(moveReferences).not.toContain(basename(canonicalChildWorktree));
+
+      const removeReferences = values(["arashi", "remove", ""]);
+      expect(removeReferences).toEqual(
+        expect.arrayContaining(["parent,feature", "child-feature", canonicalChildWorktree]),
+      );
+      expect(removeReferences).not.toContain(basename(canonicalChildWorktree));
+
       expect(values(["arashi", "switch", "parent,"])).toContain("parent,feature");
       expect(
         values(["arashi", "switch", "--path", `${canonicalParentWorktree.slice(0, -5)}`]),
@@ -193,6 +211,39 @@ describe("lossless bounded dynamic completion query", () => {
     expect(records(runQuery(root, ["arashi", "create", "topic", "--group", ""]).stdout)).toEqual(
       [],
     );
+
+    const environment = {
+      ...process.env,
+      GIT_AUTHOR_EMAIL: "completion@example.com",
+      GIT_AUTHOR_NAME: "Completion Test",
+      GIT_COMMITTER_EMAIL: "completion@example.com",
+      GIT_COMMITTER_NAME: "Completion Test",
+    };
+    writeFileSync(join(root, "README.md"), "fixture\n");
+    for (const arguments_ of [
+      ["add", "README.md"],
+      ["commit", "-m", "fixture"],
+    ]) {
+      const result = spawnSync("git", arguments_, {
+        cwd: root,
+        encoding: "utf8",
+        env: environment,
+      });
+      expect(result.status, result.stderr).toBe(0);
+    }
+    const linked = join(root, "linked-worktree");
+    const added = spawnSync("git", ["worktree", "add", "-b", "linked-branch", linked], {
+      cwd: root,
+      encoding: "utf8",
+      env: environment,
+    });
+    expect(added.status, added.stderr).toBe(0);
+    const standaloneRemove = records(runQuery(root, ["arashi", "remove", ""]).stdout).map(
+      ({ value }) => value,
+    );
+    expect(standaloneRemove).toContain("linked-branch");
+    expect(standaloneRemove).not.toContain(realpathSync(linked));
+    expect(standaloneRemove).not.toContain(basename(linked));
   });
 
   test("returns exact finite choices only for their owning slots", () => {

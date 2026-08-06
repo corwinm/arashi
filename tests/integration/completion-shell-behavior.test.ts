@@ -207,14 +207,7 @@ run_sensitive_completion sensitive arashi create topic --only ''
       expect(output.get("conflict")).not.toEqual(expect.arrayContaining(["--herdr", "--sesh"]));
       expect(output.get("boundary")).toEqual([]);
       expect(output.get("variadic")).toEqual([]);
-      for (const label of [
-        "repository",
-        "repositoryShort",
-        "switchRepos",
-        "remove",
-        "moveFrom",
-        "moveTo",
-      ])
+      for (const label of ["repository", "repositoryShort", "switchRepos"])
         expect(output.get(label)).toContain("repo one");
       expect(output.get("group")).toContain("docs team");
       expect(output.get("groupShort")).toContain("docs team");
@@ -308,14 +301,7 @@ run_sensitive_completion sensitive arashi create topic --only ''
       expect(output.get("conflict")).not.toEqual(expect.arrayContaining(["--herdr", "--sesh"]));
       expect(output.get("boundary")).toEqual([]);
       expect(output.get("variadic")).toEqual([]);
-      for (const label of [
-        "repository",
-        "repositoryShort",
-        "switchRepos",
-        "remove",
-        "moveFrom",
-        "moveTo",
-      ])
+      for (const label of ["repository", "repositoryShort", "switchRepos"])
         expect(output.get(label)).toContain("repo one");
       expect(output.get("group")).toContain("docs team");
       expect(output.get("groupShort")).toContain("docs team");
@@ -387,14 +373,7 @@ run_completion sensitive 'arashi create topic --only '
       );
       expect(output.get("boundary")).toEqual([]);
       expect(output.get("variadic")).toEqual([]);
-      for (const label of [
-        "repository",
-        "repositoryShort",
-        "switchRepos",
-        "remove",
-        "moveFrom",
-        "moveTo",
-      ])
+      for (const label of ["repository", "repositoryShort", "switchRepos"])
         expect(candidateValues(output.get(label) ?? [])).toContain("repo one");
       expect(candidateValues(output.get("group") ?? [])).toContain("docs team");
       expect(candidateValues(output.get("groupShort") ?? [])).toContain("docs team");

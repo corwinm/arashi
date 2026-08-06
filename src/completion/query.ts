@@ -310,7 +310,11 @@ function findWorkspace(start: string, deadline: number): WorkspaceData | null {
 
 function worktreeCandidates(
   repositories: WorkspaceData["repositories"],
-  pathsOnly: boolean,
+  formsFor: (repository: WorkspaceData["repositories"][number]) => {
+    basename: boolean;
+    branch: boolean;
+    path: boolean;
+  },
   excludePrimary: boolean,
   deadline: number,
 ): CompletionCandidate[] {
@@ -333,7 +337,12 @@ function worktreeCandidates(
     const add = () => {
       if (!path) return;
       if (excludePrimary && resolve(path) === resolve(repository.path)) return;
-      const values = pathsOnly ? [path] : [branch, basename(path), path];
+      const forms = formsFor(repository);
+      const values = [
+        forms.branch ? branch : "",
+        forms.basename ? basename(path) : "",
+        forms.path ? path : "",
+      ];
       for (const value of values.filter(Boolean)) {
         found.set(value, {
           description: `${repository.name} worktree${branch ? ` (${branch})` : ""}`,
@@ -400,10 +409,25 @@ function dynamicCandidates(
     );
   }
   const pathsOnly = kind === "worktree" && context.wordsBeforeCursor.includes("--path");
-  const excludePrimary = context.command?.path === "remove" && pathsOnly;
+  const command = context.command?.path;
+  const excludePrimary = command === "remove";
+  const formsFor = (repository: WorkspaceData["repositories"][number]) => {
+    if (pathsOnly) return { basename: false, branch: false, path: true };
+    if (command === "move") {
+      return {
+        basename: resolve(repository.path) === resolve(workspace.root),
+        branch: true,
+        path: true,
+      };
+    }
+    if (command === "remove") {
+      return { basename: false, branch: true, path: workspace.configured };
+    }
+    return { basename: true, branch: true, path: true };
+  };
   const candidates = worktreeCandidates(
     worktreeRepositories(workspace, context),
-    pathsOnly,
+    formsFor,
     excludePrimary,
     deadline,
   );
