@@ -11,6 +11,7 @@ type SpawnOptions = {
   cwd?: string;
   detached?: boolean;
   env?: Record<string, string | undefined>;
+  extraStdio?: number[];
   stdin?: IoMode;
   stdout?: IoMode;
   stderr?: IoMode;
@@ -37,7 +38,12 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
     killSignal: options.killSignal,
     timeout: options.timeout,
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-    stdio: [options.stdin ?? "pipe", options.stdout ?? "pipe", options.stderr ?? "pipe"],
+    stdio: [
+      options.stdin ?? "pipe",
+      options.stdout ?? "pipe",
+      options.stderr ?? "pipe",
+      ...(options.extraStdio ?? []),
+    ],
   });
   let exitCode: number | null = null;
   let signalCode: NodeJS.Signals | null = null;

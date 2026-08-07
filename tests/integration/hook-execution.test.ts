@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { spawn } from "child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
@@ -177,11 +178,12 @@ describe("hook execution integration", () => {
       const descendantPath = join(testRepo, "ignored-interrupt-descendant");
       const lateDescendantPath = join(testRepo, "ignored-interrupt-late-descendant");
       const hookPath = createMockHook(
-        `trap 'exit 0' INT\n(\n  trap '' INT TERM\n  sleep 0.1\n  sh -c 'trap "" INT TERM; sleep 60' &\n  late=$!\n  printf '%s' "$late" > '${lateDescendantPath}'\n  exit 0\n) &\ndescendant=$!\nprintf '%s' "$descendant" > '${descendantPath}'\nprintf ready > '${readyPath}'\nwait "$descendant"`,
+        `trap 'exit 0' INT\n(\n  trap '' INT TERM\n  sleep 0.1\n  sh -c 'trap "" INT TERM; sleep 60' </dev/null >/dev/null 2>&1 &\n  late=$!\n  printf '%s' "$late" > '${lateDescendantPath}'\n  exit 0\n) &\ndescendant=$!\nprintf '%s' "$descendant" > '${descendantPath}'\nprintf ready > '${readyPath}'\nwait "$descendant"`,
       );
 
       let descendantPid: number | undefined;
       let lateDescendantPid: number | undefined;
+      let unrelatedPid: number | undefined;
       try {
         const execution = executeHook({
           context: createTestContext({ repoPath: testRepo }),
@@ -196,6 +198,9 @@ describe("hook execution integration", () => {
         }
         expect(existsSync(readyPath)).toBe(true);
         descendantPid = Number.parseInt(readFileSync(descendantPath, "utf8"), 10);
+        const unrelated = spawn("sleep", ["60"], { stdio: "ignore" });
+        unrelatedPid = unrelated.pid;
+        expect(unrelatedPid).toBeTypeOf("number");
 
         process.emit("SIGINT", "SIGINT");
         const result = await execution;
@@ -220,8 +225,11 @@ describe("hook execution integration", () => {
           }
           expect(processAlive).toBe(false);
         }
+        const unrelatedProcessId = unrelatedPid;
+        if (!unrelatedProcessId) throw new Error("Expected unrelated process ID");
+        expect(() => process.kill(unrelatedProcessId, 0)).not.toThrow();
       } finally {
-        for (const processId of [descendantPid, lateDescendantPid]) {
+        for (const processId of [descendantPid, lateDescendantPid, unrelatedPid]) {
           if (!processId) continue;
           try {
             process.kill(processId, "SIGKILL");
