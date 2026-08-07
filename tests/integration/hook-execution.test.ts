@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
   cleanupTestRepo,
@@ -174,10 +174,12 @@ describe("hook execution integration", () => {
     "escalates cancellation when an interrupted hook ignores SIGINT",
     async () => {
       const readyPath = join(testRepo, "ignored-interrupt-ready");
+      const descendantPath = join(testRepo, "ignored-interrupt-descendant");
       const hookPath = createMockHook(
-        `trap '' INT TERM\nprintf ready > '${readyPath}'\nwhile true; do sleep 0.1; done`,
+        `trap '' INT TERM\nsleep 60 &\ndescendant=$!\nprintf '%s' "$descendant" > '${descendantPath}'\nprintf ready > '${readyPath}'\nwait "$descendant"`,
       );
 
+      let descendantPid: number | undefined;
       try {
         const execution = executeHook({
           context: createTestContext({ repoPath: testRepo }),
@@ -191,6 +193,7 @@ describe("hook execution integration", () => {
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
         expect(existsSync(readyPath)).toBe(true);
+        descendantPid = Number.parseInt(readFileSync(descendantPath, "utf8"), 10);
 
         process.emit("SIGINT", "SIGINT");
         const result = await execution;
@@ -199,7 +202,24 @@ describe("hook execution integration", () => {
         expect(result.exitCode).toBe(130);
         expect(result.signalCode).toBe("SIGINT");
         expect(result.duration).toBeLessThan(5000);
+        let descendantAlive = true;
+        for (let attempt = 0; attempt < 100 && descendantAlive; attempt += 1) {
+          try {
+            process.kill(descendantPid, 0);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          } catch {
+            descendantAlive = false;
+          }
+        }
+        expect(descendantAlive).toBe(false);
       } finally {
+        if (descendantPid) {
+          try {
+            process.kill(descendantPid, "SIGKILL");
+          } catch {
+            // The expected path already terminated the descendant process group.
+          }
+        }
         cleanupTestRepo(hookPath);
       }
     },

@@ -794,11 +794,54 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
     });
     let interrupted = false;
     let interruptEscalation: ReturnType<typeof setTimeout> | undefined;
+    let interruptedProcessIds: number[] = [];
+    const captureHookProcessTree = (): number[] => {
+      if (process.platform === "win32" || !proc.pid) return [];
+      const listing = runtime.spawnSync(["ps", "-eo", "pid=,ppid="], {
+        stderr: "ignore",
+      });
+      if (listing.exitCode !== ZERO) return [proc.pid];
+      const children = new Map<number, number[]>();
+      for (const line of listing.stdout.toString().split("\n")) {
+        const [pidText, parentText] = line.trim().split(/\s+/);
+        const pid = Number.parseInt(pidText, 10);
+        const parent = Number.parseInt(parentText, 10);
+        if (!Number.isInteger(pid) || !Number.isInteger(parent)) continue;
+        children.set(parent, [...(children.get(parent) ?? []), pid]);
+      }
+      const result: number[] = [];
+      const pending = [proc.pid];
+      while (pending.length > 0) {
+        const parent = pending.pop();
+        if (parent === undefined) continue;
+        for (const child of children.get(parent) ?? []) {
+          result.push(child);
+          pending.push(child);
+        }
+      }
+      return [...result.reverse(), proc.pid];
+    };
+    const signalHookTree = (signal: NodeJS.Signals): void => {
+      if (process.platform !== "win32" && proc.pid) {
+        if (interruptedProcessIds.length === 0) {
+          interruptedProcessIds = captureHookProcessTree();
+        }
+        for (const pid of interruptedProcessIds) {
+          try {
+            process.kill(pid, signal);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          }
+        }
+        return;
+      }
+      proc.kill(signal);
+    };
     const forwardInterrupt = (): void => {
       interrupted = true;
-      proc.kill("SIGINT");
+      signalHookTree("SIGINT");
       interruptEscalation = setTimeout(() => {
-        if (proc.exitCode === null) proc.kill("SIGKILL");
+        if (proc.exitCode === null) signalHookTree("SIGKILL");
       }, 250);
       interruptEscalation.unref();
     };

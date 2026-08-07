@@ -73,6 +73,9 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
     get killed() {
       return child.killed;
     },
+    get pid() {
+      return child.pid;
+    },
     kill: (signal?: NodeJS.Signals) => child.kill(signal),
     unref: () => child.unref(),
     stdin: child.stdin,
