@@ -8,12 +8,12 @@ if (-not (Test-Path $binary)) { throw "Built CLI is missing: $binary" }
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("arashi-hook-input-" + [guid]::NewGuid())
 $repo = Join-Path $temp "repo"
-$home = Join-Path $temp "home"
-$hooks = Join-Path $home ".arashi\hooks"
+$testHome = Join-Path $temp "home"
+$hooks = Join-Path $testHome ".arashi\hooks"
 $record = Join-Path $temp "hook-input.log"
 New-Item -ItemType Directory -Force -Path $repo, $hooks | Out-Null
 $previousHome = $env:HOME
-$env:HOME = $home
+$env:HOME = $testHome
 $env:HOOK_INPUT_RECORD = $record
 
 function Invoke-Checked([string[]]$Command) {
@@ -48,14 +48,16 @@ Add-Content -Path $env:HOOK_INPUT_RECORD -Value "powershell:unavailable:immediat
 '@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
     Invoke-Checked -Command @($binary, "create", "feature/unavailable")
 
-    $winpty = Get-Command winpty.exe -ErrorAction Stop
+    $winpty = Get-Command winpty.exe -ErrorAction SilentlyContinue
+    $winptyPath = if ($winpty) { $winpty.Source } else { "C:\Program Files\Git\usr\bin\winpty.exe" }
+    if (-not (Test-Path $winptyPath)) { throw "winpty.exe is required for terminal acceptance" }
     @'
 $answer = Read-Host "tty answer"
 if ($env:ARASHI_HOOK_INPUT -ne "tty") { exit 95 }
 if ($answer -ne "yes") { exit 96 }
 Add-Content -Path $env:HOOK_INPUT_RECORD -Value "powershell:tty:yes"
 '@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
-    "yes" | & $winpty.Source -Xallow-non-tty $binary create feature/tty
+    "yes" | & $winptyPath -Xallow-non-tty $binary create feature/tty
     if ($LASTEXITCODE -ne 0) { throw "PowerShell terminal hook acceptance failed: $LASTEXITCODE" }
 
     Remove-Item (Join-Path $hooks "pre-create.ps1")
@@ -66,7 +68,7 @@ set /p "answer=tty answer> "
 if /i not "%answer%"=="yes" exit /b 98
 echo cmd:tty:yes>>"%HOOK_INPUT_RECORD%"
 '@ | Set-Content -Path (Join-Path $hooks "pre-remove.cmd")
-    "yes" | & $winpty.Source -Xallow-non-tty $binary remove feature/tty --force
+    "yes" | & $winptyPath -Xallow-non-tty $binary remove feature/tty --force
     if ($LASTEXITCODE -ne 0) { throw "cmd terminal hook acceptance failed: $LASTEXITCODE" }
 
     @'
