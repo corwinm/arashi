@@ -89,13 +89,15 @@ if ! (( $+functions[compdef] )); then
   autoload -Uz compinit && compinit -i
 fi
 _arashi() {
-  local value description
-  local -a values descriptions
+  local value description display
+  local -a values displays
   while IFS= read -r -d $'\\0' value && IFS= read -r -d $'\\0' description; do
     values+=("$value")
-    descriptions+=("$description")
+    display="$value"
+    [[ -n "$description" ]] && display+=" -- $description"
+    displays+=("$display")
   done < <(command arashi completion __query "$((CURRENT - 1))" -- "\${words[@]}")
-  compadd -d descriptions -- "\${values[@]}"
+  compadd -d displays -- "\${values[@]}"
 }
 compdef _arashi arashi
 `;

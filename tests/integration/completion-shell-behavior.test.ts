@@ -234,9 +234,17 @@ run_sensitive_completion sensitive arashi create topic --only ''
 source ${shellQuote(completionFiles.get("zsh")!)}
 [[ "$_comps[arashi]" == _arashi ]] || exit 9
 compadd() {
-  local emit=0 argument description
-  for description in "\${descriptions[@]}"; do print -r -- "description:$description"; done
+  local emit=0 capture_display_array=0 argument display display_array
   for argument in "$@"; do
+    if (( capture_display_array )); then
+      display_array="$argument"
+      capture_display_array=0
+      continue
+    fi
+    if [[ "$argument" == -d ]]; then
+      capture_display_array=1
+      continue
+    fi
     if (( emit )); then
       if (( ENCODE_VALUES )); then
         printf '%s' "$argument" | base64
@@ -247,6 +255,7 @@ compadd() {
     fi
     [[ "$argument" == -- ]] && emit=1
   done
+  for display in "\${(@P)display_array}"; do print -r -- "display:$display"; done
   return 0
 }
 run_completion() {
@@ -298,7 +307,9 @@ run_sensitive_completion sensitive arashi create topic --only ''
       expect(result.status, result.stderr).toBe(0);
       const output = sections(result.stdout);
       expect(output.get("directRoot")).toContain("create");
-      expect(output.get("directRoot")?.some((line) => line.startsWith("description:"))).toBe(true);
+      expect(output.get("directRoot")).toContain(
+        "display:create -- Create coordinated worktrees across multiple repositories",
+      );
       expect(output.get("wrappedRoot")).toContain("create");
       expect(output.get("nested")).toContain("init");
       expect(output.get("shortOption")).toContain("-o");
@@ -314,7 +325,7 @@ run_sensitive_completion sensitive arashi create topic --only ''
       expect(
         output
           .get("path")
-          ?.filter((value) => !value.startsWith("description:"))
+          ?.filter((value) => !value.startsWith("display:"))
           .every((value) => value.startsWith("/")),
       ).toBe(true);
       expect(output.get("sensitive")).toContain(sensitiveRepositoryBase64);
