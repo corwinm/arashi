@@ -122,6 +122,7 @@ jobs:
     name: Installed Wrapper Hook Input Acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 6
+    needs: [build]
 
     steps:
       - name: Checkout code
@@ -138,7 +139,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Download built Linux package binary
+        uses: actions/download-artifact@v8
+        with:
+          name: arashi-linux-x64
+          path: bin
+
+      - name: Prepare installed package entrypoint
+        run: |
+          cp bin/arashi-linux-x64 bin/arashi.bin
+          chmod +x bin/arashi.bin bin/arashi
+
       - name: Verify package entrypoint stdin preservation
+        env:
+          ARASHI_WRAPPER_ACCEPTANCE: "1"
         run: pnpm exec vitest run tests/integration/hook-input-wrapper.test.ts tests/unit/arashi-wrapper.test.ts
 
   build:
@@ -266,6 +280,17 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v1
+        with:
+          version: 11.20.0
+          runtime: node@24.18.0
+          cache: true
+          install: false
+
+      - name: Install PTY acceptance dependency
+        run: pnpm install --frozen-lockfile
 
       - name: Download Windows binary
         uses: actions/download-artifact@v8

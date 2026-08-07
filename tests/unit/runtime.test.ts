@@ -69,6 +69,23 @@ describe("prepareSpawnCommand", () => {
     });
   });
 
+  test("uses the canonical call form only for lifecycle batch hooks", () => {
+    expect(
+      prepareSpawnCommand(
+        [String.raw`C:\hook path %!&()\pre-create.cmd`],
+        "win32",
+        { COMSPEC: "cmd.exe" },
+        false,
+        true,
+      ),
+    ).toMatchObject({
+      args: ["/d", "/e:on", "/v:off", "/s", "/c", '"call %ARASHI_CMD_ARGUMENT_0%"'],
+      command: "cmd.exe",
+      env: { ARASHI_CMD_ARGUMENT_0: String.raw`"C:\hook path %!&()\pre-create.cmd"` },
+      windowsVerbatimArguments: true,
+    });
+  });
+
   test("leaves native executables and non-Windows commands unchanged", () => {
     expect(prepareSpawnCommand(["pnpm", "install"], "darwin", {})).toEqual({
       args: ["install"],

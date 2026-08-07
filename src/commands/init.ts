@@ -887,7 +887,9 @@ const windowsHookContent = (hookName: (typeof WINDOWS_LIFECYCLE_NAMES)[number]):
   return `# ${hookName} lifecycle hook example
 # Copy this one file without .example to activate it.
 $ErrorActionPreference = "Stop"
-# Lifecycle input is available only when ARASHI_HOOK_INPUT is tty.
+# ARASHI_HOOK_INPUT is tty, disabled, or unavailable. Only tty inherits terminal
+# stdin; disabled and unavailable receive immediate EOF. --no-hook-input is
+# invocation-only and does not skip hooks; --json takes precedence as disabled.
 # Do not enter passwords or secrets into lifecycle hook prompts.
 if ($env:ARASHI_HOOK_INPUT -eq "tty") { $answer = Read-Host "Continue $lifecycle? [y/N]"; if ($answer -ne "y") { exit 1 } }
 ${branchAssertion}
@@ -901,12 +903,15 @@ const windowsCmdHookContent = (hookName: (typeof WINDOWS_LIFECYCLE_NAMES)[number
   const lifecycle = hookName.split(".")[0];
   return `@echo off
 rem ${hookName} lifecycle hook example
-rem Lifecycle input is available only when ARASHI_HOOK_INPUT is tty.
+rem ARASHI_HOOK_INPUT is tty, disabled, or unavailable. Only tty inherits terminal
+rem stdin; disabled and unavailable receive immediate EOF. --no-hook-input is
+rem invocation-only and does not skip hooks; --json takes precedence as disabled.
 rem Do not enter passwords or secrets into lifecycle hook prompts.
-if "%ARASHI_HOOK_INPUT%"=="tty" (
-  set /p "ARASHI_HOOK_ANSWER=Continue ${lifecycle}? [y/N] "
-  if /i not "%ARASHI_HOOK_ANSWER%"=="y" exit /b 1
-)
+if not "%ARASHI_HOOK_INPUT%"=="tty" goto arashi_hook_input_done
+set "ARASHI_HOOK_ANSWER="
+set /p "ARASHI_HOOK_ANSWER=Continue ${lifecycle}? [y/N] "
+if /i not "%ARASHI_HOOK_ANSWER%"=="y" exit /b 1
+:arashi_hook_input_done
 echo ${lifecycle} hook complete
 `;
 };

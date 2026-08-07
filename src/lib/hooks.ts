@@ -404,21 +404,6 @@ export const mapHookExecutionResult = (result: HookResult): HookOutcomeMapping =
 // Helper Functions (Internal)
 // ============================================================================
 
-/**
- * Returns platform-appropriate shell command for executing scripts.
- */
-export const encodeCmdScriptPath = (scriptPath: string): string => {
-  if (
-    scriptPath.includes("\r") ||
-    scriptPath.includes("\n") ||
-    scriptPath.includes("\0") ||
-    scriptPath.includes('"')
-  ) {
-    throw new Error(`Unsafe command hook path: ${scriptPath}`);
-  }
-  return `"${scriptPath.replaceAll("%", "%%")}"`;
-};
-
 export const getHookSpawnCommand = (
   scriptPath: string,
   platform: NodeJS.Platform = process.platform,
@@ -435,16 +420,7 @@ export const getHookSpawnCommand = (
         scriptPath,
       ];
     }
-    return [
-      "cmd.exe",
-      "/d",
-      "/e:on",
-      "/v:off",
-      "/s",
-      "/c",
-      "call",
-      encodeCmdScriptPath(scriptPath),
-    ];
+    return [scriptPath];
   }
 
   return [scriptPath];
@@ -762,13 +738,14 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
           valid: false,
         };
       }
-      const lookup = runtime.spawnSync(["where.exe", command[ZERO]], {
+      const interpreter = hookPath.toLowerCase().endsWith(".cmd") ? "cmd.exe" : command[ZERO];
+      const lookup = runtime.spawnSync(["where.exe", interpreter], {
         stderr: "ignore",
         stdout: "ignore",
       });
       if (lookup.exitCode !== ZERO) {
         return {
-          error: `Required hook interpreter is unavailable: ${command[ZERO]}`,
+          error: `Required hook interpreter is unavailable: ${interpreter}`,
           reasonCode: "interpreter_unavailable",
           valid: false,
         };
@@ -805,6 +782,7 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
 
   try {
     const proc = runtime.spawn(getHookSpawnCommand(options.scriptPath), {
+      callBatchFile: /\.(?:cmd|bat)$/i.test(options.scriptPath),
       cwd: options.context.repoPath,
       env: buildHookEnvironment({ ...options.context, hookInputMode }),
       killSignal: "SIGTERM",
@@ -813,32 +791,40 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
       stdout: "pipe",
       timeout,
     });
-
-    const [stdout, stderr] = interactiveOutput
-      ? await Promise.all([
-          streamRawOutput(proc.stdout, (chunk) => process.stdout.write(chunk)),
-          streamRawOutput(proc.stderr, (chunk) => process.stderr.write(chunk)),
-        ])
-      : await Promise.all([
-          streamOutput(proc.stdout, `[${options.hookName}:OUT]`, options.quiet),
-          streamOutput(proc.stderr, `[${options.hookName}:ERR]`, options.quiet),
-        ]);
-
-    await proc.exited;
-
-    const duration = Date.now() - startTime;
-    const exitCode = proc.exitCode ?? -ONE;
-
-    return {
-      duration,
-      exitCode,
-      killed: proc.killed,
-      signalCode: proc.signalCode,
-      stderr,
-      stdout,
-      success: exitCode === 0,
-      timedOut: proc.killed && proc.signalCode === "SIGTERM",
+    const forwardInterrupt = (): void => {
+      proc.kill("SIGINT");
     };
+    process.once("SIGINT", forwardInterrupt);
+
+    try {
+      const [stdout, stderr] = interactiveOutput
+        ? await Promise.all([
+            streamRawOutput(proc.stdout, (chunk) => process.stdout.write(chunk)),
+            streamRawOutput(proc.stderr, (chunk) => process.stderr.write(chunk)),
+          ])
+        : await Promise.all([
+            streamOutput(proc.stdout, `[${options.hookName}:OUT]`, options.quiet),
+            streamOutput(proc.stderr, `[${options.hookName}:ERR]`, options.quiet),
+          ]);
+
+      await proc.exited;
+
+      const duration = Date.now() - startTime;
+      const exitCode = proc.exitCode ?? -ONE;
+
+      return {
+        duration,
+        exitCode,
+        killed: proc.killed,
+        signalCode: proc.signalCode,
+        stderr,
+        stdout,
+        success: exitCode === 0,
+        timedOut: proc.killed && proc.signalCode === "SIGTERM",
+      };
+    } finally {
+      process.off("SIGINT", forwardInterrupt);
+    }
   } catch (error) {
     const duration = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : String(error);

@@ -6,11 +6,12 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $binary = Join-Path $root "bin\arashi-windows-x64.exe"
 if (-not (Test-Path $binary)) { throw "Built CLI is missing: $binary" }
 
-$temp = Join-Path ([IO.Path]::GetTempPath()) ("arashi-hook-input-" + [guid]::NewGuid())
+$temp = Join-Path ([IO.Path]::GetTempPath()) ("arashi hook %!&() " + [guid]::NewGuid())
 $repo = Join-Path $temp "repo"
 $testHome = Join-Path $temp "home"
 $hooks = Join-Path $testHome ".arashi\hooks"
 $record = Join-Path $temp "hook-input.log"
+$ptyHelper = Join-Path $PSScriptRoot "pty-command.mjs"
 New-Item -ItemType Directory -Force -Path $repo, $hooks | Out-Null
 $previousHome = $env:HOME
 $env:HOME = $testHome
@@ -30,7 +31,34 @@ try {
   Invoke-Checked -Command @("git", "-C", $repo, "commit", "-m", "initial")
   Push-Location $repo
   try {
-    Invoke-Checked -Command @($binary, "init", "--zero-config")
+    Invoke-Checked -Command @($binary, "init", "--no-discover")
+    $hooks = Join-Path $repo ".arashi\hooks"
+
+    $generatedCmd = Join-Path $hooks "pre-create.cmd.example"
+    if (-not (Test-Path $generatedCmd)) { throw "Generated cmd hook is missing: $generatedCmd" }
+    $activeGeneratedCmd = Join-Path $repo ".arashi\hooks\pre-create.cmd"
+    Copy-Item $generatedCmd $activeGeneratedCmd
+    & node $ptyHelper $binary $repo y "Continue pre-create?" create feature/generated-cmd
+    if ($LASTEXITCODE -ne 0) { throw "Generated cmd hook acceptance failed: $LASTEXITCODE" }
+    Remove-Item $activeGeneratedCmd
+
+    @'
+$answer = Read-Host "wrapper answer"
+if ($env:ARASHI_HOOK_INPUT -ne "tty") { exit 89 }
+if ($answer -ne "yes") { exit 90 }
+Add-Content -Path $env:HOOK_INPUT_RECORD -Value "$env:WRAPPER_KIND`:tty:yes"
+'@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
+    $env:WRAPPER_KIND = "powershell-wrapper"
+    & node $ptyHelper powershell.exe $repo yes "wrapper answer" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "bin\arashi.ps1") create feature/wrapper-powershell
+    if ($LASTEXITCODE -ne 0) { throw "PowerShell wrapper acceptance failed: $LASTEXITCODE" }
+    $env:WRAPPER_KIND = "javascript-wrapper"
+    & node $ptyHelper node.exe $repo yes "wrapper answer" (Join-Path $root "bin\arashi.js") create feature/wrapper-javascript
+    if ($LASTEXITCODE -ne 0) { throw "JavaScript wrapper acceptance failed: $LASTEXITCODE" }
+    $env:WRAPPER_KIND = "batch-wrapper"
+    & node $ptyHelper cmd.exe $repo yes "wrapper answer" /d /e:on /v:off /s /c call (Join-Path $root "bin\arashi.bat") create feature/wrapper-batch
+    if ($LASTEXITCODE -ne 0) { throw "Batch wrapper acceptance failed: $LASTEXITCODE" }
+    Remove-Item (Join-Path $hooks "pre-create.ps1")
+    Remove-Item Env:WRAPPER_KIND -ErrorAction SilentlyContinue
 
     @'
 $answer = Read-Host "disabled answer"
@@ -48,16 +76,14 @@ Add-Content -Path $env:HOOK_INPUT_RECORD -Value "powershell:unavailable:immediat
 '@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
     Invoke-Checked -Command @($binary, "create", "feature/unavailable")
 
-    $winpty = Get-Command winpty.exe -ErrorAction SilentlyContinue
-    $winptyPath = if ($winpty) { $winpty.Source } else { "C:\Program Files\Git\usr\bin\winpty.exe" }
-    if (-not (Test-Path $winptyPath)) { throw "winpty.exe is required for terminal acceptance" }
+    if (-not (Test-Path $ptyHelper)) { throw "PTY helper is missing: $ptyHelper" }
     @'
 $answer = Read-Host "tty answer"
 if ($env:ARASHI_HOOK_INPUT -ne "tty") { exit 95 }
 if ($answer -ne "yes") { exit 96 }
 Add-Content -Path $env:HOOK_INPUT_RECORD -Value "powershell:tty:yes"
 '@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
-    "yes" | & $winptyPath -Xallow-non-tty $binary create feature/tty
+    & node $ptyHelper $binary $repo yes "tty answer" create feature/tty
     if ($LASTEXITCODE -ne 0) { throw "PowerShell terminal hook acceptance failed: $LASTEXITCODE" }
 
     Remove-Item (Join-Path $hooks "pre-create.ps1")
@@ -67,9 +93,13 @@ if not "%ARASHI_HOOK_INPUT%"=="tty" exit /b 97
 set /p "answer=tty answer> "
 if /i not "%answer%"=="yes" exit /b 98
 echo cmd:tty:yes>>"%HOOK_INPUT_RECORD%"
-'@ | Set-Content -Path (Join-Path $hooks "pre-remove.cmd")
-    "yes" | & $winptyPath -Xallow-non-tty $binary remove feature/tty --force
-    if ($LASTEXITCODE -ne 0) { throw "cmd terminal hook acceptance failed: $LASTEXITCODE" }
+exit /b 0
+'@ | Set-Content -Encoding ASCII -Path (Join-Path $hooks "pre-remove.cmd")
+    & node $ptyHelper $binary $repo yes "tty answer" remove feature/tty --force
+    if ($LASTEXITCODE -ne 0) {
+      $observed = (Get-Content -Path $record -ErrorAction SilentlyContinue) -join "; "
+      throw "cmd terminal hook acceptance failed: $LASTEXITCODE; records: $observed"
+    }
 
     @'
 @echo off
@@ -78,7 +108,8 @@ set "answer="
 set /p "answer=disabled answer> "
 if defined answer exit /b 100
 echo cmd:disabled:immediate EOF>>"%HOOK_INPUT_RECORD%"
-'@ | Set-Content -Path (Join-Path $hooks "pre-remove.cmd")
+exit /b 0
+'@ | Set-Content -Encoding ASCII -Path (Join-Path $hooks "pre-remove.cmd")
     Invoke-Checked -Command @($binary, "remove", "feature/disabled", "--force", "--no-hook-input")
   }
   finally {
@@ -87,6 +118,9 @@ echo cmd:disabled:immediate EOF>>"%HOOK_INPUT_RECORD%"
 
   $actual = Get-Content -Path $record
   $expected = @(
+    "powershell-wrapper:tty:yes",
+    "javascript-wrapper:tty:yes",
+    "batch-wrapper:tty:yes",
     "powershell:disabled:immediate EOF",
     "powershell:unavailable:immediate EOF",
     "powershell:tty:yes",
@@ -100,5 +134,6 @@ echo cmd:disabled:immediate EOF>>"%HOOK_INPUT_RECORD%"
 finally {
   $env:HOME = $previousHome
   Remove-Item Env:HOOK_INPUT_RECORD -ErrorAction SilentlyContinue
+  Remove-Item Env:WRAPPER_KIND -ErrorAction SilentlyContinue
   Remove-Item -Recurse -Force $temp -ErrorAction SilentlyContinue
 }

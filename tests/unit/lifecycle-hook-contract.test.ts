@@ -183,14 +183,7 @@ describe("lifecycle hook contract", () => {
       "C:\\hooks\\pre-create.PS1",
     ]);
     expect(getHookSpawnCommand("C:\\hooks\\pre-remove.cmd", "win32")).toEqual([
-      "cmd.exe",
-      "/d",
-      "/e:on",
-      "/v:off",
-      "/s",
-      "/c",
-      "call",
-      '"C:\\hooks\\pre-remove.cmd"',
+      "C:\\hooks\\pre-remove.cmd",
     ]);
   });
 
@@ -358,11 +351,22 @@ describe("lifecycle hook contract", () => {
     const cmd = windows.filter((template) => template.filename.endsWith(".cmd.example"));
     expect(powershell).toHaveLength(6);
     expect(cmd).toHaveLength(6);
-    expect(powershell.map((template) => template.content).join("\n")).toMatch(
-      /ARASHI_HOOK_INPUT[\s\S]*Read-Host/,
-    );
-    expect(cmd.map((template) => template.content).join("\n")).toMatch(
-      /ARASHI_HOOK_INPUT[\s\S]*set \/p/,
-    );
+    const powershellContent = powershell.map((template) => template.content).join("\n");
+    const cmdContent = cmd.map((template) => template.content).join("\n");
+    expect(powershellContent).toMatch(/ARASHI_HOOK_INPUT[\s\S]*Read-Host/);
+    expect(cmdContent).toMatch(/ARASHI_HOOK_INPUT[\s\S]*set \/p/);
+    for (const content of [powershellContent, cmdContent]) {
+      expect(content).toMatch(/tty, disabled, or unavailable/);
+      expect(content).toMatch(/immediate EOF/);
+      expect(content).toMatch(/--no-hook-input/);
+      expect(content).toMatch(/does not skip hooks/);
+      expect(content).toMatch(/--json takes precedence/);
+    }
+    for (const template of cmd) {
+      expect(template.content).not.toMatch(/if "%ARASHI_HOOK_INPUT%"=="tty" \(/);
+      expect(template.content).toMatch(
+        /if not "%ARASHI_HOOK_INPUT%"=="tty" goto arashi_hook_input_done[\s\S]*set \/p[\s\S]*:arashi_hook_input_done/,
+      );
+    }
   });
 });

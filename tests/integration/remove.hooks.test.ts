@@ -1,6 +1,7 @@
 import { runtime, spawn } from "../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { spawnSync } from "node:child_process";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
@@ -105,6 +106,40 @@ printf '%s:%s\\n' "$ARASHI_HOOK_INPUT" "$ARASHI_REPO_NAME" >> '${record}'`,
 
     expect(await runtime.file(record).text()).toBe("disabled:repo-a\ndisabled:repo-b\n");
   });
+
+  test.runIf(process.platform !== "win32")(
+    "keeps every target intact when Ctrl-C interrupts an interactive pre-remove hook",
+    async () => {
+      const branchName = "feature-remove-hook-interrupt";
+      const worktrees = await createWorktreesForBranch(workspace, branchName, false);
+      await createWorkspaceHook(
+        workspace.rootPath,
+        "pre-remove",
+        "printf 'remove interrupt prompt: '\nIFS= read -r answer",
+      );
+
+      const result = spawnSync(
+        "python3",
+        [
+          join(import.meta.dirname, "../helpers/pty-command.py"),
+          workspace.rootPath,
+          "remove interrupt prompt:",
+          "__CTRL_C__",
+          "15",
+          JSON.stringify([process.execPath, CLI_ENTRY, "remove", branchName, "--force"]),
+        ],
+        {
+          cwd: workspace.rootPath,
+          encoding: "utf8",
+          env: { ...process.env, HOME: homePath, NO_COLOR: "1" },
+        },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0);
+      expect(existsSync(worktrees["repo-a"])).toBe(true);
+      expect(existsSync(worktrees["repo-b"])).toBe(true);
+    },
+    30_000,
+  );
 
   test("runs scoped pre-remove hooks in repository -> workspace -> global order", async () => {
     if (process.platform === "win32") {

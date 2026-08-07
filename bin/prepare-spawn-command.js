@@ -13,6 +13,7 @@ export function prepareSpawnCommand(
   platform = process.platform,
   env = process.env,
   forceWindowsShell = false,
+  callBatchFile = false,
 ) {
   const executable = command[0];
   if (
@@ -28,8 +29,13 @@ export function prepareSpawnCommand(
   const commandInterpreter =
     Object.entries(env).find(([key]) => key.toLowerCase() === "comspec")?.[1] ?? "cmd.exe";
 
+  const invocation = variableNames.map((name) => `%${name}%`).join(" ");
+  const args = ["/d"];
+  if (callBatchFile) args.push("/e:on");
+  args.push("/v:off", "/s", "/c", `"${callBatchFile ? "call " : ""}${invocation}"`);
+
   return {
-    args: ["/d", "/v:off", "/s", "/c", `"${variableNames.map((name) => `%${name}%`).join(" ")}"`],
+    args,
     command: commandInterpreter,
     env: {
       ...Object.fromEntries(
