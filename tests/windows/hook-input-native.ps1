@@ -58,6 +58,15 @@ function Assert-ProcessStopped([int]$ProcessId, [string]$Scenario) {
   }
 }
 
+function Assert-NoCreateArtifacts([string]$BranchName, [string]$Scenario) {
+  $branchPath = $BranchName -replace "/", "\"
+  $worktreePath = Join-Path $repo (".arashi\worktrees\repo-" + $branchPath)
+  if (Test-Path $worktreePath) { throw "$Scenario left worktree $worktreePath" }
+  & git -C $repo show-ref --verify --quiet "refs/heads/$BranchName"
+  if ($LASTEXITCODE -eq 0) { throw "$Scenario left branch $BranchName" }
+  $global:LASTEXITCODE = 0
+}
+
 try {
   Invoke-Checked -Command @("git", "-C", $repo, "init", "-b", "main")
   Invoke-Checked -Command @("git", "-C", $repo, "config", "user.email", "test@example.com")
@@ -149,6 +158,26 @@ exit /b 0
     Invoke-Checked -Command @($binary, "remove", "feature/disabled", "--force", "--no-hook-input")
 
     Remove-Item (Join-Path $hooks "pre-remove.cmd")
+    Set-HookTimeout 10000
+    @'
+Write-Output "WINDOWS-REFUSAL-STDOUT"
+[Console]::Error.WriteLine("WINDOWS-REFUSAL-STDERR")
+$answer = Read-Host "refusal answer"
+if ($env:ARASHI_HOOK_INPUT -ne "tty") { exit 101 }
+if ($answer -ne "yes") { exit 102 }
+'@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
+    $refusalResult = Invoke-PtySession "refusal answer" "no" @($binary, "create", "feature/windows-refusal")
+    if ($refusalResult.exitCode -eq 0) { throw "Refused built CLI unexpectedly succeeded" }
+    if (-not $refusalResult.reused) { throw "Terminal was not reusable after refusal" }
+    if (([regex]::Matches($refusalResult.output, "WINDOWS-REFUSAL-STDOUT")).Count -ne 1) {
+      throw "Refusal stdout was not forwarded exactly once"
+    }
+    if (([regex]::Matches($refusalResult.output, "WINDOWS-REFUSAL-STDERR")).Count -ne 1) {
+      throw "Refusal stderr was not forwarded exactly once"
+    }
+    Assert-NoCreateArtifacts "feature/windows-refusal" "refusal"
+    Add-Content -Path $record -Value "windows:refusal:exact-output"
+
     Set-HookTimeout 2000
     $timeoutPid = Join-Path $temp "timeout-hook.pid"
     @"
@@ -159,6 +188,7 @@ Set-Content -NoNewline -Path '$timeoutPid' -Value `$PID
     if ($timeoutResult.exitCode -eq 0) { throw "Timed-out built CLI unexpectedly succeeded" }
     if (-not $timeoutResult.reused) { throw "Terminal was not reusable after timeout" }
     Assert-ProcessStopped ([int](Get-Content -Raw -Path $timeoutPid)) "timeout"
+    Assert-NoCreateArtifacts "feature/windows-timeout" "timeout"
     Add-Content -Path $record -Value "windows:timeout:cleanup"
     Add-Content -Path $record -Value "windows:terminal:reused"
 
@@ -172,6 +202,7 @@ Set-Content -NoNewline -Path '$interruptPid' -Value `$PID
     if ($interruptResult.exitCode -eq 0) { throw "Interrupted built CLI unexpectedly succeeded" }
     if (-not $interruptResult.reused) { throw "Terminal was not reusable after interruption" }
     Assert-ProcessStopped ([int](Get-Content -Raw -Path $interruptPid)) "interruption"
+    Assert-NoCreateArtifacts "feature/windows-interrupt" "interruption"
     Add-Content -Path $record -Value "windows:interrupt:cleanup"
   }
   finally {
@@ -188,6 +219,7 @@ Set-Content -NoNewline -Path '$interruptPid' -Value `$PID
     "powershell:tty:yes",
     "cmd:tty:yes",
     "cmd:disabled:immediate EOF",
+    "windows:refusal:exact-output",
     "windows:timeout:cleanup",
     "windows:terminal:reused",
     "windows:interrupt:cleanup"

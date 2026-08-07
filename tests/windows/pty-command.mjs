@@ -82,6 +82,7 @@ exit $exitCode
   const started = Date.now();
   let output = "";
   let promptObserved = false;
+  let reuseAnswered = false;
   let reused = false;
   const timer = setTimeout(
     () => {
@@ -103,9 +104,12 @@ exit $exitCode
         terminal.write(`${config.response}\r`);
       }
     }
-    if (!reused && output.includes(reusePrompt)) {
-      reused = true;
+    if (!reuseAnswered && output.includes(reusePrompt)) {
+      reuseAnswered = true;
       terminal.write(`${reuseAnswer}\r`);
+    }
+    if (output.includes(`__ARASHI_CONPTY_REUSED__:${reuseAnswer}`)) {
+      reused = true;
     }
   });
   terminal.onExit(({ exitCode }) => {

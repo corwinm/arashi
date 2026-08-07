@@ -34,27 +34,32 @@ def main() -> int:
     responded = False
     deadline = time.monotonic() + float(timeout_text)
     status = None
+    pty_eof = False
 
     try:
         while time.monotonic() < deadline:
-            ready, _, _ = select.select([master], [], [], 0.05)
-            if ready:
-                try:
-                    chunk = os.read(master, 4096)
-                except OSError as error:
-                    if error.errno == errno.EIO:
-                        break
-                    raise
-                if not chunk:
-                    break
-                output.extend(chunk)
-                os.write(sys.stdout.fileno(), chunk)
-                if not responded and prompt in output:
-                    responded = True
-                    if response == "__CTRL_C__":
-                        os.write(master, b"\x03")
-                    elif response != "__NO_INPUT__":
-                        os.write(master, response.encode() + b"\n")
+            if not pty_eof:
+                ready, _, _ = select.select([master], [], [], 0.05)
+                if ready:
+                    try:
+                        chunk = os.read(master, 4096)
+                    except OSError as error:
+                        if error.errno == errno.EIO:
+                            pty_eof = True
+                            chunk = b""
+                        else:
+                            raise
+                    if chunk:
+                        output.extend(chunk)
+                        os.write(sys.stdout.fileno(), chunk)
+                        if not responded and prompt in output:
+                            responded = True
+                            if response == "__CTRL_C__":
+                                os.write(master, b"\x03")
+                            elif response != "__NO_INPUT__":
+                                os.write(master, response.encode() + b"\n")
+            else:
+                time.sleep(0.01)
 
             finished, candidate = os.waitpid(pid, os.WNOHANG)
             if finished == pid:
@@ -62,14 +67,10 @@ def main() -> int:
                 break
 
         if status is None:
-            finished, candidate = os.waitpid(pid, os.WNOHANG)
-            if finished == pid:
-                status = candidate
-            else:
-                os.killpg(pid, signal.SIGKILL)
-                _, status = os.waitpid(pid, 0)
-                print("PTY command exceeded harness timeout", file=sys.stderr)
-                return 124
+            os.killpg(pid, signal.SIGKILL)
+            _, status = os.waitpid(pid, 0)
+            print("PTY command exceeded harness timeout", file=sys.stderr)
+            return 124
     finally:
         os.close(master)
 

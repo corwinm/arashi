@@ -11,10 +11,21 @@ describe("built hook-input acceptance contract", () => {
 
     expect(fixture).toContain("windows:timeout:cleanup");
     expect(fixture).toContain("windows:interrupt:cleanup");
+    expect(fixture).toContain("windows:refusal:exact-output");
+    expect(fixture).toContain("Assert-NoCreateArtifacts");
     expect(fixture).toContain("windows:terminal:reused");
     expect(fixture).toMatch(/Get-Process[\s\S]*-ErrorAction SilentlyContinue/);
     expect(helper).toContain("reusePrompt");
+    expect(helper).toContain(["__ARASHI_CONPTY_REUSED__:", "$", "{reuseAnswer}"].join(""));
     expect(helper).toContain("__CTRL_C__");
+  });
+
+  test("POSIX PTY EOF waits for child reaping instead of reporting a false timeout", async () => {
+    const helper = await readFile(join(root, "tests/helpers/pty-command.py"), "utf8");
+
+    expect(helper).toContain("pty_eof = True");
+    expect(helper).toMatch(/if not pty_eof:[\s\S]*os\.waitpid\(pid, os\.WNOHANG\)/);
+    expect(helper).not.toMatch(/errno\.EIO:[\s\S]{0,80}break/);
   });
 
   test("CI executes both built POSIX and native Windows acceptance fixtures", async () => {
