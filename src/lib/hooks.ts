@@ -819,7 +819,7 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
           pending.push(child);
         }
       }
-      return [...result.reverse(), proc.pid];
+      return [...result.toReversed(), proc.pid];
     };
     const signalHookTree = (signal: NodeJS.Signals): void => {
       if (process.platform !== "win32" && proc.pid) {
