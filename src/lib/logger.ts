@@ -109,6 +109,7 @@ export function spinner(text: string): Ora {
 }
 
 interface PausableSpinner {
+  readonly isSpinning: boolean;
   start(): unknown;
   stopAndPersist(): unknown;
 }
@@ -120,7 +121,7 @@ export async function withSpinnerPaused<T>(
   activeSpinner: PausableSpinner | null | undefined,
   operation: () => Promise<T>,
 ): Promise<T> {
-  if (!activeSpinner) {
+  if (!activeSpinner?.isSpinning) {
     return operation();
   }
 
