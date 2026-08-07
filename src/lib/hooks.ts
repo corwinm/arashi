@@ -819,7 +819,8 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
           pending.push(child);
         }
       }
-      return [...result.toReversed(), proc.pid];
+      // oxlint-disable-next-line unicorn/no-array-reverse -- Node 18 lacks Array.prototype.toReversed.
+      return [...[...result].reverse(), proc.pid];
     };
     const signalHookTree = (signal: NodeJS.Signals): void => {
       if (process.platform !== "win32" && proc.pid) {
