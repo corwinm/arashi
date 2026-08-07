@@ -1,3 +1,9 @@
+## [1.26.2](https://github.com/corwinm/arashi/compare/v1.26.1...v1.26.2) (2026-08-07)
+
+### Bug Fixes
+
+- preserve hook output newlines ([#124](https://github.com/corwinm/arashi/issues/124)) ([a4d185a](https://github.com/corwinm/arashi/commit/a4d185a0e6e24cad4d75e5fa8cd570db42ba20cc))
+
 ## [1.26.1](https://github.com/corwinm/arashi/compare/v1.26.0...v1.26.1) (2026-08-07)
 
 ### Bug Fixes

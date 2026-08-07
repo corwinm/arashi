@@ -479,11 +479,12 @@ const streamOutput = async (
   quiet = false,
 ): Promise<string> => {
   const decoder = new TextDecoder();
-  const lines: string[] = [];
+  let output = "";
   let buffer = "";
 
-  for await (const chunk of stream) {
-    buffer += decoder.decode(chunk, { stream: true });
+  const writeCompleteLines = (decoded: string): void => {
+    output += decoded;
+    buffer += decoded;
     const parts = buffer.split("\n");
     buffer = parts.pop() ?? "";
 
@@ -491,18 +492,19 @@ const streamOutput = async (
       if (!quiet) {
         console.log(`${prefix} ${line}`);
       }
-      lines.push(line);
     }
+  };
+
+  for await (const chunk of stream) {
+    writeCompleteLines(decoder.decode(chunk, { stream: true }));
+  }
+  writeCompleteLines(decoder.decode());
+
+  if (buffer && !quiet) {
+    console.log(`${prefix} ${buffer}`);
   }
 
-  if (buffer) {
-    if (!quiet) {
-      console.log(`${prefix} ${buffer}`);
-    }
-    lines.push(buffer);
-  }
-
-  return lines.join("\n");
+  return output;
 };
 
 // ============================================================================

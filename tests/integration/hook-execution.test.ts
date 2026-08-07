@@ -119,6 +119,24 @@ describe("hook execution integration", () => {
     }
   });
 
+  test("preserves trailing newlines in captured hook output", async () => {
+    const hookPath = createMockHook("printf 'first\\n\\nsecond\\n\\n'");
+
+    try {
+      const result = await executeHook({
+        context: createTestContext({ repoPath: testRepo }),
+        hookName: "test-hook",
+        quiet: true,
+        scriptPath: hookPath,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.stdout).toBe("first\n\nsecond\n\n");
+    } finally {
+      cleanupTestRepo(hookPath);
+    }
+  });
+
   test("passes scope metadata environment variables", async () => {
     const hookPath = createMockHook(`
       echo "Scope: $ARASHI_HOOK_SCOPE"
