@@ -841,7 +841,7 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
       interrupted = true;
       signalHookTree("SIGINT");
       interruptEscalation = setTimeout(() => {
-        if (proc.exitCode === null) signalHookTree("SIGKILL");
+        signalHookTree("SIGKILL");
       }, 250);
       interruptEscalation.unref();
     };
