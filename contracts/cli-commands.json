@@ -1,13 +1,52 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
+  "root": {
+    "aliases": [],
+    "description": "Git worktree manager for meta-repositories",
+    "name": "arashi",
+    "options": [
+      {
+        "conflicts": [],
+        "deprecated": false,
+        "flags": "-h, --help",
+        "description": "display help for command",
+        "hidden": false,
+        "long": "--help",
+        "required": false,
+        "optional": false,
+        "repeatable": false,
+        "semanticPolicyOwner": "structural",
+        "short": "-h",
+        "valueShape": "boolean",
+        "variadic": false
+      },
+      {
+        "conflicts": [],
+        "deprecated": false,
+        "flags": "-V, --version",
+        "description": "output the version number",
+        "hidden": false,
+        "long": "--version",
+        "required": false,
+        "optional": false,
+        "repeatable": false,
+        "semanticPolicyOwner": "structural",
+        "short": "-V",
+        "valueShape": "boolean",
+        "variadic": false
+      }
+    ]
+  },
   "commands": [
     {
       "path": "add",
+      "aliasPaths": [],
       "description": "Add a Git repository to the workspace",
       "aliases": [],
       "hidden": false,
       "arguments": [
         {
+          "hidden": false,
           "name": "git-url",
           "required": true,
           "variadic": false,
@@ -16,6 +55,7 @@
       ],
       "options": [
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--create-setup",
           "description": "Create setup.sh template if no setup script found",
@@ -23,12 +63,14 @@
           "long": "--create-setup",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-f, --force",
           "description": "Skip confirmation prompts",
@@ -36,12 +78,29 @@
           "long": "--force",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-f",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON",
@@ -49,12 +108,14 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-n, --name <name>",
           "description": "Custom repository name",
@@ -62,6 +123,7 @@
           "long": "--name",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-n",
           "valueShape": "required",
@@ -89,12 +151,14 @@
     },
     {
       "path": "clone",
+      "aliasPaths": [],
       "description": "Clone missing configured repositories",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--all",
           "description": "Clone all missing repositories without interactive selection",
@@ -102,12 +166,29 @@
           "long": "--all",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON; requires --all",
@@ -115,6 +196,7 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
@@ -142,12 +224,114 @@
       }
     },
     {
+      "path": "completion",
+      "aliasPaths": [],
+      "description": "Generate native shell completion code",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [
+        {
+          "candidateKind": "shell",
+          "choices": ["bash", "fish", "zsh"],
+          "hidden": false,
+          "name": "shell",
+          "required": false,
+          "variadic": false,
+          "description": "Shell name (bash, zsh, fish)"
+        }
+      ],
+      "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "Completion emits native shell code rather than JSON."
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "standalone": {
+          "support": "full"
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Native shell completion is intentionally outside VS Code extension scope."
+        }
+      }
+    },
+    {
+      "path": "completion __query",
+      "aliasPaths": [],
+      "description": "Internal lossless completion candidate query",
+      "aliases": [],
+      "hidden": true,
+      "arguments": [
+        {
+          "hidden": false,
+          "name": "cursor",
+          "required": true,
+          "variadic": false,
+          "description": "Zero-based cursor word index"
+        },
+        {
+          "hidden": false,
+          "name": "words",
+          "required": false,
+          "variadic": true,
+          "description": "Exact completion argument vector"
+        }
+      ],
+      "options": [],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "The internal completion protocol is not JSON."
+        },
+        "docs": {
+          "expectation": "excluded",
+          "reason": "The lossless completion query is an internal implementation detail."
+        },
+        "skills": {
+          "expectation": "excluded",
+          "reason": "The lossless completion query is an internal implementation detail."
+        },
+        "standalone": {
+          "support": "not-applicable",
+          "reason": "The query degrades silently when workspace state is unavailable."
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "The internal native-shell protocol is outside VS Code extension scope."
+        }
+      }
+    },
+    {
       "path": "create",
+      "aliasPaths": [],
       "description": "Create coordinated worktrees across multiple repositories",
       "aliases": [],
       "hidden": false,
       "arguments": [
         {
+          "hidden": false,
           "name": "branch",
           "required": true,
           "variadic": false,
@@ -156,6 +340,9 @@
       ],
       "options": [
         {
+          "candidateKind": "choice",
+          "choices": ["ABORT", "REUSE_EXISTING"],
+          "conflicts": [],
           "deprecated": false,
           "flags": "--conflict <strategy>",
           "description": "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
@@ -163,12 +350,15 @@
           "long": "--conflict",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "choices": ["cursor", "kiro", "vscode"],
+          "conflicts": [],
           "deprecated": false,
           "flags": "--editor-host <host>",
           "description": "Internal editor host context for create default resolution",
@@ -176,12 +366,14 @@
           "long": "--editor-host",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--herdr",
           "description": "Launch using Herdr mode (implies --launch)",
@@ -189,12 +381,14 @@
           "long": "--herdr",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--launch",
           "description": "Launch terminal/editor context after create",
@@ -202,12 +396,14 @@
           "long": "--launch",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--move-changes",
           "description": "Move compatible uncommitted changes from the current workspace after create",
@@ -215,12 +411,14 @@
           "long": "--move-changes",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--no-hooks",
           "description": "Disable hook execution",
@@ -228,12 +426,14 @@
           "long": "--no-hooks",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--no-launch",
           "description": "Disable configured create launch defaults for this invocation",
@@ -241,12 +441,14 @@
           "long": "--no-launch",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--no-progress",
           "description": "Hide progress indicators",
@@ -254,12 +456,14 @@
           "long": "--no-progress",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--no-switch",
           "description": "Disable configured create switch defaults for this invocation",
@@ -267,12 +471,14 @@
           "long": "--no-switch",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--sesh",
           "description": "Launch using sesh mode (implies --launch)",
@@ -280,12 +486,14 @@
           "long": "--sesh",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--switch",
           "description": "Switch to the created parent worktree after create",
@@ -293,12 +501,14 @@
           "long": "--switch",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--tab",
           "description": "Launch the created worktree in a tab; bypasses configured launch defaults and implies --launch and --switch",
@@ -306,12 +516,14 @@
           "long": "--tab",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "command",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": ["--herdr", "--sesh"],
           "deprecated": false,
           "flags": "--tmux",
           "description": "Launch using plain tmux mode (implies --launch and --switch)",
@@ -319,12 +531,15 @@
           "long": "--tmux",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "command",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "candidateKind": "group",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-g, --group <groups>",
           "description": "Only create in repositories in requested groups (repeatable, comma-separated)",
@@ -332,6 +547,7 @@
           "long": "--group",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -361,6 +577,22 @@
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-i, --interactive",
           "description": "Interactively select repositories",
@@ -368,12 +600,14 @@
           "long": "--interactive",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-i",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Return structured JSON output for non-interactive create operations",
@@ -381,12 +615,14 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-n, --dry-run",
           "description": "Show what would be done without making changes",
@@ -394,12 +630,15 @@
           "long": "--dry-run",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-n",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "candidateKind": "repository",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-o, --only <repos>",
           "description": "Only create in specified repositories (repeatable, comma-separated)",
@@ -407,6 +646,7 @@
           "long": "--only",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -521,12 +761,29 @@
     },
     {
       "path": "doctor",
+      "aliasPaths": [],
       "description": "Run non-mutating Arashi workspace diagnostics",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output a structured JSON envelope",
@@ -534,6 +791,7 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
@@ -561,11 +819,13 @@
     },
     {
       "path": "exec",
+      "aliasPaths": [],
       "description": "Run a command once per selected managed repository",
       "aliases": [],
       "hidden": false,
       "arguments": [
         {
+          "hidden": false,
           "name": "command",
           "required": false,
           "variadic": true,
@@ -574,6 +834,7 @@
       ],
       "options": [
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--dirty",
           "description": "Only include repositories with uncommitted changes",
@@ -581,12 +842,14 @@
           "long": "--dirty",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--fail-fast",
           "description": "Stop starting new commands after the first failure",
@@ -594,12 +857,14 @@
           "long": "--fail-fast",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--jobs <positive-int>",
           "description": "Maximum repositories to run concurrently",
@@ -607,12 +872,15 @@
           "long": "--jobs",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "candidateKind": "group",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-g, --group <group>",
           "description": "Only include repositories in the requested group (repeatable)",
@@ -620,6 +888,7 @@
           "long": "--group",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -649,6 +918,22 @@
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON",
@@ -656,12 +941,15 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "candidateKind": "repository",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-o, --only <repo>",
           "description": "Only include a specific repository (repeatable)",
@@ -669,6 +957,7 @@
           "long": "--only",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -720,12 +1009,14 @@
     },
     {
       "path": "handoff",
+      "aliasPaths": [],
       "description": "Generate a Markdown or JSON handoff report for the current workspace",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--link <link>",
           "description": "Related issue, PR, spec, or reference link (repeatable)",
@@ -733,12 +1024,14 @@
           "long": "--link",
           "required": true,
           "optional": false,
+          "repeatable": true,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": true,
           "flags": "--markdown",
           "description": "Deprecated compatibility spelling for the default Markdown output",
@@ -746,6 +1039,7 @@
           "long": "--markdown",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "compatibility": {
               "alternatives": ["--markdown"],
@@ -769,6 +1063,7 @@
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--next-command <command>",
           "description": "Suggested next command, not executed (repeatable)",
@@ -776,12 +1071,14 @@
           "long": "--next-command",
           "required": true,
           "optional": false,
+          "repeatable": true,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--risk <item>",
           "description": "Known risk or blocker to include in the report (repeatable)",
@@ -789,12 +1086,14 @@
           "long": "--risk",
           "required": true,
           "optional": false,
+          "repeatable": true,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--todo <item>",
           "description": "Remaining work item to include as a checklist entry (repeatable)",
@@ -802,12 +1101,14 @@
           "long": "--todo",
           "required": true,
           "optional": false,
+          "repeatable": true,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--validation <entry>",
           "description": "Validation command and result evidence, e.g. 'pnpm run test — passed' (repeatable)",
@@ -815,12 +1116,29 @@
           "long": "--validation",
           "required": true,
           "optional": false,
+          "repeatable": true,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output a structured JSON envelope instead of Markdown",
@@ -828,6 +1146,7 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
@@ -855,12 +1174,15 @@
     },
     {
       "path": "init",
+      "aliasPaths": [],
       "description": "Initialize Arashi workspace in the current repository or bootstrap a new one",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "choices": ["local", "none", "tracked"],
+          "conflicts": [],
           "deprecated": false,
           "flags": "--ignore-scope <scope>",
           "description": "Managed Git ignore scope: local (default), tracked, or none",
@@ -868,12 +1190,14 @@
           "long": "--ignore-scope",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--no-discover",
           "description": "Skip automatic repository discovery",
@@ -881,12 +1205,14 @@
           "long": "--no-discover",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--repos-dir <path>",
           "description": "Custom location for managed repositories",
@@ -894,12 +1220,14 @@
           "long": "--repos-dir",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--worktrees-dir <path>",
           "description": "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
@@ -907,12 +1235,14 @@
           "long": "--worktrees-dir",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--zero-config",
           "description": "Prepare implicit standalone mode without creating configuration",
@@ -920,12 +1250,14 @@
           "long": "--zero-config",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-f, --force",
           "description": "Overwrite existing configuration if present",
@@ -933,12 +1265,29 @@
           "long": "--force",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-f",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON",
@@ -946,12 +1295,14 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-n, --dry-run",
           "description": "Show what would be done without making changes",
@@ -959,12 +1310,14 @@
           "long": "--dry-run",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-n",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show detailed information during initialization",
@@ -972,6 +1325,7 @@
           "long": "--verbose",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-v",
           "valueShape": "boolean",
@@ -1019,12 +1373,29 @@
     },
     {
       "path": "install",
+      "aliasPaths": [],
       "description": "Install the npm-managed Arashi platform binary",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON",
@@ -1032,6 +1403,7 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
@@ -1061,12 +1433,14 @@
     },
     {
       "path": "list",
+      "aliasPaths": [],
       "description": "List all worktrees and their status",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--max-depth <depth>",
           "description": "Maximum depth for sub-repo discovery (default: 3)",
@@ -1074,12 +1448,29 @@
           "long": "--max-depth",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output in JSON format",
@@ -1087,12 +1478,14 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-t, --table",
           "description": "Show table format with headers (default: simple list)",
@@ -1100,12 +1493,14 @@
           "long": "--table",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-t",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show detailed sub-repository information",
@@ -1113,6 +1508,7 @@
           "long": "--verbose",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-v",
           "valueShape": "boolean",
@@ -1140,12 +1536,15 @@
     },
     {
       "path": "move",
+      "aliasPaths": [],
       "description": "Move uncommitted changes between coordinated worktrees",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "candidateKind": "workspace",
+          "conflicts": [],
           "deprecated": false,
           "flags": "--from <workspace>",
           "description": "Source branch, worktree name, or path",
@@ -1153,12 +1552,15 @@
           "long": "--from",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "candidateKind": "workspace",
+          "conflicts": [],
           "deprecated": false,
           "flags": "--to <workspace>",
           "description": "Target branch, worktree name, or path",
@@ -1166,12 +1568,29 @@
           "long": "--to",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Return structured JSON output",
@@ -1179,6 +1598,7 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
@@ -1205,12 +1625,14 @@
     },
     {
       "path": "prune",
+      "aliasPaths": [],
       "description": "Clean stale Git worktree metadata across the workspace",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--expire <time>",
           "description": "Git worktree prune expiry time",
@@ -1218,12 +1640,29 @@
           "long": "--expire",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "required",
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output a structured JSON envelope",
@@ -1231,12 +1670,14 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-n, --dry-run",
           "description": "Report stale worktree metadata without pruning",
@@ -1244,6 +1685,7 @@
           "long": "--dry-run",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-n",
           "valueShape": "boolean",
@@ -1270,12 +1712,15 @@
     },
     {
       "path": "pull",
+      "aliasPaths": [],
       "description": "Pull remote changes across eligible repositories",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "candidateKind": "group",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-g, --group <group>",
           "description": "Only include repositories in the requested group (repeatable)",
@@ -1283,6 +1728,7 @@
           "long": "--group",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -1312,6 +1758,22 @@
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON",
@@ -1319,12 +1781,15 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "candidateKind": "repository",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-o, --only <repo>",
           "description": "Only include a specific repository (repeatable)",
@@ -1332,6 +1797,7 @@
           "long": "--only",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -1361,6 +1827,7 @@
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show verbose git output",
@@ -1368,6 +1835,7 @@
           "long": "--verbose",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-v",
           "valueShape": "boolean",
@@ -1395,12 +1863,14 @@
     },
     {
       "path": "push",
+      "aliasPaths": [],
       "description": "Push coordinated branches across eligible repositories",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--set-upstream",
           "description": "Set upstream tracking when publishing new branches",
@@ -1408,12 +1878,15 @@
           "long": "--set-upstream",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "candidateKind": "group",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-g, --group <group>",
           "description": "Only include repositories in the requested group (repeatable)",
@@ -1421,6 +1894,7 @@
           "long": "--group",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -1450,6 +1924,22 @@
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON",
@@ -1457,12 +1947,14 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-n, --dry-run",
           "description": "Preview push operations without mutating remotes",
@@ -1470,12 +1962,15 @@
           "long": "--dry-run",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-n",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "candidateKind": "repository",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-o, --only <repo>",
           "description": "Only include a specific repository (repeatable)",
@@ -1483,6 +1978,7 @@
           "long": "--only",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -1534,11 +2030,14 @@
     },
     {
       "path": "remove",
+      "aliasPaths": [],
       "description": "Remove worktrees and delete branches",
       "aliases": [],
       "hidden": false,
       "arguments": [
         {
+          "candidateKind": "worktree",
+          "hidden": false,
           "name": "target",
           "required": false,
           "variadic": false,
@@ -1547,6 +2046,7 @@
       ],
       "options": [
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--keep-branches",
           "description": "Remove worktrees but keep git branches",
@@ -1554,12 +2054,14 @@
           "long": "--keep-branches",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--keep-worktrees",
           "description": "Delete branches but keep worktree directories",
@@ -1567,12 +2069,14 @@
           "long": "--keep-worktrees",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--no-check-dirty",
           "description": "Skip uncommitted changes check",
@@ -1580,12 +2084,14 @@
           "long": "--no-check-dirty",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--path",
           "description": "Treat argument as worktree path",
@@ -1593,12 +2099,14 @@
           "long": "--path",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-f, --force",
           "description": "Skip confirmation prompts",
@@ -1606,12 +2114,29 @@
           "long": "--force",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-f",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output results as JSON",
@@ -1619,12 +2144,14 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-n, --dry-run",
           "description": "Preview planned removals without mutating worktrees or branches",
@@ -1632,6 +2159,7 @@
           "long": "--dry-run",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-n",
           "valueShape": "boolean",
@@ -1659,12 +2187,15 @@
     },
     {
       "path": "setup",
+      "aliasPaths": [],
       "description": "Run setup scripts across workspace repositories",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "candidateKind": "group",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-g, --group <group>",
           "description": "Only include repositories in the requested group (repeatable)",
@@ -1672,6 +2203,7 @@
           "long": "--group",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -1701,6 +2233,22 @@
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON",
@@ -1708,12 +2256,15 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "candidateKind": "repository",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-o, --only <repo>",
           "description": "Only include a specific repository (repeatable)",
@@ -1721,6 +2272,7 @@
           "long": "--only",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -1750,6 +2302,7 @@
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show full setup script output",
@@ -1757,6 +2310,7 @@
           "long": "--verbose",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-v",
           "valueShape": "boolean",
@@ -1784,11 +2338,28 @@
     },
     {
       "path": "shell",
+      "aliasPaths": [],
       "description": "Manage shell integration for parent-shell switching",
       "aliases": [],
       "hidden": false,
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
       "semantics": {
         "json": {
           "support": "unsupported",
@@ -1811,11 +2382,15 @@
     },
     {
       "path": "shell init",
+      "aliasPaths": [],
       "description": "Print shell wrapper code",
       "aliases": [],
       "hidden": false,
       "arguments": [
         {
+          "candidateKind": "shell",
+          "choices": ["bash", "fish", "zsh"],
+          "hidden": false,
           "name": "shell",
           "required": false,
           "variadic": false,
@@ -1824,6 +2399,22 @@
       ],
       "options": [
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Return a structured unsupported-mode error instead of shell code",
@@ -1831,6 +2422,7 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
@@ -1862,11 +2454,28 @@
     },
     {
       "path": "shell install",
+      "aliasPaths": [],
       "description": "Install shell integration into the active shell startup file",
       "aliases": [],
       "hidden": false,
       "arguments": [],
-      "options": [],
+      "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
       "semantics": {
         "json": {
           "support": "unsupported",
@@ -1892,12 +2501,15 @@
     },
     {
       "path": "status",
+      "aliasPaths": [],
       "description": "Show status of all managed repositories",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "candidateKind": "group",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-g, --group <group>",
           "description": "Only include repositories in the requested group (repeatable, comma-separated)",
@@ -1905,6 +2517,7 @@
           "long": "--group",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -1934,6 +2547,22 @@
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output a structured JSON envelope",
@@ -1941,12 +2570,15 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "candidateKind": "repository",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-o, --only <repo>",
           "description": "Only include a configured child repository (repeatable, comma-separated)",
@@ -1954,6 +2586,7 @@
           "long": "--only",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -1983,6 +2616,7 @@
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-s, --short",
           "description": "Show one-line summary per repository",
@@ -1990,12 +2624,14 @@
           "long": "--short",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-s",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show full git status output",
@@ -2003,6 +2639,7 @@
           "long": "--verbose",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-v",
           "valueShape": "boolean",
@@ -2029,11 +2666,14 @@
     },
     {
       "path": "switch",
+      "aliasPaths": [],
       "description": "Switch to an existing worktree using explicit, configured, or contextual modes",
       "aliases": [],
       "hidden": false,
       "arguments": [
         {
+          "candidateKind": "worktree",
+          "hidden": false,
           "name": "filter",
           "required": false,
           "variadic": false,
@@ -2042,6 +2682,7 @@
       ],
       "options": [
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--all",
           "description": "Use both parent and child repositories",
@@ -2049,12 +2690,24 @@
           "long": "--all",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [
+            "--cursor",
+            "--herdr",
+            "--kiro",
+            "--launch",
+            "--no-cd",
+            "--sesh",
+            "--tab",
+            "--tmux",
+            "--vscode"
+          ],
           "deprecated": false,
           "flags": "--cd",
           "description": "Change the current shell directory when shell integration is active",
@@ -2062,6 +2715,7 @@
           "long": "--cd",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": [
               "--cursor",
@@ -2084,6 +2738,7 @@
           "variadic": false
         },
         {
+          "conflicts": ["--cd", "--herdr", "--kiro", "--sesh", "--tmux", "--vscode"],
           "deprecated": false,
           "flags": "--cursor",
           "description": "Open the selected worktree in Cursor",
@@ -2091,6 +2746,7 @@
           "long": "--cursor",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--cd", "--herdr", "--kiro", "--sesh", "--tmux", "--vscode"],
             "implies": ["launch"],
@@ -2116,6 +2772,7 @@
           "variadic": false
         },
         {
+          "conflicts": ["--cd", "--cursor", "--kiro", "--sesh", "--tmux", "--vscode"],
           "deprecated": false,
           "flags": "--herdr",
           "description": "Open or focus the selected worktree in Herdr",
@@ -2123,6 +2780,7 @@
           "long": "--herdr",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--cd", "--cursor", "--kiro", "--sesh", "--tmux", "--vscode"],
             "implies": ["launch"],
@@ -2148,6 +2806,7 @@
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--ignore-configured-launcher",
           "description": "Bypass a configured sesh or Herdr launcher for this invocation",
@@ -2155,6 +2814,7 @@
           "long": "--ignore-configured-launcher",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "compatibility": {
               "alternatives": ["--no-default-launch"],
@@ -2198,6 +2858,7 @@
           "variadic": false
         },
         {
+          "conflicts": ["--cd", "--cursor", "--herdr", "--sesh", "--tmux", "--vscode"],
           "deprecated": false,
           "flags": "--kiro",
           "description": "Open the selected worktree in Kiro",
@@ -2205,6 +2866,7 @@
           "long": "--kiro",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--cd", "--cursor", "--herdr", "--sesh", "--tmux", "--vscode"],
             "implies": ["launch"],
@@ -2230,6 +2892,7 @@
           "variadic": false
         },
         {
+          "conflicts": ["--cd"],
           "deprecated": false,
           "flags": "--launch",
           "description": "Launch the selected worktree while preserving a configured launcher",
@@ -2237,6 +2900,7 @@
           "long": "--launch",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--cd"],
             "implies": ["launch"],
@@ -2280,6 +2944,7 @@
           "variadic": false
         },
         {
+          "conflicts": ["--cd"],
           "deprecated": true,
           "flags": "--no-cd",
           "description": "Deprecated compatibility spelling for --launch",
@@ -2287,6 +2952,7 @@
           "long": "--no-cd",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--cd"],
             "implies": ["launch"],
@@ -2319,6 +2985,7 @@
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": true,
           "flags": "--no-default-launch",
           "description": "Deprecated compatibility spelling for --ignore-configured-launcher",
@@ -2326,6 +2993,7 @@
           "long": "--no-default-launch",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": [],
             "implies": [],
@@ -2358,6 +3026,7 @@
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--path",
           "description": "Treat argument as exact worktree path",
@@ -2365,12 +3034,14 @@
           "long": "--path",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "--repos",
           "description": "Use child repositories only",
@@ -2378,12 +3049,14 @@
           "long": "--repos",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--tmux", "--vscode"],
           "deprecated": false,
           "flags": "--sesh",
           "description": "Use sesh in tmux mode",
@@ -2391,6 +3064,7 @@
           "long": "--sesh",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--tmux", "--vscode"],
             "implies": ["launch"],
@@ -2416,6 +3090,7 @@
           "variadic": false
         },
         {
+          "conflicts": ["--cd"],
           "deprecated": false,
           "flags": "--tab",
           "description": "Opens the selected worktree in a tab and bypasses configured launch defaults",
@@ -2423,6 +3098,7 @@
           "long": "--tab",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--cd"],
             "implies": ["launch"],
@@ -2448,6 +3124,7 @@
           "variadic": false
         },
         {
+          "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
           "deprecated": false,
           "flags": "--tmux",
           "description": "Force launch in a new plain tmux window",
@@ -2455,6 +3132,7 @@
           "long": "--tmux",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--vscode"],
             "implies": ["launch"],
@@ -2480,6 +3158,7 @@
           "variadic": false
         },
         {
+          "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--tmux"],
           "deprecated": false,
           "flags": "--vscode",
           "description": "Open the selected worktree in VS Code",
@@ -2487,6 +3166,7 @@
           "long": "--vscode",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--cd", "--cursor", "--herdr", "--kiro", "--sesh", "--tmux"],
             "implies": ["launch"],
@@ -2512,6 +3192,22 @@
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Return a structured unsupported-mode error instead of launching or switching",
@@ -2519,6 +3215,7 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
@@ -2614,12 +3311,15 @@
     },
     {
       "path": "sync",
+      "aliasPaths": [],
       "description": "Align managed repositories to the parent branch",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "candidateKind": "group",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-g, --group <groups>",
           "description": "Only sync repositories in requested groups (repeatable, comma-separated)",
@@ -2627,6 +3327,7 @@
           "long": "--group",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -2656,6 +3357,22 @@
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON",
@@ -2663,12 +3380,15 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-j",
           "valueShape": "boolean",
           "variadic": false
         },
         {
+          "candidateKind": "repository",
+          "conflicts": [],
           "deprecated": false,
           "flags": "-o, --only <repos>",
           "description": "Only sync specified repositories (repeatable, comma-separated)",
@@ -2676,6 +3396,7 @@
           "long": "--only",
           "required": true,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "ownership": "command",
             "persisted": false,
@@ -2705,6 +3426,7 @@
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-v, --verbose",
           "description": "Show detailed output for each repository",
@@ -2712,6 +3434,7 @@
           "long": "--verbose",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-v",
           "valueShape": "boolean",
@@ -2739,12 +3462,14 @@
     },
     {
       "path": "update",
+      "aliasPaths": [],
       "description": "Check for and apply Arashi updates",
       "aliases": [],
       "hidden": false,
       "arguments": [],
       "options": [
         {
+          "conflicts": ["--dry-run"],
           "deprecated": false,
           "flags": "--check",
           "description": "check whether an update is available without changing files",
@@ -2752,6 +3477,7 @@
           "long": "--check",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--dry-run"],
             "inspection": {
@@ -2765,6 +3491,22 @@
           "variadic": false
         },
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-j, --json",
           "description": "Output result as JSON",
@@ -2772,6 +3514,7 @@
           "long": "--json",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "jsonExecution": {
               "apply": "unsupported",
@@ -2787,6 +3530,7 @@
           "variadic": false
         },
         {
+          "conflicts": ["--check"],
           "deprecated": false,
           "flags": "-n, --dry-run",
           "description": "show the installer update plan without changing files",
@@ -2794,6 +3538,7 @@
           "long": "--dry-run",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicy": {
             "conflicts": ["--check"],
             "inspection": {
@@ -2807,6 +3552,7 @@
           "variadic": false
         },
         {
+          "conflicts": [],
           "deprecated": false,
           "flags": "-y, --yes",
           "description": "apply the update without prompting",
@@ -2814,6 +3560,7 @@
           "long": "--yes",
           "required": false,
           "optional": false,
+          "repeatable": false,
           "semanticPolicyOwner": "structural",
           "short": "-y",
           "valueShape": "boolean",

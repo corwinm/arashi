@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, join, posix, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
 import { formatInstallError, getPlatformInfo, installBinary } from "./install-binary.js";
 import { runNpmManagedUpdate } from "./update.js";
 import { stringifyWrapperJsonEnvelope } from "./update-options.js";
@@ -66,7 +66,10 @@ export async function ensureInstalled(options = {}) {
   const rootDir = options.rootDir ?? join(binDir, "..");
   const platform = options.platform ?? currentPlatform;
   const arch = options.arch ?? currentArch;
-  const log = options.log ?? console.log;
+  const sourceOutputFirstUse =
+    options.argv?.[0] === "completion" ||
+    (options.argv?.[0] === "shell" && options.argv?.[1] === "init");
+  const log = sourceOutputFirstUse ? () => {} : (options.log ?? console.log);
   const installBinaryImpl = options.installBinaryImpl ?? installBinary;
 
   if (hasRunnableBinary({ arch, binDir, existsSyncImpl: options.existsSyncImpl, platform })) {
@@ -121,7 +124,7 @@ function spawnArashi(argv, options = {}) {
   const platform = options.platform ?? currentPlatform;
   const windows = platform === "win32";
   const spawnImpl = options.spawnImpl ?? spawn;
-  const wrapperPath = join(binDir, getWrapperName(platform));
+  const wrapperPath = (windows ? win32 : posix).join(binDir, getWrapperName(platform));
   const binaryPath = resolveBinaryPath({
     arch: options.arch,
     binDir,
@@ -132,10 +135,10 @@ function spawnArashi(argv, options = {}) {
   return new Promise((resolve) => {
     const child = windows
       ? spawnImpl(binaryPath, argv, {
-        stdio: "inherit",
-        windowsHide: false,
-      })
-      : spawnImpl(wrapperPath, argv, { stdio: "inherit" });
+          stdio: "inherit",
+          windowsHide: false,
+        })
+      : spawnImpl("/bin/bash", [wrapperPath, ...argv], { stdio: "inherit" });
 
     child.on("exit", (code, signal) => {
       if (typeof code === "number") {
@@ -166,7 +169,7 @@ export async function runEntrypoint(argv = process.argv.slice(2), options = {}) 
       return runNpmManagedUpdate(argv.slice(1), options);
     }
 
-    await ensureInstalled(options);
+    await ensureInstalled({ ...options, argv });
   } catch (error) {
     errorLog(formatInstallError(error));
     return 1;
@@ -175,7 +178,12 @@ export async function runEntrypoint(argv = process.argv.slice(2), options = {}) 
   return spawnArashi(argv, options);
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
-if (import.meta.url === invokedPath) {
+let invokedDirectly = false;
+try {
+  invokedDirectly = Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(__filename);
+} catch {
+  // A missing or inaccessible argv path cannot be a direct invocation of this module.
+}
+if (invokedDirectly) {
   process.exitCode = await runEntrypoint();
 }

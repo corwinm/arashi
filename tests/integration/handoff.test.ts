@@ -181,12 +181,16 @@ describe("handoff command", () => {
       "handoff",
       "--link",
       "https://github.com/corwinm/arashi-arashi/issues/186",
+      "--link",
+      "https://github.com/corwinm/arashi/pull/120",
       "--validation",
       "pnpm run test — passed",
       "--todo",
       "watch CI",
       "--risk",
       "Windows CI pending",
+      "--risk",
+      "Review pending",
       "--next-command",
       "gh pr checks 123 --repo corwinm/arashi",
     ]);
@@ -203,9 +207,11 @@ describe("handoff command", () => {
     );
     expect(result.stdout).toContain("repo-b: dirty; branch main; 1 changed file");
     expect(result.stdout).toContain("https://github.com/corwinm/arashi-arashi/issues/186");
+    expect(result.stdout).toContain("https://github.com/corwinm/arashi/pull/120");
     expect(result.stdout).toContain("pnpm run test — passed");
     expect(result.stdout).toContain("- [ ] watch CI");
     expect(result.stdout).toContain("Windows CI pending");
+    expect(result.stdout).toContain("Review pending");
     expect(result.stdout).toContain("`gh pr checks 123 --repo corwinm/arashi`");
     expect(result.stdout).toContain("`arashi status --verbose`");
   });

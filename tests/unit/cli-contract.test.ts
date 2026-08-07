@@ -15,6 +15,8 @@ import {
 const expectedPaths = [
   "add",
   "clone",
+  "completion",
+  "completion __query",
   "create",
   "doctor",
   "exec",
@@ -415,7 +417,7 @@ describe("CLI command contract", () => {
       buildProgram({ includeHelpBanner: false }),
       commandSemantics,
     );
-    expect(contract.schemaVersion).toBe(5);
+    expect(contract.schemaVersion).toBe(6);
     expect(
       contract.commands.find((command) => command.path === "switch")?.semantics.optionPolicies?.[
         "--tab"
@@ -661,9 +663,9 @@ describe("CLI command contract", () => {
     );
     const options = contract.commands.flatMap((command) => command.options);
 
-    expect(contract.commands).toHaveLength(22);
-    expect(options).toHaveLength(108);
-    expect(new Set(options.map((option) => option.long))).toHaveLength(58);
+    expect(contract.commands).toHaveLength(24);
+    expect(options).toHaveLength(131);
+    expect(new Set(options.map((option) => option.long))).toHaveLength(59);
     expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
     expect(
       contract.commands
@@ -1077,7 +1079,7 @@ describe("CLI command contract", () => {
     );
     expect(first).toBe(second);
     const contract = JSON.parse(first);
-    expect(contract.schemaVersion).toBe(5);
+    expect(contract.schemaVersion).toBe(6);
     expect(contract).not.toHaveProperty("cliVersion");
     expect(contract.commands.map((command: { path: string }) => command.path)).toEqual(
       expectedPaths,
@@ -1088,7 +1090,10 @@ describe("CLI command contract", () => {
 
   test("does not change when only the runtime release version changes", () => {
     const current = buildProgram({ includeHelpBanner: false });
-    const alternateRelease = new Command().name("arashi").version("999.0.0");
+    const alternateRelease = new Command()
+      .name("arashi")
+      .description("Git worktree manager for meta-repositories")
+      .version("999.0.0");
     for (const command of buildProgram({ includeHelpBanner: false }).commands)
       alternateRelease.addCommand(command);
 

@@ -55,8 +55,25 @@ describe("npm JavaScript entrypoint", () => {
     expect(exitCode).toBe(0);
     expect(installed).toEqual(["/package/bin"]);
     expect(spawn.calls).toHaveLength(1);
-    expect(spawn.calls[0].args).toEqual(["--version"]);
-    expect(spawn.calls[0].command.replaceAll("\\", "/")).toBe("/package/bin/arashi");
+    expect(spawn.calls[0].args).toEqual(["/package/bin/arashi", "--version"]);
+    expect(spawn.calls[0].command).toBe("/bin/bash");
+  });
+
+  test.each([
+    ["completion", "bash"],
+    ["shell", "init", "bash"],
+  ])("keeps source-output first use silent for %s", async (...argv) => {
+    const output: string[] = [];
+    await ensureInstalled({
+      argv,
+      existsSyncImpl: () => false,
+      installBinaryImpl: async (options: { log: (line: string) => void }) => {
+        options.log("installer progress");
+        return { status: "installed" };
+      },
+      log: (line: string) => output.push(line),
+    });
+    expect(output).toEqual([]);
   });
 
   test("explicit install downloads without spawning the native binary", async () => {

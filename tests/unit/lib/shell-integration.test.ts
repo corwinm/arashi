@@ -7,7 +7,7 @@ import {
   installShellIntegration,
   resolveStartupFilePath,
 } from "../../../src/lib/shell-integration.ts";
-import { mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -74,6 +74,23 @@ describe("shell integration", () => {
     expect(once).toContain("# >>> arashi shell integration >>>");
     expect(twice).toBe(once);
     expect(secondInstall.updated).toBe(false);
+  });
+
+  test("upgrades a wrapper-only block without changing bytes outside its markers", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-shell-upgrade-"));
+    tempPaths.push(home);
+    const bashrcPath = join(home, ".bashrc");
+    const prefix = "# before\n\n\t\n";
+    const suffix = "\n  \n\n# after\n";
+    const oldBlock =
+      '# >>> arashi shell integration >>>\neval "$(arashi shell init bash)"\n# <<< arashi shell integration <<<';
+    await writeFile(bashrcPath, `${prefix}${oldBlock}${suffix}`);
+
+    await installShellIntegration({ env: { HOME: home, SHELL: "/bin/bash" } });
+
+    expect(await readFile(bashrcPath, "utf8")).toBe(
+      `${prefix}${buildShellInstallBlock("bash")}${suffix}`,
+    );
   });
 
   test("returns actionable error when install cannot detect a supported shell", async () => {

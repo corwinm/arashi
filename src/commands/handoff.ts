@@ -481,6 +481,12 @@ const runHandoff = async (options: HandoffOptions): Promise<void> => {
 
 const collectRepeated = (value: string, previous: string[] = []): string[] => [...previous, value];
 
+const repeatableOption = (flags: string, description: string): Option => {
+  const option = new Option(flags, description).argParser(collectRepeated);
+  (option as Option & { repeatable?: boolean }).repeatable = true;
+  return option;
+};
+
 export const createCommand = (): Command => {
   const deprecatedMarkdown = new Option(
     "--markdown",
@@ -492,30 +498,32 @@ export const createCommand = (): Command => {
     .description("Generate a Markdown or JSON handoff report for the current workspace")
     .option("-j, --json", "Output a structured JSON envelope instead of Markdown")
     .addOption(deprecatedMarkdown)
-    .option(
-      "--link <link>",
-      "Related issue, PR, spec, or reference link (repeatable)",
-      collectRepeated,
+    .addOption(
+      repeatableOption("--link <link>", "Related issue, PR, spec, or reference link (repeatable)"),
     )
-    .option(
-      "--validation <entry>",
-      "Validation command and result evidence, e.g. 'pnpm run test — passed' (repeatable)",
-      collectRepeated,
+    .addOption(
+      repeatableOption(
+        "--validation <entry>",
+        "Validation command and result evidence, e.g. 'pnpm run test — passed' (repeatable)",
+      ),
     )
-    .option(
-      "--todo <item>",
-      "Remaining work item to include as a checklist entry (repeatable)",
-      collectRepeated,
+    .addOption(
+      repeatableOption(
+        "--todo <item>",
+        "Remaining work item to include as a checklist entry (repeatable)",
+      ),
     )
-    .option(
-      "--risk <item>",
-      "Known risk or blocker to include in the report (repeatable)",
-      collectRepeated,
+    .addOption(
+      repeatableOption(
+        "--risk <item>",
+        "Known risk or blocker to include in the report (repeatable)",
+      ),
     )
-    .option(
-      "--next-command <command>",
-      "Suggested next command, not executed (repeatable)",
-      collectRepeated,
+    .addOption(
+      repeatableOption(
+        "--next-command <command>",
+        "Suggested next command, not executed (repeatable)",
+      ),
     )
     .addHelpText(
       "after",

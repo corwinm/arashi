@@ -1,5 +1,6 @@
-import type { Command } from "commander";
+import type { Command, Option } from "commander";
 import { discoverCommandPaths } from "../cli-program.ts";
+import type { CompletionCandidateKind } from "../completion/types.ts";
 
 export type JsonPolicy =
   | { support: "full" }
@@ -339,6 +340,20 @@ export const commandSemantics: CommandSemantics = {
     undefined,
     configuredOnly("Cloning configured child repositories requires persisted configuration."),
   ),
+  completion: {
+    json: unsupported("Completion emits native shell code rather than JSON."),
+    docs: required(),
+    skills: required(),
+    standalone: { support: "full" },
+    vscode: excluded("Native shell completion is intentionally outside VS Code extension scope."),
+  },
+  "completion __query": {
+    json: unsupported("The internal completion protocol is not JSON."),
+    docs: excluded("The lossless completion query is an internal implementation detail."),
+    skills: excluded("The lossless completion query is an internal implementation detail."),
+    standalone: notApplicable("The query degrades silently when workspace state is unavailable."),
+    vscode: excluded("The internal native-shell protocol is outside VS Code extension scope."),
+  },
   create: {
     ...standard(
       {
@@ -1239,30 +1254,119 @@ export function validateOptionAudit(program: Command, policies: OptionAuditPolic
 }
 
 export interface CliCommandContract {
-  schemaVersion: 5;
+  schemaVersion: 6;
+  root: ContractRoot;
   commands: ContractCommand[];
 }
-interface ContractCommand {
+export interface ContractArgument {
+  candidateKind?: CompletionCandidateKind;
+  choices?: string[];
+  description: string;
+  hidden: boolean;
+  name: string;
+  required: boolean;
+  variadic: boolean;
+}
+export interface ContractOption {
+  candidateKind?: CompletionCandidateKind;
+  choices?: string[];
+  conflicts: string[];
+  deprecated: boolean;
+  description: string;
+  flags: string;
+  hidden: boolean;
+  long: string;
+  required: boolean;
+  optional: boolean;
+  repeatable: boolean;
+  semanticPolicy?: OptionSemanticPolicy;
+  semanticPolicyOwner: "structural" | "command";
+  short: string | null;
+  valueShape: "boolean" | "optional" | "required";
+  variadic: boolean;
+}
+export interface ContractRoot {
+  aliases: string[];
+  description: string;
+  name: string;
+  options: ContractOption[];
+}
+export interface ContractCommand {
   path: string;
+  aliasPaths: string[];
   description: string;
   aliases: string[];
   hidden: boolean;
-  arguments: Array<{ name: string; required: boolean; variadic: boolean; description: string }>;
-  options: Array<{
-    deprecated: boolean;
-    description: string;
-    flags: string;
-    hidden: boolean;
-    long: string;
-    required: boolean;
-    optional: boolean;
-    semanticPolicy?: OptionSemanticPolicy;
-    semanticPolicyOwner: "structural" | "command";
-    short: string | null;
-    valueShape: "boolean" | "optional" | "required";
-    variadic: boolean;
-  }>;
+  arguments: ContractArgument[];
+  options: ContractOption[];
   semantics: CommandSemanticMetadata;
+}
+
+const completionArgumentKinds: Record<string, CompletionCandidateKind> = {
+  "completion:shell": "shell",
+  "remove:target": "worktree",
+  "shell init:shell": "shell",
+  "switch:filter": "worktree",
+};
+
+const completionOptionKinds: Record<string, CompletionCandidateKind> = {
+  "create:--conflict": "choice",
+  "move:--from": "workspace",
+  "move:--to": "workspace",
+};
+
+function candidateKindForOption(
+  path: string,
+  long: string,
+  policy: OptionSemanticPolicy | undefined,
+): CompletionCandidateKind | undefined {
+  if (policy?.selector?.kind) return policy.selector.kind;
+  return completionOptionKinds[`${path}:${long}`];
+}
+
+function contractOption(
+  option: Option,
+  path: string,
+  metadata: CommandSemantics,
+  optionPolicies: OptionAuditPolicies,
+): ContractOption {
+  const semanticPolicy = optionPolicies[path]?.[option.long ?? ""];
+  const commandPolicy = metadata[path]?.optionPolicies?.[option.long ?? ""];
+  const conflicts = [
+    ...(option as Option & { conflictsWith: string[] }).conflictsWith,
+    ...(semanticPolicy?.conflicts ?? []),
+    ...(commandPolicy?.conflicts ?? []),
+  ]
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .toSorted();
+  return {
+    candidateKind: candidateKindForOption(path, option.long ?? "", semanticPolicy),
+    choices: option.argChoices ? [...option.argChoices].toSorted() : undefined,
+    conflicts,
+    deprecated: Boolean((option as typeof option & { deprecated?: boolean }).deprecated),
+    flags: option.flags,
+    description: option.description,
+    hidden: option.hidden,
+    long: option.long ?? "",
+    required: option.required,
+    optional: option.optional,
+    repeatable:
+      option.variadic || Boolean((option as Option & { repeatable?: boolean }).repeatable),
+    semanticPolicy,
+    semanticPolicyOwner: semanticPolicy
+      ? semanticPolicy.ownership
+      : commandPolicy
+        ? "command"
+        : "structural",
+    short: option.short ?? null,
+    valueShape: option.required ? "required" : option.optional ? "optional" : "boolean",
+    variadic: option.variadic,
+  };
+}
+
+function optionsWithBuiltInHelp(command: Command): Option[] {
+  const helpOption = (command as Command & { _getHelpOption(): Option | null })._getHelpOption();
+  return helpOption ? [...command.options, helpOption] : [...command.options];
 }
 
 export function generateCommandContract(
@@ -1294,38 +1398,24 @@ export function generateCommandContract(
       const path = prefix ? `${prefix} ${command.name()}` : command.name();
       commands.push({
         path,
+        aliasPaths: command
+          .aliases()
+          .map((alias) => (prefix ? `${prefix} ${alias}` : alias))
+          .toSorted(),
         description: command.description(),
         aliases: command.aliases().toSorted(),
         hidden: Boolean((command as Command & { _hidden?: boolean })._hidden),
         arguments: command.registeredArguments.map((argument) => ({
+          candidateKind: completionArgumentKinds[`${path}:${argument.name()}`],
+          choices: argument.argChoices ? [...argument.argChoices].toSorted() : undefined,
+          hidden: false,
           name: argument.name(),
           required: argument.required,
           variadic: argument.variadic,
           description: argument.description,
         })),
-        options: command.options
-          .map((option) => ({
-            deprecated: Boolean((option as typeof option & { deprecated?: boolean }).deprecated),
-            flags: option.flags,
-            description: option.description,
-            hidden: option.hidden,
-            long: option.long ?? "",
-            required: option.required,
-            optional: option.optional,
-            semanticPolicy: optionPolicies[path]?.[option.long ?? ""],
-            semanticPolicyOwner: optionPolicies[path]?.[option.long ?? ""]
-              ? optionPolicies[path]![option.long ?? ""]!.ownership
-              : metadata[path]!.optionPolicies?.[option.long ?? ""]
-                ? ("command" as const)
-                : ("structural" as const),
-            short: option.short ?? null,
-            valueShape: option.required
-              ? ("required" as const)
-              : option.optional
-                ? ("optional" as const)
-                : ("boolean" as const),
-            variadic: option.variadic,
-          }))
+        options: optionsWithBuiltInHelp(command)
+          .map((option) => contractOption(option, path, metadata, optionPolicies))
           .toSorted((a, b) => a.flags.localeCompare(b.flags)),
         semantics: metadata[path]!,
       });
@@ -1334,7 +1424,15 @@ export function generateCommandContract(
   };
   visit(program, "");
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
+    root: {
+      aliases: program.aliases().toSorted(),
+      description: program.description(),
+      name: program.name(),
+      options: optionsWithBuiltInHelp(program)
+        .map((option) => contractOption(option, "", metadata, optionPolicies))
+        .toSorted((left, right) => left.flags.localeCompare(right.flags)),
+    },
     commands: commands.toSorted((a, b) => a.path.localeCompare(b.path)),
   };
 }
