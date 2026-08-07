@@ -29,7 +29,7 @@ import type { HookScope, LifecycleHookOutcome } from "../lib/hooks.ts";
 import { basename, join, parse, resolve, sep } from "path";
 import { exec, isBareRepo } from "../lib/git.ts";
 import { multiSelect, select } from "../lib/prompts.ts";
-import { spinner, warn, withSpinnerPaused } from "../lib/logger.ts";
+import { spinner, warn } from "../lib/logger.ts";
 import { OperationLog } from "./rollback.ts";
 import type { Repository } from "./repository.ts";
 import { existsSync } from "fs";
@@ -682,27 +682,26 @@ const runHookIfPresent = async (options: {
     };
   }
 
-  const result = await withSpinnerPaused(options.quiet ? null : options.spinnerInstance, () =>
-    executeHook({
-      context: {
-        hookName: options.hookName,
-        hookScope: options.scope,
-        mainRepoPath: options.operationData.MAIN_REPO_PATH,
-        operationData: options.operationData,
-        parentRepoPath: options.parentRepoPath,
-        repoPath: options.repoContextPath,
-        sourceScriptPath: hookPath,
-        targetRepoName: options.targetRepositoryName,
-        targetRepoPath: options.targetRepositoryPath,
-        targetWorktreePath: options.targetWorktreePath,
-        workspaceMode: "configured",
-      },
+  const result = await executeHook({
+    context: {
       hookName: options.hookName,
-      quiet: options.quiet,
-      scriptPath: hookPath,
-      timeout: options.timeout,
-    }),
-  );
+      hookScope: options.scope,
+      mainRepoPath: options.operationData.MAIN_REPO_PATH,
+      operationData: options.operationData,
+      parentRepoPath: options.parentRepoPath,
+      repoPath: options.repoContextPath,
+      sourceScriptPath: hookPath,
+      targetRepoName: options.targetRepositoryName,
+      targetRepoPath: options.targetRepositoryPath,
+      targetWorktreePath: options.targetWorktreePath,
+      workspaceMode: "configured",
+    },
+    hookName: options.hookName,
+    outputSpinner: options.quiet ? null : options.spinnerInstance,
+    quiet: options.quiet,
+    scriptPath: hookPath,
+    timeout: options.timeout,
+  });
 
   const mapping = mapHookExecutionResult(result);
   if (mapping.hookStatus === "failure") {

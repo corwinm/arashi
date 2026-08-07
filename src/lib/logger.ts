@@ -108,7 +108,7 @@ export function spinner(text: string): Ora {
   });
 }
 
-interface PausableSpinner {
+export interface PausableSpinner {
   readonly isSpinning: boolean;
   start(): unknown;
   stopAndPersist(): unknown;

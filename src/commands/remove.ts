@@ -1556,6 +1556,7 @@ const runRemoveLifecycleHook = async (options: {
           workspaceMode: "configured",
         },
         hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
+        outputSpinner: hookSpinner,
         quiet: options.quiet,
         scriptPath: resolvedHook.scriptPath,
         timeout: options.timeoutMs,
