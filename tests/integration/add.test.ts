@@ -25,7 +25,7 @@ import { existsSync } from "fs";
 import { join } from "path";
 
 // Test workspace directory
-const TEST_WORKSPACE = join(import.meta.dirname, "../temp-integration-workspace");
+const TEST_WORKSPACE = join(import.meta.dirname, "../temp-integration-workspace", "add");
 
 describe("Add Command - URL Validation", () => {
   test("validates HTTPS URLs correctly", () => {
