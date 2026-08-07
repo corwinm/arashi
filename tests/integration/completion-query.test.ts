@@ -20,6 +20,12 @@ const runQuery = (cwd: string, words: string[]) =>
       timeout: queryProcessTimeoutMs,
     },
   );
+const runQueryWithinLatencyBudget = (cwd: string, words: string[]) => {
+  const started = performance.now();
+  const result = runQuery(cwd, words);
+  expect(performance.now() - started).toBeLessThan(completionLatencyBudgetMs);
+  return result;
+};
 const records = (stdout: Buffer) => {
   const fields = stdout.toString("utf8").split("\0");
   if (fields.at(-1) === "") fields.pop();
@@ -468,22 +474,22 @@ describe("lossless bounded dynamic completion query", () => {
   test("fails silently and quickly outside or with broken workspace metadata", () => {
     const root = mkdtempSync(join(tmpdir(), "arashi-completion-empty-"));
     temporaryDirectories.push(root);
-    const started = performance.now();
-    const outside = runQuery(root, ["arashi", "create", "topic", "--only", "r"]);
+    const query = () =>
+      runQueryWithinLatencyBudget(root, ["arashi", "create", "topic", "--only", "r"]);
+    const outside = query();
     expect(outside.status).toBe(0);
     expect(outside.stdout.length).toBe(0);
     expect(outside.stderr.length).toBe(0);
-    expect(performance.now() - started).toBeLessThan(completionLatencyBudgetMs);
     mkdirSync(join(root, ".arashi"));
     writeFileSync(join(root, ".arashi", "config.json"), "{");
-    const broken = runQuery(root, ["arashi", "create", "topic", "--only", "r"]);
+    const broken = query();
     expect(broken.status).toBe(0);
     expect(broken.stdout.length).toBe(0);
     expect(broken.stderr.length).toBe(0);
 
     const configPath = join(root, ".arashi", "config.json");
     writeFileSync(configPath, " ".repeat(2 * 1024 * 1024));
-    const oversized = runQuery(root, ["arashi", "create", "topic", "--only", "r"]);
+    const oversized = query();
     expect(oversized.status).toBe(0);
     expect(oversized.stdout.length).toBe(0);
     expect(oversized.stderr.length).toBe(0);
@@ -491,7 +497,7 @@ describe("lossless bounded dynamic completion query", () => {
     if (process.platform !== "win32") {
       rmSync(configPath);
       expect(spawnSync("mkfifo", [configPath]).status).toBe(0);
-      const fifo = runQuery(root, ["arashi", "create", "topic", "--only", "r"]);
+      const fifo = query();
       expect(fifo.status).toBe(0);
       expect(fifo.stdout.length).toBe(0);
       expect(fifo.stderr.length).toBe(0);
