@@ -6,7 +6,7 @@ export default defineConfig({
     hookTimeout: 30_000,
     testTimeout: 30_000,
     pool: "forks",
-    maxWorkers: 2,
+    maxWorkers: 3,
     fileParallelism: true,
   },
 });
