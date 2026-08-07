@@ -181,29 +181,42 @@ if ($answer -ne "yes") { exit 102 }
     Add-Content -Path $record -Value "windows:refusal:exact-output"
 
     Set-HookTimeout 2000
+    $ignoringChildScript = Join-Path $temp "ignore-interrupt-child.js"
+    @"
+process.on("SIGINT", () => {});
+setInterval(() => {}, 1000);
+"@ | Set-Content -Path $ignoringChildScript
     $timeoutPid = Join-Path $temp "timeout-hook.pid"
+    $timeoutChildPid = Join-Path $temp "timeout-child.pid"
     @"
 Set-Content -NoNewline -Path '$timeoutPid' -Value `$PID
+`$child = Start-Process -FilePath node.exe -ArgumentList '$ignoringChildScript' -NoNewWindow -PassThru
+Set-Content -NoNewline -Path '$timeoutChildPid' -Value `$child.Id
 `$null = Read-Host "timeout answer"
 "@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
     $timeoutResult = Invoke-PtySession "timeout answer" "__NO_INPUT__" @($binary, "create", "feature/windows-timeout")
     if ($timeoutResult.exitCode -eq 0) { throw "Timed-out built CLI unexpectedly succeeded" }
     if (-not $timeoutResult.reused) { throw "Terminal was not reusable after timeout" }
     Assert-ProcessStopped ([int](Get-Content -Raw -Path $timeoutPid)) "timeout"
+    Assert-ProcessStopped ([int](Get-Content -Raw -Path $timeoutChildPid)) "timeout descendant"
     Assert-NoCreateArtifacts "feature/windows-timeout" "timeout"
     Add-Content -Path $record -Value "windows:timeout:cleanup"
     Add-Content -Path $record -Value "windows:terminal:reused"
 
     Set-HookTimeout 10000
     $interruptPid = Join-Path $temp "interrupt-hook.pid"
+    $interruptChildPid = Join-Path $temp "interrupt-child.pid"
     @"
 Set-Content -NoNewline -Path '$interruptPid' -Value `$PID
+`$child = Start-Process -FilePath node.exe -ArgumentList '$ignoringChildScript' -NoNewWindow -PassThru
+Set-Content -NoNewline -Path '$interruptChildPid' -Value `$child.Id
 `$null = Read-Host "interrupt answer"
 "@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
     $interruptResult = Invoke-PtySession "interrupt answer" "__CTRL_C__" @($binary, "create", "feature/windows-interrupt")
     if ($interruptResult.exitCode -eq 0) { throw "Interrupted built CLI unexpectedly succeeded" }
     if (-not $interruptResult.reused) { throw "Terminal was not reusable after interruption" }
     Assert-ProcessStopped ([int](Get-Content -Raw -Path $interruptPid)) "interruption"
+    Assert-ProcessStopped ([int](Get-Content -Raw -Path $interruptChildPid)) "interruption descendant"
     Assert-NoCreateArtifacts "feature/windows-interrupt" "interruption"
     Add-Content -Path $record -Value "windows:interrupt:cleanup"
   }

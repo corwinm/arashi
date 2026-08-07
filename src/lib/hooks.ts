@@ -820,10 +820,19 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
     let interruptCleanup: Promise<void> | undefined;
     let interruptedProcessIds: number[] = [];
     const captureHookProcessTree = (roots: number[]): number[] => {
-      if (process.platform === "win32") return [];
-      const listing = runtime.spawnSync(["ps", "-eo", "pid=,ppid="], {
-        stderr: "ignore",
-      });
+      const listing =
+        process.platform === "win32"
+          ? runtime.spawnSync(
+              [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+              ],
+              { stderr: "ignore" },
+            )
+          : runtime.spawnSync(["ps", "-eo", "pid=,ppid="], { stderr: "ignore" });
       if (listing.exitCode !== ZERO) return roots;
       const children = new Map<number, number[]>();
       for (const line of listing.stdout.toString().split("\n")) {
@@ -881,27 +890,46 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
         .filter((pid) => Number.isInteger(pid));
     };
     const signalHookTree = (signal: NodeJS.Signals): void => {
-      if (process.platform !== "win32" && proc.pid) {
-        if (interruptedProcessIds.length === 0) {
-          interruptedProcessIds = captureHookProcessTree([proc.pid]);
-        } else if (signal === "SIGKILL") {
-          const roots = [...new Set([...interruptedProcessIds, ...captureHookLineage()])];
-          interruptedProcessIds = captureHookProcessTree(roots);
+      if (!proc.pid) {
+        proc.kill(signal);
+        return;
+      }
+      if (interruptedProcessIds.length === 0) {
+        interruptedProcessIds = captureHookProcessTree([proc.pid]);
+      } else if (signal === "SIGKILL") {
+        const roots = [
+          ...new Set([
+            ...interruptedProcessIds,
+            ...(process.platform === "win32" ? [] : captureHookLineage()),
+          ]),
+        ];
+        interruptedProcessIds = captureHookProcessTree(roots);
+      }
+      if (process.platform === "win32") {
+        if (signal !== "SIGKILL") {
+          proc.kill(signal);
+          return;
         }
-        const processIds =
-          signal === "SIGKILL"
-            ? interruptedProcessIds.map((_, index, values) => values[values.length - index - ONE])
-            : interruptedProcessIds;
-        for (const pid of processIds) {
-          try {
-            process.kill(pid, signal);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-          }
+        for (const pid of interruptedProcessIds.map(
+          (_, index, values) => values[values.length - index - ONE],
+        )) {
+          runtime.spawnSync(["taskkill.exe", "/PID", String(pid), "/T", "/F"], {
+            stderr: "ignore",
+          });
         }
         return;
       }
-      proc.kill(signal);
+      const processIds =
+        signal === "SIGKILL"
+          ? interruptedProcessIds.map((_, index, values) => values[values.length - index - ONE])
+          : interruptedProcessIds;
+      for (const pid of processIds) {
+        try {
+          process.kill(pid, signal);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
     };
     activeForwardInterrupt = (): void => {
       pendingInterrupt = true;
@@ -923,6 +951,9 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
     if (pendingInterrupt) activeForwardInterrupt();
 
     try {
+      const timeoutCleanup = proc.exited.then(() => {
+        if (proc.killed && proc.signalCode === "SIGTERM") signalHookTree("SIGKILL");
+      });
       const [stdout, stderr] = interactiveOutput
         ? await Promise.all([
             streamRawOutput(proc.stdout, (chunk) => process.stdout.write(chunk)),
@@ -933,7 +964,7 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
             streamOutput(proc.stderr, `[${options.hookName}:ERR]`, options.quiet),
           ]);
 
-      await proc.exited;
+      await timeoutCleanup;
       if (interruptCleanup) await interruptCleanup;
 
       const duration = Date.now() - startTime;
