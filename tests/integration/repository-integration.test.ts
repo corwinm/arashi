@@ -12,7 +12,11 @@ import { mkdir, rm, stat } from "fs/promises";
 import { createStandardTestRepos } from "../helpers/create-test-repos.js";
 import { join } from "path";
 
-const TEST_WORKSPACE = join(import.meta.dirname, "../temp-integration-workspace");
+const TEST_WORKSPACE = join(
+  import.meta.dirname,
+  "../temp-integration-workspace",
+  "repository-integration",
+);
 
 describe("Repository Management MVP Integration", () => {
   beforeAll(async () => {

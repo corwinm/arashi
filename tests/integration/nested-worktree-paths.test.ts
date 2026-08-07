@@ -14,7 +14,11 @@ import { createCoordinatedWorktrees } from "../../src/core/worktree.ts";
 import { join } from "path";
 
 describe("Nested Worktree Paths Integration", () => {
-  const testDir = join(import.meta.dirname, "../temp-integration-workspace");
+  const testDir = join(
+    import.meta.dirname,
+    "../temp-integration-workspace",
+    "nested-worktree-paths",
+  );
 
   beforeEach(async () => {
     await mkdir(testDir, { recursive: true });
