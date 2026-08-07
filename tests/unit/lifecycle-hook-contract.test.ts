@@ -56,6 +56,13 @@ describe("lifecycle hook contract", () => {
     }
   });
 
+  test("pauses configured remove progress while interactive hooks own the terminal", async () => {
+    const source = await readFile(join(process.cwd(), "src", "commands", "remove.ts"), "utf8");
+    expect(source).toMatch(
+      /withSpinnerPaused\(\s*options\.hookInputMode === "tty" \? hookSpinner : null,/,
+    );
+  });
+
   test("publishes the same timeout bounds in the JSON schema", async () => {
     const schema = JSON.parse(
       await readFile(join(process.cwd(), "schema", "config.schema.json"), "utf8"),
