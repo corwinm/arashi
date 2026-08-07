@@ -170,6 +170,41 @@ describe("hook execution integration", () => {
     },
   );
 
+  test.runIf(process.platform !== "win32")(
+    "escalates cancellation when an interrupted hook ignores SIGINT",
+    async () => {
+      const readyPath = join(testRepo, "ignored-interrupt-ready");
+      const hookPath = createMockHook(
+        `trap '' INT TERM\nprintf ready > '${readyPath}'\nwhile true; do sleep 0.1; done`,
+      );
+
+      try {
+        const execution = executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookInputMode: "tty",
+          hookName: "ignored-interrupt-hook",
+          quiet: true,
+          scriptPath: hookPath,
+          timeout: 5000,
+        });
+        for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(existsSync(readyPath)).toBe(true);
+
+        process.emit("SIGINT", "SIGINT");
+        const result = await execution;
+
+        expect(result.success).toBe(false);
+        expect(result.exitCode).toBe(130);
+        expect(result.signalCode).toBe("SIGINT");
+        expect(result.duration).toBeLessThan(5000);
+      } finally {
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
+
   test("passes scope metadata environment variables", async () => {
     const hookPath = createMockHook(`
       echo "Scope: $ARASHI_HOOK_SCOPE"

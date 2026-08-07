@@ -6,7 +6,7 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $binary = Join-Path $root "bin\arashi-windows-x64.exe"
 if (-not (Test-Path $binary)) { throw "Built CLI is missing: $binary" }
 
-$temp = Join-Path ([IO.Path]::GetTempPath()) ("arashi hook %!&() " + [guid]::NewGuid())
+$temp = Join-Path ([IO.Path]::GetTempPath()) ("arashi hook %TEAM% !&() " + [guid]::NewGuid())
 $repo = Join-Path $temp "repo"
 $testHome = Join-Path $temp "home"
 $hooks = Join-Path $testHome ".arashi\hooks"
@@ -14,7 +14,9 @@ $record = Join-Path $temp "hook-input.log"
 $ptyHelper = Join-Path $PSScriptRoot "pty-command.mjs"
 New-Item -ItemType Directory -Force -Path $repo, $hooks | Out-Null
 $previousHome = $env:HOME
+$previousTeam = $env:TEAM
 $env:HOME = $testHome
+$env:TEAM = "EXPANDED-PATH-MUST-NOT-BE-USED"
 $env:HOOK_INPUT_RECORD = $record
 
 function Invoke-Checked([string[]]$Command) {
@@ -230,6 +232,12 @@ Set-Content -NoNewline -Path '$interruptPid' -Value `$PID
 }
 finally {
   $env:HOME = $previousHome
+  if ($null -eq $previousTeam) {
+    Remove-Item Env:TEAM -ErrorAction SilentlyContinue
+  }
+  else {
+    $env:TEAM = $previousTeam
+  }
   Remove-Item Env:HOOK_INPUT_RECORD -ErrorAction SilentlyContinue
   Remove-Item Env:WRAPPER_KIND -ErrorAction SilentlyContinue
   Remove-Item -Recurse -Force $temp -ErrorAction SilentlyContinue

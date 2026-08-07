@@ -793,9 +793,14 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
       timeout,
     });
     let interrupted = false;
+    let interruptEscalation: ReturnType<typeof setTimeout> | undefined;
     const forwardInterrupt = (): void => {
       interrupted = true;
       proc.kill("SIGINT");
+      interruptEscalation = setTimeout(() => {
+        if (proc.exitCode === null) proc.kill("SIGKILL");
+      }, 250);
+      interruptEscalation.unref();
     };
     process.once("SIGINT", forwardInterrupt);
 
@@ -828,6 +833,7 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
       };
     } finally {
       process.off("SIGINT", forwardInterrupt);
+      if (interruptEscalation) clearTimeout(interruptEscalation);
     }
   } catch (error) {
     const duration = Date.now() - startTime;
