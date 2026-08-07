@@ -177,7 +177,7 @@ describe("hook execution integration", () => {
       const descendantPath = join(testRepo, "ignored-interrupt-descendant");
       const lateDescendantPath = join(testRepo, "ignored-interrupt-late-descendant");
       const hookPath = createMockHook(
-        `trap 'exit 0' INT\n(\n  trap '' INT TERM\n  sleep 0.1\n  sh -c 'trap "" INT TERM; sleep 60' &\n  late=$!\n  printf '%s' "$late" > '${lateDescendantPath}'\n  wait "$late"\n) &\ndescendant=$!\nprintf '%s' "$descendant" > '${descendantPath}'\nprintf ready > '${readyPath}'\nwait "$descendant"`,
+        `trap 'exit 0' INT\n(\n  trap '' INT TERM\n  sleep 0.1\n  sh -c 'trap "" INT TERM; sleep 60' &\n  late=$!\n  printf '%s' "$late" > '${lateDescendantPath}'\n  exit 0\n) &\ndescendant=$!\nprintf '%s' "$descendant" > '${descendantPath}'\nprintf ready > '${readyPath}'\nwait "$descendant"`,
       );
 
       let descendantPid: number | undefined;

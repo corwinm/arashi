@@ -782,6 +782,33 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
   }
 
   try {
+    let hookProcessGroupId: number | undefined;
+    const processGroupBaseline = new Set<number>();
+    if (process.platform !== "win32") {
+      const baseline = runtime.spawnSync(["ps", "-eo", "pid=,ppid=,pgid="], {
+        stderr: "ignore",
+      });
+      if (baseline.exitCode === ZERO) {
+        const entries = baseline.stdout
+          .toString()
+          .split("\n")
+          .map((line) =>
+            line
+              .trim()
+              .split(/\s+/)
+              .map((value) => Number.parseInt(value, 10)),
+          )
+          .filter(([pid, parent, group]) =>
+            [pid, parent, group].every((value) => Number.isInteger(value)),
+          );
+        hookProcessGroupId = entries.find(([pid]) => pid === process.pid)?.[2];
+        if (hookProcessGroupId !== undefined) {
+          for (const [pid, , group] of entries) {
+            if (group === hookProcessGroupId) processGroupBaseline.add(pid);
+          }
+        }
+      }
+    }
     const proc = runtime.spawn(getHookSpawnCommand(options.scriptPath), {
       callBatchFile: /\.(?:cmd|bat)$/i.test(options.scriptPath),
       cwd: options.context.repoPath,
@@ -797,16 +824,19 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
     let interruptedProcessIds: number[] = [];
     const captureHookProcessTree = (roots: number[]): number[] => {
       if (process.platform === "win32") return [];
-      const listing = runtime.spawnSync(["ps", "-eo", "pid=,ppid="], {
+      const listing = runtime.spawnSync(["ps", "-eo", "pid=,ppid=,pgid="], {
         stderr: "ignore",
       });
       if (listing.exitCode !== ZERO) return roots;
       const children = new Map<number, number[]>();
+      const processEntries: [number, number, number][] = [];
       for (const line of listing.stdout.toString().split("\n")) {
-        const [pidText, parentText] = line.trim().split(/\s+/);
+        const [pidText, parentText, groupText] = line.trim().split(/\s+/);
         const pid = Number.parseInt(pidText, 10);
         const parent = Number.parseInt(parentText, 10);
-        if (!Number.isInteger(pid) || !Number.isInteger(parent)) continue;
+        const group = Number.parseInt(groupText, 10);
+        if (![pid, parent, group].every((value) => Number.isInteger(value))) continue;
+        processEntries.push([pid, parent, group]);
         children.set(parent, [...(children.get(parent) ?? []), pid]);
       }
       const result: number[] = [];
@@ -818,6 +848,13 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
         result.push(pid);
       };
       for (const root of roots) visit(root);
+      if (hookProcessGroupId !== undefined) {
+        for (const [pid, parent, group] of processEntries) {
+          if (parent === ONE && group === hookProcessGroupId && !processGroupBaseline.has(pid)) {
+            visit(pid);
+          }
+        }
+      }
       return result;
     };
     const signalHookTree = (signal: NodeJS.Signals): void => {
