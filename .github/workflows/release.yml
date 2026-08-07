@@ -66,6 +66,19 @@ jobs:
           cache: true
           install: false
 
+      # pnpm's standalone Node runtime does not include npm. Trusted Publishing
+      # requires npm >=11.5.1, so install the full Node distribution before release.
+      - name: Setup npm publishing runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.0
+
+      - name: Verify npm Trusted Publishing client
+        run: |
+          node --version
+          npm --version
+          node -e 'const [major, minor, patch] = process.argv[1].split(".").map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) { throw new Error("npm " + process.argv[1] + " does not support Trusted Publishing; npm >=11.5.1 is required") }' "$(npm --version)"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
