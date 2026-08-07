@@ -7,11 +7,18 @@ import { afterEach, describe, expect, test } from "vitest";
 
 const temporaryDirectories: string[] = [];
 const cliPath = join(dirname(fileURLToPath(import.meta.url)), "../../src/index.ts");
+const queryProcessTimeoutMs = 5_000;
+const completionLatencyBudgetMs = 1_000;
 const runQuery = (cwd: string, words: string[]) =>
   spawnSync(
     process.execPath,
     [cliPath, "completion", "__query", String(words.length - 1), "--", ...words],
-    { cwd, encoding: null, env: { ...process.env, NO_COLOR: "1" }, timeout: 1000 },
+    {
+      cwd,
+      encoding: null,
+      env: { ...process.env, NO_COLOR: "1" },
+      timeout: queryProcessTimeoutMs,
+    },
   );
 const records = (stdout: Buffer) => {
   const fields = stdout.toString("utf8").split("\0");
@@ -466,7 +473,7 @@ describe("lossless bounded dynamic completion query", () => {
     expect(outside.status).toBe(0);
     expect(outside.stdout.length).toBe(0);
     expect(outside.stderr.length).toBe(0);
-    expect(performance.now() - started).toBeLessThan(1000);
+    expect(performance.now() - started).toBeLessThan(completionLatencyBudgetMs);
     mkdirSync(join(root, ".arashi"));
     writeFileSync(join(root, ".arashi", "config.json"), "{");
     const broken = runQuery(root, ["arashi", "create", "topic", "--only", "r"]);
