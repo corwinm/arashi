@@ -31,6 +31,29 @@ interface ReleaseInfo {
   version: string;
 }
 
+type GitHubRateLimitSignal = "primary" | "secondary";
+
+export class GitHubRateLimitError extends Error {
+  readonly code = "GITHUB_RATE_LIMITED";
+  readonly details: {
+    fallbackAvailable: true;
+    signal: GitHubRateLimitSignal;
+    status: 403;
+    versionPinned: false;
+  };
+
+  constructor(signal: GitHubRateLimitSignal) {
+    super("GitHub API rate limit prevented checking the latest Arashi release");
+    this.name = "GitHubRateLimitError";
+    this.details = {
+      fallbackAvailable: true,
+      signal,
+      status: 403,
+      versionPinned: false,
+    };
+  }
+}
+
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 type SpawnSyncImpl = typeof spawnSync;
 type ConfirmImpl = typeof promptConfirm;
@@ -41,6 +64,7 @@ const WINDOWS_INSTALLER_URL = "https://arashi.haphazard.dev/install.ps1";
 interface DirectUpdateDeps {
   confirmImpl?: ConfirmImpl;
   currentVersion?: string;
+  env?: NodeJS.ProcessEnv;
   execPath?: string;
   fetchImpl?: FetchImpl;
   isInteractive?: boolean;
@@ -69,7 +93,7 @@ function installerDirname(execPath: string, platform: NodeJS.Platform): string {
 }
 
 export function buildInstallerUpdatePlan(
-  latestVersion: string,
+  latestVersion: string | undefined,
   execPath: string,
   options: InstallerUpdatePlanOptions = {},
 ): {
@@ -100,7 +124,7 @@ export function buildInstallerUpdatePlan(
       env: {
         ARASHI_INSTALL_DIR: installDir,
         ARASHI_NO_MODIFY_PATH: "1",
-        ARASHI_VERSION: latestVersion,
+        ...(latestVersion ? { ARASHI_VERSION: latestVersion } : {}),
         ARASHI_WAIT_FOR_PID: String(parentProcessId),
       },
       installDir,
@@ -119,7 +143,7 @@ export function buildInstallerUpdatePlan(
     env: {
       ARASHI_INSTALL_DIR: installDir,
       ARASHI_SHELL_INTEGRATION: "no",
-      ARASHI_VERSION: latestVersion,
+      ...(latestVersion ? { ARASHI_VERSION: latestVersion } : {}),
     },
     installDir,
     label: "official POSIX installer",
@@ -183,6 +207,14 @@ export async function fetchLatestRelease(fetchImpl: FetchImpl = fetch): Promise<
   });
 
   if (!response.ok) {
+    if (response.status === 403) {
+      if (response.headers.get("x-ratelimit-remaining") === "0") {
+        throw new GitHubRateLimitError("primary");
+      }
+      if (response.headers.has("retry-after")) {
+        throw new GitHubRateLimitError("secondary");
+      }
+    }
     throw new Error(`GitHub releases returned ${response.status} ${response.statusText}`.trim());
   }
 
@@ -205,23 +237,41 @@ export async function runDirectUpdate(
 ): Promise<void> {
   assertValidUpdateInspectionOptions(options);
   const { currentVersion = "", fetchImpl, log = info } = deps ?? { currentVersion: "" };
-  const latest = await fetchLatestRelease(fetchImpl);
+  let latest: ReleaseInfo | undefined;
+  let rateLimitError: GitHubRateLimitError | undefined;
+  try {
+    latest = await fetchLatestRelease(fetchImpl);
+  } catch (error) {
+    if (!(error instanceof GitHubRateLimitError)) {
+      throw error;
+    }
+    rateLimitError = error;
+  }
 
-  if (currentVersion && compareVersions(currentVersion, latest.version) >= 0) {
+  if (rateLimitError && (options.check || options.json)) {
+    throw rateLimitError;
+  }
+
+  if (latest && currentVersion && compareVersions(currentVersion, latest.version) >= 0) {
     log(`arashi direct binary is already current (v${currentVersion}).`);
     return;
   }
 
-  if (currentVersion) {
+  if (latest && currentVersion) {
     log(`Update available: arashi v${currentVersion} -> v${latest.version}`);
-  } else {
+  } else if (latest) {
     log(`Latest arashi release: v${latest.version}`);
+  } else {
+    log("GitHub API rate limit prevented Arashi from verifying whether an update is available.");
+    log(
+      "Unpinned latest-release attempt: the official installer will resolve the release version.",
+    );
   }
 
   const platform = deps?.platform ?? process.platform;
   const assetName = platformAssetName(platform);
   const execPath = deps?.execPath ?? process.execPath;
-  const plan = buildInstallerUpdatePlan(latest.version, execPath, {
+  const plan = buildInstallerUpdatePlan(latest?.version, execPath, {
     parentProcessId: process.pid,
     platform,
   });
@@ -252,7 +302,12 @@ export async function runDirectUpdate(
     }
 
     const confirmImpl = deps?.confirmImpl ?? promptConfirm;
-    const confirmation = await confirmImpl(`Apply arashi update to v${latest.version}?`, false);
+    const confirmation = await confirmImpl(
+      latest
+        ? `Apply arashi update to v${latest.version}?`
+        : "Attempt the official latest-release installer without verifying the latest version?",
+      false,
+    );
     if (confirmation.status === "cancelled") {
       log("Update cancelled.");
       return;
@@ -266,9 +321,17 @@ export async function runDirectUpdate(
   }
 
   const spawnSyncImpl = deps?.spawnSyncImpl ?? spawnSync;
+  const installerEnv = { ...(deps?.env ?? process.env) };
+  if (!latest) {
+    for (const key of Object.keys(installerEnv)) {
+      if (key.toUpperCase() === "ARASHI_VERSION") {
+        delete installerEnv[key];
+      }
+    }
+  }
   const result = spawnSyncImpl(plan.command, plan.args, {
     encoding: "utf8",
-    env: { ...process.env, ...plan.env },
+    env: { ...installerEnv, ...plan.env },
     stdio: "inherit",
   });
 
@@ -281,15 +344,21 @@ export async function runDirectUpdate(
 
   if (plan.deferred) {
     log(
-      `✓ Scheduled arashi update to v${latest.version}. The installer will continue after this process exits; keep the terminal open until it finishes.`,
+      latest
+        ? `✓ Scheduled arashi update to v${latest.version}. The installer will continue after this process exits; keep the terminal open until it finishes.`
+        : "✓ Scheduled the Arashi latest-release installer attempt. The installer will continue after this process exits; keep the terminal open until it finishes.",
     );
     return;
   }
 
-  log(`✓ Updated arashi to v${latest.version}.`);
+  log(
+    latest
+      ? `✓ Updated arashi to v${latest.version}.`
+      : "✓ Arashi latest-release installer attempt completed.",
+  );
 }
 
-export function createCommand(currentVersion = ""): Command {
+export function createCommand(currentVersion = "", deps: DirectUpdateDeps = {}): Command {
   return new Command("update")
     .description(UPDATE_COMMAND_DESCRIPTION)
     .option("--check", "check whether an update is available without changing files")
@@ -308,12 +377,13 @@ export function createCommand(currentVersion = ""): Command {
         if (options.json) {
           const messages: string[] = [];
           await runDirectUpdate(options, {
+            ...deps,
             currentVersion,
             log: (message) => messages.push(message),
           });
           writeJsonEnvelope(createJsonSuccessEnvelope("update", { messages }));
         } else {
-          await runDirectUpdate(options, { currentVersion });
+          await runDirectUpdate(options, { ...deps, currentVersion });
         }
       } catch (error) {
         const isInspectionConflict =

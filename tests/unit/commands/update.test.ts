@@ -8,6 +8,7 @@ import {
 import { describe, expect, test, vi } from "vitest";
 
 interface MockResponse {
+  headers?: Headers;
   json: () => Promise<{ html_url: string; tag_name: string }>;
   ok: boolean;
   status: number;
@@ -24,6 +25,20 @@ function createResponse(version: string): MockResponse {
     status: 200,
     statusText: "OK",
   };
+}
+
+function createFailedResponse(
+  status: number,
+  statusText: string,
+  headers: Record<string, string> = {},
+): Response {
+  return {
+    headers: new Headers(headers),
+    json: async () => ({}),
+    ok: false,
+    status,
+    statusText,
+  } as Response;
 }
 
 const windowsInstallDir = ["C:", "Users", "me", ".arashi", "bin"].join("\\");
@@ -55,6 +70,53 @@ describe("update command", () => {
       htmlUrl: "https://github.com/corwinm/arashi/releases/tag/v2.0.0",
       version: "2.0.0",
     });
+  });
+
+  test.each([
+    ["primary", { "x-ratelimit-remaining": "0" }],
+    ["secondary", { "retry-after": "60" }],
+  ] as const)("classifies %s GitHub rate-limit responses", async (signal, headers) => {
+    await expect(
+      fetchLatestRelease(async () => createFailedResponse(403, "Forbidden", headers)),
+    ).rejects.toMatchObject({
+      code: "GITHUB_RATE_LIMITED",
+      details: {
+        fallbackAvailable: true,
+        signal,
+        status: 403,
+        versionPinned: false,
+      },
+    });
+  });
+
+  test("keeps generic GitHub 403 responses fail-closed", async () => {
+    await expect(
+      fetchLatestRelease(async () => createFailedResponse(403, "Forbidden")),
+    ).rejects.toThrow("GitHub releases returned 403 Forbidden");
+  });
+
+  test("does not offer or run the fallback for a generic GitHub 403", async () => {
+    let promptCount = 0;
+    let spawnCount = 0;
+
+    await expect(
+      runDirectUpdate(
+        { yes: true },
+        {
+          confirmImpl: async () => {
+            promptCount += 1;
+            return { status: "ok", value: true };
+          },
+          fetchImpl: async () => createFailedResponse(403, "Forbidden"),
+          spawnSyncImpl: (() => {
+            spawnCount += 1;
+            return { status: 0 };
+          }) as unknown as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+        },
+      ),
+    ).rejects.toThrow("GitHub releases returned 403 Forbidden");
+    expect(promptCount).toBe(0);
+    expect(spawnCount).toBe(0);
   });
 
   test("exported direct updater rejects conflicting inspection modes before release lookup", async () => {
@@ -134,6 +196,16 @@ describe("update command", () => {
     expect(plan.label).toContain("POSIX");
   });
 
+  test("builds an unpinned POSIX installer fallback plan", () => {
+    const plan = buildInstallerUpdatePlan(undefined, "/home/user/.arashi/bin/arashi", {
+      platform: "linux",
+    });
+
+    expect(plan.env).not.toHaveProperty("ARASHI_VERSION");
+    expect(plan.env.ARASHI_INSTALL_DIR).toBe("/home/user/.arashi/bin");
+    expect(plan.env.ARASHI_SHELL_INTEGRATION).toBe("no");
+  });
+
   test("builds installer update plan for Windows PowerShell direct binaries", () => {
     const plan = buildInstallerUpdatePlan("2.0.0", windowsExecPath, {
       parentProcessId: 1234,
@@ -153,6 +225,250 @@ describe("update command", () => {
     expect(plan.env.ARASHI_WAIT_FOR_PID).toBe("1234");
     expect(plan.label).toContain("PowerShell");
   });
+
+  test("builds an unpinned deferred Windows installer fallback plan", () => {
+    const plan = buildInstallerUpdatePlan(undefined, windowsExecPath, {
+      parentProcessId: 1234,
+      platform: "win32",
+    });
+
+    expect(plan.env).not.toHaveProperty("ARASHI_VERSION");
+    expect(plan.env.ARASHI_INSTALL_DIR).toBe(windowsInstallDir);
+    expect(plan.env.ARASHI_NO_MODIFY_PATH).toBe("1");
+    expect(plan.env.ARASHI_WAIT_FOR_PID).toBe("1234");
+  });
+
+  test("prompts and runs an unpinned installer after primary rate limiting", async () => {
+    const logs: string[] = [];
+    const prompts: string[] = [];
+    const spawnedEnvironments: NodeJS.ProcessEnv[] = [];
+
+    await runDirectUpdate(
+      {},
+      {
+        confirmImpl: async (message) => {
+          prompts.push(message);
+          return { status: "ok", value: true };
+        },
+        currentVersion: "1.0.0",
+        env: { ...process.env, ARASHI_VERSION: "0.9.0" },
+        execPath: "/home/user/.arashi/bin/arashi",
+        fetchImpl: async () =>
+          createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+        isInteractive: true,
+        log: (message) => logs.push(message),
+        platform: "linux",
+        spawnSyncImpl: ((
+          _command: string,
+          _args: string[],
+          options: { env?: NodeJS.ProcessEnv },
+        ) => {
+          spawnedEnvironments.push(options.env ?? {});
+          return { status: 0 };
+        }) as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("without verifying the latest version");
+    expect(spawnedEnvironments).toHaveLength(1);
+    expect(spawnedEnvironments[0]).not.toHaveProperty("ARASHI_VERSION");
+    expect(logs.join("\n")).toContain("GitHub API rate limit");
+    expect(logs.join("\n")).toContain("latest-release installer attempt completed");
+    expect(logs.join("\n")).not.toContain("v0.9.0");
+  });
+
+  test("uses --yes without prompting for a secondary-rate-limit fallback", async () => {
+    let promptCount = 0;
+    let spawnCount = 0;
+
+    await runDirectUpdate(
+      { yes: true },
+      {
+        confirmImpl: async () => {
+          promptCount += 1;
+          return { status: "ok", value: false };
+        },
+        currentVersion: "1.0.0",
+        fetchImpl: async () => createFailedResponse(403, "Forbidden", { "retry-after": "60" }),
+        log: () => {},
+        platform: "linux",
+        spawnSyncImpl: (() => {
+          spawnCount += 1;
+          return { status: 0 };
+        }) as unknown as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(promptCount).toBe(0);
+    expect(spawnCount).toBe(1);
+  });
+
+  test("removes an inherited version from a deferred Windows fallback spawn", async () => {
+    const logs: string[] = [];
+    const spawnedEnvironments: NodeJS.ProcessEnv[] = [];
+
+    await runDirectUpdate(
+      { yes: true },
+      {
+        env: { ...process.env, arashi_version: "0.9.0" },
+        execPath: windowsExecPath,
+        fetchImpl: async () =>
+          createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+        log: (message) => logs.push(message),
+        platform: "win32",
+        spawnSyncImpl: ((
+          _command: string,
+          _args: string[],
+          options: { env?: NodeJS.ProcessEnv },
+        ) => {
+          spawnedEnvironments.push(options.env ?? {});
+          return { status: 0 };
+        }) as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(spawnedEnvironments).toHaveLength(1);
+    expect(Object.keys(spawnedEnvironments[0]).map((key) => key.toUpperCase())).not.toContain(
+      "ARASHI_VERSION",
+    );
+    expect(logs.join("\n")).toContain("Scheduled the Arashi latest-release installer attempt");
+    expect(logs.join("\n")).not.toContain("v0.9.0");
+  });
+
+  test.each([
+    ["declined", { status: "ok", value: false } as const],
+    ["cancelled", { reason: "exit", status: "cancelled" } as const],
+  ])("does not mutate when a rate-limit fallback is %s", async (_name, confirmation) => {
+    let spawnCount = 0;
+
+    await runDirectUpdate(
+      {},
+      {
+        confirmImpl: async () => confirmation,
+        fetchImpl: async () =>
+          createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+        isInteractive: true,
+        log: () => {},
+        platform: "linux",
+        spawnSyncImpl: (() => {
+          spawnCount += 1;
+          return { status: 0 };
+        }) as unknown as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(spawnCount).toBe(0);
+  });
+
+  test("requires --yes for a non-interactive rate-limit fallback", async () => {
+    const logs: string[] = [];
+    let spawnCount = 0;
+
+    await runDirectUpdate(
+      {},
+      {
+        fetchImpl: async () =>
+          createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+        isInteractive: false,
+        log: (message) => logs.push(message),
+        platform: "linux",
+        spawnSyncImpl: (() => {
+          spawnCount += 1;
+          return { status: 0 };
+        }) as unknown as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(spawnCount).toBe(0);
+    expect(logs.join("\n")).toContain("Rerun with --yes");
+  });
+
+  test("keeps human dry-run non-mutating while showing the unpinned fallback plan", async () => {
+    const logs: string[] = [];
+    let promptCount = 0;
+    let spawnCount = 0;
+
+    await runDirectUpdate(
+      { dryRun: true },
+      {
+        confirmImpl: async () => {
+          promptCount += 1;
+          return { status: "ok", value: true };
+        },
+        fetchImpl: async () => createFailedResponse(403, "Forbidden", { "retry-after": "60" }),
+        isInteractive: true,
+        log: (message) => logs.push(message),
+        platform: "linux",
+        spawnSyncImpl: (() => {
+          spawnCount += 1;
+          return { status: 0 };
+        }) as unknown as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+      },
+    );
+
+    expect(promptCount).toBe(0);
+    expect(spawnCount).toBe(0);
+    expect(logs.join("\n")).toContain("Unpinned latest-release attempt");
+    expect(logs.join("\n")).toContain("Dry run");
+  });
+
+  test("keeps human check mode fail-closed after rate limiting", async () => {
+    let spawnCount = 0;
+
+    await expect(
+      runDirectUpdate(
+        { check: true },
+        {
+          fetchImpl: async () =>
+            createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+          spawnSyncImpl: (() => {
+            spawnCount += 1;
+            return { status: 0 };
+          }) as unknown as NonNullable<Parameters<typeof runDirectUpdate>[1]>["spawnSyncImpl"],
+        },
+      ),
+    ).rejects.toMatchObject({ code: "GITHUB_RATE_LIMITED" });
+    expect(spawnCount).toBe(0);
+  });
+
+  test.each([["--json"], ["--json", "--check"], ["--json", "--dry-run"]])(
+    "returns the typed JSON rate-limit error for %s",
+    async (...argv) => {
+      const stdout: string[] = [];
+      const originalExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const output = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+        stdout.push(String(chunk).trim());
+        return true;
+      });
+      try {
+        await createCommand("1.0.0", {
+          fetchImpl: async () =>
+            createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+        }).parseAsync(argv, { from: "user" });
+
+        expect(process.exitCode).toBe(1);
+        expect(stdout).toHaveLength(1);
+        expect(JSON.parse(stdout[0])).toMatchObject({
+          command: "update",
+          error: {
+            code: "GITHUB_RATE_LIMITED",
+            details: {
+              fallbackAvailable: true,
+              signal: "primary",
+              status: 403,
+              versionPinned: false,
+            },
+          },
+          ok: false,
+        });
+      } finally {
+        output.mockRestore();
+        process.exitCode = originalExitCode;
+      }
+    },
+  );
 
   test("prints installer update plan without mutating", async () => {
     const logs: string[] = [];
