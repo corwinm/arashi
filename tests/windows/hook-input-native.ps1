@@ -22,6 +22,42 @@ function Invoke-Checked([string[]]$Command) {
   if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $($Command -join ' ')" }
 }
 
+function Set-HookTimeout([int]$Milliseconds) {
+  $configPath = Join-Path $repo ".arashi\config.json"
+  $config = Get-Content -Raw -Path $configPath | ConvertFrom-Json
+  if ($null -eq $config.hooks) {
+    $config | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]@{})
+  }
+  $config.hooks | Add-Member -Force -NotePropertyName timeout -NotePropertyValue $Milliseconds
+  $json = $config | ConvertTo-Json -Depth 20
+  [IO.File]::WriteAllText($configPath, $json, [Text.UTF8Encoding]::new($false))
+}
+
+function Invoke-PtySession([string]$Prompt, [string]$Response, [string[]]$Command) {
+  $resultPath = Join-Path $temp ("pty-result-" + [guid]::NewGuid() + ".json")
+  $config = @{
+    command = $Command
+    cwd = $repo
+    prompt = $Prompt
+    response = $Response
+    resultPath = $resultPath
+    timeoutMs = 30000
+  } | ConvertTo-Json -Compress
+  $encodedConfig = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($config))
+  & node $ptyHelper --session $encodedConfig
+  if ($LASTEXITCODE -ne 0) {
+    $details = if (Test-Path $resultPath) { Get-Content -Raw -Path $resultPath } else { "no result" }
+    throw "ConPTY session harness failed: $LASTEXITCODE; $details"
+  }
+  return Get-Content -Raw -Path $resultPath | ConvertFrom-Json
+}
+
+function Assert-ProcessStopped([int]$ProcessId, [string]$Scenario) {
+  if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    throw "$Scenario left hook process $ProcessId running"
+  }
+}
+
 try {
   Invoke-Checked -Command @("git", "-C", $repo, "init", "-b", "main")
   Invoke-Checked -Command @("git", "-C", $repo, "config", "user.email", "test@example.com")
@@ -111,6 +147,32 @@ echo cmd:disabled:immediate EOF>>"%HOOK_INPUT_RECORD%"
 exit /b 0
 '@ | Set-Content -Encoding ASCII -Path (Join-Path $hooks "pre-remove.cmd")
     Invoke-Checked -Command @($binary, "remove", "feature/disabled", "--force", "--no-hook-input")
+
+    Remove-Item (Join-Path $hooks "pre-remove.cmd")
+    Set-HookTimeout 2000
+    $timeoutPid = Join-Path $temp "timeout-hook.pid"
+    @"
+Set-Content -NoNewline -Path '$timeoutPid' -Value `$PID
+`$null = Read-Host "timeout answer"
+"@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
+    $timeoutResult = Invoke-PtySession "timeout answer" "__NO_INPUT__" @($binary, "create", "feature/windows-timeout")
+    if ($timeoutResult.exitCode -eq 0) { throw "Timed-out built CLI unexpectedly succeeded" }
+    if (-not $timeoutResult.reused) { throw "Terminal was not reusable after timeout" }
+    Assert-ProcessStopped ([int](Get-Content -Raw -Path $timeoutPid)) "timeout"
+    Add-Content -Path $record -Value "windows:timeout:cleanup"
+    Add-Content -Path $record -Value "windows:terminal:reused"
+
+    Set-HookTimeout 10000
+    $interruptPid = Join-Path $temp "interrupt-hook.pid"
+    @"
+Set-Content -NoNewline -Path '$interruptPid' -Value `$PID
+`$null = Read-Host "interrupt answer"
+"@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
+    $interruptResult = Invoke-PtySession "interrupt answer" "__CTRL_C__" @($binary, "create", "feature/windows-interrupt")
+    if ($interruptResult.exitCode -eq 0) { throw "Interrupted built CLI unexpectedly succeeded" }
+    if (-not $interruptResult.reused) { throw "Terminal was not reusable after interruption" }
+    Assert-ProcessStopped ([int](Get-Content -Raw -Path $interruptPid)) "interruption"
+    Add-Content -Path $record -Value "windows:interrupt:cleanup"
   }
   finally {
     Pop-Location
@@ -125,7 +187,10 @@ exit /b 0
     "powershell:unavailable:immediate EOF",
     "powershell:tty:yes",
     "cmd:tty:yes",
-    "cmd:disabled:immediate EOF"
+    "cmd:disabled:immediate EOF",
+    "windows:timeout:cleanup",
+    "windows:terminal:reused",
+    "windows:interrupt:cleanup"
   )
   if (Compare-Object $expected $actual) {
     throw "Native hook-input record did not match. Actual: $($actual -join '; ')"
