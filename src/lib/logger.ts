@@ -108,6 +108,31 @@ export function spinner(text: string): Ora {
   });
 }
 
+interface PausableSpinner {
+  readonly isSpinning: boolean;
+  start(): unknown;
+  stopAndPersist(): unknown;
+}
+
+/**
+ * Persist the current spinner line before another operation writes to the terminal.
+ */
+export async function withSpinnerPaused<T>(
+  activeSpinner: PausableSpinner | null | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (!activeSpinner?.isSpinning) {
+    return operation();
+  }
+
+  activeSpinner.stopAndPersist();
+  try {
+    return await operation();
+  } finally {
+    activeSpinner.start();
+  }
+}
+
 // ============================================================================
 // US3: Table Formatting
 // ============================================================================

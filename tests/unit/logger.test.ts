@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { error, info, section, spinner, success, table, warn } from "../../src/lib/logger";
+import {
+  error,
+  info,
+  section,
+  spinner,
+  success,
+  table,
+  warn,
+  withSpinnerPaused,
+} from "../../src/lib/logger";
 
 // Capture console output
 let consoleOutput: string[] = [];
@@ -103,6 +112,54 @@ describe("US2: Spinner Display", () => {
       s.start();
       s.fail("Failed!");
     }).not.toThrow();
+  });
+
+  test("pauses spinner output while another operation writes to the terminal", async () => {
+    const events: string[] = [];
+    const pausableSpinner = {
+      isSpinning: true,
+      start: () => events.push("spinner:start"),
+      stopAndPersist: () => events.push("spinner:persist"),
+    };
+
+    await withSpinnerPaused(pausableSpinner, async () => {
+      events.push("hook:output");
+    });
+
+    expect(events).toEqual(["spinner:persist", "hook:output", "spinner:start"]);
+  });
+
+  test("restarts paused spinner output when the operation fails", async () => {
+    const events: string[] = [];
+    const pausableSpinner = {
+      isSpinning: true,
+      start: () => events.push("spinner:start"),
+      stopAndPersist: () => events.push("spinner:persist"),
+    };
+
+    await expect(
+      withSpinnerPaused(pausableSpinner, async () => {
+        events.push("hook:output");
+        throw new Error("hook failed");
+      }),
+    ).rejects.toThrow("hook failed");
+
+    expect(events).toEqual(["spinner:persist", "hook:output", "spinner:start"]);
+  });
+
+  test("does not restart a spinner when animation is disabled", async () => {
+    const events: string[] = [];
+    const inactiveSpinner = {
+      isSpinning: false,
+      start: () => events.push("spinner:start"),
+      stopAndPersist: () => events.push("spinner:persist"),
+    };
+
+    await withSpinnerPaused(inactiveSpinner, async () => {
+      events.push("hook:output");
+    });
+
+    expect(events).toEqual(["hook:output"]);
   });
 });
 
