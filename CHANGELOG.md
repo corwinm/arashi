@@ -1,3 +1,9 @@
+## [1.26.1](https://github.com/corwinm/arashi/compare/v1.26.0...v1.26.1) (2026-08-07)
+
+### Bug Fixes
+
+- **ci:** provision npm for trusted publishing ([#122](https://github.com/corwinm/arashi/issues/122)) ([c708df7](https://github.com/corwinm/arashi/commit/c708df7f3d1c4f568ef0e861d6299d8e3ff4060e))
+
 ## [1.26.0](https://github.com/corwinm/arashi/compare/v1.25.0...v1.26.0) (2026-08-07)
 
 ### Features
