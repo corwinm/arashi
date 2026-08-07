@@ -245,6 +245,38 @@ describe("hook execution integration", () => {
     },
   );
 
+  test("pauses an active progress spinner around all hook output", async () => {
+    const hookPath = createMockHook(String.raw`printf 'hook output\n'`);
+    const events: string[] = [];
+    const outputSpinner = {
+      isSpinning: true,
+      start: () => events.push("spinner:start"),
+      stopAndPersist: () => events.push("spinner:persist"),
+    };
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => events.push(args.map(String).join(" "));
+
+    try {
+      const result = await executeHook({
+        context: createTestContext({ repoPath: testRepo }),
+        hookName: "test-hook",
+        outputSpinner,
+        scriptPath: hookPath,
+      });
+
+      expect(result.success).toBe(true);
+      expect(events).toEqual([
+        "spinner:persist",
+        "🪝 Executing hook: test-hook",
+        "[test-hook:OUT] hook output",
+        "spinner:start",
+      ]);
+    } finally {
+      console.log = originalLog;
+      cleanupTestRepo(hookPath);
+    }
+  });
+
   test("passes scope metadata environment variables", async () => {
     const hookPath = createMockHook(`
       echo "Scope: $ARASHI_HOOK_SCOPE"

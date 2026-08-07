@@ -56,10 +56,10 @@ describe("lifecycle hook contract", () => {
     }
   });
 
-  test("pauses configured remove progress while interactive hooks own the terminal", async () => {
+  test("routes configured remove hooks through centralized spinner ownership", async () => {
     const source = await readFile(join(process.cwd(), "src", "commands", "remove.ts"), "utf8");
     expect(source).toMatch(
-      /withSpinnerPaused\(\s*options\.hookInputMode === "tty" \? hookSpinner : null,/,
+      /hookInputMode: options\.hookInputMode,[\s\S]*outputSpinner: hookSpinner,/,
     );
   });
 

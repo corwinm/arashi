@@ -64,7 +64,7 @@ import {
   standaloneWorktrees,
 } from "../lib/standalone.ts";
 import { exec as standaloneGitExec, getDefaultBranch } from "../lib/git.ts";
-import { info, error as logError, spinner, warn, withSpinnerPaused } from "../lib/logger.ts";
+import { info, error as logError, spinner, warn } from "../lib/logger.ts";
 import {
   confirm as promptConfirm,
   multiSelect as promptMultiSelect,
@@ -1561,29 +1561,26 @@ const runRemoveLifecycleHook = async (options: {
     const scriptPath = resolvedHook.scriptPath;
     const validation = await validateHook(scriptPath);
     if (validation.valid) {
-      const result = await withSpinnerPaused(
-        options.hookInputMode === "tty" ? hookSpinner : null,
-        () =>
-          executeHook({
-            context: {
-              hookName: options.hookName,
-              hookScope: resolvedHook.scope,
-              mainRepoPath: options.workspaceRoot,
-              operationData: perTargetOperationData,
-              repoPath: resolvedHook.executionPath,
-              sourceScriptPath: scriptPath,
-              targetRepoName: resolvedHook.targetRepositoryName,
-              targetRepoPath: resolvedHook.targetRepositoryPath,
-              targetWorktreePath,
-              workspaceMode: "configured",
-            },
-            hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
-            hookInputMode: options.hookInputMode,
-            quiet: options.quiet,
-            scriptPath,
-            timeout: options.timeoutMs,
-          }),
-      );
+      const result = await executeHook({
+        context: {
+          hookName: options.hookName,
+          hookScope: resolvedHook.scope,
+          mainRepoPath: options.workspaceRoot,
+          operationData: perTargetOperationData,
+          repoPath: resolvedHook.executionPath,
+          sourceScriptPath: scriptPath,
+          targetRepoName: resolvedHook.targetRepositoryName,
+          targetRepoPath: resolvedHook.targetRepositoryPath,
+          targetWorktreePath,
+          workspaceMode: "configured",
+        },
+        hookInputMode: options.hookInputMode,
+        hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
+        outputSpinner: hookSpinner,
+        quiet: options.quiet,
+        scriptPath,
+        timeout: options.timeoutMs,
+      });
       executedCount += 1;
 
       const mapping = mapHookExecutionResult(result);

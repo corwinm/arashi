@@ -4,6 +4,8 @@ import { closeSync, constants, mkdtempSync, openSync, readdirSync, readlinkSync,
 import { homedir, tmpdir } from "os";
 import { isAbsolute, join, normalize, resolve } from "path";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";
+import { withSpinnerPaused } from "./logger.ts";
+import type { PausableSpinner } from "./logger.ts";
 
 const ZERO = 0;
 const ONE = 1;
@@ -172,6 +174,7 @@ export interface HookExecutionOptions {
   timeout?: number;
   quiet?: boolean;
   hookInputMode?: HookInputMode;
+  outputSpinner?: PausableSpinner | null;
 }
 
 interface RunLifecycleHookOptions {
@@ -775,7 +778,7 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
  * @param options - Hook execution options
  * @returns Complete execution result including exit code and output
  */
-export const executeHook = async (options: HookExecutionOptions): Promise<HookResult> => {
+const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookResult> => {
   const startTime = Date.now();
   const timeout = options.timeout ?? DEFAULT_LIFECYCLE_HOOK_TIMEOUT;
   const hookInputMode = options.hookInputMode ?? options.context.hookInputMode ?? "unavailable";
@@ -1005,6 +1008,9 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
     if (lineageDirectory) rmSync(lineageDirectory, { force: true, recursive: true });
   }
 };
+
+export const executeHook = (options: HookExecutionOptions): Promise<HookResult> =>
+  withSpinnerPaused(options.outputSpinner, () => executeHookUnpaused(options));
 
 /**
  * High-level function to discover, validate, and execute a hook for a lifecycle point.
