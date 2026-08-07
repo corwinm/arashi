@@ -38,7 +38,7 @@ import {
 } from "../lib/json-output.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
 import { dirname, isAbsolute, join, relative, resolve } from "path";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { discoverRepositories } from "../core/repository.ts";
 import { exec as gitExec } from "../lib/git.ts";
 import {
@@ -1519,7 +1519,12 @@ export function createCommand(): Command {
       "--worktrees-dir <path>",
       "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
     )
-    .option("--ignore-scope <scope>", "Managed Git ignore scope: local (default), tracked, or none")
+    .addOption(
+      new Option(
+        "--ignore-scope <scope>",
+        "Managed Git ignore scope: local (default), tracked, or none",
+      ).choices(["local", "tracked", "none"]),
+    )
     .option("--zero-config", "Prepare implicit standalone mode without creating configuration")
     .option("-f, --force", "Overwrite existing configuration if present")
     .option("--no-discover", "Skip automatic repository discovery")
