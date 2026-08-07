@@ -15,6 +15,14 @@ interface MockResponse {
   statusText: string;
 }
 
+interface RateLimitCase {
+  body: unknown;
+  headers: Record<string, string>;
+  name: string;
+  signal: "primary" | "secondary";
+  status: 403 | 429;
+}
+
 function createResponse(version: string): MockResponse {
   return {
     json: async () => ({
@@ -30,11 +38,11 @@ function createResponse(version: string): MockResponse {
 function createFailedResponse(
   status: number,
   statusText: string,
-  headers: Record<string, string> = {},
+  options: { body?: unknown; headers?: Record<string, string> } = {},
 ): Response {
   return {
-    headers: new Headers(headers),
-    json: async () => ({}),
+    headers: new Headers(options.headers),
+    json: async () => options.body ?? {},
     ok: false,
     status,
     statusText,
@@ -73,26 +81,84 @@ describe("update command", () => {
   });
 
   test.each([
-    ["primary", { "x-ratelimit-remaining": "0" }],
-    ["secondary", { "retry-after": "60" }],
-  ] as const)("classifies %s GitHub rate-limit responses", async (signal, headers) => {
-    await expect(
-      fetchLatestRelease(async () => createFailedResponse(403, "Forbidden", headers)),
-    ).rejects.toMatchObject({
-      code: "GITHUB_RATE_LIMITED",
-      details: {
-        fallbackAvailable: true,
-        signal,
-        status: 403,
-        versionPinned: false,
-      },
-    });
-  });
+    {
+      body: {},
+      headers: { "x-ratelimit-remaining": "0" },
+      name: "primary 403",
+      signal: "primary",
+      status: 403,
+    },
+    {
+      body: {},
+      headers: { "x-ratelimit-remaining": "0" },
+      name: "primary 429",
+      signal: "primary",
+      status: 429,
+    },
+    {
+      body: {},
+      headers: { "retry-after": "60" },
+      name: "secondary-header 403",
+      signal: "secondary",
+      status: 403,
+    },
+    {
+      body: {},
+      headers: { "retry-after": "60" },
+      name: "secondary-header 429",
+      signal: "secondary",
+      status: 429,
+    },
+    {
+      body: { message: "You have exceeded a secondary rate limit." },
+      headers: {},
+      name: "secondary-message 403",
+      signal: "secondary",
+      status: 403,
+    },
+    {
+      body: { message: "You have exceeded a SECONDARY RATE LIMIT. Please wait." },
+      headers: {},
+      name: "secondary-message 429",
+      signal: "secondary",
+      status: 429,
+    },
+  ] satisfies RateLimitCase[])(
+    "classifies GitHub $name rate-limit responses",
+    async ({ body, headers, signal, status }) => {
+      await expect(
+        fetchLatestRelease(async () =>
+          createFailedResponse(status, status === 403 ? "Forbidden" : "Too Many Requests", {
+            body,
+            headers: headers as Record<string, string>,
+          }),
+        ),
+      ).rejects.toMatchObject({
+        code: "GITHUB_RATE_LIMITED",
+        details: {
+          fallbackAvailable: true,
+          signal,
+          status,
+          versionPinned: false,
+        },
+      });
+    },
+  );
 
   test("keeps generic GitHub 403 responses fail-closed", async () => {
     await expect(
       fetchLatestRelease(async () => createFailedResponse(403, "Forbidden")),
     ).rejects.toThrow("GitHub releases returned 403 Forbidden");
+  });
+
+  test("keeps generic GitHub 429 responses fail-closed", async () => {
+    await expect(
+      fetchLatestRelease(async () =>
+        createFailedResponse(429, "Too Many Requests", {
+          body: { message: "Slow down" },
+        }),
+      ),
+    ).rejects.toThrow("GitHub releases returned 429 Too Many Requests");
   });
 
   test("does not offer or run the fallback for a generic GitHub 403", async () => {
@@ -254,7 +320,9 @@ describe("update command", () => {
         env: { ...process.env, ARASHI_VERSION: "0.9.0" },
         execPath: "/home/user/.arashi/bin/arashi",
         fetchImpl: async () =>
-          createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+          createFailedResponse(403, "Forbidden", {
+            headers: { "x-ratelimit-remaining": "0" },
+          }),
         isInteractive: true,
         log: (message) => logs.push(message),
         platform: "linux",
@@ -278,7 +346,7 @@ describe("update command", () => {
     expect(logs.join("\n")).not.toContain("v0.9.0");
   });
 
-  test("uses --yes without prompting for a secondary-rate-limit fallback", async () => {
+  test("uses --yes without prompting for a message-identified 429 fallback", async () => {
     let promptCount = 0;
     let spawnCount = 0;
 
@@ -290,7 +358,10 @@ describe("update command", () => {
           return { status: "ok", value: false };
         },
         currentVersion: "1.0.0",
-        fetchImpl: async () => createFailedResponse(403, "Forbidden", { "retry-after": "60" }),
+        fetchImpl: async () =>
+          createFailedResponse(429, "Too Many Requests", {
+            body: { message: "You have exceeded a secondary rate limit." },
+          }),
         log: () => {},
         platform: "linux",
         spawnSyncImpl: (() => {
@@ -314,7 +385,9 @@ describe("update command", () => {
         env: { ...process.env, arashi_version: "0.9.0" },
         execPath: windowsExecPath,
         fetchImpl: async () =>
-          createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+          createFailedResponse(403, "Forbidden", {
+            headers: { "x-ratelimit-remaining": "0" },
+          }),
         log: (message) => logs.push(message),
         platform: "win32",
         spawnSyncImpl: ((
@@ -347,7 +420,9 @@ describe("update command", () => {
       {
         confirmImpl: async () => confirmation,
         fetchImpl: async () =>
-          createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+          createFailedResponse(403, "Forbidden", {
+            headers: { "x-ratelimit-remaining": "0" },
+          }),
         isInteractive: true,
         log: () => {},
         platform: "linux",
@@ -369,7 +444,9 @@ describe("update command", () => {
       {},
       {
         fetchImpl: async () =>
-          createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+          createFailedResponse(403, "Forbidden", {
+            headers: { "x-ratelimit-remaining": "0" },
+          }),
         isInteractive: false,
         log: (message) => logs.push(message),
         platform: "linux",
@@ -396,7 +473,8 @@ describe("update command", () => {
           promptCount += 1;
           return { status: "ok", value: true };
         },
-        fetchImpl: async () => createFailedResponse(403, "Forbidden", { "retry-after": "60" }),
+        fetchImpl: async () =>
+          createFailedResponse(403, "Forbidden", { headers: { "retry-after": "60" } }),
         isInteractive: true,
         log: (message) => logs.push(message),
         platform: "linux",
@@ -421,7 +499,9 @@ describe("update command", () => {
         { check: true },
         {
           fetchImpl: async () =>
-            createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+            createFailedResponse(403, "Forbidden", {
+              headers: { "x-ratelimit-remaining": "0" },
+            }),
           spawnSyncImpl: (() => {
             spawnCount += 1;
             return { status: 0 };
@@ -445,7 +525,9 @@ describe("update command", () => {
       try {
         await createCommand("1.0.0", {
           fetchImpl: async () =>
-            createFailedResponse(403, "Forbidden", { "x-ratelimit-remaining": "0" }),
+            createFailedResponse(403, "Forbidden", {
+              headers: { "x-ratelimit-remaining": "0" },
+            }),
         }).parseAsync(argv, { from: "user" });
 
         expect(process.exitCode).toBe(1);
@@ -469,6 +551,43 @@ describe("update command", () => {
       }
     },
   );
+
+  test("serializes a message-identified secondary 429 in JSON", async () => {
+    const stdout: string[] = [];
+    const originalExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const output = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk).trim());
+      return true;
+    });
+    try {
+      await createCommand("1.0.0", {
+        fetchImpl: async () =>
+          createFailedResponse(429, "Too Many Requests", {
+            body: { message: "You have exceeded a secondary rate limit." },
+          }),
+      }).parseAsync(["--json"], { from: "user" });
+
+      expect(process.exitCode).toBe(1);
+      expect(stdout).toHaveLength(1);
+      expect(JSON.parse(stdout[0])).toMatchObject({
+        command: "update",
+        error: {
+          code: "GITHUB_RATE_LIMITED",
+          details: {
+            fallbackAvailable: true,
+            signal: "secondary",
+            status: 429,
+            versionPinned: false,
+          },
+        },
+        ok: false,
+      });
+    } finally {
+      output.mockRestore();
+      process.exitCode = originalExitCode;
+    }
+  });
 
   test("prints installer update plan without mutating", async () => {
     const logs: string[] = [];

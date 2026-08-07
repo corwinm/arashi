@@ -38,17 +38,17 @@ export class GitHubRateLimitError extends Error {
   readonly details: {
     fallbackAvailable: true;
     signal: GitHubRateLimitSignal;
-    status: 403;
+    status: 403 | 429;
     versionPinned: false;
   };
 
-  constructor(signal: GitHubRateLimitSignal) {
+  constructor(signal: GitHubRateLimitSignal, status: 403 | 429) {
     super("GitHub API rate limit prevented checking the latest Arashi release");
     this.name = "GitHubRateLimitError";
     this.details = {
       fallbackAvailable: true,
       signal,
-      status: 403,
+      status,
       versionPinned: false,
     };
   }
@@ -207,12 +207,26 @@ export async function fetchLatestRelease(fetchImpl: FetchImpl = fetch): Promise<
   });
 
   if (!response.ok) {
-    if (response.status === 403) {
+    if (response.status === 403 || response.status === 429) {
       if (response.headers.get("x-ratelimit-remaining") === "0") {
-        throw new GitHubRateLimitError("primary");
+        throw new GitHubRateLimitError("primary", response.status);
       }
       if (response.headers.has("retry-after")) {
-        throw new GitHubRateLimitError("secondary");
+        throw new GitHubRateLimitError("secondary", response.status);
+      }
+
+      let errorMessage: unknown = undefined;
+      try {
+        const errorBody = (await response.json()) as { message?: unknown };
+        errorMessage = errorBody.message;
+      } catch {
+        // A malformed error body is not sufficient evidence of rate limiting.
+      }
+      if (
+        typeof errorMessage === "string" &&
+        errorMessage.toLowerCase().includes("secondary rate limit")
+      ) {
+        throw new GitHubRateLimitError("secondary", response.status);
       }
     }
     throw new Error(`GitHub releases returned ${response.status} ${response.statusText}`.trim());
@@ -237,8 +251,8 @@ export async function runDirectUpdate(
 ): Promise<void> {
   assertValidUpdateInspectionOptions(options);
   const { currentVersion = "", fetchImpl, log = info } = deps ?? { currentVersion: "" };
-  let latest: ReleaseInfo | undefined;
-  let rateLimitError: GitHubRateLimitError | undefined;
+  let latest: ReleaseInfo | undefined = undefined;
+  let rateLimitError: GitHubRateLimitError | undefined = undefined;
   try {
     latest = await fetchLatestRelease(fetchImpl);
   } catch (error) {
