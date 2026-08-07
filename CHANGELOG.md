@@ -1,3 +1,14 @@
+## [1.27.0](https://github.com/corwinm/arashi/compare/v1.26.2...v1.27.0) (2026-08-07)
+
+### Features
+
+- allow update after GitHub rate limiting ([#126](https://github.com/corwinm/arashi/issues/126)) ([d6424ca](https://github.com/corwinm/arashi/commit/d6424ca7d3e72b62b367408c018672ee18030559))
+
+### Bug Fixes
+
+- separate create hook output from spinner ([#127](https://github.com/corwinm/arashi/issues/127)) ([51e746f](https://github.com/corwinm/arashi/commit/51e746f5759677c216de84f21f65cc7ac737b1a4))
+- show Zsh completion candidate names ([#125](https://github.com/corwinm/arashi/issues/125)) ([eb69edc](https://github.com/corwinm/arashi/commit/eb69edcd5e61c7d57caabf0dbfec7c0674009b4a))
+
 ## [1.26.2](https://github.com/corwinm/arashi/compare/v1.26.1...v1.26.2) (2026-08-07)
 
 ### Bug Fixes
