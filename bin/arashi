@@ -53,13 +53,9 @@ fi
 
 # Close stdin only when piping list output (fzf compatibility)
 command=""
-force_remove="false"
 for arg in "$@"; do
   case "$arg" in
     -*)
-      case "$arg" in
-        -f|--force) force_remove="true" ;;
-      esac
       continue
       ;;
     *)
@@ -71,7 +67,7 @@ for arg in "$@"; do
 done
 
 if [ ! -t 1 ]; then
-  if [ "$command" = "list" ] || { [ "$command" = "remove" ] && [ "$force_remove" = "true" ]; }; then
+  if [ "$command" = "list" ]; then
     exec "$BINARY" "$@" 0<&-
   fi
 fi

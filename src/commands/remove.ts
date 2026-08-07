@@ -14,9 +14,11 @@ import {
   normalizeLifecyclePath,
   resolveScopedLifecycleHookLocations,
   resolveScopedLifecycleHooks,
+  resolveHookInputMode,
   validateHook,
 } from "../lib/hooks.ts";
 import type {
+  HookInputMode,
   HookOutcomeMapping as SharedHookOutcomeMapping,
   LifecycleHookOutcome,
   RemoveHookTarget,
@@ -117,6 +119,7 @@ interface CliOptions {
   path?: boolean;
   json?: boolean;
   dryRun?: boolean;
+  hookInput?: boolean;
 }
 
 class StandaloneRemovePartialFailure extends Error {
@@ -212,6 +215,7 @@ export function createCommand(): Command {
     .option("-f, --force", "Skip confirmation prompts")
     .option("--path", "Treat argument as worktree path")
     .option("-j, --json", "Output results as JSON")
+    .option("--no-hook-input", "Execute hooks with input disabled and immediate EOF")
     .option("-n, --dry-run", "Preview planned removals without mutating worktrees or branches")
     .action(async (branch?: string, options?: CliOptions) => {
       try {
@@ -233,6 +237,11 @@ export async function executeRemove(
   },
 ): Promise<number> {
   const startTime = Date.now();
+  const hookInputMode = resolveHookInputMode({
+    hookInput: options.hookInput,
+    json: options.json,
+    stdinIsTTY: options.stdinIsTTY ?? process.stdin.isTTY === true,
+  });
 
   const workspaceContext = await resolveWorkspaceContext();
   if (workspaceContext.mode === "standalone") {
@@ -415,6 +424,8 @@ export async function executeRemove(
         target.path,
         false,
         options.json === true,
+        false,
+        hookInputMode,
       )),
     );
     const operationFailures: { message: string; operation: string }[] = [];
@@ -478,6 +489,7 @@ export async function executeRemove(
         false,
         options.json === true,
         true,
+        hookInputMode,
       );
       summary.hookOutcomes.push(...postHookOutcomes);
       hookFailures.push(
@@ -920,6 +932,7 @@ export async function executeRemove(
 
   const preRemoveResult = await runRemoveLifecycleHook({
     hookName: GLOBAL_HOOKS.preRemove,
+    hookInputMode,
     operationData: removeHookOperationData,
     removeTargets,
     quiet: options.json === true,
@@ -1036,6 +1049,7 @@ export async function executeRemove(
 
   const postRemoveResult = await runRemoveLifecycleHook({
     hookName: GLOBAL_HOOKS.postRemove,
+    hookInputMode,
     operationData: removeHookOperationData,
     removeTargets,
     quiet: options.json === true,
@@ -1473,6 +1487,7 @@ const runRemoveLifecycleHook = async (options: {
   targetRepositories: HookTargetRepository[];
   operationData: Record<string, string>;
   removeTargets: RemoveHookTarget[];
+  hookInputMode: HookInputMode;
   quiet?: boolean;
   timeoutMs?: number;
   stopOnFailure: boolean;
@@ -1556,6 +1571,7 @@ const runRemoveLifecycleHook = async (options: {
           workspaceMode: "configured",
         },
         hookName: `${options.hookName}.${resolvedHook.targetRepositoryName}`,
+        hookInputMode: options.hookInputMode,
         quiet: options.quiet,
         scriptPath: resolvedHook.scriptPath,
         timeout: options.timeoutMs,

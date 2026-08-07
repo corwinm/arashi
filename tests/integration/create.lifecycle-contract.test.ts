@@ -79,6 +79,7 @@ describe("configured create lifecycle contract", () => {
       join(hooks, "pre-create.sh.example"),
       pre,
       `test "$PWD" = "$ARASHI_MAIN_REPO_PATH"
+test "$ARASHI_HOOK_INPUT" = disabled
 test -z "\${ARASHI_HOOK_TARGET_REPOSITORY+x}"
 test -z "\${ARASHI_WORKTREE_PATH+x}"
 if git -C "$ARASHI_MAIN_REPO_PATH/repos/alpha" show-ref --verify --quiet "refs/heads/$ARASHI_BRANCH_NAME"; then exit 41; fi

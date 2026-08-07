@@ -6,7 +6,15 @@ Arashi runs trusted lifecycle scripts from filesystem conventions. Examples gene
 
 On POSIX, a lifecycle location supports exactly `<name>.sh`. On Windows, matching is case-insensitive and a location supports exactly one of `<name>.ps1`, `<name>.cmd`, or `<name>.bat`. Arashi rejects multiple native candidates before branch, worktree, or removal mutation. Windows does not implicitly run `.sh` through Git Bash.
 
-PowerShell hooks use system `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <path>`. Command hooks use system `cmd.exe /d /e:on /v:off /s /c call <encoded-path>`. A missing interpreter is a preflight failure.
+PowerShell hooks use system `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File <path>`. Command hooks use system `cmd.exe /d /e:on /v:off /s /c call <encoded-path>`. A missing interpreter is a preflight failure.
+
+## Terminal input
+
+`ARASHI_HOOK_INPUT` is executor-owned and is always `tty`, `disabled`, or `unavailable`. An eligible human `create` or `remove` invocation gets `tty` only when stdin is a usable terminal. In TTY mode Arashi inherits terminal stdin while keeping stdout and stderr piped for immediate raw prompt streaming and exact internal capture.
+
+`--no-hook-input` is an invocation-only input opt-out for `create` and `remove`; it does not skip hooks. `--no-hooks` controls hook execution, while create's unrelated `--interactive` option controls repository selection. `--json` takes precedence and sets disabled mode. Both disabled and unavailable modes provide immediate EOF rather than an open pipe, so automation cannot hang on a prompt. There is no persistent `hooks.input` setting.
+
+Use native input primitives: Bash `read`, PowerShell `Read-Host`, and cmd `set /p`. Check `ARASHI_HOOK_INPUT` first and handle EOF explicitly. Never enter a password, token, or other secret through a hook prompt because terminals, transcripts, and hooks may expose it.
 
 ## Configured create lifecycle
 

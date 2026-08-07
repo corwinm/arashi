@@ -25,7 +25,7 @@ import {
   mapHookSkippedOutcome,
   validateHook,
 } from "../lib/hooks.ts";
-import type { HookScope, LifecycleHookOutcome } from "../lib/hooks.ts";
+import type { HookInputMode, HookScope, LifecycleHookOutcome } from "../lib/hooks.ts";
 import { basename, join, parse, resolve, sep } from "path";
 import { exec, isBareRepo } from "../lib/git.ts";
 import { multiSelect, select } from "../lib/prompts.ts";
@@ -189,6 +189,8 @@ export interface WorktreeOperationOptions {
   hookTimeout?: number;
   /** Suppress hook process output (required for JSON stdout isolation) */
   quietHooks?: boolean;
+  /** Command-wide lifecycle hook input policy */
+  hookInputMode?: HookInputMode;
 
   /** Whether to use interactive repository selection (default: false) */
   interactive?: boolean;
@@ -212,6 +214,7 @@ export interface WorktreeOperationOptions {
 interface NormalizedWorktreeOptions {
   executeHooks: boolean;
   hookTimeout: number;
+  hookInputMode: HookInputMode;
   quietHooks: boolean;
   interactive: boolean;
   conflictResolution: ConflictResolutionStrategy | null;
@@ -640,6 +643,7 @@ const runHookIfPresent = async (options: {
   targetWorktreePath?: string;
   parentRepoPath?: string;
   quiet?: boolean;
+  hookInputMode: HookInputMode;
 }): Promise<HookExecutionRunResult> => {
   const hookPath = await findHook(options.hookName, options.hookRootPath);
   const outcomeContext = {
@@ -696,6 +700,7 @@ const runHookIfPresent = async (options: {
       workspaceMode: "configured",
     },
     hookName: options.hookName,
+    hookInputMode: options.hookInputMode,
     quiet: options.quiet,
     scriptPath: hookPath,
     timeout: options.timeout,
@@ -1369,6 +1374,7 @@ export const createCoordinatedWorktrees = async (
     dryRun: options.dryRun ?? false,
     executeHooks: options.executeHooks ?? true,
     hookTimeout: options.hookTimeout ?? DEFAULT_LIFECYCLE_HOOK_TIMEOUT,
+    hookInputMode: options.hookInputMode ?? "unavailable",
     quietHooks: options.quietHooks ?? false,
     interactive: options.interactive ?? false,
     showProgress: options.showProgress ?? true,
@@ -1451,6 +1457,7 @@ export const createCoordinatedWorktrees = async (
         repository: repositories[ZERO],
         repositoryId: "workspace",
         scope: "workspace",
+        hookInputMode: opts.hookInputMode,
         quiet: opts.quietHooks,
         timeout: opts.hookTimeout,
       });
@@ -1495,6 +1502,7 @@ export const createCoordinatedWorktrees = async (
         repository: repositories[ZERO],
         repositoryId: "workspace",
         scope: "workspace",
+        hookInputMode: opts.hookInputMode,
         quiet: opts.quietHooks,
         timeout: opts.hookTimeout,
       });
@@ -1749,6 +1757,7 @@ const processRepository = async ({
         targetRepositoryPath: repo.path,
         targetWorktreePath: worktreePath,
         parentRepoPath,
+        hookInputMode: options.hookInputMode,
         quiet: options.quietHooks,
         timeout: options.hookTimeout,
       });
@@ -1774,6 +1783,7 @@ const processRepository = async ({
         targetRepositoryPath: repo.path,
         targetWorktreePath: worktreePath,
         parentRepoPath,
+        hookInputMode: options.hookInputMode,
         quiet: options.quietHooks,
         timeout: options.hookTimeout,
       });

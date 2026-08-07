@@ -66,6 +66,7 @@ import {
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
+import { resolveHookInputMode } from "../lib/hooks.ts";
 import {
   createStandaloneWorktree,
   StandaloneDestinationNotIgnoredError,
@@ -286,6 +287,9 @@ export interface CreateCommandOptions {
   noHooks?: boolean;
   hooks?: boolean;
 
+  /** Allow lifecycle hooks to inherit eligible terminal input */
+  hookInput?: boolean;
+
   /** Hide progress indicators */
   noProgress?: boolean;
   progress?: boolean;
@@ -365,6 +369,8 @@ export interface CreateCommandDependencies {
   platform?: NodeJS.Platform;
   runProcess?: SwitchProcessRunner;
   resolveGitMainWorktree?: (path: string) => Promise<string | null>;
+  /** Testable effective stdin terminal capability */
+  stdinIsTTY?: boolean;
 }
 
 export interface CreateInvocationContext {
@@ -830,6 +836,7 @@ export function createCommand(): Command {
     .option("--tmux", "Launch using plain tmux mode (implies --launch and --switch)")
     .addOption(conflictOption)
     .option("--no-hooks", "Disable hook execution")
+    .option("--no-hook-input", "Execute hooks with input disabled and immediate EOF")
     .option("--no-progress", "Hide progress indicators")
     .option("-n, --dry-run", "Show what would be done without making changes")
     .option(
@@ -939,6 +946,11 @@ export async function executeCreate(
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
 ): Promise<number> {
+  const hookInputMode = resolveHookInputMode({
+    hookInput: options.hookInput,
+    json: options.json,
+    stdinIsTTY: deps.stdinIsTTY ?? process.stdin.isTTY === true,
+  });
   if (options.json && options.tab) {
     writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
     return ERROR_EXIT_CODE;
@@ -984,6 +996,7 @@ export async function executeCreate(
       branchName,
       options.dryRun === true,
       {
+        hookInputMode,
         quiet: options.json === true,
         skipHooks: options.noHooks === true || options.hooks === false,
       },
@@ -1208,6 +1221,7 @@ export async function executeCreate(
     conflictResolution: options.conflict || null,
     dryRun: options.dryRun || false,
     executeHooks: hooksEnabled,
+    hookInputMode,
     hookTimeout: arashiConfig.hooks?.timeout,
     quietHooks: options.json === true,
     interactive: options.interactive || false,

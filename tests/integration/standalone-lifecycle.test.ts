@@ -28,6 +28,46 @@ async function arashi(cwd: string, args: string[], env?: Record<string, string>)
     env,
   );
 }
+const PTY_RUNNER = `import errno, os, pty, subprocess, sys
+master, slave = pty.openpty()
+child = subprocess.Popen(sys.argv[2:], cwd=sys.argv[1], stdin=slave, stdout=slave, stderr=slave)
+os.close(slave)
+data = sys.stdin.buffer.read()
+if data:
+    os.write(master, data)
+chunks = []
+while True:
+    try:
+        chunk = os.read(master, 4096)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    except OSError as error:
+        if error.errno == errno.EIO:
+            break
+        raise
+os.close(master)
+exit_code = child.wait()
+sys.stdout.buffer.write(b"".join(chunks))
+raise SystemExit(exit_code)
+`;
+async function arashiPty(cwd: string, args: string[], input: string, env?: Record<string, string>) {
+  const command = [process.execPath, join(import.meta.dirname, "../../src/index.ts"), ...args];
+  const child = spawn(["python3", "-c", PTY_RUNNER, cwd, ...command], {
+    cwd,
+    env: env ? { ...process.env, ...env } : undefined,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  child.stdin?.end(input);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  return { exitCode, stderr, stdout };
+}
 async function repository() {
   const root = await mkdtemp(join(tmpdir(), "arashi-standalone-"));
   roots.push(root);
@@ -1141,6 +1181,66 @@ describe("standalone lifecycle", () => {
     expect(result.exitCode).toBe(0);
     expect(await readFile(record, "utf8")).toBe(
       "targeted-pre\nshared-pre\ntargeted-post\nshared-post\n",
+    );
+  });
+
+  test("threads disabled input through standalone create and remove without skipping hooks", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const home = await mkdtemp(join(tmpdir(), "arashi-hook-input-home-"));
+    roots.push(home);
+    const hooks = join(home, ".arashi", "hooks");
+    const record = join(home, "input-modes.log");
+    await mkdir(hooks, { recursive: true });
+    for (const hookName of ["pre-create", "pre-remove"]) {
+      const hook = join(hooks, `${hookName}.sh`);
+      await writeFile(
+        hook,
+        `#!/bin/sh\nprintf '%s:%s\\n' '${hookName}' "$ARASHI_HOOK_INPUT" >> '${record}'\nif IFS= read -r answer; then exit 91; fi\n`,
+      );
+      await chmod(hook, 0o755);
+    }
+
+    const created = await arashi(root, ["create", "input-policy", "--json"], { HOME: home });
+    expect(created.exitCode, created.stderr).toBe(0);
+    const removed = await arashi(root, ["remove", "input-policy", "--force", "--no-hook-input"], {
+      HOME: home,
+    });
+    expect(removed.exitCode, removed.stderr).toBe(0);
+    expect(await readFile(record, "utf8")).toBe("pre-create:disabled\npre-remove:disabled\n");
+  });
+
+  test("reads sequential create and remove hook answers from a real terminal", async () => {
+    if (process.platform === "win32") return;
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const home = await mkdtemp(join(tmpdir(), "arashi-hook-input-pty-home-"));
+    roots.push(home);
+    const hooks = join(home, ".arashi", "hooks");
+    const record = join(home, "interactive-input.log");
+    await mkdir(hooks, { recursive: true });
+    for (const hookName of ["pre-create", "post-create", "pre-remove", "post-remove"]) {
+      const hook = join(hooks, `${hookName}.sh`);
+      await writeFile(
+        hook,
+        `#!/bin/sh\nprintf '${hookName}> '\nIFS= read -r answer || exit 90\nprintf '%s:%s:%s\\n' '${hookName}' "$ARASHI_HOOK_INPUT" "$answer" >> '${record}'\n`,
+      );
+      await chmod(hook, 0o755);
+    }
+
+    const created = await arashiPty(root, ["create", "interactive-input"], "create-1\ncreate-2\n", {
+      HOME: home,
+    });
+    expect(created.exitCode, `${created.stdout}\n${created.stderr}`).toBe(0);
+    const removed = await arashiPty(
+      root,
+      ["remove", "interactive-input", "--force"],
+      "remove-1\nremove-2\n",
+      { HOME: home },
+    );
+    expect(removed.exitCode, `${removed.stdout}\n${removed.stderr}`).toBe(0);
+    expect(await readFile(record, "utf8")).toBe(
+      "pre-create:tty:create-1\npost-create:tty:create-2\npre-remove:tty:remove-1\npost-remove:tty:remove-2\n",
     );
   });
 

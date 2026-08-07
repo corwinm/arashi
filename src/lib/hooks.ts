@@ -23,6 +23,7 @@ export interface HookContext {
   hookName: string;
   repoPath: string;
   operationData: Record<string, string>;
+  hookInputMode?: HookInputMode;
   hookScope?: HookScope;
   sourceScriptPath?: string;
   targetRepoName?: string;
@@ -51,6 +52,18 @@ export interface HookResult {
 }
 
 export type HookScope = "repository" | "workspace" | "global-repository" | "global-shared";
+export type HookInputMode = "tty" | "disabled" | "unavailable";
+
+export interface HookInputResolutionOptions {
+  hookInput?: boolean;
+  json?: boolean;
+  stdinIsTTY?: boolean;
+}
+
+export const resolveHookInputMode = (options: HookInputResolutionOptions): HookInputMode => {
+  if (options.json === true || options.hookInput === false) return "disabled";
+  return options.stdinIsTTY === true ? "tty" : "unavailable";
+};
 
 export interface HookTargetRepository {
   name: string;
@@ -151,6 +164,7 @@ export interface HookExecutionOptions {
   context: HookContext;
   timeout?: number;
   quiet?: boolean;
+  hookInputMode?: HookInputMode;
 }
 
 interface RunLifecycleHookOptions {
@@ -415,14 +429,22 @@ export const getHookSpawnCommand = (
         "powershell.exe",
         "-NoLogo",
         "-NoProfile",
-        "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
         "-File",
         scriptPath,
       ];
     }
-    return ["cmd.exe", "/d", "/e:on", "/v:off", "/c", "call", scriptPath];
+    return [
+      "cmd.exe",
+      "/d",
+      "/e:on",
+      "/v:off",
+      "/s",
+      "/c",
+      "call",
+      encodeCmdScriptPath(scriptPath),
+    ];
   }
 
   return [scriptPath];
@@ -440,6 +462,7 @@ export const buildHookEnvironment = (context: HookContext): Record<string, strin
 
   env.ARASHI_HOOK_NAME = context.hookName;
   env.ARASHI_HOOK_EXECUTION_PATH = context.repoPath;
+  env.ARASHI_HOOK_INPUT = context.hookInputMode ?? "unavailable";
 
   if (context.hookScope) {
     env.ARASHI_HOOK_SCOPE = context.hookScope;
@@ -505,6 +528,33 @@ const streamOutput = async (
   }
 
   return output;
+};
+
+const streamRawOutput = async (
+  stream: ReadableStream,
+  write: (chunk: Uint8Array) => void,
+): Promise<string> => {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of stream) {
+    const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk as ArrayBuffer);
+    chunks.push(bytes.slice());
+    write(bytes);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+};
+
+const formatInteractiveHookAttribution = (options: HookExecutionOptions): string => {
+  const context = options.context;
+  const fields = [
+    `lifecycle=${context.hookName}`,
+    `scope=${context.hookScope ?? "workspace"}`,
+    `source=${context.sourceScriptPath ?? options.scriptPath}`,
+  ];
+  if (context.targetRepoName) fields.push(`repository=${context.targetRepoName}`);
+  if (context.targetWorktreePath) fields.push(`worktree=${context.targetWorktreePath}`);
+  else if (context.targetRepoPath) fields.push(`target=${context.targetRepoPath}`);
+  else fields.push(`workspace=${context.mainRepoPath ?? context.repoPath}`);
+  return `🪝 Hook input: ${fields.join(" ")}`;
 };
 
 // ============================================================================
@@ -744,25 +794,35 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
 export const executeHook = async (options: HookExecutionOptions): Promise<HookResult> => {
   const startTime = Date.now();
   const timeout = options.timeout ?? DEFAULT_LIFECYCLE_HOOK_TIMEOUT;
+  const hookInputMode = options.hookInputMode ?? options.context.hookInputMode ?? "unavailable";
+  const interactiveOutput = hookInputMode === "tty" && options.quiet !== true;
 
-  if (!options.quiet) {
+  if (interactiveOutput) {
+    console.log(formatInteractiveHookAttribution(options));
+  } else if (!options.quiet) {
     console.log(`🪝 Executing hook: ${options.hookName}`);
   }
 
   try {
     const proc = runtime.spawn(getHookSpawnCommand(options.scriptPath), {
       cwd: options.context.repoPath,
-      env: buildHookEnvironment(options.context),
+      env: buildHookEnvironment({ ...options.context, hookInputMode }),
       killSignal: "SIGTERM",
+      stdin: hookInputMode === "tty" ? "inherit" : "ignore",
       stderr: "pipe",
       stdout: "pipe",
       timeout,
     });
 
-    const [stdout, stderr] = await Promise.all([
-      streamOutput(proc.stdout, `[${options.hookName}:OUT]`, options.quiet),
-      streamOutput(proc.stderr, `[${options.hookName}:ERR]`, options.quiet),
-    ]);
+    const [stdout, stderr] = interactiveOutput
+      ? await Promise.all([
+          streamRawOutput(proc.stdout, (chunk) => process.stdout.write(chunk)),
+          streamRawOutput(proc.stderr, (chunk) => process.stderr.write(chunk)),
+        ])
+      : await Promise.all([
+          streamOutput(proc.stdout, `[${options.hookName}:OUT]`, options.quiet),
+          streamOutput(proc.stderr, `[${options.hookName}:ERR]`, options.quiet),
+        ]);
 
     await proc.exited;
 

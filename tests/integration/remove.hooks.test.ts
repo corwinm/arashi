@@ -77,6 +77,35 @@ echo "post:$ARASHI_REPO_NAME" >> "$ARASHI_MAIN_REPO_PATH/.arashi/remove-hooks-or
     expect(orderLog).toBe("pre:repo-a\npre:repo-b\npost:repo-a\npost:repo-b");
   });
 
+  test("JSON takes precedence and gives configured remove hooks immediate EOF", async () => {
+    if (process.platform === "win32") return;
+    const branchName = "feature-remove-hook-input-disabled";
+    await createWorktreesForBranch(workspace, branchName, false);
+    const record = join(workspace.rootPath, ".arashi", "remove-hook-input.log");
+    await createWorkspaceHook(
+      workspace.rootPath,
+      "pre-remove",
+      `if IFS= read -r answer; then exit 91; fi
+printf '%s:%s\\n' "$ARASHI_HOOK_INPUT" "$ARASHI_REPO_NAME" >> '${record}'`,
+    );
+
+    const originalCwd = process.cwd();
+    process.chdir(workspace.rootPath);
+    try {
+      const exitCode = await executeRemove(branchName, {
+        force: true,
+        hookInput: true,
+        json: true,
+        stdinIsTTY: true,
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    expect(await runtime.file(record).text()).toBe("disabled:repo-a\ndisabled:repo-b\n");
+  });
+
   test("runs scoped pre-remove hooks in repository -> workspace -> global order", async () => {
     if (process.platform === "win32") {
       return;

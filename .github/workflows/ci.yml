@@ -118,6 +118,29 @@ jobs:
       - name: Run tests
         run: pnpm run test
 
+  hook-input-wrapper:
+    name: Installed Wrapper Hook Input Acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v1
+        with:
+          version: 11.20.0
+          runtime: node@24.18.0
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify package entrypoint stdin preservation
+        run: pnpm exec vitest run tests/integration/hook-input-wrapper.test.ts tests/unit/arashi-wrapper.test.ts
+
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -233,3 +256,23 @@ jobs:
       - name: Install with canonical defaults and verify fresh shells
         shell: powershell
         run: ./tests/windows/default-installer-acceptance.ps1
+
+  hook-input-native:
+    name: Native Windows Hook Input Acceptance
+    runs-on: windows-latest
+    timeout-minutes: 10
+    needs: [build]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v8
+        with:
+          name: arashi-windows-x64.exe
+          path: bin
+
+      - name: Exercise terminal and immediate-EOF hook input
+        shell: powershell
+        run: ./tests/windows/hook-input-native.ps1

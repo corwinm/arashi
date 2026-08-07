@@ -420,6 +420,32 @@
         {
           "conflicts": [],
           "deprecated": false,
+          "flags": "--no-hook-input",
+          "description": "Execute hooks with input disabled and immediate EOF",
+          "hidden": false,
+          "long": "--no-hook-input",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "hookInput": {
+              "disabledMode": "disabled",
+              "immediateEof": true,
+              "jsonPrecedence": true,
+              "modes": ["tty", "disabled", "unavailable"],
+              "skipsHooks": false
+            },
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
           "flags": "--no-hooks",
           "description": "Disable hook execution",
           "hidden": false,
@@ -2086,6 +2112,32 @@
           "optional": false,
           "repeatable": false,
           "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--no-hook-input",
+          "description": "Execute hooks with input disabled and immediate EOF",
+          "hidden": false,
+          "long": "--no-hook-input",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "hookInput": {
+              "disabledMode": "disabled",
+              "immediateEof": true,
+              "jsonPrecedence": true,
+              "modes": ["tty", "disabled", "unavailable"],
+              "skipsHooks": false
+            },
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
           "short": null,
           "valueShape": "boolean",
           "variadic": false

@@ -702,6 +702,19 @@ const POSIX_HOOK_TEMPLATES: HookTemplate[] = [
 
 set -e
 
+# Lifecycle input is available only for an eligible human terminal invocation.
+# ARASHI_HOOK_INPUT is always tty, disabled, or unavailable. TTY mode inherits
+# terminal stdin; disabled and unavailable modes receive immediate EOF.
+# --no-hook-input is invocation-only and does not replace --no-hooks or create's
+# --interactive selection. --json takes precedence and selects disabled mode.
+# Native examples use Bash read, PowerShell Read-Host, and cmd set /p.
+# Do not enter a password, token, or other secret into lifecycle hook prompts.
+if [ "\${ARASHI_HOOK_INPUT:-unavailable}" = "tty" ]; then
+  printf 'Continue create? [y/N] '
+  IFS= read -r answer
+  [ "$answer" = "y" ] || exit 1
+fi
+
 echo "Pre-create hook: Validating branch name..."
 
 # Example: Enforce branch naming convention
@@ -874,6 +887,9 @@ const windowsHookContent = (hookName: (typeof WINDOWS_LIFECYCLE_NAMES)[number]):
   return `# ${hookName} lifecycle hook example
 # Copy this one file without .example to activate it.
 $ErrorActionPreference = "Stop"
+# Lifecycle input is available only when ARASHI_HOOK_INPUT is tty.
+# Do not enter passwords or secrets into lifecycle hook prompts.
+if ($env:ARASHI_HOOK_INPUT -eq "tty") { $answer = Read-Host "Continue $lifecycle? [y/N]"; if ($answer -ne "y") { exit 1 } }
 ${branchAssertion}
 ${targetAssertions}
 ${packageExample}
@@ -881,14 +897,31 @@ Write-Output "${lifecycle} hook complete"
 `;
 };
 
+const windowsCmdHookContent = (hookName: (typeof WINDOWS_LIFECYCLE_NAMES)[number]): string => {
+  const lifecycle = hookName.split(".")[0];
+  return `@echo off
+rem ${hookName} lifecycle hook example
+rem Lifecycle input is available only when ARASHI_HOOK_INPUT is tty.
+rem Do not enter passwords or secrets into lifecycle hook prompts.
+if "%ARASHI_HOOK_INPUT%"=="tty" (
+  set /p "ARASHI_HOOK_ANSWER=Continue ${lifecycle}? [y/N] "
+  if /i not "%ARASHI_HOOK_ANSWER%"=="y" exit /b 1
+)
+echo ${lifecycle} hook complete
+`;
+};
+
 export const getInitHookTemplates = (
   platform: NodeJS.Platform = process.platform,
 ): HookTemplate[] =>
   platform === "win32"
-    ? WINDOWS_LIFECYCLE_NAMES.map((hookName) => ({
-        content: windowsHookContent(hookName),
-        filename: `${hookName.replace(".<repo>", ".REPO")}.ps1.example`,
-      }))
+    ? WINDOWS_LIFECYCLE_NAMES.flatMap((hookName) => {
+        const basename = hookName.replace(".<repo>", ".REPO");
+        return [
+          { content: windowsHookContent(hookName), filename: `${basename}.ps1.example` },
+          { content: windowsCmdHookContent(hookName), filename: `${basename}.cmd.example` },
+        ];
+      })
     : POSIX_HOOK_TEMPLATES;
 
 /**
