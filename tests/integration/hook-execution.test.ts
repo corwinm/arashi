@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
   cleanupTestRepo,
@@ -136,6 +136,39 @@ describe("hook execution integration", () => {
       cleanupTestRepo(hookPath);
     }
   });
+
+  test.runIf(process.platform !== "win32")(
+    "reports cancellation when an interrupted hook traps SIGINT and exits zero",
+    async () => {
+      const readyPath = join(testRepo, "hook-ready");
+      const hookPath = createMockHook(
+        `trap 'exit 0' INT\nprintf ready > '${readyPath}'\nwhile true; do sleep 0.1; done`,
+      );
+
+      try {
+        const execution = executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookInputMode: "tty",
+          hookName: "interrupt-hook",
+          quiet: true,
+          scriptPath: hookPath,
+        });
+        for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(existsSync(readyPath)).toBe(true);
+
+        process.emit("SIGINT", "SIGINT");
+        const result = await execution;
+
+        expect(result.success).toBe(false);
+        expect(result.exitCode).toBe(130);
+        expect(result.signalCode).toBe("SIGINT");
+      } finally {
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
 
   test("passes scope metadata environment variables", async () => {
     const hookPath = createMockHook(`

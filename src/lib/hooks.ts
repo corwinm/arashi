@@ -7,6 +7,7 @@ import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 
 const ZERO = 0;
 const ONE = 1;
+const INTERRUPTED_EXIT_CODE = 130;
 export const DEFAULT_LIFECYCLE_HOOK_TIMEOUT = 300_000;
 
 // ============================================================================
@@ -791,7 +792,9 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
       stdout: "pipe",
       timeout,
     });
+    let interrupted = false;
     const forwardInterrupt = (): void => {
+      interrupted = true;
       proc.kill("SIGINT");
     };
     process.once("SIGINT", forwardInterrupt);
@@ -810,16 +813,17 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
       await proc.exited;
 
       const duration = Date.now() - startTime;
-      const exitCode = proc.exitCode ?? -ONE;
+      const childExitCode = proc.exitCode ?? -ONE;
+      const exitCode = interrupted ? INTERRUPTED_EXIT_CODE : childExitCode;
 
       return {
         duration,
         exitCode,
-        killed: proc.killed,
-        signalCode: proc.signalCode,
+        killed: proc.killed || interrupted,
+        signalCode: interrupted ? "SIGINT" : proc.signalCode,
         stderr,
         stdout,
-        success: exitCode === 0,
+        success: exitCode === ZERO,
         timedOut: proc.killed && proc.signalCode === "SIGTERM",
       };
     } finally {
