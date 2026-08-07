@@ -1,3 +1,14 @@
+## [1.26.0](https://github.com/corwinm/arashi/compare/v1.25.0...v1.26.0) (2026-08-07)
+
+### Features
+
+- add native shell completions ([#120](https://github.com/corwinm/arashi/issues/120)) ([ad2563a](https://github.com/corwinm/arashi/commit/ad2563aca2f7e7fb5c06c9893ef595dcf686eed7))
+- **cli:** rationalize command flags ([#118](https://github.com/corwinm/arashi/issues/118)) ([95937c8](https://github.com/corwinm/arashi/commit/95937c895b2daa3484bac05330f722f6d9098e8b))
+
+### Bug Fixes
+
+- resolve macOS IDE bundle launchers ([#119](https://github.com/corwinm/arashi/issues/119)) ([f78acee](https://github.com/corwinm/arashi/commit/f78acee0f75ed6f451e64b17e6e5103923973635))
+
 ## [1.25.0](https://github.com/corwinm/arashi/compare/v1.24.1...v1.25.0) (2026-08-05)
 
 ### Features
