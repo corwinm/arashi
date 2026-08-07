@@ -8,7 +8,13 @@ import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 const ZERO = 0;
 const ONE = 1;
 const INTERRUPTED_EXIT_CODE = 130;
+const retainedInterruptHandlers = new Set<() => void>();
 export const DEFAULT_LIFECYCLE_HOOK_TIMEOUT = 300_000;
+
+export const releaseHookInterruptGuards = (): void => {
+  for (const handler of retainedInterruptHandlers) process.off("SIGINT", handler);
+  retainedInterruptHandlers.clear();
+};
 
 // ============================================================================
 // Type Definitions
@@ -788,7 +794,7 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
     pendingInterrupt = true;
   };
   const handleInterrupt = (): void => activeForwardInterrupt();
-  process.once("SIGINT", handleInterrupt);
+  process.on("SIGINT", handleInterrupt);
   try {
     if (process.platform !== "win32") {
       lineageDirectory = mkdtempSync(join(tmpdir(), "arashi-hook-lineage-"));
@@ -898,9 +904,12 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
       proc.kill(signal);
     };
     activeForwardInterrupt = (): void => {
+      pendingInterrupt = true;
       if (interrupted) return;
       interrupted = true;
-      signalHookTree("SIGINT");
+      const terminalDeliveredInterrupt =
+        process.platform !== "win32" && hookInputMode === "tty" && process.stdin.isTTY === true;
+      if (!terminalDeliveredInterrupt) signalHookTree("SIGINT");
       interruptCleanup = new Promise((resolveCleanup) => {
         interruptEscalation = setTimeout(() => {
           try {
@@ -942,7 +951,6 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
         timedOut: proc.killed && proc.signalCode === "SIGTERM",
       };
     } finally {
-      process.off("SIGINT", handleInterrupt);
       if (interruptEscalation) clearTimeout(interruptEscalation);
     }
   } catch (error) {
@@ -960,7 +968,8 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
       timedOut: false,
     };
   } finally {
-    process.off("SIGINT", handleInterrupt);
+    if (pendingInterrupt) retainedInterruptHandlers.add(handleInterrupt);
+    else process.off("SIGINT", handleInterrupt);
     if (lineageDescriptor !== undefined) closeSync(lineageDescriptor);
     if (lineageDirectory) rmSync(lineageDirectory, { force: true, recursive: true });
   }

@@ -12,6 +12,7 @@ import {
   mapHookExecutionResult,
   mapHookSkippedOutcome,
   normalizeLifecyclePath,
+  releaseHookInterruptGuards,
   resolveScopedLifecycleHookLocations,
   resolveScopedLifecycleHooks,
   resolveHookInputMode,
@@ -219,7 +220,9 @@ export function createCommand(): Command {
     .option("-n, --dry-run", "Preview planned removals without mutating worktrees or branches")
     .action(async (branch?: string, options?: CliOptions) => {
       try {
-        const exitCode = await executeRemove(branch, options || {});
+        const exitCode = await executeRemove(branch, options || {}).finally(
+          releaseHookInterruptGuards,
+        );
         process.exit(exitCode);
       } catch (error) {
         handleError(error, options || {});

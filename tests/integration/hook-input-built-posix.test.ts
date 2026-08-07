@@ -120,9 +120,10 @@ describe.runIf(process.platform !== "win32" && process.env.ARASHI_BUILT_HOOK_ACC
       await expect(access(timeout.getMainWorktreePath("feature/timeout"))).rejects.toThrow();
 
       const interruptPid = join(exact.workspacePath, ".arashi", "interrupt.pid");
+      const interruptCount = join(exact.workspacePath, ".arashi", "interrupt.count");
       const interrupt = await workspaceWithHook(
         5_000,
-        `printf '%s' "$$" > '${interruptPid}'\nprintf 'interrupt? ' >&2\nIFS= read -r answer`,
+        `printf '%s' "$$" > '${interruptPid}'\ncount=0\ntrap 'count=$((count + 1)); printf "%s" "$count" > "${interruptCount}"; exit 0' INT\nprintf 'interrupt? ' >&2\nwhile true; do sleep 1; done`,
       );
       const interrupted = await runBuiltSession(
         interrupt,
@@ -132,6 +133,7 @@ describe.runIf(process.platform !== "win32" && process.env.ARASHI_BUILT_HOOK_ACC
       );
       expect(interrupted.exitCode).not.toBe(0);
       expect(interrupted.reused).toBe(true);
+      expect(await readFile(interruptCount, "utf8")).toBe("1");
       expectProcessGone(Number(await readFile(interruptPid, "utf8")));
       await expect(access(interrupt.getMainWorktreePath("feature/interrupted"))).rejects.toThrow();
     }, 60_000);

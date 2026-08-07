@@ -12,6 +12,7 @@ import {
 import {
   discoverLifecycleHookInDirectory,
   executeHook,
+  releaseHookInterruptGuards,
   runLifecycleHook,
   validateHook,
 } from "../../src/lib/hooks";
@@ -24,6 +25,7 @@ describe("hook execution integration", () => {
   });
 
   afterEach(() => {
+    releaseHookInterruptGuards();
     cleanupTestRepo(testRepo);
   });
 
@@ -203,6 +205,7 @@ describe("hook execution integration", () => {
         expect(unrelatedPid).toBeTypeOf("number");
 
         process.emit("SIGINT", "SIGINT");
+        setTimeout(() => process.emit("SIGINT", "SIGINT"), 50);
         const result = await execution;
 
         expect(result.success).toBe(false);

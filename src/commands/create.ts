@@ -66,7 +66,7 @@ import {
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
-import { resolveHookInputMode } from "../lib/hooks.ts";
+import { releaseHookInterruptGuards, resolveHookInputMode } from "../lib/hooks.ts";
 import {
   createStandaloneWorktree,
   StandaloneDestinationNotIgnoredError,
@@ -881,7 +881,9 @@ By default, launch opens a new OS window or managed independent-session equivale
           writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
           process.exit(ERROR_EXIT_CODE);
         }
-        const exitCode = await executeCreate(branchName, options);
+        const exitCode = await executeCreate(branchName, options).finally(
+          releaseHookInterruptGuards,
+        );
         process.exit(exitCode);
       } catch (createError) {
         if (options.json) {
