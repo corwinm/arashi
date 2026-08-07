@@ -175,11 +175,13 @@ describe("hook execution integration", () => {
     async () => {
       const readyPath = join(testRepo, "ignored-interrupt-ready");
       const descendantPath = join(testRepo, "ignored-interrupt-descendant");
+      const lateDescendantPath = join(testRepo, "ignored-interrupt-late-descendant");
       const hookPath = createMockHook(
-        `trap 'exit 0' INT\nsh -c 'trap "" INT TERM; sleep 60' &\ndescendant=$!\nprintf '%s' "$descendant" > '${descendantPath}'\nprintf ready > '${readyPath}'\nwait "$descendant"`,
+        `trap 'exit 0' INT\n(\n  trap '' INT TERM\n  sleep 0.1\n  sh -c 'trap "" INT TERM; sleep 60' &\n  late=$!\n  printf '%s' "$late" > '${lateDescendantPath}'\n  wait "$late"\n) &\ndescendant=$!\nprintf '%s' "$descendant" > '${descendantPath}'\nprintf ready > '${readyPath}'\nwait "$descendant"`,
       );
 
       let descendantPid: number | undefined;
+      let lateDescendantPid: number | undefined;
       try {
         const execution = executeHook({
           context: createTestContext({ repoPath: testRepo }),
@@ -202,22 +204,29 @@ describe("hook execution integration", () => {
         expect(result.exitCode).toBe(130);
         expect(result.signalCode).toBe("SIGINT");
         expect(result.duration).toBeLessThan(5000);
-        let descendantAlive = true;
-        for (let attempt = 0; attempt < 100 && descendantAlive; attempt += 1) {
-          try {
-            process.kill(descendantPid, 0);
-            await new Promise((resolve) => setTimeout(resolve, 10));
-          } catch {
-            descendantAlive = false;
+        expect(existsSync(lateDescendantPath)).toBe(true);
+        lateDescendantPid = Number.parseInt(readFileSync(lateDescendantPath, "utf8"), 10);
+        for (const processId of [descendantPid, lateDescendantPid]) {
+          expect(processId).toBeTypeOf("number");
+          if (!processId) throw new Error("Expected descendant process ID");
+          let processAlive = true;
+          for (let attempt = 0; attempt < 100 && processAlive; attempt += 1) {
+            try {
+              process.kill(processId, 0);
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            } catch {
+              processAlive = false;
+            }
           }
+          expect(processAlive).toBe(false);
         }
-        expect(descendantAlive).toBe(false);
       } finally {
-        if (descendantPid) {
+        for (const processId of [descendantPid, lateDescendantPid]) {
+          if (!processId) continue;
           try {
-            process.kill(descendantPid, "SIGKILL");
+            process.kill(processId, "SIGKILL");
           } catch {
-            // The expected path already terminated the descendant process group.
+            // The expected path already terminated the descendant process tree.
           }
         }
         cleanupTestRepo(hookPath);

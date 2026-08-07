@@ -795,12 +795,12 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
     let interrupted = false;
     let interruptEscalation: ReturnType<typeof setTimeout> | undefined;
     let interruptedProcessIds: number[] = [];
-    const captureHookProcessTree = (): number[] => {
-      if (process.platform === "win32" || !proc.pid) return [];
+    const captureHookProcessTree = (roots: number[]): number[] => {
+      if (process.platform === "win32") return [];
       const listing = runtime.spawnSync(["ps", "-eo", "pid=,ppid="], {
         stderr: "ignore",
       });
-      if (listing.exitCode !== ZERO) return [proc.pid];
+      if (listing.exitCode !== ZERO) return roots;
       const children = new Map<number, number[]>();
       for (const line of listing.stdout.toString().split("\n")) {
         const [pidText, parentText] = line.trim().split(/\s+/);
@@ -810,24 +810,28 @@ export const executeHook = async (options: HookExecutionOptions): Promise<HookRe
         children.set(parent, [...(children.get(parent) ?? []), pid]);
       }
       const result: number[] = [];
-      const pending = [proc.pid];
-      while (pending.length > 0) {
-        const parent = pending.pop();
-        if (parent === undefined) continue;
-        for (const child of children.get(parent) ?? []) {
-          result.push(child);
-          pending.push(child);
-        }
-      }
-      // oxlint-disable-next-line unicorn/no-array-reverse -- Node 18 lacks Array.prototype.toReversed.
-      return [...[...result].reverse(), proc.pid];
+      const visited = new Set<number>();
+      const visit = (pid: number): void => {
+        if (visited.has(pid)) return;
+        visited.add(pid);
+        for (const child of children.get(pid) ?? []) visit(child);
+        result.push(pid);
+      };
+      for (const root of roots) visit(root);
+      return result;
     };
     const signalHookTree = (signal: NodeJS.Signals): void => {
       if (process.platform !== "win32" && proc.pid) {
         if (interruptedProcessIds.length === 0) {
-          interruptedProcessIds = captureHookProcessTree();
+          interruptedProcessIds = captureHookProcessTree([proc.pid]);
+        } else if (signal === "SIGKILL") {
+          interruptedProcessIds = captureHookProcessTree(interruptedProcessIds);
         }
-        for (const pid of interruptedProcessIds) {
+        const processIds =
+          signal === "SIGKILL"
+            ? interruptedProcessIds.map((_, index, values) => values[values.length - index - ONE])
+            : interruptedProcessIds;
+        for (const pid of processIds) {
           try {
             process.kill(pid, signal);
           } catch (error) {
