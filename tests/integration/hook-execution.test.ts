@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdirSync, writeFileSync } from "fs";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { spawn } from "child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
   cleanupTestRepo,
@@ -11,9 +12,11 @@ import {
 import {
   discoverLifecycleHookInDirectory,
   executeHook,
+  releaseHookInterruptGuards,
   runLifecycleHook,
   validateHook,
 } from "../../src/lib/hooks";
+import { runtime } from "../../src/lib/runtime";
 
 describe("hook execution integration", () => {
   let testRepo: string;
@@ -23,6 +26,7 @@ describe("hook execution integration", () => {
   });
 
   afterEach(() => {
+    releaseHookInterruptGuards();
     cleanupTestRepo(testRepo);
   });
 
@@ -136,6 +140,364 @@ describe("hook execution integration", () => {
       cleanupTestRepo(hookPath);
     }
   });
+
+  test.runIf(process.platform !== "win32")(
+    "reports timeout when a hook handles SIGTERM and exits zero",
+    async () => {
+      const hookPath = createMockHook("trap 'exit 0' TERM\nwhile :; do :; done");
+
+      try {
+        const result = await executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookName: "handled-timeout-hook",
+          quiet: true,
+          scriptPath: hookPath,
+          timeout: 1000,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.timedOut).toBe(true);
+      } finally {
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "does not launch a hook after an interrupt during observer startup",
+    async () => {
+      const stdinTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      const sideEffectPath = join(testRepo, "hook-side-effect");
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+      const hookPath = createMockHook(`printf launched > '${sideEffectPath}'`);
+      const spawnObserver = vi.spyOn(runtime, "spawn");
+      spawnObserver.mockImplementationOnce((_command, options = {}) => {
+        const readyPath = options.env?.ARASHI_SIGNAL_OBSERVER_READY;
+        const markerPath = options.env?.ARASHI_TERMINAL_SIGINT;
+        if (!readyPath || !markerPath) throw new Error("Expected observer marker paths");
+        writeFileSync(markerPath, "observed");
+        process.emit("SIGINT", "SIGINT");
+        writeFileSync(readyPath, "ready");
+        return {
+          exited: Promise.resolve(0),
+          exitCode: 0,
+          kill: () => true,
+          killed: false,
+          pid: undefined,
+          signalCode: null,
+          spawned: Promise.resolve(true),
+          spawnError: null,
+          stderr: new ReadableStream(),
+          stdin: null,
+          stdout: new ReadableStream(),
+          unref: () => undefined,
+        };
+      });
+
+      try {
+        const result = await executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookInputMode: "tty",
+          hookName: "startup-interrupt-hook",
+          quiet: true,
+          scriptPath: hookPath,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.exitCode).toBe(130);
+        expect(result.signalCode).toBe("SIGINT");
+        expect(existsSync(sideEffectPath)).toBe(false);
+      } finally {
+        spawnObserver.mockRestore();
+        if (stdinTTYDescriptor) Object.defineProperty(process.stdin, "isTTY", stdinTTYDescriptor);
+        else Reflect.deleteProperty(process.stdin, "isTTY");
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "keeps SIGINT guarded while the terminal observer shuts down",
+    async () => {
+      const stdinTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+      const descendantPath = join(testRepo, "observer-shutdown-descendant");
+      const hookPath = createMockHook(
+        `(trap '' INT TERM; sleep 60) </dev/null >/dev/null 2>&1 &\nprintf '%s' "$!" > '${descendantPath}'\nexit 0`,
+      );
+      const spawnObserver = vi.spyOn(runtime, "spawn");
+      let observerExitCode: number | null = null;
+      let resolveObserverExit: ((code: number) => void) | undefined;
+      const observerExited = new Promise<number>((resolve) => {
+        resolveObserverExit = resolve;
+      });
+      spawnObserver.mockImplementationOnce((_command, options = {}) => {
+        const readyPath = options.env?.ARASHI_SIGNAL_OBSERVER_READY;
+        if (!readyPath) throw new Error("Expected observer readiness path");
+        writeFileSync(readyPath, "ready");
+        return {
+          exited: observerExited,
+          get exitCode() {
+            return observerExitCode;
+          },
+          kill: (signal?: NodeJS.Signals) => {
+            if (signal === "SIGTERM") {
+              process.emit("SIGINT", "SIGINT");
+              observerExitCode = 0;
+              resolveObserverExit?.(0);
+            }
+            return true;
+          },
+          killed: false,
+          pid: undefined,
+          signalCode: null,
+          spawned: Promise.resolve(true),
+          spawnError: null,
+          stderr: new ReadableStream(),
+          stdin: null,
+          stdout: new ReadableStream(),
+          unref: () => undefined,
+        };
+      });
+      let descendantPid: number | undefined;
+
+      try {
+        const result = await executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookInputMode: "tty",
+          hookName: "observer-shutdown-interrupt-hook",
+          quiet: true,
+          scriptPath: hookPath,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.exitCode).toBe(130);
+        expect(result.signalCode).toBe("SIGINT");
+        descendantPid = Number.parseInt(readFileSync(descendantPath, "utf8"), 10);
+        let descendantAlive = true;
+        for (let attempt = 0; attempt < 100 && descendantAlive; attempt += 1) {
+          try {
+            process.kill(descendantPid, 0);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          } catch {
+            descendantAlive = false;
+          }
+        }
+        expect(descendantAlive).toBe(false);
+      } finally {
+        if (descendantPid) {
+          try {
+            process.kill(descendantPid, "SIGKILL");
+          } catch {
+            // The expected cleanup-window escalation already terminated the descendant.
+          }
+        }
+        spawnObserver.mockRestore();
+        if (stdinTTYDescriptor) Object.defineProperty(process.stdin, "isTTY", stdinTTYDescriptor);
+        else Reflect.deleteProperty(process.stdin, "isTTY");
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "times out after the direct hook exits while a descendant retains output streams",
+    async () => {
+      const descendantPath = join(testRepo, "settlement-timeout-descendant");
+      const hookPath = createMockHook(`sleep 60 &\nprintf '%s' "$!" > '${descendantPath}'\nexit 0`);
+      let descendantPid: number | undefined;
+
+      try {
+        const result = await executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookName: "settlement-timeout-hook",
+          quiet: true,
+          scriptPath: hookPath,
+          timeout: 300,
+        });
+        descendantPid = Number.parseInt(readFileSync(descendantPath, "utf8"), 10);
+        const timedOutDescendantPid = descendantPid;
+
+        expect(result.success).toBe(false);
+        expect(result.timedOut).toBe(true);
+        expect(() => process.kill(timedOutDescendantPid, 0)).toThrow();
+      } finally {
+        if (descendantPid) {
+          try {
+            process.kill(descendantPid, "SIGKILL");
+          } catch {
+            // The expected timeout cleanup already terminated the descendant.
+          }
+        }
+        cleanupTestRepo(hookPath);
+      }
+    },
+    5000,
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "terminates redirected descendants after the direct hook times out",
+    async () => {
+      const descendantPath = join(testRepo, "timeout-descendant");
+      const hookPath = createMockHook(
+        `(trap '' INT TERM; sleep 60) </dev/null >/dev/null 2>&1 &\nprintf '%s' "$!" > '${descendantPath}'\nwhile true; do sleep 0.1; done`,
+      );
+      let descendantPid: number | undefined;
+
+      try {
+        const execution = executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookName: "timeout-descendant-hook",
+          quiet: true,
+          scriptPath: hookPath,
+          timeout: 1000,
+        });
+        for (let attempt = 0; attempt < 100 && !existsSync(descendantPath); attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(existsSync(descendantPath)).toBe(true);
+        descendantPid = Number.parseInt(readFileSync(descendantPath, "utf8"), 10);
+
+        const result = await execution;
+
+        expect(result.success).toBe(false);
+        expect(result.timedOut).toBe(true);
+        expect(descendantPid).toBeTypeOf("number");
+        const timedOutDescendantPid = descendantPid;
+        if (!timedOutDescendantPid) throw new Error("Expected timeout descendant process ID");
+        let descendantAlive = true;
+        for (let attempt = 0; attempt < 100 && descendantAlive; attempt += 1) {
+          try {
+            process.kill(timedOutDescendantPid, 0);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          } catch {
+            descendantAlive = false;
+          }
+        }
+        expect(descendantAlive).toBe(false);
+      } finally {
+        if (descendantPid) {
+          try {
+            process.kill(descendantPid, "SIGKILL");
+          } catch {
+            // The expected timeout cleanup already terminated the descendant.
+          }
+        }
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "reports cancellation when an interrupted hook traps SIGINT and exits zero",
+    async () => {
+      const readyPath = join(testRepo, "hook-ready");
+      const interruptPath = join(testRepo, "hook-interrupted");
+      const stdinTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+      const hookPath = createMockHook(
+        `trap 'printf interrupted > "${interruptPath}"; exit 0' INT\nprintf ready > '${readyPath}'\nwhile true; do sleep 0.1; done`,
+      );
+
+      try {
+        const execution = executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookInputMode: "tty",
+          hookName: "interrupt-hook",
+          quiet: true,
+          scriptPath: hookPath,
+        });
+        for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(existsSync(readyPath)).toBe(true);
+
+        process.emit("SIGINT", "SIGINT");
+        const result = await execution;
+
+        expect(result.success).toBe(false);
+        expect(result.exitCode).toBe(130);
+        expect(result.signalCode).toBe("SIGINT");
+        expect(readFileSync(interruptPath, "utf8")).toBe("interrupted");
+      } finally {
+        if (stdinTTYDescriptor) Object.defineProperty(process.stdin, "isTTY", stdinTTYDescriptor);
+        else Reflect.deleteProperty(process.stdin, "isTTY");
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "escalates cancellation when an interrupted hook ignores SIGINT",
+    async () => {
+      const readyPath = join(testRepo, "ignored-interrupt-ready");
+      const descendantPath = join(testRepo, "ignored-interrupt-descendant");
+      const lateDescendantPath = join(testRepo, "ignored-interrupt-late-descendant");
+      const hookPath = createMockHook(
+        `trap 'exit 0' INT\n(\n  trap '' INT TERM\n  sleep 0.1\n  sh -c 'trap "" INT TERM; sleep 60' </dev/null >/dev/null 2>&1 &\n  late=$!\n  printf '%s' "$late" > '${lateDescendantPath}'\n  exit 0\n) &\ndescendant=$!\nprintf '%s' "$descendant" > '${descendantPath}'\nprintf ready > '${readyPath}'\nwait "$descendant"`,
+      );
+
+      let descendantPid: number | undefined;
+      let lateDescendantPid: number | undefined;
+      let unrelatedPid: number | undefined;
+      try {
+        const execution = executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookInputMode: "tty",
+          hookName: "ignored-interrupt-hook",
+          quiet: true,
+          scriptPath: hookPath,
+          timeout: 5000,
+        });
+        for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(existsSync(readyPath)).toBe(true);
+        descendantPid = Number.parseInt(readFileSync(descendantPath, "utf8"), 10);
+        const unrelated = spawn("sleep", ["60"], { stdio: "ignore" });
+        unrelatedPid = unrelated.pid;
+        expect(unrelatedPid).toBeTypeOf("number");
+
+        process.emit("SIGINT", "SIGINT");
+        setTimeout(() => process.emit("SIGINT", "SIGINT"), 50);
+        const result = await execution;
+
+        expect(result.success).toBe(false);
+        expect(result.exitCode).toBe(130);
+        expect(result.signalCode).toBe("SIGINT");
+        expect(result.duration).toBeLessThan(5000);
+        expect(existsSync(lateDescendantPath)).toBe(true);
+        lateDescendantPid = Number.parseInt(readFileSync(lateDescendantPath, "utf8"), 10);
+        for (const processId of [descendantPid, lateDescendantPid]) {
+          expect(processId).toBeTypeOf("number");
+          if (!processId) throw new Error("Expected descendant process ID");
+          let processAlive = true;
+          for (let attempt = 0; attempt < 100 && processAlive; attempt += 1) {
+            try {
+              process.kill(processId, 0);
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            } catch {
+              processAlive = false;
+            }
+          }
+          expect(processAlive).toBe(false);
+        }
+        const unrelatedProcessId = unrelatedPid;
+        if (!unrelatedProcessId) throw new Error("Expected unrelated process ID");
+        expect(() => process.kill(unrelatedProcessId, 0)).not.toThrow();
+      } finally {
+        for (const processId of [descendantPid, lateDescendantPid, unrelatedPid]) {
+          if (!processId) continue;
+          try {
+            process.kill(processId, "SIGKILL");
+          } catch {
+            // The expected path already terminated the descendant process tree.
+          }
+        }
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
 
   test("pauses an active progress spinner around all hook output", async () => {
     const hookPath = createMockHook(String.raw`printf 'hook output\n'`);

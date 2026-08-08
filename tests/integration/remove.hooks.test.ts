@@ -1,6 +1,7 @@
 import { runtime, spawn } from "../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { spawnSync } from "node:child_process";
 import {
   createRemoveWorkspace,
   createWorktreesForBranch,
@@ -76,6 +77,69 @@ echo "post:$ARASHI_REPO_NAME" >> "$ARASHI_MAIN_REPO_PATH/.arashi/remove-hooks-or
     const orderLog = (await runtime.file(orderLogPath).text()).trim();
     expect(orderLog).toBe("pre:repo-a\npre:repo-b\npost:repo-a\npost:repo-b");
   });
+
+  test("JSON takes precedence and gives configured remove hooks immediate EOF", async () => {
+    if (process.platform === "win32") return;
+    const branchName = "feature-remove-hook-input-disabled";
+    await createWorktreesForBranch(workspace, branchName, false);
+    const record = join(workspace.rootPath, ".arashi", "remove-hook-input.log");
+    await createWorkspaceHook(
+      workspace.rootPath,
+      "pre-remove",
+      `if IFS= read -r answer; then exit 91; fi
+printf '%s:%s\\n' "$ARASHI_HOOK_INPUT" "$ARASHI_REPO_NAME" >> '${record}'`,
+    );
+
+    const originalCwd = process.cwd();
+    process.chdir(workspace.rootPath);
+    try {
+      const exitCode = await executeRemove(branchName, {
+        force: true,
+        hookInput: true,
+        json: true,
+        stdinIsTTY: true,
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    expect(await runtime.file(record).text()).toBe("disabled:repo-a\ndisabled:repo-b\n");
+  });
+
+  test.runIf(process.platform !== "win32")(
+    "keeps every target intact when Ctrl-C interrupts an interactive pre-remove hook",
+    async () => {
+      const branchName = "feature-remove-hook-interrupt";
+      const worktrees = await createWorktreesForBranch(workspace, branchName, false);
+      await createWorkspaceHook(
+        workspace.rootPath,
+        "pre-remove",
+        "printf 'remove interrupt prompt: '\nIFS= read -r answer",
+      );
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          join(import.meta.dirname, "../helpers/pty-command.mjs"),
+          workspace.rootPath,
+          "remove interrupt prompt:",
+          "__CTRL_C__",
+          "15",
+          JSON.stringify([process.execPath, CLI_ENTRY, "remove", branchName, "--force"]),
+        ],
+        {
+          cwd: workspace.rootPath,
+          encoding: "utf8",
+          env: { ...process.env, HOME: homePath, NO_COLOR: "1" },
+        },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0);
+      expect(existsSync(worktrees["repo-a"])).toBe(true);
+      expect(existsSync(worktrees["repo-b"])).toBe(true);
+    },
+    30_000,
+  );
 
   test("runs scoped pre-remove hooks in repository -> workspace -> global order", async () => {
     if (process.platform === "win32") {

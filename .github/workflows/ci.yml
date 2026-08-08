@@ -118,6 +118,44 @@ jobs:
       - name: Run tests
         run: pnpm run test
 
+  hook-input-wrapper:
+    name: Installed Wrapper Hook Input Acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    needs: [build]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v1
+        with:
+          version: 11.20.0
+          runtime: node@24.18.0
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download built Linux package binary
+        uses: actions/download-artifact@v8
+        with:
+          name: arashi-linux-x64
+          path: bin
+
+      - name: Prepare installed package entrypoint
+        run: |
+          cp bin/arashi-linux-x64 bin/arashi.bin
+          chmod +x bin/arashi.bin bin/arashi
+
+      - name: Verify built POSIX and installed package hook input acceptance
+        env:
+          ARASHI_BUILT_HOOK_ACCEPTANCE: "1"
+          ARASHI_WRAPPER_ACCEPTANCE: "1"
+        run: pnpm exec vitest run tests/integration/hook-input-built-posix.test.ts tests/integration/hook-input-wrapper.test.ts tests/unit/arashi-wrapper.test.ts
+
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -233,3 +271,34 @@ jobs:
       - name: Install with canonical defaults and verify fresh shells
         shell: powershell
         run: ./tests/windows/default-installer-acceptance.ps1
+
+  hook-input-native:
+    name: Native Windows Hook Input Acceptance
+    runs-on: windows-latest
+    timeout-minutes: 10
+    needs: [build]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v1
+        with:
+          version: 11.20.0
+          runtime: node@24.18.0
+          cache: true
+          install: false
+
+      - name: Install PTY acceptance dependency
+        run: pnpm install --frozen-lockfile
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v8
+        with:
+          name: arashi-windows-x64.exe
+          path: bin
+
+      - name: Exercise terminal and immediate-EOF hook input
+        shell: powershell
+        run: ./tests/windows/hook-input-native.ps1

@@ -184,6 +184,42 @@ describe("CLI command contract", () => {
     });
   });
 
+  test("publishes invocation-only hook input policy on exactly create and remove", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+      optionAuditPolicies,
+    );
+    const owners = contract.commands
+      .filter((command) => command.options.some((option) => option.long === "--no-hook-input"))
+      .map((command) => command.path);
+
+    expect(owners).toEqual(["create", "remove"]);
+    for (const owner of owners) {
+      const option = contract.commands
+        .find((command) => command.path === owner)
+        ?.options.find((candidate) => candidate.long === "--no-hook-input");
+      expect(option?.semanticPolicy).toEqual({
+        hookInput: {
+          disabledMode: "disabled",
+          immediateEof: true,
+          jsonPrecedence: true,
+          modes: ["tty", "disabled", "unavailable"],
+          skipsHooks: false,
+        },
+        ownership: "command",
+        persisted: false,
+      });
+    }
+
+    const createHelp = buildProgram({ includeHelpBanner: false })
+      .commands.find((command) => command.name() === "create")
+      ?.helpInformation();
+    expect(createHelp).toContain("--no-hook-input");
+    expect(createHelp).toContain("--interactive");
+    expect(createHelp).toContain("--no-hooks");
+  });
+
   test("publishes real canonical switch compatibility policies", () => {
     const contract = generateCommandContract(
       buildProgram({ includeHelpBanner: false }),
@@ -664,8 +700,8 @@ describe("CLI command contract", () => {
     const options = contract.commands.flatMap((command) => command.options);
 
     expect(contract.commands).toHaveLength(24);
-    expect(options).toHaveLength(131);
-    expect(new Set(options.map((option) => option.long))).toHaveLength(59);
+    expect(options).toHaveLength(133);
+    expect(new Set(options.map((option) => option.long))).toHaveLength(60);
     expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
     expect(
       contract.commands

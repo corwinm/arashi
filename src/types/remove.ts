@@ -132,6 +132,10 @@ export interface RemoveCommandOptions {
   path?: boolean;
   /** Output JSON */
   json?: boolean;
+  /** Allow lifecycle hooks to inherit eligible terminal input */
+  hookInput?: boolean;
+  /** Testable effective stdin terminal capability for direct executor callers */
+  stdinIsTTY?: boolean;
   /** Preview planned removals without mutating repositories */
   dryRun?: boolean;
 }

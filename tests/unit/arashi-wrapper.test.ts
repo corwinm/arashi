@@ -123,19 +123,29 @@ describe("extensionless arashi wrapper", () => {
     expect(result.stdout).toContain("stdin:available");
   });
 
-  test.each([["list"], ["remove", "--force", "topic"]])(
-    "retains conditional stdin closure for piped %s",
-    (...args) => {
-      const directory = createFixture();
-      writeBinary(directory, "arashi.bin.exe", "windows");
+  test("retains conditional stdin closure for piped list", () => {
+    const directory = createFixture();
+    writeBinary(directory, "arashi.bin.exe", "windows");
 
-      const result = runWrapper(directory, args, {
-        env: { CHECK_STDIN: "1", UNAME_S: "MINGW64_NT-10.0" },
-        input: "must-not-arrive\n",
-      });
+    const result = runWrapper(directory, ["list"], {
+      env: { CHECK_STDIN: "1", UNAME_S: "MINGW64_NT-10.0" },
+      input: "must-not-arrive\n",
+    });
 
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain("stdin:closed");
-    },
-  );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("stdin:closed");
+  });
+
+  test("preserves hook-eligible stdin for forced remove with redirected stdout", () => {
+    const directory = createFixture();
+    writeBinary(directory, "arashi.bin.exe", "windows");
+
+    const result = runWrapper(directory, ["remove", "--force", "topic"], {
+      env: { CHECK_STDIN: "1", UNAME_S: "MINGW64_NT-10.0" },
+      input: "hook-answer\n",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("stdin:hook-answer");
+  });
 });

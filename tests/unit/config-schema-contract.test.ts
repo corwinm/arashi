@@ -38,5 +38,7 @@ describe("generated config schema contracts", () => {
       },
     });
     expect(schema.definitions.EditorCommandDefaults?.properties).toHaveProperty("create");
+    expect(schema.definitions.Config?.properties?.hooks).toBeDefined();
+    expect(JSON.stringify(schema.definitions.Config?.properties?.hooks)).not.toContain('"input"');
   });
 });

@@ -702,6 +702,19 @@ const POSIX_HOOK_TEMPLATES: HookTemplate[] = [
 
 set -e
 
+# Lifecycle input is available only for an eligible human terminal invocation.
+# ARASHI_HOOK_INPUT is always tty, disabled, or unavailable. TTY mode inherits
+# terminal stdin; disabled and unavailable modes receive immediate EOF.
+# --no-hook-input is invocation-only and does not replace --no-hooks or create's
+# --interactive selection. --json takes precedence and selects disabled mode.
+# Native examples use Bash read, PowerShell Read-Host, and cmd set /p.
+# Do not enter a password, token, or other secret into lifecycle hook prompts.
+if [ "\${ARASHI_HOOK_INPUT:-unavailable}" = "tty" ]; then
+  printf 'Continue create? [y/N] ' >&2
+  IFS= read -r answer
+  [ "$answer" = "y" ] || exit 1
+fi
+
 echo "Pre-create hook: Validating branch name..."
 
 # Example: Enforce branch naming convention
@@ -874,6 +887,11 @@ const windowsHookContent = (hookName: (typeof WINDOWS_LIFECYCLE_NAMES)[number]):
   return `# ${hookName} lifecycle hook example
 # Copy this one file without .example to activate it.
 $ErrorActionPreference = "Stop"
+# ARASHI_HOOK_INPUT is tty, disabled, or unavailable. Only tty inherits terminal
+# stdin; disabled and unavailable receive immediate EOF. --no-hook-input is
+# invocation-only and does not skip hooks; --json takes precedence as disabled.
+# Do not enter passwords or secrets into lifecycle hook prompts.
+if ($env:ARASHI_HOOK_INPUT -eq "tty") { [Console]::Error.Write("Continue $lifecycle? [y/N] "); $answer = Read-Host; if ($answer -ne "y") { exit 1 } }
 ${branchAssertion}
 ${targetAssertions}
 ${packageExample}
@@ -881,14 +899,35 @@ Write-Output "${lifecycle} hook complete"
 `;
 };
 
+const windowsCmdHookContent = (hookName: (typeof WINDOWS_LIFECYCLE_NAMES)[number]): string => {
+  const lifecycle = hookName.split(".")[0];
+  return `@echo off
+rem ${hookName} lifecycle hook example
+rem ARASHI_HOOK_INPUT is tty, disabled, or unavailable. Only tty inherits terminal
+rem stdin; disabled and unavailable receive immediate EOF. --no-hook-input is
+rem invocation-only and does not skip hooks; --json takes precedence as disabled.
+rem Do not enter passwords or secrets into lifecycle hook prompts.
+if not "%ARASHI_HOOK_INPUT%"=="tty" goto arashi_hook_input_done
+set "ARASHI_HOOK_ANSWER="
+<nul set /p "=Continue ${lifecycle}? [y/N] " 1>&2
+set /p "ARASHI_HOOK_ANSWER="
+if /i not "%ARASHI_HOOK_ANSWER%"=="y" exit /b 1
+:arashi_hook_input_done
+echo ${lifecycle} hook complete
+`;
+};
+
 export const getInitHookTemplates = (
   platform: NodeJS.Platform = process.platform,
 ): HookTemplate[] =>
   platform === "win32"
-    ? WINDOWS_LIFECYCLE_NAMES.map((hookName) => ({
-        content: windowsHookContent(hookName),
-        filename: `${hookName.replace(".<repo>", ".REPO")}.ps1.example`,
-      }))
+    ? WINDOWS_LIFECYCLE_NAMES.flatMap((hookName) => {
+        const basename = hookName.replace(".<repo>", ".REPO");
+        return [
+          { content: windowsHookContent(hookName), filename: `${basename}.ps1.example` },
+          { content: windowsCmdHookContent(hookName), filename: `${basename}.cmd.example` },
+        ];
+      })
     : POSIX_HOOK_TEMPLATES;
 
 /**

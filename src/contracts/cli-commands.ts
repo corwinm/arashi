@@ -92,6 +92,13 @@ export interface OptionSemanticPolicy {
   conflicts?: string[];
   implies?: string[];
   inspection?: { executionPaths: Array<"human" | "json"> };
+  hookInput?: {
+    disabledMode: "disabled";
+    immediateEof: true;
+    jsonPrecedence: true;
+    modes: ["tty", "disabled", "unavailable"];
+    skipsHooks: false;
+  };
   jsonExecution?: {
     apply: "unsupported";
     bare: "inspection-only";
@@ -180,8 +187,20 @@ const selectorPolicies = (
   "--only": selectorPolicy("repository", standalone),
 });
 
+const hookInputPolicy: OptionSemanticPolicy = {
+  hookInput: {
+    disabledMode: "disabled",
+    immediateEof: true,
+    jsonPrecedence: true,
+    modes: ["tty", "disabled", "unavailable"],
+    skipsHooks: false,
+  },
+  ownership: "command",
+  persisted: false,
+};
+
 export const optionAuditPolicies: OptionAuditPolicies = {
-  create: selectorPolicies("unsupported"),
+  create: { ...selectorPolicies("unsupported"), "--no-hook-input": hookInputPolicy },
   exec: selectorPolicies("configured-only"),
   handoff: {
     "--markdown": {
@@ -198,6 +217,7 @@ export const optionAuditPolicies: OptionAuditPolicies = {
   },
   pull: selectorPolicies("configured-only"),
   push: selectorPolicies("configured-only"),
+  remove: { "--no-hook-input": hookInputPolicy },
   setup: selectorPolicies("configured-only"),
   status: selectorPolicies("unsupported"),
   sync: selectorPolicies("configured-only"),
@@ -794,6 +814,7 @@ export function validateOptionSemanticPolicy(
       [
         "compatibility",
         "conflicts",
+        "hookInput",
         "implies",
         "inspection",
         "jsonExecution",
@@ -821,6 +842,31 @@ export function validateOptionSemanticPolicy(
     errors.push(`${label}.role must be "redundant-compatibility"`);
   if (value.role === "redundant-compatibility" && value.persisted !== false)
     errors.push(`${label}.persisted must be false for redundant compatibility`);
+
+  if (
+    value.hookInput !== undefined &&
+    validateExactObject(
+      value.hookInput,
+      ["disabledMode", "immediateEof", "jsonPrecedence", "modes", "skipsHooks"],
+      ["disabledMode", "immediateEof", "jsonPrecedence", "modes", "skipsHooks"],
+      `${label}.hookInput`,
+      errors,
+    )
+  ) {
+    if (value.hookInput.disabledMode !== "disabled")
+      errors.push(`${label}.hookInput.disabledMode must be "disabled"`);
+    if (value.hookInput.immediateEof !== true)
+      errors.push(`${label}.hookInput.immediateEof must be true`);
+    if (value.hookInput.jsonPrecedence !== true)
+      errors.push(`${label}.hookInput.jsonPrecedence must be true`);
+    if (value.hookInput.skipsHooks !== false)
+      errors.push(`${label}.hookInput.skipsHooks must be false`);
+    if (
+      !Array.isArray(value.hookInput.modes) ||
+      value.hookInput.modes.join(",") !== "tty,disabled,unavailable"
+    )
+      errors.push(`${label}.hookInput.modes must be tty, disabled, unavailable`);
+  }
 
   if (
     value.compatibility !== undefined &&

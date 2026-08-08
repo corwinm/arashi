@@ -10,7 +10,7 @@ import {
   resolveScopedLifecycleHookLocations,
   validateHook,
 } from "./hooks.ts";
-import type { LifecycleHookOutcome } from "./hooks.ts";
+import type { HookInputMode, LifecycleHookOutcome } from "./hooks.ts";
 import type { StandaloneWorkspaceContext } from "./workspace-context.ts";
 
 export class StandaloneDestinationNotIgnoredError extends Error {
@@ -61,6 +61,7 @@ export async function runStandaloneGlobalHooks(
   skipHooks: boolean,
   quiet = false,
   continueOnFailure = false,
+  hookInputMode: HookInputMode = "unavailable",
 ): Promise<LifecycleHookOutcome[]> {
   if (skipHooks) return [];
   const outcomes: LifecycleHookOutcome[] = [];
@@ -146,6 +147,7 @@ export async function runStandaloneGlobalHooks(
         workspaceMode: "standalone",
       },
       hookName,
+      hookInputMode,
       quiet,
       scriptPath: hook.scriptPath,
     });
@@ -168,7 +170,7 @@ export async function runStandaloneGlobalHooks(
       targetWorktreePath: worktreePath,
       workspaceMode: "standalone",
     });
-    if (!result.success && !continueOnFailure) {
+    if (!result.success && (!continueOnFailure || result.signalCode === "SIGINT")) {
       throw new StandaloneHookError(hookName, hook.scriptPath, outcomes);
     }
   }
@@ -304,7 +306,7 @@ export async function createStandaloneWorktree(
   context: StandaloneWorkspaceContext,
   branch: string,
   dryRun = false,
-  options: { quiet?: boolean; skipHooks?: boolean } = {},
+  options: { hookInputMode?: HookInputMode; quiet?: boolean; skipHooks?: boolean } = {},
 ) {
   await exec(["check-ref-format", "--branch", branch], context.mainRoot);
   const destination = join(context.mainRoot, ".worktrees", ...branch.split("/"));
@@ -353,6 +355,8 @@ export async function createStandaloneWorktree(
           destination,
           options.skipHooks === true,
           options.quiet === true,
+          false,
+          options.hookInputMode,
         )),
       );
     } catch (error) {
@@ -378,6 +382,8 @@ export async function createStandaloneWorktree(
           destination,
           options.skipHooks === true,
           options.quiet === true,
+          false,
+          options.hookInputMode,
         )),
       );
     } catch (error) {

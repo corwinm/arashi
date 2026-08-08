@@ -1,7 +1,18 @@
 import { runtime } from "./runtime.ts";
 import { access, readdir, stat } from "fs/promises";
-import { constants } from "fs";
-import { homedir } from "os";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
+import { homedir, tmpdir } from "os";
 import { isAbsolute, join, normalize, resolve } from "path";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 import { withSpinnerPaused } from "./logger.ts";
@@ -9,7 +20,14 @@ import type { PausableSpinner } from "./logger.ts";
 
 const ZERO = 0;
 const ONE = 1;
+const INTERRUPTED_EXIT_CODE = 130;
+const retainedInterruptHandlers = new Set<() => void>();
 export const DEFAULT_LIFECYCLE_HOOK_TIMEOUT = 300_000;
+
+export const releaseHookInterruptGuards = (): void => {
+  for (const handler of retainedInterruptHandlers) process.off("SIGINT", handler);
+  retainedInterruptHandlers.clear();
+};
 
 // ============================================================================
 // Type Definitions
@@ -25,6 +43,7 @@ export interface HookContext {
   hookName: string;
   repoPath: string;
   operationData: Record<string, string>;
+  hookInputMode?: HookInputMode;
   hookScope?: HookScope;
   sourceScriptPath?: string;
   targetRepoName?: string;
@@ -53,6 +72,18 @@ export interface HookResult {
 }
 
 export type HookScope = "repository" | "workspace" | "global-repository" | "global-shared";
+export type HookInputMode = "tty" | "disabled" | "unavailable";
+
+export interface HookInputResolutionOptions {
+  hookInput?: boolean;
+  json?: boolean;
+  stdinIsTTY?: boolean;
+}
+
+export const resolveHookInputMode = (options: HookInputResolutionOptions): HookInputMode => {
+  if (options.json === true || options.hookInput === false) return "disabled";
+  return options.stdinIsTTY === true ? "tty" : "unavailable";
+};
 
 export interface HookTargetRepository {
   name: string;
@@ -153,6 +184,7 @@ export interface HookExecutionOptions {
   context: HookContext;
   timeout?: number;
   quiet?: boolean;
+  hookInputMode?: HookInputMode;
   outputSpinner?: PausableSpinner | null;
 }
 
@@ -393,21 +425,6 @@ export const mapHookExecutionResult = (result: HookResult): HookOutcomeMapping =
 // Helper Functions (Internal)
 // ============================================================================
 
-/**
- * Returns platform-appropriate shell command for executing scripts.
- */
-export const encodeCmdScriptPath = (scriptPath: string): string => {
-  if (
-    scriptPath.includes("\r") ||
-    scriptPath.includes("\n") ||
-    scriptPath.includes("\0") ||
-    scriptPath.includes('"')
-  ) {
-    throw new Error(`Unsafe command hook path: ${scriptPath}`);
-  }
-  return `"${scriptPath.replaceAll("%", "%%")}"`;
-};
-
 export const getHookSpawnCommand = (
   scriptPath: string,
   platform: NodeJS.Platform = process.platform,
@@ -418,14 +435,13 @@ export const getHookSpawnCommand = (
         "powershell.exe",
         "-NoLogo",
         "-NoProfile",
-        "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
         "-File",
         scriptPath,
       ];
     }
-    return ["cmd.exe", "/d", "/e:on", "/v:off", "/c", "call", scriptPath];
+    return [scriptPath];
   }
 
   return [scriptPath];
@@ -443,6 +459,7 @@ export const buildHookEnvironment = (context: HookContext): Record<string, strin
 
   env.ARASHI_HOOK_NAME = context.hookName;
   env.ARASHI_HOOK_EXECUTION_PATH = context.repoPath;
+  env.ARASHI_HOOK_INPUT = context.hookInputMode ?? "unavailable";
 
   if (context.hookScope) {
     env.ARASHI_HOOK_SCOPE = context.hookScope;
@@ -508,6 +525,33 @@ const streamOutput = async (
   }
 
   return output;
+};
+
+const streamRawOutput = async (
+  stream: ReadableStream,
+  write: (chunk: Uint8Array) => void,
+): Promise<string> => {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of stream) {
+    const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk as ArrayBuffer);
+    chunks.push(bytes.slice());
+    write(bytes);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+};
+
+const formatInteractiveHookAttribution = (options: HookExecutionOptions): string => {
+  const context = options.context;
+  const fields = [
+    `lifecycle=${context.hookName}`,
+    `scope=${context.hookScope ?? "workspace"}`,
+    `source=${context.sourceScriptPath ?? options.scriptPath}`,
+  ];
+  if (context.targetRepoName) fields.push(`repository=${context.targetRepoName}`);
+  if (context.targetWorktreePath) fields.push(`worktree=${context.targetWorktreePath}`);
+  else if (context.targetRepoPath) fields.push(`target=${context.targetRepoPath}`);
+  else fields.push(`workspace=${context.mainRepoPath ?? context.repoPath}`);
+  return `🪝 Hook input: ${fields.join(" ")}`;
 };
 
 // ============================================================================
@@ -715,13 +759,14 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
           valid: false,
         };
       }
-      const lookup = runtime.spawnSync(["where.exe", command[ZERO]], {
+      const interpreter = /\.(?:cmd|bat)$/i.test(hookPath) ? "cmd.exe" : command[ZERO];
+      const lookup = runtime.spawnSync(["where.exe", interpreter], {
         stderr: "ignore",
         stdout: "ignore",
       });
       if (lookup.exitCode !== ZERO) {
         return {
-          error: `Required hook interpreter is unavailable: ${command[ZERO]}`,
+          error: `Required hook interpreter is unavailable: ${interpreter}`,
           reasonCode: "interpreter_unavailable",
           valid: false,
         };
@@ -747,46 +792,367 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
 const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookResult> => {
   const startTime = Date.now();
   const timeout = options.timeout ?? DEFAULT_LIFECYCLE_HOOK_TIMEOUT;
+  const hookInputMode = options.hookInputMode ?? options.context.hookInputMode ?? "unavailable";
+  const interactiveOutput = hookInputMode === "tty" && options.quiet !== true;
 
-  if (!options.quiet) {
+  if (interactiveOutput) {
+    console.log(formatInteractiveHookAttribution(options));
+  } else if (!options.quiet) {
     console.log(`🪝 Executing hook: ${options.hookName}`);
   }
 
+  let lineageDirectory: string | undefined;
+  let lineageDescriptor: number | undefined;
+  let terminalSignalMarkerPath: string | undefined;
+  let terminalSignalRequestPath: string | undefined;
+  let terminalSignalAckPath: string | undefined;
+  let terminalSignalObserver: ReturnType<typeof runtime.spawn> | undefined;
+  let terminalSignalObservationUnavailable = false;
+  let interruptCleanup: Promise<void> | undefined;
+  let settledResult: HookResult | undefined;
+  let pendingInterrupt = false;
+  let activeForwardInterrupt = (): void => {
+    pendingInterrupt = true;
+  };
+  const handleInterrupt = (): void => activeForwardInterrupt();
+  process.on("SIGINT", handleInterrupt);
   try {
+    if (process.platform !== "win32") {
+      lineageDirectory = mkdtempSync(join(tmpdir(), "arashi-hook-lineage-"));
+      lineageDescriptor = openSync(join(lineageDirectory, "lineage"), "w");
+      if (process.stdin.isTTY === true) {
+        terminalSignalMarkerPath = join(lineageDirectory, "terminal-sigint");
+        terminalSignalRequestPath = join(lineageDirectory, "terminal-signal-request");
+        terminalSignalAckPath = join(lineageDirectory, "terminal-signal-ack");
+        const observerReadyPath = join(lineageDirectory, "terminal-observer-ready");
+        terminalSignalObserver = runtime.spawn(
+          [
+            "sh",
+            "-c",
+            'trap \'printf observed > "$ARASHI_TERMINAL_SIGINT"; if [ -f "$ARASHI_SIGNAL_REQUEST" ]; then printf terminal > "$ARASHI_SIGNAL_ACK"; rm -f "$ARASHI_SIGNAL_REQUEST"; fi\' INT; trap \'kill "$observer_child" 2>/dev/null; exit 0\' TERM; printf ready > "$ARASHI_SIGNAL_OBSERVER_READY"; while :; do if [ -f "$ARASHI_SIGNAL_REQUEST" ]; then if [ -f "$ARASHI_TERMINAL_SIGINT" ]; then printf terminal > "$ARASHI_SIGNAL_ACK"; else printf direct > "$ARASHI_SIGNAL_ACK"; fi; rm -f "$ARASHI_SIGNAL_REQUEST"; fi; sleep 0.005 & observer_child=$!; wait "$observer_child"; done',
+          ],
+          {
+            env: {
+              ...process.env,
+              ARASHI_SIGNAL_OBSERVER_READY: observerReadyPath,
+              ARASHI_SIGNAL_REQUEST: terminalSignalRequestPath,
+              ARASHI_SIGNAL_ACK: terminalSignalAckPath,
+              ARASHI_TERMINAL_SIGINT: terminalSignalMarkerPath,
+            },
+            stderr: "ignore",
+            stdin: "ignore",
+            stdout: "ignore",
+          },
+        );
+        await terminalSignalObserver.spawned;
+        for (let attempt = 0; attempt < 100 && !existsSync(observerReadyPath); attempt += ONE) {
+          await new Promise((resolveReady) => setTimeout(resolveReady, ONE));
+        }
+        if (!existsSync(observerReadyPath)) {
+          terminalSignalObserver.kill("SIGTERM");
+          terminalSignalObserver = undefined;
+          terminalSignalMarkerPath = undefined;
+          terminalSignalObservationUnavailable = true;
+        }
+      }
+    } else if (process.stdin.isTTY === true) {
+      const powershellLookup = runtime.spawnSync(["where.exe", "powershell.exe"], {
+        stderr: "ignore",
+        stdout: "ignore",
+      });
+      if (powershellLookup.exitCode !== ZERO) {
+        terminalSignalObservationUnavailable = true;
+      } else {
+        lineageDirectory = mkdtempSync(join(tmpdir(), "arashi-hook-observer-"));
+        terminalSignalMarkerPath = join(lineageDirectory, "terminal-sigint");
+        terminalSignalRequestPath = join(lineageDirectory, "terminal-signal-request");
+        terminalSignalAckPath = join(lineageDirectory, "terminal-signal-ack");
+        const observerReadyPath = join(lineageDirectory, "terminal-observer-ready");
+        terminalSignalObserver = runtime.spawn(
+          [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-Command",
+            '$handler = [ConsoleCancelEventHandler]{ param($sender, $eventArgs) [IO.File]::WriteAllText($env:ARASHI_TERMINAL_SIGINT, "observed"); if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST)) { [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, "terminal"); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; $eventArgs.Cancel = $true }; [Console]::add_CancelKeyPress($handler); [IO.File]::WriteAllText($env:ARASHI_SIGNAL_OBSERVER_READY, "ready"); try { while ($true) { if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST) -and [IO.File]::Exists($env:ARASHI_TERMINAL_SIGINT)) { [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, "terminal"); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; Start-Sleep -Milliseconds 5 } } finally { [Console]::remove_CancelKeyPress($handler) }',
+          ],
+          {
+            env: {
+              ...process.env,
+              ARASHI_SIGNAL_OBSERVER_READY: observerReadyPath,
+              ARASHI_SIGNAL_REQUEST: terminalSignalRequestPath,
+              ARASHI_SIGNAL_ACK: terminalSignalAckPath,
+              ARASHI_TERMINAL_SIGINT: terminalSignalMarkerPath,
+            },
+            stderr: "ignore",
+            stdin: "ignore",
+            stdout: "ignore",
+          },
+        );
+        await terminalSignalObserver.spawned;
+        for (let attempt = 0; attempt < 1000 && !existsSync(observerReadyPath); attempt += ONE) {
+          await new Promise((resolveReady) => setTimeout(resolveReady, ONE));
+        }
+        if (!existsSync(observerReadyPath)) {
+          terminalSignalObserver.kill("SIGTERM");
+          terminalSignalObserver = undefined;
+          terminalSignalMarkerPath = undefined;
+          terminalSignalObservationUnavailable = true;
+        }
+      }
+    }
+    if (pendingInterrupt) {
+      settledResult = {
+        duration: Date.now() - startTime,
+        exitCode: INTERRUPTED_EXIT_CODE,
+        killed: true,
+        signalCode: "SIGINT",
+        stderr: "",
+        stdout: "",
+        success: false,
+        timedOut: false,
+      };
+      return settledResult;
+    }
     const proc = runtime.spawn(getHookSpawnCommand(options.scriptPath), {
+      callBatchFile: /\.(?:cmd|bat)$/i.test(options.scriptPath),
       cwd: options.context.repoPath,
-      env: buildHookEnvironment(options.context),
+      env: buildHookEnvironment({ ...options.context, hookInputMode }),
+      extraStdio: lineageDescriptor === undefined ? [] : [lineageDescriptor],
       killSignal: "SIGTERM",
+      stdin: hookInputMode === "tty" ? "inherit" : "ignore",
       stderr: "pipe",
       stdout: "pipe",
-      timeout,
     });
-
-    const [stdout, stderr] = await Promise.all([
-      streamOutput(proc.stdout, `[${options.hookName}:OUT]`, options.quiet),
-      streamOutput(proc.stderr, `[${options.hookName}:ERR]`, options.quiet),
-    ]);
-
-    await proc.exited;
-
-    const duration = Date.now() - startTime;
-    const exitCode = proc.exitCode ?? -ONE;
-
-    return {
-      duration,
-      exitCode,
-      killed: proc.killed,
-      signalCode: proc.signalCode,
-      stderr,
-      stdout,
-      success: exitCode === 0,
-      timedOut: proc.killed && proc.signalCode === "SIGTERM",
+    if (lineageDescriptor !== undefined) {
+      closeSync(lineageDescriptor);
+      lineageDescriptor = undefined;
+    }
+    let interrupted = false;
+    let interruptEscalation: ReturnType<typeof setTimeout> | undefined;
+    let interruptedProcessIds: number[] = [];
+    let timeoutTriggered = false;
+    let hookTimeout: ReturnType<typeof setTimeout> | undefined;
+    let timeoutEscalation: ReturnType<typeof setTimeout> | undefined;
+    const captureHookProcessTree = (roots: number[]): number[] => {
+      const listing =
+        process.platform === "win32"
+          ? runtime.spawnSync(
+              [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+              ],
+              { stderr: "ignore" },
+            )
+          : runtime.spawnSync(["ps", "-eo", "pid=,ppid="], { stderr: "ignore" });
+      if (listing.exitCode !== ZERO) return roots;
+      const children = new Map<number, number[]>();
+      for (const line of listing.stdout.toString().split("\n")) {
+        const [pidText, parentText] = line.trim().split(/\s+/);
+        const pid = Number.parseInt(pidText, 10);
+        const parent = Number.parseInt(parentText, 10);
+        if (![pid, parent].every((value) => Number.isInteger(value))) continue;
+        children.set(parent, [...(children.get(parent) ?? []), pid]);
+      }
+      const result: number[] = [];
+      const visited = new Set<number>();
+      const visit = (pid: number): void => {
+        if (visited.has(pid)) return;
+        visited.add(pid);
+        for (const child of children.get(pid) ?? []) visit(child);
+        result.push(pid);
+      };
+      for (const root of roots) visit(root);
+      return result;
     };
+    const captureHookLineage = (): number[] => {
+      if (!lineageDirectory || process.platform === "win32") return [];
+      const lineagePath = join(lineageDirectory, "lineage");
+      if (process.platform === "linux") {
+        const holders: number[] = [];
+        let processEntries: Array<import("fs").Dirent<string>>;
+        try {
+          processEntries = readdirSync("/proc", { withFileTypes: true });
+        } catch {
+          return [];
+        }
+        for (const entry of processEntries) {
+          if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+          const descriptorDirectory = join("/proc", entry.name, "fd");
+          try {
+            if (
+              readdirSync(descriptorDirectory).some((descriptor) => {
+                try {
+                  return readlinkSync(join(descriptorDirectory, descriptor)) === lineagePath;
+                } catch {
+                  return false;
+                }
+              })
+            ) {
+              holders.push(Number.parseInt(entry.name, 10));
+            }
+          } catch {
+            // Processes can exit or deny inspection between /proc reads.
+          }
+        }
+        return holders;
+      }
+      const holders = runtime.spawnSync(["/usr/sbin/lsof", "-t", "--", lineagePath], {
+        stderr: "ignore",
+      });
+      if (holders.exitCode !== ZERO) return [];
+      return holders.stdout
+        .toString()
+        .split("\n")
+        .map((value) => Number.parseInt(value.trim(), 10))
+        .filter((pid) => Number.isInteger(pid));
+    };
+    const signalHookTree = (signal: NodeJS.Signals): void => {
+      if (!proc.pid) {
+        proc.kill(signal);
+        return;
+      }
+      if (interruptedProcessIds.length === 0) {
+        const roots = [proc.pid, ...(process.platform === "win32" ? [] : captureHookLineage())];
+        interruptedProcessIds = captureHookProcessTree(roots);
+      } else if (signal === "SIGKILL") {
+        const roots = [
+          ...new Set([
+            ...interruptedProcessIds,
+            ...(process.platform === "win32" ? [] : captureHookLineage()),
+          ]),
+        ];
+        interruptedProcessIds = captureHookProcessTree(roots);
+      }
+      if (process.platform === "win32") {
+        if (signal !== "SIGKILL") {
+          proc.kill(signal);
+          return;
+        }
+        for (const pid of interruptedProcessIds.map(
+          (_, index, values) => values[values.length - index - ONE],
+        )) {
+          runtime.spawnSync(["taskkill.exe", "/PID", String(pid), "/T", "/F"], {
+            stderr: "ignore",
+          });
+        }
+        return;
+      }
+      const processIds =
+        signal === "SIGKILL"
+          ? interruptedProcessIds.map((_, index, values) => values[values.length - index - ONE])
+          : interruptedProcessIds;
+      for (const pid of processIds) {
+        try {
+          process.kill(pid, signal);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
+    };
+    hookTimeout = setTimeout(() => {
+      timeoutTriggered = true;
+      signalHookTree("SIGTERM");
+      timeoutEscalation = setTimeout(() => signalHookTree("SIGKILL"), 250);
+    }, timeout);
+    activeForwardInterrupt = (): void => {
+      pendingInterrupt = true;
+      if (interrupted) return;
+      interrupted = true;
+      interruptCleanup = new Promise((resolveCleanup) => {
+        interruptEscalation = setTimeout(() => {
+          try {
+            signalHookTree("SIGKILL");
+          } finally {
+            resolveCleanup();
+          }
+        }, 250);
+        const forwardOrObserveInterrupt = async (): Promise<void> => {
+          if (
+            terminalSignalObserver &&
+            terminalSignalMarkerPath &&
+            terminalSignalRequestPath &&
+            terminalSignalAckPath
+          ) {
+            rmSync(terminalSignalAckPath, { force: true });
+            writeFileSync(terminalSignalRequestPath, "check");
+            for (
+              let attempt = 0;
+              attempt < 100 &&
+              !existsSync(terminalSignalMarkerPath) &&
+              !existsSync(terminalSignalAckPath);
+              attempt += ONE
+            ) {
+              await new Promise((resolveAck) => setTimeout(resolveAck, ONE));
+            }
+            if (existsSync(terminalSignalMarkerPath)) return;
+            // POSIX can acknowledge direct-only delivery after the shell trap boundary. Windows
+            // has no ordered cross-process completion event for console-control dispatch, so an
+            // absent acknowledgement is intentionally treated as unknown and never forwarded.
+            if (!existsSync(terminalSignalAckPath)) return;
+            if (readFileSync(terminalSignalAckPath, "utf8") === "terminal") return;
+          }
+          // Without a terminal observer, console-origin delivery is ambiguous. The bounded tree
+          // escalation below remains authoritative without risking a duplicate Ctrl-C delivery.
+          if (terminalSignalObservationUnavailable) return;
+          signalHookTree("SIGINT");
+        };
+        void forwardOrObserveInterrupt();
+      });
+    };
+    if (pendingInterrupt) activeForwardInterrupt();
+
+    try {
+      const timeoutCleanup = proc.exited.then(() => {
+        if (timeoutTriggered) signalHookTree("SIGKILL");
+        if (timeoutEscalation) clearTimeout(timeoutEscalation);
+      });
+      const [stdout, stderr] = interactiveOutput
+        ? await Promise.all([
+            streamRawOutput(proc.stdout, (chunk) => process.stdout.write(chunk)),
+            streamRawOutput(proc.stderr, (chunk) => process.stderr.write(chunk)),
+          ])
+        : await Promise.all([
+            streamOutput(proc.stdout, `[${options.hookName}:OUT]`, options.quiet),
+            streamOutput(proc.stderr, `[${options.hookName}:ERR]`, options.quiet),
+          ]);
+
+      await timeoutCleanup;
+      if (hookTimeout) clearTimeout(hookTimeout);
+      if (interruptCleanup) await interruptCleanup;
+
+      const duration = Date.now() - startTime;
+      const childExitCode = proc.exitCode ?? -ONE;
+      const exitCode = interrupted
+        ? INTERRUPTED_EXIT_CODE
+        : timeoutTriggered
+          ? -ONE
+          : childExitCode;
+
+      settledResult = {
+        duration,
+        exitCode,
+        killed: proc.killed || interrupted || timeoutTriggered,
+        signalCode: interrupted ? "SIGINT" : timeoutTriggered ? "SIGTERM" : proc.signalCode,
+        stderr,
+        stdout,
+        success: exitCode === ZERO,
+        timedOut: timeoutTriggered,
+      };
+      return settledResult;
+    } finally {
+      if (hookTimeout) clearTimeout(hookTimeout);
+      if (timeoutEscalation) clearTimeout(timeoutEscalation);
+      if (interruptEscalation) clearTimeout(interruptEscalation);
+    }
   } catch (error) {
     const duration = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    return {
+    settledResult = {
       duration,
       exitCode: -ONE,
       killed: false,
@@ -796,6 +1162,28 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       success: false,
       timedOut: false,
     };
+    return settledResult;
+  } finally {
+    if (terminalSignalObserver) {
+      terminalSignalObserver.kill("SIGTERM");
+      await Promise.race([
+        terminalSignalObserver.exited,
+        new Promise((resolveObserver) => setTimeout(resolveObserver, 100)),
+      ]);
+      if (terminalSignalObserver.exitCode === null) terminalSignalObserver.kill("SIGKILL");
+    }
+    if (interruptCleanup) await interruptCleanup;
+    if (lineageDescriptor !== undefined) closeSync(lineageDescriptor);
+    if (lineageDirectory) rmSync(lineageDirectory, { force: true, recursive: true });
+    if (pendingInterrupt && settledResult) {
+      settledResult.exitCode = INTERRUPTED_EXIT_CODE;
+      settledResult.killed = true;
+      settledResult.signalCode = "SIGINT";
+      settledResult.success = false;
+      settledResult.timedOut = false;
+    }
+    if (pendingInterrupt) retainedInterruptHandlers.add(handleInterrupt);
+    else process.off("SIGINT", handleInterrupt);
   }
 };
 

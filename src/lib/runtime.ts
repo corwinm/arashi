@@ -11,18 +11,26 @@ type SpawnOptions = {
   cwd?: string;
   detached?: boolean;
   env?: Record<string, string | undefined>;
+  extraStdio?: number[];
   stdin?: IoMode;
   stdout?: IoMode;
   stderr?: IoMode;
   timeout?: number;
   killSignal?: NodeJS.Signals;
+  callBatchFile?: boolean;
 };
 
 export function spawn(command: string[], options: SpawnOptions = {}) {
   if (options.cwd && !existsSync(options.cwd)) {
     throw new Error(`Working directory not found: ${options.cwd}`);
   }
-  const invocation = prepareSpawnCommand(command, process.platform, options.env ?? process.env);
+  const invocation = prepareSpawnCommand(
+    command,
+    process.platform,
+    options.env ?? process.env,
+    false,
+    options.callBatchFile,
+  );
   const child = nodeSpawn(invocation.command, invocation.args, {
     cwd: options.cwd,
     detached: options.detached,
@@ -30,7 +38,12 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
     killSignal: options.killSignal,
     timeout: options.timeout,
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-    stdio: [options.stdin ?? "pipe", options.stdout ?? "pipe", options.stderr ?? "pipe"],
+    stdio: [
+      options.stdin ?? "pipe",
+      options.stdout ?? "pipe",
+      options.stderr ?? "pipe",
+      ...(options.extraStdio ?? []),
+    ],
   });
   let exitCode: number | null = null;
   let signalCode: NodeJS.Signals | null = null;
@@ -66,6 +79,9 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
     get killed() {
       return child.killed;
     },
+    get pid() {
+      return child.pid;
+    },
     kill: (signal?: NodeJS.Signals) => child.kill(signal),
     unref: () => child.unref(),
     stdin: child.stdin,
@@ -75,7 +91,13 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
 }
 
 export function spawnSync(command: string[], options: SpawnOptions = {}) {
-  const invocation = prepareSpawnCommand(command, process.platform, options.env ?? process.env);
+  const invocation = prepareSpawnCommand(
+    command,
+    process.platform,
+    options.env ?? process.env,
+    false,
+    options.callBatchFile,
+  );
   const result = nodeSpawnSync(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: invocation.env ?? options.env,
