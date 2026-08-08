@@ -99,12 +99,14 @@ install -m 755 '.arashi/hooks/post-create.<repo>.sh.example' .arashi/hooks/post-
 install -m 755 .arashi/setup.sh.example .arashi/setup.sh
 ```
 
-On Windows, init generates PowerShell lifecycle examples; activate one with `Copy-Item`, for example
-`Copy-Item .arashi/hooks/pre-create.ps1.example .arashi/hooks/pre-create.ps1`. Runtime also accepts
-one user-authored `.cmd` or `.bat` candidate at a location. Windows init does not generate a setup
-script because setup discovery remains POSIX-only. Generated examples do not automatically infer
-npm from `package.json`; follow the repository's committed `packageManager` and lockfile. In a
-coordinated pnpm child worktree use:
+On Windows, init generates both PowerShell and cmd lifecycle examples. Activate exactly one native
+candidate per lifecycle location: for example,
+`Copy-Item .arashi/hooks/pre-create.ps1.example .arashi/hooks/pre-create.ps1` or
+`Copy-Item .arashi/hooks/pre-create.cmd.example .arashi/hooks/pre-create.cmd`. Runtime also accepts a
+user-authored `.bat` candidate, but do not activate a PowerShell, cmd, and bat definition for the same
+lifecycle location. Windows init does not generate a setup script because setup discovery remains
+POSIX-only. Generated examples do not automatically infer npm from `package.json`; follow the
+repository's committed `packageManager` and lockfile. In a coordinated pnpm child worktree use:
 
 ```sh
 CI=true corepack pnpm --ignore-workspace install --frozen-lockfile

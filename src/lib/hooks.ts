@@ -898,7 +898,8 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
         return;
       }
       if (interruptedProcessIds.length === 0) {
-        interruptedProcessIds = captureHookProcessTree([proc.pid]);
+        const roots = [proc.pid, ...(process.platform === "win32" ? [] : captureHookLineage())];
+        interruptedProcessIds = captureHookProcessTree(roots);
       } else if (signal === "SIGKILL") {
         const roots = [
           ...new Set([

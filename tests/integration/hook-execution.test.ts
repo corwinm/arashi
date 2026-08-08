@@ -141,6 +141,50 @@ describe("hook execution integration", () => {
   });
 
   test.runIf(process.platform !== "win32")(
+    "terminates redirected descendants after the direct hook times out",
+    async () => {
+      const descendantPath = join(testRepo, "timeout-descendant");
+      const hookPath = createMockHook(
+        `(trap '' INT TERM; sleep 60) </dev/null >/dev/null 2>&1 &\nprintf '%s' "$!" > '${descendantPath}'\nwhile true; do sleep 0.1; done`,
+      );
+      let descendantPid: number | undefined;
+
+      try {
+        const execution = executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookName: "timeout-descendant-hook",
+          quiet: true,
+          scriptPath: hookPath,
+          timeout: 1000,
+        });
+        for (let attempt = 0; attempt < 100 && !existsSync(descendantPath); attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(existsSync(descendantPath)).toBe(true);
+        descendantPid = Number.parseInt(readFileSync(descendantPath, "utf8"), 10);
+
+        const result = await execution;
+
+        expect(result.success).toBe(false);
+        expect(result.timedOut).toBe(true);
+        expect(descendantPid).toBeTypeOf("number");
+        const timedOutDescendantPid = descendantPid;
+        if (!timedOutDescendantPid) throw new Error("Expected timeout descendant process ID");
+        expect(() => process.kill(timedOutDescendantPid, 0)).toThrow();
+      } finally {
+        if (descendantPid) {
+          try {
+            process.kill(descendantPid, "SIGKILL");
+          } catch {
+            // The expected timeout cleanup already terminated the descendant.
+          }
+        }
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
     "reports cancellation when an interrupted hook traps SIGINT and exits zero",
     async () => {
       const readyPath = join(testRepo, "hook-ready");
