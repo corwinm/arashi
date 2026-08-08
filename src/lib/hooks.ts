@@ -759,7 +759,7 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
           valid: false,
         };
       }
-      const interpreter = hookPath.toLowerCase().endsWith(".cmd") ? "cmd.exe" : command[ZERO];
+      const interpreter = /\.(?:cmd|bat)$/i.test(hookPath) ? "cmd.exe" : command[ZERO];
       const lookup = runtime.spawnSync(["where.exe", interpreter], {
         stderr: "ignore",
         stdout: "ignore",
@@ -807,6 +807,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
   let terminalSignalRequestPath: string | undefined;
   let terminalSignalAckPath: string | undefined;
   let terminalSignalObserver: ReturnType<typeof runtime.spawn> | undefined;
+  let terminalSignalObservationUnavailable = false;
   let interruptCleanup: Promise<void> | undefined;
   let settledResult: HookResult | undefined;
   let pendingInterrupt = false;
@@ -851,43 +852,53 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
           terminalSignalObserver.kill("SIGTERM");
           terminalSignalObserver = undefined;
           terminalSignalMarkerPath = undefined;
+          terminalSignalObservationUnavailable = true;
         }
       }
     } else if (process.stdin.isTTY === true) {
-      lineageDirectory = mkdtempSync(join(tmpdir(), "arashi-hook-observer-"));
-      terminalSignalMarkerPath = join(lineageDirectory, "terminal-sigint");
-      terminalSignalRequestPath = join(lineageDirectory, "terminal-signal-request");
-      terminalSignalAckPath = join(lineageDirectory, "terminal-signal-ack");
-      const observerReadyPath = join(lineageDirectory, "terminal-observer-ready");
-      terminalSignalObserver = runtime.spawn(
-        [
-          "powershell.exe",
-          "-NoLogo",
-          "-NoProfile",
-          "-Command",
-          '$handler = [ConsoleCancelEventHandler]{ param($sender, $eventArgs) [IO.File]::WriteAllText($env:ARASHI_TERMINAL_SIGINT, "observed"); if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST)) { [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, "terminal"); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; $eventArgs.Cancel = $true }; [Console]::add_CancelKeyPress($handler); [IO.File]::WriteAllText($env:ARASHI_SIGNAL_OBSERVER_READY, "ready"); try { while ($true) { if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST) -and [IO.File]::Exists($env:ARASHI_TERMINAL_SIGINT)) { [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, "terminal"); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; Start-Sleep -Milliseconds 5 } } finally { [Console]::remove_CancelKeyPress($handler) }',
-        ],
-        {
-          env: {
-            ...process.env,
-            ARASHI_SIGNAL_OBSERVER_READY: observerReadyPath,
-            ARASHI_SIGNAL_REQUEST: terminalSignalRequestPath,
-            ARASHI_SIGNAL_ACK: terminalSignalAckPath,
-            ARASHI_TERMINAL_SIGINT: terminalSignalMarkerPath,
+      const powershellLookup = runtime.spawnSync(["where.exe", "powershell.exe"], {
+        stderr: "ignore",
+        stdout: "ignore",
+      });
+      if (powershellLookup.exitCode !== ZERO) {
+        terminalSignalObservationUnavailable = true;
+      } else {
+        lineageDirectory = mkdtempSync(join(tmpdir(), "arashi-hook-observer-"));
+        terminalSignalMarkerPath = join(lineageDirectory, "terminal-sigint");
+        terminalSignalRequestPath = join(lineageDirectory, "terminal-signal-request");
+        terminalSignalAckPath = join(lineageDirectory, "terminal-signal-ack");
+        const observerReadyPath = join(lineageDirectory, "terminal-observer-ready");
+        terminalSignalObserver = runtime.spawn(
+          [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-Command",
+            '$handler = [ConsoleCancelEventHandler]{ param($sender, $eventArgs) [IO.File]::WriteAllText($env:ARASHI_TERMINAL_SIGINT, "observed"); if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST)) { [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, "terminal"); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; $eventArgs.Cancel = $true }; [Console]::add_CancelKeyPress($handler); [IO.File]::WriteAllText($env:ARASHI_SIGNAL_OBSERVER_READY, "ready"); try { while ($true) { if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST) -and [IO.File]::Exists($env:ARASHI_TERMINAL_SIGINT)) { [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, "terminal"); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; Start-Sleep -Milliseconds 5 } } finally { [Console]::remove_CancelKeyPress($handler) }',
+          ],
+          {
+            env: {
+              ...process.env,
+              ARASHI_SIGNAL_OBSERVER_READY: observerReadyPath,
+              ARASHI_SIGNAL_REQUEST: terminalSignalRequestPath,
+              ARASHI_SIGNAL_ACK: terminalSignalAckPath,
+              ARASHI_TERMINAL_SIGINT: terminalSignalMarkerPath,
+            },
+            stderr: "ignore",
+            stdin: "ignore",
+            stdout: "ignore",
           },
-          stderr: "ignore",
-          stdin: "ignore",
-          stdout: "ignore",
-        },
-      );
-      await terminalSignalObserver.spawned;
-      for (let attempt = 0; attempt < 1000 && !existsSync(observerReadyPath); attempt += ONE) {
-        await new Promise((resolveReady) => setTimeout(resolveReady, ONE));
-      }
-      if (!existsSync(observerReadyPath)) {
-        terminalSignalObserver.kill("SIGTERM");
-        terminalSignalObserver = undefined;
-        terminalSignalMarkerPath = undefined;
+        );
+        await terminalSignalObserver.spawned;
+        for (let attempt = 0; attempt < 1000 && !existsSync(observerReadyPath); attempt += ONE) {
+          await new Promise((resolveReady) => setTimeout(resolveReady, ONE));
+        }
+        if (!existsSync(observerReadyPath)) {
+          terminalSignalObserver.kill("SIGTERM");
+          terminalSignalObserver = undefined;
+          terminalSignalMarkerPath = undefined;
+          terminalSignalObservationUnavailable = true;
+        }
       }
     }
     if (pendingInterrupt) {
@@ -1084,6 +1095,9 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
             if (!existsSync(terminalSignalAckPath)) return;
             if (readFileSync(terminalSignalAckPath, "utf8") === "terminal") return;
           }
+          // Without a terminal observer, console-origin delivery is ambiguous. The bounded tree
+          // escalation below remains authoritative without risking a duplicate Ctrl-C delivery.
+          if (terminalSignalObservationUnavailable) return;
           signalHookTree("SIGINT");
         };
         void forwardOrObserveInterrupt();

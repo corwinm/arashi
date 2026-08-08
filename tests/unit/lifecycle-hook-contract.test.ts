@@ -63,6 +63,11 @@ describe("lifecycle hook contract", () => {
     );
   });
 
+  test("validates both cmd and bat hooks through cmd.exe", async () => {
+    const source = await readFile(join(process.cwd(), "src", "lib", "hooks.ts"), "utf8");
+    expect(source).toContain('const interpreter = /\\.(?:cmd|bat)$/i.test(hookPath) ? "cmd.exe"');
+  });
+
   test("routes configured remove hooks through centralized spinner ownership", async () => {
     const source = await readFile(join(process.cwd(), "src", "commands", "remove.ts"), "utf8");
     expect(source).toMatch(

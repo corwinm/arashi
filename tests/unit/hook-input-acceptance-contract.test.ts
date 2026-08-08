@@ -14,6 +14,11 @@ describe("built hook-input acceptance contract", () => {
     expect(hooks).toContain("powershell.exe");
     expect(hooks).toContain("ARASHI_SIGNAL_REQUEST");
     expect(hooks).toContain("ARASHI_SIGNAL_ACK");
+    expect(hooks).toContain('runtime.spawnSync(["where.exe", "powershell.exe"]');
+    expect(hooks).toContain("terminalSignalObservationUnavailable = true");
+    expect(hooks).toMatch(
+      /if \(terminalSignalObservationUnavailable\) return;[\s\S]*signalHookTree\("SIGINT"\)/,
+    );
     expect(hooks).not.toContain("setTimeout(forwardOrObserveInterrupt, 25)");
 
     expect(fixture).toContain("windows:timeout:cleanup");
