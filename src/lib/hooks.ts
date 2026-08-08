@@ -868,7 +868,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
         },
       );
       await terminalSignalObserver.spawned;
-      for (let attempt = 0; attempt < 100 && !existsSync(observerReadyPath); attempt += ONE) {
+      for (let attempt = 0; attempt < 1000 && !existsSync(observerReadyPath); attempt += ONE) {
         await new Promise((resolveReady) => setTimeout(resolveReady, ONE));
       }
       if (!existsSync(observerReadyPath)) {

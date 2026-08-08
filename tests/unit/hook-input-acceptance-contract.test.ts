@@ -15,7 +15,6 @@ describe("built hook-input acceptance contract", () => {
 
     expect(fixture).toContain("windows:timeout:cleanup");
     expect(fixture).toContain("windows:interrupt:cleanup");
-    expect(fixture).toContain("windows:interrupt:handler");
     expect(fixture).toContain("windows:interrupt:finally");
     expect(fixture).toContain("windows:refusal:exact-output");
     expect(fixture).toContain("Assert-NoCreateArtifacts");

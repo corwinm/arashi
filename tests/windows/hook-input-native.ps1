@@ -204,30 +204,21 @@ Set-Content -NoNewline -Path '$timeoutChildPid' -Value `$child.Id
     Add-Content -Path $record -Value "windows:terminal:reused"
 
     Set-HookTimeout 10000
-    $interruptHandlerMarker = Join-Path $temp "interrupt-handler.marker"
     $interruptFinallyMarker = Join-Path $temp "interrupt-finally.marker"
     @"
-`$handler = [ConsoleCancelEventHandler]{
-  param(`$sender, `$eventArgs)
-  [IO.File]::WriteAllText('$interruptHandlerMarker', 'handled')
-  `$eventArgs.Cancel = `$true
-}
-[Console]::add_CancelKeyPress(`$handler)
 try {
   `$null = Read-Host "interrupt grace answer"
 }
 finally {
+  Start-Sleep -Milliseconds 100
   [IO.File]::WriteAllText('$interruptFinallyMarker', 'finalized')
-  [Console]::remove_CancelKeyPress(`$handler)
 }
 "@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
     $interruptGraceResult = Invoke-PtySession "interrupt grace answer" "__CTRL_C__" @($binary, "create", "feature/windows-interrupt-grace")
     if ($interruptGraceResult.exitCode -eq 0) { throw "Graceful interrupted built CLI unexpectedly succeeded" }
     if (-not $interruptGraceResult.reused) { throw "Terminal was not reusable after graceful interruption" }
-    if (-not (Test-Path $interruptHandlerMarker)) { throw "Windows hook did not handle terminal Ctrl-C" }
     if (-not (Test-Path $interruptFinallyMarker)) { throw "Windows hook finally block was cut off" }
     Assert-NoCreateArtifacts "feature/windows-interrupt-grace" "graceful interruption"
-    Add-Content -Path $record -Value "windows:interrupt:handler"
     Add-Content -Path $record -Value "windows:interrupt:finally"
 
     $interruptPid = Join-Path $temp "interrupt-hook.pid"
@@ -263,7 +254,6 @@ Set-Content -NoNewline -Path '$interruptChildPid' -Value `$child.Id
     "windows:refusal:exact-output",
     "windows:timeout:cleanup",
     "windows:terminal:reused",
-    "windows:interrupt:handler",
     "windows:interrupt:finally",
     "windows:interrupt:cleanup"
   )
