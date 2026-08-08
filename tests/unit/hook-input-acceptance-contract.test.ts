@@ -34,12 +34,12 @@ describe("built hook-input acceptance contract", () => {
     expect(helper).toContain("__CTRL_C__");
   });
 
-  test("POSIX PTY EOF waits for child reaping instead of reporting a false timeout", async () => {
-    const helper = await readFile(join(root, "tests/helpers/pty-command.py"), "utf8");
+  test("POSIX PTY closure waits for node-pty child exit instead of reporting a false timeout", async () => {
+    const helper = await readFile(join(root, "tests/helpers/pty-command.mjs"), "utf8");
 
-    expect(helper).toContain("pty_eof = True");
-    expect(helper).toMatch(/if not pty_eof:[\s\S]*os\.waitpid\(pid, os\.WNOHANG\)/);
-    expect(helper).not.toMatch(/errno\.EIO:[\s\S]{0,80}break/);
+    expect(helper).toContain("terminal.onExit");
+    expect(helper).toMatch(/terminal\.onExit\([\s\S]*clearTimeout\(timer\)/);
+    expect(helper).not.toMatch(/terminal\.onData\([\s\S]{0,300}clearTimeout\(timer\)/);
   });
 
   test("CI executes both built POSIX and native Windows acceptance fixtures", async () => {

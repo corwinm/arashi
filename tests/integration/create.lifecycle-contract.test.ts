@@ -26,9 +26,9 @@ const arashi = async (cwd: string, args: string[]) => {
 
 const arashiPty = (cwd: string, prompt: string, response: string, args: string[]) =>
   spawnSync(
-    "python3",
+    process.execPath,
     [
-      join(import.meta.dirname, "../helpers/pty-command.py"),
+      join(import.meta.dirname, "../helpers/pty-command.mjs"),
       cwd,
       prompt,
       response,

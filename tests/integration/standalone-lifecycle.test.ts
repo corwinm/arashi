@@ -28,38 +28,23 @@ async function arashi(cwd: string, args: string[], env?: Record<string, string>)
     env,
   );
 }
-const PTY_RUNNER = `import errno, os, pty, subprocess, sys
-master, slave = pty.openpty()
-child = subprocess.Popen(sys.argv[2:], cwd=sys.argv[1], stdin=slave, stdout=slave, stderr=slave)
-os.close(slave)
-data = sys.stdin.buffer.read()
-if data:
-    os.write(master, data)
-chunks = []
-while True:
-    try:
-        chunk = os.read(master, 4096)
-        if not chunk:
-            break
-        chunks.append(chunk)
-    except OSError as error:
-        if error.errno == errno.EIO:
-            break
-        raise
-os.close(master)
-exit_code = child.wait()
-sys.stdout.buffer.write(b"".join(chunks))
-raise SystemExit(exit_code)
-`;
 async function arashiPty(cwd: string, args: string[], input: string, env?: Record<string, string>) {
   const command = [process.execPath, join(import.meta.dirname, "../../src/index.ts"), ...args];
-  const child = spawn(["python3", "-c", PTY_RUNNER, cwd, ...command], {
-    cwd,
-    env: env ? { ...process.env, ...env } : undefined,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const child = spawn(
+    [
+      process.execPath,
+      join(import.meta.dirname, "../helpers/pty-input.mjs"),
+      cwd,
+      JSON.stringify(command),
+    ],
+    {
+      cwd,
+      env: env ? { ...process.env, ...env } : undefined,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   child.stdin?.end(input);
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),

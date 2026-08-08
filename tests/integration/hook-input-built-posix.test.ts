@@ -16,7 +16,7 @@ interface PtySessionResult {
 
 const root = join(import.meta.dirname, "../..");
 const binary = join(root, "bin", "arashi.bin");
-const sessionHelper = join(root, "tests/helpers/pty-session.py");
+const sessionHelper = join(root, "tests/helpers/pty-session.mjs");
 const workspaces: Workspace[] = [];
 const tempRoots: string[] = [];
 
@@ -33,33 +33,34 @@ async function runBuiltSession(
   const resultPath = join(fixture, "result.json");
   const stdoutPath = join(fixture, "stdout.bin");
   const stderrPath = join(fixture, "stderr.bin");
-  const result = spawnSync(
-    "python3",
-    [
-      sessionHelper,
-      JSON.stringify({
-        command: [binary, "create", branch, "--no-progress", "--no-launch"],
-        cwd: workspace.workspacePath,
-        prompt,
-        response,
-        resultPath,
-        stderrPath,
-        stdoutPath,
-        timeoutSeconds: 15,
-      }),
-    ],
-    {
+  const sessionConfig = Buffer.from(
+    JSON.stringify({
+      command: [binary, "create", branch, "--no-progress", "--no-launch"],
       cwd: workspace.workspacePath,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: join(fixture, "home"),
-        NO_COLOR: "1",
-      },
+      prompt,
+      response,
+      resultPath,
+      stderrPath,
+      stdoutPath,
+      timeoutSeconds: 15,
+    }),
+    "utf8",
+  ).toString("base64");
+  const result = spawnSync(process.execPath, [sessionHelper, sessionConfig], {
+    cwd: workspace.workspacePath,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: join(fixture, "home"),
+      NO_COLOR: "1",
     },
-  );
+  });
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  return JSON.parse(await readFile(resultPath, "utf8"));
+  return {
+    ...JSON.parse(await readFile(resultPath, "utf8")),
+    stderrBase64: (await readFile(stderrPath)).toString("base64"),
+    stdoutBase64: (await readFile(stdoutPath)).toString("base64"),
+  };
 }
 
 async function workspaceWithHook(timeout: number, body: string): Promise<Workspace> {

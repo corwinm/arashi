@@ -119,9 +119,9 @@ printf '%s:%s\\n' "$ARASHI_HOOK_INPUT" "$ARASHI_REPO_NAME" >> '${record}'`,
       );
 
       const result = spawnSync(
-        "python3",
+        process.execPath,
         [
-          join(import.meta.dirname, "../helpers/pty-command.py"),
+          join(import.meta.dirname, "../helpers/pty-command.mjs"),
           workspace.rootPath,
           "remove interrupt prompt:",
           "__CTRL_C__",

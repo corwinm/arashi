@@ -31,9 +31,9 @@ const runPty = (
   env: NodeJS.ProcessEnv,
 ) =>
   spawnSync(
-    "python3",
+    process.execPath,
     [
-      join(root, "tests/helpers/pty-command.py"),
+      join(root, "tests/helpers/pty-command.mjs"),
       cwd,
       prompt,
       response,
