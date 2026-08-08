@@ -1020,7 +1020,6 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
 
     try {
       const timeoutCleanup = proc.exited.then(() => {
-        if (hookTimeout) clearTimeout(hookTimeout);
         if (timeoutTriggered) signalHookTree("SIGKILL");
         if (timeoutEscalation) clearTimeout(timeoutEscalation);
       });
@@ -1035,6 +1034,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
           ]);
 
       await timeoutCleanup;
+      if (hookTimeout) clearTimeout(hookTimeout);
       if (interruptCleanup) await interruptCleanup;
 
       const duration = Date.now() - startTime;

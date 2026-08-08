@@ -217,6 +217,41 @@ describe("hook execution integration", () => {
   );
 
   test.runIf(process.platform !== "win32")(
+    "times out after the direct hook exits while a descendant retains output streams",
+    async () => {
+      const descendantPath = join(testRepo, "settlement-timeout-descendant");
+      const hookPath = createMockHook(`sleep 60 &\nprintf '%s' "$!" > '${descendantPath}'\nexit 0`);
+      let descendantPid: number | undefined;
+
+      try {
+        const result = await executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookName: "settlement-timeout-hook",
+          quiet: true,
+          scriptPath: hookPath,
+          timeout: 300,
+        });
+        descendantPid = Number.parseInt(readFileSync(descendantPath, "utf8"), 10);
+        const timedOutDescendantPid = descendantPid;
+
+        expect(result.success).toBe(false);
+        expect(result.timedOut).toBe(true);
+        expect(() => process.kill(timedOutDescendantPid, 0)).toThrow();
+      } finally {
+        if (descendantPid) {
+          try {
+            process.kill(descendantPid, "SIGKILL");
+          } catch {
+            // The expected timeout cleanup already terminated the descendant.
+          }
+        }
+        cleanupTestRepo(hookPath);
+      }
+    },
+    5000,
+  );
+
+  test.runIf(process.platform !== "win32")(
     "terminates redirected descendants after the direct hook times out",
     async () => {
       const descendantPath = join(testRepo, "timeout-descendant");
