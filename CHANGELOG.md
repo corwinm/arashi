@@ -1,3 +1,13 @@
+## [1.28.0](https://github.com/corwinm/arashi/compare/v1.27.0...v1.28.0) (2026-08-08)
+
+### Features
+
+- support interactive lifecycle hook input ([#128](https://github.com/corwinm/arashi/issues/128)) ([21a0e8a](https://github.com/corwinm/arashi/commit/21a0e8a8fb732dfc20ca7d677a027afcccaf2b63))
+
+### Bug Fixes
+
+- separate all hook output from spinners ([#129](https://github.com/corwinm/arashi/issues/129)) ([6920f8c](https://github.com/corwinm/arashi/commit/6920f8ca5d626afd48c62cc7656d112afc2538d0))
+
 ## [1.27.0](https://github.com/corwinm/arashi/compare/v1.26.2...v1.27.0) (2026-08-07)
 
 ### Features
