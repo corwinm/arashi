@@ -844,6 +844,18 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
         }
       }
     }
+    if (pendingInterrupt) {
+      return {
+        duration: Date.now() - startTime,
+        exitCode: INTERRUPTED_EXIT_CODE,
+        killed: true,
+        signalCode: "SIGINT",
+        stderr: "",
+        stdout: "",
+        success: false,
+        timedOut: false,
+      };
+    }
     const proc = runtime.spawn(getHookSpawnCommand(options.scriptPath), {
       callBatchFile: /\.(?:cmd|bat)$/i.test(options.scriptPath),
       cwd: options.context.repoPath,
@@ -853,7 +865,6 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       stdin: hookInputMode === "tty" ? "inherit" : "ignore",
       stderr: "pipe",
       stdout: "pipe",
-      timeout,
     });
     if (lineageDescriptor !== undefined) {
       closeSync(lineageDescriptor);
@@ -863,6 +874,9 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
     let interruptEscalation: ReturnType<typeof setTimeout> | undefined;
     let interruptCleanup: Promise<void> | undefined;
     let interruptedProcessIds: number[] = [];
+    let timeoutTriggered = false;
+    let hookTimeout: ReturnType<typeof setTimeout> | undefined;
+    let timeoutEscalation: ReturnType<typeof setTimeout> | undefined;
     const captureHookProcessTree = (roots: number[]): number[] => {
       const listing =
         process.platform === "win32"
@@ -976,6 +990,11 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
         }
       }
     };
+    hookTimeout = setTimeout(() => {
+      timeoutTriggered = true;
+      signalHookTree("SIGTERM");
+      timeoutEscalation = setTimeout(() => signalHookTree("SIGKILL"), 250);
+    }, timeout);
     activeForwardInterrupt = (): void => {
       pendingInterrupt = true;
       if (interrupted) return;
@@ -1001,7 +1020,9 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
 
     try {
       const timeoutCleanup = proc.exited.then(() => {
-        if (proc.killed && proc.signalCode === "SIGTERM") signalHookTree("SIGKILL");
+        if (hookTimeout) clearTimeout(hookTimeout);
+        if (timeoutTriggered) signalHookTree("SIGKILL");
+        if (timeoutEscalation) clearTimeout(timeoutEscalation);
       });
       const [stdout, stderr] = interactiveOutput
         ? await Promise.all([
@@ -1018,19 +1039,25 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
 
       const duration = Date.now() - startTime;
       const childExitCode = proc.exitCode ?? -ONE;
-      const exitCode = interrupted ? INTERRUPTED_EXIT_CODE : childExitCode;
+      const exitCode = interrupted
+        ? INTERRUPTED_EXIT_CODE
+        : timeoutTriggered
+          ? -ONE
+          : childExitCode;
 
       return {
         duration,
         exitCode,
-        killed: proc.killed || interrupted,
-        signalCode: interrupted ? "SIGINT" : proc.signalCode,
+        killed: proc.killed || interrupted || timeoutTriggered,
+        signalCode: interrupted ? "SIGINT" : timeoutTriggered ? "SIGTERM" : proc.signalCode,
         stderr,
         stdout,
         success: exitCode === ZERO,
-        timedOut: proc.killed && proc.signalCode === "SIGTERM",
+        timedOut: timeoutTriggered,
       };
     } finally {
+      if (hookTimeout) clearTimeout(hookTimeout);
+      if (timeoutEscalation) clearTimeout(timeoutEscalation);
       if (interruptEscalation) clearTimeout(interruptEscalation);
     }
   } catch (error) {

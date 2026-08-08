@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { spawn } from "child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -16,6 +16,7 @@ import {
   runLifecycleHook,
   validateHook,
 } from "../../src/lib/hooks";
+import { runtime } from "../../src/lib/runtime";
 
 describe("hook execution integration", () => {
   let testRepo: string;
@@ -139,6 +140,81 @@ describe("hook execution integration", () => {
       cleanupTestRepo(hookPath);
     }
   });
+
+  test.runIf(process.platform !== "win32")(
+    "reports timeout when a hook handles SIGTERM and exits zero",
+    async () => {
+      const hookPath = createMockHook("trap 'exit 0' TERM\nwhile :; do :; done");
+
+      try {
+        const result = await executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookName: "handled-timeout-hook",
+          quiet: true,
+          scriptPath: hookPath,
+          timeout: 1000,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.timedOut).toBe(true);
+      } finally {
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "does not launch a hook after an interrupt during observer startup",
+    async () => {
+      const stdinTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      const sideEffectPath = join(testRepo, "hook-side-effect");
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+      const hookPath = createMockHook(`printf launched > '${sideEffectPath}'`);
+      const spawnObserver = vi.spyOn(runtime, "spawn");
+      spawnObserver.mockImplementationOnce((_command, options = {}) => {
+        const readyPath = options.env?.ARASHI_SIGNAL_OBSERVER_READY;
+        const markerPath = options.env?.ARASHI_TERMINAL_SIGINT;
+        if (!readyPath || !markerPath) throw new Error("Expected observer marker paths");
+        writeFileSync(markerPath, "observed");
+        process.emit("SIGINT", "SIGINT");
+        writeFileSync(readyPath, "ready");
+        return {
+          exited: Promise.resolve(0),
+          exitCode: 0,
+          kill: () => true,
+          killed: false,
+          pid: undefined,
+          signalCode: null,
+          spawned: Promise.resolve(true),
+          spawnError: null,
+          stderr: new ReadableStream(),
+          stdin: null,
+          stdout: new ReadableStream(),
+          unref: () => undefined,
+        };
+      });
+
+      try {
+        const result = await executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookInputMode: "tty",
+          hookName: "startup-interrupt-hook",
+          quiet: true,
+          scriptPath: hookPath,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.exitCode).toBe(130);
+        expect(result.signalCode).toBe("SIGINT");
+        expect(existsSync(sideEffectPath)).toBe(false);
+      } finally {
+        spawnObserver.mockRestore();
+        if (stdinTTYDescriptor) Object.defineProperty(process.stdin, "isTTY", stdinTTYDescriptor);
+        else Reflect.deleteProperty(process.stdin, "isTTY");
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
 
   test.runIf(process.platform !== "win32")(
     "terminates redirected descendants after the direct hook times out",
