@@ -1,6 +1,15 @@
 import { runtime } from "./runtime.ts";
 import { access, readdir, stat } from "fs/promises";
-import { closeSync, constants, mkdtempSync, openSync, readdirSync, readlinkSync, rmSync } from "fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+} from "fs";
 import { homedir, tmpdir } from "os";
 import { isAbsolute, join, normalize, resolve } from "path";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";
@@ -792,6 +801,8 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
 
   let lineageDirectory: string | undefined;
   let lineageDescriptor: number | undefined;
+  let terminalSignalMarkerPath: string | undefined;
+  let terminalSignalObserver: ReturnType<typeof runtime.spawn> | undefined;
   let pendingInterrupt = false;
   let activeForwardInterrupt = (): void => {
     pendingInterrupt = true;
@@ -802,6 +813,36 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
     if (process.platform !== "win32") {
       lineageDirectory = mkdtempSync(join(tmpdir(), "arashi-hook-lineage-"));
       lineageDescriptor = openSync(join(lineageDirectory, "lineage"), "w");
+      if (hookInputMode === "tty" && process.stdin.isTTY === true) {
+        terminalSignalMarkerPath = join(lineageDirectory, "terminal-sigint");
+        const observerReadyPath = join(lineageDirectory, "terminal-observer-ready");
+        terminalSignalObserver = runtime.spawn(
+          [
+            process.execPath,
+            "-e",
+            'const fs=require("node:fs");fs.writeFileSync(process.env.ARASHI_SIGNAL_OBSERVER_READY,"");process.on("SIGINT",()=>fs.writeFileSync(process.env.ARASHI_TERMINAL_SIGINT,""));process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000);',
+          ],
+          {
+            env: {
+              ...process.env,
+              ARASHI_SIGNAL_OBSERVER_READY: observerReadyPath,
+              ARASHI_TERMINAL_SIGINT: terminalSignalMarkerPath,
+            },
+            stderr: "ignore",
+            stdin: "ignore",
+            stdout: "ignore",
+          },
+        );
+        await terminalSignalObserver.spawned;
+        for (let attempt = 0; attempt < 100 && !existsSync(observerReadyPath); attempt += ONE) {
+          await new Promise((resolveReady) => setTimeout(resolveReady, ONE));
+        }
+        if (!existsSync(observerReadyPath)) {
+          terminalSignalObserver.kill("SIGTERM");
+          terminalSignalObserver = undefined;
+          terminalSignalMarkerPath = undefined;
+        }
+      }
     }
     const proc = runtime.spawn(getHookSpawnCommand(options.scriptPath), {
       callBatchFile: /\.(?:cmd|bat)$/i.test(options.scriptPath),
@@ -939,17 +980,21 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       pendingInterrupt = true;
       if (interrupted) return;
       interrupted = true;
-      const terminalDeliveredInterrupt =
-        process.platform !== "win32" && hookInputMode === "tty" && process.stdin.isTTY === true;
-      if (!terminalDeliveredInterrupt) signalHookTree("SIGINT");
       interruptCleanup = new Promise((resolveCleanup) => {
-        interruptEscalation = setTimeout(() => {
-          try {
-            signalHookTree("SIGKILL");
-          } finally {
-            resolveCleanup();
-          }
-        }, 250);
+        const forwardOrObserveInterrupt = (): void => {
+          const terminalDeliveredInterrupt =
+            terminalSignalMarkerPath !== undefined && existsSync(terminalSignalMarkerPath);
+          if (!terminalDeliveredInterrupt) signalHookTree("SIGINT");
+          interruptEscalation = setTimeout(() => {
+            try {
+              signalHookTree("SIGKILL");
+            } finally {
+              resolveCleanup();
+            }
+          }, 250);
+        };
+        if (terminalSignalObserver) setTimeout(forwardOrObserveInterrupt, 25);
+        else forwardOrObserveInterrupt();
       });
     };
     if (pendingInterrupt) activeForwardInterrupt();
@@ -1005,6 +1050,14 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
   } finally {
     if (pendingInterrupt) retainedInterruptHandlers.add(handleInterrupt);
     else process.off("SIGINT", handleInterrupt);
+    if (terminalSignalObserver) {
+      terminalSignalObserver.kill("SIGTERM");
+      await Promise.race([
+        terminalSignalObserver.exited,
+        new Promise((resolveObserver) => setTimeout(resolveObserver, 100)),
+      ]);
+      if (terminalSignalObserver.exitCode === null) terminalSignalObserver.kill("SIGKILL");
+    }
     if (lineageDescriptor !== undefined) closeSync(lineageDescriptor);
     if (lineageDirectory) rmSync(lineageDirectory, { force: true, recursive: true });
   }

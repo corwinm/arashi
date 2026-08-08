@@ -188,8 +188,11 @@ describe("hook execution integration", () => {
     "reports cancellation when an interrupted hook traps SIGINT and exits zero",
     async () => {
       const readyPath = join(testRepo, "hook-ready");
+      const interruptPath = join(testRepo, "hook-interrupted");
+      const stdinTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
       const hookPath = createMockHook(
-        `trap 'exit 0' INT\nprintf ready > '${readyPath}'\nwhile true; do sleep 0.1; done`,
+        `trap 'printf interrupted > "${interruptPath}"; exit 0' INT\nprintf ready > '${readyPath}'\nwhile true; do sleep 0.1; done`,
       );
 
       try {
@@ -211,7 +214,10 @@ describe("hook execution integration", () => {
         expect(result.success).toBe(false);
         expect(result.exitCode).toBe(130);
         expect(result.signalCode).toBe("SIGINT");
+        expect(readFileSync(interruptPath, "utf8")).toBe("interrupted");
       } finally {
+        if (stdinTTYDescriptor) Object.defineProperty(process.stdin, "isTTY", stdinTTYDescriptor);
+        else Reflect.deleteProperty(process.stdin, "isTTY");
         cleanupTestRepo(hookPath);
       }
     },
