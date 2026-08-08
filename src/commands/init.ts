@@ -710,7 +710,7 @@ set -e
 # Native examples use Bash read, PowerShell Read-Host, and cmd set /p.
 # Do not enter a password, token, or other secret into lifecycle hook prompts.
 if [ "\${ARASHI_HOOK_INPUT:-unavailable}" = "tty" ]; then
-  printf 'Continue create? [y/N] '
+  printf 'Continue create? [y/N] ' >&2
   IFS= read -r answer
   [ "$answer" = "y" ] || exit 1
 fi
@@ -891,7 +891,7 @@ $ErrorActionPreference = "Stop"
 # stdin; disabled and unavailable receive immediate EOF. --no-hook-input is
 # invocation-only and does not skip hooks; --json takes precedence as disabled.
 # Do not enter passwords or secrets into lifecycle hook prompts.
-if ($env:ARASHI_HOOK_INPUT -eq "tty") { $answer = Read-Host "Continue $lifecycle? [y/N]"; if ($answer -ne "y") { exit 1 } }
+if ($env:ARASHI_HOOK_INPUT -eq "tty") { [Console]::Error.Write("Continue $lifecycle? [y/N] "); $answer = Read-Host; if ($answer -ne "y") { exit 1 } }
 ${branchAssertion}
 ${targetAssertions}
 ${packageExample}
@@ -909,7 +909,8 @@ rem invocation-only and does not skip hooks; --json takes precedence as disabled
 rem Do not enter passwords or secrets into lifecycle hook prompts.
 if not "%ARASHI_HOOK_INPUT%"=="tty" goto arashi_hook_input_done
 set "ARASHI_HOOK_ANSWER="
-set /p "ARASHI_HOOK_ANSWER=Continue ${lifecycle}? [y/N] "
+<nul set /p "=Continue ${lifecycle}? [y/N] " 1>&2
+set /p "ARASHI_HOOK_ANSWER="
 if /i not "%ARASHI_HOOK_ANSWER%"=="y" exit /b 1
 :arashi_hook_input_done
 echo ${lifecycle} hook complete

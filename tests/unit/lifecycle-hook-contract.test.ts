@@ -370,7 +370,7 @@ describe("lifecycle hook contract", () => {
       .map((template) => template.content)
       .join("\n");
     expect(posix).toContain("ARASHI_HOOK_INPUT");
-    expect(posix).toMatch(/ARASHI_HOOK_INPUT.*tty[\s\S]*read/);
+    expect(posix).toMatch(/ARASHI_HOOK_INPUT.*tty[\s\S]*printf[^\n]*>&2[\s\S]*read/);
     expect(posix).toMatch(/password[\s\S]*token[\s\S]*secret/i);
 
     const windows = getInitHookTemplates("win32");
@@ -380,8 +380,11 @@ describe("lifecycle hook contract", () => {
     expect(cmd).toHaveLength(6);
     const powershellContent = powershell.map((template) => template.content).join("\n");
     const cmdContent = cmd.map((template) => template.content).join("\n");
-    expect(powershellContent).toMatch(/ARASHI_HOOK_INPUT[\s\S]*Read-Host/);
+    expect(powershellContent).toMatch(
+      /ARASHI_HOOK_INPUT[\s\S]*\[Console\]::Error\.Write[\s\S]*Read-Host/,
+    );
     expect(cmdContent).toMatch(/ARASHI_HOOK_INPUT[\s\S]*set \/p/);
+    expect(cmdContent).toMatch(/<nul set \/p[^\n]*1>&2[\s\S]*set \/p "ARASHI_HOOK_ANSWER="/);
     for (const content of [powershellContent, cmdContent]) {
       expect(content).toMatch(/tty, disabled, or unavailable/);
       expect(content).toMatch(/immediate EOF/);
