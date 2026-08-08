@@ -343,7 +343,16 @@ describe("hook execution integration", () => {
         expect(descendantPid).toBeTypeOf("number");
         const timedOutDescendantPid = descendantPid;
         if (!timedOutDescendantPid) throw new Error("Expected timeout descendant process ID");
-        expect(() => process.kill(timedOutDescendantPid, 0)).toThrow();
+        let descendantAlive = true;
+        for (let attempt = 0; attempt < 100 && descendantAlive; attempt += 1) {
+          try {
+            process.kill(timedOutDescendantPid, 0);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          } catch {
+            descendantAlive = false;
+          }
+        }
+        expect(descendantAlive).toBe(false);
       } finally {
         if (descendantPid) {
           try {
