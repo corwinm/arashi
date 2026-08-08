@@ -818,9 +818,9 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
         const observerReadyPath = join(lineageDirectory, "terminal-observer-ready");
         terminalSignalObserver = runtime.spawn(
           [
-            process.execPath,
-            "-e",
-            'const fs=require("node:fs");fs.writeFileSync(process.env.ARASHI_SIGNAL_OBSERVER_READY,"");process.on("SIGINT",()=>fs.writeFileSync(process.env.ARASHI_TERMINAL_SIGINT,""));process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000);',
+            "sh",
+            "-c",
+            'trap \'printf observed > "$ARASHI_TERMINAL_SIGINT"\' INT; trap \'kill "$observer_child" 2>/dev/null; exit 0\' TERM; printf ready > "$ARASHI_SIGNAL_OBSERVER_READY"; while :; do sleep 3600 & observer_child=$!; wait "$observer_child"; done',
           ],
           {
             env: {

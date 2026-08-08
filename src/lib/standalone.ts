@@ -170,7 +170,7 @@ export async function runStandaloneGlobalHooks(
       targetWorktreePath: worktreePath,
       workspaceMode: "standalone",
     });
-    if (!result.success && !continueOnFailure) {
+    if (!result.success && (!continueOnFailure || result.signalCode === "SIGINT")) {
       throw new StandaloneHookError(hookName, hook.scriptPath, outcomes);
     }
   }

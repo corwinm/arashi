@@ -1613,7 +1613,7 @@ const runRemoveLifecycleHook = async (options: {
         failures.push(
           `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${failureMessage}`,
         );
-        if (options.stopOnFailure) {
+        if (options.stopOnFailure || result.signalCode === "SIGINT") {
           break;
         }
       }

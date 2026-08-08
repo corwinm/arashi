@@ -63,6 +63,19 @@ describe("lifecycle hook contract", () => {
     );
   });
 
+  test("stops configured and standalone hook chains after SIGINT", async () => {
+    const [configuredSource, standaloneSource] = await Promise.all([
+      readFile(join(process.cwd(), "src", "commands", "remove.ts"), "utf8"),
+      readFile(join(process.cwd(), "src", "lib", "standalone.ts"), "utf8"),
+    ]);
+    expect(configuredSource).toContain(
+      'if (options.stopOnFailure || result.signalCode === "SIGINT")',
+    );
+    expect(standaloneSource).toContain(
+      'if (!result.success && (!continueOnFailure || result.signalCode === "SIGINT"))',
+    );
+  });
+
   test("publishes the same timeout bounds in the JSON schema", async () => {
     const schema = JSON.parse(
       await readFile(join(process.cwd(), "schema", "config.schema.json"), "utf8"),
