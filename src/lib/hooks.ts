@@ -962,7 +962,13 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       const lineagePath = join(lineageDirectory, "lineage");
       if (process.platform === "linux") {
         const holders: number[] = [];
-        for (const entry of readdirSync("/proc", { withFileTypes: true })) {
+        let processEntries: Array<import("fs").Dirent<string>>;
+        try {
+          processEntries = readdirSync("/proc", { withFileTypes: true });
+        } catch {
+          return [];
+        }
+        for (const entry of processEntries) {
           if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
           const descriptorDirectory = join("/proc", entry.name, "fd");
           try {

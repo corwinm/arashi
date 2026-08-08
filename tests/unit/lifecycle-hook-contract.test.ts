@@ -56,6 +56,13 @@ describe("lifecycle hook contract", () => {
     }
   });
 
+  test("fails closed when Linux process enumeration is unavailable", async () => {
+    const source = await readFile(join(process.cwd(), "src", "lib", "hooks.ts"), "utf8");
+    expect(source).toMatch(
+      /try \{\s*processEntries = readdirSync\("\/proc", \{ withFileTypes: true \}\);\s*\} catch \{\s*return \[\];\s*\}/,
+    );
+  });
+
   test("routes configured remove hooks through centralized spinner ownership", async () => {
     const source = await readFile(join(process.cwd(), "src", "commands", "remove.ts"), "utf8");
     expect(source).toMatch(
