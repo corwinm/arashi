@@ -7,8 +7,10 @@ import {
   mkdtempSync,
   openSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   rmSync,
+  writeFileSync,
 } from "fs";
 import { homedir, tmpdir } from "os";
 import { isAbsolute, join, normalize, resolve } from "path";
@@ -802,6 +804,8 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
   let lineageDirectory: string | undefined;
   let lineageDescriptor: number | undefined;
   let terminalSignalMarkerPath: string | undefined;
+  let terminalSignalRequestPath: string | undefined;
+  let terminalSignalAckPath: string | undefined;
   let terminalSignalObserver: ReturnType<typeof runtime.spawn> | undefined;
   let settledResult: HookResult | undefined;
   let pendingInterrupt = false;
@@ -814,19 +818,23 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
     if (process.platform !== "win32") {
       lineageDirectory = mkdtempSync(join(tmpdir(), "arashi-hook-lineage-"));
       lineageDescriptor = openSync(join(lineageDirectory, "lineage"), "w");
-      if (hookInputMode === "tty" && process.stdin.isTTY === true) {
+      if (process.stdin.isTTY === true) {
         terminalSignalMarkerPath = join(lineageDirectory, "terminal-sigint");
+        terminalSignalRequestPath = join(lineageDirectory, "terminal-signal-request");
+        terminalSignalAckPath = join(lineageDirectory, "terminal-signal-ack");
         const observerReadyPath = join(lineageDirectory, "terminal-observer-ready");
         terminalSignalObserver = runtime.spawn(
           [
             "sh",
             "-c",
-            'trap \'printf observed > "$ARASHI_TERMINAL_SIGINT"\' INT; trap \'kill "$observer_child" 2>/dev/null; exit 0\' TERM; printf ready > "$ARASHI_SIGNAL_OBSERVER_READY"; while :; do sleep 3600 & observer_child=$!; wait "$observer_child"; done',
+            'trap \'printf observed > "$ARASHI_TERMINAL_SIGINT"\' INT; trap \'kill "$observer_child" 2>/dev/null; exit 0\' TERM; printf ready > "$ARASHI_SIGNAL_OBSERVER_READY"; while :; do if [ -f "$ARASHI_SIGNAL_REQUEST" ]; then if [ -f "$ARASHI_TERMINAL_SIGINT" ]; then printf terminal > "$ARASHI_SIGNAL_ACK"; else printf direct > "$ARASHI_SIGNAL_ACK"; fi; rm -f "$ARASHI_SIGNAL_REQUEST"; fi; sleep 0.005 & observer_child=$!; wait "$observer_child"; done',
           ],
           {
             env: {
               ...process.env,
               ARASHI_SIGNAL_OBSERVER_READY: observerReadyPath,
+              ARASHI_SIGNAL_REQUEST: terminalSignalRequestPath,
+              ARASHI_SIGNAL_ACK: terminalSignalAckPath,
               ARASHI_TERMINAL_SIGINT: terminalSignalMarkerPath,
             },
             stderr: "ignore",
@@ -844,9 +852,11 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
           terminalSignalMarkerPath = undefined;
         }
       }
-    } else if (hookInputMode === "tty" && process.stdin.isTTY === true) {
+    } else if (process.stdin.isTTY === true) {
       lineageDirectory = mkdtempSync(join(tmpdir(), "arashi-hook-observer-"));
       terminalSignalMarkerPath = join(lineageDirectory, "terminal-sigint");
+      terminalSignalRequestPath = join(lineageDirectory, "terminal-signal-request");
+      terminalSignalAckPath = join(lineageDirectory, "terminal-signal-ack");
       const observerReadyPath = join(lineageDirectory, "terminal-observer-ready");
       terminalSignalObserver = runtime.spawn(
         [
@@ -854,12 +864,14 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
           "-NoLogo",
           "-NoProfile",
           "-Command",
-          '$handler = [ConsoleCancelEventHandler]{ param($sender, $eventArgs) [IO.File]::WriteAllText($env:ARASHI_TERMINAL_SIGINT, "observed"); $eventArgs.Cancel = $true }; [Console]::add_CancelKeyPress($handler); [IO.File]::WriteAllText($env:ARASHI_SIGNAL_OBSERVER_READY, "ready"); try { while ($true) { Start-Sleep -Seconds 3600 } } finally { [Console]::remove_CancelKeyPress($handler) }',
+          '$handler = [ConsoleCancelEventHandler]{ param($sender, $eventArgs) [IO.File]::WriteAllText($env:ARASHI_TERMINAL_SIGINT, "observed"); $eventArgs.Cancel = $true }; [Console]::add_CancelKeyPress($handler); [IO.File]::WriteAllText($env:ARASHI_SIGNAL_OBSERVER_READY, "ready"); try { while ($true) { if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST)) { $response = if ([IO.File]::Exists($env:ARASHI_TERMINAL_SIGINT)) { "terminal" } else { "direct" }; [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, $response); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; Start-Sleep -Milliseconds 5 } } finally { [Console]::remove_CancelKeyPress($handler) }',
         ],
         {
           env: {
             ...process.env,
             ARASHI_SIGNAL_OBSERVER_READY: observerReadyPath,
+            ARASHI_SIGNAL_REQUEST: terminalSignalRequestPath,
+            ARASHI_SIGNAL_ACK: terminalSignalAckPath,
             ARASHI_TERMINAL_SIGINT: terminalSignalMarkerPath,
           },
           stderr: "ignore",
@@ -1034,20 +1046,38 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       if (interrupted) return;
       interrupted = true;
       interruptCleanup = new Promise((resolveCleanup) => {
-        const forwardOrObserveInterrupt = (): void => {
-          const terminalDeliveredInterrupt =
-            terminalSignalMarkerPath !== undefined && existsSync(terminalSignalMarkerPath);
-          if (!terminalDeliveredInterrupt) signalHookTree("SIGINT");
-          interruptEscalation = setTimeout(() => {
-            try {
-              signalHookTree("SIGKILL");
-            } finally {
-              resolveCleanup();
+        interruptEscalation = setTimeout(() => {
+          try {
+            signalHookTree("SIGKILL");
+          } finally {
+            resolveCleanup();
+          }
+        }, 250);
+        const forwardOrObserveInterrupt = async (): Promise<void> => {
+          if (
+            terminalSignalObserver &&
+            terminalSignalMarkerPath &&
+            terminalSignalRequestPath &&
+            terminalSignalAckPath
+          ) {
+            rmSync(terminalSignalAckPath, { force: true });
+            writeFileSync(terminalSignalRequestPath, "check");
+            for (
+              let attempt = 0;
+              attempt < 100 &&
+              !existsSync(terminalSignalMarkerPath) &&
+              !existsSync(terminalSignalAckPath);
+              attempt += ONE
+            ) {
+              await new Promise((resolveAck) => setTimeout(resolveAck, ONE));
             }
-          }, 250);
+            if (existsSync(terminalSignalMarkerPath)) return;
+            if (!existsSync(terminalSignalAckPath)) return;
+            if (readFileSync(terminalSignalAckPath, "utf8") === "terminal") return;
+          }
+          signalHookTree("SIGINT");
         };
-        if (terminalSignalObserver) setTimeout(forwardOrObserveInterrupt, 25);
-        else forwardOrObserveInterrupt();
+        void forwardOrObserveInterrupt();
       });
     };
     if (pendingInterrupt) activeForwardInterrupt();

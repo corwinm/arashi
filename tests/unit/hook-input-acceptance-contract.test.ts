@@ -12,10 +12,14 @@ describe("built hook-input acceptance contract", () => {
 
     expect(hooks).toContain("ConsoleCancelEventHandler");
     expect(hooks).toContain("powershell.exe");
+    expect(hooks).toContain("ARASHI_SIGNAL_REQUEST");
+    expect(hooks).toContain("ARASHI_SIGNAL_ACK");
+    expect(hooks).not.toContain("setTimeout(forwardOrObserveInterrupt, 25)");
 
     expect(fixture).toContain("windows:timeout:cleanup");
     expect(fixture).toContain("windows:interrupt:cleanup");
     expect(fixture).toContain("windows:interrupt:finally");
+    expect(fixture).toContain("windows:disabled-interrupt:finally");
     expect(fixture).toContain("windows:refusal:exact-output");
     expect(fixture).toContain("Assert-NoCreateArtifacts");
     expect(fixture).toContain("windows:terminal:reused");

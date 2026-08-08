@@ -221,6 +221,24 @@ finally {
     Assert-NoCreateArtifacts "feature/windows-interrupt-grace" "graceful interruption"
     Add-Content -Path $record -Value "windows:interrupt:finally"
 
+    $disabledInterruptFinallyMarker = Join-Path $temp "disabled-interrupt-finally.marker"
+    @"
+try {
+  Write-Host "disabled interrupt ready"
+  Start-Sleep -Seconds 30
+}
+finally {
+  Start-Sleep -Milliseconds 100
+  [IO.File]::WriteAllText('$disabledInterruptFinallyMarker', 'finalized')
+}
+"@ | Set-Content -Path (Join-Path $hooks "pre-create.ps1")
+    $disabledInterruptResult = Invoke-PtySession "disabled interrupt ready" "__CTRL_C__" @($binary, "create", "feature/windows-disabled-interrupt", "--no-hook-input")
+    if ($disabledInterruptResult.exitCode -eq 0) { throw "Disabled-input interrupted built CLI unexpectedly succeeded" }
+    if (-not $disabledInterruptResult.reused) { throw "Terminal was not reusable after disabled-input interruption" }
+    if (-not (Test-Path $disabledInterruptFinallyMarker)) { throw "Disabled-input Windows hook finally block was cut off" }
+    Assert-NoCreateArtifacts "feature/windows-disabled-interrupt" "disabled-input interruption"
+    Add-Content -Path $record -Value "windows:disabled-interrupt:finally"
+
     $interruptPid = Join-Path $temp "interrupt-hook.pid"
     $interruptChildPid = Join-Path $temp "interrupt-child.pid"
     @"
@@ -255,6 +273,7 @@ Set-Content -NoNewline -Path '$interruptChildPid' -Value `$child.Id
     "windows:timeout:cleanup",
     "windows:terminal:reused",
     "windows:interrupt:finally",
+    "windows:disabled-interrupt:finally",
     "windows:interrupt:cleanup"
   )
   if (Compare-Object $expected $actual) {
