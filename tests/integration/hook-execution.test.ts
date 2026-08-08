@@ -221,7 +221,10 @@ describe("hook execution integration", () => {
     async () => {
       const stdinTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
       Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-      const hookPath = createMockHook("exit 0");
+      const descendantPath = join(testRepo, "observer-shutdown-descendant");
+      const hookPath = createMockHook(
+        `(trap '' INT TERM; sleep 60) </dev/null >/dev/null 2>&1 &\nprintf '%s' "$!" > '${descendantPath}'\nexit 0`,
+      );
       const spawnObserver = vi.spyOn(runtime, "spawn");
       let observerExitCode: number | null = null;
       let resolveObserverExit: ((code: number) => void) | undefined;
@@ -256,6 +259,7 @@ describe("hook execution integration", () => {
           unref: () => undefined,
         };
       });
+      let descendantPid: number | undefined;
 
       try {
         const result = await executeHook({
@@ -269,7 +273,25 @@ describe("hook execution integration", () => {
         expect(result.success).toBe(false);
         expect(result.exitCode).toBe(130);
         expect(result.signalCode).toBe("SIGINT");
+        descendantPid = Number.parseInt(readFileSync(descendantPath, "utf8"), 10);
+        let descendantAlive = true;
+        for (let attempt = 0; attempt < 100 && descendantAlive; attempt += 1) {
+          try {
+            process.kill(descendantPid, 0);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          } catch {
+            descendantAlive = false;
+          }
+        }
+        expect(descendantAlive).toBe(false);
       } finally {
+        if (descendantPid) {
+          try {
+            process.kill(descendantPid, "SIGKILL");
+          } catch {
+            // The expected cleanup-window escalation already terminated the descendant.
+          }
+        }
         spawnObserver.mockRestore();
         if (stdinTTYDescriptor) Object.defineProperty(process.stdin, "isTTY", stdinTTYDescriptor);
         else Reflect.deleteProperty(process.stdin, "isTTY");

@@ -807,6 +807,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
   let terminalSignalRequestPath: string | undefined;
   let terminalSignalAckPath: string | undefined;
   let terminalSignalObserver: ReturnType<typeof runtime.spawn> | undefined;
+  let interruptCleanup: Promise<void> | undefined;
   let settledResult: HookResult | undefined;
   let pendingInterrupt = false;
   let activeForwardInterrupt = (): void => {
@@ -918,7 +919,6 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
     }
     let interrupted = false;
     let interruptEscalation: ReturnType<typeof setTimeout> | undefined;
-    let interruptCleanup: Promise<void> | undefined;
     let interruptedProcessIds: number[] = [];
     let timeoutTriggered = false;
     let hookTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -1158,6 +1158,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       ]);
       if (terminalSignalObserver.exitCode === null) terminalSignalObserver.kill("SIGKILL");
     }
+    if (interruptCleanup) await interruptCleanup;
     if (lineageDescriptor !== undefined) closeSync(lineageDescriptor);
     if (lineageDirectory) rmSync(lineageDirectory, { force: true, recursive: true });
     if (pendingInterrupt && settledResult) {
