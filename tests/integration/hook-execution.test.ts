@@ -217,6 +217,68 @@ describe("hook execution integration", () => {
   );
 
   test.runIf(process.platform !== "win32")(
+    "keeps SIGINT guarded while the terminal observer shuts down",
+    async () => {
+      const stdinTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+      const hookPath = createMockHook("exit 0");
+      const spawnObserver = vi.spyOn(runtime, "spawn");
+      let observerExitCode: number | null = null;
+      let resolveObserverExit: ((code: number) => void) | undefined;
+      const observerExited = new Promise<number>((resolve) => {
+        resolveObserverExit = resolve;
+      });
+      spawnObserver.mockImplementationOnce((_command, options = {}) => {
+        const readyPath = options.env?.ARASHI_SIGNAL_OBSERVER_READY;
+        if (!readyPath) throw new Error("Expected observer readiness path");
+        writeFileSync(readyPath, "ready");
+        return {
+          exited: observerExited,
+          get exitCode() {
+            return observerExitCode;
+          },
+          kill: (signal?: NodeJS.Signals) => {
+            if (signal === "SIGTERM") {
+              process.emit("SIGINT", "SIGINT");
+              observerExitCode = 0;
+              resolveObserverExit?.(0);
+            }
+            return true;
+          },
+          killed: false,
+          pid: undefined,
+          signalCode: null,
+          spawned: Promise.resolve(true),
+          spawnError: null,
+          stderr: new ReadableStream(),
+          stdin: null,
+          stdout: new ReadableStream(),
+          unref: () => undefined,
+        };
+      });
+
+      try {
+        const result = await executeHook({
+          context: createTestContext({ repoPath: testRepo }),
+          hookInputMode: "tty",
+          hookName: "observer-shutdown-interrupt-hook",
+          quiet: true,
+          scriptPath: hookPath,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.exitCode).toBe(130);
+        expect(result.signalCode).toBe("SIGINT");
+      } finally {
+        spawnObserver.mockRestore();
+        if (stdinTTYDescriptor) Object.defineProperty(process.stdin, "isTTY", stdinTTYDescriptor);
+        else Reflect.deleteProperty(process.stdin, "isTTY");
+        cleanupTestRepo(hookPath);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
     "times out after the direct hook exits while a descendant retains output streams",
     async () => {
       const descendantPath = join(testRepo, "settlement-timeout-descendant");

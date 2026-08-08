@@ -803,6 +803,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
   let lineageDescriptor: number | undefined;
   let terminalSignalMarkerPath: string | undefined;
   let terminalSignalObserver: ReturnType<typeof runtime.spawn> | undefined;
+  let settledResult: HookResult | undefined;
   let pendingInterrupt = false;
   let activeForwardInterrupt = (): void => {
     pendingInterrupt = true;
@@ -845,7 +846,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       }
     }
     if (pendingInterrupt) {
-      return {
+      settledResult = {
         duration: Date.now() - startTime,
         exitCode: INTERRUPTED_EXIT_CODE,
         killed: true,
@@ -855,6 +856,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
         success: false,
         timedOut: false,
       };
+      return settledResult;
     }
     const proc = runtime.spawn(getHookSpawnCommand(options.scriptPath), {
       callBatchFile: /\.(?:cmd|bat)$/i.test(options.scriptPath),
@@ -1045,7 +1047,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
           ? -ONE
           : childExitCode;
 
-      return {
+      settledResult = {
         duration,
         exitCode,
         killed: proc.killed || interrupted || timeoutTriggered,
@@ -1055,6 +1057,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
         success: exitCode === ZERO,
         timedOut: timeoutTriggered,
       };
+      return settledResult;
     } finally {
       if (hookTimeout) clearTimeout(hookTimeout);
       if (timeoutEscalation) clearTimeout(timeoutEscalation);
@@ -1064,7 +1067,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
     const duration = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    return {
+    settledResult = {
       duration,
       exitCode: -ONE,
       killed: false,
@@ -1074,9 +1077,8 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       success: false,
       timedOut: false,
     };
+    return settledResult;
   } finally {
-    if (pendingInterrupt) retainedInterruptHandlers.add(handleInterrupt);
-    else process.off("SIGINT", handleInterrupt);
     if (terminalSignalObserver) {
       terminalSignalObserver.kill("SIGTERM");
       await Promise.race([
@@ -1087,6 +1089,15 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
     }
     if (lineageDescriptor !== undefined) closeSync(lineageDescriptor);
     if (lineageDirectory) rmSync(lineageDirectory, { force: true, recursive: true });
+    if (pendingInterrupt && settledResult) {
+      settledResult.exitCode = INTERRUPTED_EXIT_CODE;
+      settledResult.killed = true;
+      settledResult.signalCode = "SIGINT";
+      settledResult.success = false;
+      settledResult.timedOut = false;
+    }
+    if (pendingInterrupt) retainedInterruptHandlers.add(handleInterrupt);
+    else process.off("SIGINT", handleInterrupt);
   }
 };
 
