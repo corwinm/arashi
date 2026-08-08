@@ -8,9 +8,15 @@ describe("built hook-input acceptance contract", () => {
   test("native Windows acceptance covers timeout, interruption cleanup, and terminal reuse", async () => {
     const fixture = await readFile(join(root, "tests/windows/hook-input-native.ps1"), "utf8");
     const helper = await readFile(join(root, "tests/windows/pty-command.mjs"), "utf8");
+    const hooks = await readFile(join(root, "src/lib/hooks.ts"), "utf8");
+
+    expect(hooks).toContain("ConsoleCancelEventHandler");
+    expect(hooks).toContain("powershell.exe");
 
     expect(fixture).toContain("windows:timeout:cleanup");
     expect(fixture).toContain("windows:interrupt:cleanup");
+    expect(fixture).toContain("windows:interrupt:handler");
+    expect(fixture).toContain("windows:interrupt:finally");
     expect(fixture).toContain("windows:refusal:exact-output");
     expect(fixture).toContain("Assert-NoCreateArtifacts");
     expect(fixture).toContain("windows:terminal:reused");

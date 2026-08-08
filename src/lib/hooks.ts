@@ -844,6 +844,38 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
           terminalSignalMarkerPath = undefined;
         }
       }
+    } else if (hookInputMode === "tty" && process.stdin.isTTY === true) {
+      lineageDirectory = mkdtempSync(join(tmpdir(), "arashi-hook-observer-"));
+      terminalSignalMarkerPath = join(lineageDirectory, "terminal-sigint");
+      const observerReadyPath = join(lineageDirectory, "terminal-observer-ready");
+      terminalSignalObserver = runtime.spawn(
+        [
+          "powershell.exe",
+          "-NoLogo",
+          "-NoProfile",
+          "-Command",
+          '$handler = [ConsoleCancelEventHandler]{ param($sender, $eventArgs) [IO.File]::WriteAllText($env:ARASHI_TERMINAL_SIGINT, "observed"); $eventArgs.Cancel = $true }; [Console]::add_CancelKeyPress($handler); [IO.File]::WriteAllText($env:ARASHI_SIGNAL_OBSERVER_READY, "ready"); try { while ($true) { Start-Sleep -Seconds 3600 } } finally { [Console]::remove_CancelKeyPress($handler) }',
+        ],
+        {
+          env: {
+            ...process.env,
+            ARASHI_SIGNAL_OBSERVER_READY: observerReadyPath,
+            ARASHI_TERMINAL_SIGINT: terminalSignalMarkerPath,
+          },
+          stderr: "ignore",
+          stdin: "ignore",
+          stdout: "ignore",
+        },
+      );
+      await terminalSignalObserver.spawned;
+      for (let attempt = 0; attempt < 100 && !existsSync(observerReadyPath); attempt += ONE) {
+        await new Promise((resolveReady) => setTimeout(resolveReady, ONE));
+      }
+      if (!existsSync(observerReadyPath)) {
+        terminalSignalObserver.kill("SIGTERM");
+        terminalSignalObserver = undefined;
+        terminalSignalMarkerPath = undefined;
+      }
     }
     if (pendingInterrupt) {
       settledResult = {
