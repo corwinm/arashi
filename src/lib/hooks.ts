@@ -827,7 +827,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
           [
             "sh",
             "-c",
-            'trap \'printf observed > "$ARASHI_TERMINAL_SIGINT"\' INT; trap \'kill "$observer_child" 2>/dev/null; exit 0\' TERM; printf ready > "$ARASHI_SIGNAL_OBSERVER_READY"; while :; do if [ -f "$ARASHI_SIGNAL_REQUEST" ]; then if [ -f "$ARASHI_TERMINAL_SIGINT" ]; then printf terminal > "$ARASHI_SIGNAL_ACK"; else printf direct > "$ARASHI_SIGNAL_ACK"; fi; rm -f "$ARASHI_SIGNAL_REQUEST"; fi; sleep 0.005 & observer_child=$!; wait "$observer_child"; done',
+            'trap \'printf observed > "$ARASHI_TERMINAL_SIGINT"; if [ -f "$ARASHI_SIGNAL_REQUEST" ]; then printf terminal > "$ARASHI_SIGNAL_ACK"; rm -f "$ARASHI_SIGNAL_REQUEST"; fi\' INT; trap \'kill "$observer_child" 2>/dev/null; exit 0\' TERM; printf ready > "$ARASHI_SIGNAL_OBSERVER_READY"; while :; do if [ -f "$ARASHI_SIGNAL_REQUEST" ]; then if [ -f "$ARASHI_TERMINAL_SIGINT" ]; then printf terminal > "$ARASHI_SIGNAL_ACK"; else printf direct > "$ARASHI_SIGNAL_ACK"; fi; rm -f "$ARASHI_SIGNAL_REQUEST"; fi; sleep 0.005 & observer_child=$!; wait "$observer_child"; done',
           ],
           {
             env: {
@@ -864,7 +864,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
           "-NoLogo",
           "-NoProfile",
           "-Command",
-          '$handler = [ConsoleCancelEventHandler]{ param($sender, $eventArgs) [IO.File]::WriteAllText($env:ARASHI_TERMINAL_SIGINT, "observed"); $eventArgs.Cancel = $true }; [Console]::add_CancelKeyPress($handler); [IO.File]::WriteAllText($env:ARASHI_SIGNAL_OBSERVER_READY, "ready"); try { while ($true) { if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST)) { $response = if ([IO.File]::Exists($env:ARASHI_TERMINAL_SIGINT)) { "terminal" } else { "direct" }; [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, $response); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; Start-Sleep -Milliseconds 5 } } finally { [Console]::remove_CancelKeyPress($handler) }',
+          '$handler = [ConsoleCancelEventHandler]{ param($sender, $eventArgs) [IO.File]::WriteAllText($env:ARASHI_TERMINAL_SIGINT, "observed"); if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST)) { [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, "terminal"); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; $eventArgs.Cancel = $true }; [Console]::add_CancelKeyPress($handler); [IO.File]::WriteAllText($env:ARASHI_SIGNAL_OBSERVER_READY, "ready"); try { while ($true) { if ([IO.File]::Exists($env:ARASHI_SIGNAL_REQUEST) -and [IO.File]::Exists($env:ARASHI_TERMINAL_SIGINT)) { [IO.File]::WriteAllText($env:ARASHI_SIGNAL_ACK, "terminal"); [IO.File]::Delete($env:ARASHI_SIGNAL_REQUEST) }; Start-Sleep -Milliseconds 5 } } finally { [Console]::remove_CancelKeyPress($handler) }',
         ],
         {
           env: {
@@ -1072,6 +1072,9 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
               await new Promise((resolveAck) => setTimeout(resolveAck, ONE));
             }
             if (existsSync(terminalSignalMarkerPath)) return;
+            // POSIX can acknowledge direct-only delivery after the shell trap boundary. Windows
+            // has no ordered cross-process completion event for console-control dispatch, so an
+            // absent acknowledgement is intentionally treated as unknown and never forwarded.
             if (!existsSync(terminalSignalAckPath)) return;
             if (readFileSync(terminalSignalAckPath, "utf8") === "terminal") return;
           }
