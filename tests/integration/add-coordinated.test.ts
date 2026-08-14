@@ -371,6 +371,28 @@ describe("add coordinated linked materialization", () => {
     expect(persisted.repos.child?.path).toBe(join(absoluteRepos, "child"));
   });
 
+  test("retains single-placement behavior for an unsafe relative repositories directory", async () => {
+    const topology = await createParentTopology("feature/root-repos");
+    const remote = await seedChildRemote(topology.root);
+    const activeConfigPath = join(topology.active, ".arashi", "config.json");
+    const activeConfig = JSON.parse(await readFile(activeConfigPath, "utf8")) as {
+      repos: Record<string, unknown>;
+      reposDir: string;
+    };
+    activeConfig.reposDir = ".";
+    await writeFile(activeConfigPath, JSON.stringify(activeConfig, null, 2));
+
+    const result = await runAdd(topology.active, remote);
+    const repository = repositoryResult(result);
+
+    expect(repository).toMatchObject({
+      canonicalPath: join(await realpath(topology.active), "child"),
+      materialization: "clone",
+      worktreePath: null,
+    });
+    expect(await runtime.file(join(topology.active, "child", ".git")).exists()).toBe(true);
+  });
+
   test("rejects canonical and active destination conflicts before mutation", async () => {
     for (const role of ["canonical", "active"] as const) {
       const topology = await createParentTopology(`feature/${role}`);
@@ -1152,6 +1174,68 @@ describe("add coordinated linked materialization", () => {
     expect(persistedNames.toSorted()).toEqual(successfulNames.toSorted());
     expect(await runtime.file(firstClone).exists()).toBe(results[0]?.exitCode === 0);
     expect(await runtime.file(secondClone).exists()).toBe(results[1]?.exitCode === 0);
+  });
+
+  test("serializes ignore reconciliation with the complete add transaction", async () => {
+    const topology = await createParentTopology("feature/ignore-transaction-lock");
+    const firstRoot = join(topology.root, "ignore-first-remote");
+    const secondRoot = join(topology.root, "ignore-second-remote");
+    await mkdir(firstRoot);
+    await mkdir(secondRoot);
+    const firstRemote = await seedChildRemote(firstRoot);
+    const secondRemote = await seedChildRemote(secondRoot);
+    let releaseFirst!: () => void;
+    let markFirstReached!: () => void;
+    const firstReached = new Promise<void>((resolveReached) => {
+      markFirstReached = resolveReached;
+    });
+    const release = new Promise<void>((resolveRelease) => {
+      releaseFirst = resolveRelease;
+    });
+
+    const first = executeAdd(
+      firstRemote,
+      { force: true, json: true, name: "ignore-one" },
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        afterIgnoreReconcile: async () => {
+          markFirstReached();
+          await release;
+        },
+      },
+    );
+    await firstReached;
+    const second = executeAdd(
+      secondRemote,
+      { force: true, json: true, name: "ignore-two" },
+      { configurationRoot: topology.active, executionRoot: topology.active },
+    );
+    releaseFirst();
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    const config = JSON.parse(
+      await readFile(join(topology.active, ".arashi", "config.json"), "utf8"),
+    ) as { repos: Record<string, unknown> };
+    expect(config.repos).toHaveProperty("ignore-one");
+    expect(config.repos).toHaveProperty("ignore-two");
+    await expect(
+      git(topology.canonical, ["check-ignore", "--no-index", "repos/ignore-two"]),
+    ).resolves.toBeDefined();
+  });
+
+  test("reclaims an abandoned configuration lock", async () => {
+    const topology = await createParentTopology("feature/stale-config-lock");
+    const remote = await seedChildRemote(topology.root);
+    const lockPath = join(topology.active, ".arashi-config.add.lock");
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: 2_147_483_647, token: "abandoned-test-owner" }),
+    );
+
+    const result = await runAdd(topology.active, remote);
+
+    expect(repositoryResult(result)).toMatchObject({ name: "child" });
+    expect(await runtime.file(lockPath).exists()).toBe(false);
   });
 
   test("preserves concurrent config bytes instead of falsely completing rollback", async () => {

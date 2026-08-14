@@ -10,7 +10,8 @@ import { runtime } from "../lib/runtime.ts";
  */
 
 import { AddCommandError, AddCommandErrorCode, ArashiError } from "../lib/errors.ts";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
+import { basename, dirname, join, relative, resolve } from "path";
+import { randomUUID } from "node:crypto";
 import { clone, exec as gitExec, getDefaultBranch } from "../lib/git.ts";
 import {
   configExists,
@@ -27,9 +28,10 @@ import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { executeClone } from "./clone.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
-import { chmod, mkdir, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import {
   reconcileRepositoryManagedIgnore,
+  classifyManagedPaths,
   restoreManagedIgnore,
   verifyManagedIgnoreRestored,
   inspectRepositoryManagedIgnore,
@@ -204,6 +206,7 @@ export interface AddRollbackDetails {
 export interface AddExecutionDependencies {
   afterConfigLoad?: () => Promise<void>;
   afterConfigPersist?: () => Promise<void>;
+  afterIgnoreReconcile?: () => Promise<void>;
   cloneRepository?: typeof clone;
   createCoordinatedBranch?: (
     canonicalPath: string,
@@ -224,20 +227,79 @@ export interface AddExecutionDependencies {
   restoreConfigBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
   restoreIgnore?: typeof restoreManagedIgnore;
   verifyIgnoreRestored?: typeof verifyManagedIgnoreRestored;
+  transactionLockHeld?: boolean;
 }
 
 const CONFIG_LOCK_RETRY_COUNT = 500;
 const CONFIG_LOCK_RETRY_DELAY_MS = 20;
+const INCOMPLETE_LOCK_STALE_MS = 30_000;
 
-const withConfigLock = async <T>(configPath: string, operation: () => Promise<T>): Promise<T> => {
-  const lockPath = join(dirname(dirname(configPath)), ".arashi-config.add.lock");
+interface LockOwner {
+  pid: number;
+  token: string;
+}
+
+const readLockOwner = async (lockPath: string): Promise<LockOwner | null> => {
+  try {
+    const owner = JSON.parse(await readFile(lockPath, "utf8")) as Partial<LockOwner>;
+    return Number.isInteger(owner.pid) && typeof owner.token === "string"
+      ? { pid: owner.pid as number, token: owner.token }
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const lockOwnerIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+};
+
+const reclaimAbandonedLock = async (lockPath: string): Promise<boolean> => {
+  const owner = await readLockOwner(lockPath);
+  if (owner && lockOwnerIsAlive(owner.pid)) return false;
+  if (!owner) {
+    try {
+      const lockStat = await stat(lockPath);
+      if (Date.now() - lockStat.mtimeMs < INCOMPLETE_LOCK_STALE_MS) return false;
+    } catch {
+      return true;
+    }
+  }
+  const observedOwner = await readLockOwner(lockPath);
+  if (owner?.token !== observedOwner?.token) return false;
+  await rm(lockPath, { force: true });
+  return true;
+};
+
+const withWorkspaceLock = async <T>(
+  configPath: string,
+  lockName: string,
+  operation: () => Promise<T>,
+): Promise<T> => {
+  const lockPath = join(dirname(dirname(configPath)), lockName);
   let lock: Awaited<ReturnType<typeof open>> | undefined;
+  const owner: LockOwner = { pid: process.pid, token: randomUUID() };
   for (let attempt = 0; attempt < CONFIG_LOCK_RETRY_COUNT; attempt += 1) {
     try {
-      lock = await open(lockPath, "wx");
+      const candidate = await open(lockPath, "wx");
+      try {
+        await candidate.writeFile(JSON.stringify(owner));
+        await candidate.sync();
+        lock = candidate;
+      } catch (error) {
+        await candidate.close();
+        await rm(lockPath, { force: true });
+        throw error;
+      }
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (await reclaimAbandonedLock(lockPath)) continue;
       await new Promise((resolveDelay) => setTimeout(resolveDelay, CONFIG_LOCK_RETRY_DELAY_MS));
     }
   }
@@ -246,9 +308,16 @@ const withConfigLock = async <T>(configPath: string, operation: () => Promise<T>
     return await operation();
   } finally {
     await lock.close();
-    await rm(lockPath, { force: true });
+    const currentOwner = await readLockOwner(lockPath);
+    if (currentOwner?.token === owner.token) await rm(lockPath, { force: true });
   }
 };
+
+const withConfigLock = <T>(configPath: string, operation: () => Promise<T>): Promise<T> =>
+  withWorkspaceLock(configPath, ".arashi-config.add.lock", operation);
+
+const withAddTransactionLock = <T>(configPath: string, operation: () => Promise<T>): Promise<T> =>
+  withWorkspaceLock(configPath, ".arashi-add.transaction.lock", operation);
 
 // ============================================================================
 // URL Validation and Parsing
@@ -560,6 +629,15 @@ export const executeAdd = async (
   workspaceRoots: WorkspaceRoots,
   dependencies: AddExecutionDependencies = {},
 ): Promise<AddCommandResult> => {
+  const workspaceRoot = workspaceRoots.configurationRoot;
+  if (!dependencies.transactionLockHeld) {
+    return withAddTransactionLock(getConfigPath(workspaceRoot), () =>
+      executeAdd(gitUrl, options, workspaceRoots, {
+        ...dependencies,
+        transactionLockHeld: true,
+      }),
+    );
+  }
   const cloneRepository = dependencies.cloneRepository ?? clone;
   const createCoordinatedBranch =
     dependencies.createCoordinatedBranch ??
@@ -580,6 +658,7 @@ export const executeAdd = async (
   const observeWorktreeMetadata = dependencies.observeWorktreeMetadata ?? hasWorktreeMetadata;
   const afterConfigLoad = dependencies.afterConfigLoad;
   const afterConfigPersist = dependencies.afterConfigPersist;
+  const afterIgnoreReconcile = dependencies.afterIgnoreReconcile;
   const resolveMainWorktree =
     dependencies.resolveMainWorktree ??
     ((path: string) => resolveGitMainWorktree(path, { strict: true }));
@@ -600,7 +679,6 @@ export const executeAdd = async (
     dependencies.removeCanonicalClone ??
     (async (path: string) => rm(path, { force: true, recursive: true }));
   const restoreConfigBytes = dependencies.restoreConfigBytes ?? writeFile;
-  const workspaceRoot = workspaceRoots.configurationRoot;
   const executionRoot = workspaceRoots.executionRoot;
   let canonicalPath = "";
   let activePath: string | null = null;
@@ -694,13 +772,15 @@ export const executeAdd = async (
         { error: (error as Error).message, executionRoot: executionRootReal },
       );
     }
-    const canonicalRoot = resolvedMainRoot
+    const topologyCanonicalRoot = resolvedMainRoot
       ? await realpath(resolvedMainRoot)
       : await realpath(workspaceRoot);
+    const repositoryPathIsSafe = classifyManagedPaths([config.reposDir])[0]?.safety === "safe";
     const coordinated =
       resolvedMainRoot !== null &&
-      canonicalRoot !== executionRootReal &&
-      !isAbsolute(config.reposDir);
+      topologyCanonicalRoot !== executionRootReal &&
+      repositoryPathIsSafe;
+    const canonicalRoot = repositoryPathIsSafe ? topologyCanonicalRoot : executionRootReal;
     canonicalPath = resolve(canonicalRoot, configuredRepositoryPath);
     activePath = coordinated ? resolve(executionRootReal, configuredRepositoryPath) : null;
 
@@ -790,6 +870,7 @@ export const executeAdd = async (
         info(`Warning: ${warning}`);
       }
     }
+    await afterIgnoreReconcile?.();
 
     // Step 6: Atomically reserve the destination, then clone into the invocation-owned directory.
     currentPhase = "clone";
