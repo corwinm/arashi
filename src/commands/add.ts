@@ -396,11 +396,11 @@ const resolveAddTransactionLockPath = async (workspaceRoot: string): Promise<str
 // ============================================================================
 
 const WINDOWS_DRIVE_PATH = /^[a-zA-Z]:[\\/]/;
-const SCP_GIT_URL = /^(?:([^@\s/:]+)@)?([^@\s/:]+):([^/\s][^\s]*)$/;
+const SCP_GIT_URL = /^(?:([^@\s/:]+)@)?([^@\s/:]+):([^\s]+)$/;
 const SSH_GIT_URL = /^ssh:\/\/(?:([^@\s/]+)@)?([^@\s/:]+)\/([^\s]+)$/;
 
 const parseScpGitUrl = (url: string): RegExpMatchArray | null => {
-  if (WINDOWS_DRIVE_PATH.test(url)) return null;
+  if (WINDOWS_DRIVE_PATH.test(url) || url.includes("://")) return null;
   const colonIndex = url.indexOf(":");
   if (colonIndex <= ZERO || url.slice(0, colonIndex).includes("/")) return null;
   return url.match(SCP_GIT_URL);
@@ -516,7 +516,7 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
       const [, _gitUser, matchedHost, matchedPath] = sshMatch;
       host = matchedHost;
       const path = matchedPath.replace(/\.git\/?$/, "").replace(/\/+$/, "");
-      const pathParts = path.split("/");
+      const pathParts = path.split("/").filter(Boolean);
       if (pathParts.length >= 2) owner = pathParts[0];
       repository = getLastPathSegment(pathParts);
     } else if (GIT_URL_PATTERNS.git.test(trimmedUrl)) {

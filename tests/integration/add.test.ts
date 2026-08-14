@@ -111,6 +111,22 @@ describe("Add Command - URL Parsing", () => {
       url: "work-github:acme/api.git",
     },
     {
+      expected: {
+        host: "work-github",
+        owner: "srv",
+        repository: "api",
+      },
+      url: "git@work-github:/srv/acme/api.git",
+    },
+    {
+      expected: {
+        host: "work-github",
+        owner: "srv",
+        repository: "api",
+      },
+      url: "work-github:/srv/acme/api.git",
+    },
+    {
       expected: { host: "work-github", owner: null, repository: "api" },
       url: "work-github:api.git",
     },
