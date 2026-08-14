@@ -14,7 +14,12 @@ import { GitErrorCode } from "../types/git.ts";
 import chalk from "chalk";
 import { exec } from "../lib/git.ts";
 import { realpathSync } from "fs";
-import { resolve as resolvePath } from "path";
+import {
+  isAbsolute as isAbsolutePath,
+  relative as relativePath,
+  resolve as resolvePath,
+  sep as pathSeparator,
+} from "path";
 import { resolveWorktreeStatuses } from "./worktree.ts";
 
 const ZERO = 0;
@@ -28,6 +33,103 @@ const toComparablePath = (value: string): string => {
   } catch {
     return resolvePath(value).replaceAll("\\", "/").toLowerCase();
   }
+};
+
+export interface ConfiguredWorktreeRemovalPlan {
+  worktrees: WorktreeEntry[];
+}
+
+export interface WorktreePathSemantics {
+  isAbsolute(path: string): boolean;
+  relative(from: string, to: string): string;
+  resolve(path: string): string;
+  sep: string;
+  caseSensitive?: boolean;
+}
+
+const nativePathSemantics: WorktreePathSemantics = {
+  caseSensitive: process.platform !== "win32",
+  isAbsolute: isAbsolutePath,
+  relative: relativePath,
+  resolve: resolvePath,
+  sep: pathSeparator,
+};
+
+const comparablePlanPath = (value: string, semantics: WorktreePathSemantics): string => {
+  const normalized = semantics.resolve(value);
+  return semantics.caseSensitive === false ? normalized.toLowerCase() : normalized;
+};
+
+export const isDescendantWorktreePath = (
+  ancestorPath: string,
+  candidatePath: string,
+  semantics: WorktreePathSemantics = nativePathSemantics,
+): boolean => {
+  const ancestor = comparablePlanPath(ancestorPath, semantics);
+  const candidate = comparablePlanPath(candidatePath, semantics);
+  const relative = semantics.relative(ancestor, candidate);
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${semantics.sep}`) &&
+    !semantics.isAbsolute(relative)
+  );
+};
+
+export const createConfiguredWorktreeRemovalPlan = (
+  selected: WorktreeEntry[],
+  inventory: WorktreeEntry[],
+  semantics: WorktreePathSemantics = nativePathSemantics,
+): ConfiguredWorktreeRemovalPlan => {
+  const removableInventory = inventory.filter(
+    (worktree) => !worktree.isMain && worktree.status !== "prunable",
+  );
+  const selectedPaths = new Set(
+    selected.map((worktree) => comparablePlanPath(worktree.path, semantics)),
+  );
+  const selectedAncestors = removableInventory.filter((worktree) =>
+    selectedPaths.has(comparablePlanPath(worktree.path, semantics)),
+  );
+  const closed = removableInventory.filter(
+    (candidate) =>
+      selectedPaths.has(comparablePlanPath(candidate.path, semantics)) ||
+      selectedAncestors.some((ancestor) =>
+        isDescendantWorktreePath(ancestor.path, candidate.path, semantics),
+      ),
+  );
+
+  for (const worktree of selected) {
+    const key = comparablePlanPath(worktree.path, semantics);
+    if (!closed.some((candidate) => comparablePlanPath(candidate.path, semantics) === key)) {
+      closed.push(worktree);
+    }
+  }
+
+  const emitted = new Set<WorktreeEntry>();
+  const ordered: WorktreeEntry[] = [];
+  const emitWithDescendants = (worktree: WorktreeEntry): void => {
+    if (emitted.has(worktree)) {
+      return;
+    }
+
+    for (const candidate of closed) {
+      if (
+        candidate !== worktree &&
+        isDescendantWorktreePath(worktree.path, candidate.path, semantics)
+      ) {
+        emitWithDescendants(candidate);
+      }
+    }
+
+    emitted.add(worktree);
+    ordered.push(worktree);
+  };
+
+  for (const worktree of closed) {
+    emitWithDescendants(worktree);
+  }
+
+  return { worktrees: ordered };
 };
 
 export interface RepositoryTarget {
@@ -139,6 +241,7 @@ export const discoverWorktreesByPath = async (
 
 export const discoverAllWorktrees = async (
   repositories: RepositoryTarget[],
+  options: { strict?: boolean } = {},
 ): Promise<WorktreeInfo[]> => {
   const results: WorktreeInfo[] = [];
 
@@ -146,7 +249,14 @@ export const discoverAllWorktrees = async (
     try {
       const result = await exec(["worktree", "list", "--porcelain"], repo.path);
       results.push(...parseWorktreeList(result.stdout, repo.name, repo.path));
-    } catch {}
+    } catch (error) {
+      if (options.strict) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to inspect worktrees for ${repo.name} (${repo.path}): ${message}`, {
+          cause: error,
+        });
+      }
+    }
   }
 
   return results;

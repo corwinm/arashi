@@ -35,6 +35,7 @@ import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
 import { basename, resolve } from "path";
 import {
   branchExists,
+  createConfiguredWorktreeRemovalPlan,
   createRemovalSummary,
   deleteBranch,
   detachWorktree,
@@ -45,6 +46,7 @@ import {
   formatRemovalSummaryJson,
   getCurrentBranch,
   groupWorktreesByParent,
+  isDescendantWorktreePath,
   refreshRemainingChildStatuses,
   removeWorktree,
 } from "../core/remove.ts";
@@ -203,6 +205,7 @@ interface ConfirmationOptions {
   branchPresence: Record<string, string[]>;
   checkDirty: boolean;
   confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
+  quiet: boolean;
   worktrees: WorktreeEntry[];
 }
 
@@ -329,6 +332,7 @@ export async function executeRemove(
         branchPresence,
         checkDirty: options.checkDirty !== false,
         confirm: prompt.confirm,
+        quiet: options.json === true,
         worktrees: [targetEntry],
       });
       if (confirmation === "cancelled") {
@@ -743,6 +747,31 @@ export async function executeRemove(
     }
   }
 
+  if (!options.keepWorktrees && worktreesToRemove.length > ZERO) {
+    const discoveredInventory = await discoverAllWorktrees(repositories, { strict: true });
+    const configuredInventory = await buildWorktreeEntries(discoveredInventory, {
+      childRepoNames,
+      includeDirtyDetails: false,
+      reposDirName,
+    });
+    const plan = createConfiguredWorktreeRemovalPlan(worktreesToRemove, configuredInventory);
+    worktreesToRemove.splice(ZERO, worktreesToRemove.length, ...plan.worktrees);
+
+    for (const worktree of plan.worktrees) {
+      if (!worktree.branch) {
+        continue;
+      }
+      if (!targetBranches.includes(worktree.branch)) {
+        targetBranches.push(worktree.branch);
+      }
+      branchPresence[worktree.branch] = branchPresence[worktree.branch] ?? [];
+      if (!branchPresence[worktree.branch].includes(worktree.repository)) {
+        branchPresence[worktree.branch].push(worktree.repository);
+      }
+      missingBranches[worktree.branch] = missingBranches[worktree.branch] ?? [];
+    }
+  }
+
   if (!options.json) {
     warnOnDefaultMainRemoval(skippedMain, defaultBranches);
   }
@@ -769,6 +798,7 @@ export async function executeRemove(
       branchPresence,
       checkDirty: options.checkDirty !== false,
       confirm: prompt.confirm,
+      quiet: options.json === true,
       worktrees: worktreesToRemove,
     });
     if (confirmation === "cancelled") {
@@ -977,6 +1007,7 @@ export async function executeRemove(
   }
 
   if (!options.keepWorktrees) {
+    const failedWorktrees: WorktreeEntry[] = [];
     for (let index = 0; index < worktreesToRemove.length; index += 1) {
       const worktree = worktreesToRemove[index];
       const operation: RemovalOperation = {
@@ -987,19 +1018,27 @@ export async function executeRemove(
         worktreePath: worktree.path,
       };
 
-      try {
-        const forceRemove = options.checkDirty === false || worktree.isDirty === true;
-        await removeWorktree(
-          worktree,
-          getRepoPath(repositories, worktree.repository),
-          forceRemove || false,
-        );
-        operation.status = "success";
-        const remaining = worktreesToRemove.slice(index + 1);
-        await refreshRemainingChildStatuses(worktree, remaining, options.checkDirty !== false);
-      } catch (error) {
+      const failedDescendant = failedWorktrees.find((failed) =>
+        isDescendantWorktreePath(worktree.path, failed.path),
+      );
+      if (failedDescendant) {
         operation.status = "failed";
-        operation.error = formatWorktreeRemovalError(error);
+        operation.error = `Removal of ${worktree.path} blocked because descendant ${failedDescendant.repository}: ${failedDescendant.path} failed`;
+      } else {
+        try {
+          const forceRemove = options.checkDirty === false || worktree.isDirty === true;
+          await removeWorktree(
+            worktree,
+            getRepoPath(repositories, worktree.repository),
+            forceRemove || false,
+          );
+          operation.status = "success";
+          const remaining = worktreesToRemove.slice(index + 1);
+          await refreshRemainingChildStatuses(worktree, remaining, options.checkDirty !== false);
+        } catch (error) {
+          operation.status = "failed";
+          operation.error = formatWorktreeRemovalError(error);
+        }
       }
 
       summary.operations.push(operation);
@@ -1007,6 +1046,7 @@ export async function executeRemove(
         summary.successfulWorktrees += 1;
       }
       if (operation.status === "failed" && operation.error) {
+        failedWorktrees.push(worktree);
         summary.errors.push(`${operation.repository}: ${operation.error}`);
       }
     }
@@ -1273,15 +1313,18 @@ const promptConfirmation = async ({
   branchPresence,
   checkDirty,
   confirm,
+  quiet,
   worktrees,
 }: ConfirmationOptions): Promise<"confirmed" | "declined" | "cancelled"> => {
   if (checkDirty) {
     const dirty = worktrees.filter((wt) => wt.isDirty);
     if (dirty.length > ZERO) {
-      warn(`Uncommitted changes detected in ${dirty.length} worktrees:`);
-      for (const wt of dirty) {
-        const detailText = formatDirtyDetailsText(wt);
-        info(`  • ${wt.repository}: ${wt.path}${detailText}`);
+      if (!quiet) {
+        warn(`Uncommitted changes detected in ${dirty.length} worktrees:`);
+        for (const wt of dirty) {
+          const detailText = formatDirtyDetailsText(wt);
+          info(`  • ${wt.repository}: ${wt.path}${detailText}`);
+        }
       }
 
       const outcome = await confirm(
