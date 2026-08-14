@@ -146,6 +146,22 @@
         },
         "vscode": {
           "expectation": "required"
+        },
+        "addMaterialization": {
+          "activeConfigOwnership": true,
+          "canonicalCloneDefaultBranch": true,
+          "coordinatedBranch": "active-parent-branch",
+          "linkedMode": "git-topology",
+          "resultRoles": [
+            "path",
+            "materialization",
+            "canonicalPath",
+            "worktreePath",
+            "defaultBranch",
+            "coordinatedBranch",
+            "setupScript",
+            "setupScriptCreated"
+          ]
         }
       }
     },

@@ -1316,19 +1316,16 @@ const normalizePersistedConfig = (config: Config): Config => {
  * await saveConfig('/path/to/repo', config);
  * ```
  */
+export const serializeConfig = (config: Config): string =>
+  JSON.stringify(normalizePersistedConfig(normalizeConfig(config)), null, TWO);
+
 export const saveConfig = async (repoPath: string, config: Config): Promise<void> => {
   const configPath = getConfigPath(repoPath);
   const configDir = dirname(configPath);
 
   try {
-    const normalized = normalizeConfig(config);
-    const persistedConfig = normalizePersistedConfig(normalized);
-
-    // Ensure .arashi directory exists
     await mkdir(configDir, { recursive: true });
-
-    // Write pretty-printed JSON (2-space indentation)
-    const json = JSON.stringify(persistedConfig, null, TWO);
+    const json = serializeConfig(config);
     await runtime.write(configPath, json);
   } catch (error) {
     throw new ConfigError(

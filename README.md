@@ -174,6 +174,10 @@ arashi switch --ignore-configured-launcher  # bypass configured sesh/Herdr mode 
 arashi switch --launch --ignore-configured-launcher # force generic automatic launch
 ```
 
+### Add from a linked parent worktree
+
+When `arashi add` runs from an active linked parent worktree, Arashi creates one canonical clone in the parent main checkout and leaves it on the child default branch. It then creates the active child as a linked worktree on the coordinated branch and updates only the active parent configuration. Direct-main and configured-bare adds keep their existing single-placement behavior. See the [add command guide](https://arashi.haphazard.dev/commands/add/) for branch, managed-ignore, JSON, and rollback details.
+
 Explicit `--tmux` is a per-invocation launcher override for `create` and `switch`; it is not a persisted configuration mode. It requires an active tmux context whose `TMUX` value is non-empty after trimming, uses the selected worktree path as one argv-safe `tmux new-window -c` argument, and does not fall back to another launcher when the prerequisite or launch fails. On `create`, it implies both launch and switch, while validation failures occur before worktree mutation.
 
 `--tab` is a CLI-only launch disposition for `create` and `switch`; it is never persisted. It requests a true terminal tab or documented managed-context equivalent, implies launch (and selection for `create`), overrides automatic parent-shell `cd`, and never degrades to a window or another launcher. For switch, it bypasses configured `sesh` or `herdr` launch defaults; for create, it bypasses configured generic or editor-scoped launch defaults. An explicit launcher selector remains authoritative. Unsupported adapters fail with `TAB_DISPOSITION_UNSUPPORTED`; launch/preflight failures use `LAUNCH_FAILED`. Human-only tab launch is incompatible with `--json`.
