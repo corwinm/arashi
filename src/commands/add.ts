@@ -33,6 +33,7 @@ import {
   link,
   mkdir,
   open,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -278,15 +279,14 @@ const reclaimAbandonedLock = async (lockPath: string): Promise<boolean> => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
   }
-  const claimPath = `${lockPath}.reclaim-${lockStat.dev}-${lockStat.ino}`;
+  const legacyClaimPath = `${lockPath}.reclaim-${lockStat.dev}-${lockStat.ino}`;
+  const claimPrefix = `${legacyClaimPath}-`;
+  const claimPath = `${claimPrefix}${process.pid}-${randomUUID()}`;
   try {
     await link(lockPath, claimPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
-      throw error;
-    }
-    return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
   }
 
   try {
@@ -299,10 +299,33 @@ const reclaimAbandonedLock = async (lockPath: string): Promise<boolean> => {
     ) {
       return true;
     }
+    const claimDirectory = dirname(lockPath);
+    const claimNamePrefix = basename(claimPrefix);
+    const liveClaims: string[] = [];
+    for (const name of await readdir(claimDirectory)) {
+      if (!name.startsWith(claimNamePrefix)) continue;
+      const pid = Number(name.slice(claimNamePrefix.length).split("-", 1)[0]);
+      const contenderPath = join(claimDirectory, name);
+      if (!Number.isInteger(pid) || !lockOwnerIsAlive(pid)) {
+        await rm(contenderPath, { force: true });
+        continue;
+      }
+      liveClaims.push(name);
+    }
+    if (liveClaims.toSorted()[0] !== basename(claimPath)) return false;
     const owner = await readLockOwner(claimPath);
     if (owner && lockOwnerIsAlive(owner.pid)) return false;
     if (!owner && Date.now() - claimedStat.mtimeMs < INCOMPLETE_LOCK_STALE_MS) return false;
+    const finalCurrentStat = await stat(lockPath).catch(() => null);
+    if (
+      !finalCurrentStat ||
+      claimedStat.dev !== finalCurrentStat.dev ||
+      claimedStat.ino !== finalCurrentStat.ino
+    ) {
+      return true;
+    }
     await rm(lockPath);
+    await rm(legacyClaimPath, { force: true });
     return true;
   } finally {
     await rm(claimPath, { force: true });

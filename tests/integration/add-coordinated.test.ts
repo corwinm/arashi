@@ -1,6 +1,17 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { executeAdd, type AddExecutionDependencies } from "../../src/commands/add.ts";
@@ -1320,6 +1331,28 @@ describe("add coordinated linked materialization", () => {
 
     expect(result.exitCode).toBe(0);
     expect(await runtime.file(lockPath).exists()).toBe(false);
+  });
+
+  test("recovers a claim left by an interrupted lock reclaimer", async () => {
+    const topology = await createParentTopology("feature/orphaned-reclaim-claim");
+    const remote = await seedChildRemote(topology.root);
+    const lockPath = join(topology.active, ".arashi-config.add.lock");
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: 2_147_483_647, token: "abandoned-test-owner" }),
+    );
+    const lockStat = await stat(lockPath);
+    const legacyClaimPath = `${lockPath}.reclaim-${lockStat.dev}-${lockStat.ino}`;
+    const interruptedClaimPath = `${legacyClaimPath}-2147483647-interrupted`;
+    await link(lockPath, legacyClaimPath);
+    await link(lockPath, interruptedClaimPath);
+
+    const result = await runAdd(topology.active, remote);
+
+    expect(repositoryResult(result)).toMatchObject({ name: "child" });
+    expect(await runtime.file(lockPath).exists()).toBe(false);
+    expect(await runtime.file(legacyClaimPath).exists()).toBe(false);
+    expect(await runtime.file(interruptedClaimPath).exists()).toBe(false);
   });
 
   test("atomically reclaims one abandoned transaction lock for concurrent waiters", async () => {
