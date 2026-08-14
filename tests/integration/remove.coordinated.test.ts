@@ -176,7 +176,7 @@ describe("remove command - coordinated child-first removal", () => {
     ]);
   });
 
-  test("skips intentionally missing configured repositories during strict inventory discovery", async () => {
+  test("fails closed when an absent repository can conceal an arbitrary registered descendant", async () => {
     const { childPaths, parentPath } = await createNestedWorktrees(
       workspace,
       "parent-missing-repo",
@@ -184,25 +184,32 @@ describe("remove command - coordinated child-first removal", () => {
         "repo-a": "child-missing-repo",
       },
     );
-    await git(workspace.repos[1].path, ["worktree", "remove", childPaths["repo-b"], "--force"]);
-    expect(existsSync(childPaths["repo-b"])).toBe(false);
+    const customDescendantPath = join(parentPath, "custom-location", "repo-b-worktree");
+    await mkdir(join(parentPath, "custom-location"), { recursive: true });
+    await git(workspace.repos[1].path, [
+      "worktree",
+      "move",
+      childPaths["repo-b"],
+      customDescendantPath,
+    ]);
     const missingRepoPath = workspace.repos[1].path;
     const preservedRepoPath = `${missingRepoPath}-preserved`;
     await rename(missingRepoPath, preservedRepoPath);
 
     try {
-      const result = await runRemove(await realpath(parentPath), {
-        force: true,
-        keepBranches: true,
-        path: true,
-      });
-      expect(result.exitCode).toBe(0);
+      await expect(
+        runRemove(await realpath(parentPath), { force: true, keepBranches: true, path: true }),
+      ).rejects.toThrow(/failed to inspect worktrees for repo-b/i);
     } finally {
       await rename(preservedRepoPath, missingRepoPath);
     }
 
-    expect(existsSync(parentPath)).toBe(false);
-    expect(existsSync(childPaths["repo-a"])).toBe(false);
+    expect(existsSync(parentPath)).toBe(true);
+    expect(existsSync(childPaths["repo-a"])).toBe(true);
+    expect(existsSync(customDescendantPath)).toBe(true);
+    expect(normalizePathForComparison(await worktreeList(workspace.repos[1].path))).toContain(
+      normalizePathForComparison(await realpath(customDescendantPath)),
+    );
   });
 
   test("fails closed when a missing configured repository owns a nested descendant", async () => {

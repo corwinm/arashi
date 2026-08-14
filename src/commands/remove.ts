@@ -676,7 +676,6 @@ export async function executeRemove(
   }
 
   const worktreesToRemove: WorktreeEntry[] = [];
-  let allowedMissingRepositoryPaths = new Set<string>();
   const skippedMain: WorktreeEntry[] = [];
   const worktreeCounts: Record<string, number> = {};
 
@@ -752,11 +751,6 @@ export async function executeRemove(
 
   if (!options.keepWorktrees && worktreesToRemove.length > ZERO) {
     const configuredRepositories = repositories.filter((repo) => childRepoNames.has(repo.name));
-    allowedMissingRepositoryPaths = new Set(
-      configuredRepositories
-        .filter((repo) => !pathExistsFailClosed(repo.path))
-        .map((repo) => repo.path),
-    );
     const physicalHierarchy = worktreesToRemove.map((worktree) => worktree.path);
     const inspectedHierarchyPaths = new Set<string>();
 
@@ -786,7 +780,6 @@ export async function executeRemove(
     }
 
     const discoveredInventory = await discoverAllWorktrees(repositories, {
-      allowMissingRepositoryPaths: allowedMissingRepositoryPaths,
       strict: true,
     });
     const configuredInventory = await buildWorktreeEntries(discoveredInventory, {
@@ -1035,7 +1028,6 @@ export async function executeRemove(
   let invalidatedRemovalPlan: UnplannedConfiguredDescendant | undefined;
   if (!options.keepWorktrees) {
     const refreshedInventory = await discoverAllWorktrees(repositories, {
-      allowMissingRepositoryPaths: allowedMissingRepositoryPaths,
       strict: true,
     });
     const refreshedEntries = await buildWorktreeEntries(refreshedInventory, {
