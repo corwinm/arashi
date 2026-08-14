@@ -1015,6 +1015,9 @@ describe("add coordinated linked materialization", () => {
           await writeFile(join(destination, "partial"), "owned\n");
           throw new Error("injected partial clone failure");
         },
+        observeWorktreeMetadata: async () => {
+          throw new Error("metadata inspection must not run before worktree creation");
+        },
       },
     ).catch((error: unknown) => error);
 
@@ -1302,6 +1305,38 @@ describe("add coordinated linked materialization", () => {
     const result = await runAdd(topology.active, remote);
 
     expect(repositoryResult(result)).toMatchObject({ name: "child" });
+    expect(await runtime.file(lockPath).exists()).toBe(false);
+  });
+
+  test("atomically reclaims one abandoned transaction lock for concurrent waiters", async () => {
+    const topology = await createParentTopology("feature/stale-transaction-lock");
+    const firstRoot = join(topology.root, "stale-first-remote");
+    const secondRoot = join(topology.root, "stale-second-remote");
+    await mkdir(firstRoot);
+    await mkdir(secondRoot);
+    const firstRemote = await seedChildRemote(firstRoot);
+    const secondRemote = await seedChildRemote(secondRoot);
+    const commonDirectory = resolve(
+      topology.active,
+      await git(topology.active, ["rev-parse", "--git-common-dir"]),
+    );
+    const lockPath = join(commonDirectory, ".arashi-add.transaction.lock");
+    await writeFile(lockPath, JSON.stringify({ pid: 2_147_483_647, token: "abandoned" }));
+
+    const results = await Promise.all([
+      executeAdd(
+        firstRemote,
+        { force: true, json: true, name: "stale-one" },
+        { configurationRoot: topology.active, executionRoot: topology.active },
+      ),
+      executeAdd(
+        secondRemote,
+        { force: true, json: true, name: "stale-two" },
+        { configurationRoot: topology.canonical, executionRoot: topology.canonical },
+      ),
+    ]);
+
+    expect(results).toHaveLength(2);
     expect(await runtime.file(lockPath).exists()).toBe(false);
   });
 

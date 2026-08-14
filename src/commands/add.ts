@@ -28,7 +28,18 @@ import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { executeClone } from "./clone.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
-import { chmod, mkdir, open, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import {
   reconcileRepositoryManagedIgnore,
   classifyManagedPaths,
@@ -261,20 +272,54 @@ const lockOwnerIsAlive = (pid: number): boolean => {
 };
 
 const reclaimAbandonedLock = async (lockPath: string): Promise<boolean> => {
-  const owner = await readLockOwner(lockPath);
-  if (owner && lockOwnerIsAlive(owner.pid)) return false;
-  if (!owner) {
+  let lockStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    lockStat = await stat(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+  const claimPath = `${lockPath}.reclaim-${lockStat.dev}-${lockStat.ino}`;
+  try {
+    await link(lockPath, claimPath);
+    const claimedAt = new Date();
+    await utimes(claimPath, claimedAt, claimedAt);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+      throw error;
+    }
     try {
-      const lockStat = await stat(lockPath);
-      if (Date.now() - lockStat.mtimeMs < INCOMPLETE_LOCK_STALE_MS) return false;
-    } catch {
+      const claimStat = await stat(claimPath);
+      if (Date.now() - claimStat.mtimeMs >= INCOMPLETE_LOCK_STALE_MS) {
+        await rm(claimPath, { force: true });
+        return true;
+      }
+    } catch (claimError) {
+      if ((claimError as NodeJS.ErrnoException).code === "ENOENT") return true;
+      throw claimError;
+    }
+    return false;
+  }
+
+  try {
+    const claimedStat = await stat(claimPath);
+    const currentStat = await stat(lockPath).catch(() => null);
+    if (
+      !currentStat ||
+      claimedStat.dev !== currentStat.dev ||
+      claimedStat.ino !== currentStat.ino
+    ) {
       return true;
     }
+    const owner = await readLockOwner(claimPath);
+    if (owner && lockOwnerIsAlive(owner.pid)) return false;
+    if (!owner && Date.now() - claimedStat.mtimeMs < INCOMPLETE_LOCK_STALE_MS) return false;
+    await rm(lockPath);
+    return true;
+  } finally {
+    await rm(claimPath, { force: true });
   }
-  const observedOwner = await readLockOwner(lockPath);
-  if (owner?.token !== observedOwner?.token) return false;
-  await rm(lockPath, { force: true });
-  return true;
 };
 
 const withFileLock = async <T>(
@@ -707,6 +752,7 @@ export const executeAdd = async (
   let branchCreated = false;
   let preExistingCoordinatedBranch = false;
   let worktreeCreated = false;
+  let worktreeCreationAttempted = false;
   let setupScriptCreated = false;
   let originalConfigBytes: Uint8Array | null = null;
   let persistedConfigBytes: Uint8Array | null = null;
@@ -1000,6 +1046,7 @@ export const executeAdd = async (
       currentPhase = "worktree";
       try {
         await mkdir(join(activePath, ".."), { recursive: true });
+        worktreeCreationAttempted = true;
         await createWorktree(canonicalPath, activePath, coordinatedBranch);
         worktreeCreated = true;
       } catch (error) {
@@ -1180,8 +1227,8 @@ export const executeAdd = async (
       }
     };
     let worktreeExists: boolean | null = activePath ? await observeFinalPath(activePath) : null;
-    let metadataPresent: boolean | null = activePath && !cloneCreated ? false : null;
-    if (activePath && cloneCreated) {
+    let metadataPresent: boolean | null = activePath && !worktreeCreationAttempted ? false : null;
+    if (activePath && worktreeCreationAttempted) {
       try {
         metadataPresent = await observeWorktreeMetadata(canonicalPath, activePath);
       } catch (observeError) {
