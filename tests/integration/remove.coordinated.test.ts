@@ -36,9 +36,11 @@ describe("remove command - coordinated child-first removal", () => {
         childBranches,
       );
       await git(workspace.repos[1].path, ["branch", childBranches["repo-a"]]);
-      const expectedPaths = await Promise.all(
-        [childPaths["repo-a"], childPaths["repo-b"], parentPath].map((path) => realpath(path)),
-      );
+      const expectedPaths = (
+        await Promise.all(
+          [childPaths["repo-a"], childPaths["repo-b"], parentPath].map((path) => realpath(path)),
+        )
+      ).map(normalizePathForComparison);
       const target = selectionMode === "path" ? await realpath(parentPath) : parentBranch;
 
       const result = await runRemove(target, {
@@ -52,9 +54,11 @@ describe("remove command - coordinated child-first removal", () => {
       const removals = envelope.data.operations.filter(
         (operation: { type: string }) => operation.type === "worktree_remove",
       );
-      expect(removals.map((operation: { worktreePath: string }) => operation.worktreePath)).toEqual(
-        expectedPaths,
-      );
+      expect(
+        removals.map((operation: { worktreePath: string }) =>
+          normalizePathForComparison(operation.worktreePath),
+        ),
+      ).toEqual(expectedPaths);
       expect(envelope.data.operations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -85,7 +89,9 @@ describe("remove command - coordinated child-first removal", () => {
       const branchHeader = humanLines.indexOf("Planned branch deletions:");
       const humanPaths = humanLines
         .slice(removalHeader + 1, branchHeader)
-        .map((line) => expectedPaths.find((path) => line.endsWith(path)))
+        .map((line) =>
+          expectedPaths.find((path) => normalizePathForComparison(line).endsWith(path)),
+        )
         .filter((path): path is string => path !== undefined);
       expect(humanPaths).toEqual(expectedPaths);
     },
@@ -127,11 +133,13 @@ describe("remove command - coordinated child-first removal", () => {
     await createWorktree(workspace.repos[1].path, "grandchild-transitive", grandchildPath);
     const unrelatedPath = join(workspace.rootPath, "worktrees", "unrelated-transitive");
     await createWorktree(workspace.repos[1].path, "unrelated-transitive", unrelatedPath);
-    const expectedPaths = await Promise.all(
-      [grandchildPath, childPaths["repo-a"], childPaths["repo-b"], parentPath].map((path) =>
-        realpath(path),
-      ),
-    );
+    const expectedPaths = (
+      await Promise.all(
+        [grandchildPath, childPaths["repo-a"], childPaths["repo-b"], parentPath].map((path) =>
+          realpath(path),
+        ),
+      )
+    ).map(normalizePathForComparison);
 
     const result = await runRemove(await realpath(parentPath), {
       dryRun: true,
@@ -141,10 +149,12 @@ describe("remove command - coordinated child-first removal", () => {
     const removals = JSON.parse(result.stdout).data.operations.filter(
       (operation: { type: string }) => operation.type === "worktree_remove",
     );
-    const paths = removals.map((operation: { worktreePath: string }) => operation.worktreePath);
+    const paths = removals.map((operation: { worktreePath: string }) =>
+      normalizePathForComparison(operation.worktreePath),
+    );
 
     expect(paths).toEqual(expectedPaths);
-    expect(paths).not.toContain(await realpath(unrelatedPath));
+    expect(paths).not.toContain(normalizePathForComparison(await realpath(unrelatedPath)));
   });
 
   test("does not expand descendants with --keep-worktrees", async () => {
@@ -189,9 +199,11 @@ describe("remove command - coordinated child-first removal", () => {
 
     expect(existsSync(parentPath)).toBe(true);
     expect(existsSync(childPaths["repo-a"])).toBe(true);
-    expect(await worktreeList(workspace.rootPath)).toContain(await realpath(parentPath));
-    expect(await worktreeList(workspace.repos[0].path)).toContain(
-      await realpath(childPaths["repo-a"]),
+    expect(normalizePathForComparison(await worktreeList(workspace.rootPath))).toContain(
+      normalizePathForComparison(await realpath(parentPath)),
+    );
+    expect(normalizePathForComparison(await worktreeList(workspace.repos[0].path))).toContain(
+      normalizePathForComparison(await realpath(childPaths["repo-a"])),
     );
   });
 
@@ -452,6 +464,8 @@ async function runCli(
   ]);
   return { exitCode, stderr, stdout };
 }
+
+const normalizePathForComparison = (value: string): string => value.replaceAll("\\", "/");
 
 const worktreeList = (repoPath: string): Promise<string> =>
   git(repoPath, ["worktree", "list", "--porcelain"]);
