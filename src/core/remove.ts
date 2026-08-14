@@ -46,6 +46,16 @@ export const pathExistsFailClosed = (path: string, inspect: PathInspector = lsta
   }
 };
 
+type PathCanonicalizer = (path: string) => string;
+
+export const canonicalPhysicalPath = (
+  value: string,
+  canonicalize: PathCanonicalizer = realpathSync.native,
+): string => {
+  const canonical = resolvePath(canonicalize(value));
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+};
+
 const toComparablePath = (value: string): string => {
   try {
     return realpathSync.native(value).replaceAll("\\", "/").toLowerCase();

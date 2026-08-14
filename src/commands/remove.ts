@@ -35,6 +35,7 @@ import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
 import { basename, resolve } from "path";
 import {
   branchExists,
+  canonicalPhysicalPath,
   createConfiguredWorktreeRemovalPlan,
   createRemovalSummary,
   deleteBranch,
@@ -761,10 +762,14 @@ export async function executeRemove(
 
     while (physicalHierarchy.length > ZERO) {
       const parentPath = physicalHierarchy.shift();
-      if (!parentPath || inspectedHierarchyPaths.has(parentPath)) {
+      if (!parentPath) {
         continue;
       }
-      inspectedHierarchyPaths.add(parentPath);
+      const parentIdentity = canonicalPhysicalPath(parentPath);
+      if (inspectedHierarchyPaths.has(parentIdentity)) {
+        continue;
+      }
+      inspectedHierarchyPaths.add(parentIdentity);
 
       for (const repo of configuredRepositories) {
         const nestedPath = resolve(parentPath, reposDirName, repo.name);
@@ -1241,7 +1246,7 @@ const findUnplannedConfiguredDescendant = (
   childRepoNames: Set<string>,
   reposDirName: string,
 ): UnplannedConfiguredDescendant | undefined => {
-  const plannedPaths = new Set(worktrees.map((worktree) => comparablePhysicalPath(worktree.path)));
+  const plannedPaths = new Set(worktrees.map((worktree) => canonicalPhysicalPath(worktree.path)));
   const configuredRepositories = repositories.filter((repo) => childRepoNames.has(repo.name));
 
   for (const blockingWorktree of worktrees) {
@@ -1249,17 +1254,21 @@ const findUnplannedConfiguredDescendant = (
     const inspectedPaths = new Set<string>();
     while (hierarchy.length > ZERO) {
       const parentPath = hierarchy.shift();
-      if (!parentPath || inspectedPaths.has(comparablePhysicalPath(parentPath))) {
+      if (!parentPath) {
         continue;
       }
-      inspectedPaths.add(comparablePhysicalPath(parentPath));
+      const parentIdentity = canonicalPhysicalPath(parentPath);
+      if (inspectedPaths.has(parentIdentity)) {
+        continue;
+      }
+      inspectedPaths.add(parentIdentity);
 
       for (const repository of configuredRepositories) {
         const nestedPath = resolve(parentPath, reposDirName, repository.name);
         if (!pathExistsFailClosed(nestedPath)) {
           continue;
         }
-        if (!plannedPaths.has(comparablePhysicalPath(nestedPath))) {
+        if (!plannedPaths.has(canonicalPhysicalPath(nestedPath))) {
           return { blockingWorktree, path: nestedPath, repository };
         }
         hierarchy.push(nestedPath);
