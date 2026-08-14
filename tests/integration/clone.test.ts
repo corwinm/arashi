@@ -126,6 +126,74 @@ describe("clone command", () => {
     expect(clonedDestinations).toHaveLength(2);
   });
 
+  test("preserves exact SSH alias URLs when HTTPS is selected for a mixed run", async () => {
+    const aliasUrl = "ssh://deploy@work-github/team/repo-a.git";
+    const config: Config = {
+      repos: {
+        "repo-a": { gitUrl: aliasUrl, path: "./repos/repo-a" },
+        "repo-b": {
+          gitUrl: "https://github.com/team/repo-b.git",
+          path: "./repos/repo-b",
+        },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+    const clonedUrls: string[] = [];
+
+    const result = await executeClone(
+      { all: true },
+      {
+        cloneRepository: async (gitUrl, destinationPath) => {
+          clonedUrls.push(gitUrl);
+          await mkdir(destinationPath, { recursive: true });
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        loadConfig: async () => config,
+        promptSelect: async <T>() => ({ status: "ok", value: "https" as T }),
+        saveConfig: async () => {},
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        workspaceRoot,
+      },
+    );
+
+    expect(result).toMatchObject({ cloned: ["repo-a", "repo-b"], failed: [], status: "success" });
+    expect(clonedUrls).toEqual([aliasUrl, "https://github.com/team/repo-b.git"]);
+    expect(config.repos["repo-a"]?.gitUrl).toBe(aliasUrl);
+  });
+
+  test("uses the exact SSH alias remote when a coordinated local source is unavailable", async () => {
+    const coordinatedRoot = join(workspaceRoot, ".arashi", "worktrees", "meta-feat-demo");
+    await mkdir(join(coordinatedRoot, "repos"), { recursive: true });
+    const aliasUrl = "work-github:team/repo-a.git";
+    const config: Config = {
+      repos: { "repo-a": { gitUrl: aliasUrl, path: "./repos/repo-a" } },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+    const clonedUrls: string[] = [];
+
+    const result = await executeClone(
+      { all: true, json: true },
+      {
+        cloneRepository: async (gitUrl, destinationPath) => {
+          clonedUrls.push(gitUrl);
+          await mkdir(destinationPath, { recursive: true });
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        loadConfig: async () => config,
+        pathExists: async (path) => path === join(coordinatedRoot, "repos"),
+        resolveCurrentBranch: async () => "feat/demo",
+        saveConfig: async () => {},
+        workspaceRoot: coordinatedRoot,
+      },
+    );
+
+    expect(result).toMatchObject({ cloned: ["repo-a"], failed: [], status: "success" });
+    expect(clonedUrls).toEqual([aliasUrl]);
+  });
+
   test("reconciles local ignore rules before cloning a configured repository", async () => {
     const config: Config = {
       repos: {

@@ -50,7 +50,7 @@
           "name": "git-url",
           "required": true,
           "variadic": false,
-          "description": "Git repository URL (HTTPS, SSH, Git, File, or SCP format)"
+          "description": "Git repository URL (HTTPS, Git, File, [user@]host:path, or ssh://[user@]host/path)"
         }
       ],
       "options": [

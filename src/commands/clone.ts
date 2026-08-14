@@ -510,7 +510,7 @@ const resolveProtocolPreference = async (options: {
 
   const choice = await options.askSelect("Choose clone protocol for this run:", [
     {
-      description: "git@host:owner/repo.git",
+      description: "[user@]host:owner/repo.git (SSH URLs remain unchanged by HTTPS preference)",
       name: "SSH",
       value: "ssh" as CloneProtocol,
     },
