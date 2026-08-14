@@ -13,7 +13,7 @@ import { ArashiError } from "../lib/errors.ts";
 import { GitErrorCode } from "../types/git.ts";
 import chalk from "chalk";
 import { exec } from "../lib/git.ts";
-import { realpathSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import {
   isAbsolute as isAbsolutePath,
   relative as relativePath,
@@ -246,6 +246,9 @@ export const discoverAllWorktrees = async (
   const results: WorktreeInfo[] = [];
 
   for (const repo of repositories) {
+    if (!existsSync(repo.path)) {
+      continue;
+    }
     try {
       const result = await exec(["worktree", "list", "--porcelain"], repo.path);
       results.push(...parseWorktreeList(result.stdout, repo.name, repo.path));

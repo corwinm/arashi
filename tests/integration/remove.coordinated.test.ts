@@ -176,6 +176,33 @@ describe("remove command - coordinated child-first removal", () => {
     ]);
   });
 
+  test("skips intentionally missing configured repositories during strict inventory discovery", async () => {
+    const { childPaths, parentPath } = await createNestedWorktrees(
+      workspace,
+      "parent-missing-repo",
+      {
+        "repo-a": "child-missing-repo",
+      },
+    );
+    const missingRepoPath = workspace.repos[1].path;
+    const preservedRepoPath = `${missingRepoPath}-preserved`;
+    await rename(missingRepoPath, preservedRepoPath);
+
+    try {
+      const result = await runRemove(await realpath(parentPath), {
+        force: true,
+        keepBranches: true,
+        path: true,
+      });
+      expect(result.exitCode).toBe(0);
+    } finally {
+      await rename(preservedRepoPath, missingRepoPath);
+    }
+
+    expect(existsSync(parentPath)).toBe(false);
+    expect(existsSync(childPaths["repo-a"])).toBe(false);
+  });
+
   test("fails closed before parent mutation when configured descendant inventory cannot be inspected", async () => {
     const { childPaths, parentPath } = await createNestedWorktrees(workspace, "parent-inspection", {
       "repo-a": "child-inspection",
