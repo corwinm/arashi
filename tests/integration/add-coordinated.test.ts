@@ -1135,6 +1135,26 @@ describe("add coordinated linked materialization", () => {
     });
   });
 
+  test("uses the migrated config as the add transaction snapshot", async () => {
+    const topology = await createParentTopology("feature/config-version-migration");
+    const remote = await seedChildRemote(topology.root);
+    const configPath = join(topology.active, ".arashi", "config.json");
+    await writeFile(
+      configPath,
+      `${JSON.stringify({ repos: {}, reposDir: "./repos", version: "1" }, null, 2)}\n`,
+    );
+
+    const result = await runAdd(topology.active, remote);
+
+    expect(repositoryResult(result)).toMatchObject({ name: "child" });
+    const finalConfig = JSON.parse(await readFile(configPath, "utf8")) as {
+      repos: Record<string, unknown>;
+      version: string;
+    };
+    expect(finalConfig.version).toBe("1.0.0");
+    expect(finalConfig.repos).toHaveProperty("child");
+  });
+
   test("fails before mutation when config changes between load and snapshot", async () => {
     const topology = await createParentTopology("feature/config-load-race");
     const remote = await seedChildRemote(topology.root);

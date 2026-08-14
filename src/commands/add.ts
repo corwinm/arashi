@@ -805,18 +805,18 @@ export const executeAdd = async (
     // Step 4: Check for duplicate name
     const configPath = getConfigPath(workspaceRoot);
     const configSnapshot = await withConfigLock(configPath, async () => {
-      const bytesBeforeLoad = await readFile(configPath);
       const loadedConfig = await loadConfig(workspaceRoot);
-      await afterConfigLoad?.();
       const bytesAfterLoad = await readFile(configPath);
-      if (!bytesEqual(bytesBeforeLoad, bytesAfterLoad)) {
+      await afterConfigLoad?.();
+      const bytesAfterHook = await readFile(configPath);
+      if (!bytesEqual(bytesAfterLoad, bytesAfterHook)) {
         throw addFailure(
           "Configuration changed while add was loading it; preserved the newer file.",
           AddCommandErrorCode.CONFIG_UPDATE_FAILED,
           "preflight",
         );
       }
-      return { bytes: bytesBeforeLoad, config: loadedConfig };
+      return { bytes: bytesAfterLoad, config: loadedConfig };
     });
     const config = configSnapshot.config;
     originalConfigBytes = configSnapshot.bytes;
