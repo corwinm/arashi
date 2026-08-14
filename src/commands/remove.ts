@@ -127,21 +127,64 @@ interface CliOptions {
   hookInput?: boolean;
 }
 
+export interface StandaloneRemovePartialFailureDetails {
+  finalState: { branchExists: boolean; worktreeExists: boolean };
+  hookOutcomes: LifecycleHookOutcome[];
+  hookFailures: { hookName: string; message: string }[];
+  operationFailures: { message: string; operation: string }[];
+}
+
 class StandaloneRemovePartialFailure extends Error {
   readonly code = "STANDALONE_REMOVE_PARTIAL_FAILURE";
-  readonly details: {
-    finalState: { branchExists: boolean; worktreeExists: boolean };
-    hookOutcomes: LifecycleHookOutcome[];
-    hookFailures: { hookName: string; message: string }[];
-    operationFailures: { message: string; operation: string }[];
-  };
+  readonly details: StandaloneRemovePartialFailureDetails;
 
-  constructor(details: StandaloneRemovePartialFailure["details"]) {
+  constructor(details: StandaloneRemovePartialFailureDetails) {
     super("Standalone remove completed with one or more operation or finalization failures");
     this.details = details;
     this.name = "StandaloneRemovePartialFailure";
   }
 }
+
+export const formatStandaloneRemovePartialFailureHuman = (
+  details: Pick<
+    StandaloneRemovePartialFailureDetails,
+    "finalState" | "hookFailures" | "operationFailures"
+  >,
+): string => {
+  const lines = [
+    "Standalone removal completed with incomplete cleanup.",
+    "",
+    "Final state:",
+    `  • ${details.finalState.worktreeExists ? "Worktree directory remains" : "Worktree directory was removed"}`,
+    `  • ${details.finalState.branchExists ? "Branch still exists" : "Branch was deleted"}`,
+  ];
+
+  if (details.operationFailures.length > ZERO) {
+    lines.push("", "Operation failures:");
+    for (const failure of details.operationFailures) {
+      lines.push(`  • ${failure.operation}: ${failure.message}`);
+    }
+  }
+
+  if (details.hookFailures.length > ZERO) {
+    lines.push("", "Hook failures:");
+    for (const failure of details.hookFailures) {
+      lines.push(`  • ${failure.hookName}: ${failure.message}`);
+    }
+  }
+
+  const worktreeRemovalFailed = details.operationFailures.some(
+    (failure) => failure.operation === "remove-worktree",
+  );
+  if (details.finalState.worktreeExists && worktreeRemovalFailed) {
+    lines.push(
+      "",
+      "Close terminals or editors using the worktree directory, then remove it manually.",
+    );
+  }
+
+  return lines.join("\n");
+};
 
 const loadWorkspaceConfig = async (workspaceRoot: string): Promise<Config> => {
   try {
@@ -1572,6 +1615,8 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
           : unknownErrorToJsonError(error),
       ),
     );
+  } else if (error instanceof StandaloneRemovePartialFailure) {
+    logError(formatStandaloneRemovePartialFailureHuman(error.details));
   } else {
     logError(`Unexpected error: ${message}`);
   }
