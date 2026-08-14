@@ -748,7 +748,38 @@ export async function executeRemove(
   }
 
   if (!options.keepWorktrees && worktreesToRemove.length > ZERO) {
-    const discoveredInventory = await discoverAllWorktrees(repositories, { strict: true });
+    const configuredRepositories = repositories.filter((repo) => childRepoNames.has(repo.name));
+    const allowedMissingRepositoryPaths = new Set(
+      configuredRepositories.filter((repo) => !existsSync(repo.path)).map((repo) => repo.path),
+    );
+    const physicalHierarchy = worktreesToRemove.map((worktree) => worktree.path);
+    const inspectedHierarchyPaths = new Set<string>();
+
+    while (physicalHierarchy.length > ZERO) {
+      const parentPath = physicalHierarchy.shift();
+      if (!parentPath || inspectedHierarchyPaths.has(parentPath)) {
+        continue;
+      }
+      inspectedHierarchyPaths.add(parentPath);
+
+      for (const repo of configuredRepositories) {
+        const nestedPath = resolve(parentPath, reposDirName, repo.name);
+        if (!existsSync(nestedPath)) {
+          continue;
+        }
+        if (!existsSync(repo.path)) {
+          throw new Error(
+            `Failed to inspect worktrees for ${repo.name} (${repo.path}): repository is missing while a configured descendant exists at ${nestedPath}`,
+          );
+        }
+        physicalHierarchy.push(nestedPath);
+      }
+    }
+
+    const discoveredInventory = await discoverAllWorktrees(repositories, {
+      allowMissingRepositoryPaths: allowedMissingRepositoryPaths,
+      strict: true,
+    });
     const configuredInventory = await buildWorktreeEntries(discoveredInventory, {
       childRepoNames,
       includeDirtyDetails: false,
@@ -992,6 +1023,28 @@ export async function executeRemove(
     return ONE;
   }
 
+  let invalidatedRemovalPlan: UnplannedConfiguredDescendant | undefined;
+  if (!options.keepWorktrees) {
+    invalidatedRemovalPlan = findUnplannedConfiguredDescendant(
+      worktreesToRemove,
+      repositories,
+      childRepoNames,
+      reposDirName,
+    );
+    if (invalidatedRemovalPlan) {
+      const message = `Removal of ${invalidatedRemovalPlan.blockingWorktree.path} blocked because unplanned configured descendant ${invalidatedRemovalPlan.repository.name}: ${invalidatedRemovalPlan.path} appeared after planning`;
+      summary.operations.push({
+        branchName: invalidatedRemovalPlan.blockingWorktree.branch,
+        error: message,
+        repository: invalidatedRemovalPlan.blockingWorktree.repository,
+        status: "failed",
+        type: "worktree_remove",
+        worktreePath: invalidatedRemovalPlan.blockingWorktree.path,
+      });
+      summary.errors.push(message);
+    }
+  }
+
   if (options.keepWorktrees && worktreesToRemove.length > 0) {
     for (const worktree of worktreesToRemove) {
       try {
@@ -1006,7 +1059,7 @@ export async function executeRemove(
     }
   }
 
-  if (!options.keepWorktrees) {
+  if (!options.keepWorktrees && !invalidatedRemovalPlan) {
     const failedWorktrees: WorktreeEntry[] = [];
     for (let index = 0; index < worktreesToRemove.length; index += 1) {
       const worktree = worktreesToRemove[index];
@@ -1052,7 +1105,7 @@ export async function executeRemove(
     }
   }
 
-  if (!options.keepBranches && targetBranches.length > 0) {
+  if (!options.keepBranches && !invalidatedRemovalPlan && targetBranches.length > 0) {
     for (const branch of targetBranches) {
       for (const repoName of branchPresence[branch]) {
         const repoPath = getRepoPath(repositories, repoName);
@@ -1129,6 +1182,52 @@ export async function executeRemove(
 
   return ZERO;
 }
+
+interface UnplannedConfiguredDescendant {
+  blockingWorktree: WorktreeEntry;
+  path: string;
+  repository: RepositoryTarget;
+}
+
+const comparablePhysicalPath = (value: string): string => {
+  const comparable = resolve(value);
+  return process.platform === "win32" ? comparable.toLowerCase() : comparable;
+};
+
+const findUnplannedConfiguredDescendant = (
+  worktrees: WorktreeEntry[],
+  repositories: RepositoryTarget[],
+  childRepoNames: Set<string>,
+  reposDirName: string,
+): UnplannedConfiguredDescendant | undefined => {
+  const plannedPaths = new Set(worktrees.map((worktree) => comparablePhysicalPath(worktree.path)));
+  const configuredRepositories = repositories.filter((repo) => childRepoNames.has(repo.name));
+
+  for (const blockingWorktree of worktrees) {
+    const hierarchy = [blockingWorktree.path];
+    const inspectedPaths = new Set<string>();
+    while (hierarchy.length > ZERO) {
+      const parentPath = hierarchy.shift();
+      if (!parentPath || inspectedPaths.has(comparablePhysicalPath(parentPath))) {
+        continue;
+      }
+      inspectedPaths.add(comparablePhysicalPath(parentPath));
+
+      for (const repository of configuredRepositories) {
+        const nestedPath = resolve(parentPath, reposDirName, repository.name);
+        if (!existsSync(nestedPath)) {
+          continue;
+        }
+        if (!plannedPaths.has(comparablePhysicalPath(nestedPath))) {
+          return { blockingWorktree, path: nestedPath, repository };
+        }
+        hierarchy.push(nestedPath);
+      }
+    }
+  }
+
+  return undefined;
+};
 
 const buildRepositoryTargets = (
   workspaceRoot: string,

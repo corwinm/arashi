@@ -241,12 +241,17 @@ export const discoverWorktreesByPath = async (
 
 export const discoverAllWorktrees = async (
   repositories: RepositoryTarget[],
-  options: { strict?: boolean } = {},
+  options: { allowMissingRepositoryPaths?: ReadonlySet<string>; strict?: boolean } = {},
 ): Promise<WorktreeInfo[]> => {
   const results: WorktreeInfo[] = [];
 
   for (const repo of repositories) {
     if (!existsSync(repo.path)) {
+      if (options.strict && !options.allowMissingRepositoryPaths?.has(repo.path)) {
+        throw new Error(
+          `Failed to inspect worktrees for ${repo.name} (${repo.path}): repository is missing`,
+        );
+      }
       continue;
     }
     try {

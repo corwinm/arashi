@@ -184,6 +184,8 @@ describe("remove command - coordinated child-first removal", () => {
         "repo-a": "child-missing-repo",
       },
     );
+    await git(workspace.repos[1].path, ["worktree", "remove", childPaths["repo-b"], "--force"]);
+    expect(existsSync(childPaths["repo-b"])).toBe(false);
     const missingRepoPath = workspace.repos[1].path;
     const preservedRepoPath = `${missingRepoPath}-preserved`;
     await rename(missingRepoPath, preservedRepoPath);
@@ -201,6 +203,66 @@ describe("remove command - coordinated child-first removal", () => {
 
     expect(existsSync(parentPath)).toBe(false);
     expect(existsSync(childPaths["repo-a"])).toBe(false);
+  });
+
+  test("fails closed when a missing configured repository owns a nested descendant", async () => {
+    const { childPaths, parentPath } = await createNestedWorktrees(
+      workspace,
+      "parent-missing-owner",
+      {
+        "repo-a": "child-missing-owner",
+      },
+    );
+    const missingRepoPath = workspace.repos[1].path;
+    const preservedRepoPath = `${missingRepoPath}-preserved`;
+    await rename(missingRepoPath, preservedRepoPath);
+
+    try {
+      await expect(
+        runRemove(await realpath(parentPath), { force: true, path: true }),
+      ).rejects.toThrow(/repo-b.*configured descendant/i);
+    } finally {
+      await rename(preservedRepoPath, missingRepoPath);
+    }
+
+    expect(existsSync(parentPath)).toBe(true);
+    expect(existsSync(childPaths["repo-a"])).toBe(true);
+    expect(existsSync(childPaths["repo-b"])).toBe(true);
+    expect(normalizePathForComparison(await worktreeList(workspace.repos[1].path))).toContain(
+      normalizePathForComparison(await realpath(childPaths["repo-b"])),
+    );
+  });
+
+  test("fails closed for a missing repository nested beneath an auto-included descendant", async () => {
+    const { childPaths, parentPath } = await createNestedWorktrees(
+      workspace,
+      "parent-transitive-missing-owner",
+      {
+        "repo-a": "child-transitive-missing-owner",
+      },
+    );
+    await git(workspace.repos[1].path, ["worktree", "remove", childPaths["repo-b"], "--force"]);
+    const grandchildPath = join(childPaths["repo-a"], "repos", "repo-b");
+    await mkdir(join(childPaths["repo-a"], "repos"), { recursive: true });
+    await createWorktree(workspace.repos[1].path, "grandchild-missing-owner", grandchildPath);
+    const missingRepoPath = workspace.repos[1].path;
+    const preservedRepoPath = `${missingRepoPath}-preserved`;
+    await rename(missingRepoPath, preservedRepoPath);
+
+    try {
+      await expect(
+        runRemove(await realpath(parentPath), { force: true, path: true }),
+      ).rejects.toThrow(/repo-b.*configured descendant/i);
+    } finally {
+      await rename(preservedRepoPath, missingRepoPath);
+    }
+
+    expect(existsSync(parentPath)).toBe(true);
+    expect(existsSync(childPaths["repo-a"])).toBe(true);
+    expect(existsSync(grandchildPath)).toBe(true);
+    expect(normalizePathForComparison(await worktreeList(workspace.repos[1].path))).toContain(
+      normalizePathForComparison(await realpath(grandchildPath)),
+    );
   });
 
   test("fails closed before parent mutation when configured descendant inventory cannot be inspected", async () => {
@@ -231,6 +293,42 @@ describe("remove command - coordinated child-first removal", () => {
     );
     expect(normalizePathForComparison(await worktreeList(workspace.repos[0].path))).toContain(
       normalizePathForComparison(await realpath(childPaths["repo-a"])),
+    );
+  });
+
+  test("revalidates the authoritative plan after pre-remove hooks before mutation", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const { childPaths, parentPath } = await createNestedWorktrees(
+      workspace,
+      "parent-hook-invalidation",
+      { "repo-a": "child-hook-invalidation" },
+    );
+    await git(workspace.repos[1].path, ["worktree", "remove", childPaths["repo-b"], "--force"]);
+    const lateDescendantPath = join(parentPath, "repos", "repo-b");
+    const hooksDir = join(workspace.rootPath, ".arashi", "hooks");
+    await mkdir(hooksDir, { recursive: true });
+    const hookPath = join(hooksDir, "pre-remove.sh");
+    await writeFile(
+      hookPath,
+      `#!/usr/bin/env bash\nset -euo pipefail\nif [[ ! -e '${lateDescendantPath}' ]]; then\n  git -C '${workspace.repos[1].path}' worktree add -b hook-created-descendant '${lateDescendantPath}' >/dev/null\nfi\n`,
+    );
+    await chmod(hookPath, 0o755);
+
+    const result = await runRemove(await realpath(parentPath), {
+      force: true,
+      keepBranches: true,
+      path: true,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("appeared after planning");
+    expect(existsSync(parentPath)).toBe(true);
+    expect(existsSync(childPaths["repo-a"])).toBe(true);
+    expect(existsSync(lateDescendantPath)).toBe(true);
+    expect(normalizePathForComparison(await worktreeList(workspace.repos[1].path))).toContain(
+      normalizePathForComparison(await realpath(lateDescendantPath)),
     );
   });
 

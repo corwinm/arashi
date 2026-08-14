@@ -51,7 +51,8 @@ arashi remove feature-login --json
 - Removing a configured parent worktree automatically includes every configured descendant worktree nested beneath it, even when a descendant uses a different branch name. Descendants are always removed before their ancestors.
 - Unless `--keep-branches` is set, branches belonging to automatically included descendants are also deleted from their owning repositories. Same-named branches in unrelated repositories are not included.
 - `--dry-run` reports this complete child-first descendant plan without changing worktrees, branches, or hooks.
-- Configured repositories that are intentionally missing locally are skipped during inventory discovery. If an existing configured repository cannot be inspected, removal fails before mutation so an undiscovered descendant cannot be orphaned.
+- Configured repositories that are intentionally missing locally and own no nested descendant at any depth are skipped during inventory discovery. If a repository is missing while one of its nested descendants still exists, or an existing configured repository cannot be inspected, removal fails before mutation so the descendant cannot be orphaned.
+- After pre-remove hooks finish, the planned hierarchy is revalidated before mutation. If a hook introduces an unplanned configured descendant, worktree and branch removal stop before changing the planned targets.
 - Dirty worktrees require explicit confirmation unless `--no-check-dirty` is set.
 - Use `--dry-run` when you want to see planned worktree removals, branch deletions, dirty blockers, skipped/missing repositories, and hook context before mutation.
 - `--dry-run` never removes worktrees, deletes branches, detaches kept worktrees, or executes remove hooks.
