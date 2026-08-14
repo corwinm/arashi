@@ -241,7 +241,7 @@ export interface AddExecutionDependencies {
   transactionLockHeld?: boolean;
 }
 
-const CONFIG_LOCK_RETRY_COUNT = 500;
+const CONFIG_LOCK_RETRY_COUNT = 2_000;
 const CONFIG_LOCK_RETRY_DELAY_MS = 20;
 const INCOMPLETE_LOCK_STALE_MS = 30_000;
 const TRANSACTION_LOCK_RETRY_COUNT = 90_000;

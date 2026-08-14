@@ -1333,6 +1333,20 @@ describe("add coordinated linked materialization", () => {
     expect(await runtime.file(lockPath).exists()).toBe(false);
   });
 
+  test("waits through the remaining incomplete-lock grace period", async () => {
+    const topology = await createParentTopology("feature/incomplete-config-lock-grace");
+    const remote = await seedChildRemote(topology.root);
+    const lockPath = join(topology.active, ".arashi-config.add.lock");
+    await writeFile(lockPath, "incomplete");
+    const halfwayThroughGrace = new Date(Date.now() - 15_000);
+    await utimes(lockPath, halfwayThroughGrace, halfwayThroughGrace);
+
+    const result = await runAdd(topology.active, remote);
+
+    expect(repositoryResult(result)).toMatchObject({ name: "child" });
+    expect(await runtime.file(lockPath).exists()).toBe(false);
+  }, 25_000);
+
   test("recovers a claim left by an interrupted lock reclaimer", async () => {
     const topology = await createParentTopology("feature/orphaned-reclaim-claim");
     const remote = await seedChildRemote(topology.root);
