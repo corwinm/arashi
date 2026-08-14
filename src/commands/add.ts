@@ -37,7 +37,6 @@ import {
   realpath,
   rm,
   stat,
-  utimes,
   writeFile,
 } from "node:fs/promises";
 import {
@@ -282,22 +281,10 @@ const reclaimAbandonedLock = async (lockPath: string): Promise<boolean> => {
   const claimPath = `${lockPath}.reclaim-${lockStat.dev}-${lockStat.ino}`;
   try {
     await link(lockPath, claimPath);
-    const claimedAt = new Date();
-    await utimes(claimPath, claimedAt, claimedAt);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
       throw error;
-    }
-    try {
-      const claimStat = await stat(claimPath);
-      if (Date.now() - claimStat.mtimeMs >= INCOMPLETE_LOCK_STALE_MS) {
-        await rm(claimPath, { force: true });
-        return true;
-      }
-    } catch (claimError) {
-      if ((claimError as NodeJS.ErrnoException).code === "ENOENT") return true;
-      throw claimError;
     }
     return false;
   }

@@ -1,6 +1,6 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { executeAdd, type AddExecutionDependencies } from "../../src/commands/add.ts";
@@ -1305,6 +1305,20 @@ describe("add coordinated linked materialization", () => {
     const result = await runAdd(topology.active, remote);
 
     expect(repositoryResult(result)).toMatchObject({ name: "child" });
+    expect(await runtime.file(lockPath).exists()).toBe(false);
+  });
+
+  test("preserves malformed lock age while claiming it for recovery", async () => {
+    const topology = await createParentTopology("feature/stale-malformed-lock");
+    const remote = await seedChildRemote(topology.root);
+    const lockPath = join(topology.active, ".arashi-config.add.lock");
+    await writeFile(lockPath, "incomplete");
+    const staleTime = new Date(Date.now() - 31_000);
+    await utimes(lockPath, staleTime, staleTime);
+
+    const result = await runAdd(topology.active, remote);
+
+    expect(result.exitCode).toBe(0);
     expect(await runtime.file(lockPath).exists()).toBe(false);
   });
 
