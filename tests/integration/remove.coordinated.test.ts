@@ -309,8 +309,12 @@ describe("remove command - coordinated child-first removal", () => {
       "parent-prunable-descendant",
       { "repo-a": "child-prunable-a", "repo-b": "child-prunable-b" },
     );
-    const gitPointer = join(childPaths["repo-b"], ".git");
-    const hiddenGitPointer = join(childPaths["repo-b"], ".git-hidden");
+    const customDirectory = join(parentPath, "custom-location");
+    const prunablePath = join(customDirectory, "repo-b-worktree");
+    await mkdir(customDirectory, { recursive: true });
+    await git(workspace.repos[1].path, ["worktree", "move", childPaths["repo-b"], prunablePath]);
+    const gitPointer = join(prunablePath, ".git");
+    const hiddenGitPointer = join(prunablePath, ".git-hidden");
     await rename(gitPointer, hiddenGitPointer);
 
     try {
@@ -328,9 +332,9 @@ describe("remove command - coordinated child-first removal", () => {
 
     expect(existsSync(parentPath)).toBe(true);
     expect(existsSync(childPaths["repo-a"])).toBe(true);
-    expect(existsSync(childPaths["repo-b"])).toBe(true);
+    expect(existsSync(prunablePath)).toBe(true);
     expect(normalizePathForComparison(await worktreeList(workspace.repos[1].path))).toContain(
-      normalizePathForComparison(await realpath(childPaths["repo-b"])),
+      normalizePathForComparison(await realpath(prunablePath)),
     );
   });
 

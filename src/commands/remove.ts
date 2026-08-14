@@ -789,12 +789,14 @@ export async function executeRemove(
     });
     const plan = createConfiguredWorktreeRemovalPlan(worktreesToRemove, configuredInventory);
     worktreesToRemove.splice(ZERO, worktreesToRemove.length, ...plan.worktrees);
-    const unsafePlannedDescendant = findUnplannedConfiguredDescendant(
-      worktreesToRemove,
-      repositories,
-      childRepoNames,
-      reposDirName,
-    );
+    const unsafePlannedDescendant =
+      findUnplannedRegisteredDescendant(worktreesToRemove, discoveredInventory, repositories) ??
+      findUnplannedConfiguredDescendant(
+        worktreesToRemove,
+        repositories,
+        childRepoNames,
+        reposDirName,
+      );
     if (unsafePlannedDescendant) {
       throw new Error(
         `Removal of ${unsafePlannedDescendant.blockingWorktree.path} blocked because configured descendant ${unsafePlannedDescendant.repository.name}: ${unsafePlannedDescendant.path} exists outside the authoritative plan`,
@@ -1041,13 +1043,8 @@ export async function executeRemove(
     const refreshedInventory = await discoverAllWorktrees(repositories, {
       strict: true,
     });
-    const refreshedEntries = await buildWorktreeEntries(refreshedInventory, {
-      childRepoNames,
-      includeDirtyDetails: false,
-      reposDirName,
-    });
     invalidatedRemovalPlan =
-      findUnplannedRegisteredDescendant(worktreesToRemove, refreshedEntries, repositories) ??
+      findUnplannedRegisteredDescendant(worktreesToRemove, refreshedInventory, repositories) ??
       findUnplannedConfiguredDescendant(
         worktreesToRemove,
         repositories,
@@ -1212,24 +1209,20 @@ interface UnplannedConfiguredDescendant {
   repository: RepositoryTarget;
 }
 
-const comparablePhysicalPath = (value: string): string => {
-  const comparable = resolve(value);
-  return process.platform === "win32" ? comparable.toLowerCase() : comparable;
-};
-
 const findUnplannedRegisteredDescendant = (
   worktrees: WorktreeEntry[],
-  refreshedInventory: WorktreeEntry[],
+  refreshedInventory: ReadonlyArray<Pick<WorktreeEntry, "path" | "repository">>,
   repositories: RepositoryTarget[],
 ): UnplannedConfiguredDescendant | undefined => {
-  const plannedPaths = new Set(worktrees.map((worktree) => comparablePhysicalPath(worktree.path)));
+  const plannedPaths = new Set(worktrees.map((worktree) => canonicalPhysicalPath(worktree.path)));
 
   for (const candidate of refreshedInventory) {
-    if (plannedPaths.has(comparablePhysicalPath(candidate.path))) {
+    const candidatePath = canonicalPhysicalPath(candidate.path);
+    if (plannedPaths.has(candidatePath)) {
       continue;
     }
     const blockingWorktree = worktrees.find((worktree) =>
-      isDescendantWorktreePath(worktree.path, candidate.path),
+      isDescendantWorktreePath(canonicalPhysicalPath(worktree.path), candidatePath),
     );
     if (!blockingWorktree) {
       continue;
