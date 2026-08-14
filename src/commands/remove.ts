@@ -35,6 +35,8 @@ import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
 import { basename, resolve } from "path";
 import {
   branchExists,
+  canonicalPhysicalPath,
+  createConfiguredWorktreeRemovalPlan,
   createRemovalSummary,
   deleteBranch,
   detachWorktree,
@@ -45,6 +47,8 @@ import {
   formatRemovalSummaryJson,
   getCurrentBranch,
   groupWorktreesByParent,
+  isDescendantWorktreePath,
+  pathExistsFailClosed,
   refreshRemainingChildStatuses,
   removeWorktree,
 } from "../core/remove.ts";
@@ -203,6 +207,7 @@ interface ConfirmationOptions {
   branchPresence: Record<string, string[]>;
   checkDirty: boolean;
   confirm: (message: string, defaultValue?: boolean) => Promise<PromptOutcome<boolean>>;
+  quiet: boolean;
   worktrees: WorktreeEntry[];
 }
 
@@ -329,6 +334,7 @@ export async function executeRemove(
         branchPresence,
         checkDirty: options.checkDirty !== false,
         confirm: prompt.confirm,
+        quiet: options.json === true,
         worktrees: [targetEntry],
       });
       if (confirmation === "cancelled") {
@@ -743,6 +749,75 @@ export async function executeRemove(
     }
   }
 
+  if (!options.keepWorktrees && worktreesToRemove.length > ZERO) {
+    const configuredRepositories = repositories.filter((repo) => childRepoNames.has(repo.name));
+    const physicalHierarchy = worktreesToRemove.map((worktree) => worktree.path);
+    const inspectedHierarchyPaths = new Set<string>();
+
+    while (physicalHierarchy.length > ZERO) {
+      const parentPath = physicalHierarchy.shift();
+      if (!parentPath) {
+        continue;
+      }
+      const parentIdentity = canonicalPhysicalPath(parentPath);
+      if (inspectedHierarchyPaths.has(parentIdentity)) {
+        continue;
+      }
+      inspectedHierarchyPaths.add(parentIdentity);
+
+      for (const repo of configuredRepositories) {
+        const nestedPath = resolve(parentPath, reposDirName, repo.name);
+        if (!pathExistsFailClosed(nestedPath)) {
+          continue;
+        }
+        if (!pathExistsFailClosed(repo.path)) {
+          throw new Error(
+            `Failed to inspect worktrees for ${repo.name} (${repo.path}): repository is missing while a configured descendant exists at ${nestedPath}`,
+          );
+        }
+        physicalHierarchy.push(nestedPath);
+      }
+    }
+
+    const discoveredInventory = await discoverAllWorktrees(repositories, {
+      strict: true,
+    });
+    const configuredInventory = await buildWorktreeEntries(discoveredInventory, {
+      childRepoNames,
+      includeDirtyDetails: false,
+      reposDirName,
+    });
+    const plan = createConfiguredWorktreeRemovalPlan(worktreesToRemove, configuredInventory);
+    worktreesToRemove.splice(ZERO, worktreesToRemove.length, ...plan.worktrees);
+    const unsafePlannedDescendant =
+      findUnplannedRegisteredDescendant(worktreesToRemove, discoveredInventory, repositories) ??
+      findUnplannedConfiguredDescendant(
+        worktreesToRemove,
+        repositories,
+        childRepoNames,
+        reposDirName,
+      );
+    if (unsafePlannedDescendant) {
+      throw new Error(
+        `Removal of ${unsafePlannedDescendant.blockingWorktree.path} blocked because configured descendant ${unsafePlannedDescendant.repository.name}: ${unsafePlannedDescendant.path} exists outside the authoritative plan`,
+      );
+    }
+
+    for (const worktree of plan.worktrees) {
+      if (!worktree.branch) {
+        continue;
+      }
+      if (!targetBranches.includes(worktree.branch)) {
+        targetBranches.push(worktree.branch);
+      }
+      branchPresence[worktree.branch] = branchPresence[worktree.branch] ?? [];
+      if (!branchPresence[worktree.branch].includes(worktree.repository)) {
+        branchPresence[worktree.branch].push(worktree.repository);
+      }
+      missingBranches[worktree.branch] = missingBranches[worktree.branch] ?? [];
+    }
+  }
+
   if (!options.json) {
     warnOnDefaultMainRemoval(skippedMain, defaultBranches);
   }
@@ -769,6 +844,7 @@ export async function executeRemove(
       branchPresence,
       checkDirty: options.checkDirty !== false,
       confirm: prompt.confirm,
+      quiet: options.json === true,
       worktrees: worktreesToRemove,
     });
     if (confirmation === "cancelled") {
@@ -962,6 +1038,33 @@ export async function executeRemove(
     return ONE;
   }
 
+  let invalidatedRemovalPlan: UnplannedConfiguredDescendant | undefined;
+  if (!options.keepWorktrees) {
+    const refreshedInventory = await discoverAllWorktrees(repositories, {
+      strict: true,
+    });
+    invalidatedRemovalPlan =
+      findUnplannedRegisteredDescendant(worktreesToRemove, refreshedInventory, repositories) ??
+      findUnplannedConfiguredDescendant(
+        worktreesToRemove,
+        repositories,
+        childRepoNames,
+        reposDirName,
+      );
+    if (invalidatedRemovalPlan) {
+      const message = `Removal of ${invalidatedRemovalPlan.blockingWorktree.path} blocked because unplanned configured descendant ${invalidatedRemovalPlan.repository.name}: ${invalidatedRemovalPlan.path} appeared after planning`;
+      summary.operations.push({
+        branchName: invalidatedRemovalPlan.blockingWorktree.branch,
+        error: message,
+        repository: invalidatedRemovalPlan.blockingWorktree.repository,
+        status: "failed",
+        type: "worktree_remove",
+        worktreePath: invalidatedRemovalPlan.blockingWorktree.path,
+      });
+      summary.errors.push(message);
+    }
+  }
+
   if (options.keepWorktrees && worktreesToRemove.length > 0) {
     for (const worktree of worktreesToRemove) {
       try {
@@ -976,7 +1079,8 @@ export async function executeRemove(
     }
   }
 
-  if (!options.keepWorktrees) {
+  if (!options.keepWorktrees && !invalidatedRemovalPlan) {
+    const failedWorktrees: WorktreeEntry[] = [];
     for (let index = 0; index < worktreesToRemove.length; index += 1) {
       const worktree = worktreesToRemove[index];
       const operation: RemovalOperation = {
@@ -987,19 +1091,27 @@ export async function executeRemove(
         worktreePath: worktree.path,
       };
 
-      try {
-        const forceRemove = options.checkDirty === false || worktree.isDirty === true;
-        await removeWorktree(
-          worktree,
-          getRepoPath(repositories, worktree.repository),
-          forceRemove || false,
-        );
-        operation.status = "success";
-        const remaining = worktreesToRemove.slice(index + 1);
-        await refreshRemainingChildStatuses(worktree, remaining, options.checkDirty !== false);
-      } catch (error) {
+      const failedDescendant = failedWorktrees.find((failed) =>
+        isDescendantWorktreePath(worktree.path, failed.path),
+      );
+      if (failedDescendant) {
         operation.status = "failed";
-        operation.error = formatWorktreeRemovalError(error);
+        operation.error = `Removal of ${worktree.path} blocked because descendant ${failedDescendant.repository}: ${failedDescendant.path} failed`;
+      } else {
+        try {
+          const forceRemove = options.checkDirty === false || worktree.isDirty === true;
+          await removeWorktree(
+            worktree,
+            getRepoPath(repositories, worktree.repository),
+            forceRemove || false,
+          );
+          operation.status = "success";
+          const remaining = worktreesToRemove.slice(index + 1);
+          await refreshRemainingChildStatuses(worktree, remaining, options.checkDirty !== false);
+        } catch (error) {
+          operation.status = "failed";
+          operation.error = formatWorktreeRemovalError(error);
+        }
       }
 
       summary.operations.push(operation);
@@ -1007,12 +1119,13 @@ export async function executeRemove(
         summary.successfulWorktrees += 1;
       }
       if (operation.status === "failed" && operation.error) {
+        failedWorktrees.push(worktree);
         summary.errors.push(`${operation.repository}: ${operation.error}`);
       }
     }
   }
 
-  if (!options.keepBranches && targetBranches.length > 0) {
+  if (!options.keepBranches && !invalidatedRemovalPlan && targetBranches.length > 0) {
     for (const branch of targetBranches) {
       for (const repoName of branchPresence[branch]) {
         const repoPath = getRepoPath(repositories, repoName);
@@ -1089,6 +1202,81 @@ export async function executeRemove(
 
   return ZERO;
 }
+
+interface UnplannedConfiguredDescendant {
+  blockingWorktree: WorktreeEntry;
+  path: string;
+  repository: RepositoryTarget;
+}
+
+const findUnplannedRegisteredDescendant = (
+  worktrees: WorktreeEntry[],
+  refreshedInventory: ReadonlyArray<Pick<WorktreeEntry, "path" | "repository">>,
+  repositories: RepositoryTarget[],
+): UnplannedConfiguredDescendant | undefined => {
+  const plannedPaths = new Set(worktrees.map((worktree) => canonicalPhysicalPath(worktree.path)));
+
+  for (const candidate of refreshedInventory) {
+    if (!pathExistsFailClosed(candidate.path)) {
+      continue;
+    }
+    const candidatePath = canonicalPhysicalPath(candidate.path);
+    if (plannedPaths.has(candidatePath)) {
+      continue;
+    }
+    const blockingWorktree = worktrees.find((worktree) =>
+      isDescendantWorktreePath(canonicalPhysicalPath(worktree.path), candidatePath),
+    );
+    if (!blockingWorktree) {
+      continue;
+    }
+    const repository = repositories.find((target) => target.name === candidate.repository);
+    if (repository) {
+      return { blockingWorktree, path: candidate.path, repository };
+    }
+  }
+
+  return undefined;
+};
+
+const findUnplannedConfiguredDescendant = (
+  worktrees: WorktreeEntry[],
+  repositories: RepositoryTarget[],
+  childRepoNames: Set<string>,
+  reposDirName: string,
+): UnplannedConfiguredDescendant | undefined => {
+  const plannedPaths = new Set(worktrees.map((worktree) => canonicalPhysicalPath(worktree.path)));
+  const configuredRepositories = repositories.filter((repo) => childRepoNames.has(repo.name));
+
+  for (const blockingWorktree of worktrees) {
+    const hierarchy = [blockingWorktree.path];
+    const inspectedPaths = new Set<string>();
+    while (hierarchy.length > ZERO) {
+      const parentPath = hierarchy.shift();
+      if (!parentPath) {
+        continue;
+      }
+      const parentIdentity = canonicalPhysicalPath(parentPath);
+      if (inspectedPaths.has(parentIdentity)) {
+        continue;
+      }
+      inspectedPaths.add(parentIdentity);
+
+      for (const repository of configuredRepositories) {
+        const nestedPath = resolve(parentPath, reposDirName, repository.name);
+        if (!pathExistsFailClosed(nestedPath)) {
+          continue;
+        }
+        if (!plannedPaths.has(canonicalPhysicalPath(nestedPath))) {
+          return { blockingWorktree, path: nestedPath, repository };
+        }
+        hierarchy.push(nestedPath);
+      }
+    }
+  }
+
+  return undefined;
+};
 
 const buildRepositoryTargets = (
   workspaceRoot: string,
@@ -1273,15 +1461,18 @@ const promptConfirmation = async ({
   branchPresence,
   checkDirty,
   confirm,
+  quiet,
   worktrees,
 }: ConfirmationOptions): Promise<"confirmed" | "declined" | "cancelled"> => {
   if (checkDirty) {
     const dirty = worktrees.filter((wt) => wt.isDirty);
     if (dirty.length > ZERO) {
-      warn(`Uncommitted changes detected in ${dirty.length} worktrees:`);
-      for (const wt of dirty) {
-        const detailText = formatDirtyDetailsText(wt);
-        info(`  • ${wt.repository}: ${wt.path}${detailText}`);
+      if (!quiet) {
+        warn(`Uncommitted changes detected in ${dirty.length} worktrees:`);
+        for (const wt of dirty) {
+          const detailText = formatDirtyDetailsText(wt);
+          info(`  • ${wt.repository}: ${wt.path}${detailText}`);
+        }
       }
 
       const outcome = await confirm(

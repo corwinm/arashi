@@ -1,6 +1,58 @@
 import { describe, expect, test } from "vitest";
+import { mkdir, mkdtemp, rm, symlink } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
-import { groupWorktreesByParent } from "../../../src/core/remove.ts";
+import {
+  canonicalPhysicalPath,
+  groupWorktreesByParent,
+  pathExistsFailClosed,
+} from "../../../src/core/remove.ts";
+
+const inspectMissingPath = () => {
+  throw Object.assign(new Error("missing"), { code: "ENOENT" });
+};
+
+const canonicalizeToParent = () => "/workspace/parent";
+
+describe("pathExistsFailClosed", () => {
+  test("returns false only for missing paths", () => {
+    expect(pathExistsFailClosed("/missing", inspectMissingPath)).toBe(false);
+  });
+
+  test("preserves filesystem inspection failures", () => {
+    const failure = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const inspect = () => {
+      throw failure;
+    };
+
+    expect(() => pathExistsFailClosed("/blocked", inspect)).toThrow(/permission denied/);
+  });
+});
+
+describe("canonicalPhysicalPath", () => {
+  test("uses the resolved filesystem identity instead of an alias spelling", () => {
+    expect(canonicalPhysicalPath("/workspace/parent/repos/repo-a", canonicalizeToParent)).toBe(
+      canonicalPhysicalPath("/workspace/parent", canonicalizeToParent),
+    );
+  });
+
+  test("collapses a symlink cycle to the ancestor identity", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const root = await mkdtemp(join(tmpdir(), "arashi-remove-cycle-"));
+    const aliasParent = join(root, "repos");
+    const alias = join(aliasParent, "repo-a");
+    try {
+      await mkdir(aliasParent);
+      await symlink(root, alias, "dir");
+      expect(canonicalPhysicalPath(alias)).toBe(canonicalPhysicalPath(root));
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+});
 
 describe("groupWorktreesByParent", () => {
   test("groups children under parentPath and leaves orphans ungrouped", () => {

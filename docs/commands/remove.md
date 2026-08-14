@@ -48,6 +48,11 @@ arashi remove feature-login --json
 ## Notes
 
 - The command skips main worktrees automatically.
+- Removing a configured parent worktree automatically includes every configured descendant worktree nested beneath it, even when a descendant uses a different branch name. Descendants are always removed before their ancestors.
+- Unless `--keep-branches` is set, branches belonging to automatically included descendants are also deleted from their owning repositories. Same-named branches in unrelated repositories are not included.
+- `--dry-run` reports this complete child-first descendant plan without changing worktrees, branches, or hooks.
+- If any configured repository is missing or cannot be inspected, coordinated worktree removal fails before mutation. An unavailable repository can still own a registered descendant at an arbitrary path beneath a selected ancestor, so absence alone is not sufficient proof that removal is safe.
+- After pre-remove hooks finish, the planned hierarchy is revalidated before mutation. If a hook introduces an unplanned configured descendant, worktree and branch removal stop before changing the planned targets.
 - Dirty worktrees require explicit confirmation unless `--no-check-dirty` is set.
 - Use `--dry-run` when you want to see planned worktree removals, branch deletions, dirty blockers, skipped/missing repositories, and hook context before mutation.
 - `--dry-run` never removes worktrees, deletes branches, detaches kept worktrees, or executes remove hooks.
