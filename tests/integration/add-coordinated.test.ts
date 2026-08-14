@@ -242,6 +242,33 @@ describe("add coordinated linked materialization", () => {
     expect(await runtime.file(canonicalSetup).exists()).toBe(false);
   });
 
+  test("creates the setup template from a nested invocation in the active child worktree", async () => {
+    const topology = await createParentTopology("feature/nested-create-setup");
+    const remote = await seedChildRemote(topology.root, [], false);
+    const nested = join(topology.active, "nested", "directory");
+    await mkdir(nested, { recursive: true });
+
+    const result = await run(nested, [
+      process.execPath,
+      CLI_ENTRY,
+      "add",
+      remote,
+      "--json",
+      "--force",
+      "--create-setup",
+    ]);
+    const repository = repositoryResult(result);
+    const activeSetup = join(topology.active, "repos", "child", "setup.sh");
+
+    expect(repository).toMatchObject({
+      materialization: "coordinated-worktree",
+      setupScript: "repos/child/setup.sh",
+      setupScriptCreated: true,
+    });
+    expect(await readFile(activeSetup, "utf8")).toContain("Add repository setup commands here");
+    expect(await runtime.file(join(nested, "repos", "child", "setup.sh")).exists()).toBe(false);
+  });
+
   test("fails closed when parent Git topology cannot be observed", async () => {
     const topology = await createParentTopology("feature/topology-observe");
     const remote = await seedChildRemote(topology.root);
@@ -315,6 +342,33 @@ describe("add coordinated linked materialization", () => {
       setupScriptCreated: false,
       worktreePath: null,
     });
+  });
+
+  test("retains single-placement behavior for an absolute repositories directory", async () => {
+    const topology = await createParentTopology("feature/absolute-repos");
+    const remote = await seedChildRemote(topology.root);
+    const absoluteRepos = join(topology.root, "shared-repositories");
+    const activeConfigPath = join(topology.active, ".arashi", "config.json");
+    const activeConfig = JSON.parse(await readFile(activeConfigPath, "utf8")) as {
+      repos: Record<string, unknown>;
+      reposDir: string;
+    };
+    activeConfig.reposDir = absoluteRepos;
+    await writeFile(activeConfigPath, JSON.stringify(activeConfig, null, 2));
+
+    const result = await runAdd(topology.active, remote);
+    const repository = repositoryResult(result);
+
+    expect(repository).toMatchObject({
+      canonicalPath: join(absoluteRepos, "child"),
+      materialization: "clone",
+      worktreePath: null,
+    });
+    expect(await runtime.file(join(absoluteRepos, "child", ".git")).exists()).toBe(true);
+    const persisted = JSON.parse(await readFile(activeConfigPath, "utf8")) as {
+      repos: Record<string, { path: string }>;
+    };
+    expect(persisted.repos.child?.path).toBe(join(absoluteRepos, "child"));
   });
 
   test("rejects canonical and active destination conflicts before mutation", async () => {
@@ -1026,6 +1080,35 @@ describe("add coordinated linked materialization", () => {
     });
   });
 
+  test("fails before mutation when config changes between load and snapshot", async () => {
+    const topology = await createParentTopology("feature/config-load-race");
+    const remote = await seedChildRemote(topology.root);
+    const configPath = join(topology.active, ".arashi", "config.json");
+
+    const failure = await executeAdd(
+      remote,
+      { force: true, json: true },
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        afterConfigLoad: async () => {
+          const concurrent = JSON.parse(await readFile(configPath, "utf8")) as {
+            repos: Record<string, unknown>;
+          };
+          concurrent.repos.concurrent = { gitUrl: "concurrent.git", path: "repos/concurrent" };
+          await writeFile(configPath, JSON.stringify(concurrent, null, 2));
+        },
+      },
+    ).catch((error: unknown) => error as AddCommandError);
+
+    expect(failure).toBeInstanceOf(AddCommandError);
+    const finalConfig = JSON.parse(await readFile(configPath, "utf8")) as {
+      repos: Record<string, unknown>;
+    };
+    expect(finalConfig.repos).toHaveProperty("concurrent");
+    expect(finalConfig.repos).not.toHaveProperty("child");
+    expect(await runtime.file(join(topology.canonical, "repos", "child")).exists()).toBe(false);
+  });
+
   test("serializes concurrent add config persistence without losing an entry", async () => {
     const topology = await createParentTopology("feature/config-lock");
     const firstRoot = join(topology.root, "first-remote");
@@ -1034,9 +1117,6 @@ describe("add coordinated linked materialization", () => {
     await mkdir(secondRoot);
     const firstRemote = await seedChildRemote(firstRoot);
     const secondRemote = await seedChildRemote(secondRoot);
-    const lockPath = join(topology.active, ".arashi-config.add.lock");
-    await writeFile(lockPath, "test barrier\n");
-
     const first = run(topology.active, [
       process.execPath,
       CLI_ENTRY,
@@ -1059,29 +1139,19 @@ describe("add coordinated linked materialization", () => {
     ]);
     const firstClone = join(topology.canonical, "repos", "child-one");
     const secondClone = join(topology.canonical, "repos", "child-two");
-    for (let attempt = 0; attempt < 250; attempt += 1) {
-      if ((await runtime.file(firstClone).exists()) && (await runtime.file(secondClone).exists())) {
-        break;
-      }
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
-    }
-    expect(await runtime.file(firstClone).exists()).toBe(true);
-    expect(await runtime.file(secondClone).exists()).toBe(true);
-    await rm(lockPath);
-
     const results = await Promise.all([first, second]);
-    expect(results.filter((result) => result.exitCode === 0)).toHaveLength(1);
-    expect(results.filter((result) => result.exitCode !== 0)).toHaveLength(1);
+    const successfulNames = results.flatMap((result, index) =>
+      result.exitCode === 0 ? [index === 0 ? "child-one" : "child-two"] : [],
+    );
+    expect(successfulNames.length).toBeGreaterThan(0);
+
     const config = JSON.parse(
       await readFile(join(topology.active, ".arashi", "config.json"), "utf8"),
     ) as { repos: Record<string, unknown> };
     const persistedNames = ["child-one", "child-two"].filter((name) => name in config.repos);
-    expect(persistedNames).toHaveLength(1);
-    const failed = results.find((result) => result.exitCode !== 0);
-    expect(JSON.parse(failed?.stdout ?? "{}")).toMatchObject({
-      error: { details: { phase: "config" } },
-      ok: false,
-    });
+    expect(persistedNames.toSorted()).toEqual(successfulNames.toSorted());
+    expect(await runtime.file(firstClone).exists()).toBe(results[0]?.exitCode === 0);
+    expect(await runtime.file(secondClone).exists()).toBe(results[1]?.exitCode === 0);
   });
 
   test("preserves concurrent config bytes instead of falsely completing rollback", async () => {

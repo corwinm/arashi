@@ -10,7 +10,7 @@ import { runtime } from "../lib/runtime.ts";
  */
 
 import { AddCommandError, AddCommandErrorCode, ArashiError } from "../lib/errors.ts";
-import { basename, dirname, join, relative, resolve } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import { clone, exec as gitExec, getDefaultBranch } from "../lib/git.ts";
 import {
   configExists,
@@ -202,6 +202,7 @@ export interface AddRollbackDetails {
 }
 
 export interface AddExecutionDependencies {
+  afterConfigLoad?: () => Promise<void>;
   afterConfigPersist?: () => Promise<void>;
   cloneRepository?: typeof clone;
   createCoordinatedBranch?: (
@@ -577,6 +578,7 @@ export const executeAdd = async (
   const isEffectivelyIgnored = dependencies.isEffectivelyIgnored ?? gitPathIsEffectivelyIgnored;
   const observePath = dependencies.observePath ?? pathExists;
   const observeWorktreeMetadata = dependencies.observeWorktreeMetadata ?? hasWorktreeMetadata;
+  const afterConfigLoad = dependencies.afterConfigLoad;
   const afterConfigPersist = dependencies.afterConfigPersist;
   const resolveMainWorktree =
     dependencies.resolveMainWorktree ??
@@ -649,8 +651,23 @@ export const executeAdd = async (
     repositoryName = options.name || urlInfo.derivedName;
 
     // Step 4: Check for duplicate name
-    const config = await loadConfig(workspaceRoot);
-    originalConfigBytes = await readConfigBytes(getConfigPath(workspaceRoot));
+    const configPath = getConfigPath(workspaceRoot);
+    const configSnapshot = await withConfigLock(configPath, async () => {
+      const bytesBeforeLoad = await readFile(configPath);
+      const loadedConfig = await loadConfig(workspaceRoot);
+      await afterConfigLoad?.();
+      const bytesAfterLoad = await readFile(configPath);
+      if (!bytesEqual(bytesBeforeLoad, bytesAfterLoad)) {
+        throw addFailure(
+          "Configuration changed while add was loading it; preserved the newer file.",
+          AddCommandErrorCode.CONFIG_UPDATE_FAILED,
+          "preflight",
+        );
+      }
+      return { bytes: bytesBeforeLoad, config: loadedConfig };
+    });
+    const config = configSnapshot.config;
+    originalConfigBytes = configSnapshot.bytes;
     if (config.repos[repositoryName]) {
       throw new AddCommandError(
         `Repository name "${repositoryName}" already exists at ${config.repos[repositoryName].path}`,
@@ -680,7 +697,10 @@ export const executeAdd = async (
     const canonicalRoot = resolvedMainRoot
       ? await realpath(resolvedMainRoot)
       : await realpath(workspaceRoot);
-    const coordinated = resolvedMainRoot !== null && canonicalRoot !== executionRootReal;
+    const coordinated =
+      resolvedMainRoot !== null &&
+      canonicalRoot !== executionRootReal &&
+      !isAbsolute(config.reposDir);
     canonicalPath = resolve(canonicalRoot, configuredRepositoryPath);
     activePath = coordinated ? resolve(executionRootReal, configuredRepositoryPath) : null;
 
@@ -723,7 +743,7 @@ export const executeAdd = async (
         !(await inspectEffectiveIgnore(canonicalRoot, configuredRepositoryPath))
       ) {
         throw addFailure(
-          "Tracked managed-ignore scope cannot protect the canonical destination from this linked checkout. Reconcile and commit the managed repository rule on the parent main branch first.",
+          "Tracked managed-ignore scope cannot protect the canonical destination from this linked checkout. Reconcile and commit the managed repository rule on the branch checked out in the canonical parent checkout first.",
           AddCommandErrorCode.CONFIG_UPDATE_FAILED,
           "preflight",
           { canonicalPath, managedIgnoreScope: inspection.scope },
@@ -895,9 +915,10 @@ export const executeAdd = async (
 
     // Step 8: Detect setup script
     const s4 = startSpinner("Checking for setup script...");
-    let setupScript = await detectSetupScript(canonicalPath);
+    const materializedRepositoryPath = activePath ?? canonicalPath;
+    let setupScript = await detectSetupScript(materializedRepositoryPath);
     if (!setupScript && options.createSetup) {
-      setupScript = join(configuredRepositoryPath, "setup.sh");
+      setupScript = join(materializedRepositoryPath, "setup.sh");
       await writeFile(
         setupScript,
         "#!/usr/bin/env bash\nset -euo pipefail\n\n# Add repository setup commands here.\n",
