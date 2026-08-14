@@ -338,6 +338,27 @@ describe("remove command - coordinated child-first removal", () => {
     );
   });
 
+  test("ignores unrelated prunable registrations whose paths are already absent", async () => {
+    const { parentPath } = await createNestedWorktrees(workspace, "parent-unrelated-prunable", {
+      "repo-a": "child-unrelated-prunable-a",
+      "repo-b": "child-unrelated-prunable-b",
+    });
+    const unrelatedPath = join(workspace.rootPath, "worktrees", "unrelated-missing-prunable");
+    await createWorktree(workspace.repos[1].path, "unrelated-missing-prunable", unrelatedPath);
+    await rm(unrelatedPath, { force: true, recursive: true });
+
+    const result = await runRemove(await realpath(parentPath), {
+      dryRun: true,
+      force: true,
+      keepBranches: true,
+      path: true,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Dry run preview");
+    expect(existsSync(parentPath)).toBe(true);
+  });
+
   test("revalidates arbitrary registered descendant paths after pre-remove hooks", async () => {
     if (process.platform === "win32") {
       return;

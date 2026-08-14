@@ -1217,6 +1217,9 @@ const findUnplannedRegisteredDescendant = (
   const plannedPaths = new Set(worktrees.map((worktree) => canonicalPhysicalPath(worktree.path)));
 
   for (const candidate of refreshedInventory) {
+    if (!pathExistsFailClosed(candidate.path)) {
+      continue;
+    }
     const candidatePath = canonicalPhysicalPath(candidate.path);
     if (plannedPaths.has(candidatePath)) {
       continue;
