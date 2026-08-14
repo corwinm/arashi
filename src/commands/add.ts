@@ -312,7 +312,7 @@ const reclaimAbandonedLock = async (lockPath: string): Promise<boolean> => {
       }
       liveClaims.push(name);
     }
-    if (liveClaims.toSorted()[0] !== basename(claimPath)) return false;
+    if (liveClaims.some((name) => name !== basename(claimPath))) return false;
     const owner = await readLockOwner(claimPath);
     if (owner && lockOwnerIsAlive(owner.pid)) return false;
     if (!owner && Date.now() - claimedStat.mtimeMs < INCOMPLETE_LOCK_STALE_MS) return false;
