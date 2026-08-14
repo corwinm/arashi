@@ -393,6 +393,25 @@ describe("add coordinated linked materialization", () => {
     expect(await runtime.file(join(topology.active, "child", ".git")).exists()).toBe(true);
   });
 
+  test("treats a dash-prefixed repositories directory as a path during ignore inspection", async () => {
+    const topology = await createParentTopology("feature/dash-repos");
+    const remote = await seedChildRemote(topology.root);
+    const activeConfigPath = join(topology.active, ".arashi", "config.json");
+    const activeConfig = JSON.parse(await readFile(activeConfigPath, "utf8")) as {
+      repos: Record<string, unknown>;
+      reposDir: string;
+    };
+    activeConfig.reposDir = "-repos";
+    await writeFile(activeConfigPath, JSON.stringify(activeConfig, null, 2));
+
+    const repository = repositoryResult(await runAdd(topology.active, remote));
+
+    expect(repository).toMatchObject({
+      materialization: "coordinated-worktree",
+      path: "-repos/child",
+    });
+  });
+
   test("rejects canonical and active destination conflicts before mutation", async () => {
     for (const role of ["canonical", "active"] as const) {
       const topology = await createParentTopology(`feature/${role}`);
@@ -1221,6 +1240,54 @@ describe("add coordinated linked materialization", () => {
     await expect(
       git(topology.canonical, ["check-ignore", "--no-index", "repos/ignore-two"]),
     ).resolves.toBeDefined();
+  });
+
+  test("shares the add transaction lock between canonical and linked parent checkouts", async () => {
+    const topology = await createParentTopology("feature/shared-transaction-lock");
+    const firstRoot = join(topology.root, "shared-first-remote");
+    const secondRoot = join(topology.root, "shared-second-remote");
+    await mkdir(firstRoot);
+    await mkdir(secondRoot);
+    const firstRemote = await seedChildRemote(firstRoot);
+    const secondRemote = await seedChildRemote(secondRoot);
+    let releaseFirst!: () => void;
+    let markFirstReached!: () => void;
+    let secondReached = false;
+    const firstReached = new Promise<void>((resolveReached) => {
+      markFirstReached = resolveReached;
+    });
+    const release = new Promise<void>((resolveRelease) => {
+      releaseFirst = resolveRelease;
+    });
+
+    const first = executeAdd(
+      firstRemote,
+      { force: true, json: true, name: "shared-one" },
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        afterIgnoreReconcile: async () => {
+          markFirstReached();
+          await release;
+        },
+      },
+    );
+    await firstReached;
+    const second = executeAdd(
+      secondRemote,
+      { force: true, json: true, name: "shared-two" },
+      { configurationRoot: topology.canonical, executionRoot: topology.canonical },
+      {
+        afterIgnoreReconcile: async () => {
+          secondReached = true;
+        },
+      },
+    );
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+    expect(secondReached).toBe(false);
+    releaseFirst();
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(secondReached).toBe(true);
   });
 
   test("reclaims an abandoned configuration lock", async () => {

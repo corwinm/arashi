@@ -233,6 +233,7 @@ export interface AddExecutionDependencies {
 const CONFIG_LOCK_RETRY_COUNT = 500;
 const CONFIG_LOCK_RETRY_DELAY_MS = 20;
 const INCOMPLETE_LOCK_STALE_MS = 30_000;
+const TRANSACTION_LOCK_RETRY_COUNT = 90_000;
 
 interface LockOwner {
   pid: number;
@@ -276,15 +277,14 @@ const reclaimAbandonedLock = async (lockPath: string): Promise<boolean> => {
   return true;
 };
 
-const withWorkspaceLock = async <T>(
-  configPath: string,
-  lockName: string,
+const withFileLock = async <T>(
+  lockPath: string,
+  retryCount: number,
   operation: () => Promise<T>,
 ): Promise<T> => {
-  const lockPath = join(dirname(dirname(configPath)), lockName);
   let lock: Awaited<ReturnType<typeof open>> | undefined;
   const owner: LockOwner = { pid: process.pid, token: randomUUID() };
-  for (let attempt = 0; attempt < CONFIG_LOCK_RETRY_COUNT; attempt += 1) {
+  for (let attempt = 0; attempt < retryCount; attempt += 1) {
     try {
       const candidate = await open(lockPath, "wx");
       try {
@@ -314,10 +314,27 @@ const withWorkspaceLock = async <T>(
 };
 
 const withConfigLock = <T>(configPath: string, operation: () => Promise<T>): Promise<T> =>
-  withWorkspaceLock(configPath, ".arashi-config.add.lock", operation);
+  withFileLock(
+    join(dirname(dirname(configPath)), ".arashi-config.add.lock"),
+    CONFIG_LOCK_RETRY_COUNT,
+    operation,
+  );
 
-const withAddTransactionLock = <T>(configPath: string, operation: () => Promise<T>): Promise<T> =>
-  withWorkspaceLock(configPath, ".arashi-add.transaction.lock", operation);
+const withAddTransactionLock = <T>(lockPath: string, operation: () => Promise<T>): Promise<T> =>
+  withFileLock(lockPath, TRANSACTION_LOCK_RETRY_COUNT, operation);
+
+const resolveAddTransactionLockPath = async (workspaceRoot: string): Promise<string> => {
+  try {
+    const result = await gitExec(["rev-parse", "--git-common-dir"], workspaceRoot);
+    const commonDirectory = result.stdout.trim();
+    if (!commonDirectory) throw new Error("Git returned an empty common directory.");
+    const absoluteCommonDirectory = resolve(workspaceRoot, commonDirectory);
+    return join(await realpath(absoluteCommonDirectory), ".arashi-add.transaction.lock");
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("not a git repository")) throw error;
+    return join(await realpath(workspaceRoot), ".arashi-add.transaction.lock");
+  }
+};
 
 // ============================================================================
 // URL Validation and Parsing
@@ -566,7 +583,7 @@ const gitPathIsEffectivelyIgnored = async (
   path: string,
 ): Promise<boolean> => {
   try {
-    await gitExec(["check-ignore", "--no-index", path], workspaceRoot);
+    await gitExec(["check-ignore", "--no-index", "--", path], workspaceRoot);
     return true;
   } catch (error) {
     if (error instanceof ArashiError && error.context.exitCode === 1) return false;
@@ -631,7 +648,8 @@ export const executeAdd = async (
 ): Promise<AddCommandResult> => {
   const workspaceRoot = workspaceRoots.configurationRoot;
   if (!dependencies.transactionLockHeld) {
-    return withAddTransactionLock(getConfigPath(workspaceRoot), () =>
+    const transactionLockPath = await resolveAddTransactionLockPath(workspaceRoot);
+    return withAddTransactionLock(transactionLockPath, () =>
       executeAdd(gitUrl, options, workspaceRoots, {
         ...dependencies,
         transactionLockHeld: true,
