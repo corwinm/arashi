@@ -45,6 +45,23 @@ export interface CommandSemanticMetadata {
   vscode: SurfacePolicy;
   optionPolicies?: Record<string, ExplicitOptionPolicy>;
   zeroConfig?: ZeroConfigCommandPolicy;
+  addMaterialization?: AddMaterializationPolicy;
+}
+export interface AddMaterializationPolicy {
+  activeConfigOwnership: true;
+  canonicalCloneDefaultBranch: true;
+  coordinatedBranch: "active-parent-branch";
+  linkedMode: "git-topology";
+  resultRoles: Array<
+    | "path"
+    | "materialization"
+    | "canonicalPath"
+    | "worktreePath"
+    | "defaultBranch"
+    | "coordinatedBranch"
+    | "setupScript"
+    | "setupScriptCreated"
+  >;
 }
 export type CommandSemantics = Record<string, CommandSemanticMetadata>;
 
@@ -352,10 +369,28 @@ const standard = (
 });
 
 export const commandSemantics: CommandSemantics = {
-  add: standard(
-    { support: "full" },
-    configuredOnly("Adding child repositories requires persisted configuration."),
-  ),
+  add: {
+    ...standard(
+      { support: "full" },
+      configuredOnly("Adding child repositories requires persisted configuration."),
+    ),
+    addMaterialization: {
+      activeConfigOwnership: true,
+      canonicalCloneDefaultBranch: true,
+      coordinatedBranch: "active-parent-branch",
+      linkedMode: "git-topology",
+      resultRoles: [
+        "path",
+        "materialization",
+        "canonicalPath",
+        "worktreePath",
+        "defaultBranch",
+        "coordinatedBranch",
+        "setupScript",
+        "setupScriptCreated",
+      ],
+    },
+  },
   clone: standard(
     undefined,
     configuredOnly("Cloning configured child repositories requires persisted configuration."),

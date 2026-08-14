@@ -734,6 +734,27 @@ export const reconcileRepositoryManagedIgnore = async (
   }
 };
 
+export const verifyManagedIgnoreRestored = async (
+  reconciliation: ManagedIgnoreReconciliation,
+): Promise<boolean> => {
+  const snapshot = reconciliationSnapshots.get(reconciliation);
+  if (!snapshot) return false;
+  for (const file of snapshot.files) {
+    if ((await readOptionalFile(file.path)) !== file.content) return false;
+  }
+  let preference: string | null = null;
+  try {
+    const result = await gitExec(
+      ["config", "--local", "--get", "arashi.ignoreScope"],
+      snapshot.workspaceRoot,
+    );
+    preference = result.stdout.trim() || null;
+  } catch (error) {
+    if (!(error instanceof ArashiError && error.context.exitCode === 1)) throw error;
+  }
+  return preference === snapshot.preference;
+};
+
 export const restoreManagedIgnore = async (
   reconciliation: ManagedIgnoreReconciliation,
 ): Promise<void> => {

@@ -9,10 +9,16 @@ import { runtime } from "../lib/runtime.ts";
  * @module commands/add
  */
 
-import { AddCommandError, AddCommandErrorCode } from "../lib/errors.ts";
-import { basename, join } from "path";
-import { clone, getDefaultBranch } from "../lib/git.ts";
-import { configExists, getConfigPath, loadConfig, saveConfig } from "../lib/config.ts";
+import { AddCommandError, AddCommandErrorCode, ArashiError } from "../lib/errors.ts";
+import { basename, dirname, join, relative, resolve } from "path";
+import { clone, exec as gitExec, getDefaultBranch } from "../lib/git.ts";
+import {
+  configExists,
+  getConfigPath,
+  loadConfig,
+  saveConfig,
+  serializeConfig,
+} from "../lib/config.ts";
 import {
   findConfiguredWorkspaceRoots,
   throwIfStandaloneWorkspace,
@@ -21,10 +27,12 @@ import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { executeClone } from "./clone.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
-import { rm } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import {
   reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
+  verifyManagedIgnoreRestored,
+  inspectRepositoryManagedIgnore,
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
@@ -34,6 +42,7 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
+import { resolveGitMainWorktree } from "../lib/workspace-context.ts";
 
 type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
 type WorkspaceRoots = Awaited<ReturnType<typeof findConfiguredWorkspaceRoots>>;
@@ -146,6 +155,12 @@ export interface AddCommandResult {
   repositoryName: string;
   /** Absolute filesystem path where repository was cloned */
   clonePath: string;
+  /** Config-relative repository path. */
+  path: string;
+  materialization: "clone" | "coordinated-worktree";
+  canonicalPath: string;
+  worktreePath: string | null;
+  coordinatedBranch: string | null;
   /** Detected default branch name */
   defaultBranch: string;
   /** Path to detected or created setup script (null if none) */
@@ -161,16 +176,78 @@ export interface AddCommandResult {
 /**
  * Operation metadata for rollback mechanism
  */
-interface RollbackOperation {
-  /** Type of operation that was performed */
-  type: "clone" | "config_update" | "setup_script_create";
-  /** Filesystem path affected by operation */
-  path: string;
-  /** Whether operation can be automatically reversed */
-  reversible: boolean;
-  /** Metadata for rollback logic (operation-specific) */
-  metadata?: Record<string, unknown>;
+export type AddRollbackFailurePhase =
+  | "worktree-remove"
+  | "branch-delete"
+  | "clone-remove"
+  | "config-restore"
+  | "managed-ignore-restore"
+  | "final-state-observe";
+
+export interface AddRollbackDetails {
+  complete: boolean;
+  failures: Array<{ message: string; phase: AddRollbackFailurePhase }>;
+  finalState: {
+    canonical: { exists: boolean | null; path: string };
+    worktree: { exists: boolean | null; metadataPresent: boolean | null; path: string } | null;
+    coordinatedBranch: {
+      createdByInvocation: boolean;
+      exists: boolean | null;
+      name: string;
+    } | null;
+    configEntryPresent: boolean | null;
+    configRestored: boolean | null;
+    managedIgnore: { changed: boolean; restored: boolean | null };
+  };
 }
+
+export interface AddExecutionDependencies {
+  afterConfigPersist?: () => Promise<void>;
+  cloneRepository?: typeof clone;
+  createCoordinatedBranch?: (
+    canonicalPath: string,
+    branch: string,
+    startPoint: string,
+    track: boolean,
+  ) => Promise<void>;
+  createWorktree?: (canonicalPath: string, worktreePath: string, branch: string) => Promise<void>;
+  deleteBranch?: (canonicalPath: string, branch: string) => Promise<void>;
+  isEffectivelyIgnored?: (workspaceRoot: string, path: string) => Promise<boolean>;
+  observePath?: (path: string) => Promise<boolean>;
+  observeWorktreeMetadata?: (canonicalPath: string, worktreePath: string) => Promise<boolean>;
+  removeCanonicalClone?: (path: string) => Promise<void>;
+  removeWorktree?: (canonicalPath: string, worktreePath: string) => Promise<void>;
+  resolveMainWorktree?: (path: string) => Promise<string | null>;
+  readConfigBytes?: (path: string) => Promise<Uint8Array>;
+  refExists?: (canonicalPath: string, ref: string) => Promise<boolean>;
+  restoreConfigBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
+  restoreIgnore?: typeof restoreManagedIgnore;
+  verifyIgnoreRestored?: typeof verifyManagedIgnoreRestored;
+}
+
+const CONFIG_LOCK_RETRY_COUNT = 500;
+const CONFIG_LOCK_RETRY_DELAY_MS = 20;
+
+const withConfigLock = async <T>(configPath: string, operation: () => Promise<T>): Promise<T> => {
+  const lockPath = join(dirname(dirname(configPath)), ".arashi-config.add.lock");
+  let lock: Awaited<ReturnType<typeof open>> | undefined;
+  for (let attempt = 0; attempt < CONFIG_LOCK_RETRY_COUNT; attempt += 1) {
+    try {
+      lock = await open(lockPath, "wx");
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, CONFIG_LOCK_RETRY_DELAY_MS));
+    }
+  }
+  if (!lock) throw new Error(`Timed out waiting for configuration lock: ${lockPath}`);
+  try {
+    return await operation();
+  } finally {
+    await lock.close();
+    await rm(lockPath, { force: true });
+  }
+};
 
 // ============================================================================
 // URL Validation and Parsing
@@ -399,15 +476,157 @@ export async function detectSetupScript(repoPath: string): Promise<string | null
  * @param workspaceRoot - Root directory of the workspace
  * @returns Result of add operation
  */
-const executeAdd = async (
+const pathExists = async (path: string): Promise<boolean> => runtime.file(path).exists();
+
+const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean =>
+  left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+
+const gitRefExists = async (repositoryPath: string, ref: string): Promise<boolean> => {
+  try {
+    await gitExec(["show-ref", "--verify", "--quiet", ref], repositoryPath);
+    return true;
+  } catch (error) {
+    if (error instanceof ArashiError && error.context.exitCode === 1) return false;
+    throw error;
+  }
+};
+
+const gitPathIsEffectivelyIgnored = async (
+  workspaceRoot: string,
+  path: string,
+): Promise<boolean> => {
+  try {
+    await gitExec(["check-ignore", "--no-index", path], workspaceRoot);
+    return true;
+  } catch (error) {
+    if (error instanceof ArashiError && error.context.exitCode === 1) return false;
+    throw error;
+  }
+};
+
+const resolveSymbolicBranch = async (workspaceRoot: string): Promise<string | null> => {
+  try {
+    const result = await gitExec(["symbolic-ref", "--quiet", "--short", "HEAD"], workspaceRoot);
+    return result.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+};
+
+const hasWorktreeMetadata = async (
+  canonicalPath: string,
+  worktreePath: string,
+): Promise<boolean> => {
+  const listing = await gitExec(
+    ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
+    canonicalPath,
+  );
+  const target = resolve(worktreePath);
+  return listing.stdout
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .some((line) => resolve(line.slice("worktree ".length)) === target);
+};
+
+const findWorktreeForBranch = async (
+  canonicalPath: string,
+  branch: string,
+): Promise<string | null> => {
+  const listing = await gitExec(
+    ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
+    canonicalPath,
+  );
+  for (const block of listing.stdout.trim().split(/\r?\n\r?\n/)) {
+    const lines = block.split(/\r?\n/);
+    if (lines.includes(`branch refs/heads/${branch}`)) {
+      const pathLine = lines.find((line) => line.startsWith("worktree "));
+      if (pathLine) return resolve(pathLine.slice("worktree ".length));
+    }
+  }
+  return null;
+};
+
+const addFailure = (
+  message: string,
+  code: AddCommandErrorCode,
+  phase: "preflight" | "clone" | "branch" | "worktree" | "config",
+  context: Record<string, unknown> = {},
+): AddCommandError => new AddCommandError(message, code, { ...context, phase });
+
+export const executeAdd = async (
   gitUrl: string,
   options: AddCommandOptions,
-  workspaceRoot: string,
+  workspaceRoots: WorkspaceRoots,
+  dependencies: AddExecutionDependencies = {},
 ): Promise<AddCommandResult> => {
-  const operations: RollbackOperation[] = [];
-  let existingFailedCloneDestinationSurvives = false;
+  const cloneRepository = dependencies.cloneRepository ?? clone;
+  const createCoordinatedBranch =
+    dependencies.createCoordinatedBranch ??
+    (async (repositoryPath: string, branch: string, startPoint: string, track: boolean) => {
+      await gitExec(
+        track ? ["branch", "--track", branch, startPoint] : ["branch", branch, startPoint],
+        repositoryPath,
+      );
+    });
+  const createWorktree =
+    dependencies.createWorktree ??
+    (async (repositoryPath: string, worktreePath: string, branch: string) => {
+      await gitExec(["worktree", "add", worktreePath, branch], repositoryPath);
+    });
+  const refExists = dependencies.refExists ?? gitRefExists;
+  const isEffectivelyIgnored = dependencies.isEffectivelyIgnored ?? gitPathIsEffectivelyIgnored;
+  const observePath = dependencies.observePath ?? pathExists;
+  const observeWorktreeMetadata = dependencies.observeWorktreeMetadata ?? hasWorktreeMetadata;
+  const afterConfigPersist = dependencies.afterConfigPersist;
+  const resolveMainWorktree =
+    dependencies.resolveMainWorktree ??
+    ((path: string) => resolveGitMainWorktree(path, { strict: true }));
+  const readConfigBytes = dependencies.readConfigBytes ?? readFile;
+  const restoreIgnore = dependencies.restoreIgnore ?? restoreManagedIgnore;
+  const verifyIgnoreRestored = dependencies.verifyIgnoreRestored ?? verifyManagedIgnoreRestored;
+  const removeWorktree =
+    dependencies.removeWorktree ??
+    (async (repositoryPath: string, path: string) => {
+      await gitExec(["worktree", "remove", "--force", path], repositoryPath);
+    });
+  const deleteBranch =
+    dependencies.deleteBranch ??
+    (async (repositoryPath: string, branch: string) => {
+      await gitExec(["branch", "-D", branch], repositoryPath);
+    });
+  const removeCanonicalClone =
+    dependencies.removeCanonicalClone ??
+    (async (path: string) => rm(path, { force: true, recursive: true }));
+  const restoreConfigBytes = dependencies.restoreConfigBytes ?? writeFile;
+  const workspaceRoot = workspaceRoots.configurationRoot;
+  const executionRoot = workspaceRoots.executionRoot;
+  let canonicalPath = "";
+  let activePath: string | null = null;
+  let coordinatedBranch: string | null = null;
+  let repositoryName = "";
+  let configWriteAttempted = false;
+  let cloneCreated = false;
+  let branchCreated = false;
+  let preExistingCoordinatedBranch = false;
+  let worktreeCreated = false;
+  let setupScriptCreated = false;
+  let originalConfigBytes: Uint8Array | null = null;
+  let persistedConfigBytes: Uint8Array | null = null;
+  let currentPhase: "preflight" | "clone" | "branch" | "worktree" | "config" = "preflight";
   let managedIgnore: ManagedIgnoreReconciliation | undefined = undefined;
   const startSpinner = (text: string) => (options.json ? undefined : spinner(text).start());
+  const inspectEffectiveIgnore = async (root: string, path: string): Promise<boolean> => {
+    try {
+      return await isEffectivelyIgnored(root, path);
+    } catch (error) {
+      throw addFailure(
+        `Failed to inspect managed-ignore coverage for '${path}': ${(error as Error).message}`,
+        AddCommandErrorCode.CONFIG_UPDATE_FAILED,
+        "preflight",
+        { error: (error as Error).message, path, workspaceRoot: root },
+      );
+    }
+  };
 
   try {
     // Step 1: Validate workspace is initialized
@@ -427,10 +646,11 @@ const executeAdd = async (
     s1?.succeed("Git URL validated");
 
     // Step 3: Determine repository name
-    const repositoryName = options.name || urlInfo.derivedName;
+    repositoryName = options.name || urlInfo.derivedName;
 
     // Step 4: Check for duplicate name
     const config = await loadConfig(workspaceRoot);
+    originalConfigBytes = await readConfigBytes(getConfigPath(workspaceRoot));
     if (config.repos[repositoryName]) {
       throw new AddCommandError(
         `Repository name "${repositoryName}" already exists at ${config.repos[repositoryName].path}`,
@@ -444,150 +664,566 @@ const executeAdd = async (
     }
 
     // Step 5: Prepare clone destination
-    const reposDir = join(workspaceRoot, config.reposDir);
-    const clonePath = join(reposDir, repositoryName);
+    const configuredRepositoryPath = join(config.reposDir, repositoryName);
+    const executionRootReal = await realpath(executionRoot);
+    let resolvedMainRoot: string | null;
+    try {
+      resolvedMainRoot = await resolveMainWorktree(executionRootReal);
+    } catch (error) {
+      throw addFailure(
+        `Failed to inspect parent Git worktree topology: ${(error as Error).message}`,
+        AddCommandErrorCode.CLONE_FAILED,
+        "preflight",
+        { error: (error as Error).message, executionRoot: executionRootReal },
+      );
+    }
+    const canonicalRoot = resolvedMainRoot
+      ? await realpath(resolvedMainRoot)
+      : await realpath(workspaceRoot);
+    const coordinated = resolvedMainRoot !== null && canonicalRoot !== executionRootReal;
+    canonicalPath = resolve(canonicalRoot, configuredRepositoryPath);
+    activePath = coordinated ? resolve(executionRootReal, configuredRepositoryPath) : null;
+
+    if (coordinated) {
+      coordinatedBranch = await resolveSymbolicBranch(executionRootReal);
+      if (!coordinatedBranch) {
+        throw addFailure(
+          "Cannot coordinate add from a detached parent HEAD. Check out a named parent branch and retry.",
+          AddCommandErrorCode.BRANCH_DETECTION_FAILED,
+          "preflight",
+          { executionRoot: executionRootReal },
+        );
+      }
+    }
+    if (await observePath(canonicalPath)) {
+      throw addFailure(
+        `Canonical repository destination already exists: ${canonicalPath}`,
+        AddCommandErrorCode.CLONE_FAILED,
+        "preflight",
+        { canonicalPath },
+      );
+    }
+    if (activePath && (await observePath(activePath))) {
+      throw addFailure(
+        `Active worktree destination already exists: ${activePath}`,
+        AddCommandErrorCode.CLONE_FAILED,
+        "preflight",
+        { worktreePath: activePath },
+      );
+    }
+
+    if (coordinated) {
+      const inspection = await inspectRepositoryManagedIgnore({
+        reposDir: config.reposDir,
+        workspaceRoot,
+        worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+      });
+      if (
+        inspection.scope === "tracked" &&
+        !(await inspectEffectiveIgnore(canonicalRoot, configuredRepositoryPath))
+      ) {
+        throw addFailure(
+          "Tracked managed-ignore scope cannot protect the canonical destination from this linked checkout. Reconcile and commit the managed repository rule on the parent main branch first.",
+          AddCommandErrorCode.CONFIG_UPDATE_FAILED,
+          "preflight",
+          { canonicalPath, managedIgnoreScope: inspection.scope },
+        );
+      }
+    }
 
     managedIgnore = await reconcileRepositoryManagedIgnore({
       reposDir: config.reposDir,
       workspaceRoot,
       worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
     });
+    if (coordinated && managedIgnore.scope !== "none") {
+      const canonicalCovered = await inspectEffectiveIgnore(
+        canonicalRoot,
+        configuredRepositoryPath,
+      );
+      const activeCovered = await inspectEffectiveIgnore(
+        executionRootReal,
+        configuredRepositoryPath,
+      );
+      if (!canonicalCovered || !activeCovered) {
+        throw addFailure(
+          "Managed-ignore reconciliation did not cover both canonical and active repository destinations.",
+          AddCommandErrorCode.CONFIG_UPDATE_FAILED,
+          "preflight",
+          { activeCovered, canonicalCovered },
+        );
+      }
+    } else if (coordinated && managedIgnore.scope === "none") {
+      for (const [role, root, destination] of [
+        ["canonical", canonicalRoot, canonicalPath],
+        ["active", executionRootReal, activePath as string],
+      ] as const) {
+        if (!(await inspectEffectiveIgnore(root, relative(root, destination)))) {
+          managedIgnore.warnings.push(
+            `${role} destination '${destination}' remains unignored because scope is none.`,
+          );
+        }
+      }
+    }
     if (!options.json) {
       for (const warning of managedIgnore.warnings) {
         info(`Warning: ${warning}`);
       }
     }
 
-    // Step 6: Clone repository
+    // Step 6: Atomically reserve the destination, then clone into the invocation-owned directory.
+    currentPhase = "clone";
     const s2 = startSpinner(`Cloning repository from ${gitUrl}...`);
-    const clonePathExistedBefore = await runtime.file(clonePath).exists();
     try {
-      await clone(gitUrl, clonePath);
-      operations.push({ path: clonePath, reversible: true, type: "clone" });
+      await mkdir(join(canonicalPath, ".."), { recursive: true });
+    } catch (error) {
+      throw addFailure(
+        `Failed to prepare the canonical repository parent: ${(error as Error).message}`,
+        AddCommandErrorCode.CLONE_FAILED,
+        "clone",
+        { canonicalPath, error: (error as Error).message },
+      );
+    }
+    try {
+      await mkdir(canonicalPath);
+      cloneCreated = true;
+    } catch (error) {
+      s2?.fail("Clone failed");
+      throw addFailure(
+        `Canonical repository destination could not be reserved: ${(error as Error).message}`,
+        AddCommandErrorCode.CLONE_FAILED,
+        "clone",
+        { canonicalPath, error: (error as Error).message },
+      );
+    }
+    try {
+      await cloneRepository(gitUrl, canonicalPath);
       s2?.succeed("Repository cloned");
     } catch (error) {
-      const clonePathExistsAfterFailure = await runtime.file(clonePath).exists();
-      if (clonePathExistedBefore) {
-        existingFailedCloneDestinationSurvives = shouldTreatFailedCloneAsMaterialized(
-          clonePathExistsAfterFailure,
-        );
-      } else if (clonePathExistsAfterFailure) {
-        operations.push({ path: clonePath, reversible: true, type: "clone" });
-      }
       s2?.fail("Clone failed");
-      throw new AddCommandError(
+      throw addFailure(
         `Git clone operation failed: ${(error as Error).message}`,
         AddCommandErrorCode.CLONE_FAILED,
+        "clone",
         { error: (error as Error).message, url: gitUrl },
       );
     }
 
     // Step 7: Detect default branch
     const s3 = startSpinner("Detecting default branch...");
-    const defaultBranch = await detectDefaultBranchOrThrow(clonePath, gitUrl).catch((error) => {
+    const defaultBranch = await detectDefaultBranchOrThrow(canonicalPath, gitUrl).catch((error) => {
       s3?.fail("Branch detection failed");
+      if (error instanceof AddCommandError) {
+        throw addFailure(error.message, error.code, "branch", error.context ?? {});
+      }
       throw error;
     });
     s3?.succeed(`Detected default branch: ${defaultBranch}`);
 
+    if (coordinated && activePath && coordinatedBranch) {
+      currentPhase = "branch";
+      if (coordinatedBranch === defaultBranch) {
+        throw addFailure(
+          `Coordinated branch '${coordinatedBranch}' conflicts with the child default branch checked out in the canonical clone.`,
+          AddCommandErrorCode.BRANCH_DETECTION_FAILED,
+          "branch",
+          { coordinatedBranch, defaultBranch },
+        );
+      }
+      let localBranchExists: boolean;
+      let remoteBranchExists: boolean;
+      try {
+        localBranchExists = await refExists(canonicalPath, `refs/heads/${coordinatedBranch}`);
+        remoteBranchExists = await refExists(
+          canonicalPath,
+          `refs/remotes/origin/${coordinatedBranch}`,
+        );
+      } catch (error) {
+        throw addFailure(
+          `Failed to inspect coordinated child refs for '${coordinatedBranch}': ${(error as Error).message}`,
+          AddCommandErrorCode.BRANCH_DETECTION_FAILED,
+          "branch",
+          { coordinatedBranch, error: (error as Error).message },
+        );
+      }
+      if (localBranchExists) {
+        preExistingCoordinatedBranch = true;
+        const conflictingWorktree = await findWorktreeForBranch(canonicalPath, coordinatedBranch);
+        throw addFailure(
+          `Child branch '${coordinatedBranch}' already exists; pre-existing local branch adoption is not supported.`,
+          AddCommandErrorCode.BRANCH_DETECTION_FAILED,
+          "branch",
+          {
+            coordinatedBranch,
+            ...(conflictingWorktree ? { conflictingWorktree } : {}),
+          },
+        );
+      }
+      try {
+        await createCoordinatedBranch(
+          canonicalPath,
+          coordinatedBranch,
+          remoteBranchExists ? `origin/${coordinatedBranch}` : defaultBranch,
+          remoteBranchExists,
+        );
+        branchCreated = true;
+      } catch (error) {
+        // Creation did not return successfully, so ownership is uncertain. A concurrent actor may
+        // have created or checked out the branch; preserve the common-directory owner.
+        preExistingCoordinatedBranch = true;
+        throw addFailure(
+          `Failed to create coordinated child branch '${coordinatedBranch}': ${(error as Error).message}`,
+          AddCommandErrorCode.BRANCH_DETECTION_FAILED,
+          "branch",
+          { coordinatedBranch },
+        );
+      }
+      currentPhase = "worktree";
+      try {
+        await mkdir(join(activePath, ".."), { recursive: true });
+        await createWorktree(canonicalPath, activePath, coordinatedBranch);
+        worktreeCreated = true;
+      } catch (error) {
+        throw addFailure(
+          `Failed to create active child worktree: ${(error as Error).message}`,
+          AddCommandErrorCode.CLONE_FAILED,
+          "worktree",
+          { coordinatedBranch, worktreePath: activePath },
+        );
+      }
+    }
+
     // Step 8: Detect setup script
     const s4 = startSpinner("Checking for setup script...");
-    const setupScript = await detectSetupScript(clonePath);
+    let setupScript = await detectSetupScript(canonicalPath);
+    if (!setupScript && options.createSetup) {
+      setupScript = join(configuredRepositoryPath, "setup.sh");
+      await writeFile(
+        setupScript,
+        "#!/usr/bin/env bash\nset -euo pipefail\n\n# Add repository setup commands here.\n",
+      );
+      await chmod(setupScript, 0o755);
+      setupScriptCreated = true;
+    }
     if (setupScript) {
-      s4?.succeed(`Found setup script: ${basename(setupScript)}`);
+      s4?.succeed(
+        setupScriptCreated
+          ? "Created setup script: setup.sh"
+          : `Found setup script: ${basename(setupScript)}`,
+      );
     } else {
       s4?.info("No setup script found");
     }
 
     // Step 9: Update configuration
+    currentPhase = "config";
     const s5 = startSpinner("Updating configuration...");
     try {
       const repoConfig: RepoConfig = {
         gitUrl: urlInfo.url,
-        path: join(".", config.reposDir, repositoryName),
+        path: configuredRepositoryPath,
       };
 
-      config.repos[repositoryName] = repoConfig;
-      await saveConfig(workspaceRoot, config);
+      await withConfigLock(getConfigPath(workspaceRoot), async () => {
+        const currentConfigBytes = await readFile(getConfigPath(workspaceRoot));
+        if (!originalConfigBytes || !bytesEqual(currentConfigBytes, originalConfigBytes)) {
+          throw new Error(
+            "Configuration changed concurrently after add began; preserving the newer file.",
+          );
+        }
+        config.repos[repositoryName] = repoConfig;
+        persistedConfigBytes = new TextEncoder().encode(serializeConfig(config));
+        configWriteAttempted = true;
+        await saveConfig(workspaceRoot, config);
+      });
+      await afterConfigPersist?.();
       s5?.succeed("Configuration updated");
     } catch (error) {
       s5?.fail("Configuration update failed");
-      throw new AddCommandError(
+      throw addFailure(
         `Failed to update configuration file: ${(error as Error).message}`,
         AddCommandErrorCode.CONFIG_UPDATE_FAILED,
+        "config",
         { configPath: getConfigPath(workspaceRoot), error: (error as Error).message },
       );
     }
 
     // Success!
     return {
-      clonePath,
+      canonicalPath,
+      clonePath: canonicalPath,
+      coordinatedBranch,
       defaultBranch,
       gitUrl,
       managedIgnore,
+      materialization: coordinated ? "coordinated-worktree" : "clone",
+      path: configuredRepositoryPath,
       repositoryName,
-      setupScript,
-      setupScriptCreated: false,
+      setupScript: setupScript ? join(configuredRepositoryPath, basename(setupScript)) : null,
+      setupScriptCreated,
+      worktreePath: activePath,
     };
   } catch (error) {
-    let managedIgnoreRestoreError: string | undefined = undefined;
-    let materializedStateSurvives = existingFailedCloneDestinationSurvives;
-    // Rollback operations in reverse order
-    const rollbackOperations = [...operations];
-    rollbackOperations.reverse();
-
-    for (const operation of rollbackOperations) {
+    const canonicalCreatedByInvocation = cloneCreated;
+    const branchCreatedByInvocation = branchCreated;
+    let branchSurvives = branchCreated;
+    const managedIgnoreChangedByInvocation = managedIgnore?.changed ?? false;
+    const failures: AddRollbackDetails["failures"] = [];
+    const recordFailure = (phase: AddRollbackFailurePhase, cleanupError: unknown): void => {
+      failures.push({
+        message: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        phase,
+      });
+    };
+    let configRestoreFailed = false;
+    if (configWriteAttempted && originalConfigBytes) {
+      const configBytesBeforeAdd = originalConfigBytes;
       try {
-        if (operation.type === "clone") {
-          await rm(operation.path, { force: true, recursive: true });
-        }
+        await withConfigLock(getConfigPath(workspaceRoot), async () => {
+          const currentConfigBytes = await readConfigBytes(getConfigPath(workspaceRoot));
+          if (bytesEqual(currentConfigBytes, configBytesBeforeAdd)) {
+            // The failed write did not change the file, so the original snapshot already survives.
+          } else if (persistedConfigBytes && bytesEqual(currentConfigBytes, persistedConfigBytes)) {
+            await restoreConfigBytes(getConfigPath(workspaceRoot), configBytesBeforeAdd);
+          } else if (persistedConfigBytes) {
+            try {
+              const currentConfig = JSON.parse(new TextDecoder().decode(currentConfigBytes)) as {
+                repos?: Record<string, unknown>;
+              };
+              const persistedConfig = JSON.parse(
+                new TextDecoder().decode(persistedConfigBytes),
+              ) as {
+                repos?: Record<string, unknown>;
+              };
+              const currentEntry = currentConfig.repos?.[repositoryName];
+              const persistedEntry = persistedConfig.repos?.[repositoryName];
+              const currentRecord =
+                typeof currentEntry === "object" && currentEntry !== null
+                  ? (currentEntry as Record<string, unknown>)
+                  : null;
+              const persistedRecord =
+                typeof persistedEntry === "object" && persistedEntry !== null
+                  ? (persistedEntry as Record<string, unknown>)
+                  : null;
+              if (
+                currentRecord &&
+                persistedRecord &&
+                currentRecord.path === persistedRecord.path &&
+                currentRecord.gitUrl === persistedRecord.gitUrl
+              ) {
+                delete currentConfig.repos?.[repositoryName];
+                await restoreConfigBytes(
+                  getConfigPath(workspaceRoot),
+                  new TextEncoder().encode(JSON.stringify(currentConfig, null, 2)),
+                );
+              } else {
+                throw new Error(
+                  "Configuration changed concurrently during add; preserved the unowned newer bytes.",
+                  { cause: error },
+                );
+              }
+            } catch (cleanupError) {
+              if (cleanupError instanceof SyntaxError) {
+                await restoreConfigBytes(getConfigPath(workspaceRoot), configBytesBeforeAdd);
+              } else {
+                throw cleanupError;
+              }
+            }
+          } else {
+            configRestoreFailed = true;
+            recordFailure(
+              "config-restore",
+              new Error(
+                "Configuration changed concurrently during add; preserved the unowned newer bytes.",
+              ),
+            );
+          }
+        });
       } catch (cleanupError) {
-        materializedStateSurvives = true;
-        if (!options.json) {
-          info(`Warning: Failed to clean up ${operation.path}: ${(cleanupError as Error).message}`);
-          info(`Please manually remove: rm -rf ${operation.path}`);
+        configRestoreFailed = true;
+        recordFailure("config-restore", cleanupError);
+      }
+    }
+    if (activePath && worktreeCreated) {
+      try {
+        await removeWorktree(canonicalPath, activePath);
+      } catch (cleanupError) {
+        recordFailure("worktree-remove", cleanupError);
+      }
+    }
+    const observeFinalPath = async (path: string): Promise<boolean | null> => {
+      try {
+        return await observePath(path);
+      } catch (observeError) {
+        recordFailure("final-state-observe", observeError);
+        return null;
+      }
+    };
+    let worktreeExists: boolean | null = activePath ? await observeFinalPath(activePath) : null;
+    let metadataPresent: boolean | null = activePath && !cloneCreated ? false : null;
+    if (activePath && cloneCreated) {
+      try {
+        metadataPresent = await observeWorktreeMetadata(canonicalPath, activePath);
+      } catch (observeError) {
+        recordFailure("final-state-observe", observeError);
+      }
+    }
+    const linkedStateDefinitelyAbsent =
+      (!activePath || (worktreeExists === false && metadataPresent === false)) &&
+      !preExistingCoordinatedBranch;
+    if (branchCreated && coordinatedBranch && linkedStateDefinitelyAbsent) {
+      try {
+        await deleteBranch(canonicalPath, coordinatedBranch);
+        branchSurvives = false;
+      } catch (cleanupError) {
+        recordFailure("branch-delete", cleanupError);
+      }
+    }
+    if (cloneCreated && linkedStateDefinitelyAbsent && !branchSurvives) {
+      try {
+        await removeCanonicalClone(canonicalPath);
+        cloneCreated = false;
+      } catch (cleanupError) {
+        recordFailure("clone-remove", cleanupError);
+      }
+    }
+    let canonicalExists: boolean | null = canonicalPath
+      ? await observeFinalPath(canonicalPath)
+      : false;
+    if (activePath) worktreeExists = await observeFinalPath(activePath);
+    let configEntryPresent: boolean | null = false;
+    try {
+      if (repositoryName) {
+        configEntryPresent = Boolean((await loadConfig(workspaceRoot)).repos[repositoryName]);
+      }
+    } catch (observeError) {
+      configEntryPresent = null;
+      recordFailure("final-state-observe", observeError);
+    }
+    const expectedConfigBytes = originalConfigBytes as Uint8Array | null;
+    let configRestored: boolean | null = configWriteAttempted ? false : null;
+    if (configWriteAttempted && expectedConfigBytes) {
+      try {
+        const finalConfigBytes = await readConfigBytes(getConfigPath(workspaceRoot));
+        configRestored =
+          finalConfigBytes.byteLength === expectedConfigBytes.byteLength &&
+          finalConfigBytes.every((byte, index) => byte === expectedConfigBytes[index]);
+        if (!configRestored && !configRestoreFailed) {
+          recordFailure(
+            "config-restore",
+            new Error("Configuration bytes did not match the exact pre-command snapshot."),
+          );
+        }
+      } catch (observeError) {
+        configRestored = null;
+        recordFailure("final-state-observe", observeError);
+      }
+    }
+    const materializedStateSurvives =
+      canonicalExists !== false ||
+      worktreeExists === true ||
+      (metadataPresent !== false && activePath !== null);
+    let managedIgnoreRestored: boolean | null = managedIgnoreChangedByInvocation ? false : null;
+    if (
+      managedIgnore &&
+      managedIgnoreChangedByInvocation &&
+      !materializedStateSurvives &&
+      configEntryPresent === false
+    ) {
+      try {
+        await restoreIgnore(managedIgnore);
+        managedIgnoreRestored = await verifyIgnoreRestored(managedIgnore);
+        if (!managedIgnoreRestored) {
+          recordFailure(
+            "managed-ignore-restore",
+            new Error("Managed-ignore state did not match its exact pre-command snapshot."),
+          );
+        }
+      } catch (restoreError) {
+        recordFailure("managed-ignore-restore", restoreError);
+      }
+    }
+    let coordinatedBranchExists: boolean | null = null;
+    if (coordinatedBranch) {
+      if (canonicalExists === false) {
+        coordinatedBranchExists = false;
+      } else if (canonicalExists === true) {
+        try {
+          coordinatedBranchExists = await refExists(
+            canonicalPath,
+            `refs/heads/${coordinatedBranch}`,
+          );
+        } catch (observeError) {
+          recordFailure("final-state-observe", observeError);
         }
       }
-      if (operation.type === "clone" && (await runtime.file(operation.path).exists())) {
-        materializedStateSurvives = true;
-      }
     }
-
-    if (managedIgnore?.changed && !materializedStateSurvives) {
-      try {
-        await restoreManagedIgnore(managedIgnore);
-      } catch (restoreError) {
-        managedIgnoreRestoreError = (restoreError as Error).message;
-      }
-    }
-    if (error instanceof AddCommandError && managedIgnore) {
+    const invocationStateSurvives =
+      (canonicalCreatedByInvocation && canonicalExists !== false) ||
+      (branchCreatedByInvocation && coordinatedBranchExists !== false) ||
+      (worktreeCreated && (worktreeExists !== false || metadataPresent !== false)) ||
+      (managedIgnoreChangedByInvocation && managedIgnoreRestored !== true) ||
+      (configWriteAttempted && (configEntryPresent !== false || configRestored !== true));
+    const rollback: AddRollbackDetails = {
+      complete: failures.length === 0 && !invocationStateSurvives,
+      failures,
+      finalState: {
+        canonical: { exists: canonicalExists, path: canonicalPath },
+        configEntryPresent,
+        configRestored,
+        coordinatedBranch: coordinatedBranch
+          ? {
+              createdByInvocation: branchCreatedByInvocation,
+              exists: coordinatedBranchExists,
+              name: coordinatedBranch,
+            }
+          : null,
+        managedIgnore: {
+          changed: managedIgnoreChangedByInvocation,
+          restored: managedIgnoreRestored,
+        },
+        worktree: activePath ? { exists: worktreeExists, metadataPresent, path: activePath } : null,
+      },
+    };
+    if (error instanceof AddCommandError) {
       throw new AddCommandError(error.message, error.code, {
         ...error.context,
-        managedIgnore,
-        materializedStateSurvives,
-        ...(managedIgnoreRestoreError ? { managedIgnoreRestoreError } : {}),
+        rollback,
       });
     }
-
-    // Re-throw original error
-    throw error;
+    const fallbackCode =
+      currentPhase === "config"
+        ? AddCommandErrorCode.CONFIG_UPDATE_FAILED
+        : currentPhase === "branch"
+          ? AddCommandErrorCode.BRANCH_DETECTION_FAILED
+          : AddCommandErrorCode.CLONE_FAILED;
+    throw new AddCommandError(
+      error instanceof Error ? error.message : String(error),
+      fallbackCode,
+      { phase: currentPhase, rollback },
+    );
   }
 };
 
 /**
  * Display success message in human-readable format
  */
-const displaySuccess = (result: AddCommandResult, workspaceRoot: string): void => {
+const displaySuccess = (result: AddCommandResult): void => {
   success("\nRepository added successfully:");
-  console.log(`  Name:     ${result.repositoryName}`);
-  console.log(`  Location: ${result.clonePath.replace(workspaceRoot, ".")}`);
-  console.log(`  Branch:   ${result.defaultBranch}`);
+  console.log(`  Name:              ${result.repositoryName}`);
+  console.log(`  Config path:       ${result.path}`);
+  console.log(`  Canonical clone:   ${result.canonicalPath}`);
+  console.log(`  Default branch:    ${result.defaultBranch}`);
+  if (result.worktreePath && result.coordinatedBranch) {
+    console.log(`  Active worktree:   ${result.worktreePath}`);
+    console.log(`  Coordinated branch: ${result.coordinatedBranch}`);
+  }
 
   if (result.setupScript) {
     console.log(`  Setup:    ${basename(result.setupScript)}`);
     console.log("\nNext steps:");
     console.log(
-      `  1. Run setup: cd ${result.clonePath.replace(workspaceRoot, ".")} && ./${basename(result.setupScript)}`,
+      `  1. Run setup: cd ${result.worktreePath ?? result.canonicalPath} && ./${basename(result.setupScript)}`,
     );
     console.log(`  2. Create worktree: arashi create my-branch`);
   } else {
@@ -596,11 +1232,49 @@ const displaySuccess = (result: AddCommandResult, workspaceRoot: string): void =
   }
 };
 
+const formatObservation = (value: boolean | null): string =>
+  value === null ? "unknown" : value ? "present" : "absent";
+
 /**
  * Display error message in human-readable format
  */
 const displayError = (error: AddCommandError): void => {
   logError(`\n✗ ${error.message}\n`);
+
+  const rollback =
+    error.context?.phase && error.context.phase !== "preflight"
+      ? (error.context.rollback as AddRollbackDetails | undefined)
+      : undefined;
+  if (rollback) {
+    const { finalState } = rollback;
+    console.log(`Rollback: ${rollback.complete ? "complete" : "incomplete"}`);
+    for (const failure of rollback.failures) {
+      console.log(`  Cleanup failure (${failure.phase}): ${failure.message}`);
+    }
+    console.log(
+      `  Canonical clone: ${formatObservation(finalState.canonical.exists)} at ${finalState.canonical.path}`,
+    );
+    if (finalState.worktree) {
+      console.log(
+        `  Active worktree: ${formatObservation(finalState.worktree.exists)} at ${finalState.worktree.path}`,
+      );
+      console.log(`  Worktree metadata: ${formatObservation(finalState.worktree.metadataPresent)}`);
+    }
+    if (finalState.coordinatedBranch) {
+      console.log(
+        `  Coordinated branch: ${formatObservation(finalState.coordinatedBranch.exists)} (${finalState.coordinatedBranch.name})`,
+      );
+    }
+    console.log(`  Config entry: ${formatObservation(finalState.configEntryPresent)}`);
+    if (finalState.configRestored !== null) {
+      console.log(`  Config bytes restored: ${finalState.configRestored ? "yes" : "no"}`);
+    }
+    if (finalState.managedIgnore.changed) {
+      console.log(
+        `  Managed-ignore restored: ${formatObservation(finalState.managedIgnore.restored)}`,
+      );
+    }
+  }
 
   if (error.code === AddCommandErrorCode.INVALID_URL) {
     console.log("Supported formats:");
@@ -641,8 +1315,7 @@ export function createCommand(): Command {
       let workspaceRoots: WorkspaceRoots | null = null;
       try {
         workspaceRoots = await findConfiguredWorkspaceRoots("add", process.cwd());
-        const workspaceRoot = workspaceRoots.configurationRoot;
-        const result = await executeAdd(gitUrl, options, workspaceRoot);
+        const result = await executeAdd(gitUrl, options, workspaceRoots);
 
         if (options.json) {
           writeJsonEnvelope(
@@ -650,18 +1323,20 @@ export function createCommand(): Command {
               managedIgnore: result.managedIgnore,
               repository: {
                 defaultBranch: result.defaultBranch,
+                canonicalPath: result.canonicalPath,
+                coordinatedBranch: result.coordinatedBranch,
                 gitUrl: result.gitUrl,
+                materialization: result.materialization,
                 name: result.repositoryName,
-                path: result.clonePath.replace(workspaceRoot, "."),
-                setupScript: result.setupScript
-                  ? result.setupScript.replace(workspaceRoot, ".")
-                  : null,
+                path: result.path,
+                setupScript: result.setupScript,
                 setupScriptCreated: result.setupScriptCreated,
+                worktreePath: result.worktreePath,
               },
             }),
           );
         } else {
-          displaySuccess(result, workspaceRoot);
+          displaySuccess(result);
         }
 
         process.exit(0);

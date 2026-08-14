@@ -108,6 +108,27 @@ describe("CLI command contract", () => {
     }
   });
 
+  test("publishes add materialization and result-role policy", () => {
+    expect(commandSemantics.add).toMatchObject({
+      addMaterialization: {
+        activeConfigOwnership: true,
+        canonicalCloneDefaultBranch: true,
+        coordinatedBranch: "active-parent-branch",
+        linkedMode: "git-topology",
+        resultRoles: [
+          "path",
+          "materialization",
+          "canonicalPath",
+          "worktreePath",
+          "defaultBranch",
+          "coordinatedBranch",
+          "setupScript",
+          "setupScriptCreated",
+        ],
+      },
+    });
+  });
+
   test("publishes enforceable init zero-config option and output policy", () => {
     const contract = generateCommandContract(
       buildProgram({ includeHelpBanner: false }),

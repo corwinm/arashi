@@ -96,7 +96,10 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 /** Resolve the primary, non-bare worktree recorded by Git for an invocation repository. */
-export async function resolveGitMainWorktree(invocationPath: string): Promise<string | null> {
+export async function resolveGitMainWorktree(
+  invocationPath: string,
+  options: { strict?: boolean } = {},
+): Promise<string | null> {
   const absoluteInvocationPath = resolve(invocationPath);
   try {
     const bare = await exec(["rev-parse", "--is-bare-repository"], absoluteInvocationPath);
@@ -130,13 +133,17 @@ export async function resolveGitMainWorktree(invocationPath: string): Promise<st
       .split(/\r?\n/)
       .find((line) => line.startsWith("worktree "))
       ?.slice("worktree ".length);
-    if (!firstWorktree) return null;
+    if (!firstWorktree) {
+      if (options.strict) throw new Error("Git did not report a primary worktree.");
+      return null;
+    }
     const listedRoot = resolve(firstWorktree);
     if (listedRoot === resolve(absoluteCommonDir)) {
       return null;
     }
     return listedRoot;
-  } catch {
+  } catch (error) {
+    if (options.strict) throw error;
     return null;
   }
 }
