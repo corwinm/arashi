@@ -296,6 +296,37 @@ describe("remove command - coordinated child-first removal", () => {
     );
   });
 
+  test("blocks a parent whose existing descendant is prunable", async () => {
+    const { childPaths, parentPath } = await createNestedWorktrees(
+      workspace,
+      "parent-prunable-descendant",
+      { "repo-a": "child-prunable-a", "repo-b": "child-prunable-b" },
+    );
+    const gitPointer = join(childPaths["repo-b"], ".git");
+    const hiddenGitPointer = join(childPaths["repo-b"], ".git-hidden");
+    await rename(gitPointer, hiddenGitPointer);
+
+    let result;
+    try {
+      result = await runRemove(await realpath(parentPath), {
+        force: true,
+        keepBranches: true,
+        path: true,
+      });
+    } finally {
+      await rename(hiddenGitPointer, gitPointer);
+    }
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("appeared after planning");
+    expect(existsSync(parentPath)).toBe(true);
+    expect(existsSync(childPaths["repo-a"])).toBe(true);
+    expect(existsSync(childPaths["repo-b"])).toBe(true);
+    expect(normalizePathForComparison(await worktreeList(workspace.repos[1].path))).toContain(
+      normalizePathForComparison(await realpath(childPaths["repo-b"])),
+    );
+  });
+
   test("revalidates the authoritative plan after pre-remove hooks before mutation", async () => {
     if (process.platform === "win32") {
       return;

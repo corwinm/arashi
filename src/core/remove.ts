@@ -13,7 +13,7 @@ import { ArashiError } from "../lib/errors.ts";
 import { GitErrorCode } from "../types/git.ts";
 import chalk from "chalk";
 import { exec } from "../lib/git.ts";
-import { existsSync, realpathSync } from "fs";
+import { lstatSync, realpathSync } from "fs";
 import {
   isAbsolute as isAbsolutePath,
   relative as relativePath,
@@ -26,6 +26,25 @@ const ZERO = 0;
 const ONE = 1;
 const JSON_INDENT = 2;
 const DETACHED_HEAD = "HEAD";
+
+type PathInspector = (path: string) => unknown;
+
+export const pathExistsFailClosed = (path: string, inspect: PathInspector = lstatSync): boolean => {
+  try {
+    inspect(path);
+    return true;
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT"
+    ) {
+      return false;
+    }
+    throw error;
+  }
+};
 
 const toComparablePath = (value: string): string => {
   try {
@@ -246,15 +265,13 @@ export const discoverAllWorktrees = async (
   const results: WorktreeInfo[] = [];
 
   for (const repo of repositories) {
-    if (!existsSync(repo.path)) {
-      if (options.strict && !options.allowMissingRepositoryPaths?.has(repo.path)) {
-        throw new Error(
-          `Failed to inspect worktrees for ${repo.name} (${repo.path}): repository is missing`,
-        );
-      }
-      continue;
-    }
     try {
+      if (!pathExistsFailClosed(repo.path)) {
+        if (options.strict && !options.allowMissingRepositoryPaths?.has(repo.path)) {
+          throw new Error("repository is missing");
+        }
+        continue;
+      }
       const result = await exec(["worktree", "list", "--porcelain"], repo.path);
       results.push(...parseWorktreeList(result.stdout, repo.name, repo.path));
     } catch (error) {

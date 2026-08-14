@@ -1,6 +1,25 @@
 import { describe, expect, test } from "vitest";
 import type { WorktreeEntry } from "../../../src/types/remove.ts";
-import { groupWorktreesByParent } from "../../../src/core/remove.ts";
+import { groupWorktreesByParent, pathExistsFailClosed } from "../../../src/core/remove.ts";
+
+const inspectMissingPath = () => {
+  throw Object.assign(new Error("missing"), { code: "ENOENT" });
+};
+
+describe("pathExistsFailClosed", () => {
+  test("returns false only for missing paths", () => {
+    expect(pathExistsFailClosed("/missing", inspectMissingPath)).toBe(false);
+  });
+
+  test("preserves filesystem inspection failures", () => {
+    const failure = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const inspect = () => {
+      throw failure;
+    };
+
+    expect(() => pathExistsFailClosed("/blocked", inspect)).toThrow(/permission denied/);
+  });
+});
 
 describe("groupWorktreesByParent", () => {
   test("groups children under parentPath and leaves orphans ungrouped", () => {

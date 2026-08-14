@@ -47,6 +47,7 @@ import {
   getCurrentBranch,
   groupWorktreesByParent,
   isDescendantWorktreePath,
+  pathExistsFailClosed,
   refreshRemainingChildStatuses,
   removeWorktree,
 } from "../core/remove.ts";
@@ -750,7 +751,9 @@ export async function executeRemove(
   if (!options.keepWorktrees && worktreesToRemove.length > ZERO) {
     const configuredRepositories = repositories.filter((repo) => childRepoNames.has(repo.name));
     const allowedMissingRepositoryPaths = new Set(
-      configuredRepositories.filter((repo) => !existsSync(repo.path)).map((repo) => repo.path),
+      configuredRepositories
+        .filter((repo) => !pathExistsFailClosed(repo.path))
+        .map((repo) => repo.path),
     );
     const physicalHierarchy = worktreesToRemove.map((worktree) => worktree.path);
     const inspectedHierarchyPaths = new Set<string>();
@@ -764,10 +767,10 @@ export async function executeRemove(
 
       for (const repo of configuredRepositories) {
         const nestedPath = resolve(parentPath, reposDirName, repo.name);
-        if (!existsSync(nestedPath)) {
+        if (!pathExistsFailClosed(nestedPath)) {
           continue;
         }
-        if (!existsSync(repo.path)) {
+        if (!pathExistsFailClosed(repo.path)) {
           throw new Error(
             `Failed to inspect worktrees for ${repo.name} (${repo.path}): repository is missing while a configured descendant exists at ${nestedPath}`,
           );
@@ -1215,7 +1218,7 @@ const findUnplannedConfiguredDescendant = (
 
       for (const repository of configuredRepositories) {
         const nestedPath = resolve(parentPath, reposDirName, repository.name);
-        if (!existsSync(nestedPath)) {
+        if (!pathExistsFailClosed(nestedPath)) {
           continue;
         }
         if (!plannedPaths.has(comparablePhysicalPath(nestedPath))) {
