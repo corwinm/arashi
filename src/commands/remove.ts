@@ -789,6 +789,17 @@ export async function executeRemove(
     });
     const plan = createConfiguredWorktreeRemovalPlan(worktreesToRemove, configuredInventory);
     worktreesToRemove.splice(ZERO, worktreesToRemove.length, ...plan.worktrees);
+    const unsafePlannedDescendant = findUnplannedConfiguredDescendant(
+      worktreesToRemove,
+      repositories,
+      childRepoNames,
+      reposDirName,
+    );
+    if (unsafePlannedDescendant) {
+      throw new Error(
+        `Removal of ${unsafePlannedDescendant.blockingWorktree.path} blocked because configured descendant ${unsafePlannedDescendant.repository.name}: ${unsafePlannedDescendant.path} exists outside the authoritative plan`,
+      );
+    }
 
     for (const worktree of plan.worktrees) {
       if (!worktree.branch) {

@@ -303,7 +303,7 @@ describe("remove command - coordinated child-first removal", () => {
     );
   });
 
-  test("blocks a parent whose existing descendant is prunable", async () => {
+  test("reports a prunable descendant as a dry-run blocker", async () => {
     const { childPaths, parentPath } = await createNestedWorktrees(
       workspace,
       "parent-prunable-descendant",
@@ -313,19 +313,19 @@ describe("remove command - coordinated child-first removal", () => {
     const hiddenGitPointer = join(childPaths["repo-b"], ".git-hidden");
     await rename(gitPointer, hiddenGitPointer);
 
-    let result;
     try {
-      result = await runRemove(await realpath(parentPath), {
-        force: true,
-        keepBranches: true,
-        path: true,
-      });
+      await expect(
+        runRemove(await realpath(parentPath), {
+          dryRun: true,
+          force: true,
+          keepBranches: true,
+          path: true,
+        }),
+      ).rejects.toThrow(/repo-b.*outside the authoritative plan/i);
     } finally {
       await rename(hiddenGitPointer, gitPointer);
     }
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain("appeared after planning");
     expect(existsSync(parentPath)).toBe(true);
     expect(existsSync(childPaths["repo-a"])).toBe(true);
     expect(existsSync(childPaths["repo-b"])).toBe(true);
