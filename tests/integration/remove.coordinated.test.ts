@@ -327,6 +327,44 @@ describe("remove command - coordinated child-first removal", () => {
     );
   });
 
+  test("revalidates arbitrary registered descendant paths after pre-remove hooks", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const { childPaths, parentPath } = await createNestedWorktrees(
+      workspace,
+      "parent-hook-custom-descendant",
+      { "repo-a": "child-hook-custom-a" },
+    );
+    const lateDescendantPath = join(parentPath, "custom-location", "repo-b-worktree");
+    const hooksDir = join(workspace.rootPath, ".arashi", "hooks");
+    await mkdir(hooksDir, { recursive: true });
+    const hookPath = join(hooksDir, "pre-remove.sh");
+    await writeFile(
+      hookPath,
+      `#!/usr/bin/env bash\nset -euo pipefail\nif [[ ! -e '${lateDescendantPath}' ]]; then\n  git -C '${workspace.repos[1].path}' worktree add -b hook-created-custom-descendant '${lateDescendantPath}' >/dev/null\nfi\n`,
+    );
+    await chmod(hookPath, 0o755);
+
+    const result = await runRemove(await realpath(parentPath), {
+      checkDirty: false,
+      force: true,
+      keepBranches: true,
+      path: true,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("appeared after planning");
+    expect(result.stdout).toContain(lateDescendantPath);
+    expect(existsSync(parentPath)).toBe(true);
+    expect(existsSync(childPaths["repo-a"])).toBe(true);
+    expect(existsSync(lateDescendantPath)).toBe(true);
+    expect(normalizePathForComparison(await worktreeList(workspace.repos[1].path))).toContain(
+      normalizePathForComparison(await realpath(lateDescendantPath)),
+    );
+  });
+
   test("revalidates the authoritative plan after pre-remove hooks before mutation", async () => {
     if (process.platform === "win32") {
       return;

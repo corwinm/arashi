@@ -675,6 +675,7 @@ export async function executeRemove(
   }
 
   const worktreesToRemove: WorktreeEntry[] = [];
+  let allowedMissingRepositoryPaths = new Set<string>();
   const skippedMain: WorktreeEntry[] = [];
   const worktreeCounts: Record<string, number> = {};
 
@@ -750,7 +751,7 @@ export async function executeRemove(
 
   if (!options.keepWorktrees && worktreesToRemove.length > ZERO) {
     const configuredRepositories = repositories.filter((repo) => childRepoNames.has(repo.name));
-    const allowedMissingRepositoryPaths = new Set(
+    allowedMissingRepositoryPaths = new Set(
       configuredRepositories
         .filter((repo) => !pathExistsFailClosed(repo.path))
         .map((repo) => repo.path),
@@ -1028,12 +1029,23 @@ export async function executeRemove(
 
   let invalidatedRemovalPlan: UnplannedConfiguredDescendant | undefined;
   if (!options.keepWorktrees) {
-    invalidatedRemovalPlan = findUnplannedConfiguredDescendant(
-      worktreesToRemove,
-      repositories,
+    const refreshedInventory = await discoverAllWorktrees(repositories, {
+      allowMissingRepositoryPaths: allowedMissingRepositoryPaths,
+      strict: true,
+    });
+    const refreshedEntries = await buildWorktreeEntries(refreshedInventory, {
       childRepoNames,
+      includeDirtyDetails: false,
       reposDirName,
-    );
+    });
+    invalidatedRemovalPlan =
+      findUnplannedRegisteredDescendant(worktreesToRemove, refreshedEntries, repositories) ??
+      findUnplannedConfiguredDescendant(
+        worktreesToRemove,
+        repositories,
+        childRepoNames,
+        reposDirName,
+      );
     if (invalidatedRemovalPlan) {
       const message = `Removal of ${invalidatedRemovalPlan.blockingWorktree.path} blocked because unplanned configured descendant ${invalidatedRemovalPlan.repository.name}: ${invalidatedRemovalPlan.path} appeared after planning`;
       summary.operations.push({
@@ -1195,6 +1207,32 @@ interface UnplannedConfiguredDescendant {
 const comparablePhysicalPath = (value: string): string => {
   const comparable = resolve(value);
   return process.platform === "win32" ? comparable.toLowerCase() : comparable;
+};
+
+const findUnplannedRegisteredDescendant = (
+  worktrees: WorktreeEntry[],
+  refreshedInventory: WorktreeEntry[],
+  repositories: RepositoryTarget[],
+): UnplannedConfiguredDescendant | undefined => {
+  const plannedPaths = new Set(worktrees.map((worktree) => comparablePhysicalPath(worktree.path)));
+
+  for (const candidate of refreshedInventory) {
+    if (plannedPaths.has(comparablePhysicalPath(candidate.path))) {
+      continue;
+    }
+    const blockingWorktree = worktrees.find((worktree) =>
+      isDescendantWorktreePath(worktree.path, candidate.path),
+    );
+    if (!blockingWorktree) {
+      continue;
+    }
+    const repository = repositories.find((target) => target.name === candidate.repository);
+    if (repository) {
+      return { blockingWorktree, path: candidate.path, repository };
+    }
+  }
+
+  return undefined;
 };
 
 const findUnplannedConfiguredDescendant = (
