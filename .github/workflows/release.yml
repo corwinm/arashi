@@ -59,7 +59,7 @@ jobs:
           persist-credentials: true
 
       - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v1
+        uses: pnpm/setup@v2
         with:
           version: 11.20.0
           runtime: node@24.18.0
