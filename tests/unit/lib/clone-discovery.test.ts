@@ -92,6 +92,22 @@ describe("inferCloneProtocolPreference", () => {
     expect(result.protocol).toBeNull();
     expect(result.reason).toBe("mixed");
   });
+
+  test("ignores file and git URI schemes when inferring an HTTPS preference", () => {
+    expect(
+      inferCloneProtocolPreference([
+        "https://github.com/team/repo-a.git",
+        "file:///tmp/repo-b.git",
+        "git://example.com/team/repo-c.git",
+      ]),
+    ).toEqual({ protocol: "https", reason: "inferred-https" });
+  });
+
+  test("reports no preference for only non-convertible URI schemes", () => {
+    expect(
+      inferCloneProtocolPreference(["file:///tmp/repo-a.git", "git://example.com/team/repo-b.git"]),
+    ).toEqual({ protocol: null, reason: "none" });
+  });
 });
 
 describe("applyCloneProtocol", () => {

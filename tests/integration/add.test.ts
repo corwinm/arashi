@@ -135,6 +135,14 @@ describe("Add Command - URL Parsing", () => {
       url: "ssh://git@work-github/acme/api.git",
     },
     {
+      expected: {
+        host: "work-github:2222",
+        owner: "acme",
+        repository: "api",
+      },
+      url: "ssh://git@work-github:2222/acme/api.git",
+    },
+    {
       expected: { host: "work-github", owner: "acme", repository: "api" },
       url: "ssh://work-github/acme/api.git",
     },

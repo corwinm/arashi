@@ -128,7 +128,13 @@ function detectCloneProtocol(url: string): CloneProtocol | null {
   if (trimmed.startsWith("https://")) {
     return "https";
   }
-  if (trimmed.startsWith("ssh://") || /^(?:[^@\s/:]+@)?[^@\s/:]+:[^\s]+$/.test(trimmed)) {
+  if (trimmed.startsWith("ssh://")) {
+    return "ssh";
+  }
+  if (/^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.includes("://")) {
+    return null;
+  }
+  if (/^(?:[^@\s/:]+@)?[^@\s/:]+:[^\s]+$/.test(trimmed)) {
     return "ssh";
   }
   return null;

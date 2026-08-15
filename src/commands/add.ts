@@ -397,7 +397,7 @@ const resolveAddTransactionLockPath = async (workspaceRoot: string): Promise<str
 
 const WINDOWS_DRIVE_PATH = /^[a-zA-Z]:[\\/]/;
 const SCP_GIT_URL = /^(?:([^@\s/:]+)@)?([^@\s/:]+):([^\s]+)$/;
-const SSH_GIT_URL = /^ssh:\/\/(?:([^@\s/]+)@)?([^@\s/:]+)\/([^\s]+)$/;
+const SSH_GIT_URL = /^ssh:\/\/(?:([^@\s/]+)@)?((?:\[[^\]\s]+\]|[^@\s/:]+)(?::[0-9]+)?)\/([^\s]+)$/;
 
 const parseScpGitUrl = (url: string): RegExpMatchArray | null => {
   if (WINDOWS_DRIVE_PATH.test(url) || url.includes("://")) return null;
