@@ -539,6 +539,48 @@ describe("create base output contracts", () => {
     expect(await branchExists(root, localTarget)).toBe(true);
   });
 
+  test("standalone explicit base creates a remote-only target from the captured base OID", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-create-base-output-standalone-remote-base-"));
+    const remote = await mkdtemp(
+      join(tmpdir(), "arashi-create-base-output-standalone-remote-base-origin-"),
+    );
+    cleanups.push(() => rm(root, { force: true, recursive: true }));
+    cleanups.push(() => rm(remote, { force: true, recursive: true }));
+    await git(root, "init", "-b", "main");
+    await git(root, "config", "user.name", "Test User");
+    await git(root, "config", "user.email", "test@example.com");
+    await writeFile(join(root, "README.md"), "fixture\n");
+    await git(root, "add", "README.md");
+    await git(root, "commit", "-m", "initial");
+    expect((await arashi(root, "init", "--zero-config", "--json")).exitCode).toBe(0);
+    await git(remote, "init", "--bare");
+    await git(root, "remote", "add", "origin", remote);
+    const base = "feature/standalone-captured-base";
+    const target = "feature/standalone-remote-only-target-from-base";
+    await git(root, "switch", "-c", target);
+    await writeFile(join(root, "remote-target.txt"), "remote target\n");
+    await git(root, "add", "remote-target.txt");
+    await git(root, "commit", "-m", "remote target fixture");
+    await git(root, "push", "origin", target);
+    const remoteTargetOid = await oid(root, `refs/remotes/origin/${target}`);
+    await git(root, "switch", "main");
+    await git(root, "branch", "-D", target);
+    await git(root, "switch", "-c", base);
+    await writeFile(join(root, "captured-base.txt"), "captured base\n");
+    await git(root, "add", "captured-base.txt");
+    await git(root, "commit", "-m", "captured base fixture");
+    const baseOid = await oid(root, base);
+    expect(baseOid).not.toBe(remoteTargetOid);
+    await git(root, "switch", "main");
+    const result = await arashi(root, "create", target, "--base", base, "--json", "--no-launch");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(parseSingleDocument(result.stdout).data.base.repositories[0]).toMatchObject({
+      resolvedOid: baseOid,
+      targetAction: "created",
+    });
+    expect(await oid(root, target)).toBe(baseOid);
+    expect(await oid(root, target)).not.toBe(remoteTargetOid);
+  });
   test("standalone explicit base uses the same success/error shape and human dry-run is mutation-free", async () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-create-base-output-standalone-"));
     cleanups.push(() => rm(root, { force: true, recursive: true }));

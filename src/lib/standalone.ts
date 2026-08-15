@@ -386,10 +386,10 @@ export async function createStandaloneWorktree(
       await exec(
         localBranchExists
           ? ["worktree", "add", destination, branch]
-          : branchSource
-            ? ["worktree", "add", "-b", branch, destination, branchSource]
-            : baseResolution
-              ? ["worktree", "add", "-b", branch, destination, baseResolution.resolvedOid]
+          : baseResolution
+            ? ["worktree", "add", "-b", branch, destination, baseResolution.resolvedOid]
+            : branchSource
+              ? ["worktree", "add", "-b", branch, destination, branchSource]
               : ["worktree", "add", "-b", branch, destination],
         context.mainRoot,
       );
