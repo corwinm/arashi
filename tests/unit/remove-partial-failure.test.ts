@@ -78,6 +78,19 @@ describe("standalone remove partial failure diagnostics", () => {
     expect(output).not.toContain("Branch was deleted");
   });
 
+  test("does not claim deletion when an unborn branch never had a ref", () => {
+    const output = formatStandaloneRemovePartialFailureHuman({
+      finalState: { branchExists: false, worktreeExists: false },
+      hookFailures: [],
+      operationFailures: [
+        { message: "error: branch 'unborn' not found", operation: "delete-branch" },
+      ],
+    });
+
+    expect(output).toContain("Branch does not exist");
+    expect(output).not.toContain("Branch was deleted");
+  });
+
   test("does not suggest deleting a deliberately kept worktree after a hook failure", () => {
     const output = formatStandaloneRemovePartialFailureHuman({
       finalState: { branchExists: false, worktreeExists: true },

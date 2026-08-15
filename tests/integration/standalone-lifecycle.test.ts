@@ -1304,6 +1304,21 @@ describe("standalone lifecycle", () => {
     expect(output).not.toContain("Branch was deleted");
   });
 
+  test("standalone remove does not report an unborn branch as deleted", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const linked = join(root, ".worktrees", "unborn-partial-remove");
+    await run(root, ["git", "worktree", "add", "--orphan", "-b", "unborn-partial-remove", linked]);
+
+    const result = await arashi(root, ["remove", await realpath(linked), "--path", "--force"]);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.exitCode).not.toBe(0);
+    expect(output).toContain("delete-branch:");
+    expect(output).toContain("Branch does not exist");
+    expect(output).not.toContain("Branch was deleted");
+  });
+
   test("standalone remove finalizes after operation failure and aggregates hook failure", async () => {
     const root = await repository();
     await arashi(root, ["init", "--zero-config"]);

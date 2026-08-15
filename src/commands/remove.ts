@@ -157,11 +157,16 @@ export const formatStandaloneRemovePartialFailureHuman = (
   >,
   branchAssociated = details.finalState.branchExists !== null,
 ): string => {
+  const branchDeletionFailed = details.operationFailures.some(
+    (failure) => failure.operation === "delete-branch",
+  );
   let branchState = branchAssociated
     ? "Could not determine whether the branch still exists"
     : "No branch was associated with this worktree";
-  if (details.finalState.branchExists !== null) {
-    branchState = details.finalState.branchExists ? "Branch still exists" : "Branch was deleted";
+  if (details.finalState.branchExists === true) {
+    branchState = "Branch still exists";
+  } else if (details.finalState.branchExists === false) {
+    branchState = branchDeletionFailed ? "Branch does not exist" : "Branch was deleted";
   }
   const lines = [
     "Standalone removal completed with incomplete cleanup.",
