@@ -31,7 +31,7 @@ import type {
   WorktreeEntry,
   WorktreeGrouping,
 } from "../types/remove.ts";
-import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
+import { ArashiError, RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
 import { basename, resolve } from "path";
 import {
   branchExists,
@@ -77,6 +77,7 @@ import {
 import { Command } from "commander";
 import chalk from "chalk";
 import { existsSync } from "fs";
+import { access } from "fs/promises";
 
 interface Choice<T> {
   value: T;
@@ -114,6 +115,7 @@ type RepositoryTarget = Parameters<typeof discoverAllWorktrees>[0][number];
 
 const ZERO = 0;
 const ONE = 1;
+const TWO = 2;
 const JSON_INDENT = 2;
 
 interface CliOptions {
@@ -127,21 +129,114 @@ interface CliOptions {
   hookInput?: boolean;
 }
 
+export interface StandaloneRemovePartialFailureDetails {
+  finalState: { branchExists: boolean | null; worktreeExists: boolean | null };
+  hookOutcomes: LifecycleHookOutcome[];
+  hookFailures: { hookName: string; message: string }[];
+  operationFailures: { message: string; operation: string }[];
+}
+
+export const branchStateAfterShowRefExistsFailure = (error: unknown): false | null =>
+  error instanceof ArashiError && error.context.exitCode === TWO ? false : null;
+
+export const pathStateAfterInspectionFailure = (error: unknown): false | null =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
+    ? false
+    : null;
+
+const inspectPathExists = async (path: string): Promise<boolean | null> => {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    return pathStateAfterInspectionFailure(error);
+  }
+};
+
+type StandaloneBranchAction = "keep" | "none" | "remove";
+
 class StandaloneRemovePartialFailure extends Error {
   readonly code = "STANDALONE_REMOVE_PARTIAL_FAILURE";
-  readonly details: {
-    finalState: { branchExists: boolean; worktreeExists: boolean };
-    hookOutcomes: LifecycleHookOutcome[];
-    hookFailures: { hookName: string; message: string }[];
-    operationFailures: { message: string; operation: string }[];
-  };
+  readonly details: StandaloneRemovePartialFailureDetails;
+  readonly branchAction: StandaloneBranchAction;
 
-  constructor(details: StandaloneRemovePartialFailure["details"]) {
+  constructor(
+    details: StandaloneRemovePartialFailureDetails,
+    branchAction: StandaloneBranchAction,
+  ) {
     super("Standalone remove completed with one or more operation or finalization failures");
     this.details = details;
+    this.branchAction = branchAction;
     this.name = "StandaloneRemovePartialFailure";
   }
 }
+
+export const formatStandaloneRemovePartialFailureHuman = (
+  details: Pick<
+    StandaloneRemovePartialFailureDetails,
+    "finalState" | "hookFailures" | "operationFailures"
+  >,
+  branchAction: StandaloneBranchAction = details.finalState.branchExists === null
+    ? "none"
+    : "remove",
+): string => {
+  const branchDeletionFailed = details.operationFailures.some(
+    (failure) => failure.operation === "delete-branch",
+  );
+  let branchState =
+    branchAction === "none"
+      ? "No branch was associated with this worktree"
+      : "Could not determine whether the branch still exists";
+  if (details.finalState.branchExists === true) {
+    branchState = "Branch still exists";
+  } else if (details.finalState.branchExists === false) {
+    branchState =
+      branchAction === "remove" && !branchDeletionFailed
+        ? "Branch was deleted"
+        : "Branch does not exist";
+  }
+  let worktreeState = "Could not determine whether the worktree directory remains";
+  if (details.finalState.worktreeExists === true) {
+    worktreeState = "Worktree directory remains";
+  } else if (details.finalState.worktreeExists === false) {
+    worktreeState = "Worktree directory was removed";
+  }
+  const lines = [
+    "Standalone removal completed with incomplete cleanup.",
+    "",
+    "Final state:",
+    `  • ${worktreeState}`,
+    `  • ${branchState}`,
+  ];
+
+  if (details.operationFailures.length > ZERO) {
+    lines.push("", "Operation failures:");
+    for (const failure of details.operationFailures) {
+      lines.push(`  • ${failure.operation}: ${failure.message}`);
+    }
+  }
+
+  if (details.hookFailures.length > ZERO) {
+    lines.push("", "Hook failures:");
+    for (const failure of details.hookFailures) {
+      lines.push(`  • ${failure.hookName}: ${failure.message}`);
+    }
+  }
+
+  const worktreeRemovalFailed = details.operationFailures.some(
+    (failure) => failure.operation === "remove-worktree",
+  );
+  if (details.finalState.worktreeExists === true && worktreeRemovalFailed) {
+    lines.push(
+      "",
+      "Close terminals or editors using the worktree directory.",
+      "If Git still lists the worktree, retry removal after releasing the directory.",
+      "Otherwise, remove the leftover directory only after Git no longer lists it.",
+    );
+  }
+
+  return lines.join("\n");
+};
 
 const loadWorkspaceConfig = async (workspaceRoot: string): Promise<Config> => {
   try {
@@ -513,27 +608,34 @@ export async function executeRemove(
       });
     }
     if (operationFailures.length > ZERO || hookFailures.length > ZERO) {
-      let finalBranchExists = false;
+      let finalBranchExists: boolean | null = target.branch ? false : null;
       if (target.branch) {
         try {
           await standaloneGitExec(
-            ["show-ref", "--verify", `refs/heads/${target.branch}`],
+            ["show-ref", "--exists", `refs/heads/${target.branch}`],
             workspaceContext.mainRoot,
           );
           finalBranchExists = true;
-        } catch {
-          finalBranchExists = false;
+        } catch (error) {
+          finalBranchExists = branchStateAfterShowRefExistsFailure(error);
         }
       }
-      throw new StandaloneRemovePartialFailure({
-        finalState: {
-          branchExists: finalBranchExists,
-          worktreeExists: existsSync(target.path),
+      let branchAction: StandaloneBranchAction = "none";
+      if (target.branch !== null) {
+        branchAction = options.keepBranches ? "keep" : "remove";
+      }
+      throw new StandaloneRemovePartialFailure(
+        {
+          finalState: {
+            branchExists: finalBranchExists,
+            worktreeExists: await inspectPathExists(target.path),
+          },
+          hookFailures,
+          hookOutcomes: summary.hookOutcomes,
+          operationFailures,
         },
-        hookOutcomes: summary.hookOutcomes,
-        hookFailures,
-        operationFailures,
-      });
+        branchAction,
+      );
     }
     summary.duration = Date.now() - startTime;
     const data = removalJsonData(summary, {}, metadata);
@@ -1572,6 +1674,8 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
           : unknownErrorToJsonError(error),
       ),
     );
+  } else if (error instanceof StandaloneRemovePartialFailure) {
+    logError(formatStandaloneRemovePartialFailureHuman(error.details, error.branchAction));
   } else {
     logError(`Unexpected error: ${message}`);
   }

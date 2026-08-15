@@ -1250,6 +1250,112 @@ describe("standalone lifecycle", () => {
     );
   });
 
+  test("standalone remove reports actionable human partial-failure details", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    await arashi(root, ["create", "human-partial-remove", "--json", "--no-hooks"]);
+    const home = await mkdtemp(join(tmpdir(), "arashi-human-partial-home-"));
+    roots.push(home);
+    const hookDirectory = join(home, ".arashi", "hooks");
+    const hookExtension = process.platform === "win32" ? "ps1" : "sh";
+    const hook = join(hookDirectory, `post-remove.${hookExtension}`);
+    await mkdir(hookDirectory, { recursive: true });
+    await writeFile(hook, process.platform === "win32" ? "exit 23\n" : "#!/bin/sh\nexit 23\n");
+    if (process.platform !== "win32") {
+      await chmod(hook, 0o755);
+    }
+
+    const result = await arashi(root, ["remove", "human-partial-remove", "--force"], {
+      HOME: home,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.exitCode).not.toBe(0);
+    expect(output).toContain("Standalone removal completed with incomplete cleanup");
+    expect(output).toContain("Worktree directory was removed");
+    expect(output).toContain("Branch was deleted");
+    expect(output).toContain("post-remove:");
+    expect(output).not.toContain("Unexpected error");
+  });
+
+  test("standalone remove reports detached worktrees without inventing branch deletion", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const linked = join(root, ".worktrees", "detached-partial-remove");
+    await run(root, ["git", "worktree", "add", "--detach", linked]);
+    const home = await mkdtemp(join(tmpdir(), "arashi-detached-partial-home-"));
+    roots.push(home);
+    const hookDirectory = join(home, ".arashi", "hooks");
+    const hookExtension = process.platform === "win32" ? "ps1" : "sh";
+    const hook = join(hookDirectory, `post-remove.${hookExtension}`);
+    await mkdir(hookDirectory, { recursive: true });
+    await writeFile(hook, process.platform === "win32" ? "exit 23\n" : "#!/bin/sh\nexit 23\n");
+    if (process.platform !== "win32") {
+      await chmod(hook, 0o755);
+    }
+
+    const result = await arashi(root, ["remove", await realpath(linked), "--path", "--force"], {
+      HOME: home,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.exitCode).not.toBe(0);
+    expect(output).toContain("No branch was associated with this worktree");
+    expect(output).not.toContain("Branch was deleted");
+  });
+
+  test("standalone remove does not report an unborn branch as deleted", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const linked = join(root, ".worktrees", "unborn-partial-remove");
+    await run(root, ["git", "worktree", "add", "--orphan", "-b", "unborn-partial-remove", linked]);
+
+    const result = await arashi(root, ["remove", await realpath(linked), "--path", "--force"]);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.exitCode).not.toBe(0);
+    expect(output).toContain("delete-branch:");
+    expect(output).toContain("Branch does not exist");
+    expect(output).not.toContain("Branch was deleted");
+  });
+
+  test("standalone remove does not report a kept unborn branch as deleted", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const linked = join(root, ".worktrees", "kept-unborn-partial-remove");
+    await run(root, [
+      "git",
+      "worktree",
+      "add",
+      "--orphan",
+      "-b",
+      "kept-unborn-partial-remove",
+      linked,
+    ]);
+    const home = await mkdtemp(join(tmpdir(), "arashi-kept-unborn-home-"));
+    roots.push(home);
+    const hookDirectory = join(home, ".arashi", "hooks");
+    const hookExtension = process.platform === "win32" ? "ps1" : "sh";
+    const hook = join(hookDirectory, `post-remove.${hookExtension}`);
+    await mkdir(hookDirectory, { recursive: true });
+    await writeFile(hook, process.platform === "win32" ? "exit 23\n" : "#!/bin/sh\nexit 23\n");
+    if (process.platform !== "win32") {
+      await chmod(hook, 0o755);
+    }
+
+    const result = await arashi(
+      root,
+      ["remove", await realpath(linked), "--path", "--force", "--keep-branches"],
+      { HOME: home },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.exitCode).not.toBe(0);
+    expect(output).not.toContain("delete-branch:");
+    expect(output).toContain("Branch does not exist");
+    expect(output).not.toContain("Branch was deleted");
+  });
+
   test("standalone remove finalizes after operation failure and aggregates hook failure", async () => {
     const root = await repository();
     await arashi(root, ["init", "--zero-config"]);
