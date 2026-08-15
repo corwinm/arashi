@@ -31,7 +31,7 @@ import type {
   WorktreeEntry,
   WorktreeGrouping,
 } from "../types/remove.ts";
-import { RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
+import { ArashiError, RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
 import { basename, resolve } from "path";
 import {
   branchExists,
@@ -134,13 +134,18 @@ export interface StandaloneRemovePartialFailureDetails {
   operationFailures: { message: string; operation: string }[];
 }
 
+export const branchStateAfterShowRefFailure = (error: unknown): false | null =>
+  error instanceof ArashiError && error.context.exitCode === ONE ? false : null;
+
 class StandaloneRemovePartialFailure extends Error {
   readonly code = "STANDALONE_REMOVE_PARTIAL_FAILURE";
   readonly details: StandaloneRemovePartialFailureDetails;
+  readonly branchAssociated: boolean;
 
-  constructor(details: StandaloneRemovePartialFailureDetails) {
+  constructor(details: StandaloneRemovePartialFailureDetails, branchAssociated: boolean) {
     super("Standalone remove completed with one or more operation or finalization failures");
     this.details = details;
+    this.branchAssociated = branchAssociated;
     this.name = "StandaloneRemovePartialFailure";
   }
 }
@@ -150,8 +155,11 @@ export const formatStandaloneRemovePartialFailureHuman = (
     StandaloneRemovePartialFailureDetails,
     "finalState" | "hookFailures" | "operationFailures"
   >,
+  branchAssociated = details.finalState.branchExists !== null,
 ): string => {
-  let branchState = "No branch was associated with this worktree";
+  let branchState = branchAssociated
+    ? "Could not determine whether the branch still exists"
+    : "No branch was associated with this worktree";
   if (details.finalState.branchExists !== null) {
     branchState = details.finalState.branchExists ? "Branch still exists" : "Branch was deleted";
   }
@@ -566,23 +574,26 @@ export async function executeRemove(
       if (target.branch) {
         try {
           await standaloneGitExec(
-            ["show-ref", "--verify", `refs/heads/${target.branch}`],
+            ["show-ref", "--verify", "--quiet", `refs/heads/${target.branch}`],
             workspaceContext.mainRoot,
           );
           finalBranchExists = true;
-        } catch {
-          finalBranchExists = false;
+        } catch (error) {
+          finalBranchExists = branchStateAfterShowRefFailure(error);
         }
       }
-      throw new StandaloneRemovePartialFailure({
-        finalState: {
-          branchExists: finalBranchExists,
-          worktreeExists: existsSync(target.path),
+      throw new StandaloneRemovePartialFailure(
+        {
+          finalState: {
+            branchExists: finalBranchExists,
+            worktreeExists: existsSync(target.path),
+          },
+          hookOutcomes: summary.hookOutcomes,
+          hookFailures,
+          operationFailures,
         },
-        hookOutcomes: summary.hookOutcomes,
-        hookFailures,
-        operationFailures,
-      });
+        target.branch !== null,
+      );
     }
     summary.duration = Date.now() - startTime;
     const data = removalJsonData(summary, {}, metadata);
@@ -1622,7 +1633,7 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
       ),
     );
   } else if (error instanceof StandaloneRemovePartialFailure) {
-    logError(formatStandaloneRemovePartialFailureHuman(error.details));
+    logError(formatStandaloneRemovePartialFailureHuman(error.details, error.branchAssociated));
   } else {
     logError(`Unexpected error: ${message}`);
   }

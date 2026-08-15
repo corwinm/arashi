@@ -1,7 +1,32 @@
+import {
+  branchStateAfterShowRefFailure,
+  formatStandaloneRemovePartialFailureHuman,
+} from "../../src/commands/remove.ts";
 import { describe, expect, test } from "vitest";
-import { formatStandaloneRemovePartialFailureHuman } from "../../src/commands/remove.ts";
+import { ArashiError } from "../../src/lib/errors.ts";
 
 describe("standalone remove partial failure diagnostics", () => {
+  test("distinguishes a missing branch from an uninspectable branch", () => {
+    const missingRef = new ArashiError("missing ref", {
+      args: ["show-ref", "--verify", "refs/heads/missing"],
+      cwd: "/repo",
+      exitCode: 1,
+      stderr: "",
+      stdout: "",
+    });
+    const repositoryFailure = new ArashiError("not a repository", {
+      args: ["show-ref", "--verify", "refs/heads/unknown"],
+      cwd: "/repo",
+      exitCode: 128,
+      stderr: "fatal: not a git repository",
+      stdout: "",
+    });
+
+    expect(branchStateAfterShowRefFailure(missingRef)).toBe(false);
+    expect(branchStateAfterShowRefFailure(repositoryFailure)).toBeNull();
+    expect(branchStateAfterShowRefFailure(new Error("spawn failed"))).toBeNull();
+  });
+
   test("explains a Windows directory left behind after Git cleanup", () => {
     const output = formatStandaloneRemovePartialFailureHuman({
       finalState: { branchExists: false, worktreeExists: true },
@@ -35,6 +60,21 @@ describe("standalone remove partial failure diagnostics", () => {
     });
 
     expect(output).toContain("No branch was associated with this worktree");
+    expect(output).not.toContain("Branch was deleted");
+  });
+
+  test("reports an associated branch as unknown when inspection fails", () => {
+    const output = formatStandaloneRemovePartialFailureHuman(
+      {
+        finalState: { branchExists: null, worktreeExists: false },
+        hookFailures: [{ hookName: "post-remove", message: "Hook exited with code 23" }],
+        operationFailures: [],
+      },
+      true,
+    );
+
+    expect(output).toContain("Could not determine whether the branch still exists");
+    expect(output).not.toContain("No branch was associated");
     expect(output).not.toContain("Branch was deleted");
   });
 
