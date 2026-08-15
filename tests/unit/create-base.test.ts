@@ -39,7 +39,16 @@ function gitFailure(args: string[], cwd: string, exitCode: number): ArashiError 
 }
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
+  await Promise.all(
+    roots.splice(0).map((root) =>
+      rm(root, {
+        force: true,
+        maxRetries: process.platform === "win32" ? 10 : 0,
+        recursive: true,
+        retryDelay: 100,
+      }),
+    ),
+  );
 });
 
 describe("resolveCreateBasePlan", () => {
