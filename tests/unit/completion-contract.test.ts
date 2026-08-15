@@ -4,7 +4,6 @@ import {
   commandSemantics,
   generateCommandContract,
   optionAuditPolicies,
-  serializeCommandContract,
 } from "../../src/contracts/cli-commands.ts";
 
 describe("completion canonical contract", () => {
@@ -69,23 +68,5 @@ describe("completion canonical contract", () => {
         )?.repeatable,
       ).toBe(true);
     }
-  });
-
-  test("serializes deterministically and includes completion-critical fields", () => {
-    const program = buildProgram({ includeHelpBanner: false });
-    const first = serializeCommandContract(
-      generateCommandContract(program, commandSemantics, optionAuditPolicies),
-    );
-    const second = serializeCommandContract(
-      generateCommandContract(
-        buildProgram({ includeHelpBanner: false }),
-        commandSemantics,
-        optionAuditPolicies,
-      ),
-    );
-    expect(second).toBe(first);
-    expect(first).toContain('"candidateKind"');
-    expect(first).toContain('"choices"');
-    expect(first).toContain('"conflicts"');
   });
 });

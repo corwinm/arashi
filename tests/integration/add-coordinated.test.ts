@@ -14,7 +14,11 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { executeAdd, type AddExecutionDependencies } from "../../src/commands/add.ts";
+import {
+  DEFAULT_INCOMPLETE_LOCK_STALE_MS,
+  executeAdd,
+  type AddExecutionDependencies,
+} from "../../src/commands/add.ts";
 import { AddCommandError } from "../../src/lib/errors.ts";
 import { clone as cloneRepository } from "../../src/lib/git.ts";
 
@@ -1407,15 +1411,53 @@ describe("add coordinated linked materialization", () => {
     const topology = await createParentTopology("feature/incomplete-config-lock-grace");
     const remote = await seedChildRemote(topology.root);
     const lockPath = join(topology.active, ".arashi-config.add.lock");
+    const incompleteLockStaleMs = 200;
     await writeFile(lockPath, "incomplete");
-    const halfwayThroughGrace = new Date(Date.now() - 15_000);
+    const halfwayThroughGrace = new Date(Date.now() - incompleteLockStaleMs / 2);
     await utimes(lockPath, halfwayThroughGrace, halfwayThroughGrace);
+    const startedAt = Date.now();
 
-    const result = await runAdd(topology.active, remote);
+    const result = await executeAdd(
+      remote,
+      { force: true, json: true },
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      { incompleteLockStaleMs },
+    );
 
-    expect(repositoryResult(result)).toMatchObject({ name: "child" });
+    expect(result.repositoryName).toBe("child");
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(incompleteLockStaleMs / 2);
     expect(await runtime.file(lockPath).exists()).toBe(false);
-  }, 25_000);
+  });
+
+  test("keeps the production incomplete-lock grace period at 30 seconds", () => {
+    expect(DEFAULT_INCOMPLETE_LOCK_STALE_MS).toBe(30_000);
+  });
+
+  test("uses the production incomplete-lock grace period before reclamation", async () => {
+    const topology = await createParentTopology("feature/default-incomplete-config-lock-grace");
+    const remote = await seedChildRemote(topology.root);
+    const lockPath = join(topology.active, ".arashi-config.add.lock");
+    await writeFile(lockPath, "incomplete");
+    const nearlyStale = new Date(Date.now() - 28_000);
+    await utimes(lockPath, nearlyStale, nearlyStale);
+    const startedAt = Date.now();
+    let configLoadedAt = 0;
+
+    const result = await executeAdd(
+      remote,
+      { force: true, json: true },
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        afterConfigLoad: async () => {
+          configLoadedAt = Date.now();
+        },
+      },
+    );
+
+    expect(result.repositoryName).toBe("child");
+    expect(configLoadedAt - startedAt).toBeGreaterThanOrEqual(1_000);
+    expect(await runtime.file(lockPath).exists()).toBe(false);
+  });
 
   test("recovers a claim left by an interrupted lock reclaimer", async () => {
     const topology = await createParentTopology("feature/orphaned-reclaim-claim");

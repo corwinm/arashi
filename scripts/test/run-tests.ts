@@ -14,10 +14,8 @@ const windowsExcludedTests = new Set([
   "tests/integration/create.child-hooks-success.test.ts",
   "tests/integration/create.non-bare-parity.test.ts",
   "tests/integration/hook-execution.test.ts",
-  "tests/integration/hooks-integration.test.ts",
   "tests/integration/remove.hooks.test.ts",
   "tests/integration/repository-management.test.ts",
-  "tests/integration/repository-integration.test.ts",
   "tests/integration/setup.test.ts",
   "tests/integration/worktree-path-calculation.test.ts",
 ]);
@@ -41,7 +39,6 @@ const windowsShellExecutionPatterns = [
 const windowsSupplementalTests = [
   "tests/integration/config-integration.test.ts",
   "tests/integration/create.bare-config-fallback.test.ts",
-  "tests/integration/create.bare-context.setup.test.ts",
   "tests/integration/create.bare-missing-config-error.test.ts",
   "tests/integration/create.bare-rollback-guarantee.test.ts",
   "tests/integration/create.bare-root-success.test.ts",
