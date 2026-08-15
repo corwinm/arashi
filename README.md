@@ -132,7 +132,7 @@ Arashi currently provides these commands:
 - `arashi update [--check] [--dry-run] [--yes]`
 - `arashi add <git-url>`
 - `arashi clone [--all]`
-- `arashi create <branch> [--tab] [--tmux|--sesh|--herdr]`
+- `arashi create <branch> [--base <branch>] [--tab] [--tmux|--sesh|--herdr]`
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
@@ -154,6 +154,7 @@ arashi init --ignore-scope tracked  # opt in to a shared .gitignore block
 arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
 arashi create feature-auth-refresh
+arashi create feature-auth-refresh --base feature/auth
 arashi create feature-auth-refresh --launch
 arashi create feature-auth-refresh --tmux
 arashi create feature-auth-refresh --herdr
