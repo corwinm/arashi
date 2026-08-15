@@ -1077,9 +1077,10 @@ export async function executeCreate(
         skipHooks: options.noHooks === true || options.hooks === false,
       },
     );
+    const { targetAction: standaloneTargetAction, ...standaloneOutput } = standaloneResult;
     const standaloneData = {
       ...workspaceJsonMetadata(workspaceContext),
-      ...standaloneResult,
+      ...standaloneOutput,
       ...(standaloneBasePlan
         ? {
             base: {
@@ -1087,9 +1088,7 @@ export async function executeCreate(
               source: standaloneBasePlan.source,
               repositories: standaloneBasePlan.repositories.map((resolution) => ({
                 ...resolution,
-                targetAction: standaloneResult.branchSource
-                  ? ("reused" as const)
-                  : ("created" as const),
+                targetAction: standaloneTargetAction,
               })),
             },
           }
@@ -1100,9 +1099,7 @@ export async function executeCreate(
     } else {
       info("Workspace mode: standalone");
       if (options.dryRun && standaloneBasePlan) {
-        printCreateBasePlan(standaloneBasePlan, () =>
-          standaloneResult.branchSource ? "reused" : "created",
-        );
+        printCreateBasePlan(standaloneBasePlan, () => standaloneTargetAction);
       }
       success(
         options.dryRun

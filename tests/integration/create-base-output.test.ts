@@ -495,6 +495,50 @@ describe("create base output contracts", () => {
     );
   });
 
+  test("standalone dry-run reports a remote-only target as created and a local target as reused", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-create-base-output-standalone-actions-"));
+    const remote = await mkdtemp(join(tmpdir(), "arashi-create-base-output-standalone-remote-"));
+    cleanups.push(() => rm(root, { force: true, recursive: true }));
+    cleanups.push(() => rm(remote, { force: true, recursive: true }));
+    await git(root, "init", "-b", "main");
+    await git(root, "config", "user.name", "Test User");
+    await git(root, "config", "user.email", "test@example.com");
+    await writeFile(join(root, "README.md"), "fixture\n");
+    await git(root, "add", "README.md");
+    await git(root, "commit", "-m", "initial");
+    expect((await arashi(root, "init", "--zero-config", "--json")).exitCode).toBe(0);
+    await git(remote, "init", "--bare");
+    await git(root, "remote", "add", "origin", remote);
+    const base = "feature/standalone-action-base";
+    const localTarget = "feature/standalone-local-target";
+    const remoteOnlyTarget = "feature/standalone-remote-only-target";
+    await git(root, "branch", base, "main");
+    await git(root, "branch", localTarget, "main");
+    await git(root, "branch", remoteOnlyTarget, "main");
+    await git(root, "push", "origin", remoteOnlyTarget);
+    await git(root, "branch", "-D", remoteOnlyTarget);
+
+    const remoteOnly = await arashi(
+      root,
+      "create",
+      remoteOnlyTarget,
+      "--base",
+      base,
+      "--dry-run",
+      "--json",
+    );
+    expect(remoteOnly.exitCode, remoteOnly.stderr).toBe(0);
+    expect(parseSingleDocument(remoteOnly.stdout).data.base.repositories[0].targetAction).toBe(
+      "created",
+    );
+    expect(await branchExists(root, remoteOnlyTarget)).toBe(false);
+
+    const local = await arashi(root, "create", localTarget, "--base", base, "--dry-run", "--json");
+    expect(local.exitCode, local.stderr).toBe(0);
+    expect(parseSingleDocument(local.stdout).data.base.repositories[0].targetAction).toBe("reused");
+    expect(await branchExists(root, localTarget)).toBe(true);
+  });
+
   test("standalone explicit base uses the same success/error shape and human dry-run is mutation-free", async () => {
     const root = await mkdtemp(join(tmpdir(), "arashi-create-base-output-standalone-"));
     cleanups.push(() => rm(root, { force: true, recursive: true }));

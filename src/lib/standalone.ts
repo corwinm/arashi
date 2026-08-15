@@ -329,15 +329,15 @@ export async function createStandaloneWorktree(
   const destination = join(context.mainRoot, ".worktrees", ...branch.split("/"));
   const effectiveIgnore = await inspectStandaloneIgnore(context, destination);
   if (!effectiveIgnore.ignored) throw new StandaloneDestinationNotIgnoredError(destination);
-  let existing = true;
+  let localBranchExists = true;
   try {
     await exec(["show-ref", "--verify", `refs/heads/${branch}`], context.mainRoot);
   } catch {
-    existing = false;
+    localBranchExists = false;
   }
-  let branchSource: string | null = existing ? branch : null;
+  let branchSource: string | null = localBranchExists ? branch : null;
   let reusedRemoteBranch = false;
-  if (!existing) {
+  if (!localBranchExists) {
     const remotes = await exec(
       ["for-each-ref", "--format=%(refname:short)", `refs/remotes/*/${branch}`],
       context.mainRoot,
@@ -384,7 +384,7 @@ export async function createStandaloneWorktree(
     }
     try {
       await exec(
-        existing
+        localBranchExists
           ? ["worktree", "add", destination, branch]
           : branchSource
             ? ["worktree", "add", "-b", branch, destination, branchSource]
@@ -411,7 +411,7 @@ export async function createStandaloneWorktree(
       } catch {
         // The worktree may not have been created.
       }
-      if (!existing) {
+      if (!localBranchExists) {
         try {
           await exec(["branch", "-D", branch], context.mainRoot);
         } catch {
@@ -434,6 +434,7 @@ export async function createStandaloneWorktree(
   return {
     branchName: branch,
     branchSource,
+    targetAction: localBranchExists ? ("reused" as const) : ("created" as const),
     dryRun,
     mode: "standalone" as const,
     repositoryPath: context.mainRoot,
