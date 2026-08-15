@@ -4,7 +4,7 @@ import { readFile } from "fs/promises";
 
 interface JsonSchemaDefinition {
   enum?: string[];
-  properties?: Record<string, unknown>;
+  properties?: Record<string, { pattern?: string } & Record<string, unknown>>;
 }
 
 interface ConfigSchema {
@@ -18,6 +18,13 @@ describe("generated config schema contracts", () => {
 
     expect(schema.definitions.CreateLaunchMode?.enum).toEqual(["none", "auto", "sesh", "herdr"]);
     expect(schema.definitions.CreateCommandDefaults?.properties).toEqual({
+      baseBranch: {
+        description: "Default base branch for configured create invocations",
+        minLength: 1,
+        pattern:
+          "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
+        type: "string",
+      },
       launch: {
         $ref: "#/definitions/CreateLaunchMode",
         description: "Post-create launch choice; omitted preserves built-in no-launch behavior",
@@ -27,6 +34,19 @@ describe("generated config schema contracts", () => {
         type: "boolean",
       },
     });
+    expect(schema.definitions.EditorCreateCommandDefaults?.properties).toEqual({
+      launch: {
+        $ref: "#/definitions/CreateLaunchMode",
+        description: "Post-create launch choice; omitted preserves built-in no-launch behavior",
+      },
+      switch: {
+        description: "Default to switching to the new worktree after create",
+        type: "boolean",
+      },
+    });
+    expect(JSON.stringify(schema.definitions.EditorCreateCommandDefaults)).not.toContain(
+      "baseBranch",
+    );
     expect(JSON.stringify(schema.definitions.CreateCommandDefaults)).not.toContain("launchMode");
     expect(JSON.stringify(schema.definitions.CreateCommandDefaults)).not.toContain("launch_mode");
 
@@ -40,5 +60,36 @@ describe("generated config schema contracts", () => {
     expect(schema.definitions.EditorCommandDefaults?.properties).toHaveProperty("create");
     expect(schema.definitions.Config?.properties?.hooks).toBeDefined();
     expect(JSON.stringify(schema.definitions.Config?.properties?.hooks)).not.toContain('"input"');
+  });
+
+  test.each([
+    "feature branch",
+    "-feature",
+    "/feature",
+    "feature/",
+    "feature.",
+    ".feature",
+    "feature.lock",
+    "feature..child",
+    "feature@{child",
+    "feature//child",
+    "feature\u0001child",
+    String.raw`feature\child`,
+    "feature~child",
+    "feature^child",
+    "feature:child",
+    "feature?child",
+    "feature*child",
+    "feature[child",
+    "HEAD",
+    "origin/HEAD",
+    "origin/-feature",
+  ])("schema pattern rejects representative malformed Git branch %j", async (branchName) => {
+    const schemaPath = join(import.meta.dirname, "..", "..", "schema", "config.schema.json");
+    const schema = JSON.parse(await readFile(schemaPath, "utf8")) as ConfigSchema;
+    const pattern = schema.definitions.CreateCommandDefaults?.properties?.baseBranch?.pattern;
+
+    expect(pattern).toBeDefined();
+    expect(new RegExp(pattern!).test(branchName)).toBe(false);
   });
 });

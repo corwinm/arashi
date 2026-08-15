@@ -62,6 +62,71 @@ const selectorFixturePolicy = (
   },
 });
 
+const createBaseFixturePolicy = {
+  ownership: "command" as const,
+  persisted: false as const,
+  createBase: {
+    scope: {
+      cli: "invocation-only",
+      workspaceDefault: "defaults.create.baseBranch",
+      workspaceDefaultScope: "generic-only",
+      editorScopedDefault: "rejected",
+    },
+    precedence: ["cli", "defaults.create.baseBranch", "legacy-omitted"] as const,
+    normalization: { originPrefix: "remove-at-most-one" as const },
+    standalone: {
+      cli: "invocation-only" as const,
+      workspaceDefault: "ignored" as const,
+      omitted: "legacy-current-head" as const,
+    },
+    resolution: {
+      repositories: "every-effective-selected-including-reused" as const,
+      refs: ["refs/heads/<branch>", "refs/remotes/origin/<branch>"] as const,
+    },
+    mutation: {
+      preflight: "all-before-any" as const,
+      executionStartPoint: "immutable-resolved-oid" as const,
+      reusedTarget: {
+        ancestry: "not-asserted-checked-or-derived" as const,
+        baseResolution: "required" as const,
+        mutation: "none" as const,
+      },
+    },
+    output: {
+      humanDryRun: { baseResolution: true as const },
+      json: {
+        base: "optional" as const,
+        baseFields: ["requestedBranch", "source", "repositories"] as const,
+        requestedBranch: "normalized-logical-branch" as const,
+        sources: ["cli", "config"] as const,
+        targetActions: ["created", "reused"] as const,
+        success: {
+          ordering: "effective-selected-repository-order" as const,
+          repositories: "complete-selected-set" as const,
+          repositoryFields: [
+            "repositoryName",
+            "repositoryPath",
+            "resolvedRef",
+            "resolvedOid",
+            "targetAction",
+          ] as const,
+          repositoryPath: "canonical-absolute" as const,
+        },
+        failure: {
+          attemptedRefs: ["refs/heads/<branch>", "refs/remotes/origin/<branch>"] as const,
+          code: "CREATE_BASE_RESOLUTION_FAILED" as const,
+          fields: ["requestedBranch", "source", "repositories"] as const,
+          ordering: "effective-selected-repository-order" as const,
+          repositories: "affected-only-selected-set" as const,
+          repositoryFields: ["repositoryName", "repositoryPath", "attemptedRefs"] as const,
+          repositoryPath: "canonical-absolute" as const,
+        },
+      },
+    },
+    environmentVariables: { ARASHI_BASE_BRANCH: "forbidden" as const },
+  },
+};
+
 describe("CLI command contract", () => {
   test("constructs a fresh reusable program without parsing or process side effects", () => {
     const first = buildProgram({ includeHelpBanner: false });
@@ -251,6 +316,58 @@ describe("CLI command contract", () => {
     expect(createHelp).toContain("--no-hook-input");
     expect(createHelp).toContain("--interactive");
     expect(createHelp).toContain("--no-hooks");
+  });
+
+  test("publishes the complete typed create base semantic policy", () => {
+    const contract = generateCommandContract(
+      buildProgram({ includeHelpBanner: false }),
+      commandSemantics,
+      optionAuditPolicies,
+    );
+    const base = contract.commands
+      .find((command) => command.path === "create")
+      ?.options.find((option) => option.long === "--base");
+    expect(base).toMatchObject({
+      description: "Base branch to use when creating new target branches",
+      flags: "--base <branch>",
+      required: true,
+      semanticPolicy: createBaseFixturePolicy,
+      semanticPolicyOwner: "command",
+      valueShape: "required",
+    });
+    expect(base?.semanticPolicy).toEqual(createBaseFixturePolicy);
+  });
+
+  test("serializes schema-v7 create base policy deterministically with an exact shape", () => {
+    const first = serializeCommandContract(
+      generateCommandContract(
+        buildProgram({ includeHelpBanner: false }),
+        commandSemantics,
+        optionAuditPolicies,
+      ),
+    );
+    const second = serializeCommandContract(
+      generateCommandContract(
+        buildProgram({ includeHelpBanner: false }),
+        commandSemantics,
+        optionAuditPolicies,
+      ),
+    );
+    const serialized = JSON.parse(first) as {
+      schemaVersion: number;
+      commands: Array<{
+        path: string;
+        options: Array<{ long: string; semanticPolicy?: unknown }>;
+      }>;
+    };
+
+    expect(first).toBe(second);
+    expect(serialized.schemaVersion).toBe(7);
+    expect(
+      serialized.commands
+        .find((command) => command.path === "create")
+        ?.options.find((option) => option.long === "--base")?.semanticPolicy,
+    ).toEqual(createBaseFixturePolicy);
   });
 
   test("publishes real canonical switch compatibility policies", () => {
@@ -486,7 +603,7 @@ describe("CLI command contract", () => {
       buildProgram({ includeHelpBanner: false }),
       commandSemantics,
     );
-    expect(contract.schemaVersion).toBe(6);
+    expect(contract.schemaVersion).toBe(7);
     expect(
       contract.commands.find((command) => command.path === "switch")?.semantics.optionPolicies?.[
         "--tab"
@@ -733,8 +850,8 @@ describe("CLI command contract", () => {
     const options = contract.commands.flatMap((command) => command.options);
 
     expect(contract.commands).toHaveLength(24);
-    expect(options).toHaveLength(133);
-    expect(new Set(options.map((option) => option.long))).toHaveLength(60);
+    expect(options).toHaveLength(134);
+    expect(new Set(options.map((option) => option.long))).toHaveLength(61);
     expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
     expect(
       contract.commands
@@ -987,6 +1104,127 @@ describe("CLI command contract", () => {
     }
   });
 
+  test("rejects malformed create-base policy recursively at every semantic boundary", () => {
+    expect(validateOptionSemanticPolicy("create", "--base", createBaseFixturePolicy)).toEqual([]);
+    expect(validateOptionSemanticPolicy("create", "--base", { ownership: "command" })).toContain(
+      'Command "create" --base policy.createBase is required for create --base',
+    );
+    expect(validateOptionSemanticPolicy("switch", "--base", createBaseFixturePolicy)).toContain(
+      'Command "switch" --base policy.createBase is only supported for Command "create" --base',
+    );
+
+    const mutations: Array<(createBase: Record<string, unknown>) => void> = [
+      (createBase) => delete createBase.scope,
+      (createBase) => {
+        createBase.extra = true;
+      },
+      (createBase) => {
+        (createBase.scope as Record<string, unknown>).editorScopedDefault = "allowed";
+      },
+      (createBase) => {
+        (createBase.scope as Record<string, unknown>).extra = true;
+      },
+      (createBase) => {
+        createBase.precedence = ["defaults.create.baseBranch", "cli", "legacy-omitted"];
+      },
+      (createBase) => {
+        (createBase.normalization as Record<string, unknown>).originPrefix = "remove-all";
+      },
+      (createBase) => delete (createBase.standalone as Record<string, unknown>).omitted,
+      (createBase) => {
+        (createBase.resolution as Record<string, unknown>).refs = [
+          "refs/remotes/origin/<branch>",
+          "refs/heads/<branch>",
+        ];
+      },
+      (createBase) => {
+        (createBase.resolution as Record<string, unknown>).repositories = "new-only";
+      },
+      (createBase) => {
+        const reusedTarget = (createBase.mutation as Record<string, unknown>)
+          .reusedTarget as Record<string, unknown>;
+        reusedTarget.mutation = "reset";
+      },
+      (createBase) => {
+        const reusedTarget = (createBase.mutation as Record<string, unknown>)
+          .reusedTarget as Record<string, unknown>;
+        reusedTarget.ancestry = "preserved";
+      },
+      (createBase) => {
+        const reusedTarget = (createBase.mutation as Record<string, unknown>)
+          .reusedTarget as Record<string, unknown>;
+        reusedTarget.baseResolution = "skipped";
+      },
+      (createBase) => {
+        (createBase.output as Record<string, unknown>).humanDryRun = { baseResolution: false };
+      },
+      (createBase) => {
+        const json = (createBase.output as Record<string, unknown>).json as Record<string, unknown>;
+        json.baseFields = ["source", "requestedBranch", "repositories"];
+      },
+      (createBase) => {
+        const json = (createBase.output as Record<string, unknown>).json as Record<string, unknown>;
+        json.sources = ["config", "cli"];
+      },
+      (createBase) => {
+        const json = (createBase.output as Record<string, unknown>).json as Record<string, unknown>;
+        json.requestedBranch = "literal-input";
+      },
+      (createBase) => {
+        const json = (createBase.output as Record<string, unknown>).json as Record<string, unknown>;
+        (json.success as Record<string, unknown>).repositoryFields = [
+          "repositoryName",
+          "repositoryPath",
+          "resolvedOid",
+          "resolvedRef",
+          "targetAction",
+        ];
+      },
+      (createBase) => {
+        const json = (createBase.output as Record<string, unknown>).json as Record<string, unknown>;
+        (json.success as Record<string, unknown>).repositories = "affected-only-selected-set";
+      },
+      (createBase) => {
+        const json = (createBase.output as Record<string, unknown>).json as Record<string, unknown>;
+        (json.failure as Record<string, unknown>).repositoryFields = [
+          "repositoryName",
+          "repositoryPath",
+          "resolvedRef",
+          "resolvedOid",
+          "targetAction",
+        ];
+      },
+      (createBase) => {
+        const json = (createBase.output as Record<string, unknown>).json as Record<string, unknown>;
+        (json.failure as Record<string, unknown>).attemptedRefs = [
+          "refs/remotes/origin/<branch>",
+          "refs/heads/<branch>",
+        ];
+      },
+      (createBase) => {
+        const json = (createBase.output as Record<string, unknown>).json as Record<string, unknown>;
+        (json.failure as Record<string, unknown>).repositories = "complete-selected-set";
+      },
+      (createBase) => {
+        const json = (createBase.output as Record<string, unknown>).json as Record<string, unknown>;
+        (json.failure as Record<string, unknown>).extra = true;
+      },
+      (createBase) => {
+        (createBase.environmentVariables as Record<string, unknown>).ARASHI_BASE_BRANCH =
+          "supported";
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const invalid = structuredClone(createBaseFixturePolicy) as unknown as Record<
+        string,
+        unknown
+      >;
+      mutate(invalid.createBase as Record<string, unknown>);
+      expect(validateOptionSemanticPolicy("create", "--base", invalid)).not.toEqual([]);
+    }
+  });
+
   test("rejects unregistered conflict and option implication references without rejecting semantic tokens", () => {
     const program = new Command().name("arashi");
     program.addCommand(new Command("sample").option("--alpha").option("--beta").option("--gamma"));
@@ -1148,7 +1386,7 @@ describe("CLI command contract", () => {
     );
     expect(first).toBe(second);
     const contract = JSON.parse(first);
-    expect(contract.schemaVersion).toBe(6);
+    expect(contract.schemaVersion).toBe(7);
     expect(contract).not.toHaveProperty("cliVersion");
     expect(contract.commands.map((command: { path: string }) => command.path)).toEqual(
       expectedPaths,

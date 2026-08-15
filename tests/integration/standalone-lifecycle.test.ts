@@ -5,6 +5,7 @@ import { tmpdir } from "os";
 import { spawn } from "../helpers/node-runtime.ts";
 import { executeCreate } from "../../src/commands/create.ts";
 import { executeRemove } from "../../src/commands/remove.ts";
+import { resolveCreateBasePlan } from "../../src/lib/create-base.ts";
 
 const roots: string[] = [];
 async function run(cwd: string, args: string[], env?: Record<string, string>) {
@@ -127,6 +128,305 @@ describe("standalone lifecycle", () => {
       },
       mode: "standalone",
     });
+  });
+
+  test("omitted base creates a new standalone branch from the invocation HEAD", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    await run(root, ["git", "switch", "-c", "feature/current-head"]);
+    await writeFile(join(root, "current-head.txt"), "current HEAD\n");
+    await run(root, ["git", "add", "current-head.txt"]);
+    await run(root, ["git", "commit", "-m", "current HEAD fixture"]);
+    const currentHead = (await run(root, ["git", "rev-parse", "HEAD"])).stdout.trim();
+
+    const result = await arashi(root, ["create", "feature/from-current-head", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect((await run(root, ["git", "rev-parse", "feature/from-current-head"])).stdout.trim()).toBe(
+      currentHead,
+    );
+    const data = JSON.parse(result.stdout).data;
+    expect(data).not.toHaveProperty("base");
+    expect(Object.keys(data).toSorted()).toEqual(
+      [
+        "branchName",
+        "branchSource",
+        "dryRun",
+        "effectiveIgnore",
+        "hookOutcomes",
+        "mode",
+        "repositoriesBase",
+        "repositoryPath",
+        "reusedRemoteBranch",
+        "workspaceRoot",
+        "worktreePath",
+        "worktreesBase",
+      ].toSorted(),
+    );
+  });
+
+  test("explicit base prefers the standalone repository local branch over origin", async () => {
+    const root = await repository();
+    const remote = await mkdtemp(join(tmpdir(), "arashi-standalone-base-remote-"));
+    roots.push(remote);
+    await run(remote, ["git", "init", "--bare"]);
+    await run(root, ["git", "remote", "add", "origin", remote]);
+    await run(root, ["git", "switch", "-c", "feature/local-base"]);
+    await writeFile(join(root, "remote-base.txt"), "remote base\n");
+    await run(root, ["git", "add", "remote-base.txt"]);
+    await run(root, ["git", "commit", "-m", "remote base fixture"]);
+    await run(root, ["git", "push", "origin", "feature/local-base"]);
+    const remoteBase = (
+      await run(root, ["git", "rev-parse", "origin/feature/local-base"])
+    ).stdout.trim();
+    await writeFile(join(root, "local-base.txt"), "local base\n");
+    await run(root, ["git", "add", "local-base.txt"]);
+    await run(root, ["git", "commit", "-m", "local base fixture"]);
+    const localBase = (await run(root, ["git", "rev-parse", "feature/local-base"])).stdout.trim();
+    expect(localBase).not.toBe(remoteBase);
+    await run(root, ["git", "switch", "main"]);
+    await arashi(root, ["init", "--zero-config"]);
+
+    const result = await arashi(root, [
+      "create",
+      "feature/from-local-base",
+      "--base",
+      "origin/feature/local-base",
+      "--json",
+    ]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect((await run(root, ["git", "rev-parse", "feature/from-local-base"])).stdout.trim()).toBe(
+      localBase,
+    );
+    await expect(access(join(root, ".arashi"))).rejects.toThrow();
+  });
+
+  test("explicit base falls back to the standalone repository origin branch", async () => {
+    const root = await repository();
+    const remote = await mkdtemp(join(tmpdir(), "arashi-standalone-origin-base-"));
+    roots.push(remote);
+    await run(remote, ["git", "init", "--bare"]);
+    await run(root, ["git", "remote", "add", "origin", remote]);
+    await run(root, ["git", "switch", "-c", "feature/origin-base"]);
+    await writeFile(join(root, "origin-base.txt"), "origin base\n");
+    await run(root, ["git", "add", "origin-base.txt"]);
+    await run(root, ["git", "commit", "-m", "origin base fixture"]);
+    await run(root, ["git", "push", "origin", "feature/origin-base"]);
+    const originBase = (
+      await run(root, ["git", "rev-parse", "origin/feature/origin-base"])
+    ).stdout.trim();
+    await run(root, ["git", "switch", "main"]);
+    await run(root, ["git", "branch", "-D", "feature/origin-base"]);
+    await arashi(root, ["init", "--zero-config"]);
+
+    const result = await arashi(root, [
+      "create",
+      "feature/from-origin-base",
+      "--base",
+      "feature/origin-base",
+      "--json",
+    ]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect((await run(root, ["git", "rev-parse", "feature/from-origin-base"])).stdout.trim()).toBe(
+      originBase,
+    );
+  });
+
+  test("explicit base creates from its captured OID when the local ref moves before mutation", async () => {
+    const root = await repository();
+    await run(root, ["git", "switch", "-c", "feature/captured-base"]);
+    await writeFile(join(root, "captured-base.txt"), "captured base\n");
+    await run(root, ["git", "add", "captured-base.txt"]);
+    await run(root, ["git", "commit", "-m", "captured base fixture"]);
+    const capturedBase = (
+      await run(root, ["git", "rev-parse", "feature/captured-base"])
+    ).stdout.trim();
+    await run(root, ["git", "switch", "-c", "feature/moved-base"]);
+    await writeFile(join(root, "moved-base.txt"), "moved base\n");
+    await run(root, ["git", "add", "moved-base.txt"]);
+    await run(root, ["git", "commit", "-m", "moved base fixture"]);
+    const movedBase = (await run(root, ["git", "rev-parse", "feature/moved-base"])).stdout.trim();
+    await run(root, ["git", "switch", "main"]);
+    await arashi(root, ["init", "--zero-config"]);
+
+    const originalCwd = process.cwd();
+    process.chdir(root);
+    try {
+      expect(
+        await executeCreate(
+          "feature/from-captured-base",
+          { base: "feature/captured-base", noHooks: true },
+          {
+            resolveCreateBasePlan: async (...args) => {
+              const plan = await resolveCreateBasePlan(...args);
+              await run(root, ["git", "branch", "-f", "feature/captured-base", movedBase]);
+              return plan;
+            },
+          },
+        ),
+      ).toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    expect((await run(root, ["git", "rev-parse", "feature/captured-base"])).stdout.trim()).toBe(
+      movedBase,
+    );
+    expect(
+      (await run(root, ["git", "rev-parse", "feature/from-captured-base"])).stdout.trim(),
+    ).toBe(capturedBase);
+  });
+
+  test("missing explicit base fails before global pre-create hook or standalone mutation", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const home = await mkdtemp(join(tmpdir(), "arashi-standalone-missing-base-home-"));
+    roots.push(home);
+    const hooks = join(home, ".arashi", "hooks");
+    const marker = join(home, "pre-create-ran");
+    await mkdir(hooks, { recursive: true });
+    await writeFile(join(hooks, "pre-create.sh"), `#!/bin/sh\ntouch "${marker}"\n`);
+    await chmod(join(hooks, "pre-create.sh"), 0o755);
+
+    const result = await arashi(
+      root,
+      ["create", "feature/missing-base-target", "--base", "feature/does-not-exist", "--json"],
+      { HOME: home },
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("feature/does-not-exist");
+    await expect(access(marker)).rejects.toThrow();
+    expect(
+      (await run(root, ["git", "branch", "--list", "feature/missing-base-target"])).stdout,
+    ).toBe("");
+    await expect(
+      access(join(root, ".worktrees", "feature", "missing-base-target")),
+    ).rejects.toThrow();
+    await expect(access(join(root, ".arashi"))).rejects.toThrow();
+  });
+
+  test("invalid explicit base fails before global pre-create hook or standalone mutation", async () => {
+    const root = await repository();
+    await arashi(root, ["init", "--zero-config"]);
+    const home = await mkdtemp(join(tmpdir(), "arashi-standalone-invalid-base-home-"));
+    roots.push(home);
+    const hooks = join(home, ".arashi", "hooks");
+    const marker = join(home, "pre-create-ran");
+    await mkdir(hooks, { recursive: true });
+    await writeFile(join(hooks, "pre-create.sh"), `#!/bin/sh\ntouch "${marker}"\n`);
+    await chmod(join(hooks, "pre-create.sh"), 0o755);
+    const excludePath = join(root, ".git", "info", "exclude");
+    const configPath = join(root, ".git", "config");
+    const excludeBefore = await readFile(excludePath, "utf8");
+    const configBefore = await readFile(configPath, "utf8");
+
+    const result = await arashi(
+      root,
+      ["create", "feature/invalid-base-target", "--base", "bad branch", "--json"],
+      { HOME: home },
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(JSON.parse(result.stdout).error).toMatchObject({ code: "INVALID_BRANCH_NAME" });
+    await expect(access(marker)).rejects.toThrow();
+    expect(
+      (await run(root, ["git", "branch", "--list", "feature/invalid-base-target"])).stdout,
+    ).toBe("");
+    await expect(
+      access(join(root, ".worktrees", "feature", "invalid-base-target")),
+    ).rejects.toThrow();
+    await expect(access(join(root, ".arashi"))).rejects.toThrow();
+    expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
+    expect(await readFile(configPath, "utf8")).toBe(configBefore);
+  });
+
+  test("operational base resolver failure occurs before global pre-create hook or standalone mutation", async () => {
+    const root = await repository();
+    await run(root, ["git", "branch", "feature/operational-base"]);
+    await arashi(root, ["init", "--zero-config"]);
+    const home = await mkdtemp(join(tmpdir(), "arashi-standalone-operational-base-home-"));
+    const bin = await mkdtemp(join(tmpdir(), "arashi-standalone-operational-base-bin-"));
+    roots.push(home, bin);
+    const hooks = join(home, ".arashi", "hooks");
+    const marker = join(home, "pre-create-ran");
+    await mkdir(hooks, { recursive: true });
+    await writeFile(join(hooks, "pre-create.sh"), `#!/bin/sh\ntouch "${marker}"\n`);
+    await chmod(join(hooks, "pre-create.sh"), 0o755);
+    const realGit = (await run(root, ["sh", "-c", "command -v git"])).stdout.trim();
+    const gitWrapper = join(bin, "git");
+    await writeFile(
+      gitWrapper,
+      `#!/bin/sh\nif [ "$1" = "check-ref-format" ]; then\n  echo "injected check-ref-format operational failure" >&2\n  exit 74\nfi\nexec "${realGit}" "$@"\n`,
+    );
+    await chmod(gitWrapper, 0o755);
+    const excludePath = join(root, ".git", "info", "exclude");
+    const configPath = join(root, ".git", "config");
+    const excludeBefore = await readFile(excludePath, "utf8");
+    const configBefore = await readFile(configPath, "utf8");
+
+    const result = await arashi(
+      root,
+      ["create", "feature/operational-base-target", "--base", "feature/operational-base", "--json"],
+      { HOME: home, PATH: `${bin}:${process.env.PATH ?? ""}` },
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "injected check-ref-format operational failure",
+    );
+    expect(JSON.parse(result.stdout).error.code).not.toBe("INVALID_BRANCH_NAME");
+    await expect(access(marker)).rejects.toThrow();
+    expect(
+      (await run(root, ["git", "branch", "--list", "feature/operational-base-target"])).stdout,
+    ).toBe("");
+    await expect(
+      access(join(root, ".worktrees", "feature", "operational-base-target")),
+    ).rejects.toThrow();
+    await expect(access(join(root, ".arashi"))).rejects.toThrow();
+    expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
+    expect(await readFile(configPath, "utf8")).toBe(configBefore);
+  });
+
+  test("explicit base is resolved while an existing standalone target is reused unchanged", async () => {
+    const root = await repository();
+    await run(root, ["git", "branch", "feature/reuse-base", "main"]);
+    await run(root, ["git", "switch", "-c", "feature/reused-target"]);
+    await writeFile(join(root, "reused-target.txt"), "reused target\n");
+    await run(root, ["git", "add", "reused-target.txt"]);
+    await run(root, ["git", "commit", "-m", "reused target fixture"]);
+    const reusedOid = (
+      await run(root, ["git", "rev-parse", "feature/reused-target"])
+    ).stdout.trim();
+    await run(root, ["git", "switch", "main"]);
+    await arashi(root, ["init", "--zero-config"]);
+    let resolutionCalls = 0;
+
+    const originalCwd = process.cwd();
+    process.chdir(root);
+    try {
+      expect(
+        await executeCreate(
+          "feature/reused-target",
+          { base: "feature/reuse-base", noHooks: true },
+          {
+            resolveCreateBasePlan: async (...args) => {
+              resolutionCalls += 1;
+              return resolveCreateBasePlan(...args);
+            },
+          },
+        ),
+      ).toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+
+    expect(resolutionCalls).toBe(1);
+    expect((await run(root, ["git", "rev-parse", "feature/reused-target"])).stdout.trim()).toBe(
+      reusedOid,
+    );
   });
 
   test("create reuses a remote-only branch", async () => {

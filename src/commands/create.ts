@@ -71,6 +71,11 @@ import {
   createStandaloneWorktree,
   StandaloneDestinationNotIgnoredError,
 } from "../lib/standalone.ts";
+import {
+  CreateBaseResolutionError,
+  resolveCreateBasePlan,
+  type CreateBaseResolutionPlan,
+} from "../lib/create-base.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
@@ -159,6 +164,9 @@ const formatDurationSeconds = (durationMs: number): string =>
   `${(durationMs / MILLISECONDS_PER_SECOND).toFixed(TWO)}s`;
 
 const createCommandErrorCode = (createError: unknown): string => {
+  if (createError instanceof CreateBaseResolutionError) {
+    return createError.code;
+  }
   if (createError instanceof InvalidBranchNameError) {
     return "INVALID_BRANCH_NAME";
   }
@@ -191,6 +199,13 @@ const createCommandErrorCode = (createError: unknown): string => {
 };
 
 const createCommandErrorDetails = (createError: unknown): Record<string, unknown> | undefined => {
+  if (createError instanceof CreateBaseResolutionError) {
+    return {
+      requestedBranch: createError.requestedBranch,
+      source: createError.source,
+      repositories: createError.failures,
+    };
+  }
   if (createError instanceof ConfigValidationError) {
     return createError.context;
   }
@@ -225,8 +240,35 @@ const writeCreateJsonError = (createError: unknown): void => {
   );
 };
 
+const createBaseJsonData = (plan: CreateBaseResolutionPlan, summary: OperationSummary) => ({
+  requestedBranch: plan.requestedBranch,
+  source: plan.source,
+  repositories: plan.repositories.map((resolution) => {
+    const targetAction = summary.targetActionByRepositoryPath.get(resolution.repositoryPath);
+    if (!targetAction) {
+      throw new Error(
+        `Repository '${resolution.repositoryName}' is missing a planned target action for '${resolution.repositoryPath}'`,
+      );
+    }
+    return { ...resolution, targetAction };
+  }),
+});
+
+const printCreateBasePlan = (
+  plan: CreateBaseResolutionPlan,
+  targetAction: (repositoryPath: string) => "created" | "reused",
+): void => {
+  info(`Requested base: ${plan.requestedBranch} (${plan.source})`);
+  for (const resolution of plan.repositories) {
+    console.log(
+      `  • ${resolution.repositoryName}: ${resolution.resolvedRef} @ ${resolution.resolvedOid} [${targetAction(resolution.repositoryPath)}]`,
+    );
+  }
+};
+
 interface CreateSummaryJsonOptions {
   branchName: string;
+  createBasePlan?: CreateBaseResolutionPlan;
   dirtyWorkspaceGuidance?: ReturnType<typeof buildDirtyGuidance>;
   moveSummary?: MoveSummary | null;
   managedIgnore?: ManagedIgnoreReconciliation;
@@ -234,8 +276,9 @@ interface CreateSummaryJsonOptions {
   workspaceMetadata?: Record<string, unknown>;
 }
 
-const createSummaryJsonData = ({
+const createSummaryJsonData = async ({
   branchName,
+  createBasePlan,
   dirtyWorkspaceGuidance,
   managedIgnore,
   moveSummary,
@@ -244,6 +287,7 @@ const createSummaryJsonData = ({
 }: CreateSummaryJsonOptions) => ({
   ...workspaceMetadata,
   branchName,
+  ...(createBasePlan ? { base: await createBaseJsonData(createBasePlan, summary) } : {}),
   dirtyWorkspaceGuidance,
   dryRun: summary.isDryRun === true,
   errorSummary: summary.errorSummary,
@@ -271,6 +315,9 @@ const createSummaryJsonData = ({
 });
 
 export interface CreateCommandOptions {
+  /** Base branch requested for new target branches */
+  base?: string;
+
   /** Only create worktrees in specified repositories */
   only?: string[];
 
@@ -356,6 +403,7 @@ export interface CreateCommandDependencies {
   isGitRepository?: (path: string) => Promise<boolean>;
   resolveCurrentBranch?: (path: string) => Promise<string>;
   applyRepositoryFilter?: typeof applyRepositoryFilter;
+  resolveCreateBasePlan?: typeof resolveCreateBasePlan;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
   reconcileManagedIgnore?: typeof reconcileRepositoryManagedIgnore;
   restoreManagedIgnore?: typeof restoreManagedIgnore;
@@ -812,6 +860,7 @@ export function createCommand(): Command {
   return new Command("create")
     .description("Create coordinated worktrees across multiple repositories")
     .argument("<branch>", "Branch name to create across repositories")
+    .option("--base <branch>", "Base branch to use when creating new target branches")
     .option(
       "-o, --only <repos>",
       "Only create in specified repositories (repeatable, comma-separated)",
@@ -903,6 +952,15 @@ By default, launch opens a new OS window or managed independent-session equivale
         if (createError instanceof EmptyRepositoryFiltersError) {
           error(createError.message);
           process.exit(CANCELLED_EXIT_CODE);
+        } else if (createError instanceof CreateBaseResolutionError) {
+          error(`Base branch '${createError.requestedBranch}' could not be resolved.`);
+          for (const failure of createError.failures) {
+            error(`${failure.repositoryName} (${failure.repositoryPath})`);
+            for (const attemptedRef of failure.attemptedRefs) {
+              error(`  attempted: ${attemptedRef}`);
+            }
+          }
+          process.exit(ERROR_EXIT_CODE);
         } else if (createError instanceof InvalidBranchNameError) {
           error(`Invalid branch name: ${createError.branchName}`);
           error(createError.reason);
@@ -993,11 +1051,27 @@ export async function executeCreate(
         "Repository selection is not meaningful in standalone mode; omit --only, --group, and --interactive.",
       );
     }
+    const standaloneBasePlan =
+      options.base === undefined
+        ? undefined
+        : await (deps.resolveCreateBasePlan ?? resolveCreateBasePlan)(
+            [
+              {
+                defaultBranch: "",
+                hasSetupScript: false,
+                name: workspaceContext.repository.name,
+                path: workspaceContext.mainRoot,
+              },
+            ],
+            options.base,
+            "cli",
+          );
     const standaloneResult = await createStandaloneWorktree(
       workspaceContext,
       branchName,
       options.dryRun === true,
       {
+        createBasePlan: standaloneBasePlan,
         hookInputMode,
         quiet: options.json === true,
         skipHooks: options.noHooks === true || options.hooks === false,
@@ -1006,11 +1080,30 @@ export async function executeCreate(
     const standaloneData = {
       ...workspaceJsonMetadata(workspaceContext),
       ...standaloneResult,
+      ...(standaloneBasePlan
+        ? {
+            base: {
+              requestedBranch: standaloneBasePlan.requestedBranch,
+              source: standaloneBasePlan.source,
+              repositories: standaloneBasePlan.repositories.map((resolution) => ({
+                ...resolution,
+                targetAction: standaloneResult.branchSource
+                  ? ("reused" as const)
+                  : ("created" as const),
+              })),
+            },
+          }
+        : {}),
     };
     if (options.json) {
       writeJsonEnvelope(createJsonSuccessEnvelope("create", standaloneData));
     } else {
       info("Workspace mode: standalone");
+      if (options.dryRun && standaloneBasePlan) {
+        printCreateBasePlan(standaloneBasePlan, () =>
+          standaloneResult.branchSource ? "reused" : "created",
+        );
+      }
       success(
         options.dryRun
           ? `Would create worktree at ${standaloneResult.worktreePath}`
@@ -1042,6 +1135,7 @@ export async function executeCreate(
       return result.stdout.trim();
     });
   const filterRepositories = deps.applyRepositoryFilter ?? applyRepositoryFilter;
+  const resolveBasePlan = deps.resolveCreateBasePlan ?? resolveCreateBasePlan;
   const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
   const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileRepositoryManagedIgnore;
   const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
@@ -1200,6 +1294,16 @@ export async function executeCreate(
     return ZERO;
   }
 
+  const requestedBase = options.base ?? arashiConfig.defaults?.create?.baseBranch;
+  const createBasePlan =
+    requestedBase === undefined
+      ? undefined
+      : await resolveBasePlan(
+          selectedRepos,
+          requestedBase,
+          options.base === undefined ? "config" : "cli",
+        );
+
   const actionLabel = options.dryRun ? "Planning" : "Creating";
   let selectedRepositoryLabel = "repositories";
   if (selectedRepos.length === ONE) {
@@ -1221,6 +1325,7 @@ export async function executeCreate(
   // 5. Build options for worktree orchestration
   const worktreeOptions: WorktreeOperationOptions = {
     conflictResolution: options.conflict || null,
+    createBasePlan,
     dryRun: options.dryRun || false,
     executeHooks: hooksEnabled,
     hookInputMode,
@@ -1311,8 +1416,9 @@ export async function executeCreate(
 
   // 7. Display results
   if (options.json) {
-    const details = createSummaryJsonData({
+    const details = await createSummaryJsonData({
       branchName,
+      createBasePlan,
       dirtyWorkspaceGuidance,
       managedIgnore,
       moveSummary,
@@ -1349,6 +1455,17 @@ export async function executeCreate(
     }
 
     const { plannedWorktrees, conflicts, overallStatus, summaryCounts } = summary.dryRunOutcome;
+
+    if (createBasePlan) {
+      printCreateBasePlan(createBasePlan, (repositoryPath) => {
+        const targetAction = summary.targetActionByRepositoryPath.get(repositoryPath);
+        if (!targetAction) {
+          throw new Error(`Repository target action is missing for '${repositoryPath}'`);
+        }
+        return targetAction;
+      });
+      console.log("");
+    }
 
     info("Dry-run plan:");
     for (const planned of plannedWorktrees) {

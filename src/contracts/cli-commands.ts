@@ -98,6 +98,66 @@ export interface SelectorOptionSemanticPolicy {
   unknown: "error";
   validationPrecedence: "before-repository-work";
 }
+export interface CreateBaseOptionSemanticPolicy {
+  environmentVariables: { ARASHI_BASE_BRANCH: "forbidden" };
+  mutation: {
+    executionStartPoint: "immutable-resolved-oid";
+    preflight: "all-before-any";
+    reusedTarget: {
+      ancestry: "not-asserted-checked-or-derived";
+      baseResolution: "required";
+      mutation: "none";
+    };
+  };
+  normalization: { originPrefix: "remove-at-most-one" };
+  output: {
+    humanDryRun: { baseResolution: true };
+    json: {
+      base: "optional";
+      baseFields: ["requestedBranch", "source", "repositories"];
+      failure: {
+        attemptedRefs: ["refs/heads/<branch>", "refs/remotes/origin/<branch>"];
+        code: "CREATE_BASE_RESOLUTION_FAILED";
+        fields: ["requestedBranch", "source", "repositories"];
+        ordering: "effective-selected-repository-order";
+        repositories: "affected-only-selected-set";
+        repositoryFields: ["repositoryName", "repositoryPath", "attemptedRefs"];
+        repositoryPath: "canonical-absolute";
+      };
+      requestedBranch: "normalized-logical-branch";
+      sources: ["cli", "config"];
+      success: {
+        ordering: "effective-selected-repository-order";
+        repositories: "complete-selected-set";
+        repositoryFields: [
+          "repositoryName",
+          "repositoryPath",
+          "resolvedRef",
+          "resolvedOid",
+          "targetAction",
+        ];
+        repositoryPath: "canonical-absolute";
+      };
+      targetActions: ["created", "reused"];
+    };
+  };
+  precedence: ["cli", "defaults.create.baseBranch", "legacy-omitted"];
+  resolution: {
+    refs: ["refs/heads/<branch>", "refs/remotes/origin/<branch>"];
+    repositories: "every-effective-selected-including-reused";
+  };
+  scope: {
+    cli: "invocation-only";
+    editorScopedDefault: "rejected";
+    workspaceDefault: "defaults.create.baseBranch";
+    workspaceDefaultScope: "generic-only";
+  };
+  standalone: {
+    cli: "invocation-only";
+    omitted: "legacy-current-head";
+    workspaceDefault: "ignored";
+  };
+}
 export interface OptionSemanticPolicy {
   ownership: "structural" | "command";
   compatibility?: {
@@ -107,6 +167,7 @@ export interface OptionSemanticPolicy {
     removal: { earliestMajor: number; requiresApprovedBreakingChange: true };
   };
   conflicts?: string[];
+  createBase?: CreateBaseOptionSemanticPolicy;
   implies?: string[];
   inspection?: { executionPaths: Array<"human" | "json"> };
   hookInput?: {
@@ -216,8 +277,77 @@ const hookInputPolicy: OptionSemanticPolicy = {
   persisted: false,
 };
 
+const createBasePolicy: OptionSemanticPolicy = {
+  ownership: "command",
+  persisted: false,
+  createBase: {
+    scope: {
+      cli: "invocation-only",
+      workspaceDefault: "defaults.create.baseBranch",
+      workspaceDefaultScope: "generic-only",
+      editorScopedDefault: "rejected",
+    },
+    precedence: ["cli", "defaults.create.baseBranch", "legacy-omitted"],
+    normalization: { originPrefix: "remove-at-most-one" },
+    standalone: {
+      cli: "invocation-only",
+      workspaceDefault: "ignored",
+      omitted: "legacy-current-head",
+    },
+    resolution: {
+      repositories: "every-effective-selected-including-reused",
+      refs: ["refs/heads/<branch>", "refs/remotes/origin/<branch>"],
+    },
+    mutation: {
+      preflight: "all-before-any",
+      executionStartPoint: "immutable-resolved-oid",
+      reusedTarget: {
+        ancestry: "not-asserted-checked-or-derived",
+        baseResolution: "required",
+        mutation: "none",
+      },
+    },
+    output: {
+      humanDryRun: { baseResolution: true },
+      json: {
+        base: "optional",
+        baseFields: ["requestedBranch", "source", "repositories"],
+        requestedBranch: "normalized-logical-branch",
+        sources: ["cli", "config"],
+        targetActions: ["created", "reused"],
+        success: {
+          ordering: "effective-selected-repository-order",
+          repositories: "complete-selected-set",
+          repositoryFields: [
+            "repositoryName",
+            "repositoryPath",
+            "resolvedRef",
+            "resolvedOid",
+            "targetAction",
+          ],
+          repositoryPath: "canonical-absolute",
+        },
+        failure: {
+          attemptedRefs: ["refs/heads/<branch>", "refs/remotes/origin/<branch>"],
+          code: "CREATE_BASE_RESOLUTION_FAILED",
+          fields: ["requestedBranch", "source", "repositories"],
+          ordering: "effective-selected-repository-order",
+          repositories: "affected-only-selected-set",
+          repositoryFields: ["repositoryName", "repositoryPath", "attemptedRefs"],
+          repositoryPath: "canonical-absolute",
+        },
+      },
+    },
+    environmentVariables: { ARASHI_BASE_BRANCH: "forbidden" },
+  },
+};
+
 export const optionAuditPolicies: OptionAuditPolicies = {
-  create: { ...selectorPolicies("unsupported"), "--no-hook-input": hookInputPolicy },
+  create: {
+    ...selectorPolicies("unsupported"),
+    "--base": createBasePolicy,
+    "--no-hook-input": hookInputPolicy,
+  },
   exec: selectorPolicies("configured-only"),
   handoff: {
     "--markdown": {
@@ -836,6 +966,388 @@ function validateUniqueStringArray(
   return value;
 }
 
+function validateExactTuple(
+  value: unknown,
+  expected: readonly string[],
+  label: string,
+  errors: string[],
+): void {
+  if (
+    !Array.isArray(value) ||
+    value.length !== expected.length ||
+    value.some((entry, index) => entry !== expected[index])
+  )
+    errors.push(`${label} must equal ${JSON.stringify(expected)}`);
+}
+
+function validateLiteral(
+  value: Record<string, unknown>,
+  field: string,
+  expected: string | boolean,
+  label: string,
+  errors: string[],
+): void {
+  if (value[field] !== expected)
+    errors.push(`${label}.${field} must be ${JSON.stringify(expected)}`);
+}
+
+function validateCreateBaseSemanticPolicy(value: unknown, label: string, errors: string[]): void {
+  if (
+    !validateExactObject(
+      value,
+      [
+        "environmentVariables",
+        "mutation",
+        "normalization",
+        "output",
+        "precedence",
+        "resolution",
+        "scope",
+        "standalone",
+      ],
+      [
+        "environmentVariables",
+        "mutation",
+        "normalization",
+        "output",
+        "precedence",
+        "resolution",
+        "scope",
+        "standalone",
+      ],
+      label,
+      errors,
+    )
+  )
+    return;
+
+  if (
+    validateExactObject(
+      value.scope,
+      ["cli", "editorScopedDefault", "workspaceDefault", "workspaceDefaultScope"],
+      ["cli", "editorScopedDefault", "workspaceDefault", "workspaceDefaultScope"],
+      `${label}.scope`,
+      errors,
+    )
+  ) {
+    validateLiteral(value.scope, "cli", "invocation-only", `${label}.scope`, errors);
+    validateLiteral(value.scope, "editorScopedDefault", "rejected", `${label}.scope`, errors);
+    validateLiteral(
+      value.scope,
+      "workspaceDefault",
+      "defaults.create.baseBranch",
+      `${label}.scope`,
+      errors,
+    );
+    validateLiteral(value.scope, "workspaceDefaultScope", "generic-only", `${label}.scope`, errors);
+  }
+  validateExactTuple(
+    value.precedence,
+    ["cli", "defaults.create.baseBranch", "legacy-omitted"],
+    `${label}.precedence`,
+    errors,
+  );
+
+  if (
+    validateExactObject(
+      value.normalization,
+      ["originPrefix"],
+      ["originPrefix"],
+      `${label}.normalization`,
+      errors,
+    )
+  )
+    validateLiteral(
+      value.normalization,
+      "originPrefix",
+      "remove-at-most-one",
+      `${label}.normalization`,
+      errors,
+    );
+
+  if (
+    validateExactObject(
+      value.standalone,
+      ["cli", "omitted", "workspaceDefault"],
+      ["cli", "omitted", "workspaceDefault"],
+      `${label}.standalone`,
+      errors,
+    )
+  ) {
+    validateLiteral(value.standalone, "cli", "invocation-only", `${label}.standalone`, errors);
+    validateLiteral(
+      value.standalone,
+      "omitted",
+      "legacy-current-head",
+      `${label}.standalone`,
+      errors,
+    );
+    validateLiteral(value.standalone, "workspaceDefault", "ignored", `${label}.standalone`, errors);
+  }
+
+  if (
+    validateExactObject(
+      value.resolution,
+      ["refs", "repositories"],
+      ["refs", "repositories"],
+      `${label}.resolution`,
+      errors,
+    )
+  ) {
+    validateExactTuple(
+      value.resolution.refs,
+      ["refs/heads/<branch>", "refs/remotes/origin/<branch>"],
+      `${label}.resolution.refs`,
+      errors,
+    );
+    validateLiteral(
+      value.resolution,
+      "repositories",
+      "every-effective-selected-including-reused",
+      `${label}.resolution`,
+      errors,
+    );
+  }
+
+  if (
+    validateExactObject(
+      value.mutation,
+      ["executionStartPoint", "preflight", "reusedTarget"],
+      ["executionStartPoint", "preflight", "reusedTarget"],
+      `${label}.mutation`,
+      errors,
+    )
+  ) {
+    validateLiteral(
+      value.mutation,
+      "executionStartPoint",
+      "immutable-resolved-oid",
+      `${label}.mutation`,
+      errors,
+    );
+    validateLiteral(value.mutation, "preflight", "all-before-any", `${label}.mutation`, errors);
+    if (
+      validateExactObject(
+        value.mutation.reusedTarget,
+        ["ancestry", "baseResolution", "mutation"],
+        ["ancestry", "baseResolution", "mutation"],
+        `${label}.mutation.reusedTarget`,
+        errors,
+      )
+    ) {
+      validateLiteral(
+        value.mutation.reusedTarget,
+        "ancestry",
+        "not-asserted-checked-or-derived",
+        `${label}.mutation.reusedTarget`,
+        errors,
+      );
+      validateLiteral(
+        value.mutation.reusedTarget,
+        "baseResolution",
+        "required",
+        `${label}.mutation.reusedTarget`,
+        errors,
+      );
+      validateLiteral(
+        value.mutation.reusedTarget,
+        "mutation",
+        "none",
+        `${label}.mutation.reusedTarget`,
+        errors,
+      );
+    }
+  }
+
+  if (
+    validateExactObject(
+      value.output,
+      ["humanDryRun", "json"],
+      ["humanDryRun", "json"],
+      `${label}.output`,
+      errors,
+    )
+  ) {
+    if (
+      validateExactObject(
+        value.output.humanDryRun,
+        ["baseResolution"],
+        ["baseResolution"],
+        `${label}.output.humanDryRun`,
+        errors,
+      )
+    )
+      validateLiteral(
+        value.output.humanDryRun,
+        "baseResolution",
+        true,
+        `${label}.output.humanDryRun`,
+        errors,
+      );
+
+    if (
+      validateExactObject(
+        value.output.json,
+        ["base", "baseFields", "failure", "requestedBranch", "sources", "success", "targetActions"],
+        ["base", "baseFields", "failure", "requestedBranch", "sources", "success", "targetActions"],
+        `${label}.output.json`,
+        errors,
+      )
+    ) {
+      const json = value.output.json;
+      validateLiteral(json, "base", "optional", `${label}.output.json`, errors);
+      validateExactTuple(
+        json.baseFields,
+        ["requestedBranch", "source", "repositories"],
+        `${label}.output.json.baseFields`,
+        errors,
+      );
+      validateLiteral(
+        json,
+        "requestedBranch",
+        "normalized-logical-branch",
+        `${label}.output.json`,
+        errors,
+      );
+      validateExactTuple(json.sources, ["cli", "config"], `${label}.output.json.sources`, errors);
+      validateExactTuple(
+        json.targetActions,
+        ["created", "reused"],
+        `${label}.output.json.targetActions`,
+        errors,
+      );
+
+      if (
+        validateExactObject(
+          json.success,
+          ["ordering", "repositories", "repositoryFields", "repositoryPath"],
+          ["ordering", "repositories", "repositoryFields", "repositoryPath"],
+          `${label}.output.json.success`,
+          errors,
+        )
+      ) {
+        validateLiteral(
+          json.success,
+          "ordering",
+          "effective-selected-repository-order",
+          `${label}.output.json.success`,
+          errors,
+        );
+        validateLiteral(
+          json.success,
+          "repositories",
+          "complete-selected-set",
+          `${label}.output.json.success`,
+          errors,
+        );
+        validateExactTuple(
+          json.success.repositoryFields,
+          ["repositoryName", "repositoryPath", "resolvedRef", "resolvedOid", "targetAction"],
+          `${label}.output.json.success.repositoryFields`,
+          errors,
+        );
+        validateLiteral(
+          json.success,
+          "repositoryPath",
+          "canonical-absolute",
+          `${label}.output.json.success`,
+          errors,
+        );
+      }
+
+      if (
+        validateExactObject(
+          json.failure,
+          [
+            "attemptedRefs",
+            "code",
+            "fields",
+            "ordering",
+            "repositories",
+            "repositoryFields",
+            "repositoryPath",
+          ],
+          [
+            "attemptedRefs",
+            "code",
+            "fields",
+            "ordering",
+            "repositories",
+            "repositoryFields",
+            "repositoryPath",
+          ],
+          `${label}.output.json.failure`,
+          errors,
+        )
+      ) {
+        validateExactTuple(
+          json.failure.attemptedRefs,
+          ["refs/heads/<branch>", "refs/remotes/origin/<branch>"],
+          `${label}.output.json.failure.attemptedRefs`,
+          errors,
+        );
+        validateLiteral(
+          json.failure,
+          "code",
+          "CREATE_BASE_RESOLUTION_FAILED",
+          `${label}.output.json.failure`,
+          errors,
+        );
+        validateExactTuple(
+          json.failure.fields,
+          ["requestedBranch", "source", "repositories"],
+          `${label}.output.json.failure.fields`,
+          errors,
+        );
+        validateLiteral(
+          json.failure,
+          "ordering",
+          "effective-selected-repository-order",
+          `${label}.output.json.failure`,
+          errors,
+        );
+        validateLiteral(
+          json.failure,
+          "repositories",
+          "affected-only-selected-set",
+          `${label}.output.json.failure`,
+          errors,
+        );
+        validateExactTuple(
+          json.failure.repositoryFields,
+          ["repositoryName", "repositoryPath", "attemptedRefs"],
+          `${label}.output.json.failure.repositoryFields`,
+          errors,
+        );
+        validateLiteral(
+          json.failure,
+          "repositoryPath",
+          "canonical-absolute",
+          `${label}.output.json.failure`,
+          errors,
+        );
+      }
+    }
+  }
+
+  if (
+    validateExactObject(
+      value.environmentVariables,
+      ["ARASHI_BASE_BRANCH"],
+      ["ARASHI_BASE_BRANCH"],
+      `${label}.environmentVariables`,
+      errors,
+    )
+  )
+    validateLiteral(
+      value.environmentVariables,
+      "ARASHI_BASE_BRANCH",
+      "forbidden",
+      `${label}.environmentVariables`,
+      errors,
+    );
+}
+
 export function validateOptionSemanticPolicy(
   path: string,
   optionName: string,
@@ -849,6 +1361,7 @@ export function validateOptionSemanticPolicy(
       [
         "compatibility",
         "conflicts",
+        "createBase",
         "hookInput",
         "implies",
         "inspection",
@@ -877,6 +1390,19 @@ export function validateOptionSemanticPolicy(
     errors.push(`${label}.role must be "redundant-compatibility"`);
   if (value.role === "redundant-compatibility" && value.persisted !== false)
     errors.push(`${label}.persisted must be false for redundant compatibility`);
+
+  const ownsCreateBasePolicy = path === "create" && optionName === "--base";
+  if (ownsCreateBasePolicy && value.createBase === undefined)
+    errors.push(`${label}.createBase is required for create --base`);
+  if (value.createBase !== undefined) {
+    if (!ownsCreateBasePolicy)
+      errors.push(`${label}.createBase is only supported for Command "create" --base`);
+    if (value.ownership !== "command")
+      errors.push(`${label}.ownership must be "command" for create base policy`);
+    if (value.persisted !== false)
+      errors.push(`${label}.persisted must be false for create base policy`);
+    validateCreateBaseSemanticPolicy(value.createBase, `${label}.createBase`, errors);
+  }
 
   if (
     value.hookInput !== undefined &&
@@ -1335,7 +1861,7 @@ export function validateOptionAudit(program: Command, policies: OptionAuditPolic
 }
 
 export interface CliCommandContract {
-  schemaVersion: 6;
+  schemaVersion: 7;
   root: ContractRoot;
   commands: ContractCommand[];
 }
@@ -1505,7 +2031,7 @@ export function generateCommandContract(
   };
   visit(program, "");
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     root: {
       aliases: program.aliases().toSorted(),
       description: program.description(),

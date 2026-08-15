@@ -33,7 +33,10 @@ import { spinner, warn } from "../lib/logger.ts";
 import { OperationLog } from "./rollback.ts";
 import type { Repository } from "./repository.ts";
 import { existsSync } from "fs";
+import { realpath } from "node:fs/promises";
 import { resolveWorktreesBasePath } from "../lib/worktree-location.ts";
+import type { CreateBaseResolutionPlan } from "../lib/create-base.ts";
+import { isValidGitBranchNameLiteral } from "../lib/git-branch-name.ts";
 
 type ArashiConfig = Awaited<ReturnType<typeof loadConfig>>;
 
@@ -182,6 +185,9 @@ export interface RepositoryTypeInfo {
  * Options for worktree creation operation
  */
 export interface WorktreeOperationOptions {
+  /** Immutable per-repository base resolutions captured before mutation */
+  createBasePlan?: CreateBaseResolutionPlan;
+
   /** Whether to execute pre-create and post-create hooks (default: true) */
   executeHooks?: boolean;
 
@@ -245,10 +251,13 @@ export interface DryRunConflict {
   blocking: boolean;
 }
 
+export type TargetAction = "created" | "reused";
+
 export interface DryRunOutcome {
   overallStatus: DryRunPlanStatus;
   plannedWorktrees: PlannedWorktree[];
   conflicts: DryRunConflict[];
+  targetActionByRepositoryPath: ReadonlyMap<string, TargetAction>;
   summaryCounts: {
     plannedTotal: number;
     conflictTotal: number;
@@ -348,6 +357,9 @@ export interface RepositoryResult {
 
   /** Hook outcomes recorded while processing this repository */
   hookOutcomes: HookOutcomeRecord[];
+
+  /** Whether the target branch was created by this invocation or reused */
+  targetAction: TargetAction;
 }
 
 // ============================================================================
@@ -370,8 +382,11 @@ export interface OperationSummary {
   /** Number of repositories skipped */
   skippedCount: number;
 
-  /** Detailed results for each repository */
+  /** Detailed results for each repository that reached processing */
   repositoryResults: RepositoryResult[];
+
+  /** Complete planned actions for every selected repository, keyed by canonical path */
+  targetActionByRepositoryPath: ReadonlyMap<string, TargetAction>;
 
   /** Whether rollback was triggered */
   rolledBack: boolean;
@@ -457,6 +472,7 @@ interface BuildDryRunOutcomeOptions {
   conflictCheck: ConflictCheckResult;
   options: NormalizedWorktreeOptions;
   config: ArashiConfig;
+  targetActionByRepositoryPath: ReadonlyMap<string, TargetAction>;
 }
 
 interface ProcessRepositoryOptions {
@@ -466,13 +482,12 @@ interface ProcessRepositoryOptions {
   options: NormalizedWorktreeOptions;
   config: ArashiConfig;
   mainRepoPath: string;
-  conflicts?: BranchConflict[];
-  strategy?: ConflictResolutionStrategy | null;
+  createBasePlan?: CreateBaseResolutionPlan;
+  targetAction: TargetAction;
 }
 
 interface ShouldReuseBranchOptions {
   repo: Repository;
-  branchName: string;
   conflicts: BranchConflict[];
   strategy: ConflictResolutionStrategy;
 }
@@ -1171,47 +1186,7 @@ export const buildWorktreeEntries = async (
  * @returns true if valid, false otherwise
  */
 export const isValidBranchName = (branchName: string): boolean => {
-  if (!branchName || branchName.length === ZERO) {
-    return false;
-  }
-
-  // Cannot start with - or /
-  if (branchName.startsWith("-") || branchName.startsWith("/")) {
-    return false;
-  }
-
-  // Cannot end with .lock or /
-  if (branchName.endsWith(".lock") || branchName.endsWith("/")) {
-    return false;
-  }
-
-  // Cannot contain spaces
-  if (branchName.includes(" ")) {
-    return false;
-  }
-
-  // Cannot contain invalid characters: ~, ^, :, ?, *, [, \
-  const invalidChars = /[~^:?*[\\\]]/;
-  if (invalidChars.test(branchName)) {
-    return false;
-  }
-
-  // Cannot contain ..
-  if (branchName.includes("..")) {
-    return false;
-  }
-
-  // Cannot contain @{
-  if (branchName.includes("@{")) {
-    return false;
-  }
-
-  // Cannot have consecutive slashes
-  if (branchName.includes("//")) {
-    return false;
-  }
-
-  return true;
+  return isValidGitBranchNameLiteral(branchName);
 };
 
 // ============================================================================
@@ -1224,6 +1199,7 @@ const buildDryRunOutcome = async ({
   conflictCheck,
   options,
   repositories,
+  targetActionByRepositoryPath,
 }: BuildDryRunOutcomeOptions): Promise<DryRunOutcome> => {
   const plannedWorktrees: PlannedWorktree[] = [];
   const conflicts: DryRunConflict[] = [];
@@ -1304,6 +1280,7 @@ const buildDryRunOutcome = async ({
     conflicts,
     overallStatus,
     plannedWorktrees,
+    targetActionByRepositoryPath,
     summaryCounts: {
       blockingTotal,
       conflictTotal: conflicts.length,
@@ -1342,6 +1319,23 @@ const buildHookRecoveryGuidance = (hookOutcomes: HookOutcomeRecord[]): string[] 
   return [...guidance];
 };
 
+const planTargetActions = async (
+  repositories: Repository[],
+  conflicts: BranchConflict[],
+  strategy: ConflictResolutionStrategy,
+): Promise<ReadonlyMap<string, TargetAction>> =>
+  new Map(
+    await Promise.all(
+      repositories.map(
+        async (repository) =>
+          [
+            await realpath(repository.path),
+            shouldReuseBranch({ conflicts, repo: repository, strategy }) ? "reused" : "created",
+          ] as const,
+      ),
+    ),
+  );
+
 /**
  * Create coordinated worktrees across multiple repositories (T018)
  *
@@ -1369,6 +1363,13 @@ export const createCoordinatedWorktrees = async (
   const workspacePostHookOutcomes: HookOutcomeRecord[] = [];
   const preflightHookOutcomes: HookOutcomeRecord[] = [];
   const mainRepoPath = resolve(options.workspaceRoot ?? ".");
+  let targetActionByRepositoryPath: ReadonlyMap<string, TargetAction> = options.createBasePlan
+    ? new Map(
+        options.createBasePlan.repositories.map(
+          (resolution) => [resolution.repositoryPath, "created"] as const,
+        ),
+      )
+    : new Map();
 
   // Set default options
   const opts: NormalizedWorktreeOptions = {
@@ -1397,17 +1398,37 @@ export const createCoordinatedWorktrees = async (
       throw new RepositoryValidationError("No repositories provided for worktree creation", "");
     }
 
-    // 3. Load canonical workspace configuration
+    targetActionByRepositoryPath = await planTargetActions(repositories, [], "ABORT");
+
+    // 3. T039: Pre-flight conflict check and plan every selected repository's action.
+    // Keep this ahead of hook preflight so every later failure summary has the complete ledger.
+    const conflictCheck = await checkBranchConflicts(branchName, repositories);
+    let resolvedStrategy: ConflictResolutionStrategy | null = NULL_CONFLICT_STRATEGY;
+    let conflictsToHandle: BranchConflict[] = [];
+
+    if (opts.dryRun) {
+      targetActionByRepositoryPath = await planTargetActions(
+        repositories,
+        conflictCheck.conflicts,
+        opts.conflictResolution ?? "ABORT",
+      );
+    } else if (conflictCheck.hasConflicts) {
+      // Attempt to resolve conflicts
+      resolvedStrategy = await resolveConflicts(conflictCheck.conflicts, options);
+      conflictsToHandle = conflictCheck.conflicts;
+      targetActionByRepositoryPath = await planTargetActions(
+        repositories,
+        conflictsToHandle,
+        resolvedStrategy,
+      );
+    }
+
+    // 4. Load canonical workspace configuration after the target-action plan is complete.
     const config = await loadResolvedConfig(mainRepoPath, options.resolvedConfig);
 
     if (opts.executeHooks && !opts.dryRun) {
       await preflightConfiguredCreateHooks(mainRepoPath, repositories);
     }
-
-    // 4. T039: Pre-flight conflict check
-    const conflictCheck = await checkBranchConflicts(branchName, repositories);
-    let resolvedStrategy: ConflictResolutionStrategy | null = NULL_CONFLICT_STRATEGY;
-    let conflictsToHandle: BranchConflict[] = [];
 
     if (opts.dryRun) {
       const dryRunOutcome = await buildDryRunOutcome({
@@ -1416,6 +1437,7 @@ export const createCoordinatedWorktrees = async (
         conflictCheck,
         options: opts,
         repositories,
+        targetActionByRepositoryPath,
       });
 
       let errorSummary: string | null = NULL_SUMMARY;
@@ -1431,18 +1453,13 @@ export const createCoordinatedWorktrees = async (
         isDryRun: true,
         nextSteps: [],
         repositoryResults: [],
+        targetActionByRepositoryPath,
         rolledBack: false,
         skippedCount: repositories.length,
         successCount: ZERO,
         totalDuration: Date.now() - startTime,
         totalRepositories: repositories.length,
       };
-    }
-
-    if (conflictCheck.hasConflicts) {
-      // Attempt to resolve conflicts
-      resolvedStrategy = await resolveConflicts(conflictCheck.conflicts, options);
-      conflictsToHandle = conflictCheck.conflicts;
     }
 
     // 5. Execute global pre-create hook (once)
@@ -1472,15 +1489,19 @@ export const createCoordinatedWorktrees = async (
 
     // 6. Process each repository sequentially (T019-T023, T041)
     for (const repo of repositories) {
+      const targetAction = targetActionByRepositoryPath.get(await realpath(repo.path));
+      if (!targetAction) {
+        throw new Error(`Repository '${repo.name}' is missing a planned target action`);
+      }
       const repoResult = await processRepository({
         branchName,
         config,
-        conflicts: conflictsToHandle,
+        createBasePlan: options.createBasePlan,
         mainRepoPath,
         operationLog,
         options: opts,
         repo,
-        strategy: resolvedStrategy,
+        targetAction,
       });
       results.push(repoResult);
 
@@ -1527,6 +1548,7 @@ export const createCoordinatedWorktrees = async (
       hookOutcomes,
       nextSteps: buildHookRecoveryGuidance(hookOutcomes),
       repositoryResults: results,
+      targetActionByRepositoryPath,
       rolledBack: false,
       skippedCount: ZERO,
       successCount: results.filter((repositoryResult) => repositoryResult.status === "success")
@@ -1567,6 +1589,7 @@ export const createCoordinatedWorktrees = async (
       hookOutcomes,
       nextSteps: buildHookRecoveryGuidance(hookOutcomes),
       repositoryResults: results,
+      targetActionByRepositoryPath,
       rolledBack: true,
       skippedCount: ZERO,
       successCount: ZERO,
@@ -1633,15 +1656,16 @@ const resolveBranchStartPoint = async (
 const processRepository = async ({
   branchName,
   config,
-  conflicts = [],
+  createBasePlan,
   mainRepoPath,
   operationLog,
   options,
   repo,
-  strategy = NULL_CONFLICT_STRATEGY,
+  targetAction,
 }: ProcessRepositoryOptions): Promise<RepositoryResult> => {
   const startTime = Date.now();
   const hookOutcomes: HookOutcomeRecord[] = [];
+  const shouldReuse = targetAction === "reused";
 
   // Create spinner if progress is enabled
   let spinnerInstance = null;
@@ -1655,12 +1679,14 @@ const processRepository = async ({
 
   try {
     // T041: Check if we should reuse existing branch
-    const shouldReuse = shouldReuseBranch({
-      branchName,
-      conflicts,
-      repo,
-      strategy: strategy || "ABORT",
-    });
+    const baseResolution = createBasePlan
+      ? createBasePlan.byCanonicalPath.get(await realpath(repo.path))
+      : undefined;
+    if (createBasePlan && !baseResolution) {
+      throw new Error(
+        `Repository '${repo.name}' is missing immutable create-base plan entry for '${repo.path}'`,
+      );
+    }
 
     if (shouldReuse) {
       if (spinnerInstance) {
@@ -1673,7 +1699,9 @@ const processRepository = async ({
       }
 
       try {
-        const startPoint = await resolveBranchStartPoint(repo.path, repo.defaultBranch);
+        const startPoint =
+          baseResolution?.resolvedOid ??
+          (await resolveBranchStartPoint(repo.path, repo.defaultBranch));
         await exec(["branch", branchName, startPoint], repo.path);
       } catch (error) {
         if (spinnerInstance) {
@@ -1815,6 +1843,7 @@ const processRepository = async ({
       hookOutcomes,
       repository: repo,
       status: "success",
+      targetAction,
       warnings,
       worktreePath,
     };
@@ -1827,6 +1856,7 @@ const processRepository = async ({
       hookOutcomes,
       repository: repo,
       status: "failed",
+      targetAction,
       warnings: [],
       worktreePath: NULL_PATH,
     };

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "root": {
     "aliases": [],
     "description": "Git worktree manager for meta-repositories",
@@ -355,6 +355,91 @@
         }
       ],
       "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--base <branch>",
+          "description": "Base branch to use when creating new target branches",
+          "hidden": false,
+          "long": "--base",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false,
+            "createBase": {
+              "scope": {
+                "cli": "invocation-only",
+                "workspaceDefault": "defaults.create.baseBranch",
+                "workspaceDefaultScope": "generic-only",
+                "editorScopedDefault": "rejected"
+              },
+              "precedence": ["cli", "defaults.create.baseBranch", "legacy-omitted"],
+              "normalization": {
+                "originPrefix": "remove-at-most-one"
+              },
+              "standalone": {
+                "cli": "invocation-only",
+                "workspaceDefault": "ignored",
+                "omitted": "legacy-current-head"
+              },
+              "resolution": {
+                "repositories": "every-effective-selected-including-reused",
+                "refs": ["refs/heads/<branch>", "refs/remotes/origin/<branch>"]
+              },
+              "mutation": {
+                "preflight": "all-before-any",
+                "executionStartPoint": "immutable-resolved-oid",
+                "reusedTarget": {
+                  "ancestry": "not-asserted-checked-or-derived",
+                  "baseResolution": "required",
+                  "mutation": "none"
+                }
+              },
+              "output": {
+                "humanDryRun": {
+                  "baseResolution": true
+                },
+                "json": {
+                  "base": "optional",
+                  "baseFields": ["requestedBranch", "source", "repositories"],
+                  "requestedBranch": "normalized-logical-branch",
+                  "sources": ["cli", "config"],
+                  "targetActions": ["created", "reused"],
+                  "success": {
+                    "ordering": "effective-selected-repository-order",
+                    "repositories": "complete-selected-set",
+                    "repositoryFields": [
+                      "repositoryName",
+                      "repositoryPath",
+                      "resolvedRef",
+                      "resolvedOid",
+                      "targetAction"
+                    ],
+                    "repositoryPath": "canonical-absolute"
+                  },
+                  "failure": {
+                    "attemptedRefs": ["refs/heads/<branch>", "refs/remotes/origin/<branch>"],
+                    "code": "CREATE_BASE_RESOLUTION_FAILED",
+                    "fields": ["requestedBranch", "source", "repositories"],
+                    "ordering": "effective-selected-repository-order",
+                    "repositories": "affected-only-selected-set",
+                    "repositoryFields": ["repositoryName", "repositoryPath", "attemptedRefs"],
+                    "repositoryPath": "canonical-absolute"
+                  }
+                }
+              },
+              "environmentVariables": {
+                "ARASHI_BASE_BRANCH": "forbidden"
+              }
+            }
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
         {
           "candidateKind": "choice",
           "choices": ["ABORT", "REUSE_EXISTING"],

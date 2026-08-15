@@ -1,4 +1,4 @@
-import { access, rmdir } from "fs/promises";
+import { access, realpath, rmdir } from "fs/promises";
 import { dirname, join, relative, resolve } from "path";
 import { exec } from "./git.ts";
 import { parseGitIgnoreVerbose } from "./git-ignore.ts";
@@ -12,6 +12,7 @@ import {
 } from "./hooks.ts";
 import type { HookInputMode, LifecycleHookOutcome } from "./hooks.ts";
 import type { StandaloneWorkspaceContext } from "./workspace-context.ts";
+import type { CreateBaseResolutionPlan } from "./create-base.ts";
 
 export class StandaloneDestinationNotIgnoredError extends Error {
   readonly code = "STANDALONE_DESTINATION_NOT_IGNORED";
@@ -306,9 +307,25 @@ export async function createStandaloneWorktree(
   context: StandaloneWorkspaceContext,
   branch: string,
   dryRun = false,
-  options: { hookInputMode?: HookInputMode; quiet?: boolean; skipHooks?: boolean } = {},
+  options: {
+    createBasePlan?: CreateBaseResolutionPlan;
+    hookInputMode?: HookInputMode;
+    quiet?: boolean;
+    skipHooks?: boolean;
+  } = {},
 ) {
   await exec(["check-ref-format", "--branch", branch], context.mainRoot);
+  const canonicalRepositoryPath = options.createBasePlan
+    ? await realpath(context.mainRoot)
+    : undefined;
+  const baseResolution = canonicalRepositoryPath
+    ? options.createBasePlan?.byCanonicalPath.get(canonicalRepositoryPath)
+    : undefined;
+  if (options.createBasePlan && !baseResolution) {
+    throw new Error(
+      `Standalone repository is missing immutable create-base plan entry for '${context.mainRoot}'`,
+    );
+  }
   const destination = join(context.mainRoot, ".worktrees", ...branch.split("/"));
   const effectiveIgnore = await inspectStandaloneIgnore(context, destination);
   if (!effectiveIgnore.ignored) throw new StandaloneDestinationNotIgnoredError(destination);
@@ -371,7 +388,9 @@ export async function createStandaloneWorktree(
           ? ["worktree", "add", destination, branch]
           : branchSource
             ? ["worktree", "add", "-b", branch, destination, branchSource]
-            : ["worktree", "add", "-b", branch, destination],
+            : baseResolution
+              ? ["worktree", "add", "-b", branch, destination, baseResolution.resolvedOid]
+              : ["worktree", "add", "-b", branch, destination],
         context.mainRoot,
       );
       hookOutcomes.push(
