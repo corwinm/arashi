@@ -1,3 +1,9 @@
+## [1.30.0](https://github.com/corwinm/arashi/compare/v1.29.0...v1.30.0) (2026-08-15)
+
+### Features
+
+- support configurable create base branches ([#135](https://github.com/corwinm/arashi/issues/135)) ([7049680](https://github.com/corwinm/arashi/commit/70496801bc5948cd8e8a687bc057ea20a2ad8e11))
+
 ## [1.29.0](https://github.com/corwinm/arashi/compare/v1.28.0...v1.29.0) (2026-08-15)
 
 ### Features
