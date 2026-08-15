@@ -1,3 +1,15 @@
+## [1.29.0](https://github.com/corwinm/arashi/compare/v1.28.0...v1.29.0) (2026-08-15)
+
+### Features
+
+- **add:** coordinate linked parent worktrees ([#132](https://github.com/corwinm/arashi/issues/132)) ([e93ce7e](https://github.com/corwinm/arashi/commit/e93ce7e6d9dbf851b10f270bc0647504238870cd))
+- support SSH host alias remotes ([#133](https://github.com/corwinm/arashi/issues/133)) ([09cec4b](https://github.com/corwinm/arashi/commit/09cec4b0e43160d59304641e8ed9e33ab6dba652))
+
+### Bug Fixes
+
+- **remove:** remove configured worktrees child-first ([#131](https://github.com/corwinm/arashi/issues/131)) ([1971529](https://github.com/corwinm/arashi/commit/19715296c8229841f840fb11bd1d1b3a429a9779))
+- **remove:** report standalone partial cleanup details ([#134](https://github.com/corwinm/arashi/issues/134)) ([608da7d](https://github.com/corwinm/arashi/commit/608da7d8a117a03ea513ca80096629eff16acd31))
+
 ## [1.28.0](https://github.com/corwinm/arashi/compare/v1.27.0...v1.28.0) (2026-08-08)
 
 ### Features
