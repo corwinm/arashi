@@ -128,7 +128,7 @@ interface CliOptions {
 }
 
 export interface StandaloneRemovePartialFailureDetails {
-  finalState: { branchExists: boolean; worktreeExists: boolean };
+  finalState: { branchExists: boolean | null; worktreeExists: boolean };
   hookOutcomes: LifecycleHookOutcome[];
   hookFailures: { hookName: string; message: string }[];
   operationFailures: { message: string; operation: string }[];
@@ -151,12 +151,16 @@ export const formatStandaloneRemovePartialFailureHuman = (
     "finalState" | "hookFailures" | "operationFailures"
   >,
 ): string => {
+  let branchState = "No branch was associated with this worktree";
+  if (details.finalState.branchExists !== null) {
+    branchState = details.finalState.branchExists ? "Branch still exists" : "Branch was deleted";
+  }
   const lines = [
     "Standalone removal completed with incomplete cleanup.",
     "",
     "Final state:",
     `  • ${details.finalState.worktreeExists ? "Worktree directory remains" : "Worktree directory was removed"}`,
-    `  • ${details.finalState.branchExists ? "Branch still exists" : "Branch was deleted"}`,
+    `  • ${branchState}`,
   ];
 
   if (details.operationFailures.length > ZERO) {
@@ -179,7 +183,9 @@ export const formatStandaloneRemovePartialFailureHuman = (
   if (details.finalState.worktreeExists && worktreeRemovalFailed) {
     lines.push(
       "",
-      "Close terminals or editors using the worktree directory, then remove it manually.",
+      "Close terminals or editors using the worktree directory.",
+      "If Git still lists the worktree, retry removal after releasing the directory.",
+      "Otherwise, remove the leftover directory only after Git no longer lists it.",
     );
   }
 
@@ -556,7 +562,7 @@ export async function executeRemove(
       });
     }
     if (operationFailures.length > ZERO || hookFailures.length > ZERO) {
-      let finalBranchExists = false;
+      let finalBranchExists: boolean | null = target.branch ? false : null;
       if (target.branch) {
         try {
           await standaloneGitExec(
