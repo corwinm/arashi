@@ -77,6 +77,7 @@ import {
 import { Command } from "commander";
 import chalk from "chalk";
 import { existsSync } from "fs";
+import { access } from "fs/promises";
 
 interface Choice<T> {
   value: T;
@@ -114,6 +115,7 @@ type RepositoryTarget = Parameters<typeof discoverAllWorktrees>[0][number];
 
 const ZERO = 0;
 const ONE = 1;
+const TWO = 2;
 const JSON_INDENT = 2;
 
 interface CliOptions {
@@ -128,14 +130,28 @@ interface CliOptions {
 }
 
 export interface StandaloneRemovePartialFailureDetails {
-  finalState: { branchExists: boolean | null; worktreeExists: boolean };
+  finalState: { branchExists: boolean | null; worktreeExists: boolean | null };
   hookOutcomes: LifecycleHookOutcome[];
   hookFailures: { hookName: string; message: string }[];
   operationFailures: { message: string; operation: string }[];
 }
 
-export const branchStateAfterShowRefFailure = (error: unknown): false | null =>
-  error instanceof ArashiError && error.context.exitCode === ONE ? false : null;
+export const branchStateAfterShowRefExistsFailure = (error: unknown): false | null =>
+  error instanceof ArashiError && error.context.exitCode === TWO ? false : null;
+
+export const pathStateAfterInspectionFailure = (error: unknown): false | null =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
+    ? false
+    : null;
+
+const inspectPathExists = async (path: string): Promise<boolean | null> => {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    return pathStateAfterInspectionFailure(error);
+  }
+};
 
 type StandaloneBranchAction = "keep" | "none" | "remove";
 
@@ -179,11 +195,17 @@ export const formatStandaloneRemovePartialFailureHuman = (
         ? "Branch was deleted"
         : "Branch does not exist";
   }
+  let worktreeState = "Could not determine whether the worktree directory remains";
+  if (details.finalState.worktreeExists === true) {
+    worktreeState = "Worktree directory remains";
+  } else if (details.finalState.worktreeExists === false) {
+    worktreeState = "Worktree directory was removed";
+  }
   const lines = [
     "Standalone removal completed with incomplete cleanup.",
     "",
     "Final state:",
-    `  • ${details.finalState.worktreeExists ? "Worktree directory remains" : "Worktree directory was removed"}`,
+    `  • ${worktreeState}`,
     `  • ${branchState}`,
   ];
 
@@ -204,7 +226,7 @@ export const formatStandaloneRemovePartialFailureHuman = (
   const worktreeRemovalFailed = details.operationFailures.some(
     (failure) => failure.operation === "remove-worktree",
   );
-  if (details.finalState.worktreeExists && worktreeRemovalFailed) {
+  if (details.finalState.worktreeExists === true && worktreeRemovalFailed) {
     lines.push(
       "",
       "Close terminals or editors using the worktree directory.",
@@ -590,12 +612,12 @@ export async function executeRemove(
       if (target.branch) {
         try {
           await standaloneGitExec(
-            ["show-ref", "--verify", "--quiet", `refs/heads/${target.branch}`],
+            ["show-ref", "--exists", `refs/heads/${target.branch}`],
             workspaceContext.mainRoot,
           );
           finalBranchExists = true;
         } catch (error) {
-          finalBranchExists = branchStateAfterShowRefFailure(error);
+          finalBranchExists = branchStateAfterShowRefExistsFailure(error);
         }
       }
       let branchAction: StandaloneBranchAction = "none";
@@ -606,10 +628,10 @@ export async function executeRemove(
         {
           finalState: {
             branchExists: finalBranchExists,
-            worktreeExists: existsSync(target.path),
+            worktreeExists: await inspectPathExists(target.path),
           },
-          hookOutcomes: summary.hookOutcomes,
           hookFailures,
+          hookOutcomes: summary.hookOutcomes,
           operationFailures,
         },
         branchAction,

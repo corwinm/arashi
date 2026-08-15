@@ -1,6 +1,7 @@
 import {
-  branchStateAfterShowRefFailure,
+  branchStateAfterShowRefExistsFailure,
   formatStandaloneRemovePartialFailureHuman,
+  pathStateAfterInspectionFailure,
 } from "../../src/commands/remove.ts";
 import { describe, expect, test } from "vitest";
 import { ArashiError } from "../../src/lib/errors.ts";
@@ -8,10 +9,17 @@ import { ArashiError } from "../../src/lib/errors.ts";
 describe("standalone remove partial failure diagnostics", () => {
   test("distinguishes a missing branch from an uninspectable branch", () => {
     const missingRef = new ArashiError("missing ref", {
-      args: ["show-ref", "--verify", "refs/heads/missing"],
+      args: ["show-ref", "--exists", "refs/heads/missing"],
+      cwd: "/repo",
+      exitCode: 2,
+      stderr: "",
+      stdout: "",
+    });
+    const corruptRef = new ArashiError("corrupt ref", {
+      args: ["show-ref", "--exists", "refs/heads/corrupt"],
       cwd: "/repo",
       exitCode: 1,
-      stderr: "",
+      stderr: "error: failed to look up reference: Invalid argument",
       stdout: "",
     });
     const repositoryFailure = new ArashiError("not a repository", {
@@ -22,9 +30,28 @@ describe("standalone remove partial failure diagnostics", () => {
       stdout: "",
     });
 
-    expect(branchStateAfterShowRefFailure(missingRef)).toBe(false);
-    expect(branchStateAfterShowRefFailure(repositoryFailure)).toBeNull();
-    expect(branchStateAfterShowRefFailure(new Error("spawn failed"))).toBeNull();
+    expect(branchStateAfterShowRefExistsFailure(missingRef)).toBe(false);
+    expect(branchStateAfterShowRefExistsFailure(corruptRef)).toBeNull();
+    expect(branchStateAfterShowRefExistsFailure(repositoryFailure)).toBeNull();
+    expect(branchStateAfterShowRefExistsFailure(new Error("spawn failed"))).toBeNull();
+  });
+
+  test("distinguishes a missing worktree path from an uninspectable path", () => {
+    expect(pathStateAfterInspectionFailure({ code: "ENOENT" })).toBe(false);
+    expect(pathStateAfterInspectionFailure({ code: "EACCES" })).toBeNull();
+    expect(pathStateAfterInspectionFailure(new Error("inspection failed"))).toBeNull();
+  });
+
+  test("reports an unknown worktree path state without claiming removal", () => {
+    const output = formatStandaloneRemovePartialFailureHuman({
+      finalState: { branchExists: false, worktreeExists: null },
+      hookFailures: [],
+      operationFailures: [{ message: "Permission denied", operation: "remove-worktree" }],
+    });
+
+    expect(output).toContain("Could not determine whether the worktree directory remains");
+    expect(output).not.toContain("Worktree directory was removed");
+    expect(output).not.toContain("Close terminals or editors");
   });
 
   test("explains a Windows directory left behind after Git cleanup", () => {
