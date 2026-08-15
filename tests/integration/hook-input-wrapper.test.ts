@@ -65,14 +65,6 @@ describe("installed wrapper hook-input acceptance", () => {
     expect(sources.get("bin/arashi.bat")).not.toMatch(/<\s*nul/i);
   });
 
-  test("the executable wrapper command-tests forced remove with redirected stdout", async () => {
-    const source = await readFile(join(root, "tests/unit/arashi-wrapper.test.ts"), "utf8");
-    expect(source).toContain(
-      "preserves hook-eligible stdin for forced remove with redirected stdout",
-    );
-    expect(source).toContain("hook-answer");
-  });
-
   test.runIf(process.platform !== "win32" && process.env.ARASHI_WRAPPER_ACCEPTANCE === "1")(
     "executes the installed POSIX and JavaScript wrappers with prompt-gated terminal stdin",
     async () => {

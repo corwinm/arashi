@@ -228,6 +228,7 @@ export interface AddExecutionDependencies {
   createWorktree?: (canonicalPath: string, worktreePath: string, branch: string) => Promise<void>;
   deleteBranch?: (canonicalPath: string, branch: string) => Promise<void>;
   isEffectivelyIgnored?: (workspaceRoot: string, path: string) => Promise<boolean>;
+  incompleteLockStaleMs?: number;
   observePath?: (path: string) => Promise<boolean>;
   observeWorktreeMetadata?: (canonicalPath: string, worktreePath: string) => Promise<boolean>;
   removeCanonicalClone?: (path: string) => Promise<void>;
@@ -243,7 +244,7 @@ export interface AddExecutionDependencies {
 
 const CONFIG_LOCK_RETRY_COUNT = 2_000;
 const CONFIG_LOCK_RETRY_DELAY_MS = 20;
-const INCOMPLETE_LOCK_STALE_MS = 30_000;
+export const DEFAULT_INCOMPLETE_LOCK_STALE_MS = 30_000;
 const TRANSACTION_LOCK_RETRY_COUNT = 90_000;
 
 interface LockOwner {
@@ -271,7 +272,10 @@ const lockOwnerIsAlive = (pid: number): boolean => {
   }
 };
 
-const reclaimAbandonedLock = async (lockPath: string): Promise<boolean> => {
+const reclaimAbandonedLock = async (
+  lockPath: string,
+  incompleteLockStaleMs: number,
+): Promise<boolean> => {
   let lockStat: Awaited<ReturnType<typeof stat>>;
   try {
     lockStat = await stat(lockPath);
@@ -315,7 +319,7 @@ const reclaimAbandonedLock = async (lockPath: string): Promise<boolean> => {
     if (liveClaims.some((name) => name !== basename(claimPath))) return false;
     const owner = await readLockOwner(claimPath);
     if (owner && lockOwnerIsAlive(owner.pid)) return false;
-    if (!owner && Date.now() - claimedStat.mtimeMs < INCOMPLETE_LOCK_STALE_MS) return false;
+    if (!owner && Date.now() - claimedStat.mtimeMs < incompleteLockStaleMs) return false;
     const finalCurrentStat = await stat(lockPath).catch(() => null);
     if (
       !finalCurrentStat ||
@@ -336,6 +340,7 @@ const withFileLock = async <T>(
   lockPath: string,
   retryCount: number,
   operation: () => Promise<T>,
+  incompleteLockStaleMs = DEFAULT_INCOMPLETE_LOCK_STALE_MS,
 ): Promise<T> => {
   let lock: Awaited<ReturnType<typeof open>> | undefined;
   const owner: LockOwner = { pid: process.pid, token: randomUUID() };
@@ -354,7 +359,7 @@ const withFileLock = async <T>(
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (await reclaimAbandonedLock(lockPath)) continue;
+      if (await reclaimAbandonedLock(lockPath, incompleteLockStaleMs)) continue;
       await new Promise((resolveDelay) => setTimeout(resolveDelay, CONFIG_LOCK_RETRY_DELAY_MS));
     }
   }
@@ -368,15 +373,24 @@ const withFileLock = async <T>(
   }
 };
 
-const withConfigLock = <T>(configPath: string, operation: () => Promise<T>): Promise<T> =>
+const withConfigLock = <T>(
+  configPath: string,
+  operation: () => Promise<T>,
+  incompleteLockStaleMs?: number,
+): Promise<T> =>
   withFileLock(
     join(dirname(dirname(configPath)), ".arashi-config.add.lock"),
     CONFIG_LOCK_RETRY_COUNT,
     operation,
+    incompleteLockStaleMs,
   );
 
-const withAddTransactionLock = <T>(lockPath: string, operation: () => Promise<T>): Promise<T> =>
-  withFileLock(lockPath, TRANSACTION_LOCK_RETRY_COUNT, operation);
+const withAddTransactionLock = <T>(
+  lockPath: string,
+  operation: () => Promise<T>,
+  incompleteLockStaleMs?: number,
+): Promise<T> =>
+  withFileLock(lockPath, TRANSACTION_LOCK_RETRY_COUNT, operation, incompleteLockStaleMs);
 
 const resolveAddTransactionLockPath = async (workspaceRoot: string): Promise<string> => {
   try {
@@ -704,11 +718,14 @@ export const executeAdd = async (
   const workspaceRoot = workspaceRoots.configurationRoot;
   if (!dependencies.transactionLockHeld) {
     const transactionLockPath = await resolveAddTransactionLockPath(workspaceRoot);
-    return withAddTransactionLock(transactionLockPath, () =>
-      executeAdd(gitUrl, options, workspaceRoots, {
-        ...dependencies,
-        transactionLockHeld: true,
-      }),
+    return withAddTransactionLock(
+      transactionLockPath,
+      () =>
+        executeAdd(gitUrl, options, workspaceRoots, {
+          ...dependencies,
+          transactionLockHeld: true,
+        }),
+      dependencies.incompleteLockStaleMs,
     );
   }
   const cloneRepository = dependencies.cloneRepository ?? clone;
@@ -805,20 +822,24 @@ export const executeAdd = async (
 
     // Step 4: Check for duplicate name
     const configPath = getConfigPath(workspaceRoot);
-    const configSnapshot = await withConfigLock(configPath, async () => {
-      const loadedConfig = await loadConfig(workspaceRoot);
-      const bytesAfterLoad = await readFile(configPath);
-      await afterConfigLoad?.();
-      const bytesAfterHook = await readFile(configPath);
-      if (!bytesEqual(bytesAfterLoad, bytesAfterHook)) {
-        throw addFailure(
-          "Configuration changed while add was loading it; preserved the newer file.",
-          AddCommandErrorCode.CONFIG_UPDATE_FAILED,
-          "preflight",
-        );
-      }
-      return { bytes: bytesAfterLoad, config: loadedConfig };
-    });
+    const configSnapshot = await withConfigLock(
+      configPath,
+      async () => {
+        const loadedConfig = await loadConfig(workspaceRoot);
+        const bytesAfterLoad = await readFile(configPath);
+        await afterConfigLoad?.();
+        const bytesAfterHook = await readFile(configPath);
+        if (!bytesEqual(bytesAfterLoad, bytesAfterHook)) {
+          throw addFailure(
+            "Configuration changed while add was loading it; preserved the newer file.",
+            AddCommandErrorCode.CONFIG_UPDATE_FAILED,
+            "preflight",
+          );
+        }
+        return { bytes: bytesAfterLoad, config: loadedConfig };
+      },
+      dependencies.incompleteLockStaleMs,
+    );
     const config = configSnapshot.config;
     originalConfigBytes = configSnapshot.bytes;
     if (config.repos[repositoryName]) {
@@ -1102,18 +1123,22 @@ export const executeAdd = async (
         path: configuredRepositoryPath,
       };
 
-      await withConfigLock(getConfigPath(workspaceRoot), async () => {
-        const currentConfigBytes = await readFile(getConfigPath(workspaceRoot));
-        if (!originalConfigBytes || !bytesEqual(currentConfigBytes, originalConfigBytes)) {
-          throw new Error(
-            "Configuration changed concurrently after add began; preserving the newer file.",
-          );
-        }
-        config.repos[repositoryName] = repoConfig;
-        persistedConfigBytes = new TextEncoder().encode(serializeConfig(config));
-        configWriteAttempted = true;
-        await saveConfig(workspaceRoot, config);
-      });
+      await withConfigLock(
+        getConfigPath(workspaceRoot),
+        async () => {
+          const currentConfigBytes = await readFile(getConfigPath(workspaceRoot));
+          if (!originalConfigBytes || !bytesEqual(currentConfigBytes, originalConfigBytes)) {
+            throw new Error(
+              "Configuration changed concurrently after add began; preserving the newer file.",
+            );
+          }
+          config.repos[repositoryName] = repoConfig;
+          persistedConfigBytes = new TextEncoder().encode(serializeConfig(config));
+          configWriteAttempted = true;
+          await saveConfig(workspaceRoot, config);
+        },
+        dependencies.incompleteLockStaleMs,
+      );
       await afterConfigPersist?.();
       s5?.succeed("Configuration updated");
     } catch (error) {

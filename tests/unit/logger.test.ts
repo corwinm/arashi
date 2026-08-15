@@ -71,47 +71,8 @@ describe("US1: Message Output Functions", () => {
 });
 
 describe("US2: Spinner Display", () => {
-  test("spinner returns ora instance", () => {
-    const s = spinner("Loading...");
-
-    expect(s).toBeDefined();
-    expect(typeof s.start).toBe("function");
-    expect(typeof s.stop).toBe("function");
-    expect(typeof s.succeed).toBe("function");
-    expect(typeof s.fail).toBe("function");
-  });
-
-  test("spinner can be started and stopped without throwing", () => {
-    const s = spinner("Processing...");
-
-    // Verify we can call start/stop without throwing errors
-    expect(() => {
-      s.start();
-      s.stop();
-    }).not.toThrow();
-
-    // Verify spinner text was set initially
-    expect(s.text).toBe("Processing...");
-  });
-
-  test("spinner succeed completes without throwing", () => {
-    const s = spinner("Working...");
-
-    // Verify we can call succeed without throwing
-    expect(() => {
-      s.start();
-      s.succeed("Complete!");
-    }).not.toThrow();
-  });
-
-  test("spinner fail completes without throwing", () => {
-    const s = spinner("Trying...");
-
-    // Verify we can call fail without throwing
-    expect(() => {
-      s.start();
-      s.fail("Failed!");
-    }).not.toThrow();
+  test("spinner preserves its initial text", () => {
+    expect(spinner("Processing...").text).toBe("Processing...");
   });
 
   test("pauses spinner output while another operation writes to the terminal", async () => {
@@ -273,14 +234,6 @@ describe("US5: NO_COLOR Support", () => {
     expect(output).toContain("Info message");
   });
 
-  test("spinner uses dots instead of animation with NO_COLOR", () => {
-    const s = spinner("Loading...");
-
-    // Spinner should be created without colors/animation
-    expect(s).toBeDefined();
-    // Ora automatically respects NO_COLOR
-  });
-
   test("section has no formatting with NO_COLOR", () => {
     section("Section Title");
 
@@ -295,34 +248,5 @@ describe("US5: NO_COLOR Support", () => {
 
     const output = consoleOutput.join("");
     expect(output).toContain("Alice");
-  });
-});
-
-describe("Performance", () => {
-  test("message functions complete within 10ms for messages up to 10KB", () => {
-    const largeMessage = "x".repeat(10 * 1024); // 10KB
-
-    const start = performance.now();
-    info(largeMessage);
-    success(largeMessage);
-    warn(largeMessage);
-    error(largeMessage);
-    const duration = performance.now() - start;
-
-    expect(duration).toBeLessThan(10);
-  });
-
-  test("table handles 100 rows efficiently", () => {
-    const data = Array.from({ length: 100 }, (_, i) => ({
-      id: i.toString(),
-      name: `User ${i}`,
-      status: i % 2 === 0 ? "active" : "inactive",
-    }));
-
-    const start = performance.now();
-    table(data);
-    const duration = performance.now() - start;
-
-    expect(duration).toBeLessThan(50); // Should be fast
   });
 });

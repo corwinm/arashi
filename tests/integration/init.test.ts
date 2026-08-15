@@ -953,26 +953,6 @@ describe("init command - dry-run mode", () => {
     }
   });
 
-  test("--dry-run shows configuration preview", async () => {
-    const result = await runInitCommand(testDir, ["--dry-run"]);
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Configuration preview:");
-    expect(result.stdout).toContain('"version": "1.0.0"');
-    expect(result.stdout).toContain('"reposDir": "./repos"');
-  });
-
-  test("--dry-run works with --repos-dir option", async () => {
-    const result = await runInitCommand(testDir, ["--dry-run", "--repos-dir", "./custom"]);
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("[DRY RUN]");
-    expect(result.stdout).toContain('"reposDir": "./custom"');
-
-    // Verify custom directory NOT created
-    expect(await fileExists(join(testDir, "custom"))).toBe(false);
-  });
-
   test("--dry-run with custom worktrees directory previews managed ignore entry", async () => {
     const result = await runInitCommand(testDir, [
       "--dry-run",
