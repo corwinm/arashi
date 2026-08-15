@@ -101,6 +101,81 @@ describe("Add Command - Repository Name Derivation", () => {
 });
 
 describe("Add Command - URL Parsing", () => {
+  test.each([
+    {
+      expected: { host: "work-github", owner: "acme", repository: "api" },
+      url: "git@work-github:acme/api.git",
+    },
+    {
+      expected: { host: "work-github", owner: "acme", repository: "api" },
+      url: "work-github:acme/api.git",
+    },
+    {
+      expected: {
+        host: "work-github",
+        owner: "srv",
+        repository: "api",
+      },
+      url: "git@work-github:/srv/acme/api.git",
+    },
+    {
+      expected: {
+        host: "work-github",
+        owner: "srv",
+        repository: "api",
+      },
+      url: "work-github:/srv/acme/api.git",
+    },
+    {
+      expected: { host: "work-github", owner: null, repository: "api" },
+      url: "work-github:api.git",
+    },
+    {
+      expected: { host: "work-github", owner: "acme", repository: "api" },
+      url: "ssh://git@work-github/acme/api.git",
+    },
+    {
+      expected: {
+        host: "work-github:2222",
+        owner: "acme",
+        repository: "api",
+      },
+      url: "ssh://git@work-github:2222/acme/api.git",
+    },
+    {
+      expected: { host: "work-github", owner: "acme", repository: "api" },
+      url: "ssh://work-github/acme/api.git",
+    },
+  ])("parses supported optional-user SSH alias form $url", ({ expected, url }) => {
+    expect(parseGitUrl(url)).toMatchObject({
+      derivedName: expected.repository,
+      host: expected.host,
+      owner: expected.owner,
+      protocol: "ssh",
+      repository: expected.repository,
+      url,
+    });
+  });
+
+  test.each([
+    "work-github:",
+    ":acme/api.git",
+    "work github:acme/api.git",
+    "work-github:acme/api repo.git",
+    "work/gith:acme/api.git",
+    String.raw`C:\work\api.git`,
+    "C:/work/api.git",
+  ])("rejects malformed or ambiguous SCP value %s", (url) => {
+    expect(isValidGitUrl(url)).toBe(false);
+    expect(() => parseGitUrl(url)).toThrow();
+  });
+
+  test("normalizes outer whitespace in parsed URL", () => {
+    expect(parseGitUrl("  git@work-github:acme/api.git\n").url).toBe(
+      "git@work-github:acme/api.git",
+    );
+  });
+
   test("parses HTTPS URLs correctly", () => {
     const info = parseGitUrl("https://github.com/facebook/react.git");
     expect(info.protocol).toBe("https");

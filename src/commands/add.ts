@@ -395,6 +395,17 @@ const resolveAddTransactionLockPath = async (workspaceRoot: string): Promise<str
 // URL Validation and Parsing
 // ============================================================================
 
+const WINDOWS_DRIVE_PATH = /^[a-zA-Z]:[\\/]/;
+const SCP_GIT_URL = /^(?:([^@\s/:]+)@)?([^@\s/:]+):([^\s]+)$/;
+const SSH_GIT_URL = /^ssh:\/\/(?:([^@\s/]+)@)?((?:\[[^\]\s]+\]|[^@\s/:]+)(?::[0-9]+)?)\/([^\s]+)$/;
+
+const parseScpGitUrl = (url: string): RegExpMatchArray | null => {
+  if (WINDOWS_DRIVE_PATH.test(url) || url.includes("://")) return null;
+  const colonIndex = url.indexOf(":");
+  if (colonIndex <= ZERO || url.slice(0, colonIndex).includes("/")) return null;
+  return url.match(SCP_GIT_URL);
+};
+
 /**
  * Git URL validation patterns for different protocols
  */
@@ -402,8 +413,7 @@ const GIT_URL_PATTERNS = {
   file: /^(file:\/\/)?\/[^/].+/,
   git: /^git:\/\/[^/]+\/.+/,
   https: /^https:\/\/[^/]+\/.+/,
-  scp: /^[^@]+@[^:]+:[^/].+/,
-  ssh: /^(ssh:\/\/[^@]+@[^/]+\/|git@[^:]+:)[^/].+/,
+  ssh: SSH_GIT_URL,
 };
 
 /**
@@ -422,7 +432,10 @@ export function isValidGitUrl(url: string): boolean {
   }
 
   const trimmedUrl = url.trim();
-  return Object.values(GIT_URL_PATTERNS).some((pattern) => pattern.test(trimmedUrl));
+  return (
+    Object.values(GIT_URL_PATTERNS).some((pattern) => pattern.test(trimmedUrl)) ||
+    parseScpGitUrl(trimmedUrl) !== null
+  );
 }
 
 /**
@@ -493,51 +506,38 @@ export function parseGitUrl(gitUrl: string): GitUrlInfo {
       host = matchedHost;
       const path = matchedPath.replace(/\.git\/?$/, "").replace(/\/+$/, "");
       const pathParts = path.split("/");
-      if (pathParts.length >= 2) {
-        const [pathOwner] = pathParts;
-        owner = pathOwner;
-      }
+      if (pathParts.length >= 2) owner = pathParts[0];
       repository = getLastPathSegment(pathParts);
     }
-  } else if (GIT_URL_PATTERNS.ssh.test(trimmedUrl) || GIT_URL_PATTERNS.scp.test(trimmedUrl)) {
-    protocol = "ssh";
-    // Match patterns like git@github.com:user/repo.git or ssh://git@github.com/user/repo.git
-    const sshMatch = trimmedUrl.match(/^(?:ssh:\/\/)?([^@]+)@([^:/]+):?(.+)/);
+  } else {
+    const sshMatch = trimmedUrl.match(SSH_GIT_URL) ?? parseScpGitUrl(trimmedUrl);
     if (sshMatch) {
-      const [_fullMatch, _gitUser, matchedHost, matchedPath] = sshMatch;
-      host = matchedHost;
-      const path = matchedPath
-        .replace(/^\//, "")
-        .replace(/\.git\/?$/, "")
-        .replace(/\/+$/, "");
-      const pathParts = path.split("/");
-      if (pathParts.length >= 2) {
-        const [pathOwner] = pathParts;
-        owner = pathOwner;
-      }
-      repository = getLastPathSegment(pathParts);
-    }
-  } else if (GIT_URL_PATTERNS.git.test(trimmedUrl)) {
-    protocol = "git";
-    const match = trimmedUrl.match(/^git:\/\/([^/]+)\/(.+)/);
-    if (match) {
-      const [, matchedHost, matchedPath] = match;
+      protocol = "ssh";
+      const [, _gitUser, matchedHost, matchedPath] = sshMatch;
       host = matchedHost;
       const path = matchedPath.replace(/\.git\/?$/, "").replace(/\/+$/, "");
-      const pathParts = path.split("/");
-      if (pathParts.length >= 2) {
-        const [pathOwner] = pathParts;
-        owner = pathOwner;
-      }
+      const pathParts = path.split("/").filter(Boolean);
+      if (pathParts.length >= 2) owner = pathParts[0];
       repository = getLastPathSegment(pathParts);
+    } else if (GIT_URL_PATTERNS.git.test(trimmedUrl)) {
+      protocol = "git";
+      const match = trimmedUrl.match(/^git:\/\/([^/]+)\/(.+)/);
+      if (match) {
+        const [, matchedHost, matchedPath] = match;
+        host = matchedHost;
+        const path = matchedPath.replace(/\.git\/?$/, "").replace(/\/+$/, "");
+        const pathParts = path.split("/");
+        if (pathParts.length >= 2) owner = pathParts[0];
+        repository = getLastPathSegment(pathParts);
+      }
+    } else if (GIT_URL_PATTERNS.file.test(trimmedUrl)) {
+      protocol = "file";
+      const path = trimmedUrl
+        .replace(/^file:\/\//, "")
+        .replace(/\.git\/?$/, "")
+        .replace(/\/+$/, "");
+      repository = basename(path);
     }
-  } else if (GIT_URL_PATTERNS.file.test(trimmedUrl)) {
-    protocol = "file";
-    const path = trimmedUrl
-      .replace(/^file:\/\//, "")
-      .replace(/\.git\/?$/, "")
-      .replace(/\/+$/, "");
-    repository = basename(path);
   }
 
   const derivedName = deriveRepoName(trimmedUrl);
@@ -797,6 +797,7 @@ export const executeAdd = async (
     // Step 2: Parse and validate Git URL
     const s1 = startSpinner("Validating Git URL...");
     const urlInfo = parseGitUrl(gitUrl);
+    gitUrl = urlInfo.url;
     s1?.succeed("Git URL validated");
 
     // Step 3: Determine repository name
@@ -1456,10 +1457,10 @@ const displayError = (error: AddCommandError): void => {
   if (error.code === AddCommandErrorCode.INVALID_URL) {
     console.log("Supported formats:");
     console.log("  - HTTPS: https://github.com/user/repo.git");
-    console.log("  - SSH:   git@github.com:user/repo.git");
+    console.log("  - SSH URL: ssh://[user@]host/path");
+    console.log("  - SSH SCP: [user@]host:path");
     console.log("  - Git:   git://host/repo.git");
     console.log("  - File:  file:///path/to/repo.git");
-    console.log("  - SCP:   user@host:repo.git");
   } else if (error.code === AddCommandErrorCode.DUPLICATE_NAME) {
     console.log("Solutions:");
     console.log("  1. Clone the configured repository if it is missing locally: arashi clone");
@@ -1483,7 +1484,10 @@ export function createCommand(): Command {
 
   cmd
     .description("Add a Git repository to the workspace")
-    .argument("<git-url>", "Git repository URL (HTTPS, SSH, Git, File, or SCP format)")
+    .argument(
+      "<git-url>",
+      "Git repository URL (HTTPS, Git, File, [user@]host:path, or ssh://[user@]host/path)",
+    )
     .option("-n, --name <name>", "Custom repository name")
     .option("--create-setup", "Create setup.sh template if no setup script found", false)
     .option("-f, --force", "Skip confirmation prompts", false)

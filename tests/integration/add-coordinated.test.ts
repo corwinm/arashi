@@ -32,8 +32,12 @@ type InjectableAddDependencies = AddExecutionDependencies & {
   refExists?: (repositoryPath: string, ref: string) => Promise<boolean>;
 };
 
-const run = async (cwd: string, command: string[]): Promise<ProcessResult> => {
-  const process = runtime.spawn(command, { cwd, stderr: "pipe", stdout: "pipe" });
+const run = async (
+  cwd: string,
+  command: string[],
+  env?: Record<string, string | undefined>,
+): Promise<ProcessResult> => {
+  const process = runtime.spawn(command, { cwd, env, stderr: "pipe", stdout: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(process.stdout).text(),
     new Response(process.stderr).text(),
@@ -126,6 +130,52 @@ afterEach(async () => {
 });
 
 describe("add coordinated linked materialization", () => {
+  test("process add passes, returns, and persists one normalized SSH alias URL", async () => {
+    const topology = await createParentTopology("feature/ssh-alias");
+    await seedChildRemote(topology.root);
+    const gitConfig = join(topology.root, "gitconfig");
+    await writeFile(gitConfig, `[url "file://${topology.root}/"]\n\tinsteadOf = work-github:\n`);
+    const normalizedUrl = "work-github:child.git";
+    const result = await run(
+      topology.active,
+      [process.execPath, CLI_ENTRY, "add", `  ${normalizedUrl}  `, "--json", "--force"],
+      { ...process.env, GIT_CONFIG_GLOBAL: gitConfig, GIT_CONFIG_NOSYSTEM: "1" },
+    );
+
+    const repository = repositoryResult(result);
+    expect(repository.gitUrl).toBe(normalizedUrl);
+    expect(
+      JSON.parse(await readFile(join(topology.active, ".arashi", "config.json"), "utf8")),
+    ).toMatchObject({ repos: { child: { gitUrl: normalizedUrl } } });
+  });
+
+  test("process add reports alias clone context and rolls back unavailable remotes", async () => {
+    const topology = await createParentTopology("feature/ssh-alias-failure");
+    const configPath = join(topology.active, ".arashi", "config.json");
+    const configBefore = await readFile(configPath);
+    const gitConfig = join(topology.root, "gitconfig");
+    await writeFile(gitConfig, `[url "file://${topology.root}/"]\n\tinsteadOf = work-github:\n`);
+    const aliasUrl = "work-github:missing.git";
+
+    const result = await run(
+      topology.active,
+      [process.execPath, CLI_ENTRY, "add", aliasUrl, "--json", "--force"],
+      { ...process.env, GIT_CONFIG_GLOBAL: gitConfig, GIT_CONFIG_NOSYSTEM: "1" },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      error: {
+        code: "CLONE_FAILED",
+        details: { phase: "clone", url: aliasUrl },
+      },
+      ok: false,
+    });
+    expect(await readFile(configPath)).toEqual(configBefore);
+    expect(await runtime.file(join(topology.canonical, "repos", "missing")).exists()).toBe(false);
+    expect(await runtime.file(join(topology.active, "repos", "missing")).exists()).toBe(false);
+  });
+
   test("keeps the canonical clone on its default branch and creates a slash branch worktree", async () => {
     const topology = await createParentTopology("feature/example");
     const remote = await seedChildRemote(topology.root);

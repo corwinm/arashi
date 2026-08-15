@@ -56,6 +56,16 @@ describe("clone-discovery", () => {
 });
 
 describe("inferCloneProtocolPreference", () => {
+  test("infers ssh from omitted-user SCP aliases", () => {
+    expect(
+      inferCloneProtocolPreference([
+        "work-github:repo-a.git",
+        "work-github:team/repo-b.git",
+        "ssh://work-github/team/repo-c.git",
+      ]),
+    ).toEqual({ protocol: "ssh", reason: "inferred-ssh" });
+  });
+
   test("infers ssh when all URLs are ssh", () => {
     const result = inferCloneProtocolPreference([
       "git@github.com:team/repo-a.git",
@@ -82,13 +92,41 @@ describe("inferCloneProtocolPreference", () => {
     expect(result.protocol).toBeNull();
     expect(result.reason).toBe("mixed");
   });
+
+  test("ignores file and git URI schemes when inferring an HTTPS preference", () => {
+    expect(
+      inferCloneProtocolPreference([
+        "https://github.com/team/repo-a.git",
+        "file:///tmp/repo-b.git",
+        "git://example.com/team/repo-c.git",
+      ]),
+    ).toEqual({ protocol: "https", reason: "inferred-https" });
+  });
+
+  test("reports no preference for only non-convertible URI schemes", () => {
+    expect(
+      inferCloneProtocolPreference(["file:///tmp/repo-a.git", "git://example.com/team/repo-b.git"]),
+    ).toEqual({ protocol: null, reason: "none" });
+  });
 });
 
 describe("applyCloneProtocol", () => {
-  test("converts ssh URL to https", () => {
-    expect(applyCloneProtocol("git@github.com:team/repo-a.git", "https")).toBe(
-      "https://github.com/team/repo-a.git",
-    );
+  test.each([
+    "git@work-github:team/repo-a.git",
+    "work-github:team/repo-a.git",
+    "ssh://deploy@work-github/team/repo-a.git",
+  ])("never converts SSH source %s to HTTPS", (url) => {
+    expect(applyCloneProtocol(url, "https")).toBe(url);
+  });
+
+  test("preserves already-selected SSH bytes exactly", () => {
+    const url = "  ssh://deploy@work-github/team/repo-a.git  ";
+    expect(applyCloneProtocol(url, "ssh")).toBe(url);
+  });
+
+  test("preserves already-selected HTTPS bytes exactly", () => {
+    const url = "  https://github.com/team/repo-a.git  ";
+    expect(applyCloneProtocol(url, "https")).toBe(url);
   });
 
   test("converts https URL to ssh", () => {

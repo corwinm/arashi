@@ -110,16 +110,17 @@ export function inferCloneProtocolPreference(urls: (string | undefined)[]): Prot
 }
 
 export function applyCloneProtocol(gitUrl: string, protocol: CloneProtocol): string {
-  const parsed = parseHostedGitUrl(gitUrl);
-  if (!parsed) {
+  const sourceProtocol = detectCloneProtocol(gitUrl);
+  if (sourceProtocol === protocol || sourceProtocol === "ssh") {
     return gitUrl;
   }
 
-  if (protocol === "ssh") {
-    return `git@${parsed.host}:${parsed.path}.git`;
+  const parsed = parseHostedGitUrl(gitUrl);
+  if (!parsed || protocol !== "ssh") {
+    return gitUrl;
   }
 
-  return `https://${parsed.host}/${parsed.path}.git`;
+  return `git@${parsed.host}:${parsed.path}.git`;
 }
 
 function detectCloneProtocol(url: string): CloneProtocol | null {
@@ -127,7 +128,13 @@ function detectCloneProtocol(url: string): CloneProtocol | null {
   if (trimmed.startsWith("https://")) {
     return "https";
   }
-  if (trimmed.startsWith("git@") || trimmed.startsWith("ssh://")) {
+  if (trimmed.startsWith("ssh://")) {
+    return "ssh";
+  }
+  if (/^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.includes("://")) {
+    return null;
+  }
+  if (/^(?:[^@\s/:]+@)?[^@\s/:]+:[^\s]+$/.test(trimmed)) {
     return "ssh";
   }
   return null;

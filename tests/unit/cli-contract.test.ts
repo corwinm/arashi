@@ -129,6 +129,18 @@ describe("CLI command contract", () => {
     });
   });
 
+  test("publishes optional-user SSH alias syntax in add help and generated contract", () => {
+    const program = buildProgram({ includeHelpBanner: false });
+    const add = program.commands.find((command) => command.name() === "add");
+    expect(add?.helpInformation()).toContain("[user@]host:path");
+    expect(add?.helpInformation()).toContain("ssh://[user@]host/path");
+
+    const contract = generateCommandContract(program, commandSemantics, optionAuditPolicies);
+    const addArgument = contract.commands.find((command) => command.path === "add")?.arguments[0];
+    expect(addArgument?.description).toContain("[user@]host:path");
+    expect(addArgument?.description).toContain("ssh://[user@]host/path");
+  });
+
   test("publishes enforceable init zero-config option and output policy", () => {
     const contract = generateCommandContract(
       buildProgram({ includeHelpBanner: false }),
