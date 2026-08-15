@@ -137,15 +137,20 @@ export interface StandaloneRemovePartialFailureDetails {
 export const branchStateAfterShowRefFailure = (error: unknown): false | null =>
   error instanceof ArashiError && error.context.exitCode === ONE ? false : null;
 
+type StandaloneBranchAction = "keep" | "none" | "remove";
+
 class StandaloneRemovePartialFailure extends Error {
   readonly code = "STANDALONE_REMOVE_PARTIAL_FAILURE";
   readonly details: StandaloneRemovePartialFailureDetails;
-  readonly branchAssociated: boolean;
+  readonly branchAction: StandaloneBranchAction;
 
-  constructor(details: StandaloneRemovePartialFailureDetails, branchAssociated: boolean) {
+  constructor(
+    details: StandaloneRemovePartialFailureDetails,
+    branchAction: StandaloneBranchAction,
+  ) {
     super("Standalone remove completed with one or more operation or finalization failures");
     this.details = details;
-    this.branchAssociated = branchAssociated;
+    this.branchAction = branchAction;
     this.name = "StandaloneRemovePartialFailure";
   }
 }
@@ -155,18 +160,24 @@ export const formatStandaloneRemovePartialFailureHuman = (
     StandaloneRemovePartialFailureDetails,
     "finalState" | "hookFailures" | "operationFailures"
   >,
-  branchAssociated = details.finalState.branchExists !== null,
+  branchAction: StandaloneBranchAction = details.finalState.branchExists === null
+    ? "none"
+    : "remove",
 ): string => {
   const branchDeletionFailed = details.operationFailures.some(
     (failure) => failure.operation === "delete-branch",
   );
-  let branchState = branchAssociated
-    ? "Could not determine whether the branch still exists"
-    : "No branch was associated with this worktree";
+  let branchState =
+    branchAction === "none"
+      ? "No branch was associated with this worktree"
+      : "Could not determine whether the branch still exists";
   if (details.finalState.branchExists === true) {
     branchState = "Branch still exists";
   } else if (details.finalState.branchExists === false) {
-    branchState = branchDeletionFailed ? "Branch does not exist" : "Branch was deleted";
+    branchState =
+      branchAction === "remove" && !branchDeletionFailed
+        ? "Branch was deleted"
+        : "Branch does not exist";
   }
   const lines = [
     "Standalone removal completed with incomplete cleanup.",
@@ -587,6 +598,10 @@ export async function executeRemove(
           finalBranchExists = branchStateAfterShowRefFailure(error);
         }
       }
+      let branchAction: StandaloneBranchAction = "none";
+      if (target.branch !== null) {
+        branchAction = options.keepBranches ? "keep" : "remove";
+      }
       throw new StandaloneRemovePartialFailure(
         {
           finalState: {
@@ -597,7 +612,7 @@ export async function executeRemove(
           hookFailures,
           operationFailures,
         },
-        target.branch !== null,
+        branchAction,
       );
     }
     summary.duration = Date.now() - startTime;
@@ -1638,7 +1653,7 @@ const handleError = (error: unknown, options: RemoveCommandOptions): void => {
       ),
     );
   } else if (error instanceof StandaloneRemovePartialFailure) {
-    logError(formatStandaloneRemovePartialFailureHuman(error.details, error.branchAssociated));
+    logError(formatStandaloneRemovePartialFailureHuman(error.details, error.branchAction));
   } else {
     logError(`Unexpected error: ${message}`);
   }

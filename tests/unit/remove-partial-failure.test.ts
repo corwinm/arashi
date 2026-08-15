@@ -70,7 +70,7 @@ describe("standalone remove partial failure diagnostics", () => {
         hookFailures: [{ hookName: "post-remove", message: "Hook exited with code 23" }],
         operationFailures: [],
       },
-      true,
+      "remove",
     );
 
     expect(output).toContain("Could not determine whether the branch still exists");
@@ -86,6 +86,20 @@ describe("standalone remove partial failure diagnostics", () => {
         { message: "error: branch 'unborn' not found", operation: "delete-branch" },
       ],
     });
+
+    expect(output).toContain("Branch does not exist");
+    expect(output).not.toContain("Branch was deleted");
+  });
+
+  test("does not claim deletion when an unborn branch was explicitly kept", () => {
+    const output = formatStandaloneRemovePartialFailureHuman(
+      {
+        finalState: { branchExists: false, worktreeExists: false },
+        hookFailures: [{ hookName: "post-remove", message: "Hook exited with code 23" }],
+        operationFailures: [],
+      },
+      "keep",
+    );
 
     expect(output).toContain("Branch does not exist");
     expect(output).not.toContain("Branch was deleted");
