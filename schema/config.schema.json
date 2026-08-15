@@ -84,6 +84,12 @@
     "CreateCommandDefaults": {
       "additionalProperties": false,
       "properties": {
+        "baseBranch": {
+          "description": "Default base branch for configured create invocations",
+          "minLength": 1,
+          "pattern": "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
+          "type": "string"
+        },
         "launch": {
           "$ref": "#/definitions/CreateLaunchMode",
           "description": "Post-create launch choice; omitted preserves built-in no-launch behavior"
@@ -103,8 +109,22 @@
       "additionalProperties": false,
       "properties": {
         "create": {
-          "$ref": "#/definitions/CreateCommandDefaults",
+          "$ref": "#/definitions/EditorCreateCommandDefaults",
           "description": "Editor-scoped create defaults"
+        }
+      },
+      "type": "object"
+    },
+    "EditorCreateCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "launch": {
+          "$ref": "#/definitions/CreateLaunchMode",
+          "description": "Post-create launch choice; omitted preserves built-in no-launch behavior"
+        },
+        "switch": {
+          "description": "Default to switching to the new worktree after create",
+          "type": "boolean"
         }
       },
       "type": "object"

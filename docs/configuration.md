@@ -27,6 +27,7 @@ To enable JSON validation and editor autocomplete, include a `$schema` property:
   "reposDir": "./repos",
   "defaults": {
     "create": {
+      "baseBranch": "feature/auth",
       "switch": true,
       "launch": "auto"
     },
@@ -83,8 +84,16 @@ You can set command-scoped defaults under `defaults`.
 
 ### `defaults.create`
 
+- `baseBranch` (Git branch name): the workspace-generic starting point for coordinated create
 - `switch` (boolean): independent post-create switch handling
 - `launch` (`none` | `auto` | `sesh` | `herdr`): the single post-create launch choice
+
+For the create starting point, precedence is `--base` → `defaults.create.baseBranch` → legacy behavior.
+Arashi removes at most one leading `origin/`, resolves the resulting name in every selected repository
+as a local branch first and then as `origin`, and finishes that preflight before creating worktrees or
+running hooks. Editor-hosted create uses this same workspace-generic base; `baseBranch` is not valid in
+an editor-scoped create object. Standalone create accepts only the invocation-level `--base`; it does
+not load or persist workspace defaults.
 
 An absent `launch` preserves built-in no-launch behavior. `none` disables launch without disabling an independently enabled `switch`; `auto` uses context detection; and `sesh` or `herdr` select that launcher directly. Any enabled launch implies switch handling for the newly created primary worktree.
 
@@ -100,6 +109,7 @@ Example:
 {
   "defaults": {
     "create": {
+      "baseBranch": "feature/auth",
       "switch": true,
       "launch": "none"
     },
@@ -114,7 +124,7 @@ Example:
 }
 ```
 
-In that configuration, terminal `arashi create` uses `defaults.create`, while VS Code extension `create` uses `defaults.editors.vscode.create`. If an editor-hosted create invocation has no matching host override, Arashi applies no post-create defaults unless the user passes explicit CLI flags.
+In that configuration, terminal `arashi create` uses the generic launch and switch defaults, while VS Code extension `create` uses `defaults.editors.vscode.create` for launch and switch. Both use the workspace-generic `defaults.create.baseBranch`. If an editor-hosted create invocation has no matching host override, Arashi applies no post-create launch or switch defaults unless the user passes explicit CLI flags.
 
 ### `defaults.switch`
 

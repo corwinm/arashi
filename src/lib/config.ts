@@ -17,6 +17,7 @@ import { basename, dirname, join, resolve } from "path";
 import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
 import { mkdir } from "fs/promises";
 import { warn } from "./logger.ts";
+import { isValidRequestedBaseBranch } from "./git-branch-name.ts";
 
 const ZERO = 0;
 const TWO = 2;
@@ -93,6 +94,19 @@ export type SwitchMode = "auto" | "cd" | "launch" | "sesh" | "herdr";
 export type CreateDefaultsEditorHost = "vscode" | "cursor" | "kiro";
 
 export interface CreateCommandDefaults {
+  /**
+   * Default base branch for configured create invocations
+   * @minLength 1
+   * @pattern ^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\.|//|\.\.|@\{))(?!.*\.lock(?:/|$))(?!.*[/.]$)[^\u0000-\u0020\u007F~^:?*\[\\]+$
+   */
+  baseBranch?: string;
+  /** Default to switching to the new worktree after create */
+  switch?: boolean;
+  /** Post-create launch choice; omitted preserves built-in no-launch behavior */
+  launch?: CreateLaunchMode;
+}
+
+export interface EditorCreateCommandDefaults {
   /** Default to switching to the new worktree after create */
   switch?: boolean;
   /** Post-create launch choice; omitted preserves built-in no-launch behavior */
@@ -106,7 +120,7 @@ export interface SwitchCommandDefaults {
 
 export interface EditorCommandDefaults {
   /** Editor-scoped create defaults */
-  create?: CreateCommandDefaults;
+  create?: EditorCreateCommandDefaults;
 }
 
 export interface EditorDefaultsConfig {
@@ -440,6 +454,19 @@ const ROOT_ALLOWED_KEYS = new Set([
 
 const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout"]);
 const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
+const CREATE_DEFAULTS_ALLOWED_KEYS = new Set([
+  "baseBranch",
+  "launch",
+  "launchMode",
+  "launch_mode",
+  "switch",
+]);
+const EDITOR_CREATE_DEFAULTS_ALLOWED_KEYS = new Set([
+  "launch",
+  "launchMode",
+  "launch_mode",
+  "switch",
+]);
 const VERSION_ALIASES = new Map<string, ConfigVersion>([["1", CURRENT_CONFIG_VERSION]]);
 
 const REPO_ALLOWED_KEYS = new Set([
@@ -690,6 +717,7 @@ const normalizeCreateCommandDefaults = (
   scope: string,
   errors: string[],
   diagnostics: ConfigDiagnostic[],
+  editorScoped = false,
 ): CreateCommandDefaults | undefined => {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
@@ -697,7 +725,21 @@ const normalizeCreateCommandDefaults = (
     return undefined;
   }
 
+  validateNoUnknownKeys({
+    allowedKeys: editorScoped ? EDITOR_CREATE_DEFAULTS_ALLOWED_KEYS : CREATE_DEFAULTS_ALLOWED_KEYS,
+    errors,
+    prefix: scope,
+    value,
+  });
+
   const normalized: CreateCommandDefaults = {};
+  if (!editorScoped && value.baseBranch !== undefined) {
+    if (typeof value.baseBranch === "string" && isValidRequestedBaseBranch(value.baseBranch)) {
+      normalized.baseBranch = value.baseBranch;
+    } else {
+      errors.push(`${scope}.baseBranch: must be a valid Git branch name if present`);
+    }
+  }
   if (value.switch !== undefined) {
     if (typeof value.switch === "boolean") normalized.switch = value.switch;
     else errors.push(`${scope}.switch: must be a boolean if present`);
@@ -870,6 +912,7 @@ const normalizeEditorCommandDefaults = (
     `defaults.editors.${host}.create`,
     errors,
     diagnostics,
+    true,
   );
   if (!createDefaults) {
     return undefined;

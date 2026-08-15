@@ -97,6 +97,8 @@ describe("Branch Name Validation", () => {
     expect(isValidBranchName("hotfix/critical-bug")).toBe(true);
     expect(isValidBranchName("release/v1.0.0")).toBe(true);
     expect(isValidBranchName("feat/api-endpoints")).toBe(true);
+    expect(isValidBranchName("origin/HEAD")).toBe(true);
+    expect(isValidBranchName("origin/-feature")).toBe(true);
   });
 
   test("should reject branch names with spaces", () => {

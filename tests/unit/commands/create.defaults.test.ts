@@ -13,6 +13,20 @@ function configWithDefaults(defaults?: Config["defaults"]): Config {
 }
 
 describe("resolveCreateDefaults", () => {
+  test("registers and documents the create base branch option", () => {
+    const command = createCommand();
+    const base = command.options.find((option) => option.long === "--base");
+
+    expect(base).toMatchObject({
+      description: "Base branch to use when creating new target branches",
+      flags: "--base <branch>",
+      required: true,
+    });
+    expect(command.helpInformation()).toContain(
+      "--base <branch>        Base branch to use when creating new target branches",
+    );
+  });
+
   test("registers explicit plain tmux launch", () => {
     expect(
       createCommand().options.find((option) => option.long === "--tmux")?.description,
