@@ -13,7 +13,7 @@ describe("completion canonical contract", () => {
       commandSemantics,
       optionAuditPolicies,
     );
-    expect(contract.schemaVersion).toBe(6);
+    expect(contract.schemaVersion).toBe(7);
     expect(contract.root).toMatchObject({
       name: "arashi",
       description: "Git worktree manager for meta-repositories",
@@ -35,6 +35,13 @@ describe("completion canonical contract", () => {
       true,
     );
     const create = contract.commands.find((command) => command.path === "create");
+    expect(create?.options.find((option) => option.long === "--base")).toMatchObject({
+      candidateKind: undefined,
+      flags: "--base <branch>",
+      required: true,
+      semanticPolicyOwner: "command",
+      valueShape: "required",
+    });
     expect(create?.options.find((option) => option.long === "--conflict")).toMatchObject({
       choices: ["ABORT", "REUSE_EXISTING"],
       candidateKind: "choice",

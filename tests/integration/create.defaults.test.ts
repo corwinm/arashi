@@ -43,10 +43,12 @@ function createSummary(worktreePath = `${workspaceRoot}/${branchName}`): Operati
           path: workspaceRoot,
         },
         status: "success",
+        targetAction: "created",
         warnings: [],
         worktreePath,
       },
     ],
+    targetActionByRepositoryPath: new Map([[workspaceRoot, "created"]]),
     rolledBack: false,
     skippedCount: 0,
     successCount: 1,
@@ -175,6 +177,7 @@ describe("create defaults integration", () => {
                 conflicts: [],
                 overallStatus: "actionable" as const,
                 plannedWorktrees: [],
+                targetActionByRepositoryPath: summary.targetActionByRepositoryPath,
                 summaryCounts: { blockingTotal: 0, conflictTotal: 0, plannedTotal: 0 },
               },
               isDryRun: true,
@@ -382,6 +385,7 @@ describe("create defaults integration", () => {
               conflicts: [],
               overallStatus: "actionable",
               plannedWorktrees: [],
+              targetActionByRepositoryPath: createSummary().targetActionByRepositoryPath,
               summaryCounts: { blockingTotal: 0, conflictTotal: 0, plannedTotal: 0 },
             },
             isDryRun: true,
@@ -592,6 +596,67 @@ describe("create defaults integration", () => {
     );
 
     expect(launchCalls).toHaveLength(0);
+  });
+
+  test("omitted base keeps the parent current branch and child detected default", async () => {
+    let selectedRepositories: Parameters<
+      NonNullable<CreateCommandDependencies["createCoordinatedWorktrees"]>
+    >[1] = [];
+
+    await executeCreate(
+      branchName,
+      {},
+      baseDeps({
+        createCoordinatedWorktrees: async (_branch, repositories) => {
+          selectedRepositories = repositories;
+          return createSummary();
+        },
+        discoverRepositories: async () => ({
+          duration: 1,
+          errors: [],
+          repositories: [
+            {
+              defaultBranch: "develop",
+              hasSetupScript: false,
+              name: "child",
+              path: "/workspace/repos/child",
+            },
+          ],
+          scanDepth: 0,
+          scannedDirectories: 1,
+          workspacePath: `${workspaceRoot}/repos`,
+        }),
+        resolveCurrentBranch: async () => "feature/current-parent",
+      }),
+    );
+
+    expect(
+      selectedRepositories.map(({ defaultBranch, name }) => ({ defaultBranch, name })),
+    ).toEqual([
+      { defaultBranch: "feature/current-parent", name: "workspace" },
+      { defaultBranch: "develop", name: "child" },
+    ]);
+  });
+
+  test("omitted base keeps the configured JSON output shape base-free", async () => {
+    const stdout: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+
+    try {
+      expect(await executeCreate(branchName, { json: true }, baseDeps())).toBe(0);
+    } finally {
+      write.mockRestore();
+    }
+
+    expect(stdout).toHaveLength(1);
+    const envelope = JSON.parse(stdout[0]!) as { data: Record<string, unknown> };
+    expect(envelope.data).not.toHaveProperty("base");
+    expect(envelope.data.repositories).toEqual([
+      expect.not.objectContaining({ base: expect.anything() }),
+    ]);
   });
 
   test("does not apply terminal defaults to editor-hosted create without editor overrides", async () => {

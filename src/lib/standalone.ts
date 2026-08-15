@@ -1,4 +1,4 @@
-import { access, rmdir } from "fs/promises";
+import { access, realpath, rmdir } from "fs/promises";
 import { dirname, join, relative, resolve } from "path";
 import { exec } from "./git.ts";
 import { parseGitIgnoreVerbose } from "./git-ignore.ts";
@@ -12,6 +12,7 @@ import {
 } from "./hooks.ts";
 import type { HookInputMode, LifecycleHookOutcome } from "./hooks.ts";
 import type { StandaloneWorkspaceContext } from "./workspace-context.ts";
+import type { CreateBaseResolutionPlan } from "./create-base.ts";
 
 export class StandaloneDestinationNotIgnoredError extends Error {
   readonly code = "STANDALONE_DESTINATION_NOT_IGNORED";
@@ -306,21 +307,37 @@ export async function createStandaloneWorktree(
   context: StandaloneWorkspaceContext,
   branch: string,
   dryRun = false,
-  options: { hookInputMode?: HookInputMode; quiet?: boolean; skipHooks?: boolean } = {},
+  options: {
+    createBasePlan?: CreateBaseResolutionPlan;
+    hookInputMode?: HookInputMode;
+    quiet?: boolean;
+    skipHooks?: boolean;
+  } = {},
 ) {
   await exec(["check-ref-format", "--branch", branch], context.mainRoot);
+  const canonicalRepositoryPath = options.createBasePlan
+    ? await realpath(context.mainRoot)
+    : undefined;
+  const baseResolution = canonicalRepositoryPath
+    ? options.createBasePlan?.byCanonicalPath.get(canonicalRepositoryPath)
+    : undefined;
+  if (options.createBasePlan && !baseResolution) {
+    throw new Error(
+      `Standalone repository is missing immutable create-base plan entry for '${context.mainRoot}'`,
+    );
+  }
   const destination = join(context.mainRoot, ".worktrees", ...branch.split("/"));
   const effectiveIgnore = await inspectStandaloneIgnore(context, destination);
   if (!effectiveIgnore.ignored) throw new StandaloneDestinationNotIgnoredError(destination);
-  let existing = true;
+  let localBranchExists = true;
   try {
     await exec(["show-ref", "--verify", `refs/heads/${branch}`], context.mainRoot);
   } catch {
-    existing = false;
+    localBranchExists = false;
   }
-  let branchSource: string | null = existing ? branch : null;
+  let branchSource: string | null = localBranchExists ? branch : null;
   let reusedRemoteBranch = false;
-  if (!existing) {
+  if (!localBranchExists && !baseResolution) {
     const remotes = await exec(
       ["for-each-ref", "--format=%(refname:short)", `refs/remotes/*/${branch}`],
       context.mainRoot,
@@ -367,11 +384,13 @@ export async function createStandaloneWorktree(
     }
     try {
       await exec(
-        existing
+        localBranchExists
           ? ["worktree", "add", destination, branch]
-          : branchSource
-            ? ["worktree", "add", "-b", branch, destination, branchSource]
-            : ["worktree", "add", "-b", branch, destination],
+          : baseResolution
+            ? ["worktree", "add", "-b", branch, destination, baseResolution.resolvedOid]
+            : branchSource
+              ? ["worktree", "add", "-b", branch, destination, branchSource]
+              : ["worktree", "add", "-b", branch, destination],
         context.mainRoot,
       );
       hookOutcomes.push(
@@ -392,7 +411,7 @@ export async function createStandaloneWorktree(
       } catch {
         // The worktree may not have been created.
       }
-      if (!existing) {
+      if (!localBranchExists) {
         try {
           await exec(["branch", "-D", branch], context.mainRoot);
         } catch {
@@ -415,6 +434,7 @@ export async function createStandaloneWorktree(
   return {
     branchName: branch,
     branchSource,
+    targetAction: localBranchExists ? ("reused" as const) : ("created" as const),
     dryRun,
     mode: "standalone" as const,
     repositoryPath: context.mainRoot,

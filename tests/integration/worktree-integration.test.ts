@@ -1,4 +1,3 @@
-import { runtime } from "../helpers/node-runtime.ts";
 /**
  * Integration tests for worktree orchestration
  *
@@ -6,10 +5,11 @@ import { runtime } from "../helpers/node-runtime.ts";
  * Tests use real git repositories to verify end-to-end functionality
  */
 
+import { access, mkdir, rm } from "fs/promises";
 import { afterEach, describe, expect, test } from "vitest";
-import { access } from "fs/promises";
 import { constants } from "fs";
 import { createTestWorkspace } from "../helpers/create-test-workspace.ts";
+import { runtime } from "../helpers/node-runtime.ts";
 type TestWorkspace = Awaited<ReturnType<typeof createTestWorkspace>>;
 
 // ============================================================================
@@ -63,12 +63,33 @@ describe("Basic Coordinated Worktree Creation (Integration)", () => {
       // Verify branch exists
       const branchExists = await verifyBranchExists(repoResult.repository.path, branchName);
       expect(branchExists).toBe(true);
+      expect(await revParse(repoResult.repository.path, branchName)).toBe(
+        await revParse(repoResult.repository.path, repoResult.repository.defaultBranch),
+      );
     }
   });
-});
 
-// ============================================================================
-// T026: Integration test for rollback on simulated failure
+  test.each(["origin/HEAD", "origin/-feature"])(
+    "creates the literal target %s with omitted base semantics",
+    async (branchName) => {
+      workspace = await createTestWorkspace([{ defaultBranch: "main", name: "repo-1" }]);
+      const { createCoordinatedWorktrees } = await import("../../src/core/worktree.ts");
+
+      const result = await createCoordinatedWorktrees(branchName, workspace.repositories, {
+        executeHooks: false,
+        showProgress: false,
+      });
+
+      expect(result.successCount).toBe(1);
+      expect(result.failureCount).toBe(0);
+      expect(result.repositoryResults[0]?.branchName).toBe(branchName);
+      expect(await verifyBranchExists(workspace.repositories[0]!.path, branchName)).toBe(true);
+      expect(await revParse(workspace.repositories[0]!.path, branchName)).toBe(
+        await revParse(workspace.repositories[0]!.path, "main"),
+      );
+    },
+  );
+});
 // ============================================================================
 
 describe("Rollback on Repository Failure (Integration)", () => {
@@ -81,14 +102,15 @@ describe("Rollback on Repository Failure (Integration)", () => {
     // First, verify we can successfully create worktrees
     const branchName = "test-rollback";
 
-    // Make the 3rd repository path invalid to trigger a failure
+    // Keep the path canonicalizable while making the 3rd entry a non-repository.
+    // This lets action planning complete before repository processing reaches the failure.
+    const invalidRepositoryPath = workspace.repositories[2].path;
+    await rm(invalidRepositoryPath, { force: true, recursive: true });
+    await mkdir(invalidRepositoryPath, { recursive: true });
     const reposWithFailure = [
       workspace.repositories[0],
       workspace.repositories[1],
-      {
-        ...workspace.repositories[2],
-        path: "/nonexistent/invalid/path", // This will cause git command to fail
-      },
+      workspace.repositories[2],
     ];
 
     const result = await createCoordinatedWorktrees(branchName, reposWithFailure, {
@@ -109,6 +131,11 @@ describe("Rollback on Repository Failure (Integration)", () => {
     // After rollback, branches should be removed
     expect(branch1Exists).toBe(false);
     expect(branch2Exists).toBe(false);
+    expect(result.repositoryResults.map(({ status }) => status)).toEqual([
+      "success",
+      "success",
+      "failed",
+    ]);
   });
 });
 
@@ -117,7 +144,7 @@ describe("Rollback on Repository Failure (Integration)", () => {
 // ============================================================================
 
 describe("Conflict Detection and Resolution (Integration)", () => {
-  test("should detect and handle branch conflicts with REUSE_EXISTING strategy", async () => {
+  test("should preserve an existing branch OID with REUSE_EXISTING and no base", async () => {
     // Setup: Create workspace with existing branch in one repo
     const existingBranchName = "existing-feature";
     workspace = await createTestWorkspace([
@@ -128,6 +155,20 @@ describe("Conflict Detection and Resolution (Integration)", () => {
 
     const { createCoordinatedWorktrees, checkBranchConflicts } =
       await import("../../src/core/worktree.ts");
+    const [existingRepository] = workspace.repositories;
+    expect(existingRepository).toBeDefined();
+    await runGit(existingRepository.path, ["switch", existingBranchName]);
+    await runGit(existingRepository.path, [
+      "commit",
+      "--allow-empty",
+      "-m",
+      "Advance existing feature",
+    ]);
+    await runGit(existingRepository.path, ["switch", existingRepository.defaultBranch]);
+    const originalExistingBranchOid = await revParse(existingRepository.path, existingBranchName);
+    expect(originalExistingBranchOid).not.toBe(
+      await revParse(existingRepository.path, existingRepository.defaultBranch),
+    );
 
     // Check for conflicts
     const conflictCheck = await checkBranchConflicts(existingBranchName, workspace.repositories);
@@ -149,6 +190,9 @@ describe("Conflict Detection and Resolution (Integration)", () => {
     expect(result.successCount).toBe(3);
     expect(result.failureCount).toBe(0);
     expect(result.rolledBack).toBe(false);
+    expect(await revParse(existingRepository.path, existingBranchName)).toBe(
+      originalExistingBranchOid,
+    );
   });
 });
 
@@ -241,4 +285,25 @@ async function verifyBranchExists(repoPath: string, branchName: string): Promise
   await proc.exited;
 
   return output.trim().length > 0;
+}
+
+async function runGit(repoPath: string, args: string[]): Promise<void> {
+  const proc = runtime.spawn(["git", ...args], {
+    cwd: repoPath,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  expect(exitCode, stderr).toBe(0);
+}
+
+async function revParse(repoPath: string, ref: string): Promise<string> {
+  const proc = runtime.spawn(["git", "rev-parse", ref], {
+    cwd: repoPath,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [output, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  expect(exitCode).toBe(0);
+  return output.trim();
 }
