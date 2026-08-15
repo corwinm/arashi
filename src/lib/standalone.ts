@@ -337,7 +337,7 @@ export async function createStandaloneWorktree(
   }
   let branchSource: string | null = localBranchExists ? branch : null;
   let reusedRemoteBranch = false;
-  if (!localBranchExists) {
+  if (!localBranchExists && !baseResolution) {
     const remotes = await exec(
       ["for-each-ref", "--format=%(refname:short)", `refs/remotes/*/${branch}`],
       context.mainRoot,

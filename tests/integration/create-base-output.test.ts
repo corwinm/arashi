@@ -574,7 +574,12 @@ describe("create base output contracts", () => {
     await git(root, "switch", "main");
     const result = await arashi(root, "create", target, "--base", base, "--json", "--no-launch");
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(parseSingleDocument(result.stdout).data.base.repositories[0]).toMatchObject({
+    const document = parseSingleDocument(result.stdout);
+    expect(document.data).toMatchObject({
+      branchSource: null,
+      reusedRemoteBranch: false,
+    });
+    expect(document.data.base.repositories[0]).toMatchObject({
       resolvedOid: baseOid,
       targetAction: "created",
     });
