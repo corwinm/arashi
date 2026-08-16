@@ -578,7 +578,29 @@ export const formatRemovalSummaryHuman = (
     lines.push("Remove hooks that would be considered:");
     for (const hook of summary.hookPreviews) {
       const validity = hook.valid ? "valid" : `invalid: ${hook.error ?? "unknown"}`;
-      lines.push(`  • ${hook.repository}: ${hook.hookName} (${hook.scope}) - ${validity}`);
+      const source = [
+        `sourceKind=${hook.sourceKind}`,
+        `sourceOwnerKind=${hook.sourceOwnerKind}`,
+        `sourceOwnerName=${hook.sourceOwnerName ?? "null"}`,
+        ...(hook.selectedInterpreter ? [`selectedInterpreter=${hook.selectedInterpreter}`] : []),
+        `target=${hook.repository}`,
+        ...(hook.sourceScriptPath ? [`filePath=${hook.sourceScriptPath}`] : []),
+      ].join(" ");
+      lines.push(
+        `  • ${hook.repository}: ${hook.hookName} (${hook.scope}) - ${validity}; ${source}`,
+      );
+    }
+  }
+
+  if (!summary.dryRun && summary.hookOutcomes.length > ZERO) {
+    lines.push("");
+    lines.push("Hook results:");
+    for (const hook of summary.hookOutcomes) {
+      const owner = `${hook.sourceOwnerKind}${hook.sourceOwnerName ? `:${hook.sourceOwnerName}` : ""}`;
+      const path = hook.sourceScriptPath ? ` (${hook.sourceScriptPath})` : "";
+      lines.push(
+        `  • ${hook.sourceKind} ${owner} ${hook.hookName} - ${hook.hookStatus} (${hook.reasonCode})${path}`,
+      );
     }
   }
 

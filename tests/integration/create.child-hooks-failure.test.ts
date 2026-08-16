@@ -54,9 +54,11 @@ exit 19`,
 
     expect(exitCode).toBe(1);
     expect(output).toContain("Hook results:");
-    expect(output).toContain(`${failingRepo}: pre-create.${failingRepo} -> skipped (not_found)`);
     expect(output).toContain(
-      `${failingRepo}: post-create.${failingRepo} -> failure (exit_non_zero)`,
+      `file repository:${failingRepo} pre-create.${failingRepo} [${failingRepo}] -> skipped (not_found)`,
+    );
+    expect(output).toContain(
+      `file repository:${failingRepo} post-create.${failingRepo} [${failingRepo}] -> failure (exit_non_zero)`,
     );
     expect(output).toContain("Next steps:");
     expect(output).toContain(`Inspect hook output for ${failingRepo}`);
@@ -91,8 +93,12 @@ exit 19`,
     const output = `${stdout}\n${stderr}`;
 
     expect(exitCode).toBe(1);
-    expect(output).toContain(`${timeoutRepo}: pre-create.${timeoutRepo} -> skipped (not_found)`);
-    expect(output).toContain(`${timeoutRepo}: post-create.${timeoutRepo} -> failure (timeout)`);
+    expect(output).toContain(
+      `file repository:${timeoutRepo} pre-create.${timeoutRepo} [${timeoutRepo}] -> skipped (not_found)`,
+    );
+    expect(output).toContain(
+      `file repository:${timeoutRepo} post-create.${timeoutRepo} [${timeoutRepo}] -> failure (timeout)`,
+    );
     expect(output).toContain("timed out");
     expect(output).toContain("Next steps:");
   });

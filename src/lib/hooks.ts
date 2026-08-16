@@ -1,5 +1,5 @@
 import { runtime } from "./runtime.ts";
-import { access, readdir, stat } from "fs/promises";
+import { access, readdir, realpath as resolveRealpath, stat } from "fs/promises";
 import {
   closeSync,
   constants,
@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "fs";
 import { homedir, tmpdir } from "os";
-import { isAbsolute, join, normalize, resolve } from "path";
+import { delimiter, isAbsolute, join, normalize, resolve, win32 } from "path";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 import { withSpinnerPaused } from "./logger.ts";
 import type { PausableSpinner } from "./logger.ts";
@@ -144,6 +144,9 @@ export interface LifecycleHookOutcome {
   reasonCode: HookOutcomeReasonCode;
   message: string;
   repositoryId: string;
+  sourceKind: "file" | "inline-config";
+  sourceOwnerKind: "repository" | "user-global" | "workspace";
+  sourceOwnerName: string | null;
   sourceScriptPath: string | null;
   executionPath: string | null;
   targetRepositoryName: string | null;
@@ -186,7 +189,161 @@ export interface HookExecutionOptions {
   quiet?: boolean;
   hookInputMode?: HookInputMode;
   outputSpinner?: PausableSpinner | null;
+  sourceKind?: "file" | "inline-config";
+  sourceOwnerKind?: "repository" | "user-global" | "workspace";
+  sourceOwnerName?: string | null;
 }
+
+export type InlineHookInterpreter = "bash" | "cmd" | "powershell";
+
+export type AvailableInlineHookInterpreterResolution = {
+  available: true;
+  executablePath: string;
+  interpreter: InlineHookInterpreter;
+};
+
+export type InlineHookInterpreterResolution =
+  | AvailableInlineHookInterpreterResolution
+  | { available: false; reasonCode: "interpreter_unavailable" };
+
+export interface LifecycleHookSourceDescriptor {
+  configuredField?: string;
+  executionPath: string;
+  lifecycle: "post-create" | "post-remove" | "pre-create" | "pre-remove";
+  scope: HookScope;
+  sourceKind: "file" | "inline-config";
+  sourceOwnerKind: "global" | "repository" | "workspace";
+  sourceOwnerName: string | null;
+  sourceScriptPath: string | null;
+  targetRepositoryName?: string;
+}
+
+export interface LifecycleHookPlanTarget {
+  branchName: string;
+  repositoryName: string;
+  repositoryPath: string;
+  worktreePath: string;
+}
+
+export type LifecycleHookPlanConsumer = "create" | "doctor" | "remove" | "remove-dry-run";
+export type LifecycleHookPlanSlot =
+  | "create.repository.post-materialization"
+  | "create.repository.pre-after-materialization"
+  | "create.workspace.post"
+  | "create.workspace.pre"
+  | "remove.target.post-finalization"
+  | "remove.target.pre-destruction";
+
+export interface PlannedLifecycleHookSource extends LifecycleHookSourceDescriptor {
+  context: {
+    branchName: string;
+    cwd: string;
+    repositoryName: string | null;
+    repositoryPath: string | null;
+    workspaceRoot: string;
+    worktreePath: string | null;
+  };
+  failureDisposition: "gate-all-targets" | "retain-finalization" | "rollback-owned-create";
+  hookName: string;
+  slot: LifecycleHookPlanSlot;
+}
+
+export interface LifecycleHookAmbiguity {
+  code: "CREATE_FAILED" | "HOOK_AMBIGUOUS" | "HOOK_CONFIGURATION_INVALID";
+  hookName: LifecycleHookSourceDescriptor["lifecycle"];
+  scope: HookScope;
+  sourceKinds: [
+    LifecycleHookSourceDescriptor["sourceKind"],
+    LifecycleHookSourceDescriptor["sourceKind"],
+  ];
+  sourceOwnerKind: LifecycleHookSourceDescriptor["sourceOwnerKind"];
+  sourceOwnerName: string | null;
+  sourceScriptPath: string | null;
+}
+
+export type LifecycleHookPlan =
+  | { classification: "ambiguous"; entries: []; failure: LifecycleHookAmbiguity }
+  | {
+      classification: "ready";
+      entries: PlannedLifecycleHookSource[];
+      removeGate?: {
+        destructiveMutationAfterAllPreflight: true;
+        postFinalizationRetainsOperationFailures: true;
+        preflightSourceCount: number;
+      };
+    };
+
+export type LifecycleHookPreparationCandidate =
+  | {
+      readonly kind: "absent";
+      readonly source: LifecycleHookSourceDescriptor & {
+        readonly sourceKind: "file";
+        readonly sourceScriptPath: null;
+      };
+    }
+  | {
+      readonly kind: "file";
+      readonly source: LifecycleHookSourceDescriptor & {
+        readonly sourceKind: "file";
+        readonly sourceScriptPath: string;
+      };
+    }
+  | {
+      readonly interpreters: Readonly<Partial<Record<InlineHookInterpreter, string>>>;
+      readonly kind: "inline-config";
+      readonly source: LifecycleHookSourceDescriptor & { readonly sourceKind: "inline-config" };
+    };
+
+export type PreparedLifecycleHookEntry =
+  | {
+      readonly kind: "absent";
+      readonly plan: Readonly<PlannedLifecycleHookSource>;
+    }
+  | {
+      readonly kind: "file";
+      readonly plan: Readonly<PlannedLifecycleHookSource>;
+      readonly scriptPath: string;
+    }
+  | {
+      readonly kind: "inline-config";
+      readonly plan: Readonly<PlannedLifecycleHookSource>;
+      readonly resolution: Readonly<AvailableInlineHookInterpreterResolution>;
+      readonly snippet: string;
+    };
+
+type ReadyLifecycleHookPlan = Extract<LifecycleHookPlan, { classification: "ready" }>;
+type ImmutableAmbiguousLifecycleHookPlan = {
+  readonly classification: "ambiguous";
+  readonly entries: readonly never[];
+  readonly failure: Readonly<LifecycleHookAmbiguity>;
+};
+type ImmutableReadyLifecycleHookPlan = {
+  readonly classification: "ready";
+  readonly entries: readonly Readonly<PlannedLifecycleHookSource>[];
+  readonly removeGate?: Readonly<NonNullable<ReadyLifecycleHookPlan["removeGate"]>>;
+};
+
+export type PreparedLifecycleHookSources =
+  | {
+      readonly classification: "ambiguous";
+      readonly plan: ImmutableAmbiguousLifecycleHookPlan;
+    }
+  | {
+      readonly classification: "file-invalid";
+      readonly plan: ImmutableReadyLifecycleHookPlan;
+      readonly plannedEntry: Readonly<PlannedLifecycleHookSource>;
+      readonly validation: Readonly<ValidationResult>;
+    }
+  | {
+      readonly classification: "interpreter-unavailable";
+      readonly plan: ImmutableReadyLifecycleHookPlan;
+      readonly plannedEntry: Readonly<PlannedLifecycleHookSource>;
+    }
+  | {
+      readonly classification: "ready";
+      readonly entries: readonly PreparedLifecycleHookEntry[];
+      readonly plan: ImmutableReadyLifecycleHookPlan;
+    };
 
 interface RunLifecycleHookOptions {
   lifecyclePoint: string;
@@ -425,6 +582,473 @@ export const mapHookExecutionResult = (result: HookResult): HookOutcomeMapping =
 // Helper Functions (Internal)
 // ============================================================================
 
+const isRegularExecutable = async (path: string, platform: NodeJS.Platform): Promise<boolean> => {
+  try {
+    const metadata = await stat(path);
+    if (!metadata.isFile()) {
+      return false;
+    }
+    if (platform !== "win32") {
+      await access(path, constants.X_OK);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const resolveInlineHookInterpreter = async (options: {
+  env: Record<string, string | undefined>;
+  interpreters: Partial<Record<InlineHookInterpreter, string>>;
+  isExecutableFile?: (path: string) => Promise<boolean>;
+  platform: NodeJS.Platform;
+  realpath?: (path: string) => Promise<string>;
+}): Promise<InlineHookInterpreterResolution> => {
+  const executable =
+    options.isExecutableFile ?? ((path: string) => isRegularExecutable(path, options.platform));
+  const canonicalize = options.realpath ?? resolveRealpath;
+  const candidates: { interpreter: InlineHookInterpreter; path: string }[] = [];
+
+  if (options.platform === "win32") {
+    const systemRoot = options.env.SystemRoot;
+    const driveQualifiedSystemRoot = systemRoot && /^[A-Za-z]:[\\/]/u.test(systemRoot);
+    if (driveQualifiedSystemRoot) {
+      const separator = systemRoot.includes(win32.sep.repeat(2)) ? win32.sep.repeat(2) : win32.sep;
+      if (options.interpreters.powershell) {
+        candidates.push({
+          interpreter: "powershell",
+          path: [systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"].join(
+            separator,
+          ),
+        });
+      }
+      if (options.interpreters.cmd) {
+        candidates.push({
+          interpreter: "cmd",
+          path: [systemRoot, "System32", "cmd.exe"].join(separator),
+        });
+      }
+    }
+    if (options.interpreters.bash) {
+      for (const entry of (options.env.PATH ?? "").split(win32.delimiter).filter(Boolean)) {
+        candidates.push({ interpreter: "bash", path: win32.join(entry, "bash.exe") });
+      }
+    }
+  } else if (options.interpreters.bash) {
+    for (const entry of (options.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+      candidates.push({ interpreter: "bash", path: join(entry, "bash") });
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (!(await executable(candidate.path))) {
+      continue;
+    }
+    try {
+      const executablePath = await canonicalize(candidate.path);
+      if (!isAbsolute(executablePath) && options.platform !== "win32") {
+        continue;
+      }
+      if (options.platform === "win32" && !win32.isAbsolute(executablePath)) {
+        continue;
+      }
+      return { available: true, executablePath, interpreter: candidate.interpreter };
+    } catch {
+      // An executable that cannot be canonicalized is not a trusted runtime candidate.
+    }
+  }
+  return { available: false, reasonCode: "interpreter_unavailable" };
+};
+
+export type InlineHookConsumerResolution =
+  | (AvailableInlineHookInterpreterResolution & {
+      consumer: "doctor" | "remove-dry-run" | "runtime";
+    })
+  | {
+      available: false;
+      consumer: "runtime";
+      errorCode: "HOOK_INTERPRETER_UNAVAILABLE";
+      outcome: { hookStatus: "validation_failed"; reasonCode: "interpreter_unavailable" };
+      reasonCode: "interpreter_unavailable";
+    }
+  | {
+      available: false;
+      consumer: "remove-dry-run";
+      preview: { availability: "unavailable"; reasonCode: "interpreter_unavailable" };
+      reasonCode: "interpreter_unavailable";
+    }
+  | {
+      available: false;
+      consumer: "doctor";
+      finding: { code: "HOOK_INTERPRETER_UNAVAILABLE"; severity: "error" };
+      reasonCode: "interpreter_unavailable";
+    };
+
+export const resolveInlineHookForConsumer = async (options: {
+  consumer: "doctor" | "remove-dry-run" | "runtime";
+  env: Record<string, string | undefined>;
+  interpreters: Partial<Record<InlineHookInterpreter, string>>;
+  isExecutableFile?: (path: string) => Promise<boolean>;
+  platform: NodeJS.Platform;
+  realpath?: (path: string) => Promise<string>;
+}): Promise<InlineHookConsumerResolution> => {
+  const resolution = await resolveInlineHookInterpreter(options);
+  if (resolution.available) {
+    return { ...resolution, consumer: options.consumer };
+  }
+  if (options.consumer === "runtime") {
+    return {
+      available: false,
+      consumer: "runtime",
+      errorCode: "HOOK_INTERPRETER_UNAVAILABLE",
+      outcome: { hookStatus: "validation_failed", reasonCode: resolution.reasonCode },
+      reasonCode: resolution.reasonCode,
+    };
+  }
+  if (options.consumer === "remove-dry-run") {
+    return {
+      available: false,
+      consumer: "remove-dry-run",
+      preview: { availability: "unavailable", reasonCode: resolution.reasonCode },
+      reasonCode: resolution.reasonCode,
+    };
+  }
+  return {
+    available: false,
+    consumer: "doctor",
+    finding: { code: "HOOK_INTERPRETER_UNAVAILABLE", severity: "error" },
+    reasonCode: resolution.reasonCode,
+  };
+};
+
+const sourceProjection = (
+  source: LifecycleHookSourceDescriptor,
+): LifecycleHookSourceDescriptor => ({
+  ...(source.configuredField === undefined ? {} : { configuredField: source.configuredField }),
+  executionPath: source.executionPath,
+  lifecycle: source.lifecycle,
+  scope: source.scope,
+  sourceKind: source.sourceKind,
+  sourceOwnerKind: source.sourceOwnerKind,
+  sourceOwnerName: source.sourceOwnerName,
+  sourceScriptPath: source.sourceScriptPath,
+  ...(source.targetRepositoryName === undefined
+    ? {}
+    : { targetRepositoryName: source.targetRepositoryName }),
+});
+
+export const planLifecycleHookSources = (options: {
+  consumer: LifecycleHookPlanConsumer;
+  sources: LifecycleHookSourceDescriptor[];
+  targets: readonly LifecycleHookPlanTarget[];
+  workspaceRoot: string;
+}): LifecycleHookPlan => {
+  const groups = new Map<string, LifecycleHookSourceDescriptor[]>();
+  for (const source of options.sources) {
+    const key = JSON.stringify([
+      source.lifecycle,
+      source.scope,
+      source.sourceOwnerKind,
+      source.sourceOwnerName,
+      source.targetRepositoryName,
+    ]);
+    groups.set(key, [...(groups.get(key) ?? []), source]);
+  }
+  for (const candidates of groups.values()) {
+    if (candidates.length < 2) {
+      continue;
+    }
+    const fileSource = candidates.find((candidate) => candidate.sourceKind === "file");
+    const [source] = candidates;
+    const [firstCandidate, secondCandidate] = candidates.toSorted((left, right) =>
+      left.sourceKind.localeCompare(right.sourceKind),
+    );
+    let code: LifecycleHookAmbiguity["code"] = "HOOK_CONFIGURATION_INVALID";
+    if (options.consumer === "create") {
+      code = "CREATE_FAILED";
+    } else if (options.consumer === "doctor") {
+      code = "HOOK_AMBIGUOUS";
+    }
+    return {
+      classification: "ambiguous",
+      entries: [],
+      failure: {
+        code,
+        hookName: source.lifecycle,
+        scope: source.scope,
+        sourceKinds: [firstCandidate.sourceKind, secondCandidate.sourceKind],
+        sourceOwnerKind: source.sourceOwnerKind,
+        sourceOwnerName: source.sourceOwnerName,
+        sourceScriptPath: fileSource?.sourceScriptPath ?? null,
+      },
+    };
+  }
+
+  const sources = options.sources.map(sourceProjection);
+  const [firstTarget] = options.targets;
+  const entries: PlannedLifecycleHookSource[] = [];
+  const appendCreate = (
+    source: LifecycleHookSourceDescriptor | undefined,
+    target: LifecycleHookPlanTarget | undefined,
+    slot:
+      | "create.repository.post-materialization"
+      | "create.repository.pre-after-materialization"
+      | "create.workspace.post"
+      | "create.workspace.pre",
+  ): void => {
+    if (!source || !firstTarget) {
+      return;
+    }
+    const repositorySource = source.scope === "repository";
+    entries.push({
+      ...source,
+      context:
+        repositorySource && target
+          ? {
+              branchName: target.branchName,
+              cwd: target.worktreePath,
+              repositoryName: target.repositoryName,
+              repositoryPath: target.repositoryPath,
+              workspaceRoot: options.workspaceRoot,
+              worktreePath: target.worktreePath,
+            }
+          : {
+              branchName: firstTarget.branchName,
+              cwd: options.workspaceRoot,
+              repositoryName: null,
+              repositoryPath: null,
+              workspaceRoot: options.workspaceRoot,
+              worktreePath: null,
+            },
+      failureDisposition: "rollback-owned-create",
+      hookName:
+        repositorySource && target
+          ? `${source.lifecycle}.${target.repositoryName}`
+          : source.lifecycle,
+      slot,
+    });
+  };
+
+  if (options.consumer === "create") {
+    appendCreate(
+      sources.find((source) => source.lifecycle === "pre-create" && source.scope === "workspace"),
+      undefined,
+      "create.workspace.pre",
+    );
+    for (const target of options.targets) {
+      appendCreate(
+        sources.find(
+          (source) =>
+            source.lifecycle === "pre-create" &&
+            source.scope === "repository" &&
+            source.sourceOwnerName === target.repositoryName,
+        ),
+        target,
+        "create.repository.pre-after-materialization",
+      );
+      appendCreate(
+        sources.find(
+          (source) =>
+            source.lifecycle === "post-create" &&
+            source.scope === "repository" &&
+            source.sourceOwnerName === target.repositoryName,
+        ),
+        target,
+        "create.repository.post-materialization",
+      );
+    }
+    appendCreate(
+      sources.find((source) => source.lifecycle === "post-create" && source.scope === "workspace"),
+      undefined,
+      "create.workspace.post",
+    );
+    return { classification: "ready", entries };
+  }
+
+  const scopes: HookScope[] = ["repository", "workspace", "global-repository", "global-shared"];
+  for (const lifecycle of ["pre-remove", "post-remove"] as const) {
+    for (const target of options.targets) {
+      for (const scope of scopes) {
+        const source = sources.find(
+          (candidate) =>
+            candidate.lifecycle === lifecycle &&
+            candidate.scope === scope &&
+            (scope === "repository"
+              ? candidate.sourceOwnerName === target.repositoryName
+              : scope === "global-repository" || scope === "global-shared"
+                ? candidate.targetRepositoryName === target.repositoryName
+                : true),
+        );
+        if (!source) {
+          continue;
+        }
+        entries.push({
+          ...source,
+          context: {
+            branchName: target.branchName,
+            cwd: source.executionPath,
+            repositoryName: target.repositoryName,
+            repositoryPath: target.repositoryPath,
+            workspaceRoot: options.workspaceRoot,
+            worktreePath: target.worktreePath,
+          },
+          failureDisposition:
+            lifecycle === "pre-remove" ? "gate-all-targets" : "retain-finalization",
+          hookName: lifecycle,
+          slot:
+            lifecycle === "pre-remove"
+              ? "remove.target.pre-destruction"
+              : "remove.target.post-finalization",
+        });
+      }
+    }
+  }
+  return {
+    classification: "ready",
+    entries,
+    removeGate: {
+      destructiveMutationAfterAllPreflight: true,
+      postFinalizationRetainsOperationFailures: true,
+      preflightSourceCount: entries.length,
+    },
+  };
+};
+
+const lifecycleSourceKey = (source: LifecycleHookSourceDescriptor): string =>
+  JSON.stringify([
+    source.configuredField ?? null,
+    source.executionPath,
+    source.lifecycle,
+    source.scope,
+    source.sourceKind,
+    source.sourceOwnerKind,
+    source.sourceOwnerName,
+    source.sourceScriptPath,
+    source.targetRepositoryName,
+  ]);
+
+const freezePlannedLifecycleEntry = (
+  entry: PlannedLifecycleHookSource,
+): Readonly<PlannedLifecycleHookSource> =>
+  Object.freeze({ ...entry, context: Object.freeze({ ...entry.context }) });
+
+const freezeReadyLifecyclePlan = (plan: ReadyLifecycleHookPlan): ImmutableReadyLifecycleHookPlan =>
+  Object.freeze({
+    ...plan,
+    entries: Object.freeze(plan.entries.map(freezePlannedLifecycleEntry)),
+    ...(plan.removeGate ? { removeGate: Object.freeze({ ...plan.removeGate }) } : {}),
+  });
+
+export const prepareLifecycleHookSources = async (options: {
+  candidates: readonly LifecycleHookPreparationCandidate[];
+  consumer: LifecycleHookPlanConsumer;
+  env: Record<string, string | undefined>;
+  platform: NodeJS.Platform;
+  targets: readonly LifecycleHookPlanTarget[];
+  workspaceRoot: string;
+}): Promise<PreparedLifecycleHookSources> => {
+  const planned = planLifecycleHookSources({
+    consumer: options.consumer,
+    sources: options.candidates.map((candidate) => candidate.source),
+    targets: options.targets,
+    workspaceRoot: options.workspaceRoot,
+  });
+  if (planned.classification === "ambiguous") {
+    return Object.freeze({
+      classification: "ambiguous",
+      plan: Object.freeze({
+        ...planned,
+        entries: Object.freeze([]),
+        failure: Object.freeze({ ...planned.failure }),
+      }),
+    });
+  }
+
+  const plan = freezeReadyLifecyclePlan(planned);
+  const candidates = new Map(
+    options.candidates.map(
+      (candidate) => [lifecycleSourceKey(candidate.source), candidate] as const,
+    ),
+  );
+  const fileValidations = new Map<string, Readonly<ValidationResult>>();
+  const inlineResolutions = new Map<
+    string,
+    Readonly<AvailableInlineHookInterpreterResolution> | null
+  >();
+  const entries: PreparedLifecycleHookEntry[] = [];
+
+  for (const plannedEntry of plan.entries) {
+    const key = lifecycleSourceKey(plannedEntry);
+    const candidate = candidates.get(key);
+    if (!candidate) {
+      throw new Error(`Lifecycle planner returned an unknown source for ${plannedEntry.hookName}`);
+    }
+    if (candidate.kind === "absent") {
+      entries.push(Object.freeze({ kind: "absent", plan: plannedEntry }));
+      continue;
+    }
+    if (candidate.kind === "file") {
+      let validation = fileValidations.get(key);
+      if (!validation) {
+        validation = Object.freeze(await validateHook(candidate.source.sourceScriptPath as string));
+        fileValidations.set(key, validation);
+      }
+      if (!validation.valid) {
+        return Object.freeze({
+          classification: "file-invalid",
+          plan,
+          plannedEntry,
+          validation,
+        });
+      }
+      entries.push(
+        Object.freeze({
+          kind: "file",
+          plan: plannedEntry,
+          scriptPath: candidate.source.sourceScriptPath,
+        }),
+      );
+      continue;
+    }
+
+    let resolution = inlineResolutions.get(key);
+    if (resolution === undefined) {
+      const resolved = await resolveInlineHookInterpreter({
+        env: options.env,
+        interpreters: candidate.interpreters,
+        platform: options.platform,
+      });
+      resolution = resolved.available ? Object.freeze({ ...resolved }) : null;
+      inlineResolutions.set(key, resolution);
+    }
+    if (!resolution) {
+      return Object.freeze({
+        classification: "interpreter-unavailable",
+        plan,
+        plannedEntry,
+      });
+    }
+    const snippet = candidate.interpreters[resolution.interpreter];
+    if (!snippet) {
+      throw new Error(`Prepared inline hook '${plannedEntry.hookName}' has no selected snippet`);
+    }
+    entries.push(
+      Object.freeze({
+        kind: "inline-config",
+        plan: plannedEntry,
+        resolution,
+        snippet,
+      }),
+    );
+  }
+
+  return Object.freeze({
+    classification: "ready",
+    entries: Object.freeze(entries),
+    plan,
+  });
+};
+
 export const getHookSpawnCommand = (
   scriptPath: string,
   platform: NodeJS.Platform = process.platform,
@@ -465,8 +1089,11 @@ export const buildHookEnvironment = (context: HookContext): Record<string, strin
     env.ARASHI_HOOK_SCOPE = context.hookScope;
   }
 
+  // This reserved field describes a real native source file only. Operation data
+  // must never fabricate it for an inline hook.
+  delete env.ARASHI_HOOK_SOURCE_PATH;
   if (context.sourceScriptPath) {
-    env.ARASHI_HOOK_SOURCE_PATH = context.sourceScriptPath;
+    env.ARASHI_HOOK_SOURCE_PATH = resolve(context.sourceScriptPath);
   }
 
   if (context.targetRepoName) {
@@ -542,15 +1169,37 @@ const streamRawOutput = async (
 
 const formatInteractiveHookAttribution = (options: HookExecutionOptions): string => {
   const context = options.context;
+  const sourceKind = options.sourceKind ?? "file";
+  const sourceOwnerKind =
+    options.sourceOwnerKind ??
+    (context.hookScope === "repository"
+      ? "repository"
+      : context.hookScope?.startsWith("global-")
+        ? "user-global"
+        : "workspace");
+  const sourceOwnerName =
+    sourceOwnerKind === "repository"
+      ? (options.sourceOwnerName ?? context.targetRepoName ?? null)
+      : null;
   const fields = [
     `lifecycle=${context.hookName}`,
     `scope=${context.hookScope ?? "workspace"}`,
-    `source=${context.sourceScriptPath ?? options.scriptPath}`,
+    `sourceKind=${sourceKind}`,
+    `sourceOwnerKind=${sourceOwnerKind}`,
+    `sourceOwnerName=${sourceOwnerName ?? "null"}`,
   ];
-  if (context.targetRepoName) fields.push(`repository=${context.targetRepoName}`);
-  if (context.targetWorktreePath) fields.push(`worktree=${context.targetWorktreePath}`);
-  else if (context.targetRepoPath) fields.push(`target=${context.targetRepoPath}`);
-  else fields.push(`workspace=${context.mainRepoPath ?? context.repoPath}`);
+  if (context.targetRepoName) {
+    fields.push(`targetRepository=${context.targetRepoName}`);
+  }
+  if (context.targetWorktreePath) {
+    fields.push(`targetWorktree=${context.targetWorktreePath}`);
+  }
+  if (!context.targetRepoName && !context.targetWorktreePath) {
+    fields.push(`target=${context.targetRepoPath ?? context.mainRepoPath ?? context.repoPath}`);
+  }
+  if (sourceKind === "file") {
+    fields.push(`filePath=${context.sourceScriptPath ?? options.scriptPath}`);
+  }
   return `🪝 Hook input: ${fields.join(" ")}`;
 };
 
@@ -573,32 +1222,70 @@ export const lifecycleHookExtensions = (
   platform: NodeJS.Platform = process.platform,
 ): readonly string[] => (platform === "win32" ? [".ps1", ".cmd", ".bat"] : [".sh"]);
 
-export const discoverLifecycleHookInDirectory = async (
+export class LifecycleHookAmbiguityError extends Error {
+  readonly candidates: string[];
+  readonly code = "HOOK_AMBIGUOUS" as const;
+  readonly sourceKinds: ["file", "file"];
+
+  constructor(hookName: string, candidates: string[]) {
+    super(`Ambiguous lifecycle hook '${hookName}': ${candidates.join(", ")}`);
+    this.name = "LifecycleHookAmbiguityError";
+    this.candidates = candidates;
+    this.sourceKinds = ["file", "file"];
+  }
+}
+
+export const discoverLifecycleHookCandidatesInDirectory = async (
   hookName: string,
   hooksDirectory: string,
   platform: NodeJS.Platform = process.platform,
-): Promise<string | null> => {
+): Promise<readonly string[]> => {
   const extensions = lifecycleHookExtensions(platform);
   let entries: string[];
   try {
     entries = await readdir(hooksDirectory);
   } catch {
-    return null;
+    return Object.freeze([]);
   }
   const expectedNames = extensions.map((extension) => `${hookName}${extension}`.toLowerCase());
-  const candidates = entries
-    .filter((entry) =>
-      platform === "win32"
-        ? expectedNames.includes(entry.toLowerCase())
-        : entry === `${hookName}.sh`,
-    )
-    .map((entry) => resolve(hooksDirectory, entry))
-    .toSorted(compareUnicodeScalars);
+  return Object.freeze(
+    entries
+      .filter((entry) =>
+        platform === "win32"
+          ? expectedNames.includes(entry.toLowerCase())
+          : entry === `${hookName}.sh`,
+      )
+      .map((entry) => resolve(hooksDirectory, entry))
+      .toSorted(compareUnicodeScalars),
+  );
+};
+
+export const discoverLifecycleHookInDirectory = async (
+  hookName: string,
+  hooksDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string | null> => {
+  const candidates = await discoverLifecycleHookCandidatesInDirectory(
+    hookName,
+    hooksDirectory,
+    platform,
+  );
   if (candidates.length > ONE) {
-    throw new Error(`Ambiguous lifecycle hook '${hookName}': ${candidates.join(", ")}`);
+    throw new LifecycleHookAmbiguityError(hookName, [...candidates]);
   }
   return candidates[ZERO] ?? null;
 };
+
+export const discoverLifecycleHookCandidates = async (
+  hookName: string,
+  repoPath: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<readonly string[]> =>
+  discoverLifecycleHookCandidatesInDirectory(
+    hookName,
+    join(repoPath, ".arashi", "hooks"),
+    platform,
+  );
 
 export const discoverLifecycleHook = async (
   hookName: string,
@@ -789,7 +1476,12 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
  * @param options - Hook execution options
  * @returns Complete execution result including exit code and output
  */
-const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookResult> => {
+interface NativeHookExecutionOptions extends HookExecutionOptions {
+  spawnCommand?: string[];
+  windowsVerbatimArguments?: boolean;
+}
+
+const executeHookUnpaused = async (options: NativeHookExecutionOptions): Promise<HookResult> => {
   const startTime = Date.now();
   const timeout = options.timeout ?? DEFAULT_LIFECYCLE_HOOK_TIMEOUT;
   const hookInputMode = options.hookInputMode ?? options.context.hookInputMode ?? "unavailable";
@@ -914,8 +1606,10 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       };
       return settledResult;
     }
-    const proc = runtime.spawn(getHookSpawnCommand(options.scriptPath), {
-      callBatchFile: /\.(?:cmd|bat)$/i.test(options.scriptPath),
+    const spawnCommand = options.spawnCommand ?? getHookSpawnCommand(options.scriptPath);
+    const proc = runtime.spawn(spawnCommand, {
+      callBatchFile:
+        options.spawnCommand === undefined && /\.(?:cmd|bat)$/i.test(options.scriptPath),
       cwd: options.context.repoPath,
       env: buildHookEnvironment({ ...options.context, hookInputMode }),
       extraStdio: lineageDescriptor === undefined ? [] : [lineageDescriptor],
@@ -923,6 +1617,7 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
       stdin: hookInputMode === "tty" ? "inherit" : "ignore",
       stderr: "pipe",
       stdout: "pipe",
+      windowsVerbatimArguments: options.windowsVerbatimArguments,
     });
     if (lineageDescriptor !== undefined) {
       closeSync(lineageDescriptor);
@@ -1189,6 +1884,94 @@ const executeHookUnpaused = async (options: HookExecutionOptions): Promise<HookR
 
 export const executeHook = (options: HookExecutionOptions): Promise<HookResult> =>
   withSpinnerPaused(options.outputSpinner, () => executeHookUnpaused(options));
+
+export const getInlineHookSpawnCommand = (
+  executablePath: string,
+  interpreter: InlineHookInterpreter,
+  snippet: string,
+): string[] => {
+  if (interpreter === "bash") {
+    return [executablePath, "-c", snippet];
+  }
+  if (interpreter === "powershell") {
+    return [
+      executablePath,
+      "-NoLogo",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      snippet,
+    ];
+  }
+  return [executablePath, "/d", "/e:on", "/v:off", "/s", "/c", snippet];
+};
+
+export interface InlineHookSourceMetadata {
+  sourceKind: "inline-config";
+  sourceOwnerKind: "repository" | "workspace";
+  sourceOwnerName: string | null;
+  sourceScriptPath: null;
+}
+
+export interface ExecuteInlineHookOptions {
+  context: HookContext;
+  hookInputMode?: HookInputMode;
+  hookName: string;
+  outputSpinner?: PausableSpinner | null;
+  progress?: boolean;
+  quiet?: boolean;
+  resolution: AvailableInlineHookInterpreterResolution;
+  snippet: string;
+  source: InlineHookSourceMetadata;
+  timeout?: number;
+}
+
+export const executeInlineHook = async (
+  options: ExecuteInlineHookOptions,
+): Promise<{ outcome: Record<string, unknown>; result: HookResult }> => {
+  const executionOptions: NativeHookExecutionOptions = {
+    context: {
+      ...options.context,
+      hookName: options.hookName,
+      sourceScriptPath: undefined,
+    },
+    hookInputMode: options.hookInputMode,
+    hookName: options.hookName,
+
+    outputSpinner: options.outputSpinner,
+    quiet: options.quiet,
+    scriptPath: options.resolution.executablePath,
+    sourceKind: options.source.sourceKind,
+    sourceOwnerKind: options.source.sourceOwnerKind,
+    sourceOwnerName: options.source.sourceOwnerName,
+    spawnCommand: getInlineHookSpawnCommand(
+      options.resolution.executablePath,
+      options.resolution.interpreter,
+      options.snippet,
+    ),
+    timeout: options.timeout,
+    windowsVerbatimArguments: options.resolution.interpreter === "cmd",
+  };
+  const result = await withSpinnerPaused(
+    options.quiet === true || options.progress === false ? undefined : options.outputSpinner,
+    () => executeHookUnpaused(executionOptions),
+  );
+  const mapped = mapHookExecutionResult(result);
+  return {
+    outcome: {
+      environment: null,
+      errors: [],
+      findings: [],
+      hookName: options.hookName,
+      logs: [],
+      ...mapped,
+      previews: [],
+      ...options.source,
+    },
+    result,
+  };
+};
 
 /**
  * High-level function to discover, validate, and execute a hook for a lifecycle point.

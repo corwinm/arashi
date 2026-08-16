@@ -33,6 +33,10 @@
           "additionalProperties": false,
           "description": "Optional workspace-level hooks settings",
           "properties": {
+            "scripts": {
+              "$ref": "#/definitions/InlineHookScripts",
+              "description": "Workspace inline lifecycle hooks"
+            },
             "timeout": {
               "description": "Lifecycle-hook timeout in milliseconds (default: 300000)",
               "maximum": 2147483647,
@@ -144,6 +148,66 @@
       },
       "type": "object"
     },
+    "InlineHookInterpreter": {
+      "enum": ["bash", "powershell", "cmd"],
+      "type": "string"
+    },
+    "InlineHookInterpreterMap": {
+      "additionalProperties": false,
+      "description": "Interpreter-specific alternatives for one inline lifecycle hook.",
+      "minProperties": 1,
+      "properties": {
+        "bash": {
+          "$ref": "#/definitions/InlineHookSnippet"
+        },
+        "cmd": {
+          "$ref": "#/definitions/InlineHookSnippet"
+        },
+        "powershell": {
+          "$ref": "#/definitions/InlineHookSnippet"
+        }
+      },
+      "type": "object"
+    },
+    "InlineHookScripts": {
+      "additionalProperties": false,
+      "description": "Closed set of supported inline lifecycle hooks.",
+      "properties": {
+        "post-create": {
+          "$ref": "#/definitions/InlineHookValue"
+        },
+        "post-remove": {
+          "$ref": "#/definitions/InlineHookValue"
+        },
+        "pre-create": {
+          "$ref": "#/definitions/InlineHookValue"
+        },
+        "pre-remove": {
+          "$ref": "#/definitions/InlineHookValue"
+        }
+      },
+      "type": "object"
+    },
+    "InlineHookSnippet": {
+      "description": "Non-empty inline hook snippet.",
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "InlineHookValue": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/InlineHookInterpreter"
+        },
+        {
+          "$ref": "#/definitions/InlineHookSnippet"
+        },
+        {
+          "$ref": "#/definitions/InlineHookInterpreterMap"
+        }
+      ],
+      "description": "Bash shorthand or interpreter-specific alternatives for one inline hook."
+    },
     "RepoConfig": {
       "additionalProperties": false,
       "description": "Configuration for a single repository",
@@ -158,6 +222,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "hooks": {
+          "$ref": "#/definitions/InlineHookScripts",
+          "description": "Optional repository-targeted inline lifecycle hooks"
         },
         "path": {
           "description": "Path to the repository (relative or absolute)",

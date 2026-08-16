@@ -1,11 +1,15 @@
 import {
   GLOBAL_HOOKS,
+  discoverLifecycleHookCandidates,
+  discoverLifecycleHookCandidatesInDirectory,
   discoverLifecycleHook,
   getRepoSpecificHookName,
   lifecycleHookExtensions,
+  prepareLifecycleHookSources,
   resolveScopedLifecycleHooks,
   validateHook,
 } from "./hooks.ts";
+import type { LifecycleHookPreparationCandidate } from "./hooks.ts";
 import { basename, join, resolve } from "path";
 import {
   checkAllRepos,
@@ -484,6 +488,196 @@ const scanHookDirectoryForUnsupportedFiles = async (
   }
 };
 
+const collectInlineHookFindings = async (
+  configurationRoot: string,
+  executionRoot: string,
+  config: Config,
+): Promise<DoctorFinding[]> => {
+  const findings: DoctorFinding[] = [];
+  const repoNames = Object.keys(config.repos);
+  const inspect = async (options: {
+    executionPath: string;
+    filePaths: readonly string[];
+    interpreters: Partial<Record<"bash" | "cmd" | "powershell", string>>;
+    lifecycle: "post-create" | "post-remove" | "pre-create" | "pre-remove";
+    ownerKind: "repository" | "workspace";
+    ownerName: string | null;
+  }): Promise<void> => {
+    const candidates: LifecycleHookPreparationCandidate[] = [
+      ...options.filePaths.map(
+        (sourceScriptPath): LifecycleHookPreparationCandidate => ({
+          kind: "file",
+          source: {
+            executionPath: options.executionPath,
+            lifecycle: options.lifecycle,
+            scope: options.ownerKind,
+            sourceKind: "file",
+            sourceOwnerKind: options.ownerKind,
+            sourceOwnerName: options.ownerName,
+            sourceScriptPath,
+          },
+        }),
+      ),
+      {
+        interpreters: options.interpreters,
+        kind: "inline-config",
+        source: {
+          executionPath: options.executionPath,
+          lifecycle: options.lifecycle,
+          scope: options.ownerKind,
+          sourceKind: "inline-config",
+          sourceOwnerKind: options.ownerKind,
+          sourceOwnerName: options.ownerName,
+          sourceScriptPath: null,
+        },
+      },
+    ];
+    const repositoryName = options.ownerName ?? repoNames[ZERO] ?? basename(executionRoot);
+    const repositoryPath = options.ownerName
+      ? resolve(executionRoot, config.repos[options.ownerName]?.path ?? ".")
+      : executionRoot;
+    const preparation = await prepareLifecycleHookSources({
+      candidates,
+      consumer: "doctor",
+      env: process.env,
+      platform: process.platform,
+      targets: [{ branchName: "", repositoryName, repositoryPath, worktreePath: repositoryPath }],
+      workspaceRoot: executionRoot,
+    });
+    const findingScope = `hook:${options.ownerKind}:${options.ownerName ?? "workspace"}:${options.lifecycle}`;
+    if (preparation.classification === "ambiguous") {
+      const failure = preparation.plan.failure;
+      findings.push(
+        createFinding({
+          category: "hook",
+          code: "HOOK_AMBIGUOUS",
+          details: {
+            hookName: failure.hookName,
+            scope: failure.scope,
+            sourceKinds: failure.sourceKinds,
+            sourceOwnerKind: failure.sourceOwnerKind,
+            sourceOwnerName: failure.sourceOwnerName,
+            sourceScriptPath: failure.sourceScriptPath,
+          },
+          message: `Hook source is ambiguous for ${failure.hookName}.`,
+          scope: findingScope,
+          severity: "error",
+          suggestedCommands: ["Remove all but one hook source at this logical location"],
+        }),
+      );
+      return;
+    }
+    if (preparation.classification === "interpreter-unavailable") {
+      findings.push(
+        createFinding({
+          category: "hook",
+          code: "HOOK_INTERPRETER_UNAVAILABLE",
+          details: {
+            configuredInterpreterKeys: Object.keys(options.interpreters).toSorted(),
+            hookName: options.lifecycle,
+            scope: options.ownerKind,
+            sourceKind: "inline-config",
+            sourceOwnerKind: options.ownerKind,
+            sourceOwnerName: options.ownerName,
+            sourceScriptPath: null,
+          },
+          message: `No configured interpreter is available for ${options.lifecycle}.`,
+          scope: findingScope,
+          severity: "error",
+          suggestedCommands: [
+            "Install one configured interpreter or update the hook configuration",
+          ],
+        }),
+      );
+      return;
+    }
+    if (preparation.classification === "ready") {
+      findings.push(
+        createFinding({
+          category: "hook",
+          code: "HOOK_CONFIGURED",
+          details: {
+            hookName: options.lifecycle,
+            scope: options.ownerKind,
+            sourceKind: "inline-config",
+            sourceOwnerKind: options.ownerKind,
+            sourceOwnerName: options.ownerName,
+            sourceScriptPath: null,
+          },
+          message: `Configured inline hook '${options.lifecycle}' is available.`,
+          scope: findingScope,
+          severity: "info",
+          suggestedCommands: [],
+        }),
+      );
+    }
+  };
+
+  for (const lifecycle of ["pre-create", "post-create"] as const) {
+    const workspaceInline = config.hooks?.scripts?.[lifecycle];
+    if (workspaceInline) {
+      await inspect({
+        executionPath: executionRoot,
+        filePaths: await discoverLifecycleHookCandidates(lifecycle, configurationRoot),
+        interpreters:
+          typeof workspaceInline === "string" ? { bash: workspaceInline } : workspaceInline,
+        lifecycle,
+        ownerKind: "workspace",
+        ownerName: null,
+      });
+    }
+    for (const [repository, repositoryConfig] of Object.entries(config.repos)) {
+      const inline = repositoryConfig.hooks?.[lifecycle];
+      if (!inline) continue;
+      await inspect({
+        executionPath: resolve(executionRoot, repositoryConfig.path),
+        filePaths: await discoverLifecycleHookCandidates(
+          getRepoSpecificHookName(lifecycle, repository),
+          configurationRoot,
+        ),
+        interpreters: typeof inline === "string" ? { bash: inline } : inline,
+        lifecycle,
+        ownerKind: "repository",
+        ownerName: repository,
+      });
+    }
+  }
+  for (const lifecycle of ["pre-remove", "post-remove"] as const) {
+    const workspaceInline = config.hooks?.scripts?.[lifecycle];
+    if (workspaceInline) {
+      await inspect({
+        executionPath: executionRoot,
+        filePaths: await discoverLifecycleHookCandidatesInDirectory(
+          lifecycle,
+          join(configurationRoot, ".arashi", "hooks"),
+        ),
+        interpreters:
+          typeof workspaceInline === "string" ? { bash: workspaceInline } : workspaceInline,
+        lifecycle,
+        ownerKind: "workspace",
+        ownerName: null,
+      });
+    }
+    for (const [repository, repositoryConfig] of Object.entries(config.repos)) {
+      const inline = repositoryConfig.hooks?.[lifecycle];
+      if (!inline) continue;
+      const repositoryPath = resolve(executionRoot, repositoryConfig.path);
+      await inspect({
+        executionPath: repositoryPath,
+        filePaths: await discoverLifecycleHookCandidatesInDirectory(
+          lifecycle,
+          join(repositoryPath, ".arashi", "hooks"),
+        ),
+        interpreters: typeof inline === "string" ? { bash: inline } : inline,
+        lifecycle,
+        ownerKind: "repository",
+        ownerName: repository,
+      });
+    }
+  }
+  return findings;
+};
+
 const collectHookFindings = async (
   configurationRoot: string,
   executionRoot: string,
@@ -491,7 +685,11 @@ const collectHookFindings = async (
 ): Promise<DoctorFinding[]> => {
   const targetRepositories = createRepositoryTargets(executionRoot, config);
   const repoNames = Object.keys(config.repos);
-  const findings: DoctorFinding[] = [];
+  const findings: DoctorFinding[] = await collectInlineHookFindings(
+    configurationRoot,
+    executionRoot,
+    config,
+  );
   const hookNames = [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove];
 
   for (const hookName of hookNames) {
