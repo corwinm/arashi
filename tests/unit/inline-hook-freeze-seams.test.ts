@@ -34,6 +34,27 @@ const availableBashResolution = async (): Promise<AvailableInlineHookInterpreter
   return resolution;
 };
 
+const availableWindowsResolution = async (
+  interpreter: "cmd" | "powershell",
+): Promise<AvailableInlineHookInterpreterResolution> => {
+  const resolution = await resolveInlineHookInterpreter({
+    env: process.env,
+    interpreters: { [interpreter]: "diagnostic redaction acceptance" },
+    isExecutableFile: async (path) =>
+      access(path).then(
+        () => true,
+        () => false,
+      ),
+    platform: process.platform,
+    realpath,
+  });
+  expect(resolution).toMatchObject({ available: true, interpreter });
+  if (!resolution.available) {
+    throw new Error(`Expected ${interpreter} to be available for inline executor tests`);
+  }
+  return resolution;
+};
+
 const makeRoot = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "arashi-inline-freeze-"));
   roots.push(root);
@@ -321,4 +342,66 @@ describe("AC-09 additive metadata, exact capture, and exhaustive secrecy seam", 
       expect(publicProjection).not.toContain(snippet);
     },
   );
+
+  test.runIf(process.platform !== "win32")(
+    "redacts a multiline inline source line repeated by Bash diagnostics",
+    async () => {
+      const root = await makeRoot();
+      const resolution = await availableBashResolution();
+      const snippet = [`printf 'safe\\n'`, `printf '${canary}'; )`].join("\n");
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const execution = await executeInlineHook({
+        context: { hookName: "pre-create.alpha", operationData: {}, repoPath: root },
+        hookName: "pre-create.alpha",
+        quiet: false,
+        resolution,
+        snippet,
+        source: {
+          sourceKind: "inline-config",
+          sourceOwnerKind: "repository",
+          sourceOwnerName: "alpha",
+          sourceScriptPath: null,
+        },
+        timeout: 1000,
+      });
+
+      expect(execution.result.success).toBe(false);
+      const publicProjection = JSON.stringify({
+        logs: log.mock.calls,
+        outcome: execution.outcome,
+        result: execution.result,
+      });
+      expect(publicProjection).not.toContain(canary);
+      expect(publicProjection).not.toContain(snippet);
+      expect(publicProjection).toContain("[inline hook snippet redacted]");
+    },
+  );
+
+  test.runIf(process.platform === "win32").each([
+    ["powershell" as const, [`Write-Output 'safe'`, `Write-Output '${canary}'; )`].join("\r\n")],
+    ["cmd" as const, [`echo safe`, `echo ${canary} & )`].join("\r\n")],
+  ])("redacts multiline %s interpreter diagnostics", async (interpreter, snippet) => {
+    const root = await makeRoot();
+    const resolution = await availableWindowsResolution(interpreter);
+
+    const execution = await executeInlineHook({
+      context: { hookName: "pre-create.alpha", operationData: {}, repoPath: root },
+      hookName: "pre-create.alpha",
+      quiet: true,
+      resolution,
+      snippet,
+      source: {
+        sourceKind: "inline-config",
+        sourceOwnerKind: "repository",
+        sourceOwnerName: "alpha",
+        sourceScriptPath: null,
+      },
+      timeout: 5000,
+    });
+
+    expect(execution.result.success).toBe(false);
+    expect(JSON.stringify(execution)).not.toContain(canary);
+    expect(JSON.stringify(execution)).not.toContain(snippet);
+  });
 });

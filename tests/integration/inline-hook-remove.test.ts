@@ -277,6 +277,36 @@ printf '${label}|%s|%s|%s|%s\\n' "$ARASHI_REPO_NAME" "$ARASHI_HOOK_SCOPE" "$ARAS
   );
 
   test.runIf(process.platform !== "win32")(
+    "fails mixed valid and unavailable real remove before hooks or mutation",
+    async () => {
+      const branch = "feature-inline-remove-mixed-preflight";
+      const worktrees = await createWorktreesForBranch(workspace, branch, false);
+      const marker = join(workspace.rootPath, ".arashi", "mixed-valid-hook-ran");
+      await configureInlineRemove({ "pre-remove": { cmd: "exit /b 0" } }, (repositoryName) =>
+        repositoryName === "repo-a" ? { "pre-remove": `touch '${marker}'` } : {},
+      );
+
+      const result = await runArashi(
+        workspace.rootPath,
+        ["remove", branch, "--force", "--json"],
+        home,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.error.code).toBe("HOOK_CONFIGURATION_INVALID");
+      expect(envelope.error.details.operations).toEqual([]);
+      expect(await pathExists(marker)).toBe(false);
+      for (const path of Object.values(worktrees)) {
+        expect(await pathExists(path)).toBe(true);
+      }
+      for (const repository of workspace.repos) {
+        expect(await branchExists(repository.path, branch)).toBe(true);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
     "previews invalid native hooks without fabricating outcomes or mutating targets",
     async () => {
       const branch = "feature-inline-remove-invalid-file-preview";

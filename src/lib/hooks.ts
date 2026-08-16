@@ -1479,12 +1479,24 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
  * @returns Complete execution result including exit code and output
  */
 interface NativeHookExecutionOptions extends HookExecutionOptions {
+  redactedErrorValues?: readonly string[];
   redactedOutputValues?: readonly string[];
   spawnCommand?: string[];
   windowsVerbatimArguments?: boolean;
 }
 
 const REDACTED_INLINE_OUTPUT = "[inline hook snippet redacted]";
+
+const inlineSnippetDiagnosticRedactionValues = (snippet: string): readonly string[] =>
+  Object.freeze([
+    ...new Set([
+      snippet,
+      ...snippet
+        .split(/\r?\n/u)
+        .flatMap((line) => [line, line.trim()])
+        .filter((line) => line.length > ZERO),
+    ]),
+  ]);
 
 const concatenateBytes = (
   left: Uint8Array<ArrayBufferLike>,
@@ -1910,7 +1922,10 @@ const executeHookUnpaused = async (options: NativeHookExecutionOptions): Promise
         if (timeoutEscalation) clearTimeout(timeoutEscalation);
       });
       const stdoutStream = redactHookOutputStream(proc.stdout, options.redactedOutputValues);
-      const stderrStream = redactHookOutputStream(proc.stderr, options.redactedOutputValues);
+      const stderrStream = redactHookOutputStream(
+        proc.stderr,
+        options.redactedErrorValues ?? options.redactedOutputValues,
+      );
       const [stdout, stderr] = interactiveOutput
         ? await Promise.all([
             streamRawOutput(stdoutStream, (chunk) => process.stdout.write(chunk)),
@@ -2047,6 +2062,7 @@ export const executeInlineHook = async (
 
     outputSpinner: options.outputSpinner,
     quiet: options.quiet,
+    redactedErrorValues: inlineSnippetDiagnosticRedactionValues(options.snippet),
     redactedOutputValues: [options.snippet],
     scriptPath: options.resolution.executablePath,
     sourceKind: options.source.sourceKind,
