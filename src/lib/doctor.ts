@@ -30,15 +30,8 @@ import {
 
 const ZERO = 0;
 
-export const quoteDoctorShellArgument = (
-  value: string,
-  platform: NodeJS.Platform = process.platform,
-): string => {
-  if (platform === "win32") {
-    return `'${value.replaceAll("'", "''")}'`;
-  }
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-};
+export const quoteDoctorShellArgument = (value: string): string =>
+  `'${value.replaceAll("'", `'"'"'`)}'`;
 
 type RepoStatus = Awaited<ReturnType<typeof checkAllRepos>>[number];
 type RepositoryTarget = Parameters<typeof discoverPrunableWorktrees>[0][number];
@@ -195,6 +188,7 @@ const createRepositoryTargets = (workspaceRoot: string, config: Config): Reposit
 export const repositoryStatusToDoctorFindings = (
   status: RepoStatus,
   upstreamInspection: UpstreamTrackingInspection = { kind: "not-applicable" },
+  platform: NodeJS.Platform = process.platform,
 ): DoctorFinding[] => {
   const findings: DoctorFinding[] = [];
   const scope = `repository:${status.name}`;
@@ -266,16 +260,23 @@ export const repositoryStatusToDoctorFindings = (
     const conflictingFetchRefspecs = upstreamInspection.conflictingFetchRefspecs ?? [];
     const fetchConfigKey = quoteDoctorShellArgument(`remote.${upstreamInspection.remote}.fetch`);
     const hasConflictingDestination = conflictingFetchRefspecs.length > 0;
-    const message = hasConflictingDestination
+    const baseMessage = hasConflictingDestination
       ? `Repository '${status.name}' branch '${upstreamInspection.localBranch}' has upstream configuration, but Git cannot use ${upstreamInspection.remote}/${upstreamInspection.remoteBranch} because remote '${upstreamInspection.remote}' has fetch mappings that conflict at the expected tracking namespace; review the conflicting fetch mappings manually.`
       : `Repository '${status.name}' branch '${upstreamInspection.localBranch}' has upstream configuration, but Git cannot use ${upstreamInspection.remote}/${upstreamInspection.remoteBranch} because remote '${upstreamInspection.remote}' has no covering fetch mapping.`;
-    const suggestedCommands = hasConflictingDestination
-      ? [`git -C ${quotedPath} config --get-all ${fetchConfigKey}`]
-      : [
-          `git -C ${quotedPath} config --add ${fetchConfigKey} ${quoteDoctorShellArgument(fetchRefspec)}`,
-          `git -C ${quotedPath} fetch ${quotedRemote}`,
-          `git -C ${quotedPath} branch ${quoteDoctorShellArgument(`--set-upstream-to=${upstreamInspection.remote}/${upstreamInspection.remoteBranch}`)} ${quoteDoctorShellArgument(upstreamInspection.localBranch)}`,
-        ];
+    const message =
+      platform === "win32"
+        ? `${baseMessage} Review the structured details and run equivalent Git commands in your active Windows shell; doctor does not emit shell-ambiguous copy-paste commands on Windows.`
+        : baseMessage;
+    const suggestedCommands =
+      platform === "win32"
+        ? []
+        : hasConflictingDestination
+          ? [`git -C ${quotedPath} config --get-all ${fetchConfigKey}`]
+          : [
+              `git -C ${quotedPath} config --add ${fetchConfigKey} ${quoteDoctorShellArgument(fetchRefspec)}`,
+              `git -C ${quotedPath} fetch ${quotedRemote}`,
+              `git -C ${quotedPath} branch ${quoteDoctorShellArgument(`--set-upstream-to=${upstreamInspection.remote}/${upstreamInspection.remoteBranch}`)} ${quoteDoctorShellArgument(upstreamInspection.localBranch)}`,
+            ];
     findings.push(
       createFinding({
         category: "repository",

@@ -493,15 +493,35 @@ describe("arashi doctor", () => {
 });
 
 describe("repositoryStatusToDoctorFindings", () => {
-  test("quotes Git-derived remediation arguments for POSIX and PowerShell", () => {
+  test("quotes Git-derived remediation arguments for POSIX shells", () => {
     const value = "feature/'$(touch${IFS}/tmp/arashi293)";
 
-    expect(quoteDoctorShellArgument(value, "darwin")).toBe(
-      `'feature/'"'"'$(touch\${IFS}/tmp/arashi293)'`,
+    expect(quoteDoctorShellArgument(value)).toBe(`'feature/'"'"'$(touch\${IFS}/tmp/arashi293)'`);
+  });
+
+  test("does not emit shell-ambiguous remediation commands on Windows", () => {
+    const status = baseStatus();
+    status.branch.remoteBranch = null;
+
+    const findings = repositoryStatusToDoctorFindings(
+      status,
+      {
+        conflictingFetchRefspecs: [],
+        expectedRemoteTrackingRef: "refs/remotes/origin/main",
+        kind: "missing-fetch-mapping",
+        localBranch: "main",
+        mergeRef: "refs/heads/main",
+        remote: "origin",
+        remoteBranch: "main",
+      },
+      "win32",
     );
-    expect(quoteDoctorShellArgument(value, "win32")).toBe(
-      "'feature/''$(touch${IFS}/tmp/arashi293)'",
+
+    const finding = findings.find(
+      (candidate) => candidate.code === "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
     );
+    expect(finding?.message).toContain("active Windows shell");
+    expect(finding?.suggestedCommands).toEqual([]);
   });
 
   test("classifies branch divergence and default branch drift", () => {
