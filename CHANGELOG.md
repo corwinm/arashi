@@ -1,3 +1,10 @@
+## [1.31.0](https://github.com/corwinm/arashi/compare/v1.30.0...v1.31.0) (2026-08-16)
+
+### Features
+
+- add aw executable alias ([#139](https://github.com/corwinm/arashi/issues/139)) ([a193260](https://github.com/corwinm/arashi/commit/a1932607070b51f8fef76a891d5499a3d19a5006))
+- support inline lifecycle hook scripts ([#138](https://github.com/corwinm/arashi/issues/138)) ([cbe588d](https://github.com/corwinm/arashi/commit/cbe588d37e2f9c5ee82587dae43a48e48431b06b))
+
 ## [1.30.0](https://github.com/corwinm/arashi/compare/v1.29.0...v1.30.0) (2026-08-15)
 
 ### Features
