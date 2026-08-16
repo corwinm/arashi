@@ -26,6 +26,12 @@ $WindowsBinaryAsset = "arashi-windows-x64.exe"
 $BashWrapperAsset = "arashi"
 $PowerShellWrapperAsset = "arashi.ps1"
 $CmdWrapperAsset = "arashi.bat"
+$AliasBashWrapperAsset = "aw"
+$AliasPowerShellWrapperAsset = "aw.ps1"
+$AliasCmdWrapperAsset = "aw.bat"
+$AliasMarker = "arashi-managed-alias:aw:v1"
+$OwnershipLedgerName = ".arashi-managed-entrypoints.json"
+$OwnershipLedgerSchemaVersion = 1
 $ChecksumManifestAsset = "arashi-checksums.txt"
 $InstalledBinaryName = "arashi.bin.exe"
 $ReleaseFallbackUrl = "https://github.com/$Repository/releases/latest"
@@ -43,7 +49,7 @@ function Write-WarningMessage {
 function Fail-Install {
     param([Parameter(Mandatory = $true)][string]$Message)
     [Console]::Error.WriteLine($Message)
-    [Console]::Error.WriteLine("Manual fallback: download $WindowsBinaryAsset, $PowerShellWrapperAsset, and $CmdWrapperAsset, plus $BashWrapperAsset, from $ReleaseFallbackUrl into one directory on PATH; rename the executable to $InstalledBinaryName.")
+    [Console]::Error.WriteLine("Manual fallback: download $WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, and $AliasCmdWrapperAsset from $ReleaseFallbackUrl into one directory on PATH; rename the executable to $InstalledBinaryName.")
     exit 1
 }
 
@@ -182,6 +188,177 @@ function Assert-ArashiChecksum {
     }
 }
 
+function Get-ArashiFileHash {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+}
+
+function Test-ArashiGitForWindowsRoot {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    try {
+        $fullRoot = [System.IO.Path]::GetFullPath($Root)
+    } catch {
+        return $false
+    }
+    return (
+        (Test-Path -LiteralPath (Join-Path $fullRoot "cmd\git.exe") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $fullRoot "bin\bash.exe") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $fullRoot "usr\bin\cygpath.exe") -PathType Leaf)
+    )
+}
+
+function Get-ArashiGitForWindowsBash {
+    $candidateRoots = New-Object System.Collections.Generic.List[string]
+    foreach ($registryPath in @(
+        "HKCU:\Software\GitForWindows",
+        "HKLM:\Software\GitForWindows",
+        "HKLM:\Software\WOW6432Node\GitForWindows"
+    )) {
+        try {
+            $installPath = (Get-ItemProperty -LiteralPath $registryPath -Name InstallPath -ErrorAction Stop).InstallPath
+            if (-not [string]::IsNullOrWhiteSpace($installPath)) { $candidateRoots.Add($installPath) }
+        } catch {
+            # Registry discovery is optional; verified filesystem layouts below remain authoritative.
+        }
+    }
+    foreach ($programFilesRoot in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LocalAppData)) {
+        if (-not [string]::IsNullOrWhiteSpace($programFilesRoot)) {
+            $candidateRoots.Add((Join-Path $programFilesRoot "Git"))
+            if ($programFilesRoot -eq $env:LocalAppData) {
+                $candidateRoots.Add((Join-Path $programFilesRoot "Programs\Git"))
+            }
+        }
+    }
+    foreach ($gitCommand in @(Get-Command git.exe -All -ErrorAction SilentlyContinue)) {
+        if ([string]::IsNullOrWhiteSpace($gitCommand.Path)) { continue }
+        $gitDirectory = Split-Path -Parent $gitCommand.Path
+        $candidateRoots.Add((Split-Path -Parent $gitDirectory))
+        if ((Split-Path -Leaf $gitDirectory) -ieq "bin") {
+            $candidateRoots.Add((Split-Path -Parent (Split-Path -Parent $gitDirectory)))
+        }
+    }
+
+    $seen = @{}
+    foreach ($root in $candidateRoots) {
+        try { $fullRoot = [System.IO.Path]::GetFullPath($root).TrimEnd('\') } catch { continue }
+        if ($seen.ContainsKey($fullRoot)) { continue }
+        $seen[$fullRoot] = $true
+        if (Test-ArashiGitForWindowsRoot -Root $fullRoot) {
+            return (Join-Path $fullRoot "bin\bash.exe")
+        }
+    }
+    return $null
+}
+
+function Assert-ArashiAliasOwnership {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallDirectory,
+        [string[]]$AliasNames = @($AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset),
+        [scriptblock]$ResolveCommands
+    )
+
+    $ledgerPath = Join-Path $InstallDirectory $OwnershipLedgerName
+    $ledgerItem = Get-Item -LiteralPath $ledgerPath -Force -ErrorAction SilentlyContinue
+    $ledgerExists = $null -ne $ledgerItem
+    $ledger = $null
+    if ($ledgerExists) {
+        $ledgerReparse = ($ledgerItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+        if ($ledgerItem.PSIsContainer -or $ledgerReparse) { throw "Ownership ledger collision at $ledgerPath is not a regular file; move or remove it deliberately before retrying." }
+        try { $ledger = Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json } catch { throw "Malformed ownership ledger at $ledgerPath; move or remove it deliberately before retrying." }
+        $ledgerProperties = @($ledger.PSObject.Properties.Name | Sort-Object)
+        if (($ledgerProperties -join ',') -cne 'aliases,installDirectory,releaseVersion,schemaVersion') { throw "Ownership ledger property-set defect at $ledgerPath; move or remove it deliberately before retrying." }
+        if ($ledger.schemaVersion -ne $OwnershipLedgerSchemaVersion) { throw "Unsupported ownership ledger schemaVersion at $ledgerPath; move or remove it deliberately before retrying." }
+        if ($ledger.releaseVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw "Ownership ledger releaseVersion defect at $ledgerPath; move or remove it deliberately before retrying." }
+        if ([System.IO.Path]::GetFullPath($ledger.installDirectory) -ine [System.IO.Path]::GetFullPath($InstallDirectory)) { throw "Ownership ledger installDirectory mismatch at $ledgerPath; move or remove it deliberately before retrying." }
+        if (@($ledger.aliases).Count -ne $AliasNames.Count) { throw "Ownership ledger alias set mismatch at $ledgerPath; move or remove it deliberately before retrying." }
+        foreach ($entry in @($ledger.aliases)) {
+            $entryProperties = @($entry.PSObject.Properties.Name | Sort-Object)
+            if (($entryProperties -join ',') -cne 'path,sha256' -or $entry.sha256 -notmatch '^[a-f0-9]{64}$') { throw "Ownership ledger alias-entry defect at $ledgerPath; move or remove it deliberately before retrying." }
+        }
+    }
+
+    foreach ($aliasName in $AliasNames) {
+        $aliasPath = Join-Path $InstallDirectory $aliasName
+        $item = Get-Item -LiteralPath $aliasPath -Force -ErrorAction SilentlyContinue
+        $exists = $null -ne $item
+        if ($exists) {
+            $isReparsePoint = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+            if ($item.PSIsContainer -or $isReparsePoint) { throw "Alias collision at $aliasPath is not a regular file; move or remove it deliberately before retrying." }
+            try { $contents = Get-Content -LiteralPath $aliasPath -Raw -ErrorAction Stop } catch { throw "Alias collision at $aliasPath is unreadable; move or remove it deliberately before retrying." }
+            if ($contents -notmatch [regex]::Escape($AliasMarker)) { throw "Unrelated alias collision at $aliasPath; move or remove it deliberately before retrying." }
+            if ($null -eq $ledger) { throw "Marked manual alias $aliasPath has no installer ownership ledger; move or remove it deliberately before retrying." }
+            $entry = @($ledger.aliases | Where-Object { [System.IO.Path]::GetFullPath($_.path) -ieq [System.IO.Path]::GetFullPath($aliasPath) })
+            if ($entry.Count -ne 1) { throw "Ownership ledger path mismatch for $aliasPath; move or remove it deliberately before retrying." }
+            if ($entry[0].sha256 -cne (Get-ArashiFileHash -Path $aliasPath)) { throw "Ownership ledger hash mismatch for $aliasPath; move or remove it deliberately before retrying." }
+        } elseif ($null -ne $ledger) {
+            throw "Ownership ledger $ledgerPath claims a missing alias $aliasPath; move or remove it deliberately before retrying."
+        }
+    }
+
+    $resolvedCommands = @()
+    if ($null -ne $ResolveCommands) {
+        $resolvedCommands = @(& $ResolveCommands)
+    } else {
+        $powerShell = Get-Command aw -All -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandType -in @("Application", "ExternalScript") -and -not [string]::IsNullOrWhiteSpace($_.Path) } |
+            ForEach-Object { $_.Path }
+        $cmd = @(
+            foreach ($directory in @($env:Path -split ';')) {
+                $expandedDirectory = [Environment]::ExpandEnvironmentVariables($directory.Trim().Trim('"'))
+                if ([string]::IsNullOrWhiteSpace($expandedDirectory)) { continue }
+                foreach ($name in @('aw.com', 'aw.exe', 'aw.bat', 'aw.cmd')) {
+                    $candidate = Join-Path $expandedDirectory $name
+                    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                        [System.IO.Path]::GetFullPath($candidate)
+                    }
+                }
+            }
+        )
+        $bashPath = Get-ArashiGitForWindowsBash
+        $gitBash = if ($bashPath) {
+            & $bashPath --noprofile --norc -c 'candidate=$(type -P aw) || exit 0; cygpath -w -- "$candidate"' 2>$null
+        } else { @() }
+        $resolvedCommands = @($powerShell) + @($cmd) + @($gitBash)
+    }
+    $managedAliasPaths = @(
+        $AliasNames | ForEach-Object { [System.IO.Path]::GetFullPath((Join-Path $InstallDirectory $_)) }
+    )
+    foreach ($resolved in $resolvedCommands | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) {
+        $candidate = $resolved.ToString().Trim()
+        if ($candidate -match '^/[a-zA-Z]/') { $candidate = $candidate.Substring(1, 1) + ":" + $candidate.Substring(2).Replace('/', '\') }
+        $candidatePath = [System.IO.Path]::GetFullPath($candidate)
+        $candidateDirectory = Split-Path -Parent $candidatePath
+        if ($candidateDirectory.TrimEnd('\') -ine ([System.IO.Path]::GetFullPath($InstallDirectory)).TrimEnd('\')) {
+            throw "Unrelated aw command resolves to $resolved outside $InstallDirectory; move or remove it deliberately before retrying."
+        }
+        if ($managedAliasPaths -notcontains $candidatePath) {
+            throw "Unrelated aw command resolves to $resolved but is not an installer-managed alias destination; move or remove it deliberately before retrying."
+        }
+    }
+}
+
+function Write-ArashiOwnershipLedger {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$InstallDirectory,
+        [Parameter(Mandatory = $true)][string]$ReleaseVersion,
+        [Parameter(Mandatory = $true)][array]$Aliases
+    )
+    $ledger = [ordered]@{
+        schemaVersion = $OwnershipLedgerSchemaVersion
+        installDirectory = [System.IO.Path]::GetFullPath($InstallDirectory)
+        releaseVersion = $ReleaseVersion
+        aliases = @($Aliases | ForEach-Object { [ordered]@{ path = [System.IO.Path]::GetFullPath($_.Path); sha256 = $_.Hash } })
+    }
+    $temporaryPath = "$Path.arashi-install-$([System.Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($temporaryPath, (($ledger | ConvertTo-Json -Depth 5) + [Environment]::NewLine), $utf8WithoutBom)
+        Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+    } finally { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
+}
+
 function Install-ArashiStagedAsset {
     param(
         [Parameter(Mandatory = $true)][string]$SourcePath,
@@ -203,7 +380,10 @@ function Install-ArashiPayloadTransaction {
     param(
         [Parameter(Mandatory = $true)][array]$Payload,
         [Parameter(Mandatory = $true)][string]$BinaryPath,
-        [scriptblock]$SmokeTest = { param($path) Invoke-ArashiSmokeTest -BinaryPath $path },
+        [string]$CanonicalPath = $BinaryPath,
+        [string]$AliasPath = $BinaryPath,
+        [AllowNull()]$OwnershipLedgerItem = $null,
+        [scriptblock]$SmokeTest = { param($native, $canonical, $alias) Invoke-ArashiSmokeTest -BinaryPath $native -CanonicalPath $canonical -AliasPath $alias },
         [scriptblock]$ReplaceAsset = { param($source, $destination) Install-ArashiStagedAsset -SourcePath $source -DestinationPath $destination },
         [scriptblock]$RestoreAsset = { param($backup, $destination) Install-ArashiStagedAsset -SourcePath $backup -DestinationPath $destination }
     )
@@ -214,7 +394,7 @@ function Install-ArashiPayloadTransaction {
 
     try {
         $index = 0
-        foreach ($item in $Payload) {
+        foreach ($item in @($Payload) + @($OwnershipLedgerItem | Where-Object { $null -ne $_ })) {
             $existed = Test-Path -LiteralPath $item.DestinationPath
             if ($existed) {
                 $destinationItem = Get-Item -LiteralPath $item.DestinationPath -Force
@@ -246,7 +426,11 @@ function Install-ArashiPayloadTransaction {
         }
 
         $phase = "smoke test"
-        & $SmokeTest $BinaryPath
+        & $SmokeTest $BinaryPath $CanonicalPath $AliasPath
+        if ($null -ne $OwnershipLedgerItem) {
+            $phase = "ledger commit"
+            & $ReplaceAsset $OwnershipLedgerItem.SourcePath $OwnershipLedgerItem.DestinationPath
+        }
         Remove-Item -LiteralPath $backupDirectory -Recurse -Force
     } catch {
         $originalFailure = $_.Exception.Message
@@ -313,22 +497,27 @@ public static class NativeMethods {
 }
 
 function Invoke-ArashiSmokeTest {
-    param([Parameter(Mandatory = $true)][string]$BinaryPath)
+    param(
+        [Parameter(Mandatory = $true)][string]$BinaryPath,
+        [string]$CanonicalPath = $BinaryPath,
+        [string]$AliasPath = $BinaryPath
+    )
 
     Write-Step "Running post-install smoke test"
-    $output = & $BinaryPath --version 2>&1
-    $exitCode = $LASTEXITCODE
-    if ($null -eq $exitCode) {
-        $exitCode = 0
+    $outputs = @()
+    foreach ($path in @($BinaryPath, $CanonicalPath, $AliasPath)) {
+        $output = & $path --version 2>&1
+        $exitCode = $LASTEXITCODE
+        if ($null -eq $exitCode) { $exitCode = 0 }
+        if ($exitCode -ne 0) { throw "Smoke test failed: $path --version exited with $exitCode. Output: $output" }
+        $version = ($output | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($version)) { throw "Smoke test succeeded but did not print an Arashi version: $path" }
+        $outputs += $version
     }
-    if ($exitCode -ne 0) {
-        throw "Smoke test failed: $BinaryPath --version exited with $exitCode. Output: $output"
-    }
-    if ([string]::IsNullOrWhiteSpace(($output | Out-String))) {
-        throw "Smoke test succeeded but did not print an Arashi version."
-    }
-
-    Write-Step "Verified arashi executable ($($output | Select-Object -First 1))"
+    $canonicalVersion = $outputs[1]
+    $aliasVersion = $outputs[2]
+    if ($outputs[0] -cne $canonicalVersion -or $canonicalVersion -cne $aliasVersion) { throw "Smoke test failed: native, canonical, and alias version outputs differ." }
+    Write-Step "Verified arashi and aw executables ($canonicalVersion)"
 }
 
 function Install-Arashi {
@@ -338,6 +527,7 @@ function Install-Arashi {
     $releaseBaseUrl = Get-ArashiReleaseBaseUrl -InputVersion $selectedVersion
     $targetInstallDir = Resolve-ArashiInstallDir -InputInstallDir $InstallDir
     $skipPathModification = Test-ArashiNoModifyPath -NoModifyPathFlag:$NoModifyPath
+    Assert-ArashiAliasOwnership -InstallDirectory $targetInstallDir
 
     Write-Step "Installing Arashi for Windows x64"
     Write-Step "Release: $selectedVersion"
@@ -347,13 +537,13 @@ function Install-Arashi {
     New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
     try {
-        $assets = @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $ChecksumManifestAsset)
+        $assets = @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset, $ChecksumManifestAsset)
         foreach ($asset in $assets) {
             Invoke-ArashiDownload -Url "$releaseBaseUrl/$asset" -Destination (Join-Path $stagingDir $asset) -Label $asset
         }
 
         $manifestPath = Join-Path $stagingDir $ChecksumManifestAsset
-        foreach ($asset in @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset)) {
+        foreach ($asset in @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset)) {
             Assert-ArashiChecksum -ManifestPath $manifestPath -AssetPath (Join-Path $stagingDir $asset) -AssetName $asset
         }
         Write-Step "Verified SHA-256 checksums"
@@ -363,10 +553,28 @@ function Install-Arashi {
             [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $WindowsBinaryAsset; DestinationPath = Join-Path $targetInstallDir $InstalledBinaryName },
             [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $BashWrapperAsset; DestinationPath = Join-Path $targetInstallDir $BashWrapperAsset },
             [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $PowerShellWrapperAsset; DestinationPath = Join-Path $targetInstallDir $PowerShellWrapperAsset },
-            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $CmdWrapperAsset; DestinationPath = Join-Path $targetInstallDir $CmdWrapperAsset }
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $CmdWrapperAsset; DestinationPath = Join-Path $targetInstallDir $CmdWrapperAsset },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasBashWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasBashWrapperAsset },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasPowerShellWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasPowerShellWrapperAsset },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasCmdWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasCmdWrapperAsset }
         )
         $installedBinary = Join-Path $targetInstallDir $InstalledBinaryName
-        Install-ArashiPayloadTransaction -Payload $payload -BinaryPath $installedBinary
+        $installedCanonical = Join-Path $targetInstallDir $CmdWrapperAsset
+        $installedAlias = Join-Path $targetInstallDir $AliasCmdWrapperAsset
+        $stagedVersionOutput = & (Join-Path $stagingDir $WindowsBinaryAsset) --version 2>&1
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($stagedVersionOutput | Out-String))) { throw "Staged Windows binary failed version verification." }
+        $versionText = ($stagedVersionOutput | Out-String).Trim()
+        $versionMatch = [regex]::Match($versionText, '(?<![0-9A-Za-z.-])(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?![0-9A-Za-z.-])')
+        if (-not $versionMatch.Success) { throw "Unable to determine the release version from: $versionText" }
+        $releaseVersion = $versionMatch.Groups[1].Value
+        if ($selectedVersion -ne "latest" -and $releaseVersion -cne $selectedVersion) { throw "Downloaded release version $releaseVersion does not match requested version $selectedVersion." }
+        $stagedLedger = Join-Path $stagingDir $OwnershipLedgerName
+        $aliasOwnership = foreach ($asset in @($AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset)) {
+            [PSCustomObject]@{ Path = Join-Path $targetInstallDir $asset; Hash = Get-ArashiFileHash -Path (Join-Path $stagingDir $asset) }
+        }
+        Write-ArashiOwnershipLedger -Path $stagedLedger -InstallDirectory $targetInstallDir -ReleaseVersion $releaseVersion -Aliases $aliasOwnership
+        $ledgerItem = [PSCustomObject]@{ SourcePath = $stagedLedger; DestinationPath = Join-Path $targetInstallDir $OwnershipLedgerName }
+        Install-ArashiPayloadTransaction -Payload $payload -BinaryPath $installedBinary -CanonicalPath $installedCanonical -AliasPath $installedAlias -OwnershipLedgerItem $ledgerItem
         Write-Step "Installed and verified Arashi files"
 
         if ($skipPathModification) {
@@ -378,7 +586,7 @@ function Install-Arashi {
         Write-Host ""
         Write-Host "Arashi installed successfully."
         Write-Host "Install directory: $targetInstallDir"
-        Write-Host "Run 'arashi --version' from a new terminal to verify PATH setup."
+        Write-Host "Run 'arashi --version' or shorthand 'aw --version' from a new terminal to verify PATH setup."
     } catch {
         Fail-Install $_.Exception.Message
     } finally {

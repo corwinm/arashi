@@ -1,0 +1,101 @@
+name: Verify published aw release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact published version without v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-aw-posix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v2
+        with:
+          version: 11.20.0
+          runtime: node@24.18.0
+          cache: true
+          install: false
+      - name: Install supported shells
+        run: sudo apt-get update && sudo apt-get install -y fish zsh
+      - run: pnpm install --frozen-lockfile
+      - name: Verify exact public npm and POSIX release
+        env:
+          VERIFY_VERSION: ${{ inputs.version }}
+        run: pnpm release:verify-aw -- "$VERIFY_VERSION"
+
+  verify-aw-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v2
+        with:
+          version: 11.20.0
+          runtime: node@24.18.0
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - name: Reject a non-exact version
+        shell: powershell
+        env:
+          VERIFY_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:VERIFY_VERSION -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw "Exact version required" }
+      - name: Verify public npm package
+        shell: powershell
+        env:
+          VERIFY_VERSION: ${{ inputs.version }}
+        run: pnpm release:verify-aw -- "$env:VERIFY_VERSION"
+      - name: Install the exact official Windows release
+        shell: powershell
+        env:
+          VERIFY_VERSION: ${{ inputs.version }}
+        run: |
+          $env:ARASHI_VERSION = $env:VERIFY_VERSION
+          irm https://arashi.haphazard.dev/install.ps1 -OutFile "$env:RUNNER_TEMP\install.ps1"
+          & "$env:RUNNER_TEMP\install.ps1"
+          $installed = Join-Path $env:USERPROFILE ".arashi\bin"
+          $env:Path = "$installed;$env:Path"
+          $env:ARASHI_INSTALL_DIR = $installed
+          $env:ARASHI_EXPECTED_VERSION = $env:VERIFY_VERSION
+
+          $powerShellVerifier = Join-Path $env:RUNNER_TEMP "verify-aw-fresh.ps1"
+          @'
+          $ErrorActionPreference = "Stop"
+          $canonical = Get-Command arashi -CommandType ExternalScript
+          $alias = Get-Command aw -CommandType ExternalScript
+          if ($canonical.Source -cne (Join-Path $env:ARASHI_INSTALL_DIR "arashi.ps1")) { throw "PowerShell arashi resolved to $($canonical.Source)" }
+          if ($alias.Source -cne (Join-Path $env:ARASHI_INSTALL_DIR "aw.ps1")) { throw "PowerShell aw resolved to $($alias.Source)" }
+          $canonicalVersion = (arashi --version | Out-String).Trim()
+          $aliasVersion = (aw --version | Out-String).Trim()
+          if ($canonicalVersion -cne $aliasVersion) { throw "PowerShell entrypoint versions differ" }
+          if ($canonicalVersion -notmatch [regex]::Escape($env:ARASHI_EXPECTED_VERSION)) { throw "PowerShell did not dispatch exact version $env:ARASHI_EXPECTED_VERSION" }
+          '@ | Set-Content -LiteralPath $powerShellVerifier
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $powerShellVerifier
+          if ($LASTEXITCODE -ne 0) { throw "Fresh PowerShell verification failed" }
+
+          $cmdVerifier = Join-Path $env:RUNNER_TEMP "verify-aw-fresh.cmd"
+          @'
+          @echo off
+          setlocal
+          for /f "delims=" %%P in ('where arashi ^| findstr /i /e /c:"\arashi.bat"') do if not defined ARASHI_CANONICAL_PATH set "ARASHI_CANONICAL_PATH=%%P"
+          for /f "delims=" %%P in ('where aw ^| findstr /i /e /c:"\aw.bat"') do if not defined ARASHI_ALIAS_PATH set "ARASHI_ALIAS_PATH=%%P"
+          if /i not "%ARASHI_CANONICAL_PATH%"=="%ARASHI_INSTALL_DIR%\arashi.bat" exit /b 31
+          if /i not "%ARASHI_ALIAS_PATH%"=="%ARASHI_INSTALL_DIR%\aw.bat" exit /b 32
+          for /f "delims=" %%V in ('arashi --version') do set "ARASHI_CANONICAL_VERSION=%%V"
+          for /f "delims=" %%V in ('aw --version') do set "ARASHI_ALIAS_VERSION=%%V"
+          if not "%ARASHI_CANONICAL_VERSION%"=="%ARASHI_ALIAS_VERSION%" exit /b 33
+          echo(%ARASHI_CANONICAL_VERSION%| findstr /c:"%ARASHI_EXPECTED_VERSION%" >nul || exit /b 34
+          '@ | Set-Content -LiteralPath $cmdVerifier -Encoding ASCII
+          & cmd.exe /d /s /c $cmdVerifier
+          if ($LASTEXITCODE -ne 0) { throw "Fresh Command Prompt verification failed" }
+
+          $bash = "C:\Program Files\Git\bin\bash.exe"
+          & $bash --noprofile --norc -c 'installed=$(cygpath -u "$ARASHI_INSTALL_DIR"); test "$(command -v arashi)" = "$installed/arashi" || exit 41; test "$(command -v aw)" = "$installed/aw" || exit 42; canonical=$(arashi --version) || exit; alias=$(aw --version) || exit; test "$canonical" = "$alias" || exit 43; case "$canonical" in *"$ARASHI_EXPECTED_VERSION"*) ;; *) exit 44 ;; esac'
+          if ($LASTEXITCODE -ne 0) { throw "Fresh Git Bash verification failed" }

@@ -37,7 +37,9 @@ arashi --version
 ```
 
 By default, the installer places `arashi` in `~/.arashi/bin`, adds that path to your shell config, and in interactive installs offers to enable shell integration for `arashi switch --cd`.
-It also runs a quick `arashi --version` smoke test before declaring success.
+Supported installations provide both canonical `arashi` and the first-class `aw` shorthand (“Arashi Workspace”). Both run the same implementation; product names, configuration, environment variables, help, and documentation remain canonical `arashi`.
+
+The installer transaction verifies identical, non-empty `arashi --version` and `aw --version` output before declaring success.
 
 If curl installation fails, or if the smoke test reports a bad release artifact, use npm installation below or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
 
@@ -49,7 +51,7 @@ PowerShell is the canonical Windows installer:
 powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 ```
 
-It verifies and installs `arashi.bin.exe`, the extensionless `arashi` wrapper for Git Bash, `arashi.ps1`, and `arashi.bat` from the same release. The default directory is `%USERPROFILE%\.arashi\bin`; the installer adds it to the persistent user PATH. It does not create or modify `.bashrc` or another shell profile. Open a new Git Bash window before running `arashi --version` so it inherits the PATH change.
+It verifies and installs one `arashi.bin.exe` plus `arashi`/`aw` wrappers for Git Bash, `arashi.ps1`/`aw.ps1`, and `arashi.bat`/`aw.bat` from the same release. The default directory is `%USERPROFILE%\.arashi\bin`; the installer adds it to the persistent user PATH. It does not create or modify `.bashrc` or another shell profile. Open a new Git Bash window before running `arashi --version` or `aw --version` so it inherits the PATH change.
 
 ### Option 3: Install with npm
 
@@ -57,7 +59,7 @@ It verifies and installs `arashi.bin.exe`, the extensionless `arashi` wrapper fo
 npm install -g arashi
 ```
 
-The npm package is script-free: it does not require package-manager lifecycle scripts or `postinstall` approval. It installs the lightweight JavaScript entrypoint and wrapper files first, then downloads the matching platform binary on first use.
+The npm package is script-free: it does not require package-manager lifecycle scripts or `postinstall` approval. It maps both npm bins to the same lightweight JavaScript entrypoint, then downloads the matching platform binary on first use through either name.
 
 To preinstall the binary explicitly, run:
 
@@ -90,29 +92,34 @@ If you prefer not to use npm, download a platform binary from [GitHub Releases](
 macOS (Apple Silicon):
 
 ```bash
-curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-macos-arm64 -o arashi
-chmod +x arashi
-sudo mv arashi /usr/local/bin/arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-macos-arm64 -o arashi.bin
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi -o arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/aw -o aw
+chmod +x arashi.bin arashi aw
+sudo install -m 0755 arashi.bin arashi aw /usr/local/bin/
 ```
 
 Linux (x64):
 
 ```bash
-curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-linux-x64 -o arashi
-chmod +x arashi
-sudo mv arashi /usr/local/bin/arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-linux-x64 -o arashi.bin
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi -o arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/aw -o aw
+chmod +x arashi.bin arashi aw
+sudo install -m 0755 arashi.bin arashi aw /usr/local/bin/
 ```
 
 Windows (PowerShell and Git Bash):
 
 ```powershell
 # Download arashi-windows-x64.exe, arashi, arashi.ps1, arashi.bat,
+# aw, aw.ps1, aw.bat,
 # and arashi-checksums.txt from the same release.
-# Verify all four payload files against arashi-checksums.txt.
-# Rename arashi-windows-x64.exe to arashi.bin.exe and keep the four files together on PATH.
+# Verify all seven payload files against arashi-checksums.txt.
+# Rename arashi-windows-x64.exe to arashi.bin.exe and keep the seven files together on PATH.
 ```
 
-Windows manual installation requires `arashi-windows-x64.exe`, `arashi`, `arashi.ps1`, `arashi.bat`, and `arashi-checksums.txt` from the same release. Verify all four payload files, rename the executable to `arashi.bin.exe`, and keep the payload together on PATH.
+Windows manual installation requires `arashi-windows-x64.exe`, `arashi`, `arashi.ps1`, `arashi.bat`, `aw`, `aw.ps1`, `aw.bat`, and `arashi-checksums.txt` from the same release. Verify all seven payload files, rename the executable to `arashi.bin.exe`, and keep the payload together on PATH. Manual release installations do not create the direct installer's ownership ledger; deliberately move or remove the manual payload before later using the direct installer.
 
 You can also build from source for local development. Development is pinned to Node.js 24.18.0, which satisfies pnpm 11's Node.js 22.13 minimum, and pnpm 11.20.0; nvm users can select the repository's development runtime with `nvm use`.
 
@@ -214,7 +221,7 @@ For contributors working on Arashi itself, the project planning workflow in the 
 
 ## Shell Integration
 
-Use shell integration for parent-shell directory switching and native tab completion. Bash, Zsh, and Fish are supported.
+Use shell integration for parent-shell directory switching and native tab completion. Bash, Zsh, and Fish are supported through both `arashi` and `aw`.
 
 The official curl installer can offer this automatically. If you skip it or use npm, install it for the active shell with:
 
@@ -240,7 +247,7 @@ command arashi shell init fish | source
 command arashi completion fish | source
 ```
 
-`arashi shell init <shell>` remains wrapper-only. `arashi completion <shell>` emits only deterministic sourceable shell code, including on npm first use when the platform binary must be installed.
+`arashi shell init <shell>` remains wrapper-only and defines both parent-shell functions, unless an unrelated `aw` alias or function already owns that shell name. `arashi completion <shell>` registers the same completion model for both executable names and emits only deterministic sourceable shell code, including on npm first use when the platform binary must be installed.
 
 Completion covers commands, aliases, options, finite choices, conflicts, and positional boundaries. In an Arashi workspace it also resolves configured repository and group selector segments, switch/remove worktrees and paths, and move source/target references. Dynamic lookup is local and read-only, silent on unavailable or broken metadata, and limited to a 200 ms whole-query budget; it performs no network requests, hooks, prompts, workspace mutations, or child operations. Static completion remains available outside a workspace.
 

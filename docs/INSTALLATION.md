@@ -2,7 +2,7 @@
 
 ## Overview
 
-Arashi uses a small JavaScript npm entrypoint plus wrapper scripts to ensure compatibility with interactive tools like fzf. Direct installer distributions include wrapper scripts and compiled Bun executables; npm installs begin with lightweight JavaScript and wrapper files, then install the matching platform binary on first use or through `arashi install`.
+Arashi uses a small JavaScript npm entrypoint plus wrapper scripts to ensure compatibility with interactive tools like fzf. Supported installations provide canonical `arashi` and its first-class `aw` shorthand (“Arashi Workspace”) through the same implementation. Product identity, help, configuration, `ARASHI_*` variables, packages, and native binaries remain canonical `arashi`.
 
 ## Official install methods
 
@@ -42,13 +42,13 @@ The POSIX curl installer (`scripts/install.sh`) is bound to GitHub Releases arti
 - Platform mapping:
   - `darwin-arm64` -> `arashi-macos-arm64`
   - `linux-x64` -> `arashi-linux-x64`
-- Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies both the wrapper (`arashi`) and target platform binary SHA-256 checksums before install.
-- Runtime verification: after staging the wrapper and binary, the installer runs `arashi --version` as a smoke test before updating shell PATH configuration.
+- Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies `arashi`, marked alias `aw`, and the target platform binary before install.
+- Runtime verification: a recoverable transaction installs `arashi.bin`, `arashi`, and `aw`, requires identical non-empty version output through both names, and atomically commits `.arashi-managed-entrypoints.json` before updating PATH or shell startup state.
 - Default install placement is `~/.arashi/bin` unless overridden with `ARASHI_INSTALL_DIR` or `--install-dir`.
 - Installer updates the active shell config (`.zshrc`, `.bashrc`/`.bash_profile`, `.profile`, or fish config) to include the install directory on `PATH`.
 - Interactive curl installs offer to enable shell integration for bash, zsh, and fish so `arashi switch --cd` works without a second setup step.
 - For unattended installs, set `ARASHI_SHELL_INTEGRATION=yes` to enable shell integration without prompting or `ARASHI_SHELL_INTEGRATION=no` to skip it.
-- Install placement uses staged temp files and atomic moves to `arashi` (wrapper) and `arashi.bin` (platform binary).
+- Before downloads or mutation, the installer rejects an unowned destination `aw`, malformed/mismatched ledger, or an effective-PATH `aw` outside the selected install directory. Marked manual wrappers are not adopted without ledger ownership; move or remove them deliberately before retrying.
 
 ## Windows PowerShell installer behavior and release binding
 
@@ -63,16 +63,23 @@ The Windows PowerShell installer (`scripts/install.ps1`) is also bound to GitHub
   - `arashi`
   - `arashi.ps1`
   - `arashi.bat`
+  - `aw`
+  - `aw.ps1`
+  - `aw.bat`
 - Default install placement is `%USERPROFILE%\.arashi\bin` unless overridden with `ARASHI_INSTALL_DIR` or `-InstallDir`.
 - Install placement uses staged downloads and installs files together as:
   - `arashi.bin.exe`
   - `arashi`
   - `arashi.ps1`
   - `arashi.bat`
+  - `aw`
+  - `aw.ps1`
+  - `aw.bat`
 - The installer adds the install directory to the persistent user PATH by default, avoids duplicate PATH entries, and tells the user to open a new Git Bash window or other terminal. The extensionless `arashi` wrapper lets Git Bash execute the adjacent `arashi.bin.exe`.
 - The installer does not create or modify `.bashrc`, `.bash_profile`, `.profile`, or another shell profile.
 - Use `ARASHI_NO_MODIFY_PATH=1` or `-NoModifyPath` to skip PATH modification.
-- Runtime verification: after installing the wrapper and binary, the installer runs `arashi.bin.exe --version` as a smoke test so the default install path does not depend on PowerShell execution policy.
+- Before downloads or mutation, the installer rejects unowned/ambiguous alias destinations, malformed or mismatched ownership ledgers, and PowerShell/CMD/Git Bash `aw` resolutions outside the selected directory without executing the unrelated command.
+- Runtime verification compares identical output from the native binary and the policy-independent CMD entrypoints `arashi.bat` and `aw.bat` before atomically committing the alias ownership ledger. Fresh-shell acceptance separately verifies the PowerShell wrappers. Any replacement, smoke, or ledger failure restores the seven-file payload and prior ledger; recoverable backups are retained with manual instructions if rollback itself fails.
 
 Examples:
 
@@ -135,11 +142,16 @@ If you do not want to pipe a remote script into PowerShell or the installer fail
    - `arashi`
    - `arashi.ps1`
    - `arashi.bat`
+   - `aw`
+   - `aw.ps1`
+   - `aw.bat`
    - `arashi-checksums.txt`
 3. Verify each downloaded asset against `arashi-checksums.txt` with `Get-FileHash -Algorithm SHA256`.
-4. Put the four payload files in one directory on PATH.
+4. Put the seven payload files in one directory on PATH.
 5. Rename `arashi-windows-x64.exe` to `arashi.bin.exe` so both wrappers find the binary.
-6. Open a new Git Bash window and run `arashi --version`, or verify through `arashi.ps1` in PowerShell / `arashi.bat` in Command Prompt.
+6. Open fresh Git Bash, PowerShell, and Command Prompt sessions and compare `arashi --version` with the corresponding `aw --version` wrapper.
+
+These marked manual aliases intentionally have no direct-installer ledger ownership. Move or remove the manual alias files deliberately before running the PowerShell installer later; the installer will then create its own ledger.
 
 ## Why a Wrapper?
 
@@ -158,13 +170,13 @@ exec "$SCRIPT_DIR/arashi.bin" "$@"
 
 ### 1. npm Package (Recommended when Node/npm is available)
 
-The npm package intentionally avoids lifecycle scripts. Its package metadata points the npm `bin` entry to `./bin/arashi.js` and publishes the JavaScript entrypoint, wrapper files, and runtime installer module.
+The npm package intentionally avoids lifecycle scripts. Its `arashi` and `aw` npm bins both point to `./bin/arashi.js` and publish one JavaScript entrypoint, wrapper files, and runtime installer module.
 
 When users run `npm install -g arashi`, npm:
 
 1. Installs the JavaScript entrypoint (`bin/arashi.js`), wrapper files, and runtime installer module.
-2. Creates a symlink in the global bin directory pointing to `bin/arashi.js`.
-3. Downloads the matching platform binary when the user runs `arashi install` or the first normal `arashi <command>`.
+2. Creates package-manager shims for `arashi` and `aw` pointing to `bin/arashi.js`.
+3. Downloads the matching platform binary when either shim handles explicit install or first normal use.
 
 The installer resolves assets from the installed package version, for example `https://github.com/corwinm/arashi/releases/download/v<version>/arashi-linux-x64`, verifies the binary with `--version`, and removes partial downloads on failure.
 
@@ -190,7 +202,7 @@ pnpm run build:all
 # Output: bin/arashi-macos-arm64, bin/arashi-linux-x64, bin/arashi-windows-x64.exe
 ```
 
-The POSIX wrapper (`bin/arashi`) and Windows wrappers (`bin/arashi.ps1`, `bin/arashi.bat`) are maintained as source files and included in distributions.
+The canonical wrappers and marked `bin/aw`, `bin/aw.ps1`, and `bin/aw.bat` aliases are maintained as source files and included in distributions; all delegate to one adjacent native binary.
 
 ## Creating Releases
 

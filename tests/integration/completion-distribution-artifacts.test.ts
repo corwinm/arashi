@@ -30,15 +30,27 @@ beforeAll(() => {
   if (!supported) return;
   fixtureRoot = mkdtempSync(join(tmpdir(), "arashi-completion-distribution-"));
 
-  const build = run("corepack", ["pnpm", "--ignore-workspace", "run", "build"]);
+  const freshness = run(process.execPath, [
+    join(repositoryRoot, "scripts/completions.ts"),
+    "--check",
+  ]);
+  expect(freshness.status, freshness.stderr || freshness.stdout).toBe(0);
+  const build = run("bun", [
+    "build",
+    "src/index.ts",
+    "--compile",
+    "--minify",
+    "--outfile",
+    "bin/arashi.bin",
+  ]);
   expect(build.status, build.stderr || build.stdout).toBe(0);
   standaloneBinary = join(repositoryRoot, "bin", "arashi.bin");
   expect(existsSync(standaloneBinary)).toBe(true);
 
-  const pack = run("corepack", [
-    "pnpm",
-    "--ignore-workspace",
+  const pack = run("npm", [
     "pack",
+    "--cache",
+    join(fixtureRoot, "npm-cache"),
     "--pack-destination",
     fixtureRoot,
   ]);
@@ -52,7 +64,15 @@ beforeAll(() => {
   writeFileSync(join(fixtureRoot, "package.json"), '{"name":"fixture","private":true}');
   const install = run(
     "npm",
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund", archive],
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--cache",
+      join(fixtureRoot, "npm-cache"),
+      archive,
+    ],
     fixtureRoot,
   );
   expect(install.status, install.stderr || install.stdout).toBe(0);

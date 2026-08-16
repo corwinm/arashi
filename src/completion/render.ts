@@ -82,6 +82,9 @@ _arashi() {
   done < <(command arashi completion __query "$cursor" -- "\${words[@]}")
 }
 complete -F _arashi arashi
+if ! alias aw >/dev/null 2>&1 && { ! declare -F aw >/dev/null 2>&1 || declare -f aw | grep -Fq 'arashi-managed-shell-wrapper:aw:v1'; }; then
+  complete -F _arashi aw
+fi
 `;
   if (shell === "zsh")
     return `${marker}
@@ -100,6 +103,11 @@ _arashi() {
   compadd -d displays -- "\${values[@]}"
 }
 compdef _arashi arashi
+if (( ! \${+aliases[aw]} )); then
+  if (( ! \${+functions[aw]} )) || [[ "\${functions[aw]}" == *'arashi-managed-shell-wrapper:aw:v1'* ]]; then
+    compdef _arashi aw
+  fi
+fi
 `;
   return `${marker}
 function __arashi_complete
@@ -117,6 +125,9 @@ function __arashi_complete
     end
 end
 complete -c arashi -f -a '(__arashi_complete)'
+if not functions -q aw; or functions aw | string match -q '*arashi-managed-shell-wrapper:aw:v1*'
+    complete -c aw -f -a '(__arashi_complete)'
+end
 `;
 }
 

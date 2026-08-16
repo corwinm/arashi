@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnPty } from "./node-pty.mjs";
 
 const encodedConfig = process.argv[2];
@@ -27,6 +27,7 @@ const terminal = spawnPty("sh", ["-c", shell, "arashi-pty-session", ...config.co
   cwd: config.cwd,
   env: {
     ...process.env,
+    ...config.env,
     ARASHI_PTY_REUSE_PROMPT: reusePrompt,
     ARASHI_PTY_STDERR: config.stderrPath,
     ARASHI_PTY_STDOUT: config.stdoutPath,
@@ -59,7 +60,9 @@ const promptPoll = setInterval(() => {
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  if (!stderr.includes(config.prompt)) return;
+  const promptReady = stderr.includes(config.prompt);
+  const fileReady = config.readyPath && existsSync(config.readyPath);
+  if (!promptReady && !fileReady) return;
   promptObserved = true;
   if (config.response === "__CTRL_C__") terminal.write("\u0003");
   else if (config.response !== "__NO_INPUT__") terminal.write(`${config.response}\r`);

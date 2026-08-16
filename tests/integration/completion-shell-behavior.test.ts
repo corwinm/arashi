@@ -142,6 +142,7 @@ describe("generated completion in clean real shell sessions", () => {
       const script = `
 source ${shellQuote(completionFiles.get("bash")!)}
 complete -p arashi >/dev/null || exit 8
+complete -p aw >/dev/null || exit 8
 run_completion() {
   local label="$1"
   shift
@@ -167,17 +168,21 @@ run_sensitive_completion() {
 }
 cd ${shellQuote(outsideRoot)}
 run_completion directRoot arashi cr
+run_completion directAlias aw cr
 run_completion nested arashi shell i
 run_completion shortOption arashi create topic -
 eval "$(command arashi shell init bash)"
 declare -F arashi >/dev/null || exit 9
+declare -F aw >/dev/null || exit 9
 run_completion wrappedRoot arashi cr
+run_completion wrappedAlias aw cr
 run_completion choice arashi completion b
 run_completion conflict arashi create topic --tmux ''
 run_completion boundary arashi create topic -- ''
 run_completion variadic arashi exec printf ''
 cd ${shellQuote(workspaceRoot)}
 run_completion repository arashi create topic --only repo
+run_completion repositoryAlias aw create topic --only repo
 run_completion repositoryShort arashi create topic -o repo
 run_completion group arashi create topic --group docs
 run_completion groupShort arashi create topic -g docs
@@ -204,8 +209,10 @@ run_sensitive_completion sensitive arashi create topic --only ''
       ).stdout;
       const quotedSensitiveBase64 = Buffer.from(quotedSensitive).toString("base64");
       expect(output.get("directRoot")).toContain("create");
+      expect(output.get("directAlias")).toEqual(output.get("directRoot"));
       expect(output.get("directRoot")).not.toContain("__query");
       expect(output.get("wrappedRoot")).toContain("create");
+      expect(output.get("wrappedAlias")).toEqual(output.get("wrappedRoot"));
       expect(output.get("nested")).toContain("init");
       expect(output.get("shortOption")).toContain("-o");
       expect(output.get("choice")).toEqual(["bash"]);
@@ -215,6 +222,7 @@ run_sensitive_completion sensitive arashi create topic --only ''
       expect(output.get("variadic")).toEqual([]);
       for (const label of ["repository", "repositoryShort", "switchRepos"])
         expect(output.get(label)).toContain("repo\\ one");
+      expect(output.get("repositoryAlias")).toEqual(output.get("repository"));
       expect(output.get("group")).toContain("docs\\ team");
       expect(output.get("groupShort")).toContain("docs\\ team");
       expect(output.get("inlineAssignmentEmpty")).toEqual([
@@ -278,17 +286,21 @@ run_sensitive_completion() {
 }
 cd ${shellQuote(outsideRoot)}
 run_completion directRoot arashi cr
+run_completion directAlias aw cr
 run_completion nested arashi shell i
 run_completion shortOption arashi create topic -
 eval "$(command arashi shell init zsh)"
 (( $+functions[arashi] )) || exit 8
+(( $+functions[aw] )) || exit 8
 run_completion wrappedRoot arashi cr
+run_completion wrappedAlias aw cr
 run_completion choice arashi completion b
 run_completion conflict arashi create topic --tmux ''
 run_completion boundary arashi create topic -- ''
 run_completion variadic arashi exec printf ''
 cd ${shellQuote(workspaceRoot)}
 run_completion repository arashi create topic --only repo
+run_completion repositoryAlias aw create topic --only repo
 run_completion repositoryShort arashi create topic -o repo
 run_completion group arashi create topic --group docs
 run_completion groupShort arashi create topic -g docs
@@ -307,10 +319,12 @@ run_sensitive_completion sensitive arashi create topic --only ''
       expect(result.status, result.stderr).toBe(0);
       const output = sections(result.stdout);
       expect(output.get("directRoot")).toContain("create");
+      expect(output.get("directAlias")).toEqual(output.get("directRoot"));
       expect(output.get("directRoot")).toContain(
         "display:create -- Create coordinated worktrees across multiple repositories",
       );
       expect(output.get("wrappedRoot")).toContain("create");
+      expect(output.get("wrappedAlias")).toEqual(output.get("wrappedRoot"));
       expect(output.get("nested")).toContain("init");
       expect(output.get("shortOption")).toContain("-o");
       expect(output.get("choice")).toContain("bash");
@@ -320,6 +334,7 @@ run_sensitive_completion sensitive arashi create topic --only ''
       expect(output.get("variadic")).toEqual([]);
       for (const label of ["repository", "repositoryShort", "switchRepos"])
         expect(output.get(label)).toContain("repo one");
+      expect(output.get("repositoryAlias")).toEqual(output.get("repository"));
       expect(output.get("group")).toContain("docs team");
       expect(output.get("groupShort")).toContain("docs team");
       expect(
@@ -350,17 +365,21 @@ function run_completion
 end
 cd ${shellQuote(outsideRoot)}
 run_completion directRoot 'arashi cr'
+run_completion directAlias 'aw cr'
 run_completion nested 'arashi shell i'
 run_completion shortOption 'arashi create topic -'
 command arashi shell init fish | source
 functions -q arashi; or exit 8
+functions -q aw; or exit 8
 run_completion wrappedRoot 'arashi cr'
+run_completion wrappedAlias 'aw cr'
 run_completion choice 'arashi completion b'
 run_completion conflict 'arashi create topic --tmux '
 run_completion boundary 'arashi create topic -- '
 run_completion variadic 'arashi exec printf '
 cd ${shellQuote(workspaceRoot)}
 run_completion repository 'arashi create topic --only repo'
+run_completion repositoryAlias 'aw create topic --only repo'
 run_completion repositoryShort 'arashi create topic -o repo'
 run_completion group 'arashi create topic --group docs'
 run_completion groupShort 'arashi create topic -g docs'
@@ -379,8 +398,10 @@ run_completion sensitive 'arashi create topic --only '
       expect(result.status, result.stderr).toBe(0);
       const output = sections(result.stdout);
       expect(candidateValues(output.get("directRoot") ?? [])).toContain("create");
+      expect(output.get("directAlias")).toEqual(output.get("directRoot"));
       expect(output.get("directRoot")?.some((line) => line.includes("\t"))).toBe(true);
       expect(candidateValues(output.get("wrappedRoot") ?? [])).toContain("create");
+      expect(output.get("wrappedAlias")).toEqual(output.get("wrappedRoot"));
       expect(candidateValues(output.get("nested") ?? [])).toContain("init");
       expect(candidateValues(output.get("shortOption") ?? [])).toContain("-o");
       expect(candidateValues(output.get("choice") ?? [])).toContain("bash");
@@ -392,6 +413,7 @@ run_completion sensitive 'arashi create topic --only '
       expect(output.get("variadic")).toEqual([]);
       for (const label of ["repository", "repositoryShort", "switchRepos"])
         expect(candidateValues(output.get(label) ?? [])).toContain("repo one");
+      expect(output.get("repositoryAlias")).toEqual(output.get("repository"));
       expect(candidateValues(output.get("group") ?? [])).toContain("docs team");
       expect(candidateValues(output.get("groupShort") ?? [])).toContain("docs team");
       expect(

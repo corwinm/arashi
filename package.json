@@ -24,7 +24,8 @@
     "url": "git+https://github.com/corwinm/arashi.git"
   },
   "bin": {
-    "arashi": "./bin/arashi.js"
+    "arashi": "./bin/arashi.js",
+    "aw": "./bin/arashi.js"
   },
   "files": [
     "bin/arashi",
@@ -35,6 +36,9 @@
     "bin/update-options.js",
     "bin/arashi.bat",
     "bin/arashi.ps1",
+    "bin/aw",
+    "bin/aw.bat",
+    "bin/aw.ps1",
     "schema/config.schema.json",
     "README.md",
     "LICENSE"
@@ -66,14 +70,17 @@
     "schema:generate": "ts-json-schema-generator --tsconfig tsconfig.schema.json --path src/lib/config.ts --type Config --expose export --jsDoc extended --out schema/config.schema.json",
     "schema:publish": "pnpm run schema:generate && oxfmt --config .oxfmtrc.json --write schema/config.schema.json",
     "schema:check": "pnpm run schema:publish && git diff --exit-code -- schema/config.schema.json",
-    "contract:generate": "node scripts/contracts/cli-commands.ts && node scripts/contracts/inline-lifecycle-hooks.ts",
-    "contract:check": "node scripts/contracts/cli-commands.ts --check && node scripts/contracts/inline-lifecycle-hooks.ts --check",
+    "contract:generate": "node scripts/contracts/cli-commands.ts && node scripts/contracts/inline-lifecycle-hooks.ts && node scripts/contracts/executable-distribution.ts",
+    "contract:check": "node scripts/contracts/cli-commands.ts --check && node scripts/contracts/inline-lifecycle-hooks.ts --check && node scripts/contracts/executable-distribution.ts --check",
+    "executable-contract:generate": "node scripts/contracts/executable-distribution.ts",
+    "executable-contract:check": "node scripts/contracts/executable-distribution.ts --check",
     "completion:generate": "node scripts/completions.ts",
     "completion:check": "node scripts/completions.ts --check",
     "format": "oxfmt --config .oxfmtrc.json --write .",
     "format:check": "oxfmt --config .oxfmtrc.json --check .",
     "quality:changed": "node scripts/quality/changed-files-quality.ts",
-    "prepublishOnly": "pnpm run completion:check && pnpm run schema:publish",
+    "prepublishOnly": "pnpm run completion:check && pnpm run executable-contract:check && pnpm run schema:publish",
+    "release:verify-aw": "node scripts/release/verify-aw.ts",
     "prepare": "husky"
   },
   "devDependencies": {

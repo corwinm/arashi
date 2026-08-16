@@ -20,12 +20,10 @@ echo "Creating release packages..."
 echo "Packaging macOS (arm64)..."
 mkdir -p "$DIST_DIR/arashi-macos-arm64"
 cp bin/arashi-macos-arm64 "$DIST_DIR/arashi-macos-arm64/arashi.bin"
-cat > "$DIST_DIR/arashi-macos-arm64/arashi" << 'EOF'
-#!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$SCRIPT_DIR/arashi.bin" "$@" 0<&-
-EOF
+cp bin/arashi "$DIST_DIR/arashi-macos-arm64/arashi"
 chmod +x "$DIST_DIR/arashi-macos-arm64/arashi"
+cp bin/aw "$DIST_DIR/arashi-macos-arm64/aw"
+chmod +x "$DIST_DIR/arashi-macos-arm64/aw"
 cd "$DIST_DIR" && tar czf "arashi-${VERSION}-macos-arm64.tar.gz" arashi-macos-arm64 && cd ..
 
 # Linux
@@ -33,6 +31,8 @@ echo "Packaging Linux (x64)..."
 mkdir -p "$DIST_DIR/arashi-linux-x64"
 cp bin/arashi-linux-x64 "$DIST_DIR/arashi-linux-x64/arashi.bin"
 cp "$DIST_DIR/arashi-macos-arm64/arashi" "$DIST_DIR/arashi-linux-x64/arashi"
+cp bin/aw "$DIST_DIR/arashi-linux-x64/aw"
+chmod +x "$DIST_DIR/arashi-linux-x64/aw"
 cd "$DIST_DIR" && tar czf "arashi-${VERSION}-linux-x64.tar.gz" arashi-linux-x64 && cd ..
 
 # Windows
@@ -42,6 +42,9 @@ cp bin/arashi-windows-x64.exe "$DIST_DIR/arashi-windows-x64/arashi.bin.exe"
 cp bin/arashi "$DIST_DIR/arashi-windows-x64/arashi"
 cp bin/arashi.bat "$DIST_DIR/arashi-windows-x64/arashi.bat"
 cp bin/arashi.ps1 "$DIST_DIR/arashi-windows-x64/arashi.ps1"
+cp bin/aw "$DIST_DIR/arashi-windows-x64/aw"
+cp bin/aw.bat "$DIST_DIR/arashi-windows-x64/aw.bat"
+cp bin/aw.ps1 "$DIST_DIR/arashi-windows-x64/aw.ps1"
 # Create README for Windows users
 cat > "$DIST_DIR/arashi-windows-x64/README.txt" << 'EOF'
 Arashi for Windows
@@ -56,15 +59,18 @@ Usage Options:
 Option 1 - Git Bash:
   Add the directory to PATH, open a new Git Bash window, and run:
     arashi --version
+    aw --version
   The extensionless arashi wrapper executes the adjacent arashi.bin.exe.
 
 Option 2 - Batch File (CMD):
   Add arashi.bat to PATH
   Usage: arashi list | fzf
+  Shorthand: aw list | fzf
 
 Option 3 - PowerShell:
   Add directory to PATH
   Usage: arashi.ps1 list | fzf
+  Shorthand: aw.ps1 list | fzf
   Or create an alias in your PowerShell profile:
     Set-Alias arashi C:\path\to\arashi.ps1
 
@@ -86,15 +92,14 @@ echo ""
 echo "macOS:"
 echo "  tar xzf arashi-${VERSION}-macos-arm64.tar.gz"
 echo "  cd arashi-macos-arm64"
-echo "  sudo cp arashi arashi.bin /usr/local/bin/"
+echo "  sudo cp arashi aw arashi.bin /usr/local/bin/"
 echo ""
 echo "Linux:"
 echo "  tar xzf arashi-${VERSION}-linux-x64.tar.gz"
 echo "  cd arashi-linux-x64"
-echo "  sudo cp arashi arashi.bin /usr/local/bin/"
+echo "  sudo cp arashi aw arashi.bin /usr/local/bin/"
 echo ""
 echo "Windows:"
 echo "  1. Extract arashi-${VERSION}-windows-x64.zip"
 echo "  2. Copy contents to a directory in PATH"
-echo "  3. Open a new shell and use arashi (Git Bash), arashi.bat (CMD), or arashi.ps1 (PowerShell)"
-
+echo "  3. Open a new shell and use arashi/aw (Git Bash), arashi.bat/aw.bat (CMD), or arashi.ps1/aw.ps1 (PowerShell)"

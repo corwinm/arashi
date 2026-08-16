@@ -1,0 +1,43 @@
+#!/bin/bash
+# arashi-managed-alias:aw:v1
+# Arashi Workspace executable alias. Delegates to the one adjacent Arashi native binary.
+
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  [[ "$SCRIPT_SOURCE" != /* ]] && SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+BINARY="$SCRIPT_DIR/arashi.bin"
+
+if [ ! -f "$BINARY" ]; then
+  PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
+  ARCH=$(uname -m)
+  WINDOWS_SHELL="false"
+  case "${MSYSTEM:-}" in MINGW*|MSYS*) WINDOWS_SHELL="true" ;; esac
+  case "$PLATFORM" in mingw*|msys*|cygwin*) WINDOWS_SHELL="true" ;; esac
+  if [ "$WINDOWS_SHELL" = "true" ]; then
+    BINARY="$SCRIPT_DIR/arashi.bin.exe"
+  else
+    case "$PLATFORM-$ARCH" in
+      darwin-arm64) BINARY="$SCRIPT_DIR/arashi-macos-arm64" ;;
+      linux-x86_64) BINARY="$SCRIPT_DIR/arashi-linux-x64" ;;
+      *) echo "Error: Unsupported platform $PLATFORM-$ARCH" >&2; exit 1 ;;
+    esac
+  fi
+fi
+
+if [ ! -f "$BINARY" ]; then
+  echo "Error: arashi binary not found at $BINARY" >&2
+  exit 1
+fi
+
+command=""
+for arg in "$@"; do
+  case "$arg" in -*) continue ;; *) [ -n "$command" ] || command="$arg" ;; esac
+done
+if [ ! -t 1 ] && [ "$command" = "list" ]; then
+  exec "$BINARY" "$@" 0<&-
+fi
+exec "$BINARY" "$@"

@@ -31,8 +31,13 @@ describe("shell integration", () => {
   test("builds bash and fish init wrappers", () => {
     expect(buildShellInitScript("bash")).toContain("ARASHI_DIRECTIVE_FILE");
     expect(buildShellInitScript("bash")).toContain("ARASHI_SHELL=bash");
-    expect(buildShellInitScript("fish")).toContain("ARASHI_SHELL=fish");
-    expect(buildShellInitScript("fish")).toContain('source "$directive_file"');
+    const fish = buildShellInitScript("fish");
+    expect(fish).toContain('set -lx ARASHI_DIRECTIVE_FILE "$directive_file"');
+    expect(fish).toContain("set -lx ARASHI_SHELL fish");
+    expect(fish).toContain("command arashi $argv");
+    expect(fish).toContain("command aw $argv");
+    expect(fish).not.toContain("ARASHI_SHELL=fish command");
+    expect(fish).toContain('source "$directive_file"');
   });
 
   test("resolves startup files for known shells", async () => {

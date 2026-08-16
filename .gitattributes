@@ -1,6 +1,7 @@
 # Keep executable JavaScript and shell shebangs parseable on Windows checkouts.
 bin/*.js text eol=lf
 bin/arashi text eol=lf
+bin/aw text eol=lf
 
 # Keep the argv fixture diff-checkable while cmd.exe still accepts it.
 tests/fixtures/*.cmd text eol=lf
