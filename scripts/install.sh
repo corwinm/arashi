@@ -587,21 +587,13 @@ install_posix_payload_transaction() {
   if [ "$failed" -eq 0 ]; then
     phase="ledger commit"
     alias_hash="$(sha256_file "$alias_path")" || failed=1
-    ledger_release_version="$release_version"
-    if [ "$ledger_release_version" = "latest" ]; then
-      ledger_release_version="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | sed -nE 's/.*(^|[^0-9A-Za-z.-])([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)([^0-9A-Za-z.-]|$).*/\2/p' | head -n 1)"
-    fi
+    ledger_release_version="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | sed -nE 's/.*(^|[^0-9A-Za-z.-])([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)([^0-9A-Za-z.-]|$).*/\2/p' | head -n 1)"
     if [ -z "$ledger_release_version" ]; then
       printf 'ledger commit failed: could not determine exact installed release version from %s\n' "$INSTALLED_VERSION_OUTPUT" >&2
       failed=1
-    elif [ "$release_version" != "latest" ]; then
-      case "$INSTALLED_VERSION_OUTPUT" in
-        *"$release_version"*) ;;
-        *)
-          printf 'ledger commit failed: installed version output does not match requested release %s\n' "$release_version" >&2
-          failed=1
-          ;;
-      esac
+    elif [ "$release_version" != "latest" ] && [ "$ledger_release_version" != "$release_version" ]; then
+      printf 'ledger commit failed: installed version %s does not match requested release %s\n' "$ledger_release_version" "$release_version" >&2
+      failed=1
     fi
     if [ "$failed" -eq 0 ]; then
       write_ownership_ledger "$staged_ledger" "$install_dir" "$alias_path" "$alias_hash" "$ledger_release_version" || failed=1
@@ -1061,6 +1053,9 @@ main() {
     /*) ;;
     *) install_dir="$(pwd)/$install_dir" ;;
   esac
+  while [ "$install_dir" != "/" ] && [ "${install_dir%/}" != "$install_dir" ]; do
+    install_dir="${install_dir%/}"
+  done
   preflight_alias_ownership "$install_dir" || exit 1
 
   log "Preparing installation for arashi ($release_label)"

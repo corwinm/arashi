@@ -79,7 +79,7 @@ The Windows PowerShell installer (`scripts/install.ps1`) is also bound to GitHub
 - The installer does not create or modify `.bashrc`, `.bash_profile`, `.profile`, or another shell profile.
 - Use `ARASHI_NO_MODIFY_PATH=1` or `-NoModifyPath` to skip PATH modification.
 - Before downloads or mutation, the installer rejects unowned/ambiguous alias destinations, malformed or mismatched ownership ledgers, and PowerShell/CMD/Git Bash `aw` resolutions outside the selected directory without executing the unrelated command.
-- Runtime verification requires identical native, canonical PowerShell-wrapper, and alias PowerShell-wrapper version output before atomically committing the alias ownership ledger. Any replacement, smoke, or ledger failure restores the seven-file payload and prior ledger; recoverable backups are retained with manual instructions if rollback itself fails.
+- Runtime verification compares identical output from the native binary and the policy-independent CMD entrypoints `arashi.bat` and `aw.bat` before atomically committing the alias ownership ledger. Fresh-shell acceptance separately verifies the PowerShell wrappers. Any replacement, smoke, or ledger failure restores the seven-file payload and prior ledger; recoverable backups are retained with manual instructions if rollback itself fails.
 
 Examples:
 
