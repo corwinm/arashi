@@ -1492,7 +1492,7 @@ const stripShellDiagnosticQuotes = (value: string): string => value.replaceAll(/
 const staticInlineAssignmentValues = (snippet: string): readonly string[] => {
   const assignmentPatterns = [
     /(?:^|[\s;])(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s;\r\n]+))/gmu,
-    /(?:^|[;\r\n])\s*\$[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s;\r\n]+))/gmu,
+    /(?:^|[;\r\n])\s*\$(?:(?:env|global|script):)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s;\r\n]+))/gimu,
     /(?:^|[&\r\n])\s*set\s+(?:"[A-Za-z_][A-Za-z0-9_]*=([^"\r\n]*)"|[A-Za-z_][A-Za-z0-9_]*=(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s&\r\n]+)))/gimu,
   ];
   return assignmentPatterns

@@ -470,6 +470,9 @@ describe("AC-09 additive metadata, exact capture, and exhaustive secrecy seam", 
 
   test.runIf(process.platform === "win32").each([
     ["powershell" as const, `$secret = '${canary}'; Write-Output $secret`],
+    ["powershell" as const, `$env:secret = '${canary}'; Write-Output $env:secret`],
+    ["powershell" as const, `$script:secret = '${canary}'; Write-Output $script:secret`],
+    ["powershell" as const, `$global:secret = '${canary}'; Write-Output $global:secret`],
     ["cmd" as const, `set "secret=${canary}" & call echo %%secret%%`],
   ])("redacts %s static assignment values expanded to stdout", async (interpreter, snippet) => {
     const root = await makeRoot();
