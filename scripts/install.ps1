@@ -193,6 +193,64 @@ function Get-ArashiFileHash {
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
 }
 
+function Test-ArashiGitForWindowsRoot {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    try {
+        $fullRoot = [System.IO.Path]::GetFullPath($Root)
+    } catch {
+        return $false
+    }
+    return (
+        (Test-Path -LiteralPath (Join-Path $fullRoot "cmd\git.exe") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $fullRoot "bin\bash.exe") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $fullRoot "usr\bin\cygpath.exe") -PathType Leaf)
+    )
+}
+
+function Get-ArashiGitForWindowsBash {
+    $candidateRoots = New-Object System.Collections.Generic.List[string]
+    foreach ($registryPath in @(
+        "HKCU:\Software\GitForWindows",
+        "HKLM:\Software\GitForWindows",
+        "HKLM:\Software\WOW6432Node\GitForWindows"
+    )) {
+        try {
+            $installPath = (Get-ItemProperty -LiteralPath $registryPath -Name InstallPath -ErrorAction Stop).InstallPath
+            if (-not [string]::IsNullOrWhiteSpace($installPath)) { $candidateRoots.Add($installPath) }
+        } catch {
+            # Registry discovery is optional; verified filesystem layouts below remain authoritative.
+        }
+    }
+    foreach ($programFilesRoot in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LocalAppData)) {
+        if (-not [string]::IsNullOrWhiteSpace($programFilesRoot)) {
+            $candidateRoots.Add((Join-Path $programFilesRoot "Git"))
+            if ($programFilesRoot -eq $env:LocalAppData) {
+                $candidateRoots.Add((Join-Path $programFilesRoot "Programs\Git"))
+            }
+        }
+    }
+    foreach ($gitCommand in @(Get-Command git.exe -All -ErrorAction SilentlyContinue)) {
+        if ([string]::IsNullOrWhiteSpace($gitCommand.Path)) { continue }
+        $gitDirectory = Split-Path -Parent $gitCommand.Path
+        $candidateRoots.Add((Split-Path -Parent $gitDirectory))
+        if ((Split-Path -Leaf $gitDirectory) -ieq "bin") {
+            $candidateRoots.Add((Split-Path -Parent (Split-Path -Parent $gitDirectory)))
+        }
+    }
+
+    $seen = @{}
+    foreach ($root in $candidateRoots) {
+        try { $fullRoot = [System.IO.Path]::GetFullPath($root).TrimEnd('\') } catch { continue }
+        if ($seen.ContainsKey($fullRoot)) { continue }
+        $seen[$fullRoot] = $true
+        if (Test-ArashiGitForWindowsRoot -Root $fullRoot) {
+            return (Join-Path $fullRoot "bin\bash.exe")
+        }
+    }
+    return $null
+}
+
 function Assert-ArashiAliasOwnership {
     param(
         [Parameter(Mandatory = $true)][string]$InstallDirectory,
@@ -242,7 +300,9 @@ function Assert-ArashiAliasOwnership {
     if ($null -ne $ResolveCommands) {
         $resolvedCommands = @(& $ResolveCommands)
     } else {
-        $powerShell = Get-Command aw -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source } | Where-Object { $_ }
+        $powerShell = Get-Command aw -All -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandType -in @("Application", "ExternalScript") -and -not [string]::IsNullOrWhiteSpace($_.Path) } |
+            ForEach-Object { $_.Path }
         $cmd = @(
             foreach ($directory in @($env:Path -split ';')) {
                 $expandedDirectory = [Environment]::ExpandEnvironmentVariables($directory.Trim().Trim('"'))
@@ -255,8 +315,10 @@ function Assert-ArashiAliasOwnership {
                 }
             }
         )
-        $bashPath = Get-Command bash.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
-        $gitBash = if ($bashPath) { & $bashPath --noprofile --norc -c "command -v aw" 2>$null } else { @() }
+        $bashPath = Get-ArashiGitForWindowsBash
+        $gitBash = if ($bashPath) {
+            & $bashPath --noprofile --norc -c 'candidate=$(type -P aw) || exit 0; cygpath -w -- "$candidate"' 2>$null
+        } else { @() }
         $resolvedCommands = @($powerShell) + @($cmd) + @($gitBash)
     }
     $managedAliasPaths = @(

@@ -387,6 +387,14 @@ json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+physical_command_path() {
+  local path="$1" directory name physical_directory
+  directory="$(dirname "$path")"
+  name="$(basename "$path")"
+  physical_directory="$(cd -P "$directory" 2>/dev/null && pwd -P)" || return 1
+  printf '%s/%s\n' "$physical_directory" "$name"
+}
+
 preflight_alias_ownership() {
   local install_dir="$1"
   local alias_path="$install_dir/$ALIAS_ASSET"
@@ -456,15 +464,25 @@ preflight_alias_ownership() {
     return 1
   fi
 
-  resolved="$(command -v aw 2>/dev/null || true)"
+  resolved="$(type -P aw 2>/dev/null || true)"
   if [ -n "$resolved" ]; then
-    case "$resolved" in
-      "$alias_path") ;;
-      *)
-        printf 'error: unrelated aw command resolves to %s outside %s; move or remove the collision deliberately before retrying\n' "$resolved" "$install_dir" >&2
-        return 1
-        ;;
-    esac
+    if [ ! -e "$alias_path" ] && [ ! -L "$alias_path" ]; then
+      printf 'error: unrelated aw command resolves to %s outside %s; move or remove the collision deliberately before retrying\n' "$resolved" "$install_dir" >&2
+      return 1
+    fi
+    local resolved_physical alias_physical
+    resolved_physical="$(physical_command_path "$resolved")" || {
+      printf 'error: unable to resolve filesystem identity for aw command at %s\n' "$resolved" >&2
+      return 1
+    }
+    alias_physical="$(physical_command_path "$alias_path")" || {
+      printf 'error: unable to resolve managed aw destination identity at %s\n' "$alias_path" >&2
+      return 1
+    }
+    if [ "$resolved_physical" != "$alias_physical" ]; then
+      printf 'error: unrelated aw command resolves to %s outside %s; move or remove the collision deliberately before retrying\n' "$resolved" "$install_dir" >&2
+      return 1
+    fi
   fi
 }
 
@@ -521,6 +539,21 @@ restore_installed_asset() {
   fi
 }
 
+capture_entrypoint_version() {
+  local path="$1" output_variable="$2"
+  local output_path status output
+  output_path="$(mktemp "${TMPDIR:-/tmp}/arashi-version.XXXXXX")" || return 1
+  "$path" --version >"$output_path" 2>&1 &
+  ACTIVE_TRANSACTION_CHILD=$!
+  wait "$ACTIVE_TRANSACTION_CHILD"
+  status=$?
+  ACTIVE_TRANSACTION_CHILD=0
+  output="$(cat "$output_path")"
+  rm -f "$output_path"
+  printf -v "$output_variable" '%s' "$output"
+  return "$status"
+}
+
 verify_installed_entrypoints() {
   local canonical_path="$1"
   local alias_path="$2"
@@ -528,9 +561,9 @@ verify_installed_entrypoints() {
 
   log "Running post-install smoke test"
   set +e
-  canonical_version="$("$canonical_path" --version 2>&1)"
+  capture_entrypoint_version "$canonical_path" canonical_version
   canonical_status=$?
-  alias_version="$("$alias_path" --version 2>&1)"
+  capture_entrypoint_version "$alias_path" alias_version
   alias_status=$?
   set -e
   if [ "$canonical_status" -ne 0 ] || [ "$alias_status" -ne 0 ]; then
@@ -553,6 +586,56 @@ install_posix_payload_transaction() {
   local -a destinations=("$binary_path" "$canonical_path" "$alias_path" "$ledger_path")
   local -a sources=("$binary_source" "$wrapper_source" "$alias_source" "")
   local -a existed=()
+  local transaction_armed=0 transaction_committed=0 ACTIVE_TRANSACTION_CHILD=0
+  local transaction_failure="Installation exited unexpectedly during $phase"
+  local previous_exit_trap previous_err_trap
+  previous_exit_trap="$(trap -p EXIT)"
+  previous_err_trap="$(trap -p ERR)"
+
+  rollback_transaction_on_exit() {
+    local observed_status=$?
+    local status="${1:-$observed_status}"
+    trap - EXIT ERR HUP INT TERM
+    if [ "$transaction_armed" -eq 0 ] || [ "$transaction_committed" -eq 1 ]; then
+      return
+    fi
+
+    local rollback_failed=0 rollback_index
+    for rollback_index in "${!destinations[@]}"; do
+      if [ "${existed[$rollback_index]}" -eq 1 ]; then
+        restore_installed_asset "$backup_directory/$rollback_index" "${destinations[$rollback_index]}" || rollback_failed=1
+      elif [ -e "${destinations[$rollback_index]}" ] || [ -L "${destinations[$rollback_index]}" ]; then
+        rm -f "${destinations[$rollback_index]}" || rollback_failed=1
+      fi
+    done
+    rm -f "$staged_ledger" || rollback_failed=1
+
+    if [ "$rollback_failed" -ne 0 ]; then
+      printf 'error: %s. Rollback failed; recoverable backups retained at: %s. Restore them manually before retrying\n' "$transaction_failure" "$backup_directory" >&2
+    else
+      rm -rf "$backup_directory"
+      printf 'error: %s. Rollback completed and restored the previous managed payload\n' "$transaction_failure" >&2
+    fi
+    [ "$status" -ne 0 ] || status=1
+    if [ -n "$previous_exit_trap" ]; then
+      eval "$previous_exit_trap"
+    fi
+    if [ -n "$previous_err_trap" ]; then
+      eval "$previous_err_trap"
+    fi
+    exit "$status"
+  }
+
+  interrupt_transaction() {
+    local signal_name="$1" signal_status="$2"
+    transaction_failure="Installation interrupted by $signal_name during $phase"
+    if [ "$ACTIVE_TRANSACTION_CHILD" -gt 0 ]; then
+      kill -s "$signal_name" "$ACTIVE_TRANSACTION_CHILD" 2>/dev/null || true
+      wait "$ACTIVE_TRANSACTION_CHILD" 2>/dev/null || true
+      ACTIVE_TRANSACTION_CHILD=0
+    fi
+    rollback_transaction_on_exit "$signal_status"
+  }
 
   mkdir -p "$install_dir" || fail "Unable to create install directory: $install_dir"
   [ -w "$install_dir" ] || fail "Install directory is not writable: $install_dir"
@@ -575,17 +658,27 @@ install_posix_payload_transaction() {
     fi
   done
 
+  transaction_armed=1
+  trap rollback_transaction_on_exit EXIT
+  trap 'rollback_transaction_on_exit $?' ERR
+  trap 'interrupt_transaction HUP 129' HUP
+  trap 'interrupt_transaction INT 130' INT
+  trap 'interrupt_transaction TERM 143' TERM
+
   local failed=0
   phase="replacement"
+  transaction_failure="Installation failed during $phase"
   for index in 0 1 2; do
     if ! replace_installed_asset "${sources[$index]}" "${destinations[$index]}"; then failed=1; break; fi
   done
   if [ "$failed" -eq 0 ]; then
     phase="smoke test"
+    transaction_failure="Installation failed during $phase"
     verify_installed_entrypoints "$canonical_path" "$alias_path" || failed=1
   fi
   if [ "$failed" -eq 0 ]; then
     phase="ledger commit"
+    transaction_failure="Installation failed during $phase"
     alias_hash="$(sha256_file "$alias_path")" || failed=1
     ledger_release_version="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | sed -nE 's/.*(^|[^0-9A-Za-z.-])([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)([^0-9A-Za-z.-]|$).*/\2/p' | head -n 1)"
     if [ -z "$ledger_release_version" ]; then
@@ -603,26 +696,21 @@ install_posix_payload_transaction() {
     replace_installed_asset "$staged_ledger" "$ledger_path" || failed=1
   fi
 
-  if [ "$failed" -eq 0 ]; then
-    rm -rf "$backup_directory"
-    rm -f "$staged_ledger"
-    return 0
+  if [ "$failed" -ne 0 ]; then
+    rollback_transaction_on_exit 1
   fi
 
-  local rollback_failed=0
-  for index in "${!destinations[@]}"; do
-    if [ "${existed[$index]}" -eq 1 ]; then
-      restore_installed_asset "$backup_directory/$index" "${destinations[$index]}" || rollback_failed=1
-    elif [ -e "${destinations[$index]}" ] || [ -L "${destinations[$index]}" ]; then
-      rm -f "${destinations[$index]}" || rollback_failed=1
-    fi
-  done
   rm -f "$staged_ledger"
-  if [ "$rollback_failed" -ne 0 ]; then
-    fail "Installation failed during $phase. Rollback failed; recoverable backups retained at: $backup_directory. Restore them manually before retrying"
-  fi
   rm -rf "$backup_directory"
-  fail "Installation failed during $phase. Rollback completed and restored the previous managed payload"
+  transaction_committed=1
+  trap - EXIT ERR HUP INT TERM
+  if [ -n "$previous_exit_trap" ]; then
+    eval "$previous_exit_trap"
+  fi
+  if [ -n "$previous_err_trap" ]; then
+    eval "$previous_err_trap"
+  fi
+  return 0
 }
 
 print_post_install_notes() {

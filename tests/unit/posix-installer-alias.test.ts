@@ -142,9 +142,19 @@ describe("POSIX alias installer contract", () => {
     ]) {
       expect(script).toContain(evidence);
     }
-    expect(script).toContain('canonical_version="$("$canonical_path" --version 2>&1)"');
-    expect(script).toContain('alias_version="$("$alias_path" --version 2>&1)"');
+    expect(script).toContain('capture_entrypoint_version "$canonical_path" canonical_version');
+    expect(script).toContain('capture_entrypoint_version "$alias_path" alias_version');
+    expect(script).toContain("ACTIVE_TRANSACTION_CHILD=$!");
+    expect(script).toContain("trap 'interrupt_transaction INT 130' INT");
     expect(script).toContain('"$canonical_version" != "$alias_version"');
+    const stagedCleanup = script.lastIndexOf('rm -f "$staged_ledger"');
+    const backupCleanup = script.indexOf('rm -rf "$backup_directory"', stagedCleanup);
+    const committed = script.indexOf("transaction_committed=1", backupCleanup);
+    const disarmed = script.indexOf("trap - EXIT ERR HUP INT TERM", committed);
+    expect(stagedCleanup).toBeGreaterThan(-1);
+    expect(backupCleanup).toBeGreaterThan(stagedCleanup);
+    expect(committed).toBeGreaterThan(backupCleanup);
+    expect(disarmed).toBeGreaterThan(committed);
   });
 
   test("commits a three-file payload and versioned path/hash ownership ledger", () => {

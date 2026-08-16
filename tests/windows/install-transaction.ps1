@@ -247,6 +247,30 @@ try {
         }
         Remove-Item -LiteralPath $backupMatch.Groups[1].Value -Recurse -Force
     }
+    Write-Host "verified Git for Windows Bash collision resolution"
+    $gitBashPath = Get-ArashiGitForWindowsBash
+    if ([string]::IsNullOrWhiteSpace($gitBashPath) -or -not (Test-Path -LiteralPath $gitBashPath -PathType Leaf)) {
+        throw "Unable to locate verified Git for Windows Bash"
+    }
+    $bashProbeRoot = Join-Path $env:RUNNER_TEMP "arashi-bash-probe-$([Guid]::NewGuid().ToString('N'))"
+    $fakeBashDirectory = Join-Path $bashProbeRoot "fake-bash"
+    $externalDirectory = Join-Path $bashProbeRoot "external"
+    $probeInstallDirectory = Join-Path $bashProbeRoot "install"
+    New-Item -ItemType Directory -Path $fakeBashDirectory, $externalDirectory, $probeInstallDirectory -Force | Out-Null
+    Copy-Item -LiteralPath $env:ComSpec -Destination (Join-Path $fakeBashDirectory "bash.exe")
+    Set-Content -LiteralPath (Join-Path $externalDirectory "aw") -Value "#!/bin/sh`nexit 0`n" -NoNewline
+    $originalPath = $env:Path
+    try {
+        $env:Path = "$fakeBashDirectory;$externalDirectory;$originalPath"
+        Assert-Equal $gitBashPath (Get-ArashiGitForWindowsBash) "Unrelated bash.exe shadowed verified Git for Windows Bash"
+        Assert-Throws {
+            Assert-ArashiAliasOwnership -InstallDirectory $probeInstallDirectory
+        } "Unrelated aw command resolves" "Git Bash filesystem collision"
+    } finally {
+        $env:Path = $originalPath
+        Remove-Item -LiteralPath $bashProbeRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     Write-Host "deferred update"
     Write-Host "complete cleanup"
 } finally {

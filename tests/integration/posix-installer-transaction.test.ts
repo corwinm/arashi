@@ -158,9 +158,9 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     expect(existsSync(executed)).toBe(false);
   });
 
-  test(
-    "rolls back a fresh payload when terminated after mutation begins",
-    async () => {
+  test.each([{ signal: "SIGHUP" }, { signal: "SIGTERM" }] as const)(
+    "rolls back a fresh payload when $signal reaches only the installer PID after mutation begins",
+    async ({ signal }) => {
       const state = fixture();
       const ready = join(state.directory, "smoke-ready");
       writeFileSync(
@@ -184,7 +184,7 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
         await delay(25);
       }
       expect(existsSync(ready), stderr).toBe(true);
-      process.kill(-child.pid!, "SIGTERM");
+      child.kill(signal);
       const [status] = (await closed) as [number | null, NodeJS.Signals | null];
       expect(status).not.toBe(0);
       for (const name of ["arashi.bin", "arashi", "aw", ".arashi-managed-entrypoints.json"]) {
