@@ -497,8 +497,8 @@ function Install-Arashi {
             [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasCmdWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasCmdWrapperAsset }
         )
         $installedBinary = Join-Path $targetInstallDir $InstalledBinaryName
-        $installedCanonical = Join-Path $targetInstallDir $PowerShellWrapperAsset
-        $installedAlias = Join-Path $targetInstallDir $AliasPowerShellWrapperAsset
+        $installedCanonical = Join-Path $targetInstallDir $CmdWrapperAsset
+        $installedAlias = Join-Path $targetInstallDir $AliasCmdWrapperAsset
         $stagedVersionOutput = & (Join-Path $stagingDir $WindowsBinaryAsset) --version 2>&1
         if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($stagedVersionOutput | Out-String))) { throw "Staged Windows binary failed version verification." }
         $versionText = ($stagedVersionOutput | Out-String).Trim()

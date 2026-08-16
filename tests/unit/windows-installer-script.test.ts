@@ -107,6 +107,17 @@ describe("Windows PowerShell installer", () => {
     );
   });
 
+  test("smoke-tests policy-independent CMD wrappers on Windows", () => {
+    expect(script).toContain("$installedCanonical = Join-Path $targetInstallDir $CmdWrapperAsset");
+    expect(script).toContain("$installedAlias = Join-Path $targetInstallDir $AliasCmdWrapperAsset");
+    expect(script).not.toContain(
+      "$installedCanonical = Join-Path $targetInstallDir $PowerShellWrapperAsset",
+    );
+    expect(script).not.toContain(
+      "$installedAlias = Join-Path $targetInstallDir $AliasPowerShellWrapperAsset",
+    );
+  });
+
   test("backs up and replaces the seven-file payload and ledger as one transaction", () => {
     const body = functionBody("Install-ArashiPayloadTransaction");
 
