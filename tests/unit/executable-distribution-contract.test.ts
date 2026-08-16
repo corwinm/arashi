@@ -107,6 +107,12 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).toContain("verify-aw-windows");
     expect(workflow).toContain("workflow_dispatch");
     expect(workflow).toContain("release:verify-aw");
+    const windowsJob = workflow.slice(workflow.indexOf("verify-aw-windows:"));
+    expect(windowsJob).toContain("actions/setup-node@v7");
+    expect(windowsJob).toContain("node-version: 24.18.0");
+    expect(windowsJob.indexOf("actions/setup-node@v7")).toBeLessThan(
+      windowsJob.indexOf("Verify public npm package"),
+    );
   });
 
   test("runs exact-version public npm and POSIX verification on a provisioned native POSIX runner", () => {
