@@ -91,6 +91,15 @@ describe("Windows PowerShell installer", () => {
     expect(body).toContain("new Git Bash window");
   });
 
+  test("uses verified Git for Windows Bash and native path conversion for collision evidence", () => {
+    const ownership = functionBody("Assert-ArashiAliasOwnership");
+
+    expect(script).toContain("function Get-ArashiGitForWindowsBash");
+    expect(ownership).toContain("Get-ArashiGitForWindowsBash");
+    expect(ownership).toContain("cygpath -w");
+    expect(ownership).not.toContain("Get-Command bash.exe");
+  });
+
   test("runs canonical and alias wrapper smoke tests and prints complete fallback guidance", () => {
     const body = functionBody("Invoke-ArashiSmokeTest");
 
