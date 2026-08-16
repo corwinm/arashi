@@ -100,6 +100,25 @@ afterAll(() => {
 });
 
 describe.skipIf(process.platform === "win32")("exact-version published release verifier", () => {
+  test("rejects an npm entrypoint whose parsed version only contains the requested version as a substring", () => {
+    const mismatchedNative = join(fixture, "arashi-mismatched.bin");
+    writeFileSync(mismatchedNative, `#!/bin/sh\nprintf '1${version}\\n'\n`);
+    chmodSync(mismatchedNative, 0o755);
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "scripts/release/verify-aw.ts"), version],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...environment, ARASHI_TEST_NATIVE: mismatchedNative },
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      `npm entrypoint version does not exactly match requested release ${version}`,
+    );
+  }, 30_000);
+
   test("sources installed integration and executes real switch --cd and completion in every POSIX shell", () => {
     const result = spawnSync(
       process.execPath,
