@@ -563,7 +563,7 @@ describe("repositoryStatusToDoctorFindings", () => {
     );
   });
 
-  test("replaces a conflicting fetch destination before fetching", () => {
+  test("reports conflicting fetch destinations for manual resolution", () => {
     const status = baseStatus();
     status.branch.remoteBranch = null;
 
@@ -583,9 +583,10 @@ describe("repositoryStatusToDoctorFindings", () => {
     const finding = findings.find(
       (candidate) => candidate.code === "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
     );
-    expect(finding?.suggestedCommands[0]).toBe(
-      `git -C ${quoteDoctorShellArgument(status.path)} config --replace-all ${quoteDoctorShellArgument("remote.origin.fetch")} ${quoteDoctorShellArgument("+refs/heads/main:refs/remotes/origin/main")} ${quoteDoctorShellArgument("^(\\+refs/heads/trunk:refs/remotes/origin/main|\\+refs/heads/release/\\*:refs/remotes/origin/\\*)$")}`,
-    );
+    expect(finding?.message).toContain("review the conflicting fetch mappings manually");
+    expect(finding?.suggestedCommands).toEqual([
+      `git -C ${quoteDoctorShellArgument(status.path)} config --get-all ${quoteDoctorShellArgument("remote.origin.fetch")}`,
+    ]);
   });
 
   test("keeps missing remote refs authoritative over topology diagnosis", () => {

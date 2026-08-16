@@ -40,9 +40,6 @@ export const quoteDoctorShellArgument = (
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 };
 
-const escapeGitConfigValuePattern = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 type RepoStatus = Awaited<ReturnType<typeof checkAllRepos>>[number];
 type RepositoryTarget = Parameters<typeof discoverPrunableWorktrees>[0][number];
 
@@ -267,13 +264,18 @@ export const repositoryStatusToDoctorFindings = (
     const quotedPath = quoteDoctorShellArgument(status.path);
     const quotedRemote = quoteDoctorShellArgument(upstreamInspection.remote);
     const conflictingFetchRefspecs = upstreamInspection.conflictingFetchRefspecs ?? [];
-    const conflictingFetchPattern = `^(${conflictingFetchRefspecs
-      .map(escapeGitConfigValuePattern)
-      .join("|")})$`;
-    const fetchConfigCommand =
-      conflictingFetchRefspecs.length > 0
-        ? `git -C ${quotedPath} config --replace-all ${quoteDoctorShellArgument(`remote.${upstreamInspection.remote}.fetch`)} ${quoteDoctorShellArgument(fetchRefspec)} ${quoteDoctorShellArgument(conflictingFetchPattern)}`
-        : `git -C ${quotedPath} config --add ${quoteDoctorShellArgument(`remote.${upstreamInspection.remote}.fetch`)} ${quoteDoctorShellArgument(fetchRefspec)}`;
+    const fetchConfigKey = quoteDoctorShellArgument(`remote.${upstreamInspection.remote}.fetch`);
+    const hasConflictingDestination = conflictingFetchRefspecs.length > 0;
+    const message = hasConflictingDestination
+      ? `Repository '${status.name}' branch '${upstreamInspection.localBranch}' has upstream configuration, but Git cannot use ${upstreamInspection.remote}/${upstreamInspection.remoteBranch} because remote '${upstreamInspection.remote}' has fetch mappings that conflict at the expected tracking namespace; review the conflicting fetch mappings manually.`
+      : `Repository '${status.name}' branch '${upstreamInspection.localBranch}' has upstream configuration, but Git cannot use ${upstreamInspection.remote}/${upstreamInspection.remoteBranch} because remote '${upstreamInspection.remote}' has no covering fetch mapping.`;
+    const suggestedCommands = hasConflictingDestination
+      ? [`git -C ${quotedPath} config --get-all ${fetchConfigKey}`]
+      : [
+          `git -C ${quotedPath} config --add ${fetchConfigKey} ${quoteDoctorShellArgument(fetchRefspec)}`,
+          `git -C ${quotedPath} fetch ${quotedRemote}`,
+          `git -C ${quotedPath} branch ${quoteDoctorShellArgument(`--set-upstream-to=${upstreamInspection.remote}/${upstreamInspection.remoteBranch}`)} ${quoteDoctorShellArgument(upstreamInspection.localBranch)}`,
+        ];
     findings.push(
       createFinding({
         category: "repository",
@@ -288,14 +290,10 @@ export const repositoryStatusToDoctorFindings = (
           remote: upstreamInspection.remote,
           repository: status.name,
         },
-        message: `Repository '${status.name}' branch '${upstreamInspection.localBranch}' has upstream configuration, but Git cannot use ${upstreamInspection.remote}/${upstreamInspection.remoteBranch} because remote '${upstreamInspection.remote}' has no covering fetch mapping.`,
+        message,
         scope,
         severity: "warning",
-        suggestedCommands: [
-          fetchConfigCommand,
-          `git -C ${quotedPath} fetch ${quotedRemote}`,
-          `git -C ${quotedPath} branch ${quoteDoctorShellArgument(`--set-upstream-to=${upstreamInspection.remote}/${upstreamInspection.remoteBranch}`)} ${quoteDoctorShellArgument(upstreamInspection.localBranch)}`,
-        ],
+        suggestedCommands,
       }),
     );
   } else if (!status.branch.remoteBranch) {
