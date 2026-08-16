@@ -128,6 +128,16 @@ try {
     Set-Content -LiteralPath $externalAlias -Value "must not execute" -NoNewline
     Assert-Throws { Assert-ArashiAliasOwnership -InstallDirectory $pathCollision.Destination -ResolveCommands { $externalAlias } } "outside" "PATH-resolved collision"
 
+    Write-Host "same-directory unmanaged executable collision"
+    $sameDirectoryCollision = New-PayloadFixture "same-directory-collision"
+    $fixtures += $sameDirectoryCollision
+    $sameDirectoryExecutable = Join-Path $sameDirectoryCollision.Destination "aw.exe"
+    Set-Content -LiteralPath $sameDirectoryExecutable -Value "must not execute" -NoNewline
+    Assert-Throws {
+        Assert-ArashiAliasOwnership -InstallDirectory $sameDirectoryCollision.Destination -ResolveCommands { $sameDirectoryExecutable }
+    } "Unrelated aw command resolves" "same-directory unmanaged executable collision"
+    Assert-Equal "must not execute" (Get-Content -LiteralPath $sameDirectoryExecutable -Raw) "Same-directory collision was mutated"
+
     Write-Host "non-file destination"
     $nonFile = New-PayloadFixture "non-file"
     $fixtures += $nonFile

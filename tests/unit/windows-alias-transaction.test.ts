@@ -88,6 +88,7 @@ describe("Windows seven-file alias transaction", () => {
       "PATH-resolved PowerShell collision",
       "PATH-resolved CMD collision",
       "PATH-resolved Git Bash collision",
+      "same-directory unmanaged executable collision",
       "replacement failure",
       "canonical smoke-test failure",
       "alias smoke-test failure",

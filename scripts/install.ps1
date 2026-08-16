@@ -259,12 +259,19 @@ function Assert-ArashiAliasOwnership {
         $gitBash = if ($bashPath) { & $bashPath --noprofile --norc -c "command -v aw" 2>$null } else { @() }
         $resolvedCommands = @($powerShell) + @($cmd) + @($gitBash)
     }
+    $managedAliasPaths = @(
+        $AliasNames | ForEach-Object { [System.IO.Path]::GetFullPath((Join-Path $InstallDirectory $_)) }
+    )
     foreach ($resolved in $resolvedCommands | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) {
         $candidate = $resolved.ToString().Trim()
         if ($candidate -match '^/[a-zA-Z]/') { $candidate = $candidate.Substring(1, 1) + ":" + $candidate.Substring(2).Replace('/', '\') }
-        $candidateDirectory = Split-Path -Parent ([System.IO.Path]::GetFullPath($candidate))
+        $candidatePath = [System.IO.Path]::GetFullPath($candidate)
+        $candidateDirectory = Split-Path -Parent $candidatePath
         if ($candidateDirectory.TrimEnd('\') -ine ([System.IO.Path]::GetFullPath($InstallDirectory)).TrimEnd('\')) {
             throw "Unrelated aw command resolves to $resolved outside $InstallDirectory; move or remove it deliberately before retrying."
+        }
+        if ($managedAliasPaths -notcontains $candidatePath) {
+            throw "Unrelated aw command resolves to $resolved but is not an installer-managed alias destination; move or remove it deliberately before retrying."
         }
     }
 }
