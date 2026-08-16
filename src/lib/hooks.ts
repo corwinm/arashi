@@ -1489,10 +1489,20 @@ const REDACTED_INLINE_OUTPUT = "[inline hook snippet redacted]";
 
 const stripShellDiagnosticQuotes = (value: string): string => value.replaceAll(/[`"']/gu, "");
 
+const staticInlineAssignmentValues = (snippet: string): readonly string[] =>
+  [
+    ...snippet.matchAll(
+      /(?:^|[\s;])(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s;\r\n]+))/gmu,
+    ),
+  ]
+    .map((match) => match[ONE] ?? match[2] ?? match[3] ?? "")
+    .filter((value) => value.length > ZERO);
+
 const inlineSnippetStreamRedactionValues = (snippet: string): readonly string[] =>
   Object.freeze([
     ...new Set([
       snippet,
+      ...staticInlineAssignmentValues(snippet),
       ...snippet.split(/\r?\n/u).flatMap((line) => {
         const trimmed = line.trim();
         const withoutRedirection = trimmed.split(/[<>]/u, ONE)[ZERO]?.trim() ?? "";
