@@ -154,7 +154,7 @@ jobs:
         env:
           ARASHI_BUILT_HOOK_ACCEPTANCE: "1"
           ARASHI_WRAPPER_ACCEPTANCE: "1"
-        run: pnpm exec vitest run tests/integration/hook-input-built-posix.test.ts tests/integration/hook-input-wrapper.test.ts tests/unit/arashi-wrapper.test.ts
+        run: pnpm exec vitest run tests/integration/hook-input-built-posix.test.ts tests/integration/inline-hook-built-posix.test.ts tests/integration/hook-input-wrapper.test.ts tests/unit/arashi-wrapper.test.ts
 
   build:
     name: Build (${{ matrix.os }})

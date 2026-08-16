@@ -70,12 +70,17 @@ const jsonFindings = (parsed: Record<string, unknown>): Record<string, unknown>[
 
 const writeWorkspaceConfig = async (
   workspaceRoot: string,
-  repos: Record<string, { path: string; gitUrl?: string }> = {},
+  repos: Record<string, { path: string; gitUrl?: string; hooks?: Record<string, unknown> }> = {},
+  hooks?: Record<string, unknown>,
 ): Promise<void> => {
   await mkdir(join(workspaceRoot, ".arashi"), { recursive: true });
   await writeFile(
     join(workspaceRoot, ".arashi", "config.json"),
-    JSON.stringify({ repos, reposDir: "./repos", version: "1.0.0" }, null, 2),
+    JSON.stringify(
+      { ...(hooks === undefined ? {} : { hooks }), repos, reposDir: "./repos", version: "1.0.0" },
+      null,
+      2,
+    ),
   );
 };
 
@@ -322,6 +327,81 @@ describe("arashi doctor", () => {
     );
     if (process.platform !== "win32") expect(codes).toContain("HOOK_NOT_EXECUTABLE");
     expect(codes).toContain("HOOK_UNSUPPORTED_DEFINITION");
+  });
+
+  test.runIf(process.platform !== "win32")(
+    "reports an unavailable interpreter for an inline create lifecycle without exposing its snippet",
+    async () => {
+      const workspaceRoot = await createLocalWorkspace();
+      await initializeGitRepository(join(workspaceRoot, "repos", "repo-a"));
+      const snippet = "echo doctor-private-payload";
+      await writeWorkspaceConfig(
+        workspaceRoot,
+        { "repo-a": { path: "./repos/repo-a" } },
+        { scripts: { "pre-create": { cmd: snippet } } },
+      );
+
+      const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+      const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+      expect(result.exitCode).toBe(1);
+      expect(findings).toContainEqual(
+        expect.objectContaining({
+          code: "HOOK_INTERPRETER_UNAVAILABLE",
+          details: expect.objectContaining({
+            hookName: "pre-create",
+            sourceKind: "inline-config",
+            sourceScriptPath: null,
+          }),
+          scope: "hook:workspace:workspace:pre-create",
+        }),
+      );
+      expect(result.stdout).not.toContain(snippet);
+      expect(result.stderr).not.toContain(snippet);
+    },
+  );
+
+  test("composes a root repository inline remove hook with the workspace native file", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const hookDir = join(workspaceRoot, ".arashi", "hooks");
+    await mkdir(hookDir, { recursive: true });
+    const hookPath = join(
+      hookDir,
+      process.platform === "win32" ? "pre-remove.ps1" : "pre-remove.sh",
+    );
+    await writeFile(hookPath, process.platform === "win32" ? "exit 0\n" : "#!/bin/sh\nexit 0\n");
+    if (process.platform !== "win32") await chmod(hookPath, 0o755);
+    await writeWorkspaceConfig(workspaceRoot, {
+      root: {
+        hooks: {
+          "pre-remove":
+            process.platform === "win32" ? { powershell: "exit 0" } : { bash: "exit 0" },
+        },
+        path: ".",
+      },
+    });
+
+    const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        code: "HOOK_CONFIGURED",
+        details: expect.objectContaining({
+          hookName: "pre-remove",
+          sourceKind: "inline-config",
+          sourceOwnerKind: "repository",
+          sourceOwnerName: "root",
+        }),
+        scope: "hook:repository:root:pre-remove",
+      }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({
+        code: "HOOK_AMBIGUOUS",
+        scope: "hook:repository:root:pre-remove",
+      }),
+    );
   });
 });
 

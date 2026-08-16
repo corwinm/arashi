@@ -89,19 +89,20 @@ describe("hook execution integration", () => {
     },
   );
 
-  test.runIf(process.platform === "win32")(
-    "fails closed when multiple native lifecycle definitions exist",
-    async () => {
-      const hooksDirectory = join(testRepo, ".arashi", "hooks");
-      mkdirSync(hooksDirectory, { recursive: true });
-      writeFileSync(join(hooksDirectory, "pre-create.ps1"), "exit 0\n");
-      writeFileSync(join(hooksDirectory, "pre-create.cmd"), "@exit /b 0\r\n");
+  test("preserves multiple native lifecycle candidates for structured ambiguity classification", async () => {
+    const hooksDirectory = join(testRepo, ".arashi", "hooks");
+    mkdirSync(hooksDirectory, { recursive: true });
+    writeFileSync(join(hooksDirectory, "pre-create.ps1"), "exit 0\n");
+    writeFileSync(join(hooksDirectory, "pre-create.cmd"), "@exit /b 0\r\n");
 
-      await expect(discoverLifecycleHookInDirectory("pre-create", hooksDirectory)).rejects.toThrow(
-        "Ambiguous lifecycle hook",
-      );
-    },
-  );
+    await expect(
+      discoverLifecycleHookInDirectory("pre-create", hooksDirectory, "win32"),
+    ).rejects.toMatchObject({
+      candidates: [join(hooksDirectory, "pre-create.cmd"), join(hooksDirectory, "pre-create.ps1")],
+      code: "HOOK_AMBIGUOUS",
+      sourceKinds: ["file", "file"],
+    });
+  });
 
   test("executes hooks and captures stdout and stderr", async () => {
     const hookPath = createMockHook("echo 'stdout message' && echo 'stderr message' >&2");

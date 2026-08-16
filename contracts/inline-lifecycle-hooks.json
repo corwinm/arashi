@@ -1,0 +1,77 @@
+{
+  "ambiguity": {
+    "createJsonCode": "CREATE_FAILED",
+    "doctorCode": "HOOK_AMBIGUOUS",
+    "outcomeReason": "validation_failed",
+    "removeJsonCode": "HOOK_CONFIGURATION_INVALID",
+    "sourceKinds": ["inline-config", "file"]
+  },
+  "automation": {
+    "input": "source-neutral",
+    "jsonStdoutDocuments": 1,
+    "quietOwner": "json",
+    "timeout": "source-neutral"
+  },
+  "boundaries": {
+    "fileOnlyCompatible": true,
+    "standaloneInline": false,
+    "userGlobalInline": false
+  },
+  "configVersion": "1.0.0",
+  "dryRun": {
+    "create": {
+      "discoversHooks": false,
+      "emptyHookLedger": true,
+      "hookPreviews": false
+    },
+    "remove": {
+      "discoversHooks": true,
+      "executesHooks": false,
+      "hookPreviews": true
+    }
+  },
+  "lifecycles": ["pre-create", "post-create", "pre-remove", "post-remove"],
+  "logicalNames": {
+    "repositoryCreate": ["pre-create.<repo>", "post-create.<repo>"],
+    "repositoryRemove": ["pre-remove", "post-remove"]
+  },
+  "options": {
+    "create": {
+      "noHookInput": true,
+      "noHooks": true
+    },
+    "remove": {
+      "noHookInput": true,
+      "noHooks": false
+    }
+  },
+  "ownership": {
+    "repository": "repos.<name>.hooks.<lifecycle>",
+    "workspace": "hooks.scripts.<lifecycle>"
+  },
+  "producer": "scripts/contracts/inline-lifecycle-hooks.ts",
+  "schemaVersion": 1,
+  "selection": {
+    "posix": {
+      "lookup": "scan non-empty PATH entries for executable bash and return its absolute realpath",
+      "order": ["bash"]
+    },
+    "windows": {
+      "lookup": "use fixed SystemRoot PowerShell and cmd paths, then scan non-empty PATH entries for regular bash.exe",
+      "order": ["powershell", "cmd", "bash"]
+    }
+  },
+  "sourceMetadata": {
+    "fields": ["sourceKind", "sourceOwnerKind", "sourceOwnerName", "sourceScriptPath"],
+    "inlineSourceScriptPath": null,
+    "ownerKinds": ["workspace", "repository", "user-global"],
+    "snippetDisclosure": "forbidden",
+    "sourceKinds": ["file", "inline-config"]
+  },
+  "valueModel": {
+    "closedKeys": true,
+    "interpreters": ["bash", "powershell", "cmd"],
+    "nonEmpty": true,
+    "stringShorthand": "bash"
+  }
+}

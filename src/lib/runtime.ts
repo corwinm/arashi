@@ -18,6 +18,7 @@ type SpawnOptions = {
   timeout?: number;
   killSignal?: NodeJS.Signals;
   callBatchFile?: boolean;
+  windowsVerbatimArguments?: boolean;
 };
 
 export function spawn(command: string[], options: SpawnOptions = {}) {
@@ -37,7 +38,8 @@ export function spawn(command: string[], options: SpawnOptions = {}) {
     env: invocation.env ?? options.env,
     killSignal: options.killSignal,
     timeout: options.timeout,
-    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    windowsVerbatimArguments:
+      options.windowsVerbatimArguments ?? invocation.windowsVerbatimArguments,
     stdio: [
       options.stdin ?? "pipe",
       options.stdout ?? "pipe",
@@ -101,7 +103,8 @@ export function spawnSync(command: string[], options: SpawnOptions = {}) {
   const result = nodeSpawnSync(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: invocation.env ?? options.env,
-    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    windowsVerbatimArguments:
+      options.windowsVerbatimArguments ?? invocation.windowsVerbatimArguments,
   });
   return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }

@@ -50,6 +50,39 @@ export interface RepoConfig {
   gitUrl?: string;
   /** Optional semantic groups this repository belongs to */
   groups?: string[];
+  /** Optional repository-targeted inline lifecycle hooks */
+  hooks?: InlineHookScripts;
+}
+
+export type InlineHookLifecycle = "pre-create" | "post-create" | "pre-remove" | "post-remove";
+export type InlineHookInterpreter = "bash" | "powershell" | "cmd";
+
+/**
+ * Non-empty inline hook snippet.
+ * @minLength 1
+ * @pattern \S
+ */
+export type InlineHookSnippet = string;
+
+/**
+ * Interpreter-specific alternatives for one inline lifecycle hook.
+ * @minProperties 1
+ */
+export interface InlineHookInterpreterMap {
+  bash?: InlineHookSnippet;
+  powershell?: InlineHookSnippet;
+  cmd?: InlineHookSnippet;
+}
+
+/** Bash shorthand or interpreter-specific alternatives for one inline hook. */
+export type InlineHookValue = InlineHookInterpreter | InlineHookSnippet | InlineHookInterpreterMap;
+
+/** Closed set of supported inline lifecycle hooks. */
+export interface InlineHookScripts {
+  "pre-create"?: InlineHookValue;
+  "post-create"?: InlineHookValue;
+  "pre-remove"?: InlineHookValue;
+  "post-remove"?: InlineHookValue;
 }
 
 export const CURRENT_CONFIG_VERSION = "1.0.0" as const;
@@ -76,6 +109,8 @@ export interface Config {
      * @multipleOf 1
      */
     timeout?: number;
+    /** Workspace inline lifecycle hooks */
+    scripts?: InlineHookScripts;
   };
   /** Optional sync command settings */
   sync?: {
@@ -342,6 +377,10 @@ export const findWorkspaceRoot = async (startPath: string = process.cwd()): Prom
   while (true) {
     // Check if .arashi/config.json exists in current directory
     if (await configExists(currentPath)) {
+      // Validate the local configuration before probing Git topology. Commands use
+      // this discovery path before any hook or mutation preflight, so malformed
+      // configuration must fail without starting even a read-only Git process.
+      await loadConfig(currentPath);
       try {
         const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
         const rawCommonDirectory = common.stdout.trim();
@@ -452,7 +491,7 @@ const ROOT_ALLOWED_KEYS = new Set([
   "defaults",
 ]);
 
-const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout"]);
+const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout", "scripts"]);
 const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
 const CREATE_DEFAULTS_ALLOWED_KEYS = new Set([
   "baseBranch",
@@ -479,7 +518,16 @@ const REPO_ALLOWED_KEYS = new Set([
   "is_bare",
   "worktrees",
   "groups",
+  "hooks",
 ]);
+
+const INLINE_HOOK_LIFECYCLES = new Set<InlineHookLifecycle>([
+  "pre-create",
+  "post-create",
+  "pre-remove",
+  "post-remove",
+]);
+const INLINE_HOOK_INTERPRETERS = new Set<InlineHookInterpreter>(["bash", "powershell", "cmd"]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && Boolean(value) && !Array.isArray(value);
@@ -517,6 +565,75 @@ const validateNoUnknownKeys = ({
       errors.push(`${label}: unknown property`);
     }
   }
+};
+
+const normalizeInlineHookValue = (
+  value: unknown,
+  prefix: string,
+  errors: string[],
+): InlineHookInterpreterMap | undefined => {
+  if (typeof value === "string") {
+    if (value.trim() === "") {
+      errors.push(`${prefix}: must be a non-empty string or non-empty interpreter map`);
+      return undefined;
+    }
+    return { bash: value };
+  }
+
+  if (!isRecord(value)) {
+    errors.push(`${prefix}: must be a non-empty string or non-empty interpreter map`);
+    return undefined;
+  }
+
+  if (Object.keys(value).length === ZERO) {
+    errors.push(`${prefix}: must be a non-empty interpreter map`);
+    return undefined;
+  }
+
+  const normalized: InlineHookInterpreterMap = {};
+  for (const [interpreter, snippet] of Object.entries(value)) {
+    const memberPath = `${prefix}.${interpreter}`;
+    if (!INLINE_HOOK_INTERPRETERS.has(interpreter as InlineHookInterpreter)) {
+      errors.push(`${memberPath}: unknown property`);
+      continue;
+    }
+    if (typeof snippet !== "string" || snippet.trim() === "") {
+      errors.push(`${memberPath}: must be a non-empty string`);
+      continue;
+    }
+    normalized[interpreter as InlineHookInterpreter] = snippet;
+  }
+
+  return Object.keys(normalized).length > ZERO ? normalized : undefined;
+};
+
+const normalizeInlineHookScripts = (
+  value: unknown,
+  prefix: string,
+  errors: string[],
+): InlineHookScripts | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    errors.push(`${prefix}: must be an object if present`);
+    return undefined;
+  }
+
+  const normalized: InlineHookScripts = {};
+  for (const [lifecycle, hookValue] of Object.entries(value)) {
+    const hookPath = `${prefix}.${lifecycle}`;
+    if (!INLINE_HOOK_LIFECYCLES.has(lifecycle as InlineHookLifecycle)) {
+      errors.push(`${hookPath}: unknown property`);
+      continue;
+    }
+    const hook = normalizeInlineHookValue(hookValue, hookPath, errors);
+    if (hook) {
+      normalized[lifecycle as InlineHookLifecycle] = hook;
+    }
+  }
+
+  return Object.keys(normalized).length > ZERO ? normalized : undefined;
 };
 
 const resolveConfigVersion = (
@@ -609,6 +726,11 @@ const normalizeRepoConfig = (
     }
   }
 
+  const hooks = normalizeInlineHookScripts(value.hooks, `${prefix}.hooks`, errors);
+  if (hooks) {
+    normalized.hooks = hooks;
+  }
+
   return normalized;
 };
 
@@ -629,21 +751,26 @@ const normalizeWorkspaceHooks = (
   validateNoUnknownKeys({ allowedKeys: ROOT_HOOKS_ALLOWED_KEYS, errors, prefix, value });
 
   const { timeout } = value;
-  if (timeout === undefined) {
-    return undefined;
-  }
+  const scripts = normalizeInlineHookScripts(value.scripts, `${prefix}.scripts`, errors);
+  const normalized: NonNullable<Config["hooks"]> = {};
 
   if (
-    typeof timeout !== "number" ||
-    !Number.isInteger(timeout) ||
-    timeout < 1 ||
-    timeout > 2_147_483_647
+    timeout !== undefined &&
+    (typeof timeout !== "number" ||
+      !Number.isInteger(timeout) ||
+      timeout < 1 ||
+      timeout > 2_147_483_647)
   ) {
     errors.push(`${prefix}.timeout: must be an integer from 1 through 2147483647 if present`);
-    return undefined;
+  } else if (timeout !== undefined) {
+    normalized.timeout = timeout;
   }
 
-  return { timeout };
+  if (scripts) {
+    normalized.scripts = scripts;
+  }
+
+  return Object.keys(normalized).length > ZERO ? normalized : undefined;
 };
 
 const normalizeSyncConfig = (
@@ -1307,6 +1434,14 @@ const normalizePersistedRepoConfig = (repoConfig: RepoConfig): RepoConfig => {
 
   if (repoConfig.gitUrl && repoConfig.gitUrl.trim().length > 0) {
     normalized.gitUrl = repoConfig.gitUrl;
+  }
+
+  if (repoConfig.groups) {
+    normalized.groups = repoConfig.groups;
+  }
+
+  if (repoConfig.hooks) {
+    normalized.hooks = repoConfig.hooks;
   }
 
   return normalized;

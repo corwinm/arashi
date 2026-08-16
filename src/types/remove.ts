@@ -80,7 +80,21 @@ export interface RemoveHookPreview {
   /** Hook discovery scope */
   scope: string;
   /** Hook script path */
-  scriptPath: string;
+  scriptPath: string | null;
+  /** Public source kind */
+  sourceKind: "file" | "inline-config";
+  /** Public source owner kind */
+  sourceOwnerKind: "repository" | "user-global" | "workspace";
+  /** Public source owner name */
+  sourceOwnerName: string | null;
+  /** Absolute file path, or null for inline configuration */
+  sourceScriptPath: string | null;
+  /** Selected inline interpreter, or null for file sources */
+  selectedInterpreter: "bash" | "cmd" | "powershell" | null;
+  /** Interpreter/file availability classification */
+  availability: "available" | "unavailable";
+  /** Stable unavailable reason */
+  reasonCode: "interpreter_unavailable" | "validation_failed" | null;
   /** Whether the hook would be valid for a real run */
   valid: boolean;
   /** Validation error, if any */

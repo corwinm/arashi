@@ -259,18 +259,23 @@ For automated installs, set `ARASHI_SHELL_INTEGRATION=yes` to enable it without 
 
 ## Hooks
 
-Arashi can run lifecycle hooks during `arashi create` and `arashi remove`. Configured create uses
-workspace `pre-create`/`post-create` plus repository-specific `pre-create.<repo>` and
-`post-create.<repo>` files. Configured remove evaluates repository, workspace, user-global targeted,
-and user-global shared scopes once per target repository. Standalone mode activates only targeted
-and shared user-global hooks.
+Arashi can run file-backed or configured inline lifecycle hooks during `arashi create` and
+`arashi remove`. Inline workspace values live only at root `hooks.scripts.<lifecycle>`; repository
+values live only at `repos.<name>.hooks.<lifecycle>`. Use inline config for short reviewable commands
+and native files for substantial scripts. One inline/file source may own a logical location; a
+same-location collision fails preflight instead of running both.
 
-POSIX uses executable `.sh` files. Windows uses one case-insensitive `.ps1`, `.cmd`, or `.bat`
-candidate per location and never runs `.sh` implicitly. Hook failures participate in create rollback
-or remove finalization, all hooks default to a 300000 ms timeout, and JSON results expose the ordered
-ledger at `data.hookOutcomes` on success or `error.details.hookOutcomes` on failure.
+Configured create uses workspace `pre-create`/`post-create` plus repository-specific create locations.
+Configured remove evaluates repository, workspace, user-global targeted, and user-global shared scopes
+once per target repository. `--no-hooks` is create-only; `--no-hook-input` applies to both commands.
+Standalone mode remains file-only and activates only targeted and shared user-global hooks.
 
-See [`docs/hooks.md`](./docs/hooks.md) for hook behavior, environment variables, and examples.
+Hook failures participate in create rollback or remove finalization. Inline and file sources share the
+configured timeout, input, JSON isolation, dry-run, and ordered outcome policies. Public records expose
+source kind/owner metadata but never disclose configured snippet text.
+
+See [`docs/configuration.md`](./docs/configuration.md#inline-lifecycle-hook-configuration) for values and
+[`docs/hooks.md`](./docs/hooks.md) for exact lookup, lifecycle, environment, and automation behavior.
 
 ## Workflow Shortcuts
 

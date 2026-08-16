@@ -13,19 +13,27 @@ import { runtime } from "../lib/runtime.ts";
  */
 
 import { ConfigNotFoundError, loadConfig } from "../lib/config.ts";
+
 import type { DirtyStatus, WorktreeEntry, WorktreeInfo } from "../types/remove.ts";
 import {
   GLOBAL_HOOKS,
   DEFAULT_LIFECYCLE_HOOK_TIMEOUT,
   buildHookOperationData,
+  discoverLifecycleHookCandidates,
   executeHook,
-  findHook,
+  executeInlineHook,
   getRepoSpecificHookName,
   mapHookExecutionResult,
   mapHookSkippedOutcome,
-  validateHook,
+  prepareLifecycleHookSources,
 } from "../lib/hooks.ts";
-import type { HookInputMode, HookScope, LifecycleHookOutcome } from "../lib/hooks.ts";
+import type {
+  HookInputMode,
+  HookScope,
+  LifecycleHookPreparationCandidate,
+  LifecycleHookOutcome,
+  PreparedLifecycleHookEntry,
+} from "../lib/hooks.ts";
 import { basename, join, parse, resolve, sep } from "path";
 import { exec, isBareRepo } from "../lib/git.ts";
 import { multiSelect, select } from "../lib/prompts.ts";
@@ -69,7 +77,7 @@ const ONE = 1;
 
 const PARENT_PATH_OFFSET = 2;
 const GRANDPARENT_PATH_OFFSET = 3;
-const LOCK_VALIDATION_EXIT_CODE = -1;
+
 const NULL_PATH: string | null = null;
 const NULL_SUMMARY: string | null = null;
 const NULL_RESULT_ERROR: Error | null = null;
@@ -484,6 +492,7 @@ interface ProcessRepositoryOptions {
   mainRepoPath: string;
   createBasePlan?: CreateBaseResolutionPlan;
   targetAction: TargetAction;
+  preparedHooks: PreparedCreateHooks;
 }
 
 interface ShouldReuseBranchOptions {
@@ -601,9 +610,13 @@ export class InsufficientPermissionsError extends Error {
 }
 
 interface HookExecutionRunResult {
-  outcome: HookOutcomeRecord;
+  outcome: HookOutcomeRecord | null;
   error: HookExecutionError | null;
 }
+
+type PreparedCreateHook = { kind: "absent" | "omitted" } | PreparedLifecycleHookEntry;
+
+type PreparedCreateHooks = ReadonlyMap<string, PreparedCreateHook>;
 
 class ConfiguredHookPreflightError extends Error {
   readonly outcome: HookOutcomeRecord;
@@ -621,6 +634,9 @@ const toHookOutcomeRecord = (
     hookName: string;
     repositoryId: string;
     scope: HookScope;
+    sourceKind: "file" | "inline-config";
+    sourceOwnerKind: "repository" | "user-global" | "workspace";
+    sourceOwnerName: string | null;
     sourceScriptPath: string | null;
     targetRepositoryName?: string;
     targetRepositoryPath?: string;
@@ -636,6 +652,9 @@ const toHookOutcomeRecord = (
   reasonCode: mapping.reasonCode,
   repositoryId: options.repositoryId,
   scope: options.scope,
+  sourceKind: options.sourceKind,
+  sourceOwnerKind: options.sourceOwnerKind,
+  sourceOwnerName: options.sourceOwnerName,
   sourceScriptPath: options.sourceScriptPath,
   targetRepositoryName: options.targetRepositoryName ?? null,
   targetRepositoryPath: options.targetRepositoryPath ?? null,
@@ -660,18 +679,86 @@ const runHookIfPresent = async (options: {
   quiet?: boolean;
   hookInputMode: HookInputMode;
   spinnerInstance?: ReturnType<typeof spinner> | null;
+  preparedHook?: PreparedCreateHook;
 }): Promise<HookExecutionRunResult> => {
-  const hookPath = await findHook(options.hookName, options.hookRootPath);
+  const preparedHook = options.preparedHook ?? { kind: "absent" as const };
+  if (preparedHook.kind === "omitted") {
+    return { error: NULL_HOOK_ERROR, outcome: null };
+  }
+  const hookPath = preparedHook.kind === "file" ? preparedHook.scriptPath : null;
+  const plannedSource = "plan" in preparedHook ? preparedHook.plan : null;
   const outcomeContext = {
     executionPath: options.repoContextPath,
     hookName: options.hookName,
     repositoryId: options.repositoryId,
     scope: options.scope,
+    sourceKind: plannedSource?.sourceKind ?? "file",
+    sourceOwnerKind:
+      plannedSource?.sourceOwnerKind === "global"
+        ? ("user-global" as const)
+        : (plannedSource?.sourceOwnerKind ??
+          (options.scope === "repository" ? "repository" : "workspace")),
+    sourceOwnerName:
+      plannedSource === null
+        ? options.scope === "repository"
+          ? (options.targetRepositoryName ?? null)
+          : null
+        : plannedSource.sourceOwnerName,
     sourceScriptPath: hookPath,
     targetRepositoryName: options.targetRepositoryName,
     targetRepositoryPath: options.targetRepositoryPath,
     targetWorktreePath: options.targetWorktreePath,
   };
+  if (preparedHook.kind === "inline-config") {
+    const { result } = await executeInlineHook({
+      context: {
+        hookName: options.hookName,
+        hookScope: options.scope,
+        mainRepoPath: options.operationData.MAIN_REPO_PATH,
+        operationData: options.operationData,
+        parentRepoPath: options.parentRepoPath,
+        repoPath: options.repoContextPath,
+        targetRepoName: options.targetRepositoryName,
+        targetRepoPath: options.targetRepositoryPath,
+        targetWorktreePath: options.targetWorktreePath,
+        workspaceMode: "configured",
+      },
+      hookInputMode: options.hookInputMode,
+      hookName: options.hookName,
+      outputSpinner: options.quiet ? null : options.spinnerInstance,
+      quiet: options.quiet,
+      resolution: preparedHook.resolution,
+      snippet: preparedHook.snippet,
+      source: {
+        sourceKind: "inline-config",
+        sourceOwnerKind:
+          preparedHook.plan.sourceOwnerKind === "repository" ? "repository" : "workspace",
+        sourceOwnerName: preparedHook.plan.sourceOwnerName,
+        sourceScriptPath: null,
+      },
+      timeout: options.timeout,
+    });
+    const mapping = mapHookExecutionResult(result);
+    return {
+      error:
+        mapping.hookStatus === "failure"
+          ? new HookExecutionError({
+              exitCode: result.exitCode,
+              hookType: options.hookType,
+              message: `Hook execution failed for ${options.hookName}`,
+              repository: options.repository,
+              stderr: result.stderr,
+            })
+          : NULL_HOOK_ERROR,
+      outcome: toHookOutcomeRecord(outcomeContext, {
+        ...mapping,
+        message:
+          mapping.hookStatus === "failure" && result.stderr.trim().length > ZERO
+            ? result.stderr.trim()
+            : mapping.message,
+      }),
+    };
+  }
   if (!hookPath) {
     return {
       error: NULL_HOOK_ERROR,
@@ -679,25 +766,6 @@ const runHookIfPresent = async (options: {
         outcomeContext,
         mapHookSkippedOutcome("not_found", "Hook script not found"),
       ),
-    };
-  }
-
-  const validation = await validateHook(hookPath);
-  if (!validation.valid) {
-    const error = new HookExecutionError({
-      exitCode: LOCK_VALIDATION_EXIT_CODE,
-      hookType: options.hookType,
-      message: `Hook validation failed for ${options.hookName}: ${validation.error}`,
-      repository: options.repository,
-      stderr: validation.error ?? "Hook validation failed",
-    });
-    return {
-      error,
-      outcome: toHookOutcomeRecord(outcomeContext, {
-        hookStatus: "failure",
-        message: validation.error ?? "Hook validation failed",
-        reasonCode: validation.reasonCode ?? "validation_failed",
-      }),
     };
   }
 
@@ -749,11 +817,14 @@ const runHookIfPresent = async (options: {
 const preflightConfiguredCreateHooks = async (
   mainRepoPath: string,
   repositories: Repository[],
-): Promise<void> => {
+  config: ArashiConfig,
+  branchName: string,
+): Promise<PreparedCreateHooks> => {
   const locations = [
     {
       executionPath: mainRepoPath,
       hookName: GLOBAL_HOOKS.preCreate,
+      lifecycle: "pre-create" as const,
       repositoryId: "workspace",
       scope: "workspace" as const,
     },
@@ -761,6 +832,7 @@ const preflightConfiguredCreateHooks = async (
       (["pre-create", "post-create"] as const).map((lifecycle) => ({
         executionPath: repository.path,
         hookName: getRepoSpecificHookName(lifecycle, repository.name),
+        lifecycle,
         repositoryId: repository.name,
         scope: "repository" as const,
         targetRepositoryName: repository.name,
@@ -770,42 +842,170 @@ const preflightConfiguredCreateHooks = async (
     {
       executionPath: mainRepoPath,
       hookName: GLOBAL_HOOKS.postCreate,
+      lifecycle: "post-create" as const,
       repositoryId: "workspace",
       scope: "workspace" as const,
     },
   ];
-
+  const candidates: LifecycleHookPreparationCandidate[] = [];
   for (const location of locations) {
-    let hookPath: string | null = null;
-    try {
-      hookPath = await findHook(location.hookName, mainRepoPath);
-    } catch (error) {
-      throw new ConfiguredHookPreflightError(
-        toHookOutcomeRecord(
-          { ...location, sourceScriptPath: null },
-          {
-            hookStatus: "failure",
-            message: error instanceof Error ? error.message : String(error),
-            reasonCode: "validation_failed",
-          },
-        ),
-      );
+    for (const scriptPath of await discoverLifecycleHookCandidates(
+      location.hookName,
+      mainRepoPath,
+    )) {
+      candidates.push({
+        kind: "file",
+        source: {
+          executionPath: location.executionPath,
+          lifecycle: location.lifecycle,
+          scope: location.scope,
+          sourceKind: "file",
+          sourceOwnerKind: location.scope,
+          sourceOwnerName:
+            "targetRepositoryName" in location ? location.targetRepositoryName : null,
+          sourceScriptPath: scriptPath,
+        },
+      });
     }
-    if (!hookPath) continue;
-    const validation = await validateHook(hookPath);
-    if (!validation.valid) {
-      throw new ConfiguredHookPreflightError(
-        toHookOutcomeRecord(
-          { ...location, sourceScriptPath: hookPath },
-          {
-            hookStatus: "failure",
-            message: validation.error ?? "Hook validation failed",
-            reasonCode: validation.reasonCode ?? "validation_failed",
-          },
-        ),
-      );
+    const inline =
+      location.scope === "workspace"
+        ? config.hooks?.scripts?.[location.lifecycle]
+        : config.repos["targetRepositoryName" in location ? location.targetRepositoryName : ""]
+            ?.hooks?.[location.lifecycle];
+    if (inline) {
+      candidates.push({
+        interpreters: typeof inline === "string" ? { bash: inline } : inline,
+        kind: "inline-config",
+        source: {
+          configuredField:
+            location.scope === "workspace"
+              ? `hooks.scripts.${location.lifecycle}`
+              : `repos.${location.targetRepositoryName}.hooks.${location.lifecycle}`,
+          executionPath: location.executionPath,
+          lifecycle: location.lifecycle,
+          scope: location.scope,
+          sourceKind: "inline-config",
+          sourceOwnerKind: location.scope,
+          sourceOwnerName:
+            "targetRepositoryName" in location ? location.targetRepositoryName : null,
+          sourceScriptPath: null,
+        },
+      });
     }
   }
+
+  const targets = await Promise.all(
+    repositories.map(async (repository) => ({
+      branchName,
+      repositoryName: repository.name,
+      repositoryPath: repository.path,
+      worktreePath: (await calculateWorktreePath(repository, branchName, config)).path,
+    })),
+  );
+  const preparation = await prepareLifecycleHookSources({
+    candidates,
+    consumer: "create",
+    env: process.env,
+    platform: process.platform,
+    targets,
+    workspaceRoot: mainRepoPath,
+  });
+
+  const preflightError = (
+    hookName: string,
+    source: LifecycleHookPreparationCandidate["source"],
+    mapping: HookOutcomeMapping,
+  ): ConfiguredHookPreflightError =>
+    new ConfiguredHookPreflightError(
+      toHookOutcomeRecord(
+        {
+          executionPath: source.executionPath,
+          hookName,
+          repositoryId: source.sourceOwnerName ?? "workspace",
+          scope: source.scope,
+          sourceKind: source.sourceKind,
+          sourceOwnerKind:
+            source.sourceOwnerKind === "global" ? "user-global" : source.sourceOwnerKind,
+          sourceOwnerName: source.sourceOwnerName,
+          sourceScriptPath: source.sourceScriptPath,
+          targetRepositoryName: source.sourceOwnerName ?? undefined,
+          targetRepositoryPath:
+            source.sourceOwnerName === null
+              ? undefined
+              : repositories.find((repository) => repository.name === source.sourceOwnerName)?.path,
+        },
+        mapping,
+      ),
+    );
+
+  if (preparation.classification === "ambiguous") {
+    const failure = preparation.plan.failure;
+    const source = candidates.find(
+      (candidate) =>
+        candidate.source.lifecycle === failure.hookName &&
+        candidate.source.scope === failure.scope &&
+        candidate.source.sourceOwnerName === failure.sourceOwnerName,
+    )?.source;
+    if (!source) throw new Error("Lifecycle planner returned an unknown ambiguous create source");
+    if (source.lifecycle !== "pre-create" && source.lifecycle !== "post-create") {
+      throw new Error("Create lifecycle planner returned a non-create source");
+    }
+    const hookName =
+      source.sourceOwnerName === null
+        ? source.lifecycle
+        : getRepoSpecificHookName(source.lifecycle, source.sourceOwnerName);
+    throw preflightError(hookName, source, {
+      hookStatus: "failure",
+      message: `Hook source is ambiguous for ${hookName}: ${failure.sourceKinds.join(" and ")} are both configured${failure.sourceScriptPath ? ` (${failure.sourceScriptPath})` : ""}`,
+      reasonCode: "validation_failed",
+    });
+  }
+  if (preparation.classification === "file-invalid") {
+    const entry = preparation.plannedEntry;
+    throw preflightError(entry.hookName, entry, {
+      hookStatus: "failure",
+      message: preparation.validation.error ?? "Hook validation failed",
+      reasonCode: preparation.validation.reasonCode ?? "validation_failed",
+    });
+  }
+  if (preparation.classification === "interpreter-unavailable") {
+    const entry = preparation.plannedEntry;
+    throw preflightError(entry.hookName, entry, {
+      hookStatus: "failure",
+      message: `No configured interpreter is available for ${entry.hookName}`,
+      reasonCode: "interpreter_unavailable",
+    });
+  }
+
+  const inlineLocations = new Set(
+    candidates
+      .filter((candidate) => candidate.kind === "inline-config")
+      .map((candidate) =>
+        JSON.stringify([
+          candidate.source.lifecycle,
+          candidate.source.scope,
+          candidate.source.sourceOwnerName,
+        ]),
+      ),
+  );
+  const prepared = new Map<string, PreparedCreateHook>(
+    locations.map((location) => [
+      location.hookName,
+      {
+        kind: inlineLocations.has(
+          JSON.stringify([
+            location.lifecycle,
+            location.scope,
+            "targetRepositoryName" in location ? location.targetRepositoryName : null,
+          ]),
+        )
+          ? "omitted"
+          : "absent",
+      },
+    ]),
+  );
+  for (const entry of preparation.entries) prepared.set(entry.plan.hookName, entry);
+  return prepared;
 };
 
 // ============================================================================
@@ -1362,6 +1562,7 @@ export const createCoordinatedWorktrees = async (
   const workspacePreHookOutcomes: HookOutcomeRecord[] = [];
   const workspacePostHookOutcomes: HookOutcomeRecord[] = [];
   const preflightHookOutcomes: HookOutcomeRecord[] = [];
+  let preparedHooks: PreparedCreateHooks = new Map();
   const mainRepoPath = resolve(options.workspaceRoot ?? ".");
   let targetActionByRepositoryPath: ReadonlyMap<string, TargetAction> = options.createBasePlan
     ? new Map(
@@ -1427,7 +1628,12 @@ export const createCoordinatedWorktrees = async (
     const config = await loadResolvedConfig(mainRepoPath, options.resolvedConfig);
 
     if (opts.executeHooks && !opts.dryRun) {
-      await preflightConfiguredCreateHooks(mainRepoPath, repositories);
+      preparedHooks = await preflightConfiguredCreateHooks(
+        mainRepoPath,
+        repositories,
+        config,
+        branchName,
+      );
     }
 
     if (opts.dryRun) {
@@ -1468,6 +1674,7 @@ export const createCoordinatedWorktrees = async (
         hookName: GLOBAL_HOOKS.preCreate,
         hookRootPath: mainRepoPath,
         hookType: "pre-create",
+        preparedHook: preparedHooks.get(GLOBAL_HOOKS.preCreate),
         operationData: buildHookOperationData({
           branchName,
           mainRepoPath,
@@ -1480,7 +1687,7 @@ export const createCoordinatedWorktrees = async (
         quiet: opts.quietHooks,
         timeout: opts.hookTimeout,
       });
-      workspacePreHookOutcomes.push(preHookResult.outcome);
+      if (preHookResult.outcome) workspacePreHookOutcomes.push(preHookResult.outcome);
 
       if (preHookResult.error) {
         throw preHookResult.error;
@@ -1500,6 +1707,7 @@ export const createCoordinatedWorktrees = async (
         mainRepoPath,
         operationLog,
         options: opts,
+        preparedHooks,
         repo,
         targetAction,
       });
@@ -1517,6 +1725,7 @@ export const createCoordinatedWorktrees = async (
         hookName: GLOBAL_HOOKS.postCreate,
         hookRootPath: mainRepoPath,
         hookType: "post-create",
+        preparedHook: preparedHooks.get(GLOBAL_HOOKS.postCreate),
         operationData: buildHookOperationData({
           branchName,
           mainRepoPath,
@@ -1529,7 +1738,7 @@ export const createCoordinatedWorktrees = async (
         quiet: opts.quietHooks,
         timeout: opts.hookTimeout,
       });
-      workspacePostHookOutcomes.push(postHookResult.outcome);
+      if (postHookResult.outcome) workspacePostHookOutcomes.push(postHookResult.outcome);
 
       if (postHookResult.error) {
         throw postHookResult.error;
@@ -1660,6 +1869,7 @@ const processRepository = async ({
   mainRepoPath,
   operationLog,
   options,
+  preparedHooks,
   repo,
   targetAction,
 }: ProcessRepositoryOptions): Promise<RepositoryResult> => {
@@ -1778,6 +1988,7 @@ const processRepository = async ({
         hookName: getRepoSpecificHookName("pre-create", repo.name),
         hookRootPath: mainRepoPath,
         hookType: "pre-create",
+        preparedHook: preparedHooks.get(getRepoSpecificHookName("pre-create", repo.name)),
         operationData: repoOperationData,
         repoContextPath: worktreePath,
         repository: repo,
@@ -1792,7 +2003,12 @@ const processRepository = async ({
         spinnerInstance,
         timeout: options.hookTimeout,
       });
-      hookOutcomes.push(preHookResult.outcome);
+      if (
+        preHookResult.outcome &&
+        (config.repos[repo.name] || preHookResult.outcome.reasonCode !== "not_found")
+      ) {
+        hookOutcomes.push(preHookResult.outcome);
+      }
       if (preHookResult.error) {
         throw preHookResult.error;
       }
@@ -1805,6 +2021,7 @@ const processRepository = async ({
         hookName: getRepoSpecificHookName("post-create", repo.name),
         hookRootPath: mainRepoPath,
         hookType: "post-create",
+        preparedHook: preparedHooks.get(getRepoSpecificHookName("post-create", repo.name)),
         operationData: repoOperationData,
         repoContextPath: worktreePath,
         repository: repo,
@@ -1819,7 +2036,12 @@ const processRepository = async ({
         spinnerInstance,
         timeout: options.hookTimeout,
       });
-      hookOutcomes.push(postHookResult.outcome);
+      if (
+        postHookResult.outcome &&
+        (config.repos[repo.name] || postHookResult.outcome.reasonCode !== "not_found")
+      ) {
+        hookOutcomes.push(postHookResult.outcome);
+      }
       if (postHookResult.error) {
         throw postHookResult.error;
       }

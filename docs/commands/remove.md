@@ -14,8 +14,9 @@ arashi remove [branch] [options]
 - `--keep-worktrees` Delete branches but keep worktree directories
 - `--keep-branches` Remove worktrees but keep git branches
 - `-f, --force` Skip confirmation prompts
-- `--dry-run` Preview planned removals without changing worktrees, branches, or hooks
-- `--json` Output results as JSON
+- `--dry-run` Preview planned removals and source-aware hooks without changing worktrees or branches
+- `--no-hook-input` Run hooks with input disabled and immediate EOF; hooks are not skipped
+- `--json` Output results as one JSON document
 
 ## Examples
 
@@ -62,11 +63,17 @@ arashi remove feature-login --json
 
 Remove hooks can be defined at four scopes:
 
-- Repository scope: `repos/<repo>/.arashi/hooks/pre-remove<ext>` and `post-remove<ext>`
-- Workspace-root scope: `.arashi/hooks/pre-remove<ext>` and `post-remove<ext>`
-- Global scope:
+- Repository scope: inline `repos.<name>.hooks.pre-remove|post-remove` or
+  `repos/<repo>/.arashi/hooks/pre-remove<ext>` and `post-remove<ext>` files
+- Workspace-root scope: inline root `hooks.scripts.pre-remove|post-remove` or
+  `.arashi/hooks/pre-remove<ext>` and `post-remove<ext>` files
+- Global scope (file-only):
   - repository-targeted: `~/.arashi/hooks/<repo>/pre-remove<ext>` and `post-remove<ext>`
   - shared: `~/.arashi/hooks/pre-remove<ext>` and `post-remove<ext>`
+
+Each repository/workspace location uses either its inline value or native file. If both claim the same
+logical location, remove fails preflight and runs neither. Different scopes retain repository →
+workspace-root → global targeted → global shared order.
 
 `<ext>` is `.sh` on POSIX or one case-insensitive `.ps1`, `.cmd`, or `.bat` on Windows. Multiple
 native candidates fail preflight before removal mutation.
@@ -74,18 +81,21 @@ native candidates fail preflight before removal mutation.
 Behavior:
 
 - For each targeted repository, hooks run in order: repository -> workspace-root -> global targeted -> global shared.
-- `pre-remove.sh` runs after confirmation and before destructive operations.
-- `--dry-run` reports configured remove hooks that would be considered, but does not execute hook scripts.
-- If any discovered `pre-remove` hook fails, remove operations are aborted.
-- `post-remove.sh` runs after remove operations are attempted, including partial-failure runs.
-- If any discovered `post-remove` hook fails, the command reports hook errors and exits non-zero.
-- Hook scope metadata is available via `ARASHI_HOOK_SCOPE` and `ARASHI_HOOK_SOURCE_PATH`.
+- `pre-remove` runs after confirmation and before destructive operations; any failure gates all removal mutation.
+- `--dry-run` resolves the same source plan and previews inline/file kind, owner, lifecycle, scope,
+  target, interpreter, and applicable file path, but never executes a hook or fabricates an outcome.
+- Remove intentionally has no `--no-hooks`; use `--no-hook-input` only to disable hook input.
+- `post-remove` runs after remove operations are attempted, continues across partial failures, and
+  participates in failure finalization rather than rollback.
+- Hook scope metadata is available via `ARASHI_HOOK_SCOPE`; `ARASHI_HOOK_SOURCE_PATH` exists only for
+  file sources and is omitted for inline config.
 - Hook context is target-consistent for each repository invocation. Parse
   `ARASHI_REMOVE_TARGETS_JSON` for the canonical command-wide target list; comma-separated aggregate
   fields are lossy 1.x compatibility values.
-- Hooks default to 300000 ms; configured workspaces may set `hooks.timeout` to an integer from 1
-  through 2147483647.
-- JSON success stores the ordered ledger at `data.hookOutcomes`; failure stores it at
-  `error.details.hookOutcomes` alongside removal errors.
+- Inline and file hooks share the default 300000 ms timeout; configured workspaces may set
+  `hooks.timeout` to an integer from 1 through 2147483647.
+- JSON owns quiet/progress isolation and writes one document. Success stores the ordered ledger at
+  `data.hookOutcomes`; failure stores it at `error.details.hookOutcomes` alongside removal errors.
+  Outcomes expose source kind/owner and nullable file path metadata, never configured snippet text.
 
 Common use cases include session teardown (for example tmux cleanup), external cache cleanup, and follow-up notifications.
