@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { buildProgram } from "../../src/cli-program.ts";
 import { renderAllCompletions } from "../../src/completion/render.ts";
@@ -55,7 +58,7 @@ describe("dual-name generated completion", () => {
 
   test.each([
     {
-      args: ["--noprofile", "--norc", "-s"],
+      args: ["--noprofile", "--norc"],
       inspect: "complete -p aw",
       setup: "aw() { :; }; _other() { :; }; complete -F _other aw",
       shell: "bash",
@@ -77,13 +80,20 @@ describe("dual-name generated completion", () => {
     if (!available) {
       return;
     }
-    const result = spawnSync(shell, args, {
-      encoding: "utf8",
-      input: `${setup}\n${completions[shell as keyof typeof completions]}\n${inspect}\n`,
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("other");
-    expect(result.stdout).not.toContain("__arashi_complete");
-    expect(result.stdout).not.toContain("_arashi");
+    const fixture = mkdtempSync(join(tmpdir(), `arashi-completion-${shell}-`));
+    const script = join(fixture, `completion.${shell}`);
+    writeFileSync(
+      script,
+      `${setup}\n${completions[shell as keyof typeof completions]}\n${inspect}\n`,
+    );
+    try {
+      const result = spawnSync(shell, [...args, script], { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("other");
+      expect(result.stdout).not.toContain("__arashi_complete");
+      expect(result.stdout).not.toContain("_arashi");
+    } finally {
+      rmSync(fixture, { force: true, recursive: true });
+    }
   });
 });
