@@ -51,8 +51,14 @@ function Invoke-FreshShell {
             [Environment]::SetEnvironmentVariable($name, $AdditionalEnvironment[$name], "Process")
         }
 
-        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { $_.ToString() })
-        $exitCode = $LASTEXITCODE
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { $_.ToString() })
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
         Assert-True ($exitCode -eq 0) "$Label failed with exit code $exitCode`: $($output -join [Environment]::NewLine)"
         Assert-True ($output.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace(($output -join ""))) "$Label produced no version output"
         $actualOutput = ($output -join [Environment]::NewLine).Trim()
@@ -127,6 +133,7 @@ if not "!CANONICAL!"=="!ALIAS_OUTPUT!" exit /b 43
 echo !CANONICAL!
 '@ | Set-Content -LiteralPath $cmdCheckPath -Encoding Ascii
 
+    [Environment]::SetEnvironmentVariable("Path", "", "User")
     $env:USERPROFILE = $temporaryUserProfile
     & $InstallerPath
 
@@ -151,6 +158,7 @@ echo !CANONICAL!
     ) -Label "Git Bash" -ExpectedOutput $expectedVersionOutput -FreshPath $freshPath -FreshUserProfile $temporaryUserProfile -AdditionalEnvironment @{
         ARASHI_EXPECTED_WRAPPER = (Join-Path $installDirectory "arashi")
         ARASHI_EXPECTED_ALIAS_WRAPPER = (Join-Path $installDirectory "aw")
+        HOME = $temporaryUserProfile
     }
 
     Invoke-FreshShell -FilePath "powershell.exe" -Arguments @(
