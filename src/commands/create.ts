@@ -531,6 +531,7 @@ export interface CreateCommandDependencies {
     createBasePlan: CreateBaseResolutionPlan | undefined;
     dryRun: boolean;
     repositories: Parameters<typeof createCoordinatedWorktrees>[1];
+    reuseExisting: boolean;
     workspaceRoot: string;
   }) => Promise<readonly RepositoryMaterializationPlan[]>;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
@@ -1145,10 +1146,11 @@ export async function executeCreate(
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
 ): Promise<number> {
+  const stdinIsTTY = deps.stdinIsTTY ?? process.stdin.isTTY === true;
   const hookInputMode = resolveHookInputMode({
     hookInput: options.hookInput,
     json: options.json,
-    stdinIsTTY: deps.stdinIsTTY ?? process.stdin.isTTY === true,
+    stdinIsTTY,
   });
   if (options.json && options.tab) {
     writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
@@ -1448,7 +1450,8 @@ export async function executeCreate(
     createBasePlan,
     dryRun: options.dryRun === true,
     repositories: selectedRepos,
-    reuseExisting: options.conflict === "REUSE_EXISTING",
+    reuseExisting:
+      options.conflict === "REUSE_EXISTING" || (options.conflict === undefined && stdinIsTTY),
     workspaceRoot: context.workspaceRoot,
   });
 

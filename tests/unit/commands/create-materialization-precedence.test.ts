@@ -147,6 +147,7 @@ describe("configured create materialization precedence RED", () => {
         workspaceRoot,
       }),
       resolveManagedIgnoreWorkspaceRoot: async () => workspaceRoot,
+      stdinIsTTY: true,
       resolveWorkspaceContext: async () => ({
         config,
         invocationPath: workspaceRoot,
@@ -155,11 +156,9 @@ describe("configured create materialization precedence RED", () => {
       }),
     } as unknown as CreateDependencies;
 
-    const result = await executeCreate(
-      "feature/materialization",
-      { conflict: "REUSE_EXISTING" },
-      dependencies,
-    ).catch((error: unknown) => error);
+    const result = await executeCreate("feature/materialization", {}, dependencies).catch(
+      (error: unknown) => error,
+    );
 
     expect(result).toMatchObject({ code: "MATERIALIZATION_PLAN_BLOCKED" });
     expect(events).toEqual(["materialization-preflight"]);
