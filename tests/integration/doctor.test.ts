@@ -3,7 +3,10 @@ import { afterEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import type { RepoStatus } from "../../src/commands/status.ts";
 import { join } from "path";
-import { repositoryStatusToDoctorFindings } from "../../src/lib/doctor.ts";
+import {
+  quoteDoctorShellArgument,
+  repositoryStatusToDoctorFindings,
+} from "../../src/lib/doctor.ts";
 import { tmpdir } from "os";
 
 const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
@@ -142,6 +145,27 @@ const createLocalWorkspace = async (): Promise<string> => {
   await initializeGitRepository(workspaceRoot);
   await writeWorkspaceConfig(workspaceRoot, { "repo-a": { path: "./repos/repo-a" } });
   await runGit(workspaceRoot, ["add", ".arashi/config.json"]);
+  await runGit(workspaceRoot, ["commit", "-m", "Add Arashi config"]);
+  return workspaceRoot;
+};
+
+const createBareBackedLinkedWorkspace = async (): Promise<string> => {
+  const baseDir = await makeTempDir();
+  const remotePath = await createBareRemote(baseDir, "origin");
+  await seedRemote(baseDir, remotePath, "seed");
+
+  const bareWorkspace = join(baseDir, "workspace.git");
+  const workspaceRoot = join(baseDir, "main");
+  await runGit(baseDir, ["clone", "--bare", remotePath, bareWorkspace]);
+  await runGit(bareWorkspace, ["worktree", "add", workspaceRoot, "main"]);
+  await runGit(workspaceRoot, ["config", "user.email", "test@example.com"]);
+  await runGit(workspaceRoot, ["config", "user.name", "Test User"]);
+  await runGit(workspaceRoot, ["config", "branch.main.remote", "origin"]);
+  await runGit(workspaceRoot, ["config", "branch.main.merge", "refs/heads/main"]);
+  await runGit(workspaceRoot, ["update-ref", "refs/remotes/origin/main", "refs/heads/main"]);
+  await writeWorkspaceConfig(workspaceRoot);
+  await writeFile(join(workspaceRoot, ".gitignore"), "repos/\n.arashi/worktrees/\n");
+  await runGit(workspaceRoot, ["add", ".arashi/config.json", ".gitignore"]);
   await runGit(workspaceRoot, ["commit", "-m", "Add Arashi config"]);
   return workspaceRoot;
 };
@@ -403,9 +427,83 @@ describe("arashi doctor", () => {
       }),
     );
   });
+  test("diagnoses an unusable configured upstream in a bare-backed linked worktree", async () => {
+    const workspaceRoot = await createBareBackedLinkedWorkspace();
+    const canonicalRoot = await realpath(workspaceRoot);
+    const before = {
+      branches: await runGit(workspaceRoot, [
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+        "refs/heads",
+      ]),
+      config: await runGit(workspaceRoot, ["config", "--local", "--list"]),
+      worktrees: await runGit(workspaceRoot, ["worktree", "list", "--porcelain"]),
+    };
+
+    const human = await runArashi(workspaceRoot, ["doctor"]);
+    expect(human.exitCode, `${human.stdout}\n${human.stderr}`).toBe(0);
+    expect(human.stdout).toContain("REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE");
+    expect(human.stdout).toContain("has upstream configuration");
+    expect(human.stdout).toContain(
+      `git -C '${canonicalRoot}' config --add 'remote.origin.fetch' '+refs/heads/main:refs/remotes/origin/main'`,
+    );
+
+    const json = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    expect(json.exitCode, `${json.stdout}\n${json.stderr}`).toBe(0);
+    const parsed = parseSingleJsonDocument(json.stdout);
+    const findings = jsonFindings(parsed);
+    expect(findings).toContainEqual({
+      category: "repository",
+      code: "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
+      details: {
+        branch: "main",
+        conflictingFetchRefspecs: [],
+        expectedRemoteTrackingRef: "refs/remotes/origin/main",
+        mergeRef: "refs/heads/main",
+        path: canonicalRoot,
+        reason: "missing-fetch-mapping",
+        remote: "origin",
+        repository: "Main Repository",
+      },
+      message:
+        "Repository 'Main Repository' branch 'main' has upstream configuration, but Git cannot use origin/main because remote 'origin' has no covering fetch mapping.",
+      scope: "repository:Main Repository",
+      severity: "warning",
+      suggestedCommands: [
+        `git -C '${canonicalRoot}' config --add 'remote.origin.fetch' '+refs/heads/main:refs/remotes/origin/main'`,
+        `git -C '${canonicalRoot}' fetch 'origin'`,
+        `git -C '${canonicalRoot}' branch '--set-upstream-to=origin/main' 'main'`,
+      ],
+    });
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_NO_UPSTREAM" }),
+    );
+    expect(json.stdout).not.toContain("Arashi workspace doctor");
+
+    await expect(runGit(workspaceRoot, ["config", "--local", "--list"])).resolves.toBe(
+      before.config,
+    );
+    await expect(
+      runGit(workspaceRoot, ["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"]),
+    ).resolves.toBe(before.branches);
+    await expect(runGit(workspaceRoot, ["worktree", "list", "--porcelain"])).resolves.toBe(
+      before.worktrees,
+    );
+  });
 });
 
 describe("repositoryStatusToDoctorFindings", () => {
+  test("quotes Git-derived remediation arguments for POSIX and PowerShell", () => {
+    const value = "feature/'$(touch${IFS}/tmp/arashi293)";
+
+    expect(quoteDoctorShellArgument(value, "darwin")).toBe(
+      `'feature/'"'"'$(touch\${IFS}/tmp/arashi293)'`,
+    );
+    expect(quoteDoctorShellArgument(value, "win32")).toBe(
+      "'feature/''$(touch${IFS}/tmp/arashi293)'",
+    );
+  });
+
   test("classifies branch divergence and default branch drift", () => {
     const status = baseStatus();
     status.branch.ahead = 2;
@@ -439,5 +537,79 @@ describe("repositoryStatusToDoctorFindings", () => {
     expect(
       repositoryStatusToDoctorFindings(missingRemote).map((finding) => finding.code),
     ).toContain("REPOSITORY_MISSING_REMOTE_REF");
+  });
+
+  test("uses topology-aware findings only for a diagnosed missing fetch mapping", () => {
+    const status = baseStatus();
+    status.branch.remoteBranch = null;
+
+    const findings = repositoryStatusToDoctorFindings(status, {
+      expectedRemoteTrackingRef: "refs/remotes/origin/main",
+      kind: "missing-fetch-mapping",
+      localBranch: "main",
+      mergeRef: "refs/heads/main",
+      remote: "origin",
+      remoteBranch: "main",
+    });
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        code: "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
+        details: expect.objectContaining({ reason: "missing-fetch-mapping" }),
+      }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_NO_UPSTREAM" }),
+    );
+  });
+
+  test("replaces a conflicting fetch destination before fetching", () => {
+    const status = baseStatus();
+    status.branch.remoteBranch = null;
+
+    const findings = repositoryStatusToDoctorFindings(status, {
+      conflictingFetchRefspecs: [
+        "+refs/heads/trunk:refs/remotes/origin/main",
+        "+refs/heads/release/*:refs/remotes/origin/*",
+      ],
+      expectedRemoteTrackingRef: "refs/remotes/origin/main",
+      kind: "missing-fetch-mapping",
+      localBranch: "main",
+      mergeRef: "refs/heads/main",
+      remote: "origin",
+      remoteBranch: "main",
+    });
+
+    const finding = findings.find(
+      (candidate) => candidate.code === "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
+    );
+    expect(finding?.suggestedCommands[0]).toBe(
+      `git -C ${quoteDoctorShellArgument(status.path)} config --replace-all ${quoteDoctorShellArgument("remote.origin.fetch")} ${quoteDoctorShellArgument("+refs/heads/main:refs/remotes/origin/main")} ${quoteDoctorShellArgument("^(\\+refs/heads/trunk:refs/remotes/origin/main|\\+refs/heads/release/\\*:refs/remotes/origin/\\*)$")}`,
+    );
+  });
+
+  test("keeps missing remote refs authoritative over topology diagnosis", () => {
+    const status = baseStatus();
+    status.branch.remoteBranch = null;
+    status.refreshWarning = {
+      kind: "missing-remote-ref",
+      message: "couldn't find remote ref refs/heads/main",
+    };
+
+    const findings = repositoryStatusToDoctorFindings(status, {
+      expectedRemoteTrackingRef: "refs/remotes/origin/main",
+      kind: "missing-fetch-mapping",
+      localBranch: "main",
+      mergeRef: "refs/heads/main",
+      remote: "origin",
+      remoteBranch: "main",
+    });
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_MISSING_REMOTE_REF" }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE" }),
+    );
   });
 });

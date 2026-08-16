@@ -58,6 +58,175 @@ export type RemoteTrackingFetchResult =
       message: string;
     };
 
+export type UpstreamTrackingInspection =
+  | { kind: "not-applicable" }
+  | {
+      conflictingFetchRefspecs?: string[];
+      expectedRemoteTrackingRef: string;
+      kind: "missing-fetch-mapping";
+      localBranch: string;
+      mergeRef: string;
+      remote: string;
+      remoteBranch: string;
+    };
+
+type ReadOnlyGitRunner = (args: string[], cwd: string) => Promise<{ stdout: string }>;
+
+const readOptionalGitValue = async (
+  runGit: ReadOnlyGitRunner,
+  repoPath: string,
+  args: string[],
+): Promise<string | null> => {
+  try {
+    const result = await runGit(args, repoPath);
+    return result.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+};
+
+const fetchRefspecCovers = (refspec: string, source: string, destination: string): boolean => {
+  const normalized = refspec.trim().replace(/^\+/, "");
+  if (!normalized || normalized.startsWith("!")) {
+    return false;
+  }
+
+  const separator = normalized.indexOf(":");
+  if (separator === -1) {
+    return false;
+  }
+
+  const sourcePattern = normalized.slice(0, separator);
+  const destinationPattern = normalized.slice(separator + 1);
+  const sourceWildcard = sourcePattern.indexOf("*");
+  const destinationWildcard = destinationPattern.indexOf("*");
+
+  if (sourceWildcard === -1 || destinationWildcard === -1) {
+    return sourcePattern === source && destinationPattern === destination;
+  }
+  if (
+    sourcePattern.indexOf("*", sourceWildcard + 1) !== -1 ||
+    destinationPattern.indexOf("*", destinationWildcard + 1) !== -1
+  ) {
+    return false;
+  }
+
+  const sourcePrefix = sourcePattern.slice(0, sourceWildcard);
+  const sourceSuffix = sourcePattern.slice(sourceWildcard + 1);
+  if (!source.startsWith(sourcePrefix) || !source.endsWith(sourceSuffix)) {
+    return false;
+  }
+
+  const wildcardValue = source.slice(sourcePrefix.length, source.length - sourceSuffix.length);
+  return destinationPattern.replace("*", wildcardValue) === destination;
+};
+
+const fetchRefspecTargetsDestination = (refspec: string, destination: string): boolean => {
+  const normalized = refspec.trim().replace(/^\+/, "");
+  if (!normalized || normalized.startsWith("!")) {
+    return false;
+  }
+
+  const separator = normalized.indexOf(":");
+  if (separator === -1) {
+    return false;
+  }
+
+  const destinationPattern = normalized.slice(separator + 1);
+  const wildcard = destinationPattern.indexOf("*");
+  if (wildcard === -1) {
+    return destinationPattern === destination;
+  }
+  if (destinationPattern.indexOf("*", wildcard + 1) !== -1) {
+    return false;
+  }
+
+  return (
+    destination.startsWith(destinationPattern.slice(0, wildcard)) &&
+    destination.endsWith(destinationPattern.slice(wildcard + 1))
+  );
+};
+
+export const inspectUpstreamTrackingConfiguration = async (
+  repoPath: string,
+  runGit: ReadOnlyGitRunner = exec,
+): Promise<UpstreamTrackingInspection> => {
+  const localBranch = await readOptionalGitValue(runGit, repoPath, [
+    "symbolic-ref",
+    "--quiet",
+    "--short",
+    "HEAD",
+  ]);
+  if (!localBranch) {
+    return { kind: "not-applicable" };
+  }
+
+  const strictUpstream = await readOptionalGitValue(runGit, repoPath, [
+    "rev-parse",
+    "--abbrev-ref",
+    "--symbolic-full-name",
+    "@{upstream}",
+  ]);
+  if (strictUpstream) {
+    return { kind: "not-applicable" };
+  }
+
+  const remote = await readOptionalGitValue(runGit, repoPath, [
+    "config",
+    "--get",
+    `branch.${localBranch}.remote`,
+  ]);
+  const mergeRef = await readOptionalGitValue(runGit, repoPath, [
+    "config",
+    "--get",
+    `branch.${localBranch}.merge`,
+  ]);
+  if (!remote || remote === "." || !mergeRef?.startsWith("refs/heads/")) {
+    return { kind: "not-applicable" };
+  }
+
+  const remoteBranch = mergeRef.slice("refs/heads/".length);
+  if (!remoteBranch) {
+    return { kind: "not-applicable" };
+  }
+  const expectedRemoteTrackingRef = `refs/remotes/${remote}/${remoteBranch}`;
+  const trackingRef = await readOptionalGitValue(runGit, repoPath, [
+    "show-ref",
+    "--verify",
+    expectedRemoteTrackingRef,
+  ]);
+  if (!trackingRef) {
+    return { kind: "not-applicable" };
+  }
+
+  const fetchRefspecOutput = await readOptionalGitValue(runGit, repoPath, [
+    "config",
+    "--get-all",
+    `remote.${remote}.fetch`,
+  ]);
+  const fetchRefspecs = fetchRefspecOutput?.split("\n").map((value) => value.trim()) ?? [];
+  if (
+    fetchRefspecs.some((refspec) =>
+      fetchRefspecCovers(refspec, mergeRef, expectedRemoteTrackingRef),
+    )
+  ) {
+    return { kind: "not-applicable" };
+  }
+  const conflictingFetchRefspecs = fetchRefspecs.filter((refspec) =>
+    fetchRefspecTargetsDestination(refspec, expectedRemoteTrackingRef),
+  );
+
+  return {
+    conflictingFetchRefspecs,
+    expectedRemoteTrackingRef,
+    kind: "missing-fetch-mapping",
+    localBranch,
+    mergeRef,
+    remote,
+    remoteBranch,
+  };
+};
+
 export function classifyRemoteTrackingFetchFailure(
   error: string,
   target: RemoteTrackingTarget,

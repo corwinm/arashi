@@ -23,8 +23,25 @@ import { discoverPrunableWorktrees } from "../core/remove.ts";
 import { readdir } from "fs/promises";
 import { inspectRepositoryManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
+import {
+  inspectUpstreamTrackingConfiguration,
+  type UpstreamTrackingInspection,
+} from "./git-remote.ts";
 
 const ZERO = 0;
+
+export const quoteDoctorShellArgument = (
+  value: string,
+  platform: NodeJS.Platform = process.platform,
+): string => {
+  if (platform === "win32") {
+    return `'${value.replaceAll("'", "''")}'`;
+  }
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+};
+
+const escapeGitConfigValuePattern = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 type RepoStatus = Awaited<ReturnType<typeof checkAllRepos>>[number];
 type RepositoryTarget = Parameters<typeof discoverPrunableWorktrees>[0][number];
@@ -178,7 +195,10 @@ const createRepositoryTargets = (workspaceRoot: string, config: Config): Reposit
   return targets;
 };
 
-export const repositoryStatusToDoctorFindings = (status: RepoStatus): DoctorFinding[] => {
+export const repositoryStatusToDoctorFindings = (
+  status: RepoStatus,
+  upstreamInspection: UpstreamTrackingInspection = { kind: "not-applicable" },
+): DoctorFinding[] => {
   const findings: DoctorFinding[] = [];
   const scope = `repository:${status.name}`;
 
@@ -236,6 +256,46 @@ export const repositoryStatusToDoctorFindings = (status: RepoStatus): DoctorFind
         scope,
         severity: "warning",
         suggestedCommands: [`git -C ${status.path} switch <branch>`],
+      }),
+    );
+  } else if (
+    !status.branch.remoteBranch &&
+    status.refreshWarning?.kind !== "missing-remote-ref" &&
+    upstreamInspection.kind === "missing-fetch-mapping"
+  ) {
+    const fetchRefspec = `+${upstreamInspection.mergeRef}:${upstreamInspection.expectedRemoteTrackingRef}`;
+    const quotedPath = quoteDoctorShellArgument(status.path);
+    const quotedRemote = quoteDoctorShellArgument(upstreamInspection.remote);
+    const conflictingFetchRefspecs = upstreamInspection.conflictingFetchRefspecs ?? [];
+    const conflictingFetchPattern = `^(${conflictingFetchRefspecs
+      .map(escapeGitConfigValuePattern)
+      .join("|")})$`;
+    const fetchConfigCommand =
+      conflictingFetchRefspecs.length > 0
+        ? `git -C ${quotedPath} config --replace-all ${quoteDoctorShellArgument(`remote.${upstreamInspection.remote}.fetch`)} ${quoteDoctorShellArgument(fetchRefspec)} ${quoteDoctorShellArgument(conflictingFetchPattern)}`
+        : `git -C ${quotedPath} config --add ${quoteDoctorShellArgument(`remote.${upstreamInspection.remote}.fetch`)} ${quoteDoctorShellArgument(fetchRefspec)}`;
+    findings.push(
+      createFinding({
+        category: "repository",
+        code: "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
+        details: {
+          branch: upstreamInspection.localBranch,
+          conflictingFetchRefspecs,
+          expectedRemoteTrackingRef: upstreamInspection.expectedRemoteTrackingRef,
+          mergeRef: upstreamInspection.mergeRef,
+          path: status.path,
+          reason: upstreamInspection.kind,
+          remote: upstreamInspection.remote,
+          repository: status.name,
+        },
+        message: `Repository '${status.name}' branch '${upstreamInspection.localBranch}' has upstream configuration, but Git cannot use ${upstreamInspection.remote}/${upstreamInspection.remoteBranch} because remote '${upstreamInspection.remote}' has no covering fetch mapping.`,
+        scope,
+        severity: "warning",
+        suggestedCommands: [
+          fetchConfigCommand,
+          `git -C ${quotedPath} fetch ${quotedRemote}`,
+          `git -C ${quotedPath} branch ${quoteDoctorShellArgument(`--set-upstream-to=${upstreamInspection.remote}/${upstreamInspection.remoteBranch}`)} ${quoteDoctorShellArgument(upstreamInspection.localBranch)}`,
+        ],
       }),
     );
   } else if (!status.branch.remoteBranch) {
@@ -380,7 +440,21 @@ const collectRepositoryFindings = async (
 ): Promise<DoctorFinding[]> => {
   const includeWorkspaceRoot = await shouldIncludeWorkspaceRootInRepositoryChecks(workspaceRoot);
   const statuses = await checkAllRepos(workspaceRoot, config, false, includeWorkspaceRoot);
-  return statuses.flatMap((status) => repositoryStatusToDoctorFindings(status));
+  const findings = await Promise.all(
+    statuses.map(async (status) => {
+      let upstreamInspection: UpstreamTrackingInspection = { kind: "not-applicable" };
+      if (
+        !status.error &&
+        !status.branch.isDetached &&
+        !status.branch.remoteBranch &&
+        !status.refreshWarning
+      ) {
+        upstreamInspection = await inspectUpstreamTrackingConfiguration(status.path);
+      }
+      return repositoryStatusToDoctorFindings(status, upstreamInspection);
+    }),
+  );
+  return findings.flat();
 };
 
 const collectWorktreeFindings = async (
