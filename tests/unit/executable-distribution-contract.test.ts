@@ -108,7 +108,14 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).toContain("verify-aw-posix:");
     expect(workflow).toContain("runs-on: ubuntu-latest");
     expect(workflow).toMatch(/apt-get install[^\n]*(?:fish[^\n]*zsh|zsh[^\n]*fish)/);
-    expect(workflow).toContain(`pnpm release:verify-aw -- "\${{ inputs.version }}"`);
+    expect(workflow).toContain("pnpm release:verify-aw");
+  });
+
+  test("passes the dispatched POSIX verifier version through the environment", () => {
+    const workflow = read(".github/workflows/verify-aw-release.yml");
+    expect(workflow).toContain("VERIFY_VERSION: ${{ inputs.version }}");
+    expect(workflow).toContain('pnpm release:verify-aw -- "$VERIFY_VERSION"');
+    expect(workflow).not.toContain('pnpm release:verify-aw -- "${{ inputs.version }}"');
   });
 
   test("runs the packed npm generated-shim matrix on Windows without treating cmd shims as symlinks", () => {
