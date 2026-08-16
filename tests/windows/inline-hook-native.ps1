@@ -123,6 +123,7 @@ Add-Content -Path '$record' -Value "powershell|`$PWD|`$env:ARASHI_HOOK_NAME|%|!|
     if ($timeoutOutcome.reasonCode -ne "timeout" -or $timeoutOutcome.sourceKind -ne "inline-config") {
       throw "Inline timeout classification was not preserved: $timeoutJson"
     }
+    $global:LASTEXITCODE = 0
   }
   finally {
     Pop-Location
