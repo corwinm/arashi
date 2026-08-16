@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -10,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
+import { releaseNpmCommand, spawnReleaseCommand } from "./release-command.ts";
 
 const version = process.argv[2]?.trim().replace(/^v/, "");
 if (
@@ -35,7 +35,7 @@ function run(
   args: string[],
   options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
 ) {
-  const result = spawnSync(command, args, {
+  const result = spawnReleaseCommand(command, args, {
     cwd: options.cwd,
     encoding: "utf8",
     env: options.env ?? process.env,
@@ -52,7 +52,7 @@ function runResult(
   args: string[],
   options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
 ) {
-  return spawnSync(command, args, {
+  return spawnReleaseCommand(command, args, {
     cwd: options.cwd,
     encoding: "utf8",
     env: options.env ?? process.env,
@@ -192,7 +192,8 @@ function verifyInstalledPosixShellBehavior({
 const root = mkdtempSync(join(tmpdir(), `arashi-aw-release-${version}-`));
 try {
   const shellBehavior: Record<string, string[]> = {};
-  const publicVersion = run("npm", [
+  const npmCommand = releaseNpmCommand();
+  const publicVersion = run(npmCommand, [
     "view",
     `arashi@${version}`,
     "version",
@@ -205,7 +206,7 @@ try {
   }
 
   const npmPrefix = join(root, "npm-prefix");
-  run("npm", [
+  run(npmCommand, [
     "install",
     "--global",
     "--prefix",
