@@ -231,6 +231,52 @@ printf '${label}|%s|%s|%s|%s\\n' "$ARASHI_REPO_NAME" "$ARASHI_HOOK_SCOPE" "$ARAS
   );
 
   test.runIf(process.platform !== "win32")(
+    "retains valid hook previews alongside unavailable sources for the same lifecycle",
+    async () => {
+      const branch = "feature-inline-remove-mixed-preview";
+      const worktrees = await createWorktreesForBranch(workspace, branch, false);
+      await configureInlineRemove({ "pre-remove": { cmd: "exit /b 0" } }, (repositoryName) =>
+        repositoryName === "repo-a" ? { "pre-remove": "exit 0" } : {},
+      );
+
+      const result = await runArashi(
+        workspace.rootPath,
+        ["remove", branch, "--dry-run", "--json"],
+        home,
+      );
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.data.hookOutcomes).toEqual([]);
+      expect(envelope.data.hooks).toEqual([
+        expect.objectContaining({
+          availability: "available",
+          hookName: "pre-remove",
+          repository: "repo-a",
+          scope: "repository",
+          selectedInterpreter: "bash",
+          sourceKind: "inline-config",
+          valid: true,
+        }),
+        ...workspace.repos.map((repository) =>
+          expect.objectContaining({
+            availability: "unavailable",
+            hookName: "pre-remove",
+            repository: repository.name,
+            scope: "workspace",
+            selectedInterpreter: null,
+            sourceKind: "inline-config",
+            valid: false,
+          }),
+        ),
+      ]);
+      for (const path of Object.values(worktrees)) {
+        expect(await pathExists(path)).toBe(true);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
     "previews invalid native hooks without fabricating outcomes or mutating targets",
     async () => {
       const branch = "feature-inline-remove-invalid-file-preview";

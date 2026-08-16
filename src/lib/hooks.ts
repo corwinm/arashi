@@ -1479,9 +1479,111 @@ export const validateHook = async (hookPath: string): Promise<ValidationResult> 
  * @returns Complete execution result including exit code and output
  */
 interface NativeHookExecutionOptions extends HookExecutionOptions {
+  redactedOutputValues?: readonly string[];
   spawnCommand?: string[];
   windowsVerbatimArguments?: boolean;
 }
+
+const REDACTED_INLINE_OUTPUT = "[inline hook snippet redacted]";
+
+const concatenateBytes = (
+  left: Uint8Array<ArrayBufferLike>,
+  right: Uint8Array<ArrayBufferLike>,
+): Uint8Array<ArrayBuffer> => {
+  const combined = new Uint8Array(left.length + right.length);
+  combined.set(left, ZERO);
+  combined.set(right, left.length);
+  return combined;
+};
+
+const byteSequenceIndex = (haystack: Uint8Array, needle: Uint8Array): number => {
+  const finalStart = haystack.length - needle.length;
+  for (let start = ZERO; start <= finalStart; start += ONE) {
+    let matches = true;
+    for (let offset = ZERO; offset < needle.length; offset += ONE) {
+      if (haystack[start + offset] !== needle[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return start;
+  }
+  return -ONE;
+};
+
+const bytesEndWithPrefix = (haystack: Uint8Array, needle: Uint8Array, length: number): boolean => {
+  const start = haystack.length - length;
+  for (let offset = ZERO; offset < length; offset += ONE) {
+    if (haystack[start + offset] !== needle[offset]) return false;
+  }
+  return true;
+};
+
+const redactHookOutputStream = (
+  stream: ReadableStream,
+  values: readonly string[] | undefined,
+): ReadableStream => {
+  const encoder = new TextEncoder();
+  const redactedValues = [
+    ...new Map(
+      (values ?? [])
+        .filter((value) => value.length > ZERO)
+        .map((value) => [value, encoder.encode(value)] as const),
+    ).values(),
+  ].toSorted((left, right) => right.length - left.length);
+  if (redactedValues.length === ZERO) return stream;
+
+  const replacement = encoder.encode(REDACTED_INLINE_OUTPUT);
+  let pending = new Uint8Array();
+  const emit = (controller: TransformStreamDefaultController<Uint8Array>, flush: boolean): void => {
+    while (pending.length > ZERO) {
+      let matchIndex = -ONE;
+      let matchedValue: Uint8Array | undefined;
+      for (const value of redactedValues) {
+        const index = byteSequenceIndex(pending, value);
+        if (index >= ZERO && (matchIndex < ZERO || index < matchIndex)) {
+          matchIndex = index;
+          matchedValue = value;
+        }
+      }
+      if (matchedValue !== undefined) {
+        if (matchIndex > ZERO) controller.enqueue(pending.slice(ZERO, matchIndex));
+        controller.enqueue(replacement);
+        pending = pending.slice(matchIndex + matchedValue.length);
+        continue;
+      }
+      if (flush) {
+        controller.enqueue(pending);
+        pending = new Uint8Array();
+        return;
+      }
+      let retainedLength = ZERO;
+      for (const value of redactedValues) {
+        const maximumCandidate = Math.min(value.length - ONE, pending.length);
+        for (let length = maximumCandidate; length > retainedLength; length -= ONE) {
+          if (bytesEndWithPrefix(pending, value, length)) {
+            retainedLength = length;
+            break;
+          }
+        }
+      }
+      const safeLength = pending.length - retainedLength;
+      if (safeLength === ZERO) return;
+      controller.enqueue(pending.slice(ZERO, safeLength));
+      pending = pending.slice(safeLength);
+    }
+  };
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    flush(controller) {
+      emit(controller, true);
+    },
+    transform(chunk, controller) {
+      pending = concatenateBytes(pending, chunk);
+      emit(controller, false);
+    },
+  });
+  return (stream as ReadableStream<Uint8Array>).pipeThrough(transform);
+};
 
 const executeHookUnpaused = async (options: NativeHookExecutionOptions): Promise<HookResult> => {
   const startTime = Date.now();
@@ -1807,14 +1909,16 @@ const executeHookUnpaused = async (options: NativeHookExecutionOptions): Promise
         if (timeoutTriggered) signalHookTree("SIGKILL");
         if (timeoutEscalation) clearTimeout(timeoutEscalation);
       });
+      const stdoutStream = redactHookOutputStream(proc.stdout, options.redactedOutputValues);
+      const stderrStream = redactHookOutputStream(proc.stderr, options.redactedOutputValues);
       const [stdout, stderr] = interactiveOutput
         ? await Promise.all([
-            streamRawOutput(proc.stdout, (chunk) => process.stdout.write(chunk)),
-            streamRawOutput(proc.stderr, (chunk) => process.stderr.write(chunk)),
+            streamRawOutput(stdoutStream, (chunk) => process.stdout.write(chunk)),
+            streamRawOutput(stderrStream, (chunk) => process.stderr.write(chunk)),
           ])
         : await Promise.all([
-            streamOutput(proc.stdout, `[${options.hookName}:OUT]`, options.quiet),
-            streamOutput(proc.stderr, `[${options.hookName}:ERR]`, options.quiet),
+            streamOutput(stdoutStream, `[${options.hookName}:OUT]`, options.quiet),
+            streamOutput(stderrStream, `[${options.hookName}:ERR]`, options.quiet),
           ]);
 
       await timeoutCleanup;
@@ -1943,6 +2047,7 @@ export const executeInlineHook = async (
 
     outputSpinner: options.outputSpinner,
     quiet: options.quiet,
+    redactedOutputValues: [options.snippet],
     scriptPath: options.resolution.executablePath,
     sourceKind: options.source.sourceKind,
     sourceOwnerKind: options.source.sourceOwnerKind,

@@ -24,6 +24,7 @@ import type {
   HookOutcomeMapping as SharedHookOutcomeMapping,
   LifecycleHookPreparationCandidate,
   LifecycleHookOutcome,
+  PlannedLifecycleHookSource,
   PreparedLifecycleHookEntry,
   RemoveHookTarget,
 } from "../lib/hooks.ts";
@@ -1010,6 +1011,7 @@ export async function executeRemove(
   try {
     const preflight = await preflightRemoveLifecycleHooks({
       config,
+      dryRun: options.dryRun === true,
       removeTargets,
       targetRepositories: removeHookTargets,
       workspaceRoot,
@@ -1768,6 +1770,34 @@ const formatBranchDeletionError = (error: unknown): string => {
   return message;
 };
 
+const sortRemoveHookPreviews = (
+  previews: RemoveHookPreview[],
+  targetRepositories: readonly HookTargetRepository[],
+): RemoveHookPreview[] => {
+  const lifecycleOrder = new Map([
+    [GLOBAL_HOOKS.preRemove, ZERO],
+    [GLOBAL_HOOKS.postRemove, ONE],
+  ]);
+  const scopeOrder = new Map([
+    ["repository", ZERO],
+    ["workspace", ONE],
+    ["global-repository", 2],
+    ["global-shared", 3],
+  ]);
+  const repositoryOrder = new Map(
+    targetRepositories.map((repository, index) => [repository.name, index]),
+  );
+  return previews.toSorted(
+    (left, right) =>
+      (lifecycleOrder.get(left.hookName) ?? Number.MAX_SAFE_INTEGER) -
+        (lifecycleOrder.get(right.hookName) ?? Number.MAX_SAFE_INTEGER) ||
+      (repositoryOrder.get(left.repository) ?? Number.MAX_SAFE_INTEGER) -
+        (repositoryOrder.get(right.repository) ?? Number.MAX_SAFE_INTEGER) ||
+      (scopeOrder.get(left.scope) ?? Number.MAX_SAFE_INTEGER) -
+        (scopeOrder.get(right.scope) ?? Number.MAX_SAFE_INTEGER),
+  );
+};
+
 const previewRemoveLifecycleHooks = async (options: {
   globalOnly?: boolean;
   preparedLocations?: PreparedRemoveHooks;
@@ -1800,7 +1830,7 @@ const previewRemoveLifecycleHooks = async (options: {
         });
       }
     }
-    return previews;
+    return sortRemoveHookPreviews(previews, options.targetRepositories);
   }
   for (const hookName of [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove] as const) {
     const resolvedHooks = await resolveScopedLifecycleHooks({
@@ -1830,7 +1860,7 @@ const previewRemoveLifecycleHooks = async (options: {
       });
     }
   }
-  return previews;
+  return sortRemoveHookPreviews(previews, options.targetRepositories);
 };
 
 const runRemoveLifecycleHook = async (options: {
@@ -2184,8 +2214,26 @@ const unavailableRemovePreviews = (
     }));
 };
 
+const plannedRemoveEntryIdentity = (entry: PlannedLifecycleHookSource): string =>
+  JSON.stringify([
+    entry.configuredField,
+    entry.context.branchName,
+    entry.context.repositoryName,
+    entry.context.repositoryPath,
+    entry.context.worktreePath,
+    entry.executionPath,
+    entry.lifecycle,
+    entry.scope,
+    entry.sourceKind,
+    entry.sourceOwnerKind,
+    entry.sourceOwnerName,
+    entry.sourceScriptPath,
+    entry.targetRepositoryName,
+  ]);
+
 const preflightRemoveLifecycleHooks = async (options: {
   config: Config;
+  dryRun: boolean;
   removeTargets: RemoveHookTarget[];
   targetRepositories: HookTargetRepository[];
   workspaceRoot: string;
@@ -2251,6 +2299,48 @@ const preflightRemoveLifecycleHooks = async (options: {
       targetWorktreePath: targetData.WORKTREE_PATH ?? null,
       workspaceMode: "configured",
     };
+  };
+
+  const prepareCandidates = (candidates: readonly LifecycleHookPreparationCandidate[]) =>
+    prepareLifecycleHookSources({
+      candidates,
+      consumer: "remove",
+      env: process.env,
+      platform: process.platform,
+      targets,
+      workspaceRoot: options.workspaceRoot,
+    });
+
+  const retainDryRunCandidates = async (
+    candidates: readonly LifecycleHookPreparationCandidate[],
+    canonicalEntries: readonly PlannedLifecycleHookSource[],
+    hookName: RemoveHookPreview["hookName"],
+  ): Promise<void> => {
+    const recovered: PreparedLifecycleHookEntry[] = [];
+    for (const candidate of candidates) {
+      const candidatePreparation = await prepareCandidates([candidate]);
+      if (candidatePreparation.classification === "ready") {
+        recovered.push(...candidatePreparation.entries);
+        continue;
+      }
+      if (
+        candidatePreparation.classification === "file-invalid" ||
+        candidatePreparation.classification === "interpreter-unavailable"
+      ) {
+        unavailablePreviews.push(...unavailableRemovePreviews(candidatePreparation, hookName));
+        continue;
+      }
+      throw new Error(`Unexpected ambiguous single-source ${hookName} hook plan`);
+    }
+    const canonicalOrder = new Map(
+      canonicalEntries.map((entry, index) => [plannedRemoveEntryIdentity(entry), index]),
+    );
+    recovered.sort(
+      (left, right) =>
+        (canonicalOrder.get(plannedRemoveEntryIdentity(left.plan)) ?? Number.MAX_SAFE_INTEGER) -
+        (canonicalOrder.get(plannedRemoveEntryIdentity(right.plan)) ?? Number.MAX_SAFE_INTEGER),
+    );
+    preparedHooks[hookName].push(...recovered);
   };
 
   for (const hookName of [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove] as const) {
@@ -2377,14 +2467,7 @@ const preflightRemoveLifecycleHooks = async (options: {
         },
       });
     }
-    const preparation = await prepareLifecycleHookSources({
-      candidates,
-      consumer: "remove",
-      env: process.env,
-      platform: process.platform,
-      targets,
-      workspaceRoot: options.workspaceRoot,
-    });
+    const preparation = await prepareCandidates(candidates);
     if (preparation.classification === "ambiguous") {
       const failure = preparation.plan.failure;
       return {
@@ -2414,21 +2497,37 @@ const preflightRemoveLifecycleHooks = async (options: {
       };
     }
     if (preparation.classification === "file-invalid") {
-      failure ??= outcomeFor(hookName, preparation.plannedEntry, {
+      const lifecycleFailure = outcomeFor(hookName, preparation.plannedEntry, {
         hookStatus: "failure",
         message: preparation.validation.error ?? "Hook validation failed",
         reasonCode: preparation.validation.reasonCode ?? "validation_failed",
       });
-      unavailablePreviews.push(...unavailableRemovePreviews(preparation, hookName));
+      if (!options.dryRun) {
+        return {
+          failure: lifecycleFailure,
+          preparedHooks,
+          unavailablePreviews: unavailableRemovePreviews(preparation, hookName),
+        };
+      }
+      failure ??= lifecycleFailure;
+      await retainDryRunCandidates(candidates, preparation.plan.entries, hookName);
       continue;
     }
     if (preparation.classification === "interpreter-unavailable") {
-      failure ??= outcomeFor(hookName, preparation.plannedEntry, {
+      const lifecycleFailure = outcomeFor(hookName, preparation.plannedEntry, {
         hookStatus: "failure",
         message: `No configured interpreter is available for ${hookName}`,
         reasonCode: "interpreter_unavailable",
       });
-      unavailablePreviews.push(...unavailableRemovePreviews(preparation, hookName));
+      if (!options.dryRun) {
+        return {
+          failure: lifecycleFailure,
+          preparedHooks,
+          unavailablePreviews: unavailableRemovePreviews(preparation, hookName),
+        };
+      }
+      failure ??= lifecycleFailure;
+      await retainDryRunCandidates(candidates, preparation.plan.entries, hookName);
       continue;
     }
     preparedHooks[hookName].push(...preparation.entries);

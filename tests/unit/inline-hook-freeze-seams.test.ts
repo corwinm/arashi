@@ -287,4 +287,38 @@ describe("AC-09 additive metadata, exact capture, and exhaustive secrecy seam", 
     };
     assertNoCanaryProjection(projection);
   });
+
+  test.runIf(process.platform !== "win32")(
+    "redacts inline snippets repeated by interpreter diagnostics",
+    async () => {
+      const root = await makeRoot();
+      const resolution = await availableBashResolution();
+      const snippet = `printf '${canary}'; )`;
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const execution = await executeInlineHook({
+        context: { hookName: "pre-create.alpha", operationData: {}, repoPath: root },
+        hookName: "pre-create.alpha",
+        quiet: false,
+        resolution,
+        snippet,
+        source: {
+          sourceKind: "inline-config",
+          sourceOwnerKind: "repository",
+          sourceOwnerName: "alpha",
+          sourceScriptPath: null,
+        },
+        timeout: 1000,
+      });
+
+      expect(execution.result.success).toBe(false);
+      const publicProjection = JSON.stringify({
+        logs: log.mock.calls,
+        outcome: execution.outcome,
+        result: execution.result,
+      });
+      expect(publicProjection).not.toContain(canary);
+      expect(publicProjection).not.toContain(snippet);
+    },
+  );
 });
