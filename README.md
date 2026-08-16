@@ -92,17 +92,21 @@ If you prefer not to use npm, download a platform binary from [GitHub Releases](
 macOS (Apple Silicon):
 
 ```bash
-curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-macos-arm64 -o arashi
-chmod +x arashi
-sudo mv arashi /usr/local/bin/arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-macos-arm64 -o arashi.bin
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi -o arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/aw -o aw
+chmod +x arashi.bin arashi aw
+sudo install -m 0755 arashi.bin arashi aw /usr/local/bin/
 ```
 
 Linux (x64):
 
 ```bash
-curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-linux-x64 -o arashi
-chmod +x arashi
-sudo mv arashi /usr/local/bin/arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-linux-x64 -o arashi.bin
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi -o arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/aw -o aw
+chmod +x arashi.bin arashi aw
+sudo install -m 0755 arashi.bin arashi aw /usr/local/bin/
 ```
 
 Windows (PowerShell and Git Bash):
@@ -115,7 +119,7 @@ Windows (PowerShell and Git Bash):
 # Rename arashi-windows-x64.exe to arashi.bin.exe and keep the seven files together on PATH.
 ```
 
-Windows manual installation requires `arashi-windows-x64.exe`, `arashi`, `arashi.ps1`, `arashi.bat`, `aw`, `aw.ps1`, `aw.bat`, and `arashi-checksums.txt` from the same release. Verify all seven payload files, rename the executable to `arashi.bin.exe`, and keep the payload together on PATH. A manual marked alias has no installer ledger ownership; move or remove the manual alias files deliberately before later using the direct installer.
+Windows manual installation requires `arashi-windows-x64.exe`, `arashi`, `arashi.ps1`, `arashi.bat`, `aw`, `aw.ps1`, `aw.bat`, and `arashi-checksums.txt` from the same release. Verify all seven payload files, rename the executable to `arashi.bin.exe`, and keep the payload together on PATH. Manual release installations do not create the direct installer's ownership ledger; deliberately move or remove the manual payload before later using the direct installer.
 
 You can also build from source for local development. Development is pinned to Node.js 24.18.0, which satisfies pnpm 11's Node.js 22.13 minimum, and pnpm 11.20.0; nvm users can select the repository's development runtime with `nvm use`.
 

@@ -24,6 +24,12 @@ if (
   process.exit(2);
 }
 
+function reportedVersion(output: string): string | undefined {
+  return output.match(
+    /(?:^|[^0-9A-Za-z.-])(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=$|[^0-9A-Za-z.-])/u,
+  )?.[1];
+}
+
 function run(
   command: string,
   args: string[],
@@ -218,9 +224,13 @@ try {
   }
   const canonicalVersion = run(canonical, ["--version"]);
   const aliasVersion = run(alias, ["--version"]);
-  if (canonicalVersion !== aliasVersion || !canonicalVersion.includes(version)) {
+  if (
+    canonicalVersion !== aliasVersion ||
+    reportedVersion(canonicalVersion) !== version ||
+    reportedVersion(aliasVersion) !== version
+  ) {
     throw new Error(
-      `npm entrypoint versions differ: arashi=${canonicalVersion}, aw=${aliasVersion}`,
+      `npm entrypoint version does not exactly match requested release ${version}: arashi=${canonicalVersion}, aw=${aliasVersion}`,
     );
   }
   assertParity({ alias, args: ["--help"], canonical });
@@ -268,9 +278,13 @@ try {
     run("bash", [installer, "--no-modify-path", "--no-shell-integration"], { env });
     const directCanonical = run(join(directDir, "arashi"), ["--version"], { env });
     const directAlias = run(join(directDir, "aw"), ["--version"], { env });
-    if (directCanonical !== directAlias || !directCanonical.includes(version)) {
+    if (
+      directCanonical !== directAlias ||
+      reportedVersion(directCanonical) !== version ||
+      reportedVersion(directAlias) !== version
+    ) {
       throw new Error(
-        `direct entrypoint versions differ: arashi=${directCanonical}, aw=${directAlias}`,
+        `direct entrypoint version does not exactly match requested release ${version}: arashi=${directCanonical}, aw=${directAlias}`,
       );
     }
     const ledger = JSON.parse(
