@@ -8,6 +8,9 @@ import commandContract from "../../contracts/cli-commands.json";
 
 const root = join(import.meta.dirname, "../..");
 const read = (path: string): string => readFileSync(join(root, path), "utf8");
+const npmCommand = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+const npmArgs = (args: string[]): string[] =>
+  process.platform === "win32" ? ["/d", "/s", "/c", "npm", ...args] : args;
 
 const expectedPolicy = {
   alias: { expansion: "Arashi Workspace", name: "aw" },
@@ -147,8 +150,14 @@ describe("versioned executable distribution contract", () => {
     const packDirectory = mkdtempSync(join(tmpdir(), "arashi-aw-contract-pack-"));
     try {
       execFileSync(
-        "npm",
-        ["pack", "--cache", join(packDirectory, "npm-cache"), "--pack-destination", packDirectory],
+        npmCommand,
+        npmArgs([
+          "pack",
+          "--cache",
+          join(packDirectory, "npm-cache"),
+          "--pack-destination",
+          packDirectory,
+        ]),
         { cwd: root },
       );
       const archive = join(

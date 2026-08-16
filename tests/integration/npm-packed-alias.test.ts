@@ -15,6 +15,9 @@ import { delimiter, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const root = join(import.meta.dirname, "../..");
+const npmCommand = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+const npmArgs = (args: string[]): string[] =>
+  process.platform === "win32" ? ["/d", "/s", "/c", "npm", ...args] : args;
 const fixtures: string[] = [];
 let prefix = "";
 let binDirectory = "";
@@ -25,15 +28,15 @@ beforeAll(() => {
   prefix = mkdtempSync(join(tmpdir(), "arashi-aw-prefix-"));
   fixtures.push(packDir, prefix);
   execFileSync(
-    "npm",
-    ["pack", "--cache", join(packDir, "npm-cache"), "--pack-destination", packDir],
+    npmCommand,
+    npmArgs(["pack", "--cache", join(packDir, "npm-cache"), "--pack-destination", packDir]),
     { cwd: root, encoding: "utf8" },
   );
   const filename = readdirSync(packDir).find((name) => name.endsWith(".tgz"));
   if (!filename) throw new Error("npm pack did not create an archive");
   execFileSync(
-    "npm",
-    [
+    npmCommand,
+    npmArgs([
       "install",
       "--global",
       "--prefix",
@@ -41,7 +44,7 @@ beforeAll(() => {
       "--cache",
       join(prefix, "npm-cache"),
       join(packDir, filename),
-    ],
+    ]),
     { encoding: "utf8" },
   );
   binDirectory = process.platform === "win32" ? prefix : join(prefix, "bin");
