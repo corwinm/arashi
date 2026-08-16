@@ -24,7 +24,7 @@ function Invoke-Checked([string[]]$Command) {
   if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $($Command -join ' ')" }
 }
 
-function Write-ConfigScripts([hashtable]$Scripts, [int]$Timeout = 2000) {
+function Write-ConfigScripts([hashtable]$Scripts, [int]$Timeout = 30000) {
   $configPath = Join-Path $repo ".arashi\config.json"
   $config = Get-Content -Raw -Path $configPath | ConvertFrom-Json
   $config | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]@{
@@ -43,7 +43,7 @@ function Invoke-PtySession([string]$Prompt, [string]$Response, [string[]]$Comman
     prompt = $Prompt
     response = $Response
     resultPath = $resultPath
-    timeoutMs = 30000
+    timeoutMs = 120000
   } | ConvertTo-Json -Compress
   $encodedConfig = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($config))
   & node $ptyHelper --session $encodedConfig

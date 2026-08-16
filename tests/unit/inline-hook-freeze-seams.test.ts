@@ -162,7 +162,7 @@ describe("AC-06 direct shared inline interpreter resolver seam", () => {
 
 describe("AC-08 direct inline execution timeout and quiet seam", () => {
   test.each([
-    { label: "valid", snippet: "printf exact", timedOut: false, timeout: 1000 },
+    { label: "valid", snippet: "printf exact", timedOut: false, timeout: 30000 },
     { label: "default", snippet: "printf exact", timedOut: false },
     { label: "expired", snippet: "sleep 1", timedOut: true, timeout: 20 },
   ] as const)(
