@@ -50,7 +50,8 @@ describe("Windows seven-file alias transaction", () => {
       "arashi-managed-alias",
       "ReparsePoint",
       "Get-Command aw",
-      "where.exe aw",
+      "'aw.com', 'aw.exe', 'aw.bat', 'aw.cmd'",
+      "Test-Path -LiteralPath $candidate -PathType Leaf",
       "bash.exe",
       "move or remove",
     ]) {

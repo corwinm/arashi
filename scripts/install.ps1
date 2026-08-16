@@ -243,7 +243,18 @@ function Assert-ArashiAliasOwnership {
         $resolvedCommands = @(& $ResolveCommands)
     } else {
         $powerShell = Get-Command aw -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source } | Where-Object { $_ }
-        $cmd = & where.exe aw 2>$null
+        $cmd = @(
+            foreach ($directory in @($env:Path -split ';')) {
+                $expandedDirectory = [Environment]::ExpandEnvironmentVariables($directory.Trim().Trim('"'))
+                if ([string]::IsNullOrWhiteSpace($expandedDirectory)) { continue }
+                foreach ($name in @('aw.com', 'aw.exe', 'aw.bat', 'aw.cmd')) {
+                    $candidate = Join-Path $expandedDirectory $name
+                    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                        [System.IO.Path]::GetFullPath($candidate)
+                    }
+                }
+            }
+        )
         $bashPath = Get-Command bash.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
         $gitBash = if ($bashPath) { & $bashPath --noprofile --norc -c "command -v aw" 2>$null } else { @() }
         $resolvedCommands = @($powerShell) + @($cmd) + @($gitBash)
