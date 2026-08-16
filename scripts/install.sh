@@ -529,11 +529,12 @@ replace_installed_asset() {
 restore_installed_asset() {
   local backup_path="$1"
   local destination_path="$2"
+  local preserved_mode="$3"
   local destination_dir destination_name temporary_path
   destination_dir="$(dirname "$destination_path")"
   destination_name="$(basename "$destination_path")"
   temporary_path="$(mktemp "$destination_dir/.$destination_name.arashi-restore.XXXXXX")" || return 1
-  if ! cp -p "$backup_path" "$temporary_path" || ! mv -f "$temporary_path" "$destination_path"; then
+  if ! cp "$backup_path" "$temporary_path" || ! chmod "$preserved_mode" "$temporary_path" || ! mv -f "$temporary_path" "$destination_path"; then
     rm -f "$temporary_path"
     return 1
   fi
@@ -586,6 +587,7 @@ install_posix_payload_transaction() {
   local -a destinations=("$binary_path" "$canonical_path" "$alias_path" "$ledger_path")
   local -a sources=("$binary_source" "$wrapper_source" "$alias_source" "")
   local -a existed=()
+  local -a backup_modes=(0 0 0 0)
   local -a backup_fd_open=(0 0 0 0)
   local transaction_armed=0 transaction_committed=0 ACTIVE_TRANSACTION_CHILD=0
   local transaction_failure="Installation exited unexpectedly during $phase"
@@ -593,26 +595,30 @@ install_posix_payload_transaction() {
   previous_exit_trap="$(trap -p EXIT)"
   previous_err_trap="$(trap -p ERR)"
 
-  open_rollback_backup_descriptor() {
+  open_rollback_backup_descriptors() {
     local backup_index="$1"
     case "$backup_index" in
-      0) exec 7<"$backup_directory/0" ;;
-      1) exec 8<"$backup_directory/1" ;;
-      2) exec 9<"$backup_directory/2" ;;
-      3) exec 10<"$backup_directory/3" ;;
+      0) exec 7<"$backup_directory/0" 11<"$backup_directory/0" ;;
+      1) exec 8<"$backup_directory/1" 12<"$backup_directory/1" ;;
+      2) exec 9<"$backup_directory/2" 13<"$backup_directory/2" ;;
+      3) exec 10<"$backup_directory/3" 14<"$backup_directory/3" ;;
       *) return 1 ;;
     esac
     backup_fd_open[$backup_index]=1
   }
 
   rollback_backup_source() {
-    local backup_index="$1"
+    local backup_index="$1" source_kind="${2:-restore}"
     if [ "${backup_fd_open[$backup_index]}" -eq 1 ]; then
-      case "$backup_index" in
-        0) printf '/dev/fd/7\n' ;;
-        1) printf '/dev/fd/8\n' ;;
-        2) printf '/dev/fd/9\n' ;;
-        3) printf '/dev/fd/10\n' ;;
+      case "$source_kind:$backup_index" in
+        restore:0) printf '/dev/fd/7\n' ;;
+        restore:1) printf '/dev/fd/8\n' ;;
+        restore:2) printf '/dev/fd/9\n' ;;
+        restore:3) printf '/dev/fd/10\n' ;;
+        retain:0) printf '/dev/fd/11\n' ;;
+        retain:1) printf '/dev/fd/12\n' ;;
+        retain:2) printf '/dev/fd/13\n' ;;
+        retain:3) printf '/dev/fd/14\n' ;;
         *) return 1 ;;
       esac
     else
@@ -621,11 +627,25 @@ install_posix_payload_transaction() {
   }
 
   close_rollback_backup_descriptors() {
-    [ "${backup_fd_open[0]}" -eq 0 ] || exec 7<&-
-    [ "${backup_fd_open[1]}" -eq 0 ] || exec 8<&-
-    [ "${backup_fd_open[2]}" -eq 0 ] || exec 9<&-
-    [ "${backup_fd_open[3]}" -eq 0 ] || exec 10<&-
+    [ "${backup_fd_open[0]}" -eq 0 ] || { exec 7<&-; exec 11<&-; }
+    [ "${backup_fd_open[1]}" -eq 0 ] || { exec 8<&-; exec 12<&-; }
+    [ "${backup_fd_open[2]}" -eq 0 ] || { exec 9<&-; exec 13<&-; }
+    [ "${backup_fd_open[3]}" -eq 0 ] || { exec 10<&-; exec 14<&-; }
     backup_fd_open=(0 0 0 0)
+  }
+
+  backup_file_mode() {
+    local backup_path="$1" mode
+    if mode="$(stat -f '%Lp' "$backup_path" 2>/dev/null)"; then
+      case "$mode" in
+        [0-7]|[0-7][0-7]|[0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) printf '%s\n' "$mode"; return 0 ;;
+      esac
+    fi
+    mode="$(stat -c '%a' "$backup_path" 2>/dev/null)" || return 1
+    case "$mode" in
+      [0-7]|[0-7][0-7]|[0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) printf '%s\n' "$mode" ;;
+      *) return 1 ;;
+    esac
   }
 
   retain_recoverable_backups() {
@@ -634,8 +654,9 @@ install_posix_payload_transaction() {
     for backup_index in "${!destinations[@]}"; do
       [ "${existed[$backup_index]}" -eq 1 ] || continue
       [ -f "$backup_directory/$backup_index" ] && continue
-      backup_source="$(rollback_backup_source "$backup_index")" || return 1
-      cp -p "$backup_source" "$backup_directory/$backup_index" || return 1
+      backup_source="$(rollback_backup_source "$backup_index" retain)" || return 1
+      cp "$backup_source" "$backup_directory/$backup_index" || return 1
+      chmod "${backup_modes[$backup_index]}" "$backup_directory/$backup_index" || return 1
     done
   }
 
@@ -651,7 +672,7 @@ install_posix_payload_transaction() {
     for rollback_index in "${!destinations[@]}"; do
       if [ "${existed[$rollback_index]}" -eq 1 ]; then
         if backup_source="$(rollback_backup_source "$rollback_index")"; then
-          restore_installed_asset "$backup_source" "${destinations[$rollback_index]}" || rollback_failed=1
+          restore_installed_asset "$backup_source" "${destinations[$rollback_index]}" "${backup_modes[$rollback_index]}" || rollback_failed=1
         else
           rollback_failed=1
         fi
@@ -662,9 +683,14 @@ install_posix_payload_transaction() {
     rm -f "$staged_ledger" || rollback_failed=1
 
     if [ "$rollback_failed" -ne 0 ]; then
-      retain_recoverable_backups || true
+      local backups_retained=0
+      if retain_recoverable_backups; then backups_retained=1; fi
       close_rollback_backup_descriptors || true
-      printf 'error: %s. Rollback failed; recoverable backups retained at: %s. Restore them manually before retrying\n' "$transaction_failure" "$backup_directory" >&2
+      if [ "$backups_retained" -eq 1 ]; then
+        printf 'error: %s. Rollback failed; recoverable backups retained at: %s. Restore them manually before retrying\n' "$transaction_failure" "$backup_directory" >&2
+      else
+        printf 'error: %s. Rollback failed and complete recovery backups could not be retained at: %s. Inspect the destination state before retrying\n' "$transaction_failure" "$backup_directory" >&2
+      fi
     else
       close_rollback_backup_descriptors || true
       rm -rf "$backup_directory"
@@ -714,6 +740,7 @@ install_posix_payload_transaction() {
         fail "Managed destination ${destinations[$index]} is not a readable regular file; move or remove it deliberately before retrying"
       fi
       existed[$index]=1
+      backup_modes[$index]="$(backup_file_mode "${destinations[$index]}")" || fail "Installation failed to record destination mode before replacement began"
       cp -p "${destinations[$index]}" "$backup_directory/$index" || fail "Installation failed during backup before replacement began"
     else
       existed[$index]=0
@@ -766,7 +793,7 @@ install_posix_payload_transaction() {
   transaction_failure="Installation interrupted or failed during $phase"
   for index in "${!destinations[@]}"; do
     if [ "${existed[$index]}" -eq 1 ]; then
-      open_rollback_backup_descriptor "$index"
+      open_rollback_backup_descriptors "$index"
     fi
   done
   rm -f "$staged_ledger"

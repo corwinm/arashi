@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -249,7 +250,10 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     expect(first.status, first.stderr).toBe(0);
     const managedNames = ["arashi.bin", "arashi", "aw", ".arashi-managed-entrypoints.json"];
     const originals = new Map(
-      managedNames.map((name) => [name, readFileSync(join(state.install, name))]),
+      managedNames.map((name) => {
+        const path = join(state.install, name);
+        return [name, { bytes: readFileSync(path), mode: statSync(path).mode & 0o777 }];
+      }),
     );
 
     writeFileSync(
@@ -278,8 +282,71 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     const [status] = (await once(child, "exit")) as [number | null, NodeJS.Signals | null];
     expect(status).not.toBe(0);
     for (const name of managedNames) {
-      expect(readFileSync(join(state.install, name)), `${name} was not restored`).toEqual(
-        originals.get(name),
+      const path = join(state.install, name);
+      const original = originals.get(name)!;
+      expect(readFileSync(path), `${name} bytes were not restored`).toEqual(original.bytes);
+      expect(statSync(path).mode & 0o777, `${name} mode was not restored`).toBe(original.mode);
+    }
+  }, 12_000);
+
+  test("retains complete rollback sources when restoration fails after backup cleanup", async () => {
+    const state = fixture();
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: state.env,
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const managedNames = ["arashi.bin", "arashi", "aw", ".arashi-managed-entrypoints.json"];
+    const originals = managedNames.map((name) => {
+      const path = join(state.install, name);
+      return { bytes: readFileSync(path), mode: statSync(path).mode & 0o777 };
+    });
+
+    writeFileSync(
+      join(state.assets, "arashi-macos-arm64"),
+      "#!/bin/sh\nprintf '9.9.9\\n'\n# replacement payload\n",
+    );
+    chmodSync(join(state.assets, "arashi-macos-arm64"), 0o755);
+    writeChecksums(state.assets);
+    const cleanupReady = join(state.directory, "retention-cleanup-ready");
+    writeFileSync(
+      join(state.commands, "rm"),
+      `#!/bin/sh\ncase "$*" in *arashi-payload-backup*) touch "$ARASHI_CLEANUP_READY"; sleep 3;; esac\nexec /bin/rm "$@"\n`,
+    );
+    writeFileSync(
+      join(state.commands, "mv"),
+      '#!/bin/sh\ncase "$*" in *.arashi-restore.*) exit 71;; esac\nexec /bin/mv "$@"\n',
+    );
+    chmodSync(join(state.commands, "rm"), 0o755);
+    chmodSync(join(state.commands, "mv"), 0o755);
+
+    const child = spawn("bash", [join(root, "scripts/install.sh")], {
+      detached: true,
+      env: { ...state.env, ARASHI_CLEANUP_READY: cleanupReady },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr!.setEncoding("utf8");
+    child.stderr!.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    for (let attempt = 0; attempt < 100 && !existsSync(cleanupReady); attempt += 1) {
+      await delay(25);
+    }
+    expect(existsSync(cleanupReady)).toBe(true);
+    child.kill("SIGTERM");
+    const [status] = (await once(child, "exit")) as [number | null, NodeJS.Signals | null];
+    expect(status).not.toBe(0);
+    const retainedPath = stderr.match(/recoverable backups retained at: (.+?)\. Restore/u)?.[1];
+    expect(retainedPath, stderr).toBeTruthy();
+    fixtures.push(retainedPath!);
+    for (const [index, original] of originals.entries()) {
+      const backup = join(retainedPath!, String(index));
+      expect(readFileSync(backup), `backup ${index} bytes were not retained`).toEqual(
+        original.bytes,
+      );
+      expect(statSync(backup).mode & 0o777, `backup ${index} mode was not retained`).toBe(
+        original.mode,
       );
     }
   }, 12_000);
