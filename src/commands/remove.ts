@@ -6,14 +6,15 @@
 
 import {
   GLOBAL_HOOKS,
-  LifecycleHookDiscoveryError,
   buildRemoveHookOperationData,
+  discoverLifecycleHookCandidatesInDirectory,
   executeHook,
+  executeInlineHook,
   mapHookExecutionResult,
   mapHookSkippedOutcome,
   normalizeLifecyclePath,
+  prepareLifecycleHookSources,
   releaseHookInterruptGuards,
-  resolveScopedLifecycleHookLocations,
   resolveScopedLifecycleHooks,
   resolveHookInputMode,
   validateHook,
@@ -21,7 +22,10 @@ import {
 import type {
   HookInputMode,
   HookOutcomeMapping as SharedHookOutcomeMapping,
+  LifecycleHookPreparationCandidate,
   LifecycleHookOutcome,
+  PlannedLifecycleHookSource,
+  PreparedLifecycleHookEntry,
   RemoveHookTarget,
 } from "../lib/hooks.ts";
 import type {
@@ -32,7 +36,8 @@ import type {
   WorktreeGrouping,
 } from "../types/remove.ts";
 import { ArashiError, RemoveCommandError, RemoveCommandErrorCode } from "../lib/errors.ts";
-import { basename, resolve } from "path";
+import { basename, join, resolve } from "path";
+import { homedir } from "os";
 import {
   branchExists,
   canonicalPhysicalPath,
@@ -61,6 +66,7 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { ConfigValidationError, findWorkspaceRoot, loadConfig } from "../lib/config.ts";
+
 import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
 import {
   preflightStandaloneGlobalHooks,
@@ -107,6 +113,10 @@ interface HookTargetRepository {
   name: string;
   path: string;
 }
+
+type PreparedRemoveHooks = Readonly<
+  Record<"post-remove" | "pre-remove", readonly PreparedLifecycleHookEntry[]>
+>;
 
 type PromptOutcome<T> =
   | { status: "ok"; value: T }
@@ -940,25 +950,6 @@ export async function executeRemove(
     dirtyCheckSpinner?.succeed("Dirty check complete");
   }
 
-  if (!options.force && !options.dryRun) {
-    ensureInteractive(allowNonInteractive);
-    const confirmation = await promptConfirmation({
-      branchPresence,
-      checkDirty: options.checkDirty !== false,
-      confirm: prompt.confirm,
-      quiet: options.json === true,
-      worktrees: worktreesToRemove,
-    });
-    if (confirmation === "cancelled") {
-      info("Operation cancelled");
-      return ZERO;
-    }
-    if (confirmation === "declined") {
-      info("Operation cancelled by user");
-      return ZERO;
-    }
-  }
-
   let totalWorktrees = worktreesToRemove.length;
   if (options.keepWorktrees) {
     totalWorktrees = ZERO;
@@ -1014,6 +1005,55 @@ export async function executeRemove(
     targets: removeTargets,
   });
 
+  let preparedRemoveHooks: PreparedRemoveHooks | null = null;
+  let preflightFailure: LifecycleHookOutcome | null = null;
+  let unavailableHookPreviews: RemoveHookPreview[] = [];
+  try {
+    const preflight = await preflightRemoveLifecycleHooks({
+      config,
+      dryRun: options.dryRun === true,
+      removeTargets,
+      targetRepositories: removeHookTargets,
+      workspaceRoot,
+    });
+    preparedRemoveHooks = preflight.preparedHooks;
+    preflightFailure = preflight.failure;
+    unavailableHookPreviews = preflight.unavailablePreviews;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    summary.errors.push(message);
+    summary.duration = Date.now() - startTime;
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("remove", {
+          code: "HOOK_CONFIGURATION_INVALID",
+          details: removalJsonData(summary, { missingBranches, skippedMain }, configuredMetadata),
+          message,
+        }),
+      );
+    } else {
+      console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
+    }
+    return ONE;
+  }
+  if (preflightFailure && (!options.dryRun || unavailableHookPreviews.length === ZERO)) {
+    summary.hookOutcomes.push(preflightFailure);
+    summary.errors.push(preflightFailure.message);
+    summary.duration = Date.now() - startTime;
+    if (options.json) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("remove", {
+          code: "HOOK_CONFIGURATION_INVALID",
+          details: removalJsonData(summary, { missingBranches, skippedMain }, configuredMetadata),
+          message: preflightFailure.message,
+        }),
+      );
+    } else {
+      console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
+    }
+    return ONE;
+  }
+
   if (options.dryRun) {
     summary.dryRun = true;
     summary.effectiveOptions = {
@@ -1050,7 +1090,9 @@ export async function executeRemove(
     }
 
     summary.hookPreviews = await previewRemoveLifecycleHooks({
+      preparedLocations: preparedRemoveHooks ?? undefined,
       targetRepositories: removeHookTargets,
+      unavailablePreviews: unavailableHookPreviews,
       workspaceRoot,
     });
     summary.duration = Date.now() - startTime;
@@ -1069,52 +1111,30 @@ export async function executeRemove(
     return ZERO;
   }
 
-  let preflightFailure: LifecycleHookOutcome | null = null;
-  try {
-    preflightFailure = await preflightRemoveLifecycleHooks({
-      removeTargets,
-      targetRepositories: removeHookTargets,
-      workspaceRoot,
+  if (!options.force) {
+    ensureInteractive(allowNonInteractive);
+    const confirmation = await promptConfirmation({
+      branchPresence,
+      checkDirty: options.checkDirty !== false,
+      confirm: prompt.confirm,
+      quiet: options.json === true,
+      worktrees: worktreesToRemove,
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    summary.errors.push(message);
-    summary.duration = Date.now() - startTime;
-    if (options.json) {
-      writeJsonEnvelope(
-        createJsonErrorEnvelope("remove", {
-          code: "HOOK_CONFIGURATION_INVALID",
-          details: removalJsonData(summary, { missingBranches, skippedMain }, configuredMetadata),
-          message,
-        }),
-      );
-    } else {
-      console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
+    if (confirmation === "cancelled") {
+      info("Operation cancelled");
+      return ZERO;
     }
-    return ONE;
-  }
-  if (preflightFailure) {
-    summary.hookOutcomes.push(preflightFailure);
-    summary.errors.push(preflightFailure.message);
-    summary.duration = Date.now() - startTime;
-    if (options.json) {
-      writeJsonEnvelope(
-        createJsonErrorEnvelope("remove", {
-          code: "HOOK_CONFIGURATION_INVALID",
-          details: removalJsonData(summary, { missingBranches, skippedMain }, configuredMetadata),
-          message: preflightFailure.message,
-        }),
-      );
-    } else {
-      console.log(formatRemovalSummaryHuman(summary, { missingBranches, skippedMain }));
+    if (confirmation === "declined") {
+      info("Operation cancelled by user");
+      return ZERO;
     }
-    return ONE;
   }
 
   const preRemoveResult = await runRemoveLifecycleHook({
     hookName: GLOBAL_HOOKS.preRemove,
     hookInputMode,
     operationData: removeHookOperationData,
+    preparedLocations: preparedRemoveHooks?.["pre-remove"],
     removeTargets,
     quiet: options.json === true,
     stopOnFailure: true,
@@ -1269,6 +1289,7 @@ export async function executeRemove(
     hookName: GLOBAL_HOOKS.postRemove,
     hookInputMode,
     operationData: removeHookOperationData,
+    preparedLocations: preparedRemoveHooks?.["post-remove"],
     removeTargets,
     quiet: options.json === true,
     stopOnFailure: false,
@@ -1749,12 +1770,68 @@ const formatBranchDeletionError = (error: unknown): string => {
   return message;
 };
 
+const sortRemoveHookPreviews = (
+  previews: RemoveHookPreview[],
+  targetRepositories: readonly HookTargetRepository[],
+): RemoveHookPreview[] => {
+  const lifecycleOrder = new Map([
+    [GLOBAL_HOOKS.preRemove, ZERO],
+    [GLOBAL_HOOKS.postRemove, ONE],
+  ]);
+  const scopeOrder = new Map([
+    ["repository", ZERO],
+    ["workspace", ONE],
+    ["global-repository", 2],
+    ["global-shared", 3],
+  ]);
+  const repositoryOrder = new Map(
+    targetRepositories.map((repository, index) => [repository.name, index]),
+  );
+  return previews.toSorted(
+    (left, right) =>
+      (lifecycleOrder.get(left.hookName) ?? Number.MAX_SAFE_INTEGER) -
+        (lifecycleOrder.get(right.hookName) ?? Number.MAX_SAFE_INTEGER) ||
+      (repositoryOrder.get(left.repository) ?? Number.MAX_SAFE_INTEGER) -
+        (repositoryOrder.get(right.repository) ?? Number.MAX_SAFE_INTEGER) ||
+      (scopeOrder.get(left.scope) ?? Number.MAX_SAFE_INTEGER) -
+        (scopeOrder.get(right.scope) ?? Number.MAX_SAFE_INTEGER),
+  );
+};
+
 const previewRemoveLifecycleHooks = async (options: {
   globalOnly?: boolean;
-  workspaceRoot: string;
+  preparedLocations?: PreparedRemoveHooks;
   targetRepositories: HookTargetRepository[];
+  unavailablePreviews?: readonly RemoveHookPreview[];
+  workspaceRoot: string;
 }): Promise<RemoveHookPreview[]> => {
-  const previews: RemoveHookPreview[] = [];
+  const previews: RemoveHookPreview[] = [...(options.unavailablePreviews ?? [])];
+  if (options.preparedLocations) {
+    for (const hookName of [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove] as const) {
+      for (const prepared of options.preparedLocations[hookName]) {
+        if (prepared.kind === "absent") continue;
+        previews.push({
+          availability: "available",
+          hookName,
+          reasonCode: null,
+          repository: prepared.plan.context.repositoryName ?? "workspace",
+          scope: prepared.plan.scope,
+          scriptPath: prepared.kind === "file" ? prepared.scriptPath : null,
+          sourceKind: prepared.plan.sourceKind,
+          sourceOwnerKind:
+            prepared.plan.sourceOwnerKind === "global"
+              ? "user-global"
+              : prepared.plan.sourceOwnerKind,
+          sourceOwnerName: prepared.plan.sourceOwnerName,
+          sourceScriptPath: prepared.kind === "file" ? prepared.scriptPath : null,
+          selectedInterpreter:
+            prepared.kind === "inline-config" ? prepared.resolution.interpreter : null,
+          valid: true,
+        });
+      }
+    }
+    return sortRemoveHookPreviews(previews, options.targetRepositories);
+  }
   for (const hookName of [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove] as const) {
     const resolvedHooks = await resolveScopedLifecycleHooks({
       globalOnly: options.globalOnly,
@@ -1767,16 +1844,23 @@ const previewRemoveLifecycleHooks = async (options: {
     )) {
       const validation = await validateHook(resolvedHook.scriptPath);
       previews.push({
+        availability: validation.valid ? "available" : "unavailable",
         error: validation.error,
         hookName,
+        reasonCode: validation.reasonCode ?? null,
         repository: resolvedHook.targetRepositoryName,
         scope: resolvedHook.scope,
         scriptPath: resolvedHook.scriptPath,
+        sourceKind: "file",
+        sourceOwnerKind: "user-global",
+        sourceOwnerName: null,
+        sourceScriptPath: resolvedHook.scriptPath,
+        selectedInterpreter: null,
         valid: validation.valid,
       });
     }
   }
-  return previews;
+  return sortRemoveHookPreviews(previews, options.targetRepositories);
 };
 
 const runRemoveLifecycleHook = async (options: {
@@ -1789,15 +1873,12 @@ const runRemoveLifecycleHook = async (options: {
   quiet?: boolean;
   timeoutMs?: number;
   stopOnFailure: boolean;
+  preparedLocations: readonly PreparedLifecycleHookEntry[];
 }): Promise<{ outcomes: LifecycleHookOutcome[]; summary: SharedHookOutcomeMapping }> => {
   const hookSpinner = options.quiet
     ? null
     : spinner(`Running ${options.hookName} hooks...`).start();
-  const hookLocations = await resolveScopedLifecycleHookLocations({
-    hookName: options.hookName,
-    targetRepositories: options.targetRepositories,
-    workspaceRoot: options.workspaceRoot,
-  });
+  const hookLocations = options.preparedLocations;
 
   if (hookLocations.length === 0) {
     const skipped = mapHookSkippedOutcome("not_found", "Hook script not found");
@@ -1813,7 +1894,43 @@ const runRemoveLifecycleHook = async (options: {
   let executedCount = 0;
   const outcomes: LifecycleHookOutcome[] = [];
 
-  for (const resolvedHook of hookLocations) {
+  for (const preparedHook of hookLocations) {
+    const publicSource = {
+      sourceKind: preparedHook.plan.sourceKind,
+      sourceOwnerKind:
+        preparedHook.plan.sourceOwnerKind === "global"
+          ? ("user-global" as const)
+          : preparedHook.plan.sourceOwnerKind,
+      sourceOwnerName: preparedHook.plan.sourceOwnerName,
+    };
+    const targetRepositoryName = preparedHook.plan.context.repositoryName;
+    const targetRepositoryPath = preparedHook.plan.context.repositoryPath;
+    if (!targetRepositoryName || !targetRepositoryPath) {
+      throw new Error(
+        `Prepared remove hook '${preparedHook.plan.hookName}' is missing target context`,
+      );
+    }
+    const resolvedHook = {
+      executionPath: preparedHook.plan.executionPath,
+      inline:
+        preparedHook.kind === "inline-config"
+          ? {
+              interpreters: {
+                [preparedHook.resolution.interpreter]: preparedHook.snippet,
+              },
+              resolution: preparedHook.resolution,
+              sourceOwnerKind:
+                preparedHook.plan.scope === "repository"
+                  ? ("repository" as const)
+                  : ("workspace" as const),
+              sourceOwnerName: preparedHook.plan.sourceOwnerName,
+            }
+          : undefined,
+      scope: preparedHook.plan.scope,
+      scriptPath: preparedHook.kind === "file" ? preparedHook.scriptPath : null,
+      targetRepositoryName,
+      targetRepositoryPath,
+    };
     if (hookSpinner) {
       hookSpinner.text = `Running ${options.hookName} (${resolvedHook.scope}:${resolvedHook.targetRepositoryName})...`;
     }
@@ -1834,6 +1951,86 @@ const runRemoveLifecycleHook = async (options: {
     perTargetOperationData.REPO_NAME = resolvedHook.targetRepositoryName;
     perTargetOperationData.REPO_PATH = resolvedHook.targetRepositoryPath;
     const targetWorktreePath = targetData.WORKTREE_PATH;
+    if (preparedHook.kind === "absent") {
+      const mapping = mapHookSkippedOutcome("not_found", "Hook script not found");
+      outcomes.push({
+        executionPath: resolvedHook.executionPath,
+        hookName: options.hookName,
+        hookStatus: mapping.hookStatus,
+        message: mapping.message,
+        reasonCode: mapping.reasonCode,
+        repositoryId: resolvedHook.targetRepositoryName,
+        scope: resolvedHook.scope,
+        ...publicSource,
+        sourceScriptPath: null,
+        targetRepositoryName: resolvedHook.targetRepositoryName,
+        targetRepositoryPath: resolvedHook.targetRepositoryPath,
+        targetWorktreePath: targetWorktreePath ?? null,
+        workspaceMode: "configured",
+      });
+      continue;
+    }
+    if (resolvedHook.inline) {
+      const snippet = resolvedHook.inline.interpreters[resolvedHook.inline.resolution.interpreter];
+      if (!snippet) {
+        throw new Error(`Prepared inline hook '${options.hookName}' has no selected snippet`);
+      }
+      const { result } = await executeInlineHook({
+        context: {
+          hookName: options.hookName,
+          hookScope: resolvedHook.scope,
+          mainRepoPath: options.workspaceRoot,
+          operationData: perTargetOperationData,
+          repoPath: resolvedHook.executionPath,
+          targetRepoName: resolvedHook.targetRepositoryName,
+          targetRepoPath: resolvedHook.targetRepositoryPath,
+          targetWorktreePath,
+          workspaceMode: "configured",
+        },
+        hookInputMode: options.hookInputMode,
+        hookName: options.hookName,
+        outputSpinner: hookSpinner,
+        quiet: options.quiet,
+        resolution: resolvedHook.inline.resolution,
+        snippet,
+        source: {
+          sourceKind: "inline-config",
+          sourceOwnerKind: resolvedHook.inline.sourceOwnerKind,
+          sourceOwnerName: resolvedHook.inline.sourceOwnerName,
+          sourceScriptPath: null,
+        },
+        timeout: options.timeoutMs,
+      });
+      executedCount += ONE;
+      const mapping = mapHookExecutionResult(result);
+      outcomes.push({
+        durationMs: mapping.durationMs,
+        executionPath: resolvedHook.executionPath,
+        hookName: options.hookName,
+        hookStatus: mapping.hookStatus,
+        message:
+          mapping.hookStatus === "failure" && result.stderr.trim()
+            ? result.stderr.trim()
+            : mapping.message,
+        reasonCode: mapping.reasonCode,
+        repositoryId: resolvedHook.targetRepositoryName,
+        scope: resolvedHook.scope,
+        ...publicSource,
+        sourceScriptPath: null,
+        targetRepositoryName: resolvedHook.targetRepositoryName,
+        targetRepositoryPath: resolvedHook.targetRepositoryPath,
+        targetWorktreePath: targetWorktreePath ?? null,
+        workspaceMode: "configured",
+      });
+      if (mapping.hookStatus === "failure") {
+        failureReason = mapping.reasonCode;
+        failures.push(
+          `[${resolvedHook.scope}:${resolvedHook.targetRepositoryName}] ${result.stderr.trim() || mapping.message}`,
+        );
+        if (options.stopOnFailure || result.signalCode === "SIGINT") break;
+      }
+      continue;
+    }
     if (!resolvedHook.scriptPath) {
       const mapping = mapHookSkippedOutcome("not_found", "Hook script not found");
       outcomes.push({
@@ -1844,6 +2041,7 @@ const runRemoveLifecycleHook = async (options: {
         reasonCode: mapping.reasonCode,
         repositoryId: resolvedHook.targetRepositoryName,
         scope: resolvedHook.scope,
+        ...publicSource,
         sourceScriptPath: null,
         targetRepositoryName: resolvedHook.targetRepositoryName,
         targetRepositoryPath: resolvedHook.targetRepositoryPath,
@@ -1891,6 +2089,7 @@ const runRemoveLifecycleHook = async (options: {
         reasonCode: mapping.reasonCode,
         repositoryId: resolvedHook.targetRepositoryName,
         scope: resolvedHook.scope,
+        ...publicSource,
         sourceScriptPath: resolvedHook.scriptPath,
         targetRepositoryName: resolvedHook.targetRepositoryName,
         targetRepositoryPath: resolvedHook.targetRepositoryPath,
@@ -1921,6 +2120,7 @@ const runRemoveLifecycleHook = async (options: {
         reasonCode: validation.reasonCode ?? "validation_failed",
         repositoryId: resolvedHook.targetRepositoryName,
         scope: resolvedHook.scope,
+        ...publicSource,
         sourceScriptPath: resolvedHook.scriptPath,
         targetRepositoryName: resolvedHook.targetRepositoryName,
         targetRepositoryPath: resolvedHook.targetRepositoryPath,
@@ -1968,69 +2168,379 @@ const runRemoveLifecycleHook = async (options: {
   };
 };
 
+const unavailableRemovePreviews = (
+  preparation: Extract<
+    Awaited<ReturnType<typeof prepareLifecycleHookSources>>,
+    { classification: "file-invalid" | "interpreter-unavailable" }
+  >,
+  hookName: RemoveHookPreview["hookName"],
+): RemoveHookPreview[] => {
+  const failed = preparation.plannedEntry;
+  const reasonCode =
+    preparation.classification === "file-invalid"
+      ? (preparation.validation.reasonCode ?? "validation_failed")
+      : "interpreter_unavailable";
+  const message =
+    preparation.classification === "file-invalid"
+      ? (preparation.validation.error ?? "Hook validation failed")
+      : `No configured interpreter is available for ${failed.lifecycle}`;
+  return preparation.plan.entries
+    .filter(
+      (entry) =>
+        entry.configuredField === failed.configuredField &&
+        entry.executionPath === failed.executionPath &&
+        entry.lifecycle === failed.lifecycle &&
+        entry.scope === failed.scope &&
+        entry.sourceKind === failed.sourceKind &&
+        entry.sourceOwnerKind === failed.sourceOwnerKind &&
+        entry.sourceOwnerName === failed.sourceOwnerName &&
+        entry.sourceScriptPath === failed.sourceScriptPath &&
+        entry.targetRepositoryName === failed.targetRepositoryName,
+    )
+    .map((entry) => ({
+      availability: "unavailable",
+      error: message,
+      hookName,
+      reasonCode,
+      repository: entry.context.repositoryName ?? "workspace",
+      scope: entry.scope,
+      scriptPath: entry.sourceKind === "file" ? entry.sourceScriptPath : null,
+      selectedInterpreter: null,
+      sourceKind: entry.sourceKind,
+      sourceOwnerKind: entry.sourceOwnerKind === "global" ? "user-global" : entry.sourceOwnerKind,
+      sourceOwnerName: entry.sourceOwnerName,
+      sourceScriptPath: entry.sourceKind === "file" ? entry.sourceScriptPath : null,
+      valid: false,
+    }));
+};
+
+const plannedRemoveEntryIdentity = (entry: PlannedLifecycleHookSource): string =>
+  JSON.stringify([
+    entry.configuredField,
+    entry.context.branchName,
+    entry.context.repositoryName,
+    entry.context.repositoryPath,
+    entry.context.worktreePath,
+    entry.executionPath,
+    entry.lifecycle,
+    entry.scope,
+    entry.sourceKind,
+    entry.sourceOwnerKind,
+    entry.sourceOwnerName,
+    entry.sourceScriptPath,
+    entry.targetRepositoryName,
+  ]);
+
 const preflightRemoveLifecycleHooks = async (options: {
+  config: Config;
+  dryRun: boolean;
   removeTargets: RemoveHookTarget[];
   targetRepositories: HookTargetRepository[];
   workspaceRoot: string;
-}): Promise<LifecycleHookOutcome | null> => {
-  for (const hookName of [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove]) {
-    let locations;
-    try {
-      locations = await resolveScopedLifecycleHookLocations({
+}): Promise<{
+  failure: LifecycleHookOutcome | null;
+  preparedHooks: PreparedRemoveHooks;
+  unavailablePreviews: RemoveHookPreview[];
+}> => {
+  const preparedHooks: Record<"post-remove" | "pre-remove", PreparedLifecycleHookEntry[]> = {
+    "post-remove": [],
+    "pre-remove": [],
+  };
+  let failure: LifecycleHookOutcome | null = null;
+  const unavailablePreviews: RemoveHookPreview[] = [];
+  const targets = options.targetRepositories.map((repository) => {
+    const removeTarget = options.removeTargets.find(
+      (target) => target.repository === repository.name,
+    );
+    return {
+      branchName: removeTarget?.branchName ?? "",
+      repositoryName: repository.name,
+      repositoryPath: repository.path,
+      worktreePath: removeTarget?.worktreePath ?? repository.path,
+    };
+  });
+  const outcomeFor = (
+    hookName: "post-remove" | "pre-remove",
+    source: {
+      executionPath: string;
+      scope: LifecycleHookOutcome["scope"];
+      sourceKind: LifecycleHookOutcome["sourceKind"];
+      sourceOwnerKind: "global" | LifecycleHookOutcome["sourceOwnerKind"];
+      sourceOwnerName: string | null;
+      sourceScriptPath: string | null;
+      targetRepositoryName?: string;
+    },
+    mapping: Pick<LifecycleHookOutcome, "hookStatus" | "message" | "reasonCode">,
+  ): LifecycleHookOutcome => {
+    const repositoryName =
+      source.targetRepositoryName ??
+      source.sourceOwnerName ??
+      options.targetRepositories[ZERO]?.name ??
+      "workspace";
+    const repositoryPath =
+      options.targetRepositories.find((target) => target.name === repositoryName)?.path ??
+      options.workspaceRoot;
+    const targetData = buildRemoveHookOperationData({
+      mainRepoPath: options.workspaceRoot,
+      targets: options.removeTargets.filter((target) => target.repository === repositoryName),
+    });
+    return {
+      executionPath: source.executionPath,
+      hookName,
+      ...mapping,
+      repositoryId: repositoryName,
+      scope: source.scope,
+      sourceKind: source.sourceKind,
+      sourceOwnerKind: source.sourceOwnerKind === "global" ? "user-global" : source.sourceOwnerKind,
+      sourceOwnerName: source.sourceOwnerName,
+      sourceScriptPath: source.sourceScriptPath,
+      targetRepositoryName: repositoryName,
+      targetRepositoryPath: repositoryPath,
+      targetWorktreePath: targetData.WORKTREE_PATH ?? null,
+      workspaceMode: "configured",
+    };
+  };
+
+  const prepareCandidates = (candidates: readonly LifecycleHookPreparationCandidate[]) =>
+    prepareLifecycleHookSources({
+      candidates,
+      consumer: "remove",
+      env: process.env,
+      platform: process.platform,
+      targets,
+      workspaceRoot: options.workspaceRoot,
+    });
+
+  const retainDryRunCandidates = async (
+    candidates: readonly LifecycleHookPreparationCandidate[],
+    canonicalEntries: readonly PlannedLifecycleHookSource[],
+    hookName: RemoveHookPreview["hookName"],
+  ): Promise<void> => {
+    const recovered: PreparedLifecycleHookEntry[] = [];
+    for (const candidate of candidates) {
+      const candidatePreparation = await prepareCandidates([candidate]);
+      if (candidatePreparation.classification === "ready") {
+        recovered.push(...candidatePreparation.entries);
+        continue;
+      }
+      if (
+        candidatePreparation.classification === "file-invalid" ||
+        candidatePreparation.classification === "interpreter-unavailable"
+      ) {
+        unavailablePreviews.push(...unavailableRemovePreviews(candidatePreparation, hookName));
+        continue;
+      }
+      throw new Error(`Unexpected ambiguous single-source ${hookName} hook plan`);
+    }
+    const canonicalOrder = new Map(
+      canonicalEntries.map((entry, index) => [plannedRemoveEntryIdentity(entry), index]),
+    );
+    recovered.sort(
+      (left, right) =>
+        (canonicalOrder.get(plannedRemoveEntryIdentity(left.plan)) ?? Number.MAX_SAFE_INTEGER) -
+        (canonicalOrder.get(plannedRemoveEntryIdentity(right.plan)) ?? Number.MAX_SAFE_INTEGER),
+    );
+    preparedHooks[hookName].push(...recovered);
+  };
+
+  for (const hookName of [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove] as const) {
+    const candidates: LifecycleHookPreparationCandidate[] = [];
+    const addFiles = async (optionsForSource: {
+      executionPath: string;
+      hooksDirectory: string;
+      scope: LifecycleHookOutcome["scope"];
+      sourceOwnerKind: "global" | "repository" | "workspace";
+      sourceOwnerName: string | null;
+      targetRepositoryName?: string;
+    }): Promise<void> => {
+      const scriptPaths = await discoverLifecycleHookCandidatesInDirectory(
         hookName,
-        targetRepositories: options.targetRepositories,
-        workspaceRoot: options.workspaceRoot,
+        optionsForSource.hooksDirectory,
+      );
+      for (const scriptPath of scriptPaths) {
+        candidates.push({
+          kind: "file",
+          source: {
+            executionPath: optionsForSource.executionPath,
+            lifecycle: hookName,
+            scope: optionsForSource.scope,
+            sourceKind: "file",
+            sourceOwnerKind: optionsForSource.sourceOwnerKind,
+            sourceOwnerName: optionsForSource.sourceOwnerName,
+            sourceScriptPath: scriptPath,
+            targetRepositoryName: optionsForSource.targetRepositoryName,
+          },
+        });
+      }
+      const hasInlineAtLocation =
+        optionsForSource.scope === "workspace"
+          ? Boolean(options.config.hooks?.scripts?.[hookName])
+          : optionsForSource.scope === "repository" && optionsForSource.sourceOwnerName
+            ? Boolean(options.config.repos[optionsForSource.sourceOwnerName]?.hooks?.[hookName])
+            : false;
+      if (scriptPaths.length === ZERO && !hasInlineAtLocation) {
+        candidates.push({
+          kind: "absent",
+          source: {
+            executionPath: optionsForSource.executionPath,
+            lifecycle: hookName,
+            scope: optionsForSource.scope,
+            sourceKind: "file",
+            sourceOwnerKind: optionsForSource.sourceOwnerKind,
+            sourceOwnerName: optionsForSource.sourceOwnerName,
+            sourceScriptPath: null,
+            targetRepositoryName: optionsForSource.targetRepositoryName,
+          },
+        });
+      }
+    };
+
+    for (const repository of options.targetRepositories) {
+      if (
+        normalizeLifecyclePath(repository.path) !== normalizeLifecyclePath(options.workspaceRoot)
+      ) {
+        await addFiles({
+          executionPath: repository.path,
+          hooksDirectory: join(repository.path, ".arashi", "hooks"),
+          scope: "repository",
+          sourceOwnerKind: "repository",
+          sourceOwnerName: repository.name,
+        });
+      }
+      const inline = options.config.repos[repository.name]?.hooks?.[hookName];
+      if (inline) {
+        candidates.push({
+          interpreters: typeof inline === "string" ? { bash: inline } : inline,
+          kind: "inline-config",
+          source: {
+            configuredField: `repos.${repository.name}.hooks.${hookName}`,
+            executionPath: repository.path,
+            lifecycle: hookName,
+            scope: "repository",
+            sourceKind: "inline-config",
+            sourceOwnerKind: "repository",
+            sourceOwnerName: repository.name,
+            sourceScriptPath: null,
+          },
+        });
+      }
+      await addFiles({
+        executionPath: repository.path,
+        hooksDirectory: join(homedir(), ".arashi", "hooks", repository.name),
+        scope: "global-repository",
+        sourceOwnerKind: "global",
+        sourceOwnerName: null,
+        targetRepositoryName: repository.name,
       });
-    } catch (error) {
-      if (!(error instanceof LifecycleHookDiscoveryError)) throw error;
-      const targetData = buildRemoveHookOperationData({
-        mainRepoPath: options.workspaceRoot,
-        targets: options.removeTargets.filter(
-          (target) => target.repository === error.targetRepositoryName,
-        ),
+      await addFiles({
+        executionPath: repository.path,
+        hooksDirectory: join(homedir(), ".arashi", "hooks"),
+        scope: "global-shared",
+        sourceOwnerKind: "global",
+        sourceOwnerName: null,
+        targetRepositoryName: repository.name,
       });
+    }
+
+    await addFiles({
+      executionPath: options.workspaceRoot,
+      hooksDirectory: join(options.workspaceRoot, ".arashi", "hooks"),
+      scope: "workspace",
+      sourceOwnerKind: "workspace",
+      sourceOwnerName: null,
+    });
+    const workspaceInline = options.config.hooks?.scripts?.[hookName];
+    if (workspaceInline) {
+      candidates.push({
+        interpreters:
+          typeof workspaceInline === "string" ? { bash: workspaceInline } : workspaceInline,
+        kind: "inline-config",
+        source: {
+          configuredField: `hooks.scripts.${hookName}`,
+          executionPath: options.workspaceRoot,
+          lifecycle: hookName,
+          scope: "workspace",
+          sourceKind: "inline-config",
+          sourceOwnerKind: "workspace",
+          sourceOwnerName: null,
+          sourceScriptPath: null,
+        },
+      });
+    }
+    const preparation = await prepareCandidates(candidates);
+    if (preparation.classification === "ambiguous") {
+      const failure = preparation.plan.failure;
       return {
-        executionPath: error.executionPath,
-        hookName: error.hookName,
-        hookStatus: "failure",
-        message: error.message,
-        reasonCode: "validation_failed",
-        repositoryId: error.targetRepositoryName,
-        scope: error.scope,
-        sourceScriptPath: null,
-        targetRepositoryName: error.targetRepositoryName,
-        targetRepositoryPath: error.targetRepositoryPath,
-        targetWorktreePath: targetData.WORKTREE_PATH ?? null,
-        workspaceMode: "configured",
+        failure: outcomeFor(
+          hookName,
+          {
+            executionPath:
+              candidates.find(
+                (candidate) =>
+                  candidate.source.scope === failure.scope &&
+                  candidate.source.sourceOwnerName === failure.sourceOwnerName,
+              )?.source.executionPath ?? options.workspaceRoot,
+            scope: failure.scope,
+            sourceKind: "inline-config",
+            sourceOwnerKind: failure.sourceOwnerKind,
+            sourceOwnerName: failure.sourceOwnerName,
+            sourceScriptPath: failure.sourceScriptPath,
+          },
+          {
+            hookStatus: "failure",
+            message: `Hook source is ambiguous for ${hookName}: ${failure.sourceKinds.join(" and ")} are both configured${failure.sourceScriptPath ? ` (${failure.sourceScriptPath})` : ""}`,
+            reasonCode: "validation_failed",
+          },
+        ),
+        preparedHooks,
+        unavailablePreviews: [],
       };
     }
-    for (const location of locations) {
-      if (!location.scriptPath) continue;
-      const validation = await validateHook(location.scriptPath);
-      if (validation.valid) continue;
-      const targetData = buildRemoveHookOperationData({
-        mainRepoPath: options.workspaceRoot,
-        targets: options.removeTargets.filter(
-          (target) => target.repository === location.targetRepositoryName,
-        ),
-      });
-      return {
-        executionPath: location.executionPath,
-        hookName,
+    if (preparation.classification === "file-invalid") {
+      const lifecycleFailure = outcomeFor(hookName, preparation.plannedEntry, {
         hookStatus: "failure",
-        message: validation.error ?? "Hook validation failed",
-        reasonCode: validation.reasonCode ?? "validation_failed",
-        repositoryId: location.targetRepositoryName,
-        scope: location.scope,
-        sourceScriptPath: location.scriptPath,
-        targetRepositoryName: location.targetRepositoryName,
-        targetRepositoryPath: location.targetRepositoryPath,
-        targetWorktreePath: targetData.WORKTREE_PATH ?? null,
-        workspaceMode: "configured",
-      };
+        message: preparation.validation.error ?? "Hook validation failed",
+        reasonCode: preparation.validation.reasonCode ?? "validation_failed",
+      });
+      if (!options.dryRun) {
+        return {
+          failure: lifecycleFailure,
+          preparedHooks,
+          unavailablePreviews: unavailableRemovePreviews(preparation, hookName),
+        };
+      }
+      failure ??= lifecycleFailure;
+      await retainDryRunCandidates(candidates, preparation.plan.entries, hookName);
+      continue;
     }
+    if (preparation.classification === "interpreter-unavailable") {
+      const lifecycleFailure = outcomeFor(hookName, preparation.plannedEntry, {
+        hookStatus: "failure",
+        message: `No configured interpreter is available for ${hookName}`,
+        reasonCode: "interpreter_unavailable",
+      });
+      if (!options.dryRun) {
+        return {
+          failure: lifecycleFailure,
+          preparedHooks,
+          unavailablePreviews: unavailableRemovePreviews(preparation, hookName),
+        };
+      }
+      failure ??= lifecycleFailure;
+      await retainDryRunCandidates(candidates, preparation.plan.entries, hookName);
+      continue;
+    }
+    preparedHooks[hookName].push(...preparation.entries);
   }
-  return null;
+
+  return {
+    failure,
+    preparedHooks: Object.freeze({
+      "post-remove": Object.freeze([...preparedHooks["post-remove"]]),
+      "pre-remove": Object.freeze([...preparedHooks["pre-remove"]]),
+    }),
+    unavailablePreviews,
+  };
 };
 
 const formatHookFailure = (hookName: string, outcome: HookOutcomeMapping): string =>

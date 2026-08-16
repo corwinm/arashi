@@ -588,7 +588,7 @@ const printHookResults = (hookOutcomes: HookOutcomeRecord[]): void => {
       reason = ` (${outcome.reasonCode})`;
     }
     console.log(
-      `  - ${outcome.repositoryId}: ${outcome.hookName} -> ${outcome.hookStatus}${reason}`,
+      `  - ${outcome.sourceKind} ${outcome.sourceOwnerKind}${outcome.sourceOwnerName ? `:${outcome.sourceOwnerName}` : ""} ${outcome.hookName} [${outcome.repositoryId}] -> ${outcome.hookStatus}${reason}${outcome.sourceScriptPath ? ` (${outcome.sourceScriptPath})` : ""}`,
     );
   }
 };

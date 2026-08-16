@@ -187,8 +187,16 @@ describe("remove command - dry-run preview", () => {
           hookName: "pre-remove",
           repository: "repo-a",
           scope: "workspace",
+          selectedInterpreter: null,
+          sourceKind: "file",
+          sourceOwnerKind: "workspace",
+          sourceOwnerName: null,
         }),
       ]),
+    );
+    const human = await runRemoveInWorkspace(workspace.rootPath, branchName, { dryRun: true });
+    expect(human.stdout).toContain(
+      `sourceKind=file sourceOwnerKind=workspace sourceOwnerName=null target=repo-a filePath=${join(realpathSync(workspace.rootPath), ".arashi", "hooks", "pre-remove.sh")}`,
     );
     expect(existsSync(markerPath)).toBe(false);
   });

@@ -78,6 +78,53 @@ Zero, negative, fractional, non-numeric, and out-of-range values are rejected be
 or lifecycle mutation. See [the lifecycle hook contract](hooks.md) for timing, scope, environment,
 rollback/finalization, native-platform discovery, and JSON outcome details.
 
+## Inline lifecycle hook configuration
+
+Configured workspaces may define a short, reviewable command inline instead of maintaining a native
+hook file. Root `hooks.scripts.<lifecycle>` is the sole workspace-owned form, and
+`repos.<name>.hooks.<lifecycle>` is the sole repository-owned form. `<lifecycle>` is exactly
+`pre-create`, `post-create`, `pre-remove`, or `post-remove`; do not encode a repository name into a
+key such as `pre-create.<repo>`.
+
+A string value is Bash shorthand. For cross-platform configuration, use a non-empty interpreter map
+whose only supported keys are `bash`, `powershell`, and `cmd`:
+
+```json
+{
+  "hooks": {
+    "timeout": 300000,
+    "scripts": {
+      "pre-create": "set -e; printf 'creating %s\\n' \"$ARASHI_BRANCH_NAME\"",
+      "post-create": {
+        "bash": "set -e; printf 'created %s\\n' \"$ARASHI_BRANCH_NAME\"",
+        "powershell": "$ErrorActionPreference = 'Stop'; Write-Output \"created $env:ARASHI_BRANCH_NAME\"",
+        "cmd": "echo created %ARASHI_BRANCH_NAME% || exit /b 1"
+      },
+      "pre-remove": "set -e; printf 'removing\\n'",
+      "post-remove": "set -e; printf 'removed\\n'"
+    }
+  },
+  "repos": {
+    "api": {
+      "gitUrl": "git@github.com:example/api.git",
+      "hooks": {
+        "pre-create": "set -e; printf 'api create\\n'",
+        "post-create": "set -e; printf 'api ready\\n'",
+        "pre-remove": "set -e; printf 'api remove\\n'",
+        "post-remove": "set -e; printf 'api removed\\n'"
+      }
+    }
+  }
+}
+```
+
+Empty strings/maps, unsupported interpreter keys, and unknown lifecycle keys are rejected during
+configuration validation. A snippet is non-portable unless every host that must run it has a
+compatible variant. Prefer a native file for substantial scripts, reusable logic, or code that needs
+normal review and testing. Do not put a secret in inline configuration: the config is shared and
+versioned even though Arashi never discloses snippet text in logs, outcomes, previews, or doctor
+findings.
+
 ## Command Defaults
 
 You can set command-scoped defaults under `defaults`.

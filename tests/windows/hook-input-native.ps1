@@ -6,6 +6,10 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $binary = Join-Path $root "bin\arashi-windows-x64.exe"
 if (-not (Test-Path $binary)) { throw "Built CLI is missing: $binary" }
 
+# Keep inline lifecycle adapter acceptance on the existing native Windows hook job.
+& (Join-Path $PSScriptRoot "inline-hook-native.ps1")
+if ($LASTEXITCODE -ne 0) { throw "Inline lifecycle hook native acceptance failed: $LASTEXITCODE" }
+
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("arashi hook %TEAM% !&() " + [guid]::NewGuid())
 $repo = Join-Path $temp "repo"
 $testHome = Join-Path $temp "home"
