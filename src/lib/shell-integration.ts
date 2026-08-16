@@ -46,7 +46,9 @@ function renderFishShellFunction(name: "arashi" | "aw"): string {
         return 1
     end
 
-    env ARASHI_DIRECTIVE_FILE="$directive_file" ARASHI_SHELL=fish command ${name} $argv
+    set -lx ARASHI_DIRECTIVE_FILE "$directive_file"
+    set -lx ARASHI_SHELL fish
+    command ${name} $argv
     set -l status_code $status
 
     if test -s "$directive_file"

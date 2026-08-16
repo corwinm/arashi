@@ -91,7 +91,7 @@ describe("dual-name parent-shell integration", () => {
       expect(first).toContain("aw");
       expect(first).toMatch(shell === "fish" ? /command aw \$argv/ : /command aw "\$@"/);
       expect(first).toContain("ARASHI_DIRECTIVE_FILE");
-      expect(first).toContain(`ARASHI_SHELL=${shell}`);
+      expect(first).toContain(shell === "fish" ? "ARASHI_SHELL fish" : `ARASHI_SHELL=${shell}`);
       expect(first).toMatch(/alias|functions|type/);
     },
   );
