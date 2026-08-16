@@ -338,6 +338,12 @@ alias arashi-delete='arashi remove -f'
 
 ## Configuration Schema
 
+### Configured worktree files
+
+Configured repositories can copy isolated files or create native symlinks for intentionally shared state when coordinated worktrees are created. See [Worktree file materialization](docs/configuration.md#worktree-file-materialization) for direct `copy`/`symlink` arrays, Git-primary sourcing, lifecycle order, safety rules, dry-run previews, and doctor diagnostics.
+
+## Configuration Schema
+
 Arashi publishes a JSON Schema for `.arashi/config.json` so editors can validate and autocomplete your config.
 
 - Stable URL: `https://unpkg.com/arashi/schema/config.schema.json`

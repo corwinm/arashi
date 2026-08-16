@@ -23,6 +23,7 @@ import { discoverPrunableWorktrees } from "../core/remove.ts";
 import { readdir } from "fs/promises";
 import { inspectRepositoryManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
+import { collectMaterializationDiagnostics } from "./materialization-doctor.ts";
 
 const ZERO = 0;
 
@@ -63,6 +64,26 @@ export interface DoctorResult {
   workspaceRoot: string | null;
 }
 
+export interface MaterializationDiagnostic {
+  action: "copy" | "symlink" | null;
+  actualKind?: "directory" | "file" | "junction" | "symlink";
+  ancestorKind?: "directory" | "file" | "junction" | "symlink";
+  capability?: "available" | "unavailable" | "unknown";
+  destinationStatus?:
+    | "ancestor-unsafe"
+    | "broken"
+    | "kind-mismatch"
+    | "missing"
+    | "misdirected"
+    | "present";
+  expectedKind?: "directory" | "file";
+  normalizedWorktreePath?: string | null;
+  path: string | null;
+  repositoryId: string;
+  sourceStatus?: "missing" | "present" | "unavailable";
+  worktreePath?: string | null;
+}
+
 const ALL_CHECKED_CATEGORIES: DoctorCategory[] = [
   "workspace",
   "configuration",
@@ -74,6 +95,144 @@ const ALL_CHECKED_CATEGORIES: DoctorCategory[] = [
 ];
 
 const createFinding = (finding: DoctorFinding): DoctorFinding => finding;
+
+const materializationDetails = (
+  diagnostic: MaterializationDiagnostic,
+): Record<string, unknown> => ({
+  action: diagnostic.action,
+  path: diagnostic.path,
+  repositoryId: diagnostic.repositoryId,
+  worktreePath: diagnostic.worktreePath ?? null,
+});
+
+const createMaterializationFinding = (
+  diagnostic: MaterializationDiagnostic,
+  finding: Omit<DoctorFinding, "details" | "suggestedCommands">,
+  details: Record<string, unknown> = {},
+): DoctorFinding[] => [
+  createFinding({
+    ...finding,
+    details: { ...materializationDetails(diagnostic), ...details },
+    suggestedCommands: [],
+  }),
+];
+
+export const materializationToDoctorFindings = (
+  diagnostic: MaterializationDiagnostic,
+): DoctorFinding[] => {
+  const repositoryScope = ["materialization", diagnostic.repositoryId];
+
+  if (diagnostic.sourceStatus === "unavailable") {
+    return createMaterializationFinding(diagnostic, {
+      category: "repository",
+      code: "MATERIALIZATION_SOURCE_CHECKOUT_UNAVAILABLE",
+      message: "The canonical source checkout is unavailable for this repository.",
+      scope: [...repositoryScope, "source-checkout"].join(":"),
+      severity: "error",
+    });
+  }
+
+  if (diagnostic.sourceStatus === "missing" && diagnostic.action && diagnostic.path) {
+    return createMaterializationFinding(diagnostic, {
+      category: "repository",
+      code: "MATERIALIZATION_SOURCE_MISSING",
+      message: "The optional configured materialization source is missing.",
+      scope: [...repositoryScope, diagnostic.action, diagnostic.path].join(":"),
+      severity: "info",
+    });
+  }
+
+  if (diagnostic.capability === "unavailable") {
+    return createMaterializationFinding(diagnostic, {
+      category: "configuration",
+      code: "MATERIALIZATION_SYMLINK_CAPABILITY_UNAVAILABLE",
+      message: "Native symbolic-link capability is unavailable under the current platform policy.",
+      scope: [...repositoryScope, "symlink-capability"].join(":"),
+      severity: "error",
+    });
+  }
+
+  if (diagnostic.capability === "unknown") {
+    return createMaterializationFinding(diagnostic, {
+      category: "configuration",
+      code: "MATERIALIZATION_SYMLINK_CAPABILITY_UNKNOWN",
+      message: "Native symbolic-link capability cannot be established without a mutation probe.",
+      scope: [...repositoryScope, "symlink-capability"].join(":"),
+      severity: "info",
+    });
+  }
+
+  if (!diagnostic.action || !diagnostic.path || !diagnostic.normalizedWorktreePath) {
+    return [];
+  }
+
+  const scope = [
+    ...repositoryScope,
+    diagnostic.normalizedWorktreePath,
+    diagnostic.action,
+    diagnostic.path,
+  ].join(":");
+
+  if (diagnostic.destinationStatus === "ancestor-unsafe") {
+    return createMaterializationFinding(
+      diagnostic,
+      {
+        category: "worktree",
+        code: "MATERIALIZATION_DESTINATION_ANCESTOR_UNSAFE",
+        message: "A materialization destination ancestor is not a safe real directory.",
+        scope,
+        severity: "error",
+      },
+      { ancestorKind: diagnostic.ancestorKind },
+    );
+  }
+
+  if (diagnostic.action === "copy" && diagnostic.destinationStatus === "missing") {
+    return createMaterializationFinding(diagnostic, {
+      category: "worktree",
+      code: "MATERIALIZATION_COPY_DESTINATION_MISSING",
+      message: "The managed worktree is missing the configured copy destination.",
+      scope,
+      severity: "warning",
+    });
+  }
+
+  if (diagnostic.action === "copy" && diagnostic.destinationStatus === "kind-mismatch") {
+    return createMaterializationFinding(
+      diagnostic,
+      {
+        category: "worktree",
+        code: "MATERIALIZATION_COPY_DESTINATION_KIND_MISMATCH",
+        message: "The configured copy source and destination kinds do not match.",
+        scope,
+        severity: "warning",
+      },
+      { actualKind: diagnostic.actualKind, expectedKind: diagnostic.expectedKind },
+    );
+  }
+
+  if (diagnostic.action === "symlink" && diagnostic.destinationStatus === "broken") {
+    return createMaterializationFinding(diagnostic, {
+      category: "worktree",
+      code: "MATERIALIZATION_SYMLINK_BROKEN",
+      message: "The configured managed-worktree symbolic link is broken.",
+      scope,
+      severity: "warning",
+    });
+  }
+
+  if (diagnostic.action === "symlink" && diagnostic.destinationStatus === "misdirected") {
+    return createMaterializationFinding(diagnostic, {
+      category: "worktree",
+      code: "MATERIALIZATION_SYMLINK_MISDIRECTED",
+      message: "The configured symbolic link does not target the exact canonical source.",
+      scope,
+      severity: "warning",
+    });
+  }
+
+  return [];
+};
 
 export const managedIgnoreToDoctorFindings = (
   inspection: ManagedIgnoreInspection,
@@ -870,8 +1029,16 @@ export const runDoctor = async (): Promise<DoctorResult> => {
   workspaceRoot = configurationRoot;
 
   let config: Config | undefined = undefined;
+  let materializationRepositories: Awaited<
+    ReturnType<typeof loadWorkspaceRepositories>
+  >["repositories"] = [];
   try {
-    ({ config } = await loadWorkspaceRepositories(workspaceRoots));
+    ({ config, repositories: materializationRepositories } = await loadWorkspaceRepositories(
+      workspaceRoots,
+      {
+        allowUnavailableMaterializationSource: true,
+      },
+    ));
   } catch (error) {
     findings.push(
       createFinding({
@@ -900,6 +1067,10 @@ export const runDoctor = async (): Promise<DoctorResult> => {
     collectRepositoryFindings(executionRoot, config),
     collectWorktreeFindings(executionRoot, config),
     collectHookFindings(configurationRoot, executionRoot, config),
+    collectMaterializationDiagnostics(materializationRepositories, configurationRoot).then(
+      (diagnostics) =>
+        diagnostics.flatMap((diagnostic) => materializationToDoctorFindings(diagnostic)),
+    ),
   ]);
 
   for (const phaseResult of phaseResults) {

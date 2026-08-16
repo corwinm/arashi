@@ -248,6 +248,45 @@ jobs:
             grep -q 'arashi-completion-contract-v6:' "completion-$shell"
           done
 
+  materialization-native:
+    name: Native Materialization (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    needs: [build]
+
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: arashi-linux-x64
+
+          - os: macos-latest
+            artifact: arashi-macos-arm64
+
+          - os: windows-latest
+            artifact: arashi-windows-x64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Download native built binary
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+
+      - name: Set executable permissions (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: chmod +x ${{ matrix.artifact }}
+
+      - name: Exercise built-CLI materialization safety contract
+        run: node --experimental-strip-types tests/native/materialization-native.ts "${{ matrix.artifact }}"
+
   windows-installer-acceptance:
     name: Windows Installer Acceptance
     runs-on: windows-latest

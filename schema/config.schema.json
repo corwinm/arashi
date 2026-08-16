@@ -212,6 +212,13 @@
       "additionalProperties": false,
       "description": "Configuration for a single repository",
       "properties": {
+        "copy": {
+          "description": "Repository-relative paths copied into new worktrees in declaration order",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "gitUrl": {
           "description": "Canonical git URL for cloning the repository",
           "type": "string"
@@ -230,6 +237,13 @@
         "path": {
           "description": "Path to the repository (relative or absolute)",
           "type": "string"
+        },
+        "symlink": {
+          "description": "Repository-relative paths symlinked into new worktrees in declaration order",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": ["path"],

@@ -15,9 +15,10 @@ import {
 } from "./worktree-location.ts";
 import { basename, dirname, join, resolve } from "path";
 import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
-import { mkdir } from "fs/promises";
+import { mkdir, realpath } from "fs/promises";
 import { warn } from "./logger.ts";
 import { isValidRequestedBaseBranch } from "./git-branch-name.ts";
+import { normalizeMaterializationPath } from "./materialization.ts";
 
 const ZERO = 0;
 const TWO = 2;
@@ -46,6 +47,10 @@ export interface WorktreeInfo {
 export interface RepoConfig {
   /** Path to the repository (relative or absolute) */
   path: string;
+  /** Repository-relative paths copied into new worktrees in declaration order */
+  copy?: string[];
+  /** Repository-relative paths symlinked into new worktrees in declaration order */
+  symlink?: string[];
   /** Canonical git URL for cloning the repository */
   gitUrl?: string;
   /** Optional semantic groups this repository belongs to */
@@ -185,6 +190,12 @@ export interface WorkspaceRepository {
   name: string;
   /** Absolute path to repository root */
   path: string;
+  /** Git-primary non-bare checkout used as the materialization source */
+  sourcePath?: string;
+  /** Ordered repository-relative copy policy */
+  copy?: string[];
+  /** Ordered repository-relative symbolic-link policy */
+  symlink?: string[];
   /** Canonical git URL from configuration, if available */
   gitUrl?: string;
   /** Optional semantic groups this repository belongs to */
@@ -510,6 +521,8 @@ const VERSION_ALIASES = new Map<string, ConfigVersion>([["1", CURRENT_CONFIG_VER
 
 const REPO_ALLOWED_KEYS = new Set([
   "path",
+  "copy",
+  "symlink",
   "gitUrl",
   "git_url",
   "defaultBranch",
@@ -693,6 +706,58 @@ const normalizeRepoConfig = (
   }
 
   const normalized: RepoConfig = { path };
+
+  const materializationPaths = new Map<
+    string,
+    { field: "copy" | "symlink"; index: number; path: string }
+  >();
+  const normalizeMaterializationArray = (field: "copy" | "symlink"): string[] | undefined => {
+    const raw = value[field];
+    if (raw === undefined) return undefined;
+    if (!Array.isArray(raw)) {
+      errors.push(`${prefix}.${field}: must be an array of non-empty strings if present`);
+      return undefined;
+    }
+
+    const entries: string[] = [];
+    for (const [index, candidate] of raw.entries()) {
+      const entryPath = `${prefix}.${field}[${index}]`;
+      if (typeof candidate !== "string") {
+        errors.push(`${entryPath}: must be a non-empty string`);
+        continue;
+      }
+      try {
+        const normalizedPath = normalizeMaterializationPath(candidate);
+        const previous = materializationPaths.get(normalizedPath.collisionKey);
+        if (previous) {
+          if (previous.field !== field) {
+            errors.push(
+              `${entryPath}: portable collision with ${prefix}.${previous.field}[${previous.index}] after normalization`,
+            );
+          } else if (previous.path === normalizedPath.path) {
+            errors.push(`${entryPath}: duplicate normalized path`);
+          } else {
+            errors.push(`${entryPath}: portable collision`);
+          }
+          continue;
+        }
+        materializationPaths.set(normalizedPath.collisionKey, {
+          field,
+          index,
+          path: normalizedPath.path,
+        });
+        entries.push(normalizedPath.path);
+      } catch (error) {
+        errors.push(`${entryPath}: ${(error as Error).message}`);
+      }
+    }
+    return entries;
+  };
+
+  const copy = normalizeMaterializationArray("copy");
+  const symlink = normalizeMaterializationArray("symlink");
+  if (copy) normalized.copy = copy;
+  if (symlink) normalized.symlink = symlink;
 
   if (gitUrl !== undefined) {
     if (typeof gitUrl !== "string" || gitUrl.trim() === "") {
@@ -1436,6 +1501,14 @@ const normalizePersistedRepoConfig = (repoConfig: RepoConfig): RepoConfig => {
     normalized.gitUrl = repoConfig.gitUrl;
   }
 
+  if (repoConfig.copy) {
+    normalized.copy = repoConfig.copy;
+  }
+
+  if (repoConfig.symlink) {
+    normalized.symlink = repoConfig.symlink;
+  }
+
   if (repoConfig.groups) {
     normalized.groups = repoConfig.groups;
   }
@@ -1581,6 +1654,7 @@ export const removeRepo = async (repoPath: string, name: string): Promise<void> 
  */
 export const loadWorkspaceRepositories = async (
   workspaceRoots: string | WorkspaceRepositoryRoots,
+  options: { allowUnavailableMaterializationSource?: boolean } = {},
 ): Promise<{ config: Config; repositories: WorkspaceRepository[] }> => {
   const { configurationRoot, executionRoot } =
     typeof workspaceRoots === "string"
@@ -1596,15 +1670,67 @@ export const loadWorkspaceRepositories = async (
   });
 
   for (const [name, repoConfig] of Object.entries(config.repos)) {
+    const repositoryPath = resolve(executionRoot, repoConfig.path);
+    const hasMaterialization =
+      (repoConfig.copy?.length ?? ZERO) > ZERO || (repoConfig.symlink?.length ?? ZERO) > ZERO;
+    let projectedPath = repositoryPath;
+    let sourcePath: string | undefined;
+    if (hasMaterialization) {
+      try {
+        projectedPath = await realpath(repositoryPath);
+        sourcePath = await resolveGitPrimarySourceCheckout(projectedPath, name);
+      } catch (error) {
+        if (!options.allowUnavailableMaterializationSource) throw error;
+      }
+    }
     repositories.push({
+      copy: repoConfig.copy,
       gitUrl: repoConfig.gitUrl,
       groups: repoConfig.groups,
       name,
-      path: resolve(executionRoot, repoConfig.path),
+      path: projectedPath,
+      sourcePath,
+      symlink: repoConfig.symlink,
     });
   }
 
   return { config, repositories };
+};
+
+export const resolveGitPrimarySourceCheckout = async (
+  repositoryPath: string,
+  repositoryName: string,
+): Promise<string> => {
+  let output: string;
+  try {
+    output = (await exec(["worktree", "list", "--porcelain"], repositoryPath)).stdout;
+  } catch (error) {
+    throw new ConfigError(
+      `Repository '${repositoryName}' has no usable canonical source checkout for materialization.`,
+      error as Error,
+      { repositoryName, repositoryPath },
+    );
+  }
+
+  const primaryRecord = output.split(/\r?\n\r?\n/).find((record) => record.trim().length > ZERO);
+  if (primaryRecord) {
+    const lines = primaryRecord.split(/\r?\n/);
+    const worktreeLine = lines.find((line) => line.startsWith("worktree "));
+    if (!lines.includes("bare") && worktreeLine) {
+      const candidate = worktreeLine.slice("worktree ".length);
+      try {
+        return await realpath(candidate);
+      } catch {
+        // The Git-primary checkout itself is unusable; linked worktrees are not substitutes.
+      }
+    }
+  }
+
+  throw new ConfigError(
+    `Repository '${repositoryName}' has no usable canonical source checkout for materialization.`,
+    undefined,
+    { repositoryName, repositoryPath },
+  );
 };
 
 export interface GitUrlRepairResult {

@@ -1,3 +1,16 @@
+export { planRepositoryMaterialization } from "../lib/materialization.ts";
+export { materializeRepository } from "../lib/materializer.ts";
+import type {
+  ExecutedMaterializationOutcome,
+  RepositoryMaterializationPlan,
+} from "../lib/materialization.ts";
+import { planConfiguredRepositoryMaterialization } from "../lib/materialization-preflight.ts";
+import {
+  materializeRepository,
+  rollbackMaterializationOwnership,
+  type MaterializationOwnershipEntry,
+  type MaterializationResult,
+} from "../lib/materializer.ts";
 import { runtime } from "../lib/runtime.ts";
 /**
  * Worktree Orchestration Module
@@ -12,7 +25,7 @@ import { runtime } from "../lib/runtime.ts";
  * Feature: 001-worktree-orchestration
  */
 
-import { ConfigNotFoundError, loadConfig } from "../lib/config.ts";
+import { ConfigNotFoundError, loadConfig, resolveGitPrimarySourceCheckout } from "../lib/config.ts";
 
 import type { DirtyStatus, WorktreeEntry, WorktreeInfo } from "../types/remove.ts";
 import {
@@ -196,6 +209,9 @@ export interface WorktreeOperationOptions {
   /** Immutable per-repository base resolutions captured before mutation */
   createBasePlan?: CreateBaseResolutionPlan;
 
+  /** Immutable materialization plans captured before command-layer mutation. */
+  materializationPlans?: readonly RepositoryMaterializationPlan[];
+
   /** Whether to execute pre-create and post-create hooks (default: true) */
   executeHooks?: boolean;
 
@@ -226,6 +242,7 @@ export interface WorktreeOperationOptions {
 }
 
 interface NormalizedWorktreeOptions {
+  materializationPlans: readonly RepositoryMaterializationPlan[];
   executeHooks: boolean;
   hookTimeout: number;
   hookInputMode: HookInputMode;
@@ -262,6 +279,7 @@ export interface DryRunConflict {
 export type TargetAction = "created" | "reused";
 
 export interface DryRunOutcome {
+  materializationPlans?: readonly RepositoryMaterializationPlan[];
   overallStatus: DryRunPlanStatus;
   plannedWorktrees: PlannedWorktree[];
   conflicts: DryRunConflict[];
@@ -363,6 +381,15 @@ export interface RepositoryResult {
   /** Time taken to process this repository in milliseconds */
   duration: number;
 
+  /** Materialization outcomes recorded while processing this repository. */
+  materializationOutcomes?: ExecutedMaterializationOutcome[];
+
+  /** Internal owned-object ledger for command-wide rollback before worktree removal. */
+  materializationOwnershipLedger?: MaterializationOwnershipEntry[];
+
+  /** Entry-local rollback result when materialization failed. */
+  materializationRollback?: MaterializationResult["materializationRollback"];
+
   /** Hook outcomes recorded while processing this repository */
   hookOutcomes: HookOutcomeRecord[];
 
@@ -395,6 +422,9 @@ export interface OperationSummary {
 
   /** Complete planned actions for every selected repository, keyed by canonical path */
   targetActionByRepositoryPath: ReadonlyMap<string, TargetAction>;
+
+  /** Materialization-specific rollback result across processed repositories. */
+  materializationRollback?: MaterializationResult["materializationRollback"];
 
   /** Whether rollback was triggered */
   rolledBack: boolean;
@@ -1478,6 +1508,7 @@ const buildDryRunOutcome = async ({
 
   return {
     conflicts,
+    materializationPlans: options.materializationPlans ?? [],
     overallStatus,
     plannedWorktrees,
     targetActionByRepositoryPath,
@@ -1581,6 +1612,7 @@ export const createCoordinatedWorktrees = async (
     hookInputMode: options.hookInputMode ?? "unavailable",
     quietHooks: options.quietHooks ?? false,
     interactive: options.interactive ?? false,
+    materializationPlans: options.materializationPlans ?? [],
     showProgress: options.showProgress ?? true,
   };
 
@@ -1769,7 +1801,20 @@ export const createCoordinatedWorktrees = async (
     if (error instanceof ConfiguredHookPreflightError) {
       preflightHookOutcomes.push(error.outcome);
     }
-    // Automatic rollback on any error (T023)
+    // Remove invocation-owned materialized objects before Git removes worktrees.
+    for (const result of results.toReversed()) {
+      const ledger = result.materializationOwnershipLedger ?? [];
+      if (ledger.length === ZERO) continue;
+      const firstOutcome = result.materializationOutcomes?.[ZERO];
+      result.materializationRollback = await rollbackMaterializationOwnership(
+        result.repository.name,
+        firstOutcome?.action ?? "copy",
+        firstOutcome?.path ?? "materialization",
+        ledger,
+      );
+    }
+
+    // Automatic whole-worktree rollback on any error (T023)
     const rollbackResult = await operationLog.rollback();
     const residualWorktrees = results
       .filter((result) => result.worktreePath && existsSync(result.worktreePath))
@@ -1792,9 +1837,38 @@ export const createCoordinatedWorktrees = async (
       errorMessage = error.message;
     }
 
+    const materializationFailures = results.flatMap(
+      (result) => result.materializationRollback?.failures ?? [],
+    );
+    const materializationAttempted = results.some(
+      (result) => (result.materializationOutcomes?.length ?? ZERO) > ZERO,
+    );
+    if (materializationAttempted) {
+      for (const result of results) {
+        const worktreeRemoved = !result.worktreePath || !existsSync(result.worktreePath);
+        for (const outcome of result.materializationOutcomes ?? []) {
+          if (worktreeRemoved && (outcome.status === "copied" || outcome.status === "linked")) {
+            outcome.status = "rolled-back";
+            outcome.reasonCode = "rolled_back";
+            outcome.message = `Rolled back '${outcome.path}'`;
+          }
+        }
+      }
+    }
+
     return {
       errorSummary: `${errorMessage}${rollbackNote}`,
       failureCount: ONE,
+      ...(materializationAttempted
+        ? {
+            materializationRollback: {
+              attempted: true,
+              complete: materializationFailures.length === ZERO,
+              failureCount: materializationFailures.length,
+              failures: materializationFailures,
+            },
+          }
+        : {}),
       hookOutcomes,
       nextSteps: buildHookRecoveryGuidance(hookOutcomes),
       repositoryResults: results,
@@ -1875,6 +1949,9 @@ const processRepository = async ({
 }: ProcessRepositoryOptions): Promise<RepositoryResult> => {
   const startTime = Date.now();
   const hookOutcomes: HookOutcomeRecord[] = [];
+  let materializationOutcomes: ExecutedMaterializationOutcome[] = [];
+  let materializationOwnershipLedger: MaterializationOwnershipEntry[] = [];
+  let materializationRollback: MaterializationResult["materializationRollback"] | undefined;
   const shouldReuse = targetAction === "reused";
 
   // Create spinner if progress is enabled
@@ -1968,18 +2045,18 @@ const processRepository = async ({
       type: "worktree_created",
     });
 
-    // Execute repo-specific hooks if enabled
-    if (options.executeHooks) {
-      const parentRepoPath = pathResult.parentWorktreePath ?? mainRepoPath;
-      const repoOperationData = buildHookOperationData({
-        branchName,
-        mainRepoPath,
-        parentRepoPath,
-        repoName: repo.name,
-        worktreePath,
-      });
-      repoOperationData.REPO_PATH = worktreePath;
+    const parentRepoPath = pathResult.parentWorktreePath ?? mainRepoPath;
+    const repoOperationData = buildHookOperationData({
+      branchName,
+      mainRepoPath,
+      parentRepoPath,
+      repoName: repo.name,
+      worktreePath,
+    });
+    repoOperationData.REPO_PATH = worktreePath;
 
+    // Execute repository pre-create before declarative materialization.
+    if (options.executeHooks) {
       if (spinnerInstance) {
         spinnerInstance.text = `Running repo-specific pre-create hook for ${repo.name}...`;
       }
@@ -2012,7 +2089,54 @@ const processRepository = async ({
       if (preHookResult.error) {
         throw preHookResult.error;
       }
+    }
 
+    const materializationPolicy = config.repos[repo.name];
+    const materializationCopy = materializationPolicy?.copy ?? [];
+    const materializationSymlink = materializationPolicy?.symlink ?? [];
+    if (materializationCopy.length > ZERO || materializationSymlink.length > ZERO) {
+      const canonicalRepositoryPath = await realpath(repo.path);
+      const sourceRoot = await resolveGitPrimarySourceCheckout(canonicalRepositoryPath, repo.name);
+      const refreshedPlan = await planConfiguredRepositoryMaterialization({
+        copy: materializationCopy,
+        destinationRoot: worktreePath,
+        dryRun: false,
+        platform: process.platform,
+        repositoryId: repo.name,
+        repositoryPath: canonicalRepositoryPath,
+        sourceRoot,
+        symlink: materializationSymlink,
+        targetOid: branchName,
+      });
+      if (refreshedPlan.classification === "blocked") {
+        materializationOutcomes = refreshedPlan.outcomes
+          .filter((outcome) => outcome.status === "blocked")
+          .map((outcome) => ({
+            action: outcome.action,
+            message: outcome.message,
+            path: outcome.path,
+            reasonCode: outcome.reasonCode,
+            status: "failed" as const,
+          }));
+        throw new Error(`Materialization plan for '${repo.name}' became blocked after pre-create`);
+      }
+      const materialized = await materializeRepository({
+        copy: materializationCopy,
+        destinationRoot: worktreePath,
+        repositoryId: repo.name,
+        sourceRoot,
+        symlink: materializationSymlink,
+      });
+      materializationOutcomes = materialized.outcomes;
+      materializationOwnershipLedger = materialized.ownershipLedger;
+      materializationRollback = materialized.materializationRollback;
+      if (materializationOutcomes.some((outcome) => outcome.status === "failed")) {
+        throw new Error(`Materialization failed for '${repo.name}'`);
+      }
+    }
+
+    // Execute repository post-create only after materialization completes.
+    if (options.executeHooks) {
       if (spinnerInstance) {
         spinnerInstance.text = `Running repo-specific post-create hook for ${repo.name}...`;
       }
@@ -2063,6 +2187,9 @@ const processRepository = async ({
       duration: Date.now() - startTime,
       error: NULL_RESULT_ERROR,
       hookOutcomes,
+      materializationOutcomes,
+      materializationOwnershipLedger,
+      materializationRollback,
       repository: repo,
       status: "success",
       targetAction,
@@ -2076,6 +2203,9 @@ const processRepository = async ({
       duration: Date.now() - startTime,
       error: error as Error,
       hookOutcomes,
+      materializationOutcomes,
+      materializationOwnershipLedger,
+      materializationRollback,
       repository: repo,
       status: "failed",
       targetAction,

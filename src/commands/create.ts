@@ -11,6 +11,7 @@ import {
   ConfigValidationError,
   findWorkspaceRoot,
   loadConfigWithFallback,
+  resolveGitPrimarySourceCheckout,
 } from "../lib/config.ts";
 import {
   ConflictAbortedError,
@@ -18,6 +19,7 @@ import {
   RepositoryValidationError,
   UserAbortedError,
   applyRepositoryFilter,
+  calculateWorktreePath,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
@@ -76,6 +78,8 @@ import {
   resolveCreateBasePlan,
   type CreateBaseResolutionPlan,
 } from "../lib/create-base.ts";
+import { planConfiguredRepositoryMaterialization } from "../lib/materialization-preflight.ts";
+import type { RepositoryMaterializationPlan } from "../lib/materialization.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
@@ -284,35 +288,51 @@ const createSummaryJsonData = async ({
   moveSummary,
   summary,
   workspaceMetadata,
-}: CreateSummaryJsonOptions) => ({
-  ...workspaceMetadata,
-  branchName,
-  ...(createBasePlan ? { base: await createBaseJsonData(createBasePlan, summary) } : {}),
-  dirtyWorkspaceGuidance,
-  dryRun: summary.isDryRun === true,
-  errorSummary: summary.errorSummary,
-  failureCount: summary.failureCount,
-  hookOutcomes: summary.hookOutcomes,
-  managedIgnore,
-  moveSummary,
-  nextSteps: summary.nextSteps,
-  repositories: summary.repositoryResults.map((result) => ({
+}: CreateSummaryJsonOptions) => {
+  const repositories = summary.repositoryResults.map((result) => ({
     branchName: result.branchName,
     duration: result.duration,
     error: result.error ? result.error.message : null,
     hookOutcomes: result.hookOutcomes,
+    materializationOutcomes: result.materializationOutcomes ?? [],
     repositoryName: result.repository.name,
     repositoryPath: result.repository.path,
     status: result.status,
     warnings: result.warnings,
     worktreePath: result.worktreePath,
-  })),
-  rolledBack: summary.rolledBack,
-  skippedCount: summary.skippedCount,
-  successCount: summary.successCount,
-  totalDuration: summary.totalDuration,
-  totalRepositories: summary.totalRepositories,
-});
+  }));
+  const hasMaterialization =
+    (summary.dryRunOutcome?.materializationPlans?.length ?? ZERO) > ZERO ||
+    repositories.some((result) => result.materializationOutcomes.length > ZERO);
+  return {
+    ...workspaceMetadata,
+    branchName,
+    ...(createBasePlan ? { base: await createBaseJsonData(createBasePlan, summary) } : {}),
+    dirtyWorkspaceGuidance,
+    dryRun: summary.isDryRun === true,
+    ...(hasMaterialization && summary.dryRunOutcome
+      ? {
+          dryRunOutcome: { materializationPlans: summary.dryRunOutcome.materializationPlans ?? [] },
+        }
+      : {}),
+    errorSummary: summary.errorSummary,
+    failureCount: summary.failureCount,
+    hookOutcomes: summary.hookOutcomes,
+    managedIgnore,
+    ...(summary.materializationRollback
+      ? { materializationRollback: summary.materializationRollback }
+      : {}),
+    moveSummary,
+    nextSteps: summary.nextSteps,
+    repositories,
+    ...(hasMaterialization ? { repositoryResults: repositories } : {}),
+    rolledBack: summary.rolledBack,
+    skippedCount: summary.skippedCount,
+    successCount: summary.successCount,
+    totalDuration: summary.totalDuration,
+    totalRepositories: summary.totalRepositories,
+  };
+};
 
 export interface CreateCommandOptions {
   /** Base branch requested for new target branches */
@@ -391,6 +411,91 @@ export interface ResolvedCreateDefaults {
   launchMode: LaunchMode;
 }
 
+class MaterializationPlanBlockedError extends Error {
+  readonly code = "MATERIALIZATION_PLAN_BLOCKED";
+  readonly details: {
+    dryRunOutcome: { materializationPlans: readonly RepositoryMaterializationPlan[] };
+  };
+
+  constructor(materializationPlans: readonly RepositoryMaterializationPlan[]) {
+    super("Configured worktree materialization preflight is blocked");
+    this.name = "MaterializationPlanBlockedError";
+    this.details = { dryRunOutcome: { materializationPlans } };
+  }
+}
+
+const resolveDefaultMaterializationTarget = async (
+  repository: Parameters<typeof createCoordinatedWorktrees>[1][number],
+): Promise<string> => {
+  const branch = repository.defaultBranch.replace(/^origin\//, "");
+  for (const candidate of [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`]) {
+    try {
+      return (
+        await exec(["rev-parse", "--verify", "--quiet", `${candidate}^{commit}`], repository.path)
+      ).stdout.trim();
+    } catch {
+      // Continue through the same local-before-origin precedence as create execution.
+    }
+  }
+  const first = (
+    await exec(["for-each-ref", "--format=%(objectname)", "refs/heads"], repository.path)
+  ).stdout
+    .split("\n")
+    .map((value) => value.trim())
+    .find(Boolean);
+  if (!first) throw new Error(`Repository '${repository.name}' has no target Git tree`);
+  return first;
+};
+
+const preflightConfiguredMaterialization = async (input: {
+  branchName: string;
+  config: Config;
+  createBasePlan: CreateBaseResolutionPlan | undefined;
+  dryRun: boolean;
+  repositories: Parameters<typeof createCoordinatedWorktrees>[1];
+  workspaceRoot: string;
+}): Promise<readonly RepositoryMaterializationPlan[]> => {
+  const plans: RepositoryMaterializationPlan[] = [];
+  for (const repository of input.repositories) {
+    const policy = input.config.repos[repository.name];
+    const copy = policy?.copy ?? [];
+    const symlink = policy?.symlink ?? [];
+    if (copy.length === ZERO && symlink.length === ZERO) continue;
+    const canonicalRepositoryPath = await realpath(repository.path);
+    const targetOid =
+      input.createBasePlan?.byCanonicalPath.get(canonicalRepositoryPath)?.resolvedOid ??
+      (await resolveDefaultMaterializationTarget(repository));
+    const destinationRoot = (
+      await calculateWorktreePath({
+        branchName: input.branchName,
+        config: input.config,
+        repo: repository,
+      })
+    ).path;
+    const sourceRoot = await resolveGitPrimarySourceCheckout(
+      canonicalRepositoryPath,
+      repository.name,
+    );
+    plans.push(
+      await planConfiguredRepositoryMaterialization({
+        copy,
+        destinationRoot,
+        dryRun: input.dryRun,
+        platform: process.platform,
+        repositoryId: repository.name,
+        repositoryPath: canonicalRepositoryPath,
+        sourceRoot,
+        symlink,
+        targetOid,
+      }),
+    );
+  }
+  if (plans.some((plan) => plan.classification === "blocked")) {
+    throw new MaterializationPlanBlockedError(plans);
+  }
+  return Object.freeze(plans);
+};
+
 export interface CreateCommandDependencies {
   resolveWorkspaceContext?: typeof resolveWorkspaceContext;
   resolveCreateInvocationContext?: (invocationPath?: string) => Promise<CreateInvocationContext>;
@@ -404,6 +509,15 @@ export interface CreateCommandDependencies {
   resolveCurrentBranch?: (path: string) => Promise<string>;
   applyRepositoryFilter?: typeof applyRepositoryFilter;
   resolveCreateBasePlan?: typeof resolveCreateBasePlan;
+  /** Complete configured materialization preflight; runs before managed-ignore mutation. */
+  preflightMaterialization?: (input: {
+    branchName: string;
+    config: Config;
+    createBasePlan: CreateBaseResolutionPlan | undefined;
+    dryRun: boolean;
+    repositories: Parameters<typeof createCoordinatedWorktrees>[1];
+    workspaceRoot: string;
+  }) => Promise<readonly RepositoryMaterializationPlan[]>;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
   reconcileManagedIgnore?: typeof reconcileRepositoryManagedIgnore;
   restoreManagedIgnore?: typeof restoreManagedIgnore;
@@ -949,7 +1063,17 @@ By default, launch opens a new OS window or managed independent-session equivale
           process.exit(ERROR_EXIT_CODE);
         }
 
-        if (createError instanceof EmptyRepositoryFiltersError) {
+        if (createError instanceof MaterializationPlanBlockedError) {
+          error(createError.message);
+          for (const plan of createError.details.dryRunOutcome.materializationPlans) {
+            for (const outcome of plan.outcomes) {
+              console.log(
+                `  • ${plan.repositoryId}: ${outcome.action} ${outcome.path} [${outcome.status}] ${outcome.message}`,
+              );
+            }
+          }
+          process.exit(ERROR_EXIT_CODE);
+        } else if (createError instanceof EmptyRepositoryFiltersError) {
           error(createError.message);
           process.exit(CANCELLED_EXIT_CODE);
         } else if (createError instanceof CreateBaseResolutionError) {
@@ -1301,6 +1425,17 @@ export async function executeCreate(
           options.base === undefined ? "config" : "cli",
         );
 
+  const materializationPlans = await (
+    deps.preflightMaterialization ?? preflightConfiguredMaterialization
+  )({
+    branchName,
+    config: arashiConfig,
+    createBasePlan,
+    dryRun: options.dryRun === true,
+    repositories: selectedRepos,
+    workspaceRoot: context.workspaceRoot,
+  });
+
   const actionLabel = options.dryRun ? "Planning" : "Creating";
   let selectedRepositoryLabel = "repositories";
   if (selectedRepos.length === ONE) {
@@ -1329,6 +1464,7 @@ export async function executeCreate(
     hookTimeout: arashiConfig.hooks?.timeout,
     quietHooks: options.json === true,
     interactive: options.interactive || false,
+    materializationPlans,
     resolvedConfig: arashiConfig,
     showProgress: options.json ? false : progressEnabled,
     workspaceRoot: context.workspaceRoot,
@@ -1451,7 +1587,13 @@ export async function executeCreate(
       return ERROR_EXIT_CODE;
     }
 
-    const { plannedWorktrees, conflicts, overallStatus, summaryCounts } = summary.dryRunOutcome;
+    const {
+      plannedWorktrees,
+      conflicts,
+      materializationPlans = [],
+      overallStatus,
+      summaryCounts,
+    } = summary.dryRunOutcome;
 
     if (createBasePlan) {
       printCreateBasePlan(createBasePlan, (repositoryPath) => {
@@ -1471,6 +1613,18 @@ export async function executeCreate(
       console.log(
         `  • ${planned.repositoryName}: ${planned.branchName} -> ${pathLabel} [${statusLabel}]`,
       );
+    }
+
+    if (materializationPlans.length > 0) {
+      console.log("");
+      info("Materialization plan:");
+      for (const plan of materializationPlans) {
+        for (const outcome of plan.outcomes) {
+          console.log(
+            `  • ${plan.repositoryId}: ${outcome.action} ${outcome.path} [${outcome.status}] ${outcome.message}`,
+          );
+        }
+      }
     }
 
     if (conflicts.length > 0) {
@@ -1509,6 +1663,21 @@ export async function executeCreate(
       process.exit(CANCELLED_EXIT_CODE);
     }
 
+    const failedMaterialization = summary.repositoryResults.flatMap((result) =>
+      (result.materializationOutcomes ?? []).map((outcome) => ({
+        outcome,
+        repositoryId: result.repository.name,
+      })),
+    );
+    if (failedMaterialization.length > 0) {
+      console.log("");
+      info("Materialization results:");
+      for (const { outcome, repositoryId } of failedMaterialization) {
+        console.log(
+          `  • ${repositoryId}: ${outcome.action} ${outcome.path} [${outcome.status}] ${outcome.message}`,
+        );
+      }
+    }
     error("Operation failed and was rolled back");
     error(summary.errorSummary || "Unknown error");
     if (summary.nextSteps.length > 0) {
@@ -1519,6 +1688,22 @@ export async function executeCreate(
   }
 
   success(`Successfully created worktrees in ${summary.successCount} repositories`);
+
+  const materializationResults = summary.repositoryResults.flatMap((result) =>
+    (result.materializationOutcomes ?? []).map((outcome) => ({
+      outcome,
+      repositoryId: result.repository.name,
+    })),
+  );
+  if (materializationResults.length > 0) {
+    console.log("");
+    info("Materialization results:");
+    for (const { outcome, repositoryId } of materializationResults) {
+      console.log(
+        `  • ${repositoryId}: ${outcome.action} ${outcome.path} [${outcome.status}] ${outcome.message}`,
+      );
+    }
+  }
 
   if (summary.hookOutcomes.length > 0) {
     console.log("");
