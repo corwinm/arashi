@@ -34,7 +34,7 @@ function New-PayloadFixture {
         if ($Existing -contains $name) { Set-Content -LiteralPath (Join-Path $destination $name) -Value "old-$name" -NoNewline }
         [PSCustomObject]@{ SourcePath = Join-Path $source $name; DestinationPath = Join-Path $destination $name }
     }
-    return [PSCustomObject]@{ Root = $root; Destination = $destination; Payload = @($payload); Names = $names }
+    return [PSCustomObject]@{ Root = $root; Source = $source; Destination = $destination; Payload = @($payload); Names = $names }
 }
 
 function Assert-State {
