@@ -1489,14 +1489,20 @@ const REDACTED_INLINE_OUTPUT = "[inline hook snippet redacted]";
 
 const stripShellDiagnosticQuotes = (value: string): string => value.replaceAll(/[`"']/gu, "");
 
-const staticInlineAssignmentValues = (snippet: string): readonly string[] =>
-  [
-    ...snippet.matchAll(
-      /(?:^|[\s;])(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s;\r\n]+))/gmu,
-    ),
-  ]
-    .map((match) => match[ONE] ?? match[2] ?? match[3] ?? "")
+const staticInlineAssignmentValues = (snippet: string): readonly string[] => {
+  const assignmentPatterns = [
+    /(?:^|[\s;])(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s;\r\n]+))/gmu,
+    /(?:^|[;\r\n])\s*\$[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s;\r\n]+))/gmu,
+    /(?:^|[&\r\n])\s*set\s+(?:"[A-Za-z_][A-Za-z0-9_]*=([^"\r\n]*)"|[A-Za-z_][A-Za-z0-9_]*=(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s&\r\n]+)))/gimu,
+  ];
+  return assignmentPatterns
+    .flatMap((pattern) =>
+      [...snippet.matchAll(pattern)].map(
+        (match) => match.slice(ONE).find((capture) => capture !== undefined) ?? "",
+      ),
+    )
     .filter((value) => value.length > ZERO);
+};
 
 const inlineSnippetStreamRedactionValues = (snippet: string): readonly string[] =>
   Object.freeze([

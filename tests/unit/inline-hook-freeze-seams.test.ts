@@ -467,4 +467,31 @@ describe("AC-09 additive metadata, exact capture, and exhaustive secrecy seam", 
     expect(JSON.stringify(execution)).not.toContain(canary);
     expect(JSON.stringify(execution)).not.toContain(snippet);
   });
+
+  test.runIf(process.platform === "win32").each([
+    ["powershell" as const, `$secret = '${canary}'; Write-Output $secret`],
+    ["cmd" as const, `set "secret=${canary}" & call echo %%secret%%`],
+  ])("redacts %s static assignment values expanded to stdout", async (interpreter, snippet) => {
+    const root = await makeRoot();
+    const resolution = await availableWindowsResolution(interpreter);
+
+    const execution = await executeInlineHook({
+      context: { hookName: "pre-create.alpha", operationData: {}, repoPath: root },
+      hookName: "pre-create.alpha",
+      quiet: true,
+      resolution,
+      snippet,
+      source: {
+        sourceKind: "inline-config",
+        sourceOwnerKind: "repository",
+        sourceOwnerName: "alpha",
+        sourceScriptPath: null,
+      },
+      timeout: 5000,
+    });
+
+    expect(execution.result.success).toBe(true);
+    expect(execution.result.stdout).toContain("[inline hook snippet redacted]");
+    expect(JSON.stringify(execution)).not.toContain(canary);
+  });
 });
