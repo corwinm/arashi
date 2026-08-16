@@ -586,11 +586,58 @@ install_posix_payload_transaction() {
   local -a destinations=("$binary_path" "$canonical_path" "$alias_path" "$ledger_path")
   local -a sources=("$binary_source" "$wrapper_source" "$alias_source" "")
   local -a existed=()
+  local -a backup_fd_open=(0 0 0 0)
   local transaction_armed=0 transaction_committed=0 ACTIVE_TRANSACTION_CHILD=0
   local transaction_failure="Installation exited unexpectedly during $phase"
   local previous_exit_trap previous_err_trap
   previous_exit_trap="$(trap -p EXIT)"
   previous_err_trap="$(trap -p ERR)"
+
+  open_rollback_backup_descriptor() {
+    local backup_index="$1"
+    case "$backup_index" in
+      0) exec 7<"$backup_directory/0" ;;
+      1) exec 8<"$backup_directory/1" ;;
+      2) exec 9<"$backup_directory/2" ;;
+      3) exec 10<"$backup_directory/3" ;;
+      *) return 1 ;;
+    esac
+    backup_fd_open[$backup_index]=1
+  }
+
+  rollback_backup_source() {
+    local backup_index="$1"
+    if [ "${backup_fd_open[$backup_index]}" -eq 1 ]; then
+      case "$backup_index" in
+        0) printf '/dev/fd/7\n' ;;
+        1) printf '/dev/fd/8\n' ;;
+        2) printf '/dev/fd/9\n' ;;
+        3) printf '/dev/fd/10\n' ;;
+        *) return 1 ;;
+      esac
+    else
+      printf '%s/%s\n' "$backup_directory" "$backup_index"
+    fi
+  }
+
+  close_rollback_backup_descriptors() {
+    [ "${backup_fd_open[0]}" -eq 0 ] || exec 7<&-
+    [ "${backup_fd_open[1]}" -eq 0 ] || exec 8<&-
+    [ "${backup_fd_open[2]}" -eq 0 ] || exec 9<&-
+    [ "${backup_fd_open[3]}" -eq 0 ] || exec 10<&-
+    backup_fd_open=(0 0 0 0)
+  }
+
+  retain_recoverable_backups() {
+    local backup_index backup_source
+    mkdir -p "$backup_directory" || return 1
+    for backup_index in "${!destinations[@]}"; do
+      [ "${existed[$backup_index]}" -eq 1 ] || continue
+      [ -f "$backup_directory/$backup_index" ] && continue
+      backup_source="$(rollback_backup_source "$backup_index")" || return 1
+      cp -p "$backup_source" "$backup_directory/$backup_index" || return 1
+    done
+  }
 
   rollback_transaction_on_exit() {
     local observed_status=$?
@@ -600,10 +647,14 @@ install_posix_payload_transaction() {
       return
     fi
 
-    local rollback_failed=0 rollback_index
+    local rollback_failed=0 rollback_index backup_source
     for rollback_index in "${!destinations[@]}"; do
       if [ "${existed[$rollback_index]}" -eq 1 ]; then
-        restore_installed_asset "$backup_directory/$rollback_index" "${destinations[$rollback_index]}" || rollback_failed=1
+        if backup_source="$(rollback_backup_source "$rollback_index")"; then
+          restore_installed_asset "$backup_source" "${destinations[$rollback_index]}" || rollback_failed=1
+        else
+          rollback_failed=1
+        fi
       elif [ -e "${destinations[$rollback_index]}" ] || [ -L "${destinations[$rollback_index]}" ]; then
         rm -f "${destinations[$rollback_index]}" || rollback_failed=1
       fi
@@ -611,8 +662,11 @@ install_posix_payload_transaction() {
     rm -f "$staged_ledger" || rollback_failed=1
 
     if [ "$rollback_failed" -ne 0 ]; then
+      retain_recoverable_backups || true
+      close_rollback_backup_descriptors || true
       printf 'error: %s. Rollback failed; recoverable backups retained at: %s. Restore them manually before retrying\n' "$transaction_failure" "$backup_directory" >&2
     else
+      close_rollback_backup_descriptors || true
       rm -rf "$backup_directory"
       printf 'error: %s. Rollback completed and restored the previous managed payload\n' "$transaction_failure" >&2
     fi
@@ -708,10 +762,18 @@ install_posix_payload_transaction() {
     rollback_transaction_on_exit 1
   fi
 
+  phase="transaction cleanup"
+  transaction_failure="Installation interrupted or failed during $phase"
+  for index in "${!destinations[@]}"; do
+    if [ "${existed[$index]}" -eq 1 ]; then
+      open_rollback_backup_descriptor "$index"
+    fi
+  done
   rm -f "$staged_ledger"
   rm -rf "$backup_directory"
   transaction_committed=1
   trap - EXIT ERR HUP INT TERM
+  close_rollback_backup_descriptors
   if [ -n "$previous_exit_trap" ]; then
     eval "$previous_exit_trap"
   fi

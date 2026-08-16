@@ -240,6 +240,50 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     }
   }, 20_000);
 
+  test("restores an existing managed payload when interrupted during backup cleanup", async () => {
+    const state = fixture();
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: state.env,
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const managedNames = ["arashi.bin", "arashi", "aw", ".arashi-managed-entrypoints.json"];
+    const originals = new Map(
+      managedNames.map((name) => [name, readFileSync(join(state.install, name))]),
+    );
+
+    writeFileSync(
+      join(state.assets, "arashi-macos-arm64"),
+      "#!/bin/sh\nprintf '9.9.9\\n'\n# replacement payload\n",
+    );
+    chmodSync(join(state.assets, "arashi-macos-arm64"), 0o755);
+    writeChecksums(state.assets);
+    const cleanupReady = join(state.directory, "cleanup-ready");
+    writeFileSync(
+      join(state.commands, "rm"),
+      `#!/bin/sh\ncase "$*" in *arashi-payload-backup*) touch "$ARASHI_CLEANUP_READY"; sleep 3;; esac\nexec /bin/rm "$@"\n`,
+    );
+    chmodSync(join(state.commands, "rm"), 0o755);
+
+    const child = spawn("bash", [join(root, "scripts/install.sh")], {
+      detached: true,
+      env: { ...state.env, ARASHI_CLEANUP_READY: cleanupReady },
+      stdio: "ignore",
+    });
+    for (let attempt = 0; attempt < 100 && !existsSync(cleanupReady); attempt += 1) {
+      await delay(25);
+    }
+    expect(existsSync(cleanupReady)).toBe(true);
+    child.kill("SIGTERM");
+    const [status] = (await once(child, "exit")) as [number | null, NodeJS.Signals | null];
+    expect(status).not.toBe(0);
+    for (const name of managedNames) {
+      expect(readFileSync(join(state.install, name)), `${name} was not restored`).toEqual(
+        originals.get(name),
+      );
+    }
+  }, 12_000);
+
   test("rejects a pinned binary whose parsed version only contains the requested version as a substring", () => {
     const state = fixture();
     writeFileSync(join(state.assets, "arashi-macos-arm64"), "#!/bin/sh\nprintf '19.9.9\\n'\n");
