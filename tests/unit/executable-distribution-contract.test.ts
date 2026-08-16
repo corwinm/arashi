@@ -163,6 +163,8 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).toContain("where arashi");
     expect(workflow).toContain("command -v arashi");
     expect(workflow).toContain("verify-aw-fresh.sh");
+    expect(workflow).toContain("[System.IO.File]::WriteAllText($bashVerifier");
+    expect(workflow).toContain('$bashVerifierContent -replace "`r`n", "`n"');
     expect(workflow).toContain("& $bash --noprofile --norc $bashVerifier");
     expect(workflow).not.toContain("& $bash --noprofile --norc -c");
     expect(workflow).toContain("ARASHI_EXPECTED_VERSION");

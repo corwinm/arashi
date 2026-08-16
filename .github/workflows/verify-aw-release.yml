@@ -101,7 +101,7 @@ jobs:
 
           $bash = "C:\Program Files\Git\bin\bash.exe"
           $bashVerifier = Join-Path $env:RUNNER_TEMP "verify-aw-fresh.sh"
-          @'
+          $bashVerifierContent = @'
           #!/usr/bin/env bash
           set -e
           installed=$(cygpath -u "$ARASHI_INSTALL_DIR")
@@ -114,6 +114,7 @@ jobs:
             *"$ARASHI_EXPECTED_VERSION"*) ;;
             *) exit 44 ;;
           esac
-          '@ | Set-Content -LiteralPath $bashVerifier -Encoding ASCII
+          '@
+          [System.IO.File]::WriteAllText($bashVerifier, (($bashVerifierContent -replace "`r`n", "`n") + "`n"), [System.Text.Encoding]::ASCII)
           & $bash --noprofile --norc $bashVerifier
           if ($LASTEXITCODE -ne 0) { throw "Fresh Git Bash verification failed" }
