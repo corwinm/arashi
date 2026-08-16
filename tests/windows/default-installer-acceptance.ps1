@@ -69,10 +69,10 @@ function Invoke-FreshShell {
 try {
     New-Item -ItemType Directory -Path $FixtureDirectory, $temporaryUserProfile -Force | Out-Null
     Copy-Item (Join-Path $Root "bin\arashi-windows-x64.exe") (Join-Path $FixtureDirectory "arashi-windows-x64.exe")
-    foreach ($asset in @("arashi", "arashi.ps1", "arashi.bat")) {
+    foreach ($asset in @("arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat")) {
         Copy-Item (Join-Path $Root "bin\$asset") (Join-Path $FixtureDirectory $asset)
     }
-    $checksumLines = foreach ($asset in @("arashi-windows-x64.exe", "arashi", "arashi.ps1", "arashi.bat")) {
+    $checksumLines = foreach ($asset in @("arashi-windows-x64.exe", "arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat")) {
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $FixtureDirectory $asset)).Hash.ToLowerInvariant()
         "$hash  $asset"
     }
@@ -90,7 +90,13 @@ set -euo pipefail
 resolved="$(command -v arashi)"
 test -n "$resolved"
 test "$(cygpath -am "$resolved")" = "$(cygpath -am "$ARASHI_EXPECTED_WRAPPER")"
-arashi --version
+alias_resolved="$(command -v aw)"
+test -n "$alias_resolved"
+test "$(cygpath -am "$alias_resolved")" = "$(cygpath -am "$ARASHI_EXPECTED_ALIAS_WRAPPER")"
+canonical="$(arashi --version)"
+alias_output="$(aw --version)"
+test "$canonical" = "$alias_output"
+printf '%s\n' "$canonical"
 '@
     [System.IO.File]::WriteAllText($gitBashCheckPath, (($gitBashCheck -replace "`r`n", "`n") + "`n"), [System.Text.Encoding]::ASCII)
 
@@ -98,8 +104,13 @@ arashi --version
     @'
 $resolved = (Get-Command arashi.ps1 -ErrorAction Stop).Source
 if ([IO.Path]::GetFullPath($resolved) -ine [IO.Path]::GetFullPath($env:ARASHI_EXPECTED_POWERSHELL)) { throw "Unexpected arashi.ps1: $resolved" }
-& $resolved --version
-exit $LASTEXITCODE
+$aliasResolved = (Get-Command aw.ps1 -ErrorAction Stop).Source
+if ([IO.Path]::GetFullPath($aliasResolved) -ine [IO.Path]::GetFullPath($env:ARASHI_EXPECTED_ALIAS_POWERSHELL)) { throw "Unexpected aw.ps1: $aliasResolved" }
+$canonical = (& $resolved --version | Out-String).Trim()
+$aliasOutput = (& $aliasResolved --version | Out-String).Trim()
+if ($canonical -cne $aliasOutput) { throw "PowerShell entrypoint versions differ" }
+Write-Output $canonical
+exit 0
 '@ | Set-Content -LiteralPath $powerShellCheckPath -Encoding Ascii
 
     $cmdCheckPath = Join-Path $FixtureDirectory "verify-cmd.cmd"
@@ -108,14 +119,19 @@ exit $LASTEXITCODE
 setlocal EnableDelayedExpansion
 for /f "delims=" %%I in ('where arashi.bat') do if not defined RESOLVED set "RESOLVED=%%~fI"
 if /i not "!RESOLVED!"=="%ARASHI_EXPECTED_CMD%" exit /b 41
-call "!RESOLVED!" --version
+for /f "delims=" %%I in ('where aw.bat') do if not defined ALIAS_RESOLVED set "ALIAS_RESOLVED=%%~fI"
+if /i not "!ALIAS_RESOLVED!"=="%ARASHI_EXPECTED_ALIAS_CMD%" exit /b 42
+for /f "delims=" %%I in ('call "!RESOLVED!" --version') do set "CANONICAL=%%I"
+for /f "delims=" %%I in ('call "!ALIAS_RESOLVED!" --version') do set "ALIAS_OUTPUT=%%I"
+if not "!CANONICAL!"=="!ALIAS_OUTPUT!" exit /b 43
+echo !CANONICAL!
 '@ | Set-Content -LiteralPath $cmdCheckPath -Encoding Ascii
 
     $env:USERPROFILE = $temporaryUserProfile
     & $InstallerPath
 
     $installDirectory = Join-Path $temporaryUserProfile ".arashi\bin"
-    foreach ($file in @("arashi.bin.exe", "arashi", "arashi.ps1", "arashi.bat")) {
+    foreach ($file in @("arashi.bin.exe", "arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat", ".arashi-managed-entrypoints.json")) {
         Assert-True (Test-Path -LiteralPath (Join-Path $installDirectory $file) -PathType Leaf) "Missing installed payload file: $file"
     }
 
@@ -134,6 +150,7 @@ call "!RESOLVED!" --version
         $gitBashCheckPath
     ) -Label "Git Bash" -ExpectedOutput $expectedVersionOutput -FreshPath $freshPath -FreshUserProfile $temporaryUserProfile -AdditionalEnvironment @{
         ARASHI_EXPECTED_WRAPPER = (Join-Path $installDirectory "arashi")
+        ARASHI_EXPECTED_ALIAS_WRAPPER = (Join-Path $installDirectory "aw")
     }
 
     Invoke-FreshShell -FilePath "powershell.exe" -Arguments @(
@@ -145,6 +162,7 @@ call "!RESOLVED!" --version
         $powerShellCheckPath
     ) -Label "PowerShell" -ExpectedOutput $expectedVersionOutput -FreshPath $freshPath -FreshUserProfile $temporaryUserProfile -AdditionalEnvironment @{
         ARASHI_EXPECTED_POWERSHELL = (Join-Path $installDirectory "arashi.ps1")
+        ARASHI_EXPECTED_ALIAS_POWERSHELL = (Join-Path $installDirectory "aw.ps1")
     }
 
     Invoke-FreshShell -FilePath "cmd.exe" -Arguments @(
@@ -154,6 +172,11 @@ call "!RESOLVED!" --version
         $cmdCheckPath
     ) -Label "Command Prompt" -ExpectedOutput $expectedVersionOutput -FreshPath $freshPath -FreshUserProfile $temporaryUserProfile -AdditionalEnvironment @{
         ARASHI_EXPECTED_CMD = (Join-Path $installDirectory "arashi.bat")
+        ARASHI_EXPECTED_ALIAS_CMD = (Join-Path $installDirectory "aw.bat")
+    }
+
+    foreach ($profile in @(".bashrc", ".bash_profile", ".profile")) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $temporaryUserProfile $profile))) "Installer unexpectedly edited $profile"
     }
 } catch {
     $testFailure = $_

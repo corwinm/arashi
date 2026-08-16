@@ -17,6 +17,9 @@ const requiredWindowsAssets = [
   "arashi",
   "arashi.bat",
   "arashi.ps1",
+  "aw",
+  "aw.bat",
+  "aw.ps1",
   "arashi-windows-x64.exe",
 ] as const;
 const requiredInstallerAssets = [...requiredWindowsAssets, "arashi-checksums.txt"].toSorted();
@@ -72,6 +75,9 @@ describe("canonical Windows release payload", () => {
             asset === "arashi" ||
             asset === "arashi.bat" ||
             asset === "arashi.ps1" ||
+            asset === "aw" ||
+            asset === "aw.bat" ||
+            asset === "aw.ps1" ||
             asset === "arashi-windows-x64.exe" ||
             asset === "arashi-checksums.txt",
         )
@@ -85,13 +91,16 @@ describe("canonical Windows release payload", () => {
     ).toEqual([...requiredWindowsAssets].toSorted());
   });
 
-  test("ships the same supported four-file payload in the Windows archive", () => {
+  test("ships the same supported seven-file payload in the Windows archive", () => {
     const packager = read("scripts/package-releases.sh");
 
     expect(packager).toContain('cp bin/arashi "$DIST_DIR/arashi-windows-x64/arashi"');
     expect(packager).toContain("arashi.bin.exe");
     expect(packager).toContain("arashi.ps1");
     expect(packager).toContain("arashi.bat");
+    expect(packager).toContain('cp bin/aw "$DIST_DIR/arashi-windows-x64/aw"');
+    expect(packager).toContain("aw.ps1");
+    expect(packager).toContain("aw.bat");
     expect(packager).toContain("Git Bash");
     expect(packager).toContain("Open a new");
   });
@@ -113,6 +122,9 @@ describe("canonical Windows release payload", () => {
         "arashi",
         "arashi.bat",
         "arashi.ps1",
+        "aw",
+        "aw.bat",
+        "aw.ps1",
         "arashi-macos-arm64",
         "arashi-linux-x64",
         "arashi-windows-x64.exe",
@@ -136,7 +148,16 @@ describe("canonical Windows release payload", () => {
         .filter((member) => !member.endsWith("/"))
         .toSorted();
       expect(members).toEqual(
-        ["README.txt", "arashi", "arashi.bat", "arashi.bin.exe", "arashi.ps1"]
+        [
+          "README.txt",
+          "arashi",
+          "arashi.bat",
+          "arashi.bin.exe",
+          "arashi.ps1",
+          "aw",
+          "aw.bat",
+          "aw.ps1",
+        ]
           .map((name) => `arashi-windows-x64/${name}`)
           .toSorted(),
       );

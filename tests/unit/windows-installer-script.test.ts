@@ -45,9 +45,12 @@ describe("Windows PowerShell installer", () => {
     expect(script).toContain('$BashWrapperAsset = "arashi"');
     expect(script).toContain('$PowerShellWrapperAsset = "arashi.ps1"');
     expect(script).toContain('$CmdWrapperAsset = "arashi.bat"');
+    expect(script).toContain('$AliasBashWrapperAsset = "aw"');
+    expect(script).toContain('$AliasPowerShellWrapperAsset = "aw.ps1"');
+    expect(script).toContain('$AliasCmdWrapperAsset = "aw.bat"');
     expect(script).toContain('$ChecksumManifestAsset = "arashi-checksums.txt"');
     expect(script).toContain(
-      "@($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $ChecksumManifestAsset)",
+      "$AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset, $ChecksumManifestAsset",
     );
   });
 
@@ -70,6 +73,13 @@ describe("Windows PowerShell installer", () => {
       "DestinationPath = Join-Path $targetInstallDir $PowerShellWrapperAsset",
     );
     expect(script).toContain("DestinationPath = Join-Path $targetInstallDir $CmdWrapperAsset");
+    expect(script).toContain(
+      "DestinationPath = Join-Path $targetInstallDir $AliasBashWrapperAsset",
+    );
+    expect(script).toContain(
+      "DestinationPath = Join-Path $targetInstallDir $AliasPowerShellWrapperAsset",
+    );
+    expect(script).toContain("DestinationPath = Join-Path $targetInstallDir $AliasCmdWrapperAsset");
   });
 
   test("updates user PATH by default while avoiding duplicates", () => {
@@ -81,27 +91,31 @@ describe("Windows PowerShell installer", () => {
     expect(body).toContain("new Git Bash window");
   });
 
-  test("runs an installed binary version smoke test and prints fallback guidance on failures", () => {
+  test("runs canonical and alias wrapper smoke tests and prints complete fallback guidance", () => {
     const body = functionBody("Invoke-ArashiSmokeTest");
 
-    expect(body).toContain("& $BinaryPath --version");
+    expect(body).toContain("foreach ($path in @($BinaryPath, $CanonicalPath, $AliasPath))");
     expect(script).toContain("Join-Path $targetInstallDir $InstalledBinaryName");
     expect(script).toContain(
       "Install-ArashiPayloadTransaction -Payload $payload -BinaryPath $installedBinary",
     );
     expect(body).toContain("Smoke test failed");
+    expect(body).toContain("canonicalVersion");
+    expect(body).toContain("aliasVersion");
     expect(script).toContain(
-      "Manual fallback: download $WindowsBinaryAsset, $PowerShellWrapperAsset, and $CmdWrapperAsset",
+      "Manual fallback: download $WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, and $AliasCmdWrapperAsset",
     );
   });
 
-  test("backs up and replaces the exact four-file managed payload as one transaction", () => {
+  test("backs up and replaces the seven-file payload and ledger as one transaction", () => {
     const body = functionBody("Install-ArashiPayloadTransaction");
 
     expect(body).toContain("arashi-payload-backup-");
     expect(body).toContain("Test-Path -LiteralPath $item.DestinationPath");
     expect(body).toContain("Install-ArashiStagedAsset");
     expect(body).toContain("& $SmokeTest $BinaryPath");
+    expect(body).toContain("OwnershipLedgerItem");
+    expect(body).toContain("ledger commit");
     expect(body).toContain("Remove-Item -LiteralPath $backupDirectory -Recurse -Force");
   });
 
@@ -131,7 +145,7 @@ describe("Windows PowerShell installer", () => {
     expect(body).toContain("backups retained at:");
   });
 
-  test("preserves no-PATH and deferred-update behavior with four-file replacement", () => {
+  test("preserves no-PATH and deferred-update behavior with seven-file replacement", () => {
     expect(script).toContain("Test-ArashiNoModifyPath -NoModifyPathFlag:$NoModifyPath");
     expect(script).toContain("Wait-ArashiParentProcess -ParentProcessId $env:ARASHI_WAIT_FOR_PID");
     expect(script).toContain("new Git Bash window");

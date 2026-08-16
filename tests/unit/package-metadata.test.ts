@@ -8,10 +8,14 @@ describe("npm package metadata", () => {
 
   test("publishes the npm entrypoint, wrappers, and runtime installer module", () => {
     expect(pkg.bin.arashi).toBe("./bin/arashi.js");
+    expect(pkg.bin.aw).toBe("./bin/arashi.js");
     expect(pkg.files).toContain("bin/arashi");
     expect(pkg.files).toContain("bin/arashi.js");
     expect(pkg.files).toContain("bin/arashi.bat");
     expect(pkg.files).toContain("bin/arashi.ps1");
+    expect(pkg.files).toContain("bin/aw");
+    expect(pkg.files).toContain("bin/aw.bat");
+    expect(pkg.files).toContain("bin/aw.ps1");
     expect(pkg.files).toContain("bin/install-binary.js");
     expect(pkg.files).toContain("bin/update-options.js");
     expect(pkg.files).not.toContain("scripts/postinstall.js");

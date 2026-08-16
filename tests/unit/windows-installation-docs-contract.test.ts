@@ -18,12 +18,21 @@ describe.each(documents)("%s Windows installation guidance", (document) => {
     expect(content).toContain("arashi.bin.exe");
   });
 
-  test("documents the verified same-release four-file manual payload", () => {
-    for (const file of ["arashi-windows-x64.exe", "arashi", "arashi.ps1", "arashi.bat"]) {
+  test("documents the verified same-release seven-file manual payload", () => {
+    for (const file of [
+      "arashi-windows-x64.exe",
+      "arashi",
+      "arashi.ps1",
+      "arashi.bat",
+      "aw",
+      "aw.ps1",
+      "aw.bat",
+    ]) {
       expect(content).toContain(`\`${file}\``);
     }
     expect(content).toContain("same release");
     expect(content).toContain("arashi-checksums.txt");
+    expect(content).toMatch(/move or remove.*manual.*alias|manual.*alias.*move or remove/is);
   });
 
   test("documents persistent user PATH inheritance without profile mutation", () => {
