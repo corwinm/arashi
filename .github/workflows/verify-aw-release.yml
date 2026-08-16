@@ -26,7 +26,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fish zsh
       - run: pnpm install --frozen-lockfile
       - name: Verify exact public npm and POSIX release
-        run: pnpm release:verify-aw -- "${{ inputs.version }}"
+        env:
+          VERIFY_VERSION: ${{ inputs.version }}
+        run: pnpm release:verify-aw -- "$VERIFY_VERSION"
 
   verify-aw-windows:
     runs-on: windows-latest

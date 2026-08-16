@@ -228,8 +228,13 @@ try {
   assertParity({ alias, args: ["shell", "init", "bash"], canonical });
   const canonicalCompletion = run(canonical, ["completion", "bash"]);
   const aliasCompletion = run(alias, ["completion", "bash"]);
-  if (canonicalCompletion !== aliasCompletion || !aliasCompletion.includes(" arashi aw")) {
-    throw new Error("npm completion output does not register identical arashi/aw behavior");
+  if (
+    canonicalCompletion !== aliasCompletion ||
+    !aliasCompletion.includes("complete -F _arashi arashi") ||
+    !aliasCompletion.includes("complete -F _arashi aw") ||
+    !aliasCompletion.includes("arashi-managed-shell-wrapper:aw:v1")
+  ) {
+    throw new Error("npm completion output does not register guarded identical arashi/aw behavior");
   }
   if (process.platform === "darwin" || process.platform === "linux") {
     shellBehavior.npm = verifyInstalledPosixShellBehavior({
