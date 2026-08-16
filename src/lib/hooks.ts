@@ -1487,14 +1487,30 @@ interface NativeHookExecutionOptions extends HookExecutionOptions {
 
 const REDACTED_INLINE_OUTPUT = "[inline hook snippet redacted]";
 
-const inlineSnippetDiagnosticRedactionValues = (snippet: string): readonly string[] =>
+const stripShellDiagnosticQuotes = (value: string): string => value.replaceAll(/[`"']/gu, "");
+
+const inlineSnippetStreamRedactionValues = (snippet: string): readonly string[] =>
   Object.freeze([
     ...new Set([
       snippet,
-      ...snippet
-        .split(/\r?\n/u)
-        .flatMap((line) => [line, line.trim()])
-        .filter((line) => line.length > ZERO),
+      ...snippet.split(/\r?\n/u).flatMap((line) => {
+        const trimmed = line.trim();
+        const withoutRedirection = trimmed.split(/[<>]/u, ONE)[ZERO]?.trim() ?? "";
+        return [
+          line,
+          trimmed,
+          stripShellDiagnosticQuotes(trimmed),
+          withoutRedirection,
+          stripShellDiagnosticQuotes(withoutRedirection),
+        ].filter((value) => value.length > ZERO);
+      }),
+    ]),
+  ]);
+
+const inlineSnippetDiagnosticRedactionValues = (snippet: string): readonly string[] =>
+  Object.freeze([
+    ...new Set([
+      ...inlineSnippetStreamRedactionValues(snippet),
       ...snippet
         .split(/[\s&|;()<>]+/u)
         .map((token) => token.replace(/^[`"']+/u, "").replace(/[`"']+$/u, ""))
@@ -2067,7 +2083,7 @@ export const executeInlineHook = async (
     outputSpinner: options.outputSpinner,
     quiet: options.quiet,
     redactedErrorValues: inlineSnippetDiagnosticRedactionValues(options.snippet),
-    redactedOutputValues: [options.snippet],
+    redactedOutputValues: inlineSnippetStreamRedactionValues(options.snippet),
     scriptPath: options.resolution.executablePath,
     sourceKind: options.source.sourceKind,
     sourceOwnerKind: options.source.sourceOwnerKind,

@@ -378,6 +378,41 @@ describe("AC-09 additive metadata, exact capture, and exhaustive secrecy seam", 
     },
   );
 
+  test.runIf(process.platform !== "win32")(
+    "redacts trace-shaped multiline Bash source fragments written to stdout",
+    async () => {
+      const root = await makeRoot();
+      const resolution = await availableBashResolution();
+      const snippet = [`echo ${canary} >/dev/null`, `printf '%s\\n' 'echo ${canary}'`].join("\n");
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const execution = await executeInlineHook({
+        context: { hookName: "pre-create.alpha", operationData: {}, repoPath: root },
+        hookName: "pre-create.alpha",
+        quiet: false,
+        resolution,
+        snippet,
+        source: {
+          sourceKind: "inline-config",
+          sourceOwnerKind: "repository",
+          sourceOwnerName: "alpha",
+          sourceScriptPath: null,
+        },
+        timeout: 1000,
+      });
+
+      expect(execution.result.success).toBe(true);
+      expect(execution.result.stdout).toContain("[inline hook snippet redacted]");
+      const publicProjection = JSON.stringify({
+        logs: log.mock.calls,
+        outcome: execution.outcome,
+        result: execution.result,
+      });
+      expect(publicProjection).not.toContain(canary);
+      expect(publicProjection).toContain("[inline hook snippet redacted]");
+    },
+  );
+
   test.runIf(process.platform === "win32").each([
     ["powershell" as const, [`Write-Output 'safe'`, `Write-Output '${canary}'; )`].join("\r\n")],
     ["cmd" as const, `echo safe & ${canary}`],
