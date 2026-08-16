@@ -94,9 +94,15 @@ describe("versioned executable distribution contract", () => {
 
   test("registers an exact-version post-publication gate and manual Windows stage", () => {
     expect(packageJson.scripts["release:verify-aw"]).toBeTruthy();
-    expect(read("scripts/release/verify-aw.ts")).toContain("latest");
-    expect(read("scripts/release/verify-aw.ts")).toMatch(/run\("npm", \[\s*"view"/);
-    expect(read("scripts/release/verify-aw.ts")).toContain("ARASHI_VERSION");
+    const verifier = read("scripts/release/verify-aw.ts");
+    expect(verifier).toContain("latest");
+    expect(verifier).toContain("releaseNpmCommand");
+    expect(verifier).toMatch(/run\(npmCommand, \[\s*"view"/);
+    expect(verifier).toContain("ARASHI_VERSION");
+    const commandLauncher = read("scripts/release/release-command.ts");
+    expect(commandLauncher).toContain("npm.cmd");
+    expect(commandLauncher).toContain("ComSpec");
+    expect(commandLauncher).toContain('["call", command, ...args]');
     const workflow = read(".github/workflows/verify-aw-release.yml");
     expect(workflow).toContain("verify-aw-windows");
     expect(workflow).toContain("workflow_dispatch");
