@@ -59,7 +59,10 @@ if [ "$ARASHI_TEST_FIRST_USE_NOISE" = 1 ]; then
 state="\${0}.first-use-complete"
 if [ ! -e "$state" ]; then
   : > "$state"
-  printf 'installing exact public binary before first use\n'
+  printf 'downloading exact public binary from /%s/ before first use\n' "$ARASHI_TEST_VERSION"
+  if [ "$ARASHI_TEST_FIRST_USE_SKIP_DISPATCH" = 1 ]; then
+    exit 0
+  fi
 fi
 exec "$(dirname "$0")/arashi.real" "$@"
 PROXY
@@ -162,5 +165,21 @@ describe.skipIf(process.platform === "win32")("exact-version published release v
       },
     );
     expect(result.status, result.stderr).toBe(0);
+  }, 30_000);
+
+  test("rejects first-use installer output that never dispatches the version command", () => {
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "scripts/release/verify-aw.ts"), version],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...environment, ARASHI_TEST_FIRST_USE_SKIP_DISPATCH: "1" },
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      `npm first-use entrypoint does not report exact requested release ${version}`,
+    );
   }, 30_000);
 });

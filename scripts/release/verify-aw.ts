@@ -31,6 +31,11 @@ function reportedVersion(output: string): string | undefined {
   )?.[1];
 }
 
+function reportedFinalVersion(output: string): string | undefined {
+  const finalLine = output.trim().split(/\r?\n/u).at(-1)?.trim();
+  return finalLine?.match(/^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u)?.[1];
+}
+
 function run(
   command: string,
   args: string[],
@@ -225,7 +230,7 @@ try {
     chmodSync(alias, 0o755);
   }
   const firstUseCanonicalVersion = run(canonical, ["--version"]);
-  if (reportedVersion(firstUseCanonicalVersion) !== version) {
+  if (reportedFinalVersion(firstUseCanonicalVersion) !== version) {
     throw new Error(
       `npm first-use entrypoint does not report exact requested release ${version}: arashi=${firstUseCanonicalVersion}`,
     );
