@@ -97,6 +97,52 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     );
   });
 
+  test("normalizes trailing install separators before ownership preflight and ledger persistence", () => {
+    const state = fixture();
+    const trailingInstall = `${state.install}///`;
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_INSTALL_DIR: trailingInstall },
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const ledger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(ledger.installDirectory).toBe(state.install);
+    expect(ledger.aliases[0].path).toBe(join(state.install, "aw"));
+
+    const second = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: {
+        ...state.env,
+        ARASHI_INSTALL_DIR: trailingInstall,
+        PATH: `${state.install}:${state.env.PATH}`,
+      },
+    });
+    expect(second.status, second.stderr).toBe(0);
+  });
+
+  test("rejects a pinned binary whose parsed version only contains the requested version as a substring", () => {
+    const state = fixture();
+    writeFileSync(join(state.assets, "arashi-macos-arm64"), "#!/bin/sh\nprintf '19.9.9\\n'\n");
+    chmodSync(join(state.assets, "arashi-macos-arm64"), 0o755);
+    const checksums = ["arashi-macos-arm64", "arashi", "aw"].map((name) => {
+      const result = spawnSync("shasum", ["-a", "256", join(state.assets, name)], {
+        encoding: "utf8",
+      });
+      return `${result.stdout.split(" ")[0]}  ${name}`;
+    });
+    writeFileSync(join(state.assets, "arashi-checksums.txt"), `${checksums.join("\n")}\n`);
+
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: state.env,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("does not match requested release 9.9.9");
+    expect(existsSync(join(state.install, ".arashi-managed-entrypoints.json"))).toBe(false);
+  });
+
   test("manual marked alias and PATH collisions fail before download or target creation without execution", () => {
     const state = fixture();
     mkdirSync(state.install, { recursive: true });

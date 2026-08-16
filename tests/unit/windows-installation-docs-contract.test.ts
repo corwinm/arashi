@@ -41,3 +41,9 @@ describe.each(documents)("%s Windows installation guidance", (document) => {
     expect(content).toMatch(/does not (create|modify|edit).*(`\.bashrc`|shell profile)/i);
   });
 });
+
+test("Windows installer docs identify the policy-independent smoke targets exactly", () => {
+  const content = read("docs/INSTALLATION.md");
+  expect(content).toMatch(/native.*CMD.*`arashi\.bat`.*`aw\.bat`/i);
+  expect(content).not.toMatch(/canonical PowerShell-wrapper.*alias PowerShell-wrapper/i);
+});

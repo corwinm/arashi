@@ -103,10 +103,11 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).toContain("release:verify-aw");
   });
 
-  test("runs exact-version public npm and POSIX verification on a native POSIX runner", () => {
+  test("runs exact-version public npm and POSIX verification on a provisioned native POSIX runner", () => {
     const workflow = read(".github/workflows/verify-aw-release.yml");
     expect(workflow).toContain("verify-aw-posix:");
     expect(workflow).toContain("runs-on: ubuntu-latest");
+    expect(workflow).toMatch(/apt-get install[^\n]*(?:fish[^\n]*zsh|zsh[^\n]*fish)/);
     expect(workflow).toContain(`pnpm release:verify-aw -- "\${{ inputs.version }}"`);
   });
 
