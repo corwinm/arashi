@@ -2249,13 +2249,17 @@ const preflightRemoveLifecycleHooks = async (options: {
     };
 
     for (const repository of options.targetRepositories) {
-      await addFiles({
-        executionPath: repository.path,
-        hooksDirectory: join(repository.path, ".arashi", "hooks"),
-        scope: "repository",
-        sourceOwnerKind: "repository",
-        sourceOwnerName: repository.name,
-      });
+      if (
+        normalizeLifecyclePath(repository.path) !== normalizeLifecyclePath(options.workspaceRoot)
+      ) {
+        await addFiles({
+          executionPath: repository.path,
+          hooksDirectory: join(repository.path, ".arashi", "hooks"),
+          scope: "repository",
+          sourceOwnerKind: "repository",
+          sourceOwnerName: repository.name,
+        });
+      }
       const inline = options.config.repos[repository.name]?.hooks?.[hookName];
       if (inline) {
         candidates.push({
