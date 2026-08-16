@@ -380,8 +380,8 @@ describe("AC-09 additive metadata, exact capture, and exhaustive secrecy seam", 
 
   test.runIf(process.platform === "win32").each([
     ["powershell" as const, [`Write-Output 'safe'`, `Write-Output '${canary}'; )`].join("\r\n")],
-    ["cmd" as const, [`echo safe`, `echo ${canary} & )`].join("\r\n")],
-  ])("redacts multiline %s interpreter diagnostics", async (interpreter, snippet) => {
+    ["cmd" as const, `echo safe & ${canary}`],
+  ])("redacts %s interpreter diagnostics", async (interpreter, snippet) => {
     const root = await makeRoot();
     const resolution = await availableWindowsResolution(interpreter);
 

@@ -1495,6 +1495,10 @@ const inlineSnippetDiagnosticRedactionValues = (snippet: string): readonly strin
         .split(/\r?\n/u)
         .flatMap((line) => [line, line.trim()])
         .filter((line) => line.length > ZERO),
+      ...snippet
+        .split(/[\s&|;()<>]+/u)
+        .map((token) => token.replace(/^[`"']+/u, "").replace(/[`"']+$/u, ""))
+        .filter((token) => token.length > ZERO),
     ]),
   ]);
 
