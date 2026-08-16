@@ -146,6 +146,8 @@ describe("POSIX alias installer contract", () => {
     expect(script).toContain('capture_entrypoint_version "$alias_path" alias_version');
     expect(script).toContain("ACTIVE_TRANSACTION_CHILD=$!");
     expect(script).toContain("trap 'interrupt_transaction INT 130' INT");
+    expect(script).toContain('kill -TERM "$ACTIVE_TRANSACTION_CHILD"');
+    expect(script).toContain('kill -KILL "$ACTIVE_TRANSACTION_CHILD"');
     expect(script).toContain('"$canonical_version" != "$alias_version"');
     const stagedCleanup = script.lastIndexOf('rm -f "$staged_ledger"');
     const backupCleanup = script.indexOf('rm -rf "$backup_directory"', stagedCleanup);

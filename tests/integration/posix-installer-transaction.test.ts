@@ -196,6 +196,50 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     10_000,
   );
 
+  test("rolls back a foreground transaction when Ctrl-C delivers SIGINT", () => {
+    const state = fixture();
+    const ready = join(state.directory, "sigint-smoke-ready");
+    const stdoutPath = join(state.directory, "sigint-stdout");
+    const stderrPath = join(state.directory, "sigint-stderr");
+    const resultPath = join(state.directory, "sigint-result.json");
+    writeFileSync(
+      join(state.assets, "arashi-macos-arm64"),
+      `#!/bin/sh\ntouch "$ARASHI_SIGNAL_READY"\ntrap 'exit 143' HUP INT TERM\nwhile :; do sleep 1; done\n`,
+    );
+    chmodSync(join(state.assets, "arashi-macos-arm64"), 0o755);
+    writeChecksums(state.assets);
+
+    const config = Buffer.from(
+      JSON.stringify({
+        command: ["bash", join(root, "scripts/install.sh")],
+        cwd: root,
+        env: { ...state.env, ARASHI_SIGNAL_READY: ready },
+        prompt: "__unused_when_ready_path_is_set__",
+        readyPath: ready,
+        response: "__CTRL_C__",
+        resultPath,
+        stderrPath,
+        stdoutPath,
+        timeoutSeconds: 10,
+      }),
+    ).toString("base64");
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "tests/helpers/pty-session.mjs"), config],
+      { encoding: "utf8", timeout: 15_000 },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const session = JSON.parse(readFileSync(resultPath, "utf8")) as {
+      exitCode: number;
+      reused: boolean;
+    };
+    expect(session.exitCode).not.toBe(0);
+    expect(session.reused).toBe(true);
+    for (const name of ["arashi.bin", "arashi", "aw", ".arashi-managed-entrypoints.json"]) {
+      expect(existsSync(join(state.install, name)), `${name} survived SIGINT rollback`).toBe(false);
+    }
+  }, 20_000);
+
   test("rejects a pinned binary whose parsed version only contains the requested version as a substring", () => {
     const state = fixture();
     writeFileSync(join(state.assets, "arashi-macos-arm64"), "#!/bin/sh\nprintf '19.9.9\\n'\n");

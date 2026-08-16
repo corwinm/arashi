@@ -630,7 +630,15 @@ install_posix_payload_transaction() {
     local signal_name="$1" signal_status="$2"
     transaction_failure="Installation interrupted by $signal_name during $phase"
     if [ "$ACTIVE_TRANSACTION_CHILD" -gt 0 ]; then
-      kill -s "$signal_name" "$ACTIVE_TRANSACTION_CHILD" 2>/dev/null || true
+      kill -TERM "$ACTIVE_TRANSACTION_CHILD" 2>/dev/null || true
+      local child_shutdown_attempt
+      for child_shutdown_attempt in {1..20}; do
+        kill -0 "$ACTIVE_TRANSACTION_CHILD" 2>/dev/null || break
+        sleep 0.05
+      done
+      if kill -0 "$ACTIVE_TRANSACTION_CHILD" 2>/dev/null; then
+        kill -KILL "$ACTIVE_TRANSACTION_CHILD" 2>/dev/null || true
+      fi
       wait "$ACTIVE_TRANSACTION_CHILD" 2>/dev/null || true
       ACTIVE_TRANSACTION_CHILD=0
     fi
