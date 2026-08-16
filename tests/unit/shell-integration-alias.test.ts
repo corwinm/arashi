@@ -19,6 +19,9 @@ const available = (shell: string): boolean => spawnSync(shell, ["--version"]).st
 let builtFixture = "";
 
 beforeAll(() => {
+  if (process.platform === "win32") {
+    return;
+  }
   builtFixture = mkdtempSync(join(tmpdir(), "arashi-aw-built-shell-"));
   execFileSync(
     "bun",
@@ -169,35 +172,37 @@ describe("dual-name parent-shell integration", () => {
     },
   );
 
-  test.each(["bash", "zsh", "fish"] as const)(
-    "real built CLI switch --cd through actual aw changes the caller directory and cleans directives in %s",
-    (shell) => {
-      expect(available(shell), `${shell} must be installed for supported-shell acceptance`).toBe(
-        true,
-      );
-      const fixture = createRealSwitchFixture();
-      const command =
-        shell === "fish"
-          ? `command aw shell init fish | source; aw switch --all --path ${JSON.stringify(fixture.target)} --cd; set code $status; printf 'STATUS=%s\\nPWD=%s\\n' $code $PWD`
-          : `eval "$(command aw shell init ${shell})"; aw switch --all --path ${JSON.stringify(fixture.target)} --cd; code=$?; printf 'STATUS=%s\\nPWD=%s\\n' "$code" "$PWD"`;
-      const result = spawnSync(shell, [shell === "fish" ? "--no-config" : "-f", "-c", command], {
-        cwd: fixture.root,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NO_COLOR: "1",
-          PATH: `${fixture.bin}:${process.env.PATH ?? ""}`,
-          TMPDIR: dirname(fixture.bin),
-        },
-      });
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("STATUS=0");
-      expect(result.stdout).toContain(`PWD=${fixture.target}`);
-      expect(
-        spawnSync("find", [dirname(fixture.bin), "-name", "arashi-directive.*"], {
+  for (const shell of ["bash", "zsh", "fish"] as const) {
+    test.skipIf(process.platform === "win32")(
+      `real built CLI switch --cd through actual aw changes the caller directory and cleans directives in ${shell}`,
+      () => {
+        expect(available(shell), `${shell} must be installed for supported-shell acceptance`).toBe(
+          true,
+        );
+        const fixture = createRealSwitchFixture();
+        const command =
+          shell === "fish"
+            ? `command aw shell init fish | source; aw switch --all --path ${JSON.stringify(fixture.target)} --cd; set code $status; printf 'STATUS=%s\\nPWD=%s\\n' $code $PWD`
+            : `eval "$(command aw shell init ${shell})"; aw switch --all --path ${JSON.stringify(fixture.target)} --cd; code=$?; printf 'STATUS=%s\\nPWD=%s\\n' "$code" "$PWD"`;
+        const result = spawnSync(shell, [shell === "fish" ? "--no-config" : "-f", "-c", command], {
+          cwd: fixture.root,
           encoding: "utf8",
-        }).stdout,
-      ).toBe("");
-    },
-  );
+          env: {
+            ...process.env,
+            NO_COLOR: "1",
+            PATH: `${fixture.bin}:${process.env.PATH ?? ""}`,
+            TMPDIR: dirname(fixture.bin),
+          },
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain("STATUS=0");
+        expect(result.stdout).toContain(`PWD=${fixture.target}`);
+        expect(
+          spawnSync("find", [dirname(fixture.bin), "-name", "arashi-directive.*"], {
+            encoding: "utf8",
+          }).stdout,
+        ).toBe("");
+      },
+    );
+  }
 });
