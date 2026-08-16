@@ -1006,6 +1006,7 @@ export async function executeRemove(
 
   let preparedRemoveHooks: PreparedRemoveHooks | null = null;
   let preflightFailure: LifecycleHookOutcome | null = null;
+  let unavailableHookPreviews: RemoveHookPreview[] = [];
   try {
     const preflight = await preflightRemoveLifecycleHooks({
       config,
@@ -1015,6 +1016,7 @@ export async function executeRemove(
     });
     preparedRemoveHooks = preflight.preparedHooks;
     preflightFailure = preflight.failure;
+    unavailableHookPreviews = preflight.unavailablePreviews;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     summary.errors.push(message);
@@ -1032,7 +1034,7 @@ export async function executeRemove(
     }
     return ONE;
   }
-  if (preflightFailure) {
+  if (preflightFailure && (!options.dryRun || unavailableHookPreviews.length === ZERO)) {
     summary.hookOutcomes.push(preflightFailure);
     summary.errors.push(preflightFailure.message);
     summary.duration = Date.now() - startTime;
@@ -1088,6 +1090,7 @@ export async function executeRemove(
     summary.hookPreviews = await previewRemoveLifecycleHooks({
       preparedLocations: preparedRemoveHooks ?? undefined,
       targetRepositories: removeHookTargets,
+      unavailablePreviews: unavailableHookPreviews,
       workspaceRoot,
     });
     summary.duration = Date.now() - startTime;
@@ -1768,10 +1771,11 @@ const formatBranchDeletionError = (error: unknown): string => {
 const previewRemoveLifecycleHooks = async (options: {
   globalOnly?: boolean;
   preparedLocations?: PreparedRemoveHooks;
-  workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
+  unavailablePreviews?: readonly RemoveHookPreview[];
+  workspaceRoot: string;
 }): Promise<RemoveHookPreview[]> => {
-  const previews: RemoveHookPreview[] = [];
+  const previews: RemoveHookPreview[] = [...(options.unavailablePreviews ?? [])];
   if (options.preparedLocations) {
     for (const hookName of [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove] as const) {
       for (const prepared of options.preparedLocations[hookName]) {
@@ -2134,16 +2138,68 @@ const runRemoveLifecycleHook = async (options: {
   };
 };
 
+const unavailableRemovePreviews = (
+  preparation: Extract<
+    Awaited<ReturnType<typeof prepareLifecycleHookSources>>,
+    { classification: "file-invalid" | "interpreter-unavailable" }
+  >,
+  hookName: RemoveHookPreview["hookName"],
+): RemoveHookPreview[] => {
+  const failed = preparation.plannedEntry;
+  const reasonCode =
+    preparation.classification === "file-invalid"
+      ? (preparation.validation.reasonCode ?? "validation_failed")
+      : "interpreter_unavailable";
+  const message =
+    preparation.classification === "file-invalid"
+      ? (preparation.validation.error ?? "Hook validation failed")
+      : `No configured interpreter is available for ${failed.lifecycle}`;
+  return preparation.plan.entries
+    .filter(
+      (entry) =>
+        entry.configuredField === failed.configuredField &&
+        entry.executionPath === failed.executionPath &&
+        entry.lifecycle === failed.lifecycle &&
+        entry.scope === failed.scope &&
+        entry.sourceKind === failed.sourceKind &&
+        entry.sourceOwnerKind === failed.sourceOwnerKind &&
+        entry.sourceOwnerName === failed.sourceOwnerName &&
+        entry.sourceScriptPath === failed.sourceScriptPath &&
+        entry.targetRepositoryName === failed.targetRepositoryName,
+    )
+    .map((entry) => ({
+      availability: "unavailable",
+      error: message,
+      hookName,
+      reasonCode,
+      repository: entry.context.repositoryName ?? "workspace",
+      scope: entry.scope,
+      scriptPath: entry.sourceKind === "file" ? entry.sourceScriptPath : null,
+      selectedInterpreter: null,
+      sourceKind: entry.sourceKind,
+      sourceOwnerKind: entry.sourceOwnerKind === "global" ? "user-global" : entry.sourceOwnerKind,
+      sourceOwnerName: entry.sourceOwnerName,
+      sourceScriptPath: entry.sourceKind === "file" ? entry.sourceScriptPath : null,
+      valid: false,
+    }));
+};
+
 const preflightRemoveLifecycleHooks = async (options: {
   config: Config;
   removeTargets: RemoveHookTarget[];
   targetRepositories: HookTargetRepository[];
   workspaceRoot: string;
-}): Promise<{ failure: LifecycleHookOutcome | null; preparedHooks: PreparedRemoveHooks }> => {
+}): Promise<{
+  failure: LifecycleHookOutcome | null;
+  preparedHooks: PreparedRemoveHooks;
+  unavailablePreviews: RemoveHookPreview[];
+}> => {
   const preparedHooks: Record<"post-remove" | "pre-remove", PreparedLifecycleHookEntry[]> = {
     "post-remove": [],
     "pre-remove": [],
   };
+  let failure: LifecycleHookOutcome | null = null;
+  const unavailablePreviews: RemoveHookPreview[] = [];
   const targets = options.targetRepositories.map((repository) => {
     const removeTarget = options.removeTargets.find(
       (target) => target.repository === repository.name,
@@ -2198,11 +2254,6 @@ const preflightRemoveLifecycleHooks = async (options: {
   };
 
   for (const hookName of [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove] as const) {
-    const hasConfiguredInline =
-      Boolean(options.config.hooks?.scripts?.[hookName]) ||
-      options.targetRepositories.some((repository) =>
-        Boolean(options.config.repos[repository.name]?.hooks?.[hookName]),
-      );
     const candidates: LifecycleHookPreparationCandidate[] = [];
     const addFiles = async (optionsForSource: {
       executionPath: string;
@@ -2231,7 +2282,13 @@ const preflightRemoveLifecycleHooks = async (options: {
           },
         });
       }
-      if (scriptPaths.length === ZERO && !hasConfiguredInline) {
+      const hasInlineAtLocation =
+        optionsForSource.scope === "workspace"
+          ? Boolean(options.config.hooks?.scripts?.[hookName])
+          : optionsForSource.scope === "repository" && optionsForSource.sourceOwnerName
+            ? Boolean(options.config.repos[optionsForSource.sourceOwnerName]?.hooks?.[hookName])
+            : false;
+      if (scriptPaths.length === ZERO && !hasInlineAtLocation) {
         candidates.push({
           kind: "absent",
           source: {
@@ -2353,37 +2410,37 @@ const preflightRemoveLifecycleHooks = async (options: {
           },
         ),
         preparedHooks,
+        unavailablePreviews: [],
       };
     }
     if (preparation.classification === "file-invalid") {
-      return {
-        failure: outcomeFor(hookName, preparation.plannedEntry, {
-          hookStatus: "failure",
-          message: preparation.validation.error ?? "Hook validation failed",
-          reasonCode: preparation.validation.reasonCode ?? "validation_failed",
-        }),
-        preparedHooks,
-      };
+      failure ??= outcomeFor(hookName, preparation.plannedEntry, {
+        hookStatus: "failure",
+        message: preparation.validation.error ?? "Hook validation failed",
+        reasonCode: preparation.validation.reasonCode ?? "validation_failed",
+      });
+      unavailablePreviews.push(...unavailableRemovePreviews(preparation, hookName));
+      continue;
     }
     if (preparation.classification === "interpreter-unavailable") {
-      return {
-        failure: outcomeFor(hookName, preparation.plannedEntry, {
-          hookStatus: "failure",
-          message: `No configured interpreter is available for ${hookName}`,
-          reasonCode: "interpreter_unavailable",
-        }),
-        preparedHooks,
-      };
+      failure ??= outcomeFor(hookName, preparation.plannedEntry, {
+        hookStatus: "failure",
+        message: `No configured interpreter is available for ${hookName}`,
+        reasonCode: "interpreter_unavailable",
+      });
+      unavailablePreviews.push(...unavailableRemovePreviews(preparation, hookName));
+      continue;
     }
     preparedHooks[hookName].push(...preparation.entries);
   }
 
   return {
-    failure: null,
+    failure,
     preparedHooks: Object.freeze({
       "post-remove": Object.freeze([...preparedHooks["post-remove"]]),
       "pre-remove": Object.freeze([...preparedHooks["pre-remove"]]),
     }),
+    unavailablePreviews,
   };
 };
 

@@ -166,9 +166,20 @@ describe("inline hook source-neutral CLI behavior RED", () => {
       ]);
       expect(removed.exitCode, `${removed.stdout}\n${removed.stderr}`).toBe(0);
       const removedEnvelope = parseSingleDocument(removed.stdout);
-      expect(removedEnvelope.data.hookOutcomes.map((outcome) => outcome.hookName)).toEqual([
-        "pre-remove",
-        "post-remove",
+      expect(
+        removedEnvelope.data.hookOutcomes.map(
+          (outcome) =>
+            `${outcome.hookName}:${outcome.scope}:${outcome.sourceKind}:${outcome.hookStatus}`,
+        ),
+      ).toEqual([
+        "pre-remove:repository:file:skipped",
+        "pre-remove:workspace:inline-config:success",
+        "pre-remove:global-repository:file:skipped",
+        "pre-remove:global-shared:file:skipped",
+        "post-remove:repository:file:skipped",
+        "post-remove:workspace:inline-config:success",
+        "post-remove:global-repository:file:skipped",
+        "post-remove:global-shared:file:skipped",
       ]);
       expect(await readFile(marker, "utf8")).toBe("prepost");
     },

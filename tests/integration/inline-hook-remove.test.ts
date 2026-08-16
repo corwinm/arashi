@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "fs/promises";
+import { access, chmod, mkdtemp, readFile, realpath, rm } from "fs/promises";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   branchExists,
@@ -125,6 +125,153 @@ printf '${label}|%s|%s|%s|%s\\n' "$ARASHI_REPO_NAME" "$ARASHI_HOOK_SCOPE" "$ARAS
       expect(labels.filter((label) => label.startsWith("workspace-post"))).toHaveLength(2);
       for (const path of Object.values(worktrees)) {
         expect(await pathExists(path)).toBe(false);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "previews unavailable inline hooks without fabricating outcomes or mutating targets",
+    async () => {
+      const branch = "feature-inline-remove-unavailable-preview";
+      const worktrees = await createWorktreesForBranch(workspace, branch, false);
+      const snippet = "echo preview-private-payload";
+      await configureInlineRemove({ "pre-remove": { cmd: snippet } }, () => ({}));
+
+      const result = await runArashi(
+        workspace.rootPath,
+        ["remove", branch, "--dry-run", "--json"],
+        home,
+      );
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.ok).toBe(true);
+      expect(envelope.data.hookOutcomes).toEqual([]);
+      expect(envelope.data.hooks).toEqual(
+        expect.arrayContaining(
+          workspace.repos.map((repository) =>
+            expect.objectContaining({
+              availability: "unavailable",
+              hookName: "pre-remove",
+              reasonCode: "interpreter_unavailable",
+              repository: repository.name,
+              scope: "workspace",
+              selectedInterpreter: null,
+              sourceKind: "inline-config",
+              sourceOwnerKind: "workspace",
+              sourceOwnerName: null,
+              sourceScriptPath: null,
+              valid: false,
+            }),
+          ),
+        ),
+      );
+      expect(result.stdout).not.toContain(snippet);
+      expect(result.stderr).not.toContain(snippet);
+      for (const path of Object.values(worktrees)) {
+        expect(await pathExists(path)).toBe(true);
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "retains absent outcomes at unrelated remove-hook locations",
+    async () => {
+      const branch = "feature-inline-remove-complete-ledger";
+      await createWorktreesForBranch(workspace, branch, false);
+      await configureInlineRemove({ "pre-remove": "exit 0" }, () => ({}));
+
+      const result = await runArashi(
+        workspace.rootPath,
+        ["remove", branch, "--force", "--json"],
+        home,
+      );
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const outcomes = JSON.parse(result.stdout).data.hookOutcomes;
+      for (const repository of workspace.repos) {
+        expect(outcomes).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              hookName: "pre-remove",
+              hookStatus: "skipped",
+              reasonCode: "not_found",
+              repositoryId: repository.name,
+              scope: "repository",
+              sourceKind: "file",
+            }),
+            expect.objectContaining({
+              hookName: "pre-remove",
+              hookStatus: "success",
+              reasonCode: "none",
+              repositoryId: repository.name,
+              scope: "workspace",
+              sourceKind: "inline-config",
+            }),
+            expect.objectContaining({
+              hookName: "pre-remove",
+              hookStatus: "skipped",
+              reasonCode: "not_found",
+              repositoryId: repository.name,
+              scope: "global-repository",
+              sourceKind: "file",
+            }),
+            expect.objectContaining({
+              hookName: "pre-remove",
+              hookStatus: "skipped",
+              reasonCode: "not_found",
+              repositoryId: repository.name,
+              scope: "global-shared",
+              sourceKind: "file",
+            }),
+          ]),
+        );
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "previews invalid native hooks without fabricating outcomes or mutating targets",
+    async () => {
+      const branch = "feature-inline-remove-invalid-file-preview";
+      const worktrees = await createWorktreesForBranch(workspace, branch, false);
+      const hookPath = join(workspace.rootPath, ".arashi", "hooks", "pre-remove.sh");
+      await writeNativeHook(hookPath, "exit 0");
+      await chmod(hookPath, 0o644);
+      const canonicalHookPath = await realpath(hookPath);
+
+      const result = await runArashi(
+        workspace.rootPath,
+        ["remove", branch, "--dry-run", "--json"],
+        home,
+      );
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.ok).toBe(true);
+      expect(envelope.data.hookOutcomes).toEqual([]);
+      expect(envelope.data.hooks).toEqual(
+        expect.arrayContaining(
+          workspace.repos.map((repository) =>
+            expect.objectContaining({
+              availability: "unavailable",
+              hookName: "pre-remove",
+              reasonCode: "validation_failed",
+              repository: repository.name,
+              scope: "workspace",
+              scriptPath: canonicalHookPath,
+              selectedInterpreter: null,
+              sourceKind: "file",
+              sourceOwnerKind: "workspace",
+              sourceOwnerName: null,
+              sourceScriptPath: canonicalHookPath,
+              valid: false,
+            }),
+          ),
+        ),
+      );
+      for (const path of Object.values(worktrees)) {
+        expect(await pathExists(path)).toBe(true);
       }
     },
   );

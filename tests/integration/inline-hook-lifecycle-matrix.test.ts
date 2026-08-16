@@ -53,10 +53,20 @@ describe("all inline lifecycle fields and unchanged file-only compatibility RED"
 
       const removed = await runArashi(workspace.rootPath, ["remove", branch, "--force", "--json"]);
       expect(removed.exitCode, `${removed.stdout}\n${removed.stderr}`).toBe(0);
-      const removeNames = JSON.parse(removed.stdout).data.hookOutcomes.map(
-        (outcome: { hookName: string }) => outcome.hookName,
+      const removeLedger = JSON.parse(removed.stdout).data.hookOutcomes.map(
+        (outcome: { hookName: string; hookStatus: string; scope: string; sourceKind: string }) =>
+          `${outcome.hookName}:${outcome.scope}:${outcome.sourceKind}:${outcome.hookStatus}`,
       );
-      expect(removeNames).toEqual(["pre-remove", "pre-remove", "post-remove", "post-remove"]);
+      expect(removeLedger).toEqual([
+        "pre-remove:repository:inline-config:success",
+        "pre-remove:workspace:inline-config:success",
+        "pre-remove:global-repository:file:skipped",
+        "pre-remove:global-shared:file:skipped",
+        "post-remove:repository:inline-config:success",
+        "post-remove:workspace:inline-config:success",
+        "post-remove:global-repository:file:skipped",
+        "post-remove:global-shared:file:skipped",
+      ]);
 
       const created = await runArashi(workspace.rootPath, [
         "create",
