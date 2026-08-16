@@ -349,4 +349,26 @@ describe("shared repository materialization planner RED", () => {
     expect(plan.outcomes.some(({ status }) => status === "blocked")).toBe(true);
     expect(inspectionReached).toBe(false);
   });
+
+  test("blocks ancestor-descendant declarations across copy and symlink before mutation", async () => {
+    const plan = await (
+      await materializationPlanner()
+    )(input({ copy: ["assets"], symlink: ["assets/local.json"] }), dependencies());
+
+    expect(plan.classification).toBe("blocked");
+    expect(plan.outcomes).toEqual([
+      expect.objectContaining({
+        action: "copy",
+        path: "assets",
+        reasonCode: "destination_exists",
+        status: "blocked",
+      }),
+      expect.objectContaining({
+        action: "symlink",
+        path: "assets/local.json",
+        reasonCode: "destination_exists",
+        status: "blocked",
+      }),
+    ]);
+  });
 });

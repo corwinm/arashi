@@ -453,6 +453,7 @@ const preflightConfiguredMaterialization = async (input: {
   createBasePlan: CreateBaseResolutionPlan | undefined;
   dryRun: boolean;
   repositories: Parameters<typeof createCoordinatedWorktrees>[1];
+  reuseExisting: boolean;
   workspaceRoot: string;
 }): Promise<readonly RepositoryMaterializationPlan[]> => {
   const plans: RepositoryMaterializationPlan[] = [];
@@ -462,7 +463,21 @@ const preflightConfiguredMaterialization = async (input: {
     const symlink = policy?.symlink ?? [];
     if (copy.length === ZERO && symlink.length === ZERO) continue;
     const canonicalRepositoryPath = await realpath(repository.path);
+    let reusedTargetOid: string | undefined;
+    if (input.reuseExisting) {
+      try {
+        reusedTargetOid = (
+          await exec(
+            ["rev-parse", "--verify", "--quiet", `refs/heads/${input.branchName}^{commit}`],
+            repository.path,
+          )
+        ).stdout.trim();
+      } catch {
+        // The target branch does not exist in this repository, so create will use its resolved base.
+      }
+    }
     const targetOid =
+      reusedTargetOid ??
       input.createBasePlan?.byCanonicalPath.get(canonicalRepositoryPath)?.resolvedOid ??
       (await resolveDefaultMaterializationTarget(repository));
     const destinationRoot = (
@@ -1433,6 +1448,7 @@ export async function executeCreate(
     createBasePlan,
     dryRun: options.dryRun === true,
     repositories: selectedRepos,
+    reuseExisting: options.conflict === "REUSE_EXISTING",
     workspaceRoot: context.workspaceRoot,
   });
 

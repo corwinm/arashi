@@ -190,17 +190,21 @@ function findPortableCollisions(
   entries: ReadonlyArray<{ action: MaterializationAction; path: string }>,
 ): Set<number> {
   const collisions = new Set<number>();
-  const seen = new Map<string, number>();
+  const normalized: Array<{ index: number; key: string }> = [];
   for (const [index, entry] of entries.entries()) {
     try {
       const key = normalizeMaterializationPath(entry.path).collisionKey;
-      const previous = seen.get(key);
-      if (previous !== undefined) {
-        collisions.add(previous);
-        collisions.add(index);
-      } else {
-        seen.set(key, index);
+      for (const prior of normalized) {
+        if (
+          key === prior.key ||
+          key.startsWith(`${prior.key}/`) ||
+          prior.key.startsWith(`${key}/`)
+        ) {
+          collisions.add(prior.index);
+          collisions.add(index);
+        }
       }
+      normalized.push({ index, key });
     } catch {
       collisions.add(index);
     }
