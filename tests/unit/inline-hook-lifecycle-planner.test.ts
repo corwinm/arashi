@@ -457,4 +457,35 @@ describe("AC-03/04/07/11 shared lifecycle source planner RED", () => {
     expect(Object.isFrozen(entry.resolution)).toBe(true);
     expect(JSON.stringify(prepared.plan)).not.toContain(snippet);
   });
+
+  test("doctor prepares create lifecycle sources and detects an unavailable interpreter", async () => {
+    const snippet = "printf 'doctor-private-payload'";
+    const prepared = await prepareLifecycleHookSources({
+      candidates: [
+        {
+          interpreters: { cmd: snippet },
+          kind: "inline-config",
+          source: {
+            ...inline("pre-create", "workspace", null),
+            sourceKind: "inline-config" as const,
+          },
+        },
+      ],
+      consumer: "doctor",
+      env: { PATH: "" },
+      platform: "linux",
+      targets: [targets[0]],
+      workspaceRoot,
+    });
+
+    expect(prepared).toMatchObject({
+      classification: "interpreter-unavailable",
+      plannedEntry: {
+        hookName: "pre-create",
+        sourceKind: "inline-config",
+        slot: "create.workspace.pre",
+      },
+    });
+    expect(JSON.stringify(prepared)).not.toContain(snippet);
+  });
 });

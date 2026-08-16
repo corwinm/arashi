@@ -977,15 +977,31 @@ const preflightConfiguredCreateHooks = async (
     });
   }
 
-  const inlineLifecycles = new Set(
+  const inlineLocations = new Set(
     candidates
       .filter((candidate) => candidate.kind === "inline-config")
-      .map((candidate) => candidate.source.lifecycle),
+      .map((candidate) =>
+        JSON.stringify([
+          candidate.source.lifecycle,
+          candidate.source.scope,
+          candidate.source.sourceOwnerName,
+        ]),
+      ),
   );
   const prepared = new Map<string, PreparedCreateHook>(
     locations.map((location) => [
       location.hookName,
-      { kind: inlineLifecycles.has(location.lifecycle) ? "omitted" : "absent" },
+      {
+        kind: inlineLocations.has(
+          JSON.stringify([
+            location.lifecycle,
+            location.scope,
+            "targetRepositoryName" in location ? location.targetRepositoryName : null,
+          ]),
+        )
+          ? "omitted"
+          : "absent",
+      },
     ]),
   );
   for (const entry of preparation.entries) prepared.set(entry.plan.hookName, entry);

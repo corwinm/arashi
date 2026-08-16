@@ -664,10 +664,13 @@ const collectInlineHookFindings = async (
       const repositoryPath = resolve(executionRoot, repositoryConfig.path);
       await inspect({
         executionPath: repositoryPath,
-        filePaths: await discoverLifecycleHookCandidatesInDirectory(
-          lifecycle,
-          join(repositoryPath, ".arashi", "hooks"),
-        ),
+        filePaths:
+          repositoryPath === executionRoot
+            ? []
+            : await discoverLifecycleHookCandidatesInDirectory(
+                lifecycle,
+                join(repositoryPath, ".arashi", "hooks"),
+              ),
         interpreters: typeof inline === "string" ? { bash: inline } : inline,
         lifecycle,
         ownerKind: "repository",

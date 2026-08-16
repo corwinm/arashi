@@ -116,6 +116,71 @@ printf '${repositoryName}-pre|%s|%s|%s|%s\\n' "$PWD" "$ARASHI_HOOK_NAME" "$ARASH
   );
 
   test.runIf(process.platform !== "win32")(
+    "retains not-found outcomes for absent locations unrelated to one inline source",
+    async () => {
+      workspace = await createChildHookWorkspace();
+      const branch = "feature-inline-create-complete-ledger";
+      await configureInlineCreate(workspace, { "pre-create": "exit 0" }, () => ({}));
+
+      const result = await runArashi(workspace.workspacePath, [
+        "create",
+        branch,
+        "--no-progress",
+        "--json",
+      ]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const envelope = JSON.parse(result.stdout);
+      expect(
+        envelope.data.hookOutcomes.map(
+          (outcome: {
+            hookName: string;
+            hookStatus: string;
+            reasonCode: string;
+            repositoryId: string;
+            scope: string;
+            sourceKind: string;
+          }) => ({
+            hookName: outcome.hookName,
+            hookStatus: outcome.hookStatus,
+            reasonCode: outcome.reasonCode,
+            repositoryId: outcome.repositoryId,
+            scope: outcome.scope,
+            sourceKind: outcome.sourceKind,
+          }),
+        ),
+      ).toEqual([
+        {
+          hookName: "pre-create",
+          hookStatus: "success",
+          reasonCode: "none",
+          repositoryId: "workspace",
+          scope: "workspace",
+          sourceKind: "inline-config",
+        },
+        ...workspace.childRepoNames.flatMap((repositoryId) =>
+          (["pre-create", "post-create"] as const).map((lifecycle) => ({
+            hookName: `${lifecycle}.${repositoryId}`,
+            hookStatus: "skipped",
+            reasonCode: "not_found",
+            repositoryId,
+            scope: "repository",
+            sourceKind: "file",
+          })),
+        ),
+        {
+          hookName: "post-create",
+          hookStatus: "skipped",
+          reasonCode: "not_found",
+          repositoryId: "workspace",
+          scope: "workspace",
+          sourceKind: "file",
+        },
+      ]);
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
     "retains inline post-create failure and pre-existing-branch warnings while rolling back owned worktrees",
     async () => {
       workspace = await createChildHookWorkspace();

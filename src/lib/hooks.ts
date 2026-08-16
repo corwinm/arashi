@@ -829,7 +829,7 @@ export const planLifecycleHookSources = (options: {
     });
   };
 
-  if (options.consumer === "create") {
+  if (options.consumer === "create" || options.consumer === "doctor") {
     appendCreate(
       sources.find((source) => source.lifecycle === "pre-create" && source.scope === "workspace"),
       undefined,
@@ -862,7 +862,9 @@ export const planLifecycleHookSources = (options: {
       undefined,
       "create.workspace.post",
     );
-    return { classification: "ready", entries };
+    if (options.consumer === "create") {
+      return { classification: "ready", entries };
+    }
   }
 
   const scopes: HookScope[] = ["repository", "workspace", "global-repository", "global-shared"];

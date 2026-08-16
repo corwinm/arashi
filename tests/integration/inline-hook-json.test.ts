@@ -82,11 +82,35 @@ describe("inline hook public source projection and secrecy RED", () => {
           sourceScriptPath: null,
         }),
         expect.objectContaining({
+          hookName: "pre-create.alpha",
+          hookStatus: "skipped",
+          reasonCode: "not_found",
+          sourceKind: "file",
+        }),
+        expect.objectContaining({
           hookName: "post-create.alpha",
           sourceKind: "inline-config",
           sourceOwnerKind: "repository",
           sourceOwnerName: "alpha",
           sourceScriptPath: null,
+        }),
+        expect.objectContaining({
+          hookName: "pre-create.beta",
+          hookStatus: "skipped",
+          reasonCode: "not_found",
+          sourceKind: "file",
+        }),
+        expect.objectContaining({
+          hookName: "post-create.beta",
+          hookStatus: "skipped",
+          reasonCode: "not_found",
+          sourceKind: "file",
+        }),
+        expect.objectContaining({
+          hookName: "post-create",
+          hookStatus: "skipped",
+          reasonCode: "not_found",
+          sourceKind: "file",
         }),
       ]);
       expectNoSnippetProjection(result.stdout, result.stderr, envelope);
@@ -121,6 +145,10 @@ describe("inline hook public source projection and secrecy RED", () => {
       expect(envelope.error?.code).toBe("CREATE_FAILED");
       expect(envelope.error?.details?.hookOutcomes?.map((outcome) => outcome.hookName)).toEqual([
         "pre-create",
+        "pre-create.alpha",
+        "post-create.alpha",
+        "pre-create.beta",
+        "post-create.beta",
         "post-create",
       ]);
       expect(envelope.error?.details?.hookOutcomes?.at(-1)).toMatchObject({
