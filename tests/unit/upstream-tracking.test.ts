@@ -63,6 +63,10 @@ const createFakeGit = (state: FakeGitState): { calls: string[][]; runGit: RunGit
       }
       return { stdout: `${state.fetchRefspecs.join("\n")}\n` };
     }
+    if (args[0] === "check-ref-format") {
+      if (args[1]?.includes("..")) throw new Error("invalid refname");
+      return { stdout: "" };
+    }
 
     throw new Error(`Unexpected or mutating Git command: ${command}`);
   };
@@ -127,6 +131,62 @@ describe("inspectUpstreamTrackingConfiguration", () => {
         fetchRefspecs: ["+refs/heads/release/*:refs/remotes/origin/*"],
       }),
       ["+refs/heads/release/*:refs/remotes/origin/*"],
+    ],
+    [
+      "conflicting exact fetch mapping source",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/main:refs/custom/main"],
+      }),
+      ["+refs/heads/main:refs/custom/main"],
+    ],
+    [
+      "conflicting wildcard fetch mapping source",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/*:refs/custom/*"],
+      }),
+      ["+refs/heads/*:refs/custom/*"],
+    ],
+    [
+      "negative fetch exclusion",
+      configuredState({
+        fetchRefspecs: ["^refs/heads/main"],
+      }),
+      ["^refs/heads/main"],
+    ],
+    [
+      "covering mapping suppressed by a negative fetch exclusion",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/main:refs/remotes/origin/main", "^refs/heads/main"],
+      }),
+      ["^refs/heads/main"],
+    ],
+    [
+      "malformed fetch mapping",
+      configuredState({
+        fetchRefspecs: ["refs/heads/main"],
+      }),
+      ["refs/heads/main"],
+    ],
+    [
+      "structurally shaped mapping with an invalid destination refname",
+      configuredState({
+        fetchRefspecs: ["refs/heads/release:refs/custom/.."],
+      }),
+      ["refs/heads/release:refs/custom/.."],
+    ],
+    [
+      "leading whitespace preserved in a configured fetch refspec",
+      configuredState({
+        fetchRefspecs: [" +refs/heads/main:refs/remotes/origin/main"],
+      }),
+      [" +refs/heads/main:refs/remotes/origin/main"],
+    ],
+    [
+      "trailing whitespace preserved in a configured fetch refspec",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/main:refs/remotes/origin/main "],
+      }),
+      ["+refs/heads/main:refs/remotes/origin/main "],
     ],
   ])(
     "diagnoses %s without invoking a mutating Git command",

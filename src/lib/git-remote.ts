@@ -85,9 +85,62 @@ const readOptionalGitValue = async (
   }
 };
 
+const fetchRefspecRequiresManualReview = (refspec: string): boolean => {
+  if (refspec !== refspec.trim()) {
+    return true;
+  }
+
+  const normalized = refspec.replace(/^\+/, "");
+  if (!normalized || normalized.startsWith("^") || normalized.startsWith("!")) {
+    return true;
+  }
+
+  const separator = normalized.indexOf(":");
+  if (
+    separator <= 0 ||
+    separator !== normalized.lastIndexOf(":") ||
+    separator === normalized.length - 1
+  ) {
+    return true;
+  }
+
+  const sourcePattern = normalized.slice(0, separator);
+  const destinationPattern = normalized.slice(separator + 1);
+  const sourceWildcards = sourcePattern.split("*").length - 1;
+  const destinationWildcards = destinationPattern.split("*").length - 1;
+  return (
+    sourceWildcards > 1 || destinationWildcards > 1 || sourceWildcards !== destinationWildcards
+  );
+};
+
+const fetchRefspecHasInvalidRefnames = async (
+  refspec: string,
+  repoPath: string,
+  runGit: ReadOnlyGitRunner,
+): Promise<boolean> => {
+  if (fetchRefspecRequiresManualReview(refspec)) {
+    return true;
+  }
+
+  const normalized = refspec.replace(/^\+/, "");
+  const separator = normalized.indexOf(":");
+  const candidates = [
+    normalized.slice(0, separator).replace("*", "arashi-wildcard"),
+    normalized.slice(separator + 1).replace("*", "arashi-wildcard"),
+  ];
+  try {
+    for (const candidate of candidates) {
+      await runGit(["check-ref-format", candidate], repoPath);
+    }
+    return false;
+  } catch {
+    return true;
+  }
+};
+
 const fetchRefspecCovers = (refspec: string, source: string, destination: string): boolean => {
   const normalized = refspec.trim().replace(/^\+/, "");
-  if (!normalized || normalized.startsWith("!")) {
+  if (!normalized || normalized.startsWith("^")) {
     return false;
   }
 
@@ -123,7 +176,7 @@ const fetchRefspecCovers = (refspec: string, source: string, destination: string
 
 const fetchRefspecTargetsDestination = (refspec: string, destination: string): boolean => {
   const normalized = refspec.trim().replace(/^\+/, "");
-  if (!normalized || normalized.startsWith("!")) {
+  if (!normalized || normalized.startsWith("^")) {
     return false;
   }
 
@@ -147,6 +200,31 @@ const fetchRefspecTargetsDestination = (refspec: string, destination: string): b
   );
 };
 
+const fetchRefspecMapsSource = (refspec: string, source: string): boolean => {
+  const normalized = refspec.trim().replace(/^\+/, "");
+  if (!normalized || normalized.startsWith("^")) {
+    return false;
+  }
+
+  const separator = normalized.indexOf(":");
+  if (separator === -1) {
+    return false;
+  }
+
+  const sourcePattern = normalized.slice(0, separator);
+  const wildcard = sourcePattern.indexOf("*");
+  if (wildcard === -1) {
+    return sourcePattern === source;
+  }
+  if (sourcePattern.indexOf("*", wildcard + 1) !== -1) {
+    return false;
+  }
+
+  return (
+    source.startsWith(sourcePattern.slice(0, wildcard)) &&
+    source.endsWith(sourcePattern.slice(wildcard + 1))
+  );
+};
 export const inspectUpstreamTrackingConfiguration = async (
   repoPath: string,
   runGit: ReadOnlyGitRunner = exec,
@@ -199,21 +277,36 @@ export const inspectUpstreamTrackingConfiguration = async (
     return { kind: "not-applicable" };
   }
 
-  const fetchRefspecOutput = await readOptionalGitValue(runGit, repoPath, [
-    "config",
-    "--get-all",
-    `remote.${remote}.fetch`,
-  ]);
-  const fetchRefspecs = fetchRefspecOutput?.split("\n").map((value) => value.trim()) ?? [];
+  let fetchRefspecs: string[] = [];
+  try {
+    const fetchRefspecOutput = (
+      await runGit(["config", "--get-all", `remote.${remote}.fetch`], repoPath)
+    ).stdout.replace(/(?:\r?\n)$/, "");
+    fetchRefspecs = fetchRefspecOutput.split(/\r?\n/);
+  } catch {
+    // An absent fetch mapping is diagnosed below as an unambiguous missing mapping.
+  }
+  const manualReviewRefspecs: string[] = [];
+  for (const refspec of fetchRefspecs) {
+    if (await fetchRefspecHasInvalidRefnames(refspec, repoPath, runGit)) {
+      manualReviewRefspecs.push(refspec);
+    }
+  }
+  const manualReviewRefspecSet = new Set(manualReviewRefspecs);
   if (
+    manualReviewRefspecs.length === 0 &&
     fetchRefspecs.some((refspec) =>
       fetchRefspecCovers(refspec, mergeRef, expectedRemoteTrackingRef),
     )
   ) {
     return { kind: "not-applicable" };
   }
-  const conflictingFetchRefspecs = fetchRefspecs.filter((refspec) =>
-    fetchRefspecTargetsDestination(refspec, expectedRemoteTrackingRef),
+  const conflictingFetchRefspecs = fetchRefspecs.filter(
+    (refspec) =>
+      manualReviewRefspecSet.has(refspec) ||
+      (!fetchRefspecCovers(refspec, mergeRef, expectedRemoteTrackingRef) &&
+        (fetchRefspecTargetsDestination(refspec, expectedRemoteTrackingRef) ||
+          fetchRefspecMapsSource(refspec, mergeRef))),
   );
 
   return {
