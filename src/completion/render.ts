@@ -81,7 +81,7 @@ _arashi() {
     COMPREPLY+=("$quoted")
   done < <(command arashi completion __query "$cursor" -- "\${words[@]}")
 }
-complete -F _arashi arashi
+complete -F _arashi arashi aw
 `;
   if (shell === "zsh")
     return `${marker}
@@ -99,7 +99,7 @@ _arashi() {
   done < <(command arashi completion __query "$((CURRENT - 1))" -- "\${words[@]}")
   compadd -d displays -- "\${values[@]}"
 }
-compdef _arashi arashi
+compdef _arashi arashi aw
 `;
   return `${marker}
 function __arashi_complete
@@ -116,7 +116,7 @@ function __arashi_complete
         end
     end
 end
-complete -c arashi -f -a '(__arashi_complete)'
+complete -c arashi -c aw -f -a '(__arashi_complete)'
 `;
 }
 

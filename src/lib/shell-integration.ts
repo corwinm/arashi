@@ -33,9 +33,9 @@ export function detectSupportedShell(
   return isSupportedShell(shellName) ? shellName : null;
 }
 
-export function buildShellInitScript(shell: SupportedShell): string {
-  if (shell === "fish") {
-    return `function arashi --wraps arashi --description "Run arashi with shell integration"
+function renderFishShellFunction(name: "arashi" | "aw"): string {
+  return `function ${name} --wraps ${name} --description "Run arashi with shell integration"
+    # arashi-managed-shell-wrapper:${name}:v1
     set -l tmp_root /tmp
     if test -n "$TMPDIR"
         set tmp_root $TMPDIR
@@ -46,7 +46,7 @@ export function buildShellInitScript(shell: SupportedShell): string {
         return 1
     end
 
-    env ARASHI_DIRECTIVE_FILE="$directive_file" ARASHI_SHELL=fish command arashi $argv
+    env ARASHI_DIRECTIVE_FILE="$directive_file" ARASHI_SHELL=fish command ${name} $argv
     set -l status_code $status
 
     if test -s "$directive_file"
@@ -57,13 +57,22 @@ export function buildShellInitScript(shell: SupportedShell): string {
     return $status_code
 end
 `;
+}
+
+export function buildShellInitScript(shell: SupportedShell): string {
+  if (shell === "fish") {
+    return `${renderFishShellFunction("arashi")}
+if not functions -q aw; or functions aw | string match -q '*arashi-managed-shell-wrapper:aw:v1*'
+${renderFishShellFunction("aw")}end
+`;
   }
 
-  return `arashi() {
+  const renderPosixFunction = (name: "arashi" | "aw") => `${name}() {
+  : arashi-managed-shell-wrapper:${name}:v1
   local directive_file status_code
   directive_file="$(mktemp "\${TMPDIR:-/tmp}/arashi-directive.XXXXXX")" || return 1
 
-  ARASHI_DIRECTIVE_FILE="$directive_file" ARASHI_SHELL=${shell} command arashi "$@"
+  ARASHI_DIRECTIVE_FILE="$directive_file" ARASHI_SHELL=${shell} command ${name} "$@"
   status_code=$?
 
   if [ -s "$directive_file" ]; then
@@ -73,6 +82,17 @@ end
   rm -f "$directive_file"
   return "$status_code"
 }
+`;
+  const aliasGuard =
+    shell === "zsh"
+      ? `if (( ! \${+aliases[aw]} )); then
+  if (( ! \${+functions[aw]} )) || [[ "\${functions[aw]}" == *arashi-managed-shell-wrapper:aw:v1* ]]; then
+${renderPosixFunction("aw")}  fi
+fi`
+      : `if ! alias aw >/dev/null 2>&1 && { ! declare -F aw >/dev/null 2>&1 || declare -f aw | grep -Fq arashi-managed-shell-wrapper:aw:v1; }; then
+${renderPosixFunction("aw")}fi`;
+  return `${renderPosixFunction("arashi")}
+${aliasGuard}
 `;
 }
 

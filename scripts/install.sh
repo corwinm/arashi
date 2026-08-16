@@ -5,6 +5,10 @@ set -euo pipefail
 PROJECT_NAME="arashi"
 BINARY_NAME="arashi.bin"
 WRAPPER_ASSET="arashi"
+ALIAS_ASSET="aw"
+ALIAS_MARKER="arashi-managed-alias:aw:v1"
+LEDGER_NAME=".arashi-managed-entrypoints.json"
+LEDGER_SCHEMA_VERSION=1
 REPOSITORY="corwinm/arashi"
 CHECKSUM_MANIFEST="arashi-checksums.txt"
 VERSION_INPUT="latest"
@@ -368,8 +372,6 @@ expected_checksum_for_asset() {
 
 choose_install_dir() {
   if [ -n "$INSTALL_DIR_OVERRIDE" ]; then
-    mkdir -p "$INSTALL_DIR_OVERRIDE" 2>/dev/null || fail "Unable to create install directory: $INSTALL_DIR_OVERRIDE"
-    [ -w "$INSTALL_DIR_OVERRIDE" ] || fail "Install directory is not writable: $INSTALL_DIR_OVERRIDE"
     printf '%s\n' "$INSTALL_DIR_OVERRIDE"
     return
   fi
@@ -378,39 +380,257 @@ choose_install_dir() {
 
   local default_install_dir
   default_install_dir="$HOME/.arashi/bin"
-  mkdir -p "$default_install_dir" 2>/dev/null || fail "Unable to create default install directory: $default_install_dir"
-  [ -w "$default_install_dir" ] || fail "Default install directory is not writable: $default_install_dir"
   printf '%s\n' "$default_install_dir"
 }
 
-verify_installed_binary() {
-  local wrapper_path="$1"
-  local version_output=""
-  local verify_status=0
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+preflight_alias_ownership() {
+  local install_dir="$1"
+  local alias_path="$install_dir/$ALIAS_ASSET"
+  local ledger_path="$install_dir/$LEDGER_NAME"
+  local resolved=""
+
+  if [ -e "$ledger_path" ] || [ -L "$ledger_path" ]; then
+    if [ -L "$ledger_path" ] || [ ! -f "$ledger_path" ] || [ ! -r "$ledger_path" ]; then
+      printf 'error: ownership ledger collision at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
+      return 1
+    fi
+    grep -Eq '"schemaVersion"[[:space:]]*:[[:space:]]*1([,[:space:]}])' "$ledger_path" || {
+      printf 'error: ownership ledger schema defect at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
+      return 1
+    }
+    grep -Fq "\"installDirectory\": \"$(json_escape "$install_dir")\"" "$ledger_path" || {
+      printf 'error: ownership ledger install-directory mismatch at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
+      return 1
+    }
+    [ "$(grep -c '"path"' "$ledger_path")" -eq 1 ] || {
+      printf 'error: ownership ledger alias-set defect at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
+      return 1
+    }
+  fi
+
+  if [ -e "$alias_path" ] || [ -L "$alias_path" ]; then
+    if [ -L "$alias_path" ] || [ ! -f "$alias_path" ] || [ ! -r "$alias_path" ]; then
+      printf 'error: aw collision at %s is not a readable regular managed file; move or remove it deliberately before retrying\n' "$alias_path" >&2
+      return 1
+    fi
+    grep -Fq "$ALIAS_MARKER" "$alias_path" || {
+      printf 'error: unrelated aw collision at %s; move or remove it deliberately before retrying\n' "$alias_path" >&2
+      return 1
+    }
+    [ -f "$ledger_path" ] || {
+      printf 'error: marked manual aw at %s has no installer ownership ledger; move or remove it deliberately before retrying\n' "$alias_path" >&2
+      return 1
+    }
+    local alias_hash
+    alias_hash="$(sha256_file "$alias_path")"
+    grep -Fq "\"path\": \"$(json_escape "$alias_path")\"" "$ledger_path" || {
+      printf 'error: ownership ledger path mismatch for %s; move or remove it deliberately before retrying\n' "$alias_path" >&2
+      return 1
+    }
+    grep -Fq "\"sha256\": \"$alias_hash\"" "$ledger_path" || {
+      printf 'error: ownership ledger hash mismatch for %s; move or remove it deliberately before retrying\n' "$alias_path" >&2
+      return 1
+    }
+    grep -Eq '"releaseVersion"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?"' "$ledger_path" || {
+      printf 'error: ownership ledger release-version defect at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
+      return 1
+    }
+    local ledger_release_version ledger_contents expected_ledger
+    ledger_release_version="$(sed -nE 's/^  "releaseVersion": "([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)",$/\1/p' "$ledger_path")"
+    [ -n "$ledger_release_version" ] || {
+      printf 'error: ownership ledger release-version defect at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
+      return 1
+    }
+    ledger_contents="$(cat "$ledger_path")"
+    expected_ledger="$(render_ownership_ledger "$install_dir" "$alias_path" "$alias_hash" "$ledger_release_version")"
+    [ "$ledger_contents" = "$expected_ledger" ] || {
+      printf 'error: ownership ledger property or alias-set defect at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
+      return 1
+    }
+  elif [ -e "$ledger_path" ] || [ -L "$ledger_path" ]; then
+    printf 'error: ownership ledger %s claims a missing aw alias; move or remove it deliberately before retrying\n' "$ledger_path" >&2
+    return 1
+  fi
+
+  resolved="$(command -v aw 2>/dev/null || true)"
+  if [ -n "$resolved" ]; then
+    case "$resolved" in
+      "$alias_path") ;;
+      *)
+        printf 'error: unrelated aw command resolves to %s outside %s; move or remove the collision deliberately before retrying\n' "$resolved" "$install_dir" >&2
+        return 1
+        ;;
+    esac
+  fi
+}
+
+render_ownership_ledger() {
+  local install_dir="$1"
+  local alias_path="$2"
+  local alias_hash="$3"
+  local release_version="$4"
+  cat <<EOF
+{
+  "schemaVersion": $LEDGER_SCHEMA_VERSION,
+  "installDirectory": "$(json_escape "$install_dir")",
+  "releaseVersion": "$(json_escape "$release_version")",
+  "aliases": [
+    { "path": "$(json_escape "$alias_path")", "sha256": "$alias_hash" }
+  ]
+}
+EOF
+}
+
+write_ownership_ledger() {
+  local output_path="$1"
+  shift
+  render_ownership_ledger "$@" > "$output_path"
+}
+
+replace_installed_asset() {
+  local source_path="$1"
+  local destination_path="$2"
+  local destination_dir
+  local destination_name
+  local temporary_path
+  local mode=755
+  destination_dir="$(dirname "$destination_path")"
+  destination_name="$(basename "$destination_path")"
+  [ "$destination_name" != "$LEDGER_NAME" ] || mode=644
+  temporary_path="$(mktemp "$destination_dir/.$destination_name.arashi-install.XXXXXX")" || return 1
+  if ! cp "$source_path" "$temporary_path" || ! chmod "$mode" "$temporary_path" || ! mv -f "$temporary_path" "$destination_path"; then
+    rm -f "$temporary_path"
+    return 1
+  fi
+}
+
+restore_installed_asset() {
+  local backup_path="$1"
+  local destination_path="$2"
+  local destination_dir destination_name temporary_path
+  destination_dir="$(dirname "$destination_path")"
+  destination_name="$(basename "$destination_path")"
+  temporary_path="$(mktemp "$destination_dir/.$destination_name.arashi-restore.XXXXXX")" || return 1
+  if ! cp -p "$backup_path" "$temporary_path" || ! mv -f "$temporary_path" "$destination_path"; then
+    rm -f "$temporary_path"
+    return 1
+  fi
+}
+
+verify_installed_entrypoints() {
+  local canonical_path="$1"
+  local alias_path="$2"
+  local canonical_version alias_version canonical_status alias_status
 
   log "Running post-install smoke test"
-
   set +e
-  version_output="$("$wrapper_path" --version 2>&1)"
-  verify_status=$?
+  canonical_version="$("$canonical_path" --version 2>&1)"
+  canonical_status=$?
+  alias_version="$("$alias_path" --version 2>&1)"
+  alias_status=$?
   set -e
+  if [ "$canonical_status" -ne 0 ] || [ "$alias_status" -ne 0 ]; then
+    printf 'smoke test failed: arashi=%s aw=%s\n' "$canonical_status" "$alias_status" >&2
+    return 1
+  fi
+  if [ -z "$canonical_version" ] || [ "$canonical_version" != "$alias_version" ]; then
+    printf 'smoke test failed: arashi and aw version output must be identical and non-empty\n' >&2
+    return 1
+  fi
+  INSTALLED_VERSION_OUTPUT="$canonical_version"
+  log "Verified arashi and aw executables ($canonical_version)"
+}
 
-  if [ "$verify_status" -eq 0 ]; then
-    if [ -z "$version_output" ]; then
-      fail "Installed binary returned success but produced no version output"
+install_posix_payload_transaction() {
+  local install_dir="$1" binary_source="$2" wrapper_source="$3" alias_source="$4" release_version="$5"
+  local canonical_path="$install_dir/$PROJECT_NAME" alias_path="$install_dir/$ALIAS_ASSET"
+  local binary_path="$install_dir/$BINARY_NAME" ledger_path="$install_dir/$LEDGER_NAME"
+  local backup_directory staged_ledger alias_hash ledger_release_version phase="backup"
+  local -a destinations=("$binary_path" "$canonical_path" "$alias_path" "$ledger_path")
+  local -a sources=("$binary_source" "$wrapper_source" "$alias_source" "")
+  local -a existed=()
+
+  mkdir -p "$install_dir" || fail "Unable to create install directory: $install_dir"
+  [ -w "$install_dir" ] || fail "Install directory is not writable: $install_dir"
+  backup_directory="$(mktemp -d "${TMPDIR:-/tmp}/arashi-payload-backup.XXXXXX")" || fail "Unable to create transaction backup"
+  staged_ledger="$(mktemp "${TMPDIR:-/tmp}/arashi-ledger.XXXXXX")" || fail "Unable to stage ownership ledger"
+  sources[3]="$staged_ledger"
+
+  local index
+  for index in "${!destinations[@]}"; do
+    if [ -e "${destinations[$index]}" ] || [ -L "${destinations[$index]}" ]; then
+      if [ -L "${destinations[$index]}" ] || [ ! -f "${destinations[$index]}" ] || [ ! -r "${destinations[$index]}" ]; then
+        rm -rf "$backup_directory"
+        rm -f "$staged_ledger"
+        fail "Managed destination ${destinations[$index]} is not a readable regular file; move or remove it deliberately before retrying"
+      fi
+      existed[$index]=1
+      cp -p "${destinations[$index]}" "$backup_directory/$index" || fail "Installation failed during backup before replacement began"
+    else
+      existed[$index]=0
     fi
+  done
 
-    log "Verified arashi executable ($version_output)"
-    return
+  local failed=0
+  phase="replacement"
+  for index in 0 1 2; do
+    if ! replace_installed_asset "${sources[$index]}" "${destinations[$index]}"; then failed=1; break; fi
+  done
+  if [ "$failed" -eq 0 ]; then
+    phase="smoke test"
+    verify_installed_entrypoints "$canonical_path" "$alias_path" || failed=1
+  fi
+  if [ "$failed" -eq 0 ]; then
+    phase="ledger commit"
+    alias_hash="$(sha256_file "$alias_path")" || failed=1
+    ledger_release_version="$release_version"
+    if [ "$ledger_release_version" = "latest" ]; then
+      ledger_release_version="$(printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | sed -nE 's/.*(^|[^0-9A-Za-z.-])([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)([^0-9A-Za-z.-]|$).*/\2/p' | head -n 1)"
+    fi
+    if [ -z "$ledger_release_version" ]; then
+      printf 'ledger commit failed: could not determine exact installed release version from %s\n' "$INSTALLED_VERSION_OUTPUT" >&2
+      failed=1
+    elif [ "$release_version" != "latest" ]; then
+      case "$INSTALLED_VERSION_OUTPUT" in
+        *"$release_version"*) ;;
+        *)
+          printf 'ledger commit failed: installed version output does not match requested release %s\n' "$release_version" >&2
+          failed=1
+          ;;
+      esac
+    fi
+    if [ "$failed" -eq 0 ]; then
+      write_ownership_ledger "$staged_ledger" "$install_dir" "$alias_path" "$alias_hash" "$ledger_release_version" || failed=1
+    fi
+  fi
+  if [ "$failed" -eq 0 ]; then
+    replace_installed_asset "$staged_ledger" "$ledger_path" || failed=1
   fi
 
-  warn "Installed binary failed smoke test with exit code $verify_status"
-  if [ -n "$version_output" ]; then
-    warn "$version_output"
+  if [ "$failed" -eq 0 ]; then
+    rm -rf "$backup_directory"
+    rm -f "$staged_ledger"
+    return 0
   fi
-  warn "This usually indicates a bad release asset or a compiler regression in the published binary"
-  warn "Retry with a pinned version: curl -fsSL https://arashi.haphazard.dev/install | ARASHI_VERSION=<version> bash"
-  fail "Installed arashi binary could not start"
+
+  local rollback_failed=0
+  for index in "${!destinations[@]}"; do
+    if [ "${existed[$index]}" -eq 1 ]; then
+      restore_installed_asset "$backup_directory/$index" "${destinations[$index]}" || rollback_failed=1
+    elif [ -e "${destinations[$index]}" ] || [ -L "${destinations[$index]}" ]; then
+      rm -f "${destinations[$index]}" || rollback_failed=1
+    fi
+  done
+  rm -f "$staged_ledger"
+  if [ "$rollback_failed" -ne 0 ]; then
+    fail "Installation failed during $phase. Rollback failed; recoverable backups retained at: $backup_directory. Restore them manually before retrying"
+  fi
+  rm -rf "$backup_directory"
+  fail "Installation failed during $phase. Rollback completed and restored the previous managed payload"
 }
 
 print_post_install_notes() {
@@ -835,17 +1055,27 @@ main() {
   local asset_name
   asset_name="$(detect_platform_asset)"
 
+  local install_dir
+  install_dir="$(choose_install_dir)"
+  case "$install_dir" in
+    /*) ;;
+    *) install_dir="$(pwd)/$install_dir" ;;
+  esac
+  preflight_alias_ownership "$install_dir" || exit 1
+
   log "Preparing installation for arashi ($release_label)"
   log_debug "Installing $asset_name ($release_label)"
 
   local tmp_dir
   local downloaded_binary_asset
   local downloaded_wrapper_asset
+  local downloaded_alias_asset
   local downloaded_manifest
   tmp_dir="$(mktemp -d)"
   log_debug "Created temporary directory at $tmp_dir"
   downloaded_binary_asset="$tmp_dir/$asset_name"
   downloaded_wrapper_asset="$tmp_dir/$WRAPPER_ASSET"
+  downloaded_alias_asset="$tmp_dir/$ALIAS_ASSET"
   downloaded_manifest="$tmp_dir/$CHECKSUM_MANIFEST"
   trap "cleanup_progress_ui; rm -rf '$tmp_dir'" EXIT
 
@@ -853,43 +1083,34 @@ main() {
 
   download_file "$release_base_url/$asset_name" "$downloaded_binary_asset" "$asset_name" false
   download_file "$release_base_url/$WRAPPER_ASSET" "$downloaded_wrapper_asset" "$WRAPPER_ASSET" false
+  download_file "$release_base_url/$ALIAS_ASSET" "$downloaded_alias_asset" "$ALIAS_ASSET" false
   download_file "$release_base_url/$CHECKSUM_MANIFEST" "$downloaded_manifest" "$CHECKSUM_MANIFEST" true
 
   local expected_binary_checksum
   local actual_binary_checksum
   local expected_wrapper_checksum
   local actual_wrapper_checksum
+  local expected_alias_checksum
+  local actual_alias_checksum
   expected_binary_checksum="$(expected_checksum_for_asset "$downloaded_manifest" "$asset_name")"
   actual_binary_checksum="$(sha256_file "$downloaded_binary_asset")"
 
   expected_wrapper_checksum="$(expected_checksum_for_asset "$downloaded_manifest" "$WRAPPER_ASSET")"
   actual_wrapper_checksum="$(sha256_file "$downloaded_wrapper_asset")"
+  expected_alias_checksum="$(expected_checksum_for_asset "$downloaded_manifest" "$ALIAS_ASSET")"
+  actual_alias_checksum="$(sha256_file "$downloaded_alias_asset")"
 
   [ "$expected_binary_checksum" = "$actual_binary_checksum" ] || fail "Checksum validation failed for $asset_name"
   [ "$expected_wrapper_checksum" = "$actual_wrapper_checksum" ] || fail "Checksum validation failed for $WRAPPER_ASSET"
+  [ "$expected_alias_checksum" = "$actual_alias_checksum" ] || fail "Checksum validation failed for $ALIAS_ASSET"
 
   log_debug "Checksum verified for $asset_name and $WRAPPER_ASSET"
 
-  local install_dir
   local target_wrapper_path
   local target_binary_path
-  local staging_wrapper_path
-  local staging_binary_path
-  install_dir="$(choose_install_dir)"
   target_wrapper_path="$install_dir/$PROJECT_NAME"
   target_binary_path="$install_dir/$BINARY_NAME"
-  staging_wrapper_path="$install_dir/.${PROJECT_NAME}.tmp.$$"
-  staging_binary_path="$install_dir/.${BINARY_NAME}.tmp.$$"
-
-  cp "$downloaded_binary_asset" "$staging_binary_path" || fail "Failed to stage binary in $install_dir"
-  chmod 755 "$staging_binary_path" || fail "Failed to set executable permissions on binary"
-  mv -f "$staging_binary_path" "$target_binary_path" || fail "Failed to place binary at $target_binary_path"
-
-  cp "$downloaded_wrapper_asset" "$staging_wrapper_path" || fail "Failed to stage wrapper in $install_dir"
-  chmod 755 "$staging_wrapper_path" || fail "Failed to set executable permissions on wrapper"
-  mv -f "$staging_wrapper_path" "$target_wrapper_path" || fail "Failed to place wrapper at $target_wrapper_path"
-
-  verify_installed_binary "$target_wrapper_path"
+  install_posix_payload_transaction "$install_dir" "$downloaded_binary_asset" "$downloaded_wrapper_asset" "$downloaded_alias_asset" "$normalized_version"
 
   if [ "$NO_MODIFY_PATH" = "true" ]; then
     if [ "$DEBUG_LOG" = "true" ]; then
