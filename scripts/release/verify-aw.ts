@@ -11,7 +11,8 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { releaseNpmCommand, spawnReleaseCommand } from "./release-command.ts";
 
-const version = process.argv[2]?.trim().replace(/^v/, "");
+const versionArgument = process.argv[2] === "--" ? process.argv[3] : process.argv[2];
+const version = versionArgument?.trim().replace(/^v/, "");
 if (
   !version ||
   version === "latest" ||
@@ -222,6 +223,12 @@ try {
   if (process.platform !== "win32") {
     chmodSync(canonical, 0o755);
     chmodSync(alias, 0o755);
+  }
+  const firstUseCanonicalVersion = run(canonical, ["--version"]);
+  if (reportedVersion(firstUseCanonicalVersion) !== version) {
+    throw new Error(
+      `npm first-use entrypoint does not report exact requested release ${version}: arashi=${firstUseCanonicalVersion}`,
+    );
   }
   const canonicalVersion = run(canonical, ["--version"]);
   const aliasVersion = run(alias, ["--version"]);

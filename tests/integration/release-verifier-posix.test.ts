@@ -52,6 +52,19 @@ done
 package_bin="$prefix/lib/node_modules/arashi/bin"
 cp "$ARASHI_TEST_NATIVE" "$package_bin/arashi.bin"
 chmod +x "$package_bin/arashi.bin"
+if [ "$ARASHI_TEST_FIRST_USE_NOISE" = 1 ]; then
+  mv "$package_bin/arashi.bin" "$package_bin/arashi.real"
+  cat > "$package_bin/arashi.bin" <<'PROXY'
+#!/bin/bash
+state="\${0}.first-use-complete"
+if [ ! -e "$state" ]; then
+  : > "$state"
+  printf 'installing exact public binary before first use\n'
+fi
+exec "$(dirname "$0")/arashi.real" "$@"
+PROXY
+  chmod +x "$package_bin/arashi.bin"
+fi
 `,
   );
   chmodSync(join(stubBin, "npm"), 0o755);
@@ -86,6 +99,7 @@ cp "$ARASHI_TEST_INSTALLER" "$output"
   environment = {
     ...process.env,
     ARASHI_TEST_ARCHIVE: archive,
+    ARASHI_TEST_FIRST_USE_NOISE: "1",
     ARASHI_TEST_INSTALLER: installer,
     ARASHI_TEST_NATIVE: native,
     ARASHI_TEST_REAL_NPM: realNpm,
@@ -115,7 +129,7 @@ describe.skipIf(process.platform === "win32")("exact-version published release v
     );
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(
-      `npm entrypoint version does not exactly match requested release ${version}`,
+      `npm first-use entrypoint does not report exact requested release ${version}`,
     );
   }, 30_000);
 
@@ -135,5 +149,18 @@ describe.skipIf(process.platform === "win32")("exact-version published release v
       direct: ["bash", "zsh", "fish"],
       npm: ["bash", "zsh", "fish"],
     });
+  }, 30_000);
+
+  test("accepts pnpm's forwarded argument separator before the exact version", () => {
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "scripts/release/verify-aw.ts"), "--", version],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: environment,
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
   }, 30_000);
 });
