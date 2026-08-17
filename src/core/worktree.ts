@@ -1956,6 +1956,7 @@ const processRepository = async ({
   let materializationOutcomes: ExecutedMaterializationOutcome[] = [];
   let materializationOwnershipLedger: MaterializationOwnershipEntry[] = [];
   let materializationRollback: MaterializationResult["materializationRollback"] | undefined;
+  let worktreePath: string | null = NULL_PATH;
   const shouldReuse = targetAction === "reused";
 
   // Create spinner if progress is enabled
@@ -2023,7 +2024,7 @@ const processRepository = async ({
     }
 
     const pathResult = await calculateWorktreePath({ branchName, config, repo });
-    const worktreePath = pathResult.path;
+    worktreePath = pathResult.path;
     try {
       await exec(["worktree", "add", worktreePath, branchName], repo.path);
     } catch (error) {
@@ -2214,7 +2215,7 @@ const processRepository = async ({
       status: "failed",
       targetAction,
       warnings: [],
-      worktreePath: NULL_PATH,
+      worktreePath,
     };
   }
 };

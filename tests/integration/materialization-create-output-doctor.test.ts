@@ -1,6 +1,16 @@
 /* oxlint-disable sort-imports */
 import { afterEach, describe, expect, test } from "vitest";
-import { access, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { createChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
@@ -398,6 +408,8 @@ printf 'post\\n' >> '${order}'`,
     await writeFile(join(source, "Config", "local.json"), "tracked\n");
     await exec(["add", "Config/local.json"], source);
     await exec(["-c", "commit.gpgSign=false", "commit", "-m", "case collision fixture"], source);
+    await mkdir(join(source, "config"), { recursive: true });
+    await writeFile(join(source, "config", "local.json"), "materialization source\n");
     await configure(workspace, { alpha: { copy: ["config/local.json"] } });
     const branch = "feature/case-only-tree-collision";
     const marker = join(workspace.workspacePath, ".arashi", "case-collision-hook.log");
@@ -546,6 +558,59 @@ printf 'post\\n' >> '${order}'`,
     });
     await absent(workspace.getChildWorktreePath("alpha", "feature/materialization-blocked"));
   });
+
+  test.skipIf(process.platform === "win32")(
+    "preserves a failed worktree path when post-create rollback cannot remove it",
+    async () => {
+      const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
+      workspaces.push(workspace);
+      await prepareSources(workspace, "alpha");
+      await configure(workspace, { alpha: { copy: [".env.local"] } });
+      const branch = "feature/materialization-residual-worktree";
+      const worktreePath = workspace.getChildWorktreePath("alpha", branch);
+      const worktreeParent = dirname(worktreePath);
+      createRepoSpecificHookInRepo(
+        workspace.hookRootPath,
+        "post-create",
+        "alpha",
+        `chmod 0500 "$(dirname "$ARASHI_WORKTREE_PATH")"
+exit 29`,
+      );
+
+      const result = await runArashi(
+        workspace.workspacePath,
+        "create",
+        branch,
+        "--only",
+        "alpha",
+        "--json",
+      );
+      await chmod(worktreeParent, 0o700);
+      const canonicalWorktreePath = await realpath(worktreePath);
+
+      expect(result.exitCode).not.toBe(0);
+      const envelope = parseSingleDocument(result.stdout);
+      expect(envelope).toMatchObject({
+        error: {
+          details: {
+            errorSummary: expect.stringContaining(
+              `Residual worktrees detected: alpha:${canonicalWorktreePath}`,
+            ),
+            repositoryResults: [
+              expect.objectContaining({
+                materializationOutcomes: [
+                  expect.objectContaining({ path: ".env.local", status: "copied" }),
+                ],
+                status: "failed",
+                worktreePath: canonicalWorktreePath,
+              }),
+            ],
+          },
+        },
+      });
+      await expect(access(worktreePath)).resolves.toBeUndefined();
+    },
+  );
 
   test("refreshes after pre-hook, rolls earlier repositories back, and keeps source targets safe", async () => {
     const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha", "beta"] });
