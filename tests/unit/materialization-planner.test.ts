@@ -350,6 +350,34 @@ describe("shared repository materialization planner RED", () => {
     expect(inspectionReached).toBe(false);
   });
 
+  test("blocks a confirmed unsupported native symlink capability", async () => {
+    const plan = await (
+      await materializationPlanner()
+    )(
+      input({ copy: [], symlink: [".cache"] }),
+      dependencies({ resolveSymlinkCapability: async () => "unsupported" }),
+    );
+
+    expect(plan).toMatchObject({
+      classification: "blocked",
+      outcomes: [{ reasonCode: "symlink_unsupported", status: "blocked" }],
+    });
+  });
+
+  test("propagates operational native symlink capability failures", async () => {
+    const operational = Object.assign(new Error("capability probe I/O failed"), { code: "EIO" });
+    await expect(
+      (await materializationPlanner())(
+        input({ copy: [], symlink: [".cache"] }),
+        dependencies({
+          resolveSymlinkCapability: async () => {
+            throw operational;
+          },
+        }),
+      ),
+    ).rejects.toBe(operational);
+  });
+
   test("blocks ancestor-descendant declarations across copy and symlink before mutation", async () => {
     const plan = await (
       await materializationPlanner()

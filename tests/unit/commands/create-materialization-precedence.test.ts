@@ -7,6 +7,7 @@ import type { Repository } from "../../../src/core/repository.ts";
 import {
   executeCreate,
   resolveReusableMaterializationTarget,
+  shouldPreflightReusableMaterializationTarget,
 } from "../../../src/commands/create.ts";
 
 type CreateDependencies = NonNullable<Parameters<typeof executeCreate>[2]>;
@@ -168,6 +169,20 @@ describe("configured create materialization precedence RED", () => {
     expect(await readFile(localExcludePath, "utf8")).toBe("# original exclude\n");
     expect(await readFile(preferencePath, "utf8")).toBe("[arashi]\n\tignoreScope = local\n");
   });
+
+  test.each([
+    ["interactive execution", undefined, false, true],
+    ["interactive dry-run", undefined, true, false],
+    ["explicit dry-run reuse", "REUSE_EXISTING", true, true],
+    ["explicit dry-run abort", "ABORT", true, false],
+  ] as const)(
+    "aligns materialization reuse preflight for %s",
+    (_label, conflict, dryRun, expected) => {
+      expect(
+        shouldPreflightReusableMaterializationTarget({ conflict, dryRun, stdinIsTTY: true }),
+      ).toBe(expected);
+    },
+  );
 
   test("ignores a stale remote-tracking branch when reuse has no local branch", async () => {
     const calls: string[][] = [];

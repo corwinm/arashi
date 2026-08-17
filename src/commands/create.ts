@@ -465,6 +465,17 @@ export async function resolveReusableMaterializationTarget(
   }
 }
 
+export function shouldPreflightReusableMaterializationTarget(input: {
+  conflict: NonNullable<WorktreeOperationOptions>["conflictResolution"] | undefined;
+  dryRun: boolean;
+  stdinIsTTY: boolean;
+}): boolean {
+  return (
+    input.conflict === "REUSE_EXISTING" ||
+    (input.dryRun !== true && input.conflict === undefined && input.stdinIsTTY)
+  );
+}
+
 const preflightConfiguredMaterialization = async (input: {
   branchName: string;
   config: Config;
@@ -1458,8 +1469,11 @@ export async function executeCreate(
     createBasePlan,
     dryRun: options.dryRun === true,
     repositories: selectedRepos,
-    reuseExisting:
-      options.conflict === "REUSE_EXISTING" || (options.conflict === undefined && stdinIsTTY),
+    reuseExisting: shouldPreflightReusableMaterializationTarget({
+      conflict: options.conflict,
+      dryRun: options.dryRun === true,
+      stdinIsTTY,
+    }),
     workspaceRoot: context.workspaceRoot,
   });
 

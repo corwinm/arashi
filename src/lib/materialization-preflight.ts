@@ -1,5 +1,16 @@
-import { lstat, readdir, realpath, stat } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, resolve, sep } from "node:path";
 import { exec } from "./git.ts";
 import {
   planRepositoryMaterialization,
@@ -18,6 +29,45 @@ const contained = (root: string, candidate: string): boolean => {
   const fromRoot = relative(resolve(root), resolve(candidate));
   return fromRoot === "" || (fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`));
 };
+
+const unsupportedSymlink = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  ["EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "UNKNOWN"].includes(String(error.code));
+
+export interface NativeSymlinkCapabilityDependencies {
+  createProbeRoot?: () => Promise<string>;
+  createSymlink?: (target: string, path: string, kind: "dir" | "file") => Promise<void>;
+}
+
+export async function resolveNativeSymlinkCapability(
+  kind: "directory" | "file",
+  dependencies: NativeSymlinkCapabilityDependencies = {},
+): Promise<"supported" | "unsupported"> {
+  const probeRoot = await (
+    dependencies.createProbeRoot ?? (() => mkdtemp(join(tmpdir(), "arashi-symlink-probe-")))
+  )();
+  try {
+    const target = join(probeRoot, "target");
+    const link = join(probeRoot, "link");
+    if (kind === "directory") await mkdir(target);
+    else await writeFile(target, "");
+    try {
+      await (dependencies.createSymlink ?? symlink)(
+        target,
+        link,
+        kind === "directory" ? "dir" : "file",
+      );
+    } catch (error) {
+      if (unsupportedSymlink(error)) return "unsupported";
+      throw error;
+    }
+    return "supported";
+  } finally {
+    await rm(probeRoot, { force: true, recursive: true });
+  }
+}
 
 async function inspectSourceTree(
   sourceRoot: string,
@@ -138,12 +188,19 @@ export async function planConfiguredRepositoryMaterialization(
   ) {
     throw new Error("Materialization roots are invalid");
   }
+  const symlinkCapabilities = new Map<"directory" | "file", Promise<"supported" | "unsupported">>();
   return planRepositoryMaterialization(input, {
     inspectDestination: (path) => inspectDestination(input.destinationRoot, path),
     inspectSource: (path, _action: MaterializationAction) =>
       inspectSourceTree(input.sourceRoot, path),
     inspectTargetTree: (targetOid, path) =>
       inspectTargetTree(input.repositoryPath, targetOid, path),
-    resolveSymlinkCapability: async () => "supported",
+    resolveSymlinkCapability: (kind) => {
+      const existing = symlinkCapabilities.get(kind);
+      if (existing !== undefined) return existing;
+      const capability = resolveNativeSymlinkCapability(kind);
+      symlinkCapabilities.set(kind, capability);
+      return capability;
+    },
   });
 }

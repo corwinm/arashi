@@ -363,32 +363,20 @@ export async function planRepositoryMaterialization(
       continue;
     }
 
-    if (entry.action === "symlink") {
-      try {
-        if ((await dependencies.resolveSymlinkCapability(source.kind)) === "unsupported") {
-          outcomes.push(
-            boundedOutcome(
-              entry.action,
-              normalizedPath,
-              "blocked",
-              "symlink_unsupported",
-              "Native symbolic links are unavailable",
-            ),
-          );
-          continue;
-        }
-      } catch {
-        outcomes.push(
-          boundedOutcome(
-            entry.action,
-            normalizedPath,
-            "blocked",
-            "symlink_unsupported",
-            "Native symbolic-link capability could not be established",
-          ),
-        );
-        continue;
-      }
+    if (
+      entry.action === "symlink" &&
+      (await dependencies.resolveSymlinkCapability(source.kind)) === "unsupported"
+    ) {
+      outcomes.push(
+        boundedOutcome(
+          entry.action,
+          normalizedPath,
+          "blocked",
+          "symlink_unsupported",
+          "Native symbolic links are unavailable",
+        ),
+      );
+      continue;
     }
 
     outcomes.push(
