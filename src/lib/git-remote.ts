@@ -61,6 +61,12 @@ export type RemoteTrackingFetchResult =
 export type UpstreamTrackingInspection =
   | { kind: "not-applicable" }
   | {
+      kind: "ambiguous-merge-configuration";
+      localBranch: string;
+      mergeRefs: string[];
+      remote: string;
+    }
+  | {
       conflictingFetchRefspecs?: string[];
       expectedRemoteTrackingRef: string;
       hasMultipleMergeRefs?: boolean;
@@ -255,6 +261,31 @@ const fetchRefspecTargetsDestination = (refspec: string, destination: string): b
   return false;
 };
 
+const fetchRefspecDestinationPattern = (refspec: string): string | null => {
+  const normalized = refspec.trim().replace(/^\+/, "");
+  if (!normalized || normalized.startsWith("^")) return null;
+  const separator = normalized.indexOf(":");
+  if (separator <= 0 || separator === normalized.length - 1) return null;
+  return normalized.slice(separator + 1);
+};
+
+const destinationPatternsCouldConflict = (left: string, right: string): boolean => {
+  const leftWildcard = left.indexOf("*");
+  const rightWildcard = right.indexOf("*");
+  if (leftWildcard === -1 && rightWildcard === -1) {
+    return refNamespacesConflict(left, right);
+  }
+  if (leftWildcard === -1) {
+    return fetchRefspecTargetsDestination(`refs/heads/arashi-wildcard:${right}`, left);
+  }
+  if (rightWildcard === -1) {
+    return fetchRefspecTargetsDestination(`refs/heads/arashi-wildcard:${left}`, right);
+  }
+  const leftPrefix = left.slice(0, leftWildcard);
+  const rightPrefix = right.slice(0, rightWildcard);
+  return leftPrefix.startsWith(rightPrefix) || rightPrefix.startsWith(leftPrefix);
+};
+
 const fetchRefspecMapsSource = (refspec: string, source: string): boolean => {
   const normalized = refspec.trim().replace(/^\+/, "");
   if (!normalized || normalized.startsWith("^")) {
@@ -306,14 +337,23 @@ export const inspectUpstreamTrackingConfiguration = async (
     "--get",
     `branch.${localBranch}.remote`,
   ]);
-  const mergeRefOutput = await readOptionalGitValue(runGit, repoPath, [
-    "config",
-    "--get-all",
-    `branch.${localBranch}.merge`,
-  ]);
-  const mergeRefs = mergeRefOutput?.split(/\r?\n/) ?? [];
+  let mergeRefs: string[] = [];
+  try {
+    const mergeRefOutput = (
+      await runGit(["config", "--get-all", `branch.${localBranch}.merge`], repoPath)
+    ).stdout.replace(/(?:\r?\n)$/, "");
+    mergeRefs = mergeRefOutput.split(/\r?\n/);
+  } catch {
+    mergeRefs = [];
+  }
   const mergeRef = mergeRefs[0] ?? null;
-  if (!remote || remote === "." || !mergeRef?.startsWith("refs/heads/")) {
+  if (!remote || remote === ".") {
+    return { kind: "not-applicable" };
+  }
+  if (mergeRefs.length > 1 && !mergeRef?.startsWith("refs/heads/")) {
+    return { kind: "ambiguous-merge-configuration", localBranch, mergeRefs, remote };
+  }
+  if (!mergeRef?.startsWith("refs/heads/")) {
     return { kind: "not-applicable" };
   }
 
@@ -344,6 +384,22 @@ export const inspectUpstreamTrackingConfiguration = async (
   for (const refspec of fetchRefspecs) {
     if (await fetchRefspecRequiresManualReview(refspec, mergeRef, repoPath, runGit)) {
       manualReviewRefspecs.push(refspec);
+    }
+  }
+  for (let leftIndex = 0; leftIndex < fetchRefspecs.length; leftIndex += 1) {
+    const left = fetchRefspecs[leftIndex];
+    const leftDestination = left ? fetchRefspecDestinationPattern(left) : null;
+    if (!left || !leftDestination) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < fetchRefspecs.length; rightIndex += 1) {
+      const right = fetchRefspecs[rightIndex];
+      const rightDestination = right ? fetchRefspecDestinationPattern(right) : null;
+      if (
+        right &&
+        rightDestination &&
+        destinationPatternsCouldConflict(leftDestination, rightDestination)
+      ) {
+        manualReviewRefspecs.push(left, right);
+      }
     }
   }
   const manualReviewRefspecSet = new Set(manualReviewRefspecs);

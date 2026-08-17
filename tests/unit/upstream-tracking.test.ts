@@ -11,6 +11,12 @@ type Inspection =
       remoteBranch: string;
       expectedRemoteTrackingRef: string;
     }
+  | {
+      kind: "ambiguous-merge-configuration";
+      localBranch: string;
+      mergeRefs: string[];
+      remote: string;
+    }
   | { kind: "not-applicable" };
 
 const loadInspector = async (): Promise<
@@ -121,8 +127,27 @@ describe("inspectUpstreamTrackingConfiguration", () => {
     expect(calls.some((args) => args[0] === "fetch")).toBe(false);
   });
 
+  test("reports an empty effective merge value for manual review", async () => {
+    const inspect = await loadInspector();
+    const { runGit } = createFakeGit(configuredState({ mergeRefs: ["", "refs/heads/main"] }));
+
+    await expect(inspect("/workspace", runGit)).resolves.toEqual({
+      kind: "ambiguous-merge-configuration",
+      localBranch: "main",
+      mergeRefs: ["", "refs/heads/main"],
+      remote: "origin",
+    });
+  });
+
   test.each([
     ["missing fetch mapping", configuredState(), []],
+    [
+      "pairwise existing destination collision",
+      configuredState({
+        fetchRefspecs: ["refs/heads/a:refs/remotes/origin/x", "refs/heads/b:refs/remotes/origin/x"],
+      }),
+      ["refs/heads/a:refs/remotes/origin/x", "refs/heads/b:refs/remotes/origin/x"],
+    ],
     [
       "multiple merge refs using Git's effective first value",
       configuredState({

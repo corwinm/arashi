@@ -251,6 +251,33 @@ export const repositoryStatusToDoctorFindings = (
     );
   } else if (
     status.refreshWarning?.kind !== "missing-remote-ref" &&
+    upstreamInspection.kind === "ambiguous-merge-configuration"
+  ) {
+    const quotedPath = quoteDoctorShellArgument(status.path);
+    const mergeConfigKey = quoteDoctorShellArgument(
+      `branch.${upstreamInspection.localBranch}.merge`,
+    );
+    findings.push(
+      createFinding({
+        category: "repository",
+        code: "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
+        details: {
+          branch: upstreamInspection.localBranch,
+          mergeRefs: upstreamInspection.mergeRefs,
+          path: status.path,
+          reason: upstreamInspection.kind,
+          remote: upstreamInspection.remote,
+          repository: status.name,
+        },
+        message: `Repository '${status.name}' branch '${upstreamInspection.localBranch}' has ambiguous multi-valued upstream merge configuration; review the configured merge refs manually.`,
+        scope,
+        severity: "warning",
+        suggestedCommands:
+          platform === "win32" ? [] : [`git -C ${quotedPath} config --get-all ${mergeConfigKey}`],
+      }),
+    );
+  } else if (
+    status.refreshWarning?.kind !== "missing-remote-ref" &&
     upstreamInspection.kind === "missing-fetch-mapping"
   ) {
     const fetchRefspec = `+${upstreamInspection.mergeRef}:${upstreamInspection.expectedRemoteTrackingRef}`;
