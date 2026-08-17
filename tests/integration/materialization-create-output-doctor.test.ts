@@ -195,6 +195,43 @@ printf 'post\\n' >> '${order}'`,
     expect((await exec(["rev-parse", branch], source)).stdout.trim()).not.toBe(remoteOnlyOid);
   });
 
+  test("preflights and executes the existing local branch when reuse is selected", async () => {
+    const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
+    workspaces.push(workspace);
+    const source = workspace.childRepoPaths.alpha!;
+    const branch = "feature/local-reuse-materialization";
+    await exec(["switch", "-c", branch], source);
+    await writeFile(join(source, "branch-only.txt"), "LOCAL-BRANCH-CONTENT\n");
+    await exec(["add", "branch-only.txt"], source);
+    await exec(["-c", "commit.gpgSign=false", "commit", "-m", "local reuse fixture"], source);
+    const localBranchOid = (await exec(["rev-parse", "HEAD"], source)).stdout.trim();
+    await exec(["switch", "main"], source);
+    await writeFile(join(source, ".env.local"), "PRIMARY-SOURCE-CONTENT\n");
+    await configure(workspace, { alpha: { copy: [".env.local"] } });
+
+    const result = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "alpha",
+      "--conflict",
+      "REUSE_EXISTING",
+      "--no-hooks",
+      "--json",
+    );
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const destination = workspace.getChildWorktreePath("alpha", branch);
+    expect((await exec(["rev-parse", "HEAD"], destination)).stdout.trim()).toBe(localBranchOid);
+    expect(await readFile(join(destination, "branch-only.txt"), "utf8")).toBe(
+      "LOCAL-BRANCH-CONTENT\n",
+    );
+    expect(await readFile(join(destination, ".env.local"), "utf8")).toBe(
+      "PRIMARY-SOURCE-CONTENT\n",
+    );
+  });
+
   test("keeps materialization enabled under --no-hooks without discovering or executing hooks", async () => {
     const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
     workspaces.push(workspace);
