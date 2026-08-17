@@ -401,8 +401,9 @@ export async function rollbackWorktreeCreated(entry: WorktreeCreatedEntry): Prom
   const { repositoryPath, worktreePath } = entry.data;
 
   try {
-    // Execute: git worktree remove <worktreePath>
-    await gitExec(["worktree", "remove", worktreePath], repositoryPath);
+    // Invocation-created worktrees may contain hook/materialization outputs; force
+    // removes the owned worktree while source checkouts remain untouched.
+    await gitExec(["worktree", "remove", "--force", worktreePath], repositoryPath);
   } catch (error) {
     // Check if worktree no longer exists (idempotent rollback)
     const errorMessage = (error as Error).message.toLowerCase();

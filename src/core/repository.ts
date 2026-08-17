@@ -72,6 +72,8 @@ export interface Repository {
   name: string;
   /** Absolute filesystem path to repository root */
   path: string;
+  /** Checkout basename used for worktree placement when name is a configured repository ID. */
+  worktreeName?: string;
   /** Default branch name (main, master, develop, etc.) */
   defaultBranch: string;
   /** Whether repository contains a setup script */

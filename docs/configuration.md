@@ -125,6 +125,28 @@ normal review and testing. Do not put a secret in inline configuration: the conf
 versioned even though Arashi never discloses snippet text in logs, outcomes, previews, or doctor
 findings.
 
+## Worktree file materialization
+
+Configured child repositories may declare direct `repos.<name>.copy` and `repos.<name>.symlink` arrays. Each portable repository-relative entry uses the same relative path from the canonical Git-primary checkout into a newly created coordinated worktree:
+
+```json
+{
+  "repos": {
+    "web": {
+      "path": "repos/web",
+      "copy": [".env.local"],
+      "symlink": [".shared-cache"]
+    }
+  }
+}
+```
+
+Repository construction runs `pre-create`, every `copy` entry in declaration order, every `symlink` entry in declaration order, and then `post-create`. `--no-hooks` does not disable materialization. Missing sources are visible non-fatal skips. Arashi never overwrites destinations, and paths must remain inside the canonical source checkout and new worktree. A rejected native symlink does not fall back to a copy, hard link, or junction.
+
+Use `copy` for independent, isolated local configuration. Use `symlink` only for intentionally shared state. Prefer package-manager content-addressed stores and per-worktree installs over sharing `node_modules`, where branches, lockfiles, runtimes, native modules, and install scripts may diverge.
+
+This behavior is configured-workspace-only; standalone create is not supported. Globs and remapping are not supported. Use lifecycle hooks for globs, remapping, external sources, interpolation, generated files, or conditional behavior. `arashi create --dry-run` previews the ordered plan without mutation, and `arashi doctor` inspects source availability and managed destination safety without repair.
+
 ## Command Defaults
 
 You can set command-scoped defaults under `defaults`.
