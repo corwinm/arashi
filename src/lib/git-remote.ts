@@ -63,6 +63,7 @@ export type UpstreamTrackingInspection =
   | {
       conflictingFetchRefspecs?: string[];
       expectedRemoteTrackingRef: string;
+      hasMultipleMergeRefs?: boolean;
       kind: "missing-fetch-mapping";
       localBranch: string;
       mergeRef: string;
@@ -310,7 +311,8 @@ export const inspectUpstreamTrackingConfiguration = async (
     "--get-all",
     `branch.${localBranch}.merge`,
   ]);
-  const mergeRef = mergeRefOutput?.split(/\r?\n/, 1)[0] ?? null;
+  const mergeRefs = mergeRefOutput?.split(/\r?\n/) ?? [];
+  const mergeRef = mergeRefs[0] ?? null;
   if (!remote || remote === "." || !mergeRef?.startsWith("refs/heads/")) {
     return { kind: "not-applicable" };
   }
@@ -364,6 +366,7 @@ export const inspectUpstreamTrackingConfiguration = async (
   return {
     conflictingFetchRefspecs,
     expectedRemoteTrackingRef,
+    ...(mergeRefs.length > 1 ? { hasMultipleMergeRefs: true } : {}),
     kind: "missing-fetch-mapping",
     localBranch,
     mergeRef,

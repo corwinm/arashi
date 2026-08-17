@@ -493,8 +493,8 @@ describe("arashi doctor", () => {
       severity: "warning",
       suggestedCommands: [
         `git -C '${canonicalRoot}' config --add 'remote.origin.fetch' '+refs/heads/main:refs/remotes/origin/main'`,
-        `git -C '${canonicalRoot}' fetch 'origin'`,
-        `git -C '${canonicalRoot}' branch '--set-upstream-to=origin/main' 'main'`,
+        `git -C '${canonicalRoot}' fetch -- 'origin'`,
+        `git -C '${canonicalRoot}' branch '--set-upstream-to=origin/main' -- 'main'`,
       ],
     });
     expect(findings).not.toContainEqual(
@@ -603,6 +603,29 @@ describe("repositoryStatusToDoctorFindings", () => {
     expect(findings).not.toContainEqual(
       expect.objectContaining({ code: "REPOSITORY_NO_UPSTREAM" }),
     );
+  });
+
+  test("does not reset an existing multi-merge upstream", () => {
+    const status = baseStatus();
+    status.branch.remoteBranch = null;
+
+    const findings = repositoryStatusToDoctorFindings(status, {
+      expectedRemoteTrackingRef: "refs/remotes/origin/main",
+      hasMultipleMergeRefs: true,
+      kind: "missing-fetch-mapping",
+      localBranch: "main",
+      mergeRef: "refs/heads/main",
+      remote: "origin",
+      remoteBranch: "main",
+    });
+
+    const finding = findings.find(
+      (candidate) => candidate.code === "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
+    );
+    expect(finding?.suggestedCommands).toEqual([
+      `git -C '${status.path}' config --add 'remote.origin.fetch' '+refs/heads/main:refs/remotes/origin/main'`,
+      `git -C '${status.path}' fetch -- 'origin'`,
+    ]);
   });
 
   test("reports conflicting fetch destinations for manual resolution", () => {

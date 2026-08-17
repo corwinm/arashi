@@ -273,8 +273,12 @@ export const repositoryStatusToDoctorFindings = (
           ? [`git -C ${quotedPath} config --get-all ${fetchConfigKey}`]
           : [
               `git -C ${quotedPath} config --add ${fetchConfigKey} ${quoteDoctorShellArgument(fetchRefspec)}`,
-              `git -C ${quotedPath} fetch ${quotedRemote}`,
-              `git -C ${quotedPath} branch ${quoteDoctorShellArgument(`--set-upstream-to=${upstreamInspection.remote}/${upstreamInspection.remoteBranch}`)} ${quoteDoctorShellArgument(upstreamInspection.localBranch)}`,
+              `git -C ${quotedPath} fetch -- ${quotedRemote}`,
+              ...(upstreamInspection.hasMultipleMergeRefs
+                ? []
+                : [
+                    `git -C ${quotedPath} branch ${quoteDoctorShellArgument(`--set-upstream-to=${upstreamInspection.remote}/${upstreamInspection.remoteBranch}`)} -- ${quoteDoctorShellArgument(upstreamInspection.localBranch)}`,
+                  ]),
             ];
     findings.push(
       createFinding({

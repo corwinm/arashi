@@ -314,6 +314,7 @@ describe("inspectUpstreamTrackingConfiguration", () => {
 
       await expect(inspect("/workspace", runGit)).resolves.toEqual({
         conflictingFetchRefspecs,
+        ...(state.mergeRefs && state.mergeRefs.length > 1 ? { hasMultipleMergeRefs: true } : {}),
         expectedRemoteTrackingRef: "refs/remotes/origin/main",
         kind: "missing-fetch-mapping",
         localBranch: "main",
