@@ -58,6 +58,379 @@ export type RemoteTrackingFetchResult =
       message: string;
     };
 
+export type UpstreamTrackingInspection =
+  | { kind: "not-applicable" }
+  | {
+      kind: "ambiguous-merge-configuration";
+      localBranch: string;
+      mergeRefs: string[];
+      remote: string;
+    }
+  | {
+      conflictingFetchRefspecs?: string[];
+      expectedRemoteTrackingRef: string;
+      hasMultipleMergeRefs?: boolean;
+      kind: "missing-fetch-mapping";
+      localBranch: string;
+      mergeRef: string;
+      remote: string;
+      remoteBranch: string;
+    };
+
+type ReadOnlyGitRunner = (args: string[], cwd: string) => Promise<{ stdout: string }>;
+
+const readOptionalGitValue = async (
+  runGit: ReadOnlyGitRunner,
+  repoPath: string,
+  args: string[],
+): Promise<string | null> => {
+  try {
+    const result = await runGit(args, repoPath);
+    return result.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+};
+
+const wildcardPatternMatches = (pattern: string, value: string): boolean => {
+  const wildcard = pattern.indexOf("*");
+  if (wildcard === -1) {
+    return pattern === value;
+  }
+  if (pattern.indexOf("*", wildcard + 1) !== -1) {
+    return false;
+  }
+
+  const prefix = pattern.slice(0, wildcard);
+  const suffix = pattern.slice(wildcard + 1);
+  return (
+    value.length >= prefix.length + suffix.length &&
+    value.startsWith(prefix) &&
+    value.endsWith(suffix)
+  );
+};
+
+const fetchRefspecRequiresManualReview = async (
+  refspec: string,
+  mergeRef: string,
+  repoPath: string,
+  runGit: ReadOnlyGitRunner,
+): Promise<boolean> => {
+  if (refspec !== refspec.trim() || !refspec || refspec.startsWith("!")) {
+    return true;
+  }
+
+  const forced = refspec.startsWith("+");
+  const normalized = refspec.replace(/^\+/, "");
+  if (normalized.startsWith("^")) {
+    const sourcePattern = normalized.slice(1);
+    if (
+      forced ||
+      !sourcePattern ||
+      sourcePattern.includes(":") ||
+      sourcePattern.split("*").length - 1 > 1
+    ) {
+      return true;
+    }
+    try {
+      await runGit(["check-ref-format", sourcePattern.replace("*", "arashi-wildcard")], repoPath);
+    } catch {
+      return true;
+    }
+    return wildcardPatternMatches(sourcePattern, mergeRef);
+  }
+
+  const separator = normalized.indexOf(":");
+  if (separator === -1 || separator === normalized.length - 1) {
+    const sourcePattern = separator === -1 ? normalized : normalized.slice(0, -1);
+    if (!sourcePattern || sourcePattern.includes("*")) {
+      return true;
+    }
+    try {
+      await runGit(["check-ref-format", sourcePattern.replace("*", "arashi-wildcard")], repoPath);
+      return wildcardPatternMatches(sourcePattern, mergeRef);
+    } catch {
+      return true;
+    }
+  }
+  if (separator <= 0 || separator !== normalized.lastIndexOf(":")) {
+    return true;
+  }
+
+  const sourcePattern = normalized.slice(0, separator);
+  const destinationPattern = normalized.slice(separator + 1);
+  const sourceWildcards = sourcePattern.split("*").length - 1;
+  const destinationWildcards = destinationPattern.split("*").length - 1;
+  if (sourceWildcards > 1 || destinationWildcards > 1 || sourceWildcards !== destinationWildcards) {
+    return true;
+  }
+
+  try {
+    for (const candidate of [sourcePattern, destinationPattern]) {
+      await runGit(["check-ref-format", candidate.replace("*", "arashi-wildcard")], repoPath);
+    }
+    return false;
+  } catch {
+    return true;
+  }
+};
+
+const fetchRefspecCovers = (refspec: string, source: string, destination: string): boolean => {
+  const normalized = refspec.trim().replace(/^\+/, "");
+  if (!normalized || normalized.startsWith("^")) {
+    return false;
+  }
+
+  const separator = normalized.indexOf(":");
+  if (separator === -1) {
+    return false;
+  }
+
+  const sourcePattern = normalized.slice(0, separator);
+  const destinationPattern = normalized.slice(separator + 1);
+  const sourceWildcard = sourcePattern.indexOf("*");
+  const destinationWildcard = destinationPattern.indexOf("*");
+
+  if (sourceWildcard === -1 || destinationWildcard === -1) {
+    return sourcePattern === source && destinationPattern === destination;
+  }
+  if (
+    sourcePattern.indexOf("*", sourceWildcard + 1) !== -1 ||
+    destinationPattern.indexOf("*", destinationWildcard + 1) !== -1
+  ) {
+    return false;
+  }
+
+  const sourcePrefix = sourcePattern.slice(0, sourceWildcard);
+  const sourceSuffix = sourcePattern.slice(sourceWildcard + 1);
+  if (
+    source.length < sourcePrefix.length + sourceSuffix.length ||
+    !source.startsWith(sourcePrefix) ||
+    !source.endsWith(sourceSuffix)
+  ) {
+    return false;
+  }
+
+  const wildcardValue = source.slice(sourcePrefix.length, source.length - sourceSuffix.length);
+  return destinationPattern.replace("*", wildcardValue) === destination;
+};
+
+const refNamespacesConflict = (left: string, right: string): boolean =>
+  left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+
+const fetchRefspecTargetsDestination = (refspec: string, destination: string): boolean => {
+  const normalized = refspec.trim().replace(/^\+/, "");
+  if (!normalized || normalized.startsWith("^")) {
+    return false;
+  }
+
+  const separator = normalized.indexOf(":");
+  if (separator === -1) {
+    return false;
+  }
+
+  const destinationPattern = normalized.slice(separator + 1);
+  const wildcard = destinationPattern.indexOf("*");
+  if (wildcard === -1) {
+    return refNamespacesConflict(destinationPattern, destination);
+  }
+  if (destinationPattern.indexOf("*", wildcard + 1) !== -1) {
+    return false;
+  }
+
+  if (wildcardPatternMatches(destinationPattern, destination)) {
+    return true;
+  }
+
+  const destinationPrefix = destinationPattern.slice(0, wildcard);
+  const descendantPrefix = `${destination}/`;
+  if (
+    destinationPrefix.startsWith(descendantPrefix) ||
+    descendantPrefix.startsWith(destinationPrefix)
+  ) {
+    return true;
+  }
+
+  for (let separator = destination.lastIndexOf("/"); separator > 0; ) {
+    const ancestor = destination.slice(0, separator);
+    if (wildcardPatternMatches(destinationPattern, ancestor)) {
+      return true;
+    }
+    separator = destination.lastIndexOf("/", separator - 1);
+  }
+  return false;
+};
+
+const fetchRefspecDestinationPattern = (refspec: string): string | null => {
+  const normalized = refspec.trim().replace(/^\+/, "");
+  if (!normalized || normalized.startsWith("^")) return null;
+  const separator = normalized.indexOf(":");
+  if (separator <= 0 || separator === normalized.length - 1) return null;
+  return normalized.slice(separator + 1);
+};
+
+const destinationPatternsCouldConflict = (left: string, right: string): boolean => {
+  const leftWildcard = left.indexOf("*");
+  const rightWildcard = right.indexOf("*");
+  if (leftWildcard === -1 && rightWildcard === -1) {
+    return refNamespacesConflict(left, right);
+  }
+  if (leftWildcard === -1) {
+    return fetchRefspecTargetsDestination(`refs/heads/arashi-wildcard:${right}`, left);
+  }
+  if (rightWildcard === -1) {
+    return fetchRefspecTargetsDestination(`refs/heads/arashi-wildcard:${left}`, right);
+  }
+  const leftPrefix = left.slice(0, leftWildcard);
+  const rightPrefix = right.slice(0, rightWildcard);
+  return leftPrefix.startsWith(rightPrefix) || rightPrefix.startsWith(leftPrefix);
+};
+
+const fetchRefspecMapsSource = (refspec: string, source: string): boolean => {
+  const normalized = refspec.trim().replace(/^\+/, "");
+  if (!normalized || normalized.startsWith("^")) {
+    return false;
+  }
+
+  const separator = normalized.indexOf(":");
+  if (separator === -1) {
+    return false;
+  }
+
+  const sourcePattern = normalized.slice(0, separator);
+  const wildcard = sourcePattern.indexOf("*");
+  if (wildcard === -1) {
+    return sourcePattern === source;
+  }
+  if (sourcePattern.indexOf("*", wildcard + 1) !== -1) {
+    return false;
+  }
+
+  return wildcardPatternMatches(sourcePattern, source);
+};
+export const inspectUpstreamTrackingConfiguration = async (
+  repoPath: string,
+  runGit: ReadOnlyGitRunner = exec,
+): Promise<UpstreamTrackingInspection> => {
+  const localBranch = await readOptionalGitValue(runGit, repoPath, [
+    "symbolic-ref",
+    "--quiet",
+    "--short",
+    "HEAD",
+  ]);
+  if (!localBranch) {
+    return { kind: "not-applicable" };
+  }
+
+  const strictUpstream = await readOptionalGitValue(runGit, repoPath, [
+    "rev-parse",
+    "--abbrev-ref",
+    "--symbolic-full-name",
+    "@{upstream}",
+  ]);
+  if (strictUpstream) {
+    return { kind: "not-applicable" };
+  }
+
+  const remote = await readOptionalGitValue(runGit, repoPath, [
+    "config",
+    "--get",
+    `branch.${localBranch}.remote`,
+  ]);
+  let mergeRefs: string[] = [];
+  try {
+    const mergeRefOutput = (
+      await runGit(["config", "--get-all", `branch.${localBranch}.merge`], repoPath)
+    ).stdout.replace(/(?:\r?\n)$/, "");
+    mergeRefs = mergeRefOutput.split(/\r?\n/);
+  } catch {
+    mergeRefs = [];
+  }
+  const mergeRef = mergeRefs[0] ?? null;
+  if (!remote || remote === ".") {
+    return { kind: "not-applicable" };
+  }
+  if (mergeRefs.length > 1 && !mergeRef?.startsWith("refs/heads/")) {
+    return { kind: "ambiguous-merge-configuration", localBranch, mergeRefs, remote };
+  }
+  if (!mergeRef?.startsWith("refs/heads/")) {
+    return { kind: "not-applicable" };
+  }
+
+  const remoteBranch = mergeRef.slice("refs/heads/".length);
+  if (!remoteBranch) {
+    return { kind: "not-applicable" };
+  }
+  const expectedRemoteTrackingRef = `refs/remotes/${remote}/${remoteBranch}`;
+  const trackingRef = await readOptionalGitValue(runGit, repoPath, [
+    "show-ref",
+    "--verify",
+    expectedRemoteTrackingRef,
+  ]);
+  if (!trackingRef) {
+    return { kind: "not-applicable" };
+  }
+
+  let fetchRefspecs: string[] = [];
+  try {
+    const fetchRefspecOutput = (
+      await runGit(["config", "--get-all", `remote.${remote}.fetch`], repoPath)
+    ).stdout.replace(/(?:\r?\n)$/, "");
+    fetchRefspecs = fetchRefspecOutput.split(/\r?\n/);
+  } catch {
+    // An absent fetch mapping is diagnosed below as an unambiguous missing mapping.
+  }
+  const manualReviewRefspecs: string[] = [];
+  for (const refspec of fetchRefspecs) {
+    if (await fetchRefspecRequiresManualReview(refspec, mergeRef, repoPath, runGit)) {
+      manualReviewRefspecs.push(refspec);
+    }
+  }
+  for (let leftIndex = 0; leftIndex < fetchRefspecs.length; leftIndex += 1) {
+    const left = fetchRefspecs[leftIndex];
+    const leftDestination = left ? fetchRefspecDestinationPattern(left) : null;
+    if (!left || !leftDestination) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < fetchRefspecs.length; rightIndex += 1) {
+      const right = fetchRefspecs[rightIndex];
+      const rightDestination = right ? fetchRefspecDestinationPattern(right) : null;
+      if (
+        right &&
+        rightDestination &&
+        destinationPatternsCouldConflict(leftDestination, rightDestination)
+      ) {
+        manualReviewRefspecs.push(left, right);
+      }
+    }
+  }
+  const manualReviewRefspecSet = new Set(manualReviewRefspecs);
+  if (
+    manualReviewRefspecs.length === 0 &&
+    fetchRefspecs.some((refspec) =>
+      fetchRefspecCovers(refspec, mergeRef, expectedRemoteTrackingRef),
+    )
+  ) {
+    return { kind: "not-applicable" };
+  }
+  const conflictingFetchRefspecs = fetchRefspecs.filter(
+    (refspec) =>
+      manualReviewRefspecSet.has(refspec) ||
+      (!fetchRefspecCovers(refspec, mergeRef, expectedRemoteTrackingRef) &&
+        (fetchRefspecTargetsDestination(refspec, expectedRemoteTrackingRef) ||
+          fetchRefspecMapsSource(refspec, mergeRef))),
+  );
+
+  return {
+    conflictingFetchRefspecs,
+    expectedRemoteTrackingRef,
+    ...(mergeRefs.length > 1 ? { hasMultipleMergeRefs: true } : {}),
+    kind: "missing-fetch-mapping",
+    localBranch,
+    mergeRef,
+    remote,
+    remoteBranch,
+  };
+};
+
 export function classifyRemoteTrackingFetchFailure(
   error: string,
   target: RemoteTrackingTarget,
