@@ -305,11 +305,12 @@ export const inspectUpstreamTrackingConfiguration = async (
     "--get",
     `branch.${localBranch}.remote`,
   ]);
-  const mergeRef = await readOptionalGitValue(runGit, repoPath, [
+  const mergeRefOutput = await readOptionalGitValue(runGit, repoPath, [
     "config",
-    "--get",
+    "--get-all",
     `branch.${localBranch}.merge`,
   ]);
+  const mergeRef = mergeRefOutput?.split(/\r?\n/, 1)[0] ?? null;
   if (!remote || remote === "." || !mergeRef?.startsWith("refs/heads/")) {
     return { kind: "not-applicable" };
   }

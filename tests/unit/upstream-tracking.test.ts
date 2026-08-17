@@ -26,6 +26,7 @@ interface FakeGitState {
   branch?: string;
   remote?: string;
   mergeRef?: string;
+  mergeRefs?: string[];
   trackingRefExists?: boolean;
   fetchRefspecs?: string[];
   upstream?: string;
@@ -52,6 +53,11 @@ const createFakeGit = (state: FakeGitState): { calls: string[][]; runGit: RunGit
     if (command === `config --get branch.${state.branch}.merge`) {
       if (state.mergeRef === undefined) throw new Error("unset merge ref");
       return { stdout: `${state.mergeRef}\n` };
+    }
+    if (command === `config --get-all branch.${state.branch}.merge`) {
+      const mergeRefs = state.mergeRefs ?? (state.mergeRef === undefined ? [] : [state.mergeRef]);
+      if (mergeRefs.length === 0) throw new Error("unset merge ref");
+      return { stdout: `${mergeRefs.join("\n")}\n` };
     }
     if (command.startsWith("show-ref --verify refs/remotes/")) {
       if (!state.trackingRefExists) throw new Error("missing tracking ref");
@@ -117,6 +123,14 @@ describe("inspectUpstreamTrackingConfiguration", () => {
 
   test.each([
     ["missing fetch mapping", configuredState(), []],
+    [
+      "multiple merge refs using Git's effective first value",
+      configuredState({
+        mergeRef: "refs/heads/dev",
+        mergeRefs: ["refs/heads/main", "refs/heads/dev"],
+      }),
+      [],
+    ],
     [
       "incompatible fetch mapping",
       configuredState({
