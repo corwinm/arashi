@@ -24,14 +24,15 @@ The build process now creates:
 
 - `dist/arashi.bin` - The compiled Bun executable
 - `dist/arashi-wrapper.sh` - Shell wrapper that closes stdin
-- For installation, rename the wrapper to `arashi`
+- For installation, expose the wrapper as both `aw` and `arashi`
 
 ## Installation
 
 ```bash
 cp dist/arashi.bin ~/.local/bin/arashi.bin
+cp dist/arashi-wrapper.sh ~/.local/bin/aw
 cp dist/arashi-wrapper.sh ~/.local/bin/arashi
-chmod +x ~/.local/bin/arashi
+chmod +x ~/.local/bin/aw ~/.local/bin/arashi
 ```
 
 ## Why This Works
