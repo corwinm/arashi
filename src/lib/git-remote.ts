@@ -201,6 +201,9 @@ const fetchRefspecCovers = (refspec: string, source: string, destination: string
   return destinationPattern.replace("*", wildcardValue) === destination;
 };
 
+const refNamespacesConflict = (left: string, right: string): boolean =>
+  left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+
 const fetchRefspecTargetsDestination = (refspec: string, destination: string): boolean => {
   const normalized = refspec.trim().replace(/^\+/, "");
   if (!normalized || normalized.startsWith("^")) {
@@ -215,7 +218,7 @@ const fetchRefspecTargetsDestination = (refspec: string, destination: string): b
   const destinationPattern = normalized.slice(separator + 1);
   const wildcard = destinationPattern.indexOf("*");
   if (wildcard === -1) {
-    return destinationPattern === destination;
+    return refNamespacesConflict(destinationPattern, destination);
   }
   if (destinationPattern.indexOf("*", wildcard + 1) !== -1) {
     return false;

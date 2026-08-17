@@ -153,6 +153,20 @@ describe("inspectUpstreamTrackingConfiguration", () => {
       ["+refs/heads/release/*:refs/remotes/origin/*"],
     ],
     [
+      "conflicting descendant fetch mapping destination",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/other:refs/remotes/origin/main/sub"],
+      }),
+      ["+refs/heads/other:refs/remotes/origin/main/sub"],
+    ],
+    [
+      "conflicting ancestor fetch mapping destination",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/other:refs/remotes/origin"],
+      }),
+      ["+refs/heads/other:refs/remotes/origin"],
+    ],
+    [
       "conflicting exact fetch mapping source",
       configuredState({
         fetchRefspecs: ["+refs/heads/main:refs/custom/main"],
