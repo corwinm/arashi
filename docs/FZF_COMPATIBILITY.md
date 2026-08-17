@@ -2,11 +2,11 @@
 
 ## Problem
 
-When piping `arashi list` to `fzf`, the interactive interface would not respond to keyboard input. This is due to a limitation in Bun's compiled executables where stdin (file descriptor 0) remains open, preventing fzf from accessing `/dev/tty` for keyboard input.
+When piping `aw list` to `fzf`, the interactive interface would not respond to keyboard input. This is due to a limitation in Bun's compiled executables where stdin (file descriptor 0) remains open, preventing fzf from accessing `/dev/tty` for keyboard input.
 
 ## Solution
 
-On Unix-like shells, we use a shell wrapper that closes stdin when piping `arashi list` output:
+On Unix-like shells, we use a shell wrapper that closes stdin when piping `aw list` output:
 
 ```bash
 #!/bin/bash
@@ -43,21 +43,21 @@ chmod +x ~/.local/bin/arashi
 
 ## Windows Note
 
-Windows launchers should not close stdin unconditionally. Doing so makes commands like `arashi switch` appear non-interactive and prevents the built-in picker from opening.
+Windows launchers should not close stdin unconditionally. Doing so makes commands like `aw switch` appear non-interactive and prevents the built-in picker from opening.
 
 ## Testing
 
 To verify fzf works correctly:
 
 ```bash
-arashi list | fzf
+aw list | fzf
 # Should show the list and respond to typing/arrow keys/enter
 ```
 
 To use fzf to choose a worktree for forced removal:
 
 ```bash
-arashi remove -f "$(arashi list | fzf)"
+aw remove -f "$(aw list | fzf)"
 ```
 
 ## Alternative Approaches Tried

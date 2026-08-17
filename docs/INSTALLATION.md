@@ -2,7 +2,7 @@
 
 ## Overview
 
-Arashi uses a small JavaScript npm entrypoint plus wrapper scripts to ensure compatibility with interactive tools like fzf. Supported installations provide canonical `arashi` and its first-class `aw` shorthand (“Arashi Workspace”) through the same implementation. Product identity, help, configuration, `ARASHI_*` variables, packages, and native binaries remain canonical `arashi`.
+Arashi uses a small JavaScript npm entrypoint plus wrapper scripts to ensure compatibility with interactive tools like fzf. Supported installations provide both `aw` and `arashi` through the same implementation. Product identity, configuration, `ARASHI_*` variables, packages, and native binaries retain their established Arashi names.
 
 ## Official install methods
 
@@ -24,13 +24,13 @@ npm:
 
 ```bash
 npm install -g arashi
-arashi install
+aw install
 ```
 
 Verify any method with:
 
 ```bash
-arashi --version
+aw --version
 ```
 
 ## POSIX curl installer behavior and release binding
@@ -46,7 +46,7 @@ The POSIX curl installer (`scripts/install.sh`) is bound to GitHub Releases arti
 - Runtime verification: a recoverable transaction installs `arashi.bin`, `arashi`, and `aw`, requires identical non-empty version output through both names, and atomically commits `.arashi-managed-entrypoints.json` before updating PATH or shell startup state.
 - Default install placement is `~/.arashi/bin` unless overridden with `ARASHI_INSTALL_DIR` or `--install-dir`.
 - Installer updates the active shell config (`.zshrc`, `.bashrc`/`.bash_profile`, `.profile`, or fish config) to include the install directory on `PATH`.
-- Interactive curl installs offer to enable shell integration for bash, zsh, and fish so `arashi switch --cd` works without a second setup step.
+- Interactive curl installs offer to enable shell integration for bash, zsh, and fish so `aw switch --cd` works without a second setup step.
 - For unattended installs, set `ARASHI_SHELL_INTEGRATION=yes` to enable shell integration without prompting or `ARASHI_SHELL_INTEGRATION=no` to skip it.
 - Before downloads or mutation, the installer rejects an unowned destination `aw`, malformed/mismatched ledger, or an effective-PATH `aw` outside the selected install directory. Marked manual wrappers are not adopted without ledger ownership; move or remove them deliberately before retrying.
 
@@ -109,9 +109,9 @@ powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 - Permission denied writing install location: rerun with `ARASHI_INSTALL_DIR="$HOME/.local/bin"` or another writable path.
 - Download/network errors: retry the command; if failures persist, use npm installation or manual releases.
 - Checksum mismatch: treat as a blocked install, retry once, then fall back to npm/manual and report the issue.
-- Smoke test failure (for example `arashi --version` exits immediately or returns code `137`): rerun with a pinned release using `ARASHI_VERSION=<version>`, or use npm/manual release assets while reporting the bad release artifact.
+- Smoke test failure (for example `aw --version` exits immediately or returns code `137`): rerun with a pinned release using `ARASHI_VERSION=<version>`, or use npm/manual release assets while reporting the bad release artifact.
 - Unsupported platform: use npm (`npm install -g arashi`) when available, otherwise use manual release assets.
-- If you skip shell integration during install, run `arashi shell install` later.
+- If you skip shell integration during install, run `aw shell install` later.
 
 ## Windows PowerShell troubleshooting and fallback guidance
 
@@ -128,9 +128,9 @@ powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 - `npm: command not found`: install Node.js/npm, then retry. If unavailable, use the platform installer for macOS/Linux or Windows PowerShell.
 - Permission errors with global npm installs: configure a user-level npm prefix or use a direct installer with a custom user-writable install directory.
 - Lifecycle scripts are not required: the npm package does not define `postinstall`, so package managers that block install scripts can still install Arashi.
-- To preinstall the platform binary, run `arashi install` after npm install. This is safe to run more than once; if the matching binary already exists it exits successfully without downloading again.
-- First-use download failure: retry `arashi install` once, then use direct/manual release assets if the network or release asset remains unavailable.
-- Verification fails during `arashi install` or first use: partial downloads are removed automatically; switch to direct/manual release flow and report the bad release artifact.
+- To preinstall the platform binary, run `aw install` after npm install. This is safe to run more than once; if the matching binary already exists it exits successfully without downloading again.
+- First-use download failure: retry `aw install` once, then use direct/manual release assets if the network or release asset remains unavailable.
+- Verification fails during `aw install` or first use: partial downloads are removed automatically; switch to direct/manual release flow and report the bad release artifact.
 
 ## Manual Windows release fallback
 
@@ -149,7 +149,7 @@ If you do not want to pipe a remote script into PowerShell or the installer fail
 3. Verify each downloaded asset against `arashi-checksums.txt` with `Get-FileHash -Algorithm SHA256`.
 4. Put the seven payload files in one directory on PATH.
 5. Rename `arashi-windows-x64.exe` to `arashi.bin.exe` so both wrappers find the binary.
-6. Open fresh Git Bash, PowerShell, and Command Prompt sessions and compare `arashi --version` with the corresponding `aw --version` wrapper.
+6. Open fresh Git Bash, PowerShell, and Command Prompt sessions and confirm that both installed executable entrypoints report the same version.
 
 These marked manual aliases intentionally have no direct-installer ledger ownership. Move or remove the manual alias files deliberately before running the PowerShell installer later; the installer will then create its own ledger.
 
@@ -157,7 +157,7 @@ These marked manual aliases intentionally have no direct-installer ledger owners
 
 Bun's compiled executables have a limitation where stdin (file descriptor 0) remains open even after calling `process.stdin.destroy()` or `fs.closeSync(0)`. This prevents tools like fzf from exclusively accessing `/dev/tty` for keyboard input.
 
-The POSIX wrapper solves this by closing stdin when piping `arashi list` output:
+The POSIX wrapper solves this by closing stdin when piping `aw list` output:
 
 ```bash
 if [ "$command" = "list" ] && [ ! -t 1 ]; then
@@ -213,20 +213,20 @@ Semantic Release builds and uploads the release assets listed in `.releaserc.jso
 
 ## User Experience
 
-From the user's perspective, they just run `arashi` - they don't need to know about the wrapper:
+From the user's perspective, they just run `aw` - they don't need to know about the wrapper:
 
 ```bash
 # Install via npm
 npm install -g arashi
 
 # Use anywhere
-arashi list | fzf          # ✓ Works perfectly
-cd $(arashi list | fzf)    # ✓ Interactive navigation
-arashi remove -f "$(arashi list | fzf)"  # ✓ Pick a worktree via fzf
+aw list | fzf          # ✓ Works perfectly
+cd $(aw list | fzf)    # ✓ Interactive navigation
+aw remove -f "$(aw list | fzf)"  # ✓ Pick a worktree via fzf
 ```
 
 ## Windows Support
 
-On Windows, the npm entrypoint and Windows wrappers launch the packaged `.exe` directly and keep stdin attached so interactive commands such as `arashi switch` can render prompt pickers normally.
+On Windows, the npm entrypoint and Windows wrappers launch the packaged `.exe` directly and keep stdin attached so interactive commands such as `aw switch` can render prompt pickers normally.
 
-The Unix shell wrapper's stdin-closing behavior is only needed for shell pipelines like `arashi list | fzf`; Windows launchers do not force stdin closed for every command because that breaks interactive prompts.
+The Unix shell wrapper's stdin-closing behavior is only needed for shell pipelines like `aw list | fzf`; Windows launchers do not force stdin closed for every command because that breaks interactive prompts.

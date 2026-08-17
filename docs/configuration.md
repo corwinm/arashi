@@ -9,9 +9,9 @@ working-tree ignore rules and skip unsafe external paths such as the `..` worktr
 different clone-local policy with:
 
 ```bash
-arashi init --ignore-scope local    # default; remove any stored override
-arashi init --ignore-scope tracked  # maintain an owned block in .gitignore
-arashi init --ignore-scope none     # report only; manage ignore rules manually
+aw init --ignore-scope local    # default; remove any stored override
+aw init --ignore-scope tracked  # maintain an owned block in .gitignore
+aw init --ignore-scope none     # report only; manage ignore rules manually
 ```
 
 Git's effective tracked, repository-local, or existing global rule always takes precedence, and
@@ -145,7 +145,7 @@ Repository construction runs `pre-create`, every `copy` entry in declaration ord
 
 Use `copy` for independent, isolated local configuration. Use `symlink` only for intentionally shared state. Prefer package-manager content-addressed stores and per-worktree installs over sharing `node_modules`, where branches, lockfiles, runtimes, native modules, and install scripts may diverge.
 
-This behavior is configured-workspace-only; standalone create is not supported. Globs and remapping are not supported. Use lifecycle hooks for globs, remapping, external sources, interpolation, generated files, or conditional behavior. `arashi create --dry-run` previews the ordered plan without mutation, and `arashi doctor` inspects source availability and managed destination safety without repair.
+This behavior is configured-workspace-only; standalone create is not supported. Globs and remapping are not supported. Use lifecycle hooks for globs, remapping, external sources, interpolation, generated files, or conditional behavior. `aw create --dry-run` previews the ordered plan without mutation, and `aw doctor` inspects source availability and managed destination safety without repair.
 
 ## Command Defaults
 
@@ -166,11 +166,11 @@ not load or persist workspace defaults.
 
 An absent `launch` preserves built-in no-launch behavior. `none` disables launch without disabling an independently enabled `switch`; `auto` uses context detection; and `sesh` or `herdr` select that launcher directly. Any enabled launch implies switch handling for the newly created primary worktree.
 
-In a managed Kitty session, `auto` uses the same exact-marker, fail-closed launcher as `arashi switch`. A post-create Kitty failure returns a nonzero result but preserves the successfully created worktree and reports partial success. Resolve the Kitty error and run `arashi switch` rather than retrying creation for the same branch.
+In a managed Kitty session, `auto` uses the same exact-marker, fail-closed launcher as `aw switch`. A post-create Kitty failure returns a nonzero result but preserves the successfully created worktree and reports partial success. Resolve the Kitty error and run `aw switch` rather than retrying creation for the same branch.
 
 ### `defaults.editors.<host>.create`
 
-Supported hosts: `vscode`, `cursor`, `kiro`. These scopes use the same `switch` boolean and `launch` vocabulary. Use editor-scoped defaults when terminal `arashi create` should behave one way but an extension-driven create should behave differently.
+Supported hosts: `vscode`, `cursor`, `kiro`. These scopes use the same `switch` boolean and `launch` vocabulary. Use editor-scoped defaults when terminal `aw create` should behave one way but an extension-driven create should behave differently.
 
 Example:
 
@@ -193,7 +193,7 @@ Example:
 }
 ```
 
-In that configuration, terminal `arashi create` uses the generic launch and switch defaults, while VS Code extension `create` uses `defaults.editors.vscode.create` for launch and switch. Both use the workspace-generic `defaults.create.baseBranch`. If an editor-hosted create invocation has no matching host override, Arashi applies no post-create launch or switch defaults unless the user passes explicit CLI flags.
+In that configuration, terminal `aw create` uses the generic launch and switch defaults, while VS Code extension `create` uses `defaults.editors.vscode.create` for launch and switch. Both use the workspace-generic `defaults.create.baseBranch`. If an editor-hosted create invocation has no matching host override, Arashi applies no post-create launch or switch defaults unless the user passes explicit CLI flags.
 
 ### `defaults.switch`
 
@@ -208,10 +208,10 @@ Herdr automatic detection requires `HERDR_ENV` to normalize exactly to `1`. Herd
 Enable shell integration with:
 
 ```bash
-arashi shell install
+aw shell install
 ```
 
-If you prefer manual setup, print shell-specific wrapper code with `arashi shell init <bash|zsh|fish>`.
+If you prefer manual setup, print shell-specific wrapper code with `aw shell init <bash|zsh|fish>`.
 
 ## Legacy create configuration migration
 
@@ -240,9 +240,9 @@ The CLI spellings `--no-cd` and `--no-default-launch` remain accepted throughout
 
 ## Precedence Rules
 
-For `arashi create`, reject `--sesh` plus `--herdr` first. Otherwise explicit `--sesh` / `--herdr` wins (and implies launch), followed by `--tab` / `--launch`, `--no-launch`, the matching configured scope, and built-in `none`. `--tab` bypasses the matching configured scope, implies launch and switch, and remains subordinate to an explicit launcher selector. `--switch` / `--no-switch` resolves independently when tab is absent, but launch implies switch. An editor-hosted create uses only its matching scope and does not fall back to terminal or another editor scope.
+For `aw create`, reject `--sesh` plus `--herdr` first. Otherwise explicit `--sesh` / `--herdr` wins (and implies launch), followed by `--tab` / `--launch`, `--no-launch`, the matching configured scope, and built-in `none`. `--tab` bypasses the matching configured scope, implies launch and switch, and remains subordinate to an explicit launcher selector. `--switch` / `--no-switch` resolves independently when tab is absent, but launch implies switch. An editor-hosted create uses only its matching scope and does not fall back to terminal or another editor scope.
 
-For `arashi switch`, the effective order is: Explicit launcher flags > `--cd` / `--launch` > configured mode > automatic context detection. Conflicting explicit launchers, or `--cd` combined with any launch intent, are rejected before switching.
+For `aw switch`, the effective order is: Explicit launcher flags > `--cd` / `--launch` > configured mode > automatic context detection. Conflicting explicit launchers, or `--cd` combined with any launch intent, are rejected before switching.
 
 For switch, `--tab` bypasses configured `sesh` or `herdr` launch defaults and uses automatic launcher resolution. An explicit launcher selector remains authoritative and composes with tab disposition.
 
@@ -257,10 +257,10 @@ Across command defaults generally, Arashi resolves values in this order:
 
 Examples:
 
-- `arashi create feature-auth --launch` overrides config to force launch for that run.
-- `arashi create feature-auth --no-launch` disables configured create launch defaults for that run.
-- Extension-driven `arashi create` uses `defaults.editors.<host>.create` when present and otherwise skips post-create defaults.
-- `arashi switch feature-auth --cd` overrides config to request parent-shell directory switching for that run.
-- `arashi switch feature-auth --launch` forces launch behavior for that run even when switch defaults prefer `cd`, while preserving a configured launcher.
-- `arashi switch --ignore-configured-launcher` bypasses a configured `sesh` or `herdr` mode for that run; it does not erase configured `auto`, `cd`, or `launch` behavior.
-- `arashi switch --launch --ignore-configured-launcher` forces generic automatic launch.
+- `aw create feature-auth --launch` overrides config to force launch for that run.
+- `aw create feature-auth --no-launch` disables configured create launch defaults for that run.
+- Extension-driven `aw create` uses `defaults.editors.<host>.create` when present and otherwise skips post-create defaults.
+- `aw switch feature-auth --cd` overrides config to request parent-shell directory switching for that run.
+- `aw switch feature-auth --launch` forces launch behavior for that run even when switch defaults prefer `cd`, while preserving a configured launcher.
+- `aw switch --ignore-configured-launcher` bypasses a configured `sesh` or `herdr` mode for that run; it does not erase configured `auto`, `cd`, or `launch` behavior.
+- `aw switch --launch --ignore-configured-launcher` forces generic automatic launch.

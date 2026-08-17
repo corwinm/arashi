@@ -10,8 +10,8 @@ const configuration = readRepositoryDoc("docs/configuration.md");
 
 describe("create base repository documentation contract", () => {
   test("exposes the one-off base option in the command surface and example", () => {
-    expect(readme).toContain("arashi create <branch> [--base <branch>]");
-    expect(readme).toContain("arashi create feature-auth-refresh --base feature/auth");
+    expect(readme).toContain("aw create <branch> [--base <branch>]");
+    expect(readme).toContain("aw create feature-auth-refresh --base feature/auth");
   });
 
   test("documents generic configuration, precedence, normalization, and standalone scope", () => {
