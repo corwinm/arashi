@@ -85,18 +85,57 @@ const readOptionalGitValue = async (
   }
 };
 
-const fetchRefspecRequiresManualReview = (refspec: string): boolean => {
-  if (refspec !== refspec.trim()) {
+const wildcardPatternMatches = (pattern: string, value: string): boolean => {
+  const wildcard = pattern.indexOf("*");
+  if (wildcard === -1) {
+    return pattern === value;
+  }
+  if (pattern.indexOf("*", wildcard + 1) !== -1) {
+    return false;
+  }
+
+  const prefix = pattern.slice(0, wildcard);
+  const suffix = pattern.slice(wildcard + 1);
+  return (
+    value.length >= prefix.length + suffix.length &&
+    value.startsWith(prefix) &&
+    value.endsWith(suffix)
+  );
+};
+
+const fetchRefspecRequiresManualReview = async (
+  refspec: string,
+  mergeRef: string,
+  repoPath: string,
+  runGit: ReadOnlyGitRunner,
+): Promise<boolean> => {
+  if (refspec !== refspec.trim() || !refspec || refspec.startsWith("!")) {
     return true;
   }
 
+  const forced = refspec.startsWith("+");
   const normalized = refspec.replace(/^\+/, "");
-  if (!normalized || normalized.startsWith("^") || normalized.startsWith("!")) {
-    return true;
+  if (normalized.startsWith("^")) {
+    const sourcePattern = normalized.slice(1);
+    if (
+      forced ||
+      !sourcePattern ||
+      sourcePattern.includes(":") ||
+      sourcePattern.split("*").length - 1 > 1
+    ) {
+      return true;
+    }
+    try {
+      await runGit(["check-ref-format", sourcePattern.replace("*", "arashi-wildcard")], repoPath);
+    } catch {
+      return true;
+    }
+    return wildcardPatternMatches(sourcePattern, mergeRef);
   }
 
   const separator = normalized.indexOf(":");
   if (
+    !normalized ||
     separator <= 0 ||
     separator !== normalized.lastIndexOf(":") ||
     separator === normalized.length - 1
@@ -108,29 +147,13 @@ const fetchRefspecRequiresManualReview = (refspec: string): boolean => {
   const destinationPattern = normalized.slice(separator + 1);
   const sourceWildcards = sourcePattern.split("*").length - 1;
   const destinationWildcards = destinationPattern.split("*").length - 1;
-  return (
-    sourceWildcards > 1 || destinationWildcards > 1 || sourceWildcards !== destinationWildcards
-  );
-};
-
-const fetchRefspecHasInvalidRefnames = async (
-  refspec: string,
-  repoPath: string,
-  runGit: ReadOnlyGitRunner,
-): Promise<boolean> => {
-  if (fetchRefspecRequiresManualReview(refspec)) {
+  if (sourceWildcards > 1 || destinationWildcards > 1 || sourceWildcards !== destinationWildcards) {
     return true;
   }
 
-  const normalized = refspec.replace(/^\+/, "");
-  const separator = normalized.indexOf(":");
-  const candidates = [
-    normalized.slice(0, separator).replace("*", "arashi-wildcard"),
-    normalized.slice(separator + 1).replace("*", "arashi-wildcard"),
-  ];
   try {
-    for (const candidate of candidates) {
-      await runGit(["check-ref-format", candidate], repoPath);
+    for (const candidate of [sourcePattern, destinationPattern]) {
+      await runGit(["check-ref-format", candidate.replace("*", "arashi-wildcard")], repoPath);
     }
     return false;
   } catch {
@@ -166,7 +189,11 @@ const fetchRefspecCovers = (refspec: string, source: string, destination: string
 
   const sourcePrefix = sourcePattern.slice(0, sourceWildcard);
   const sourceSuffix = sourcePattern.slice(sourceWildcard + 1);
-  if (!source.startsWith(sourcePrefix) || !source.endsWith(sourceSuffix)) {
+  if (
+    source.length < sourcePrefix.length + sourceSuffix.length ||
+    !source.startsWith(sourcePrefix) ||
+    !source.endsWith(sourceSuffix)
+  ) {
     return false;
   }
 
@@ -194,10 +221,7 @@ const fetchRefspecTargetsDestination = (refspec: string, destination: string): b
     return false;
   }
 
-  return (
-    destination.startsWith(destinationPattern.slice(0, wildcard)) &&
-    destination.endsWith(destinationPattern.slice(wildcard + 1))
-  );
+  return wildcardPatternMatches(destinationPattern, destination);
 };
 
 const fetchRefspecMapsSource = (refspec: string, source: string): boolean => {
@@ -220,10 +244,7 @@ const fetchRefspecMapsSource = (refspec: string, source: string): boolean => {
     return false;
   }
 
-  return (
-    source.startsWith(sourcePattern.slice(0, wildcard)) &&
-    source.endsWith(sourcePattern.slice(wildcard + 1))
-  );
+  return wildcardPatternMatches(sourcePattern, source);
 };
 export const inspectUpstreamTrackingConfiguration = async (
   repoPath: string,
@@ -288,7 +309,7 @@ export const inspectUpstreamTrackingConfiguration = async (
   }
   const manualReviewRefspecs: string[] = [];
   for (const refspec of fetchRefspecs) {
-    if (await fetchRefspecHasInvalidRefnames(refspec, repoPath, runGit)) {
+    if (await fetchRefspecRequiresManualReview(refspec, mergeRef, repoPath, runGit)) {
       manualReviewRefspecs.push(refspec);
     }
   }

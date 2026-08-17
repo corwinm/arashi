@@ -100,6 +100,12 @@ describe("inspectUpstreamTrackingConfiguration", () => {
         fetchRefspecs: ["+refs/heads/*:refs/remotes/origin/*"],
       }),
     ],
+    [
+      "covering mapping with an unrelated negative exclusion",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/main:refs/remotes/origin/main", "^refs/heads/wip/*"],
+      }),
+    ],
     ["already resolvable strict upstream", configuredState({ upstream: "origin/main" })],
   ])("returns not-applicable for %s", async (_name, state) => {
     const inspect = await loadInspector();
@@ -117,6 +123,20 @@ describe("inspectUpstreamTrackingConfiguration", () => {
         fetchRefspecs: ["+refs/heads/release:refs/remotes/origin/release"],
       }),
       [],
+    ],
+    [
+      "unrelated negative fetch exclusion",
+      configuredState({
+        fetchRefspecs: ["^refs/heads/wip/*"],
+      }),
+      [],
+    ],
+    [
+      "overlapping wildcard pattern that does not cover the merge source",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/main*main:refs/remotes/origin/main*"],
+      }),
+      ["+refs/heads/main*main:refs/remotes/origin/main*"],
     ],
     [
       "conflicting exact fetch mapping destination",
@@ -152,6 +172,20 @@ describe("inspectUpstreamTrackingConfiguration", () => {
         fetchRefspecs: ["^refs/heads/main"],
       }),
       ["^refs/heads/main"],
+    ],
+    [
+      "matching wildcard negative fetch exclusion",
+      configuredState({
+        fetchRefspecs: ["^refs/heads/m*"],
+      }),
+      ["^refs/heads/m*"],
+    ],
+    [
+      "malformed negative fetch exclusion",
+      configuredState({
+        fetchRefspecs: ["^refs/heads/.."],
+      }),
+      ["^refs/heads/.."],
     ],
     [
       "covering mapping suppressed by a negative fetch exclusion",
