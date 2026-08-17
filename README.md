@@ -8,6 +8,8 @@ Arashi is a Git worktree manager for meta-repositories.
 
 It keeps related repositories aligned while you work on a feature branch across a shared workspace.
 
+Arashi makes a polyrepo work like a monorepo during development, while every repository keeps its own history, CI, and pull requests.
+
 [Documentation](https://arashi.haphazard.dev)
 
 ## Installation
