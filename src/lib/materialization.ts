@@ -107,6 +107,19 @@ export interface NormalizedMaterializationPath {
   path: string;
 }
 
+export interface MaterializationSourceStat {
+  isDirectory(): boolean;
+  isFile(): boolean;
+}
+
+export function classifyRegularMaterializationSource(
+  source: MaterializationSourceStat,
+): MaterializationSourceKind {
+  if (source.isDirectory()) return "directory";
+  if (source.isFile()) return "file";
+  throw new Error("Materialization sources must be regular files or directories");
+}
+
 export function normalizeMaterializationPath(rawPath: string): NormalizedMaterializationPath {
   if (rawPath.includes("\0")) throw new Error("must not contain NUL");
   if (DRIVE_PREFIX.test(rawPath)) throw new Error("must not be drive-qualified or absolute");

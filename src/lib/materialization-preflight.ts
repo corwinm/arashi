@@ -10,9 +10,10 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { exec } from "./git.ts";
 import {
+  classifyRegularMaterializationSource,
   planRepositoryMaterialization,
   type DestinationInspection,
   type MaterializationAction,
@@ -39,15 +40,39 @@ const unsupportedSymlink = (error: unknown): boolean =>
 export interface NativeSymlinkCapabilityDependencies {
   createProbeRoot?: () => Promise<string>;
   createSymlink?: (target: string, path: string, kind: "dir" | "file") => Promise<void>;
+  probeBasePath?: string;
+}
+
+async function nearestExistingDirectory(path: string): Promise<string> {
+  let candidate = resolve(path);
+  while (true) {
+    try {
+      const candidateStat = await stat(candidate);
+      if (!candidateStat.isDirectory()) {
+        throw new Error(`Symlink capability probe ancestor is not a directory: ${candidate}`);
+      }
+      return realpath(candidate);
+    } catch (error) {
+      if (!missing(error)) throw error;
+      const parent = dirname(candidate);
+      if (parent === candidate) throw error;
+      candidate = parent;
+    }
+  }
 }
 
 export async function resolveNativeSymlinkCapability(
   kind: "directory" | "file",
   dependencies: NativeSymlinkCapabilityDependencies = {},
 ): Promise<"supported" | "unsupported"> {
-  const probeRoot = await (
-    dependencies.createProbeRoot ?? (() => mkdtemp(join(tmpdir(), "arashi-symlink-probe-")))
-  )();
+  const createProbeRoot = async (): Promise<string> => {
+    const probeParent =
+      dependencies.probeBasePath === undefined
+        ? tmpdir()
+        : await nearestExistingDirectory(dirname(resolve(dependencies.probeBasePath)));
+    return mkdtemp(join(probeParent, ".arashi-symlink-probe-"));
+  };
+  const probeRoot = await (dependencies.createProbeRoot ?? createProbeRoot)();
   try {
     const target = join(probeRoot, "target");
     const link = join(probeRoot, "link");
@@ -69,7 +94,7 @@ export async function resolveNativeSymlinkCapability(
   }
 }
 
-async function inspectSourceTree(
+export async function inspectMaterializationSourceTree(
   sourceRoot: string,
   sourcePath: string,
 ): Promise<SourceInspection> {
@@ -81,7 +106,7 @@ async function inspectSourceTree(
   }
 
   const canonicalPath = await realpath(sourcePath);
-  const kind = (await stat(sourcePath)).isDirectory() ? "directory" : "file";
+  const kind = classifyRegularMaterializationSource(await stat(sourcePath));
   const links: NonNullable<Extract<SourceInspection, { status: "present" }>["links"]>[number][] =
     [];
   if (kind === "directory") {
@@ -110,8 +135,8 @@ async function inspectSourceTree(
           target: await import("node:fs/promises").then(({ readlink }) => readlink(path)),
         });
       }
-      const followed = await stat(path);
-      if (!followed.isDirectory()) return;
+      const followedKind = classifyRegularMaterializationSource(await stat(path));
+      if (followedKind !== "directory") return;
       if (active.some((ancestor) => resolve(ancestor) === resolve(canonicalIdentity))) return;
       if (completed.has(canonicalIdentity)) return;
       const nextActive = [...active, canonicalIdentity];
@@ -192,13 +217,15 @@ export async function planConfiguredRepositoryMaterialization(
   return planRepositoryMaterialization(input, {
     inspectDestination: (path) => inspectDestination(input.destinationRoot, path),
     inspectSource: (path, _action: MaterializationAction) =>
-      inspectSourceTree(input.sourceRoot, path),
+      inspectMaterializationSourceTree(input.sourceRoot, path),
     inspectTargetTree: (targetOid, path) =>
       inspectTargetTree(input.repositoryPath, targetOid, path),
     resolveSymlinkCapability: (kind) => {
       const existing = symlinkCapabilities.get(kind);
       if (existing !== undefined) return existing;
-      const capability = resolveNativeSymlinkCapability(kind);
+      const capability = resolveNativeSymlinkCapability(kind, {
+        probeBasePath: input.destinationRoot,
+      });
       symlinkCapabilities.set(kind, capability);
       return capability;
     },

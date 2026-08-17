@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import {
+  classifyRegularMaterializationSource,
   normalizeMaterializationPath,
   resolveMaterializationPath,
   type ExecutedMaterializationOutcome,
@@ -183,9 +184,10 @@ async function copyNode(
     throw new MaterializationFailure("copy_failed");
   }
 
+  const sourceKind = classifyRegularMaterializationSource(followed);
   await ensureSafeParents(destinationRoot, destination, ledger);
   await assertDestinationAbsent(destination);
-  if (followed.isDirectory()) {
+  if (sourceKind === "directory") {
     try {
       await mkdir(destination);
       ledger.push({ kind: "directory", path: destination });
@@ -318,13 +320,14 @@ export async function materializeRepository(
       } else {
         const canonical = await canonicalSource(source, canonicalSourceRoot);
         const sourceStat = await stat(source);
+        const sourceKind = classifyRegularMaterializationSource(sourceStat);
         await ensureSafeParents(input.destinationRoot, destination, ledger);
         await assertDestinationAbsent(destination);
         try {
           await (dependencies.createSymlink ?? symlink)(
             canonical,
             destination,
-            sourceStat.isDirectory() ? "dir" : "file",
+            sourceKind === "directory" ? "dir" : "file",
           );
           ledger.push({ kind: "symlink", path: destination });
         } catch (error) {

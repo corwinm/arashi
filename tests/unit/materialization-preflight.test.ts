@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveNativeSymlinkCapability } from "../../src/lib/materialization-preflight.ts";
+import { promisify } from "node:util";
+import {
+  inspectMaterializationSourceTree,
+  resolveNativeSymlinkCapability,
+} from "../../src/lib/materialization-preflight.ts";
 
 const cleanupRoots: string[] = [];
 
@@ -12,7 +17,40 @@ afterEach(async () => {
   );
 });
 
+describe("materialization source preflight", () => {
+  test.skipIf(process.platform === "win32")(
+    "rejects a FIFO nested inside a configured source directory",
+    async () => {
+      const sourceRoot = await mkdtemp(join(tmpdir(), "arashi-nonregular-source-test-"));
+      cleanupRoots.push(sourceRoot);
+      await promisify(execFile)("mkfifo", [join(sourceRoot, "blocked.fifo")]);
+
+      await expect(inspectMaterializationSourceTree(sourceRoot, sourceRoot)).rejects.toThrow(
+        "Materialization sources must be regular files or directories",
+      );
+    },
+  );
+});
+
 describe("native symlink preflight capability", () => {
+  test("places the probe on the destination filesystem and cleans it", async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), "arashi-symlink-capability-test-"));
+    cleanupRoots.push(fixtureRoot);
+    const destinationRoot = join(fixtureRoot, "managed", "worktree", "repos", "app");
+    let observedTarget = "";
+
+    await expect(
+      resolveNativeSymlinkCapability("file", {
+        probeBasePath: destinationRoot,
+        createSymlink: async (target) => {
+          observedTarget = target;
+        },
+      }),
+    ).resolves.toBe("supported");
+    expect(observedTarget.startsWith(`${await realpath(fixtureRoot)}/`)).toBe(true);
+    await expect(access(join(fixtureRoot, "managed"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   test("reports an unsupported host capability and removes the temporary probe", async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), "arashi-symlink-capability-test-"));
     cleanupRoots.push(fixtureRoot);

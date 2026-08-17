@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { classifyRegularMaterializationSource } from "../../src/lib/materialization.ts";
 
 type Action = "copy" | "symlink";
 type SourceInspection =
@@ -101,6 +102,15 @@ const dependencies = (overrides: Partial<PlannerDependencies> = {}): PlannerDepe
   inspectTargetTree: async () => ({ status: "absent" }),
   resolveSymlinkCapability: async () => "supported",
   ...overrides,
+});
+
+describe("regular materialization source classification", () => {
+  test("rejects FIFOs and other non-regular source objects", () => {
+    const fifo = { isDirectory: () => false, isFile: () => false };
+    expect(() => classifyRegularMaterializationSource(fifo)).toThrow(
+      "Materialization sources must be regular files or directories",
+    );
+  });
 });
 
 describe("shared repository materialization planner RED", () => {
