@@ -1379,10 +1379,35 @@ export async function executeCreate(
     allRepositories.unshift(metaRepo);
   }
 
+  const configuredRepositoryByCanonicalPath = new Map<
+    string,
+    { id: string; policy: Config["repos"][string] }
+  >();
+  for (const [id, policy] of Object.entries(arashiConfig.repos)) {
+    try {
+      configuredRepositoryByCanonicalPath.set(await realpath(resolve(currentDir, policy.path)), {
+        id,
+        policy,
+      });
+    } catch {
+      // Missing configured repositories are not part of create discovery.
+    }
+  }
   for (const repository of allRepositories) {
-    const configuredRepo = arashiConfig.repos[repository.name];
-    if (configuredRepo?.groups) {
-      repository.groups = configuredRepo.groups;
+    let canonicalRepositoryPath: string;
+    try {
+      canonicalRepositoryPath = await realpath(repository.path);
+    } catch {
+      continue;
+    }
+    const configured = configuredRepositoryByCanonicalPath.get(canonicalRepositoryPath);
+    if (!configured) continue;
+    if (repository.name !== configured.id) {
+      repository.worktreeName = repository.name;
+      repository.name = configured.id;
+    }
+    if (configured.policy.groups) {
+      repository.groups = configured.policy.groups;
     }
   }
 

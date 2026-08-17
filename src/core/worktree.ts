@@ -1200,7 +1200,11 @@ export const calculateWorktreePath = async (
     }
 
     const parentWorktreePath = join(worktreeBasePath, parentWorktreeName);
-    const worktreePath = join(parentWorktreePath, typeInfo.reposDir, repo.name);
+    const worktreePath = join(
+      parentWorktreePath,
+      typeInfo.reposDir,
+      repo.worktreeName ?? repo.name,
+    );
 
     return {
       parentWorktreePath,
@@ -1217,7 +1221,7 @@ export const calculateWorktreePath = async (
   // Non-bare repos: Combine folder name + branch (e.g., 'my-repo-feature-branch/')
   let worktreeName = branchName;
   if (!isBare) {
-    worktreeName = `${repo.name}-${branchName}`;
+    worktreeName = `${repo.worktreeName ?? repo.name}-${branchName}`;
   }
   const worktreePath = join(worktreeBasePath, worktreeName);
 

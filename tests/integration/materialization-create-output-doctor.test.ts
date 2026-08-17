@@ -269,6 +269,80 @@ printf 'post\\n' >> '${order}'`,
     ).toBe("PRIMARY-SOURCE-CONTENT\n");
   });
 
+  test("resolves configured materialization policy by canonical repository path when the ID differs from the checkout basename", async () => {
+    const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
+    workspaces.push(workspace);
+    await prepareSources(workspace);
+    const configPath = join(workspace.workspacePath, ".arashi", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8")) as {
+      repos: Record<string, Record<string, unknown>>;
+    };
+    config.repos["simple-repo"] = {
+      ...config.repos.alpha,
+      copy: [".env.local"],
+    };
+    delete config.repos.alpha;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    const branch = "feature/configured-id-materialization";
+    const hookMarker = join(workspace.workspacePath, ".arashi", "configured-id-hook.log");
+    createRepoSpecificHookInRepo(
+      workspace.hookRootPath,
+      "pre-create",
+      "simple-repo",
+      `printf 'configured-id\n' > '${hookMarker}'`,
+    );
+    const preview = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "simple-repo",
+      "--dry-run",
+      "--json",
+    );
+    expect(preview.exitCode, preview.stdout).toBe(0);
+    expect(parseSingleDocument(preview.stdout)).toMatchObject({
+      data: {
+        dryRunOutcome: {
+          materializationPlans: [
+            expect.objectContaining({
+              outcomes: [expect.objectContaining({ action: "copy", status: "would-copy" })],
+              repositoryId: "simple-repo",
+            }),
+          ],
+        },
+      },
+    });
+    await absent(workspace.getChildWorktreePath("alpha", branch));
+
+    const result = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "simple-repo",
+      "--json",
+    );
+
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(await readFile(hookMarker, "utf8")).toBe("configured-id\n");
+    expect(
+      await readFile(join(workspace.getChildWorktreePath("alpha", branch), ".env.local"), "utf8"),
+    ).toBe("TOP-SECRET-CONTENT\n");
+    expect(parseSingleDocument(result.stdout)).toMatchObject({
+      data: {
+        repositories: [
+          expect.objectContaining({
+            materializationOutcomes: [
+              expect.objectContaining({ action: "copy", status: "copied" }),
+            ],
+            repositoryName: "simple-repo",
+          }),
+        ],
+      },
+    });
+  });
+
   test("keeps materialization enabled under --no-hooks without discovering or executing hooks", async () => {
     const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
     workspaces.push(workspace);
