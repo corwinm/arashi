@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { createChildHookWorkspace } from "../helpers/create-child-hook-workspace.ts";
 import { createRepoSpecificHookInRepo } from "../helpers/hooks.ts";
 import { runtime } from "../helpers/node-runtime.ts";
+import { exec } from "../../src/lib/git.ts";
 
 const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
 type Workspace = Awaited<ReturnType<typeof createChildHookWorkspace>>;
@@ -157,6 +158,41 @@ printf 'post\\n' >> '${order}'`,
       ),
     );
     expect(result.stdout).not.toContain("TOP-SECRET-CONTENT");
+  });
+
+  test("preflights and executes the resolved base when only a stale remote-tracking target exists", async () => {
+    const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
+    workspaces.push(workspace);
+    const source = workspace.childRepoPaths.alpha!;
+    const branch = "feature/stale-remote-materialization";
+    await exec(["switch", "-c", branch], source);
+    await writeFile(join(source, ".env.local"), "REMOTE-ONLY-CONTENT\n");
+    await exec(["add", ".env.local"], source);
+    await exec(["-c", "commit.gpgSign=false", "commit", "-m", "remote-only fixture"], source);
+    const remoteOnlyOid = (await exec(["rev-parse", "HEAD"], source)).stdout.trim();
+    await exec(["switch", "main"], source);
+    await exec(["update-ref", `refs/remotes/origin/${branch}`, remoteOnlyOid], source);
+    await exec(["branch", "-D", branch], source);
+    await writeFile(join(source, ".env.local"), "PRIMARY-SOURCE-CONTENT\n");
+    await configure(workspace, { alpha: { copy: [".env.local"] } });
+
+    const result = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "alpha",
+      "--conflict",
+      "REUSE_EXISTING",
+      "--no-hooks",
+      "--json",
+    );
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(
+      await readFile(join(workspace.getChildWorktreePath("alpha", branch), ".env.local"), "utf8"),
+    ).toBe("PRIMARY-SOURCE-CONTENT\n");
+    expect((await exec(["rev-parse", branch], source)).stdout.trim()).not.toBe(remoteOnlyOid);
   });
 
   test("keeps materialization enabled under --no-hooks without discovering or executing hooks", async () => {

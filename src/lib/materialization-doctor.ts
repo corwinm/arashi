@@ -1,5 +1,5 @@
 import { lstat, readlink, realpath, stat } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import type { WorkspaceRepository } from "./config.ts";
 import { exec } from "./git.ts";
@@ -38,6 +38,15 @@ async function linkedWorktrees(
 ): Promise<string[]> {
   const output = (await exec(["worktree", "list", "--porcelain"], repositoryPath)).stdout;
   const primary = resolve(sourcePath);
+  let managedRoot: string | undefined;
+  if (workspaceRoot) {
+    const lexicalManagedRoot = resolve(workspaceRoot, ".arashi", "worktrees");
+    try {
+      managedRoot = await realpath(lexicalManagedRoot);
+    } catch {
+      managedRoot = lexicalManagedRoot;
+    }
+  }
   const result: string[] = [];
   for (const record of output.split(/\r?\n\r?\n/)) {
     const line = record.split(/\r?\n/).find((value) => value.startsWith("worktree "));
@@ -51,6 +60,16 @@ async function linkedWorktrees(
       continue;
     }
     if (canonical !== primary) {
+      if (managedRoot) {
+        const fromManagedRoot = relative(managedRoot, canonical);
+        if (
+          fromManagedRoot === ".." ||
+          fromManagedRoot.startsWith(`..${sep}`) ||
+          isAbsolute(fromManagedRoot)
+        ) {
+          continue;
+        }
+      }
       if (workspaceRoot) {
         const canonicalWorkspace = await realpath(workspaceRoot);
         const fromWorkspace = relative(canonicalWorkspace, canonical);

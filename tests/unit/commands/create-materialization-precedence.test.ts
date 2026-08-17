@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Config, LoadedConfig } from "../../../src/lib/config.ts";
 import type { Repository } from "../../../src/core/repository.ts";
-import { executeCreate } from "../../../src/commands/create.ts";
+import {
+  executeCreate,
+  resolveReusableMaterializationTarget,
+} from "../../../src/commands/create.ts";
 
 type CreateDependencies = NonNullable<Parameters<typeof executeCreate>[2]>;
 
@@ -164,5 +167,25 @@ describe("configured create materialization precedence RED", () => {
     expect(events).toEqual(["materialization-preflight"]);
     expect(await readFile(localExcludePath, "utf8")).toBe("# original exclude\n");
     expect(await readFile(preferencePath, "utf8")).toBe("[arashi]\n\tignoreScope = local\n");
+  });
+
+  test("ignores a stale remote-tracking branch when reuse has no local branch", async () => {
+    const calls: string[][] = [];
+    const repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "app",
+      path: "/workspace/repos/app",
+    } as Repository;
+    const run = async (args: string[]) => {
+      calls.push(args);
+      if (args[3]?.startsWith("refs/heads/")) throw new Error("missing local branch");
+      return { stderr: "", stdout: "remote-target-oid\n" };
+    };
+
+    await expect(
+      resolveReusableMaterializationTarget(repository, "feature/reuse", run as never),
+    ).resolves.toBeUndefined();
+    expect(calls.map((args) => args[3])).toEqual(["refs/heads/feature/reuse^{commit}"]);
   });
 });

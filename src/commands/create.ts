@@ -447,6 +447,24 @@ const resolveDefaultMaterializationTarget = async (
   return first;
 };
 
+export async function resolveReusableMaterializationTarget(
+  repository: Parameters<typeof createCoordinatedWorktrees>[1][number],
+  branchName: string,
+  runGit: typeof exec = exec,
+): Promise<string | undefined> {
+  try {
+    return (
+      await runGit(
+        ["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}^{commit}`],
+        repository.path,
+      )
+    ).stdout.trim();
+  } catch {
+    // Coordinated execution reuses local branches only; remote-only targets are created from base.
+    return undefined;
+  }
+}
+
 const preflightConfiguredMaterialization = async (input: {
   branchName: string;
   config: Config;
@@ -463,19 +481,9 @@ const preflightConfiguredMaterialization = async (input: {
     const symlink = policy?.symlink ?? [];
     if (copy.length === ZERO && symlink.length === ZERO) continue;
     const canonicalRepositoryPath = await realpath(repository.path);
-    let reusedTargetOid: string | undefined;
-    if (input.reuseExisting) {
-      try {
-        reusedTargetOid = (
-          await exec(
-            ["rev-parse", "--verify", "--quiet", `refs/heads/${input.branchName}^{commit}`],
-            repository.path,
-          )
-        ).stdout.trim();
-      } catch {
-        // The target branch does not exist in this repository, so create will use its resolved base.
-      }
-    }
+    const reusedTargetOid = input.reuseExisting
+      ? await resolveReusableMaterializationTarget(repository, input.branchName)
+      : undefined;
     const targetOid =
       reusedTargetOid ??
       input.createBasePlan?.byCanonicalPath.get(canonicalRepositoryPath)?.resolvedOid ??

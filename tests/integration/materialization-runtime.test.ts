@@ -583,4 +583,44 @@ describe("doctor materialization finding contract RED", () => {
     });
     expect(findings).toEqual([]);
   });
+
+  test("doctor ignores linked worktrees outside the managed workspace worktree root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-materialization-doctor-managed-"));
+    roots.push(root);
+    const source = join(root, "source");
+    const workspace = join(root, "workspace");
+    const managed = join(workspace, ".arashi", "worktrees", "managed", "repos", "app");
+    const unmanaged = join(root, "manual-worktree");
+    await mkdir(source, { recursive: true });
+    const { exec } = await import("../../src/lib/git.ts");
+    await exec(["init"], source);
+    await exec(["config", "user.email", "tests@example.com"], source);
+    await exec(["config", "user.name", "Arashi Tests"], source);
+    await writeFile(join(source, "tracked.txt"), "tracked\n");
+    await exec(["add", "tracked.txt"], source);
+    await exec(["-c", "commit.gpgSign=false", "commit", "-m", "fixture"], source);
+    await writeFile(join(source, ".env.local"), "local\n");
+    await mkdir(join(managed, ".."), { recursive: true });
+    await exec(["worktree", "add", "-b", "managed", managed], source);
+    await exec(["worktree", "add", "-b", "manual", unmanaged], source);
+
+    const { collectMaterializationDiagnostics } =
+      await import("../../src/lib/materialization-doctor.ts");
+    const diagnostics = await collectMaterializationDiagnostics(
+      [
+        {
+          copy: [".env.local"],
+          defaultBranch: "main",
+          name: "app",
+          path: source,
+          sourcePath: source,
+        },
+      ] as never,
+      workspace,
+    );
+
+    expect(diagnostics.filter((diagnostic) => diagnostic.destinationStatus === "missing")).toEqual([
+      expect.objectContaining({ normalizedWorktreePath: managed, worktreePath: managed }),
+    ]);
+  });
 });
