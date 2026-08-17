@@ -174,6 +174,13 @@ describe("inspectUpstreamTrackingConfiguration", () => {
       ["+refs/heads/other/*:refs/remotes/origin/main/*"],
     ],
     [
+      "conflicting wildcard substitution descendant destination",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/other/*:refs/remotes/origin/*/sub"],
+      }),
+      ["+refs/heads/other/*:refs/remotes/origin/*/sub"],
+    ],
+    [
       "conflicting descendant fetch mapping destination",
       configuredState({
         fetchRefspecs: ["+refs/heads/other:refs/remotes/origin/main/sub"],

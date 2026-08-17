@@ -235,11 +235,27 @@ const fetchRefspecTargetsDestination = (refspec: string, destination: string): b
     return false;
   }
 
+  if (wildcardPatternMatches(destinationPattern, destination)) {
+    return true;
+  }
+
   const destinationPrefix = destinationPattern.slice(0, wildcard);
-  return (
-    wildcardPatternMatches(destinationPattern, destination) ||
-    destinationPrefix.startsWith(`${destination}/`)
-  );
+  const descendantPrefix = `${destination}/`;
+  if (
+    destinationPrefix.startsWith(descendantPrefix) ||
+    descendantPrefix.startsWith(destinationPrefix)
+  ) {
+    return true;
+  }
+
+  for (let separator = destination.lastIndexOf("/"); separator > 0; ) {
+    const ancestor = destination.slice(0, separator);
+    if (wildcardPatternMatches(destinationPattern, ancestor)) {
+      return true;
+    }
+    separator = destination.lastIndexOf("/", separator - 1);
+  }
+  return false;
 };
 
 const fetchRefspecMapsSource = (refspec: string, source: string): boolean => {
