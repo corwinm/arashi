@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import {
@@ -47,7 +47,10 @@ describe("native symlink preflight capability", () => {
         },
       }),
     ).resolves.toBe("supported");
-    expect(observedTarget.startsWith(`${await realpath(fixtureRoot)}/`)).toBe(true);
+    const targetFromFixture = relative(await realpath(fixtureRoot), observedTarget);
+    expect(targetFromFixture).not.toBe("..");
+    expect(targetFromFixture.startsWith(`..${sep}`)).toBe(false);
+    expect(isAbsolute(targetFromFixture)).toBe(false);
     await expect(access(join(fixtureRoot, "managed"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
