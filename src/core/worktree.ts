@@ -2106,7 +2106,7 @@ const processRepository = async ({
         repositoryPath: canonicalRepositoryPath,
         sourceRoot,
         symlink: materializationSymlink,
-        targetOid: branchName,
+        targetOid: `refs/heads/${branchName}`,
       });
       if (refreshedPlan.classification === "blocked") {
         materializationOutcomes = refreshedPlan.outcomes

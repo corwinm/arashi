@@ -232,6 +232,43 @@ printf 'post\\n' >> '${order}'`,
     );
   });
 
+  test("refreshes reuse plans through the local branch when a tag has the same name", async () => {
+    const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
+    workspaces.push(workspace);
+    const source = workspace.childRepoPaths.alpha!;
+    const branch = "materialization-ambiguous-ref";
+    await exec(["switch", "-c", "tag-source"], source);
+    await writeFile(join(source, "tag-only.txt"), "TAG-ONLY-CONTENT\n");
+    await exec(["add", "tag-only.txt"], source);
+    await exec(["-c", "commit.gpgSign=false", "commit", "-m", "ambiguous tag fixture"], source);
+    await exec(["tag", branch], source);
+    await exec(["switch", "main"], source);
+    await exec(["branch", branch, "main"], source);
+    await configure(workspace, { alpha: { copy: ["tag-only.txt"] } });
+    createRepoSpecificHookInRepo(
+      workspace.hookRootPath,
+      "pre-create",
+      "alpha",
+      `printf 'PRIMARY-SOURCE-CONTENT\n' > '${source}/tag-only.txt'`,
+    );
+
+    const result = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "alpha",
+      "--conflict",
+      "REUSE_EXISTING",
+      "--json",
+    );
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(
+      await readFile(join(workspace.getChildWorktreePath("alpha", branch), "tag-only.txt"), "utf8"),
+    ).toBe("PRIMARY-SOURCE-CONTENT\n");
+  });
+
   test("keeps materialization enabled under --no-hooks without discovering or executing hooks", async () => {
     const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
     workspaces.push(workspace);

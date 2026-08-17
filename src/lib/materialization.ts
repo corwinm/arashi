@@ -127,6 +127,11 @@ export function normalizeMaterializationPath(rawPath: string): NormalizedMateria
   if (/^[\\/]/.test(rawPath) || isAbsolute(rawPath)) throw new Error("must be a relative path");
   if (rawPath.includes(":")) throw new Error("must not contain ':'");
   if (/[<>"|?*]/.test(rawPath)) throw new Error("must not contain Windows-invalid characters");
+  if (
+    [...rawPath].some((character) => character.charCodeAt(0) >= 1 && character.charCodeAt(0) <= 31)
+  ) {
+    throw new Error("must not contain Windows-invalid control characters");
+  }
 
   const rawComponents = rawPath.split(/[\\/]+/);
   if (rawComponents.includes("..")) throw new Error("must not contain '..' segments");
