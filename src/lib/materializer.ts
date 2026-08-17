@@ -10,7 +10,7 @@ import {
   unlink,
   symlink,
 } from "node:fs/promises";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   classifyRegularMaterializationSource,
   normalizeMaterializationPath,
@@ -76,10 +76,15 @@ const isUnsupportedSymlink = (error: unknown): boolean =>
   "code" in error &&
   ["EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "UNKNOWN"].includes(String(error.code));
 
-const isContained = (root: string, candidate: string): boolean => {
-  const fromRoot = relative(resolve(root), resolve(candidate));
-  return fromRoot === "" || (fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`));
-};
+export const isContainedMaterializationRelativePath = (fromRoot: string): boolean =>
+  fromRoot === "" ||
+  (fromRoot !== ".." &&
+    !fromRoot.startsWith(`..${sep}`) &&
+    !isAbsolute(fromRoot) &&
+    !/^[A-Za-z]:[\\/]/.test(fromRoot));
+
+const isContained = (root: string, candidate: string): boolean =>
+  isContainedMaterializationRelativePath(relative(resolve(root), resolve(candidate)));
 
 const safeOutcome = (
   action: MaterializationAction,

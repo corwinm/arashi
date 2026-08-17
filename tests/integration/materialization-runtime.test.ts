@@ -156,6 +156,15 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
 });
 
+describe("runtime materialization containment", () => {
+  test("rejects an absolute relative-path result from a different Windows volume", async () => {
+    const { isContainedMaterializationRelativePath } =
+      await import("../../src/lib/materializer.ts");
+    expect(isContainedMaterializationRelativePath(String.raw`D:\outside`)).toBe(false);
+    expect(isContainedMaterializationRelativePath(String.raw`child\file`)).toBe(true);
+  });
+});
+
 describe("native filesystem materializer and ownership ledger RED", () => {
   test("copies files and deterministic directory trees with spaces/metacharacters into nested parents", async () => {
     const { destinationRoot, sourceRoot } = await fixture();
@@ -582,6 +591,42 @@ describe("doctor materialization finding contract RED", () => {
       worktreePath: "/workspace/wt/app",
     });
     expect(findings).toEqual([]);
+  });
+
+  test("doctor reports operational source inspection failures as unavailable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-materialization-doctor-unavailable-"));
+    roots.push(root);
+    const source = join(root, "source");
+    await mkdir(source, { recursive: true });
+    const { exec } = await import("../../src/lib/git.ts");
+    await exec(["init"], source);
+    await exec(["config", "user.email", "tests@example.com"], source);
+    await exec(["config", "user.name", "Arashi Tests"], source);
+    await writeFile(join(source, "tracked.txt"), "tracked\n");
+    await exec(["add", "tracked.txt"], source);
+    await exec(["-c", "commit.gpgSign=false", "commit", "-m", "fixture"], source);
+    await symlink("loop", join(source, "loop"));
+
+    const { collectMaterializationDiagnostics } =
+      await import("../../src/lib/materialization-doctor.ts");
+    await expect(
+      collectMaterializationDiagnostics([
+        {
+          copy: ["loop"],
+          defaultBranch: "main",
+          name: "app",
+          path: source,
+          sourcePath: source,
+        },
+      ] as never),
+    ).resolves.toContainEqual(
+      expect.objectContaining({
+        action: "copy",
+        path: "loop",
+        repositoryId: "app",
+        sourceStatus: "unavailable",
+      }),
+    );
   });
 
   test("doctor ignores linked worktrees outside the managed workspace worktree root", async () => {

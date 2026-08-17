@@ -64,6 +64,9 @@ describe("repository worktree materialization configuration RED", () => {
     ["aux.txt", "must not contain a Windows reserved device component"],
     ["nested/COM9/log", "must not contain a Windows reserved device component"],
     ["nul\u0000byte", "must not contain NUL"],
+    [".git", "must not target the reserved top-level '.git' path"],
+    [".git/config", "must not target the reserved top-level '.git' path"],
+    [".GIT/hooks/pre-commit", "must not target the reserved top-level '.git' path"],
   ] as const)("rejects portable unsafe copy path %j", (path, reason) => {
     expect(validationErrors({ copy: [path] })).toContain(`repos.app.copy[0]: ${reason}`);
   });

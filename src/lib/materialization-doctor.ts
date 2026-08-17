@@ -3,7 +3,11 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import type { WorkspaceRepository } from "./config.ts";
 import { exec } from "./git.ts";
-import { normalizeMaterializationPath, resolveMaterializationPath } from "./materialization.ts";
+import {
+  classifyRegularMaterializationSource,
+  normalizeMaterializationPath,
+  resolveMaterializationPath,
+} from "./materialization.ts";
 
 export interface CollectedMaterializationDiagnostic {
   action: "copy" | "symlink" | null;
@@ -181,7 +185,7 @@ export async function collectMaterializationDiagnostics(
             stat(sourcePath),
           ]);
           const fromRoot = relative(canonicalRoot, canonicalTarget);
-          if (fromRoot === ".." || fromRoot.startsWith(`..${sep}`)) {
+          if (fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
             diagnostics.push({
               action,
               path: normalizedPath,
@@ -190,16 +194,16 @@ export async function collectMaterializationDiagnostics(
               worktreePath: null,
             });
           } else {
-            expectedKind = sourceEntry.isDirectory() ? "directory" : "file";
+            expectedKind = classifyRegularMaterializationSource(sourceEntry);
             expectedTarget = canonicalTarget;
           }
         } catch (error) {
-          if (!isMissing(error)) throw error;
+          const sourceStatus = isMissing(error) ? "missing" : "unavailable";
           diagnostics.push({
             action,
             path: normalizedPath,
             repositoryId: repository.name,
-            sourceStatus: "missing",
+            sourceStatus,
             worktreePath: null,
           });
         }

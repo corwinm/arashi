@@ -137,6 +137,9 @@ export function normalizeMaterializationPath(rawPath: string): NormalizedMateria
   if (rawComponents.includes("..")) throw new Error("must not contain '..' segments");
   const components = rawComponents.filter((component) => component !== "" && component !== ".");
   if (components.length === 0) throw new Error("must not be empty after normalization");
+  if (components[0]?.toLowerCase() === ".git") {
+    throw new Error("must not target the reserved top-level '.git' path");
+  }
   if (components.some((component) => /[. ]$/.test(component))) {
     throw new Error("components must not end in dot or space");
   }
