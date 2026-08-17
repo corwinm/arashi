@@ -136,7 +136,7 @@ const fetchRefspecRequiresManualReview = async (
   const separator = normalized.indexOf(":");
   if (separator === -1 || separator === normalized.length - 1) {
     const sourcePattern = separator === -1 ? normalized : normalized.slice(0, -1);
-    if (!sourcePattern || sourcePattern.split("*").length - 1 > 1) {
+    if (!sourcePattern || sourcePattern.includes("*")) {
       return true;
     }
     try {

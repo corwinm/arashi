@@ -174,6 +174,20 @@ describe("inspectUpstreamTrackingConfiguration", () => {
       ["refs/heads/main:"],
     ],
     [
+      "destinationless wildcard fetch refspec",
+      configuredState({
+        fetchRefspecs: ["refs/tags/*"],
+      }),
+      ["refs/tags/*"],
+    ],
+    [
+      "empty-destination wildcard fetch refspec",
+      configuredState({
+        fetchRefspecs: ["refs/tags/*:"],
+      }),
+      ["refs/tags/*:"],
+    ],
+    [
       "overlapping wildcard pattern that does not cover the merge source",
       configuredState({
         fetchRefspecs: ["+refs/heads/main*main:refs/remotes/origin/main*"],
