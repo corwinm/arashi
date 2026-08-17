@@ -1,3 +1,14 @@
+## [1.32.0](https://github.com/corwinm/arashi/compare/v1.31.0...v1.32.0) (2026-08-17)
+
+### Features
+
+- materialize configured worktree files ([#144](https://github.com/corwinm/arashi/issues/144)) ([d1372c4](https://github.com/corwinm/arashi/commit/d1372c4f3a17f0d65a71e7584bf017b609d366e0))
+
+### Bug Fixes
+
+- **doctor:** diagnose unavailable upstream tracking ([#143](https://github.com/corwinm/arashi/issues/143)) ([19f595c](https://github.com/corwinm/arashi/commit/19f595ce827cd92bbd830b20c1eaf7219dc47a16))
+- verify published alias release after first use ([#140](https://github.com/corwinm/arashi/issues/140)) ([34db2a7](https://github.com/corwinm/arashi/commit/34db2a7757dd94324fdc166fc20aeaf952da33df))
+
 ## [1.31.0](https://github.com/corwinm/arashi/compare/v1.30.0...v1.31.0) (2026-08-16)
 
 ### Features
