@@ -1,6 +1,6 @@
 import { runtime, spawn } from "../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -132,6 +132,22 @@ describe("setup command", () => {
 
     expect(result.exitCode).toBe(0);
     expect(order.trim().split("\n")).toEqual(["main", "repo-a", "repo-b"]);
+  });
+
+  test("loads a missing configured repository that declares materialization", async () => {
+    const { repoAPath, workspaceRoot } = await createWorkspace(testDir);
+    const configPath = join(workspaceRoot, ".arashi", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8")) as {
+      repos: Record<string, Record<string, unknown>>;
+    };
+    config.repos["repo-a"]!.copy = [".env.local"];
+    await writeFile(configPath, JSON.stringify(config, null, 2));
+    await rm(repoAPath, { force: true, recursive: true });
+
+    const result = await runSetup(workspaceRoot, ["--only", "repo-a"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("repo-a: skipped");
   });
 
   test("skips repositories without setup scripts", async () => {

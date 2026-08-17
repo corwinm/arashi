@@ -532,6 +532,44 @@ describe("doctor human and JSON materialization contract RED", () => {
     expect(result.stdout).not.toMatch(/Checking|Doctor found/);
   });
 
+  test("diagnoses managed worktrees under a configured custom worktrees directory", async () => {
+    const workspace = await createChildHookWorkspace({
+      childRepoNames: ["alpha"],
+      worktreesDir: "managed/custom-worktrees",
+    });
+    workspaces.push(workspace);
+    await prepareSources(workspace);
+    await configure(workspace, { alpha: { copy: [".env.local"] } });
+    const branch = "feature/custom-doctor-root";
+    const created = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "alpha",
+      "--no-hooks",
+      "--json",
+    );
+    expect(created.exitCode, `${created.stdout}\n${created.stderr}`).toBe(0);
+    await rm(join(workspace.getChildWorktreePath("alpha", branch), ".env.local"));
+
+    const result = await runArashi(workspace.workspacePath, "doctor", "--json");
+    const envelope = parseSingleDocument(result.stdout);
+    const findings =
+      (envelope.data as { findings?: Record<string, unknown>[] } | undefined)?.findings ??
+      (envelope.error as { details?: { findings?: Record<string, unknown>[] } } | undefined)
+        ?.details?.findings ??
+      [];
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        code: "MATERIALIZATION_COPY_DESTINATION_MISSING",
+        details: expect.objectContaining({
+          worktreePath: workspace.getChildWorktreePath("alpha", branch),
+        }),
+      }),
+    );
+  });
+
   test("reports an unavailable canonical source checkout through the materialization finding contract", async () => {
     const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
     workspaces.push(workspace);

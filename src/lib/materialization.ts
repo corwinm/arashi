@@ -113,6 +113,7 @@ export function normalizeMaterializationPath(rawPath: string): NormalizedMateria
   if (/^[\\/]{2}/.test(rawPath)) throw new Error("must not be a UNC or rooted path");
   if (/^[\\/]/.test(rawPath) || isAbsolute(rawPath)) throw new Error("must be a relative path");
   if (rawPath.includes(":")) throw new Error("must not contain ':'");
+  if (/[<>"|?*]/.test(rawPath)) throw new Error("must not contain Windows-invalid characters");
 
   const rawComponents = rawPath.split(/[\\/]+/);
   if (rawComponents.includes("..")) throw new Error("must not contain '..' segments");

@@ -1676,11 +1676,21 @@ export const loadWorkspaceRepositories = async (
     let projectedPath = repositoryPath;
     let sourcePath: string | undefined;
     if (hasMaterialization) {
+      let repositoryAvailable = false;
       try {
         projectedPath = await realpath(repositoryPath);
-        sourcePath = await resolveGitPrimarySourceCheckout(projectedPath, name);
+        repositoryAvailable = true;
       } catch (error) {
-        if (!options.allowUnavailableMaterializationSource) throw error;
+        const repositoryMissing =
+          typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+        if (!repositoryMissing && !options.allowUnavailableMaterializationSource) throw error;
+      }
+      if (repositoryAvailable) {
+        try {
+          sourcePath = await resolveGitPrimarySourceCheckout(projectedPath, name);
+        } catch (error) {
+          if (!options.allowUnavailableMaterializationSource) throw error;
+        }
       }
     }
     repositories.push({

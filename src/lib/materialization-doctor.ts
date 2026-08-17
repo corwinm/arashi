@@ -35,12 +35,13 @@ async function linkedWorktrees(
   repositoryPath: string,
   sourcePath: string,
   workspaceRoot?: string,
+  worktreesDir = ".arashi/worktrees",
 ): Promise<string[]> {
   const output = (await exec(["worktree", "list", "--porcelain"], repositoryPath)).stdout;
   const primary = resolve(sourcePath);
   let managedRoot: string | undefined;
   if (workspaceRoot) {
-    const lexicalManagedRoot = resolve(workspaceRoot, ".arashi", "worktrees");
+    const lexicalManagedRoot = resolve(workspaceRoot, worktreesDir);
     try {
       managedRoot = await realpath(lexicalManagedRoot);
     } catch {
@@ -132,6 +133,7 @@ async function inspectDestination(
 export async function collectMaterializationDiagnostics(
   repositories: readonly WorkspaceRepository[],
   workspaceRoot?: string,
+  worktreesDir = ".arashi/worktrees",
 ): Promise<CollectedMaterializationDiagnostic[]> {
   const diagnostics: CollectedMaterializationDiagnostic[] = [];
   for (const repository of repositories) {
@@ -148,7 +150,12 @@ export async function collectMaterializationDiagnostics(
       });
       continue;
     }
-    const worktrees = await linkedWorktrees(repository.path, repository.sourcePath, workspaceRoot);
+    const worktrees = await linkedWorktrees(
+      repository.path,
+      repository.sourcePath,
+      workspaceRoot,
+      worktreesDir,
+    );
     if (symlink.length > 0) {
       diagnostics.push({
         action: null,

@@ -1067,9 +1067,12 @@ export const runDoctor = async (): Promise<DoctorResult> => {
     collectRepositoryFindings(executionRoot, config),
     collectWorktreeFindings(executionRoot, config),
     collectHookFindings(configurationRoot, executionRoot, config),
-    collectMaterializationDiagnostics(materializationRepositories, configurationRoot).then(
-      (diagnostics) =>
-        diagnostics.flatMap((diagnostic) => materializationToDoctorFindings(diagnostic)),
+    collectMaterializationDiagnostics(
+      materializationRepositories,
+      configurationRoot,
+      config.worktreesDir,
+    ).then((diagnostics) =>
+      diagnostics.flatMap((diagnostic) => materializationToDoctorFindings(diagnostic)),
     ),
   ]);
 
