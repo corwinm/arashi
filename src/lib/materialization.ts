@@ -120,6 +120,9 @@ export function classifyRegularMaterializationSource(
   throw new Error("Materialization sources must be regular files or directories");
 }
 
+export const portableMaterializationCollisionKey = (path: string): string =>
+  path.toLocaleUpperCase("en-US").toLocaleLowerCase("en-US").normalize("NFC");
+
 export function normalizeMaterializationPath(rawPath: string): NormalizedMaterializationPath {
   if (rawPath.includes("\0")) throw new Error("must not contain NUL");
   if (DRIVE_PREFIX.test(rawPath)) throw new Error("must not be drive-qualified or absolute");
@@ -149,8 +152,7 @@ export function normalizeMaterializationPath(rawPath: string): NormalizedMateria
 
   const path = components.join("/").normalize("NFC");
   if (path.length === 0) throw new Error("must not be empty after normalization");
-  const collisionKey = path.toLocaleUpperCase("en-US").toLocaleLowerCase("en-US").normalize("NFC");
-  return { collisionKey, path };
+  return { collisionKey: portableMaterializationCollisionKey(path), path };
 }
 
 export function resolveMaterializationPath(root: string, normalizedPath: string): string {

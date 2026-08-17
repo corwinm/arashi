@@ -15,6 +15,7 @@ import { exec } from "./git.ts";
 import {
   classifyRegularMaterializationSource,
   planRepositoryMaterialization,
+  portableMaterializationCollisionKey,
   type DestinationInspection,
   type MaterializationAction,
   type MaterializationPlannerInput,
@@ -182,20 +183,52 @@ async function inspectTargetTree(
   path: string,
 ): Promise<TargetTreeInspection> {
   const components = path.split("/");
-  for (let length = 1; length <= components.length; length += 1) {
-    const candidate = components.slice(0, length).join("/");
-    const result = await exec(["ls-tree", "-z", targetOid, "--", candidate], repositoryPath);
-    if (result.stdout.length === 0) continue;
-    const metadata = result.stdout.slice(0, result.stdout.indexOf("\t"));
-    const kind = metadata.split(" ")[1];
-    const final = length === components.length;
-    if (final || kind !== "tree") {
+  let candidateTrees: { matchedComponents: string[]; oid: string }[] = [
+    { matchedComponents: [], oid: targetOid },
+  ];
+  for (let index = 0; index < components.length; index += 1) {
+    const expectedKey = portableMaterializationCollisionKey(components[index]!);
+    const matches: { kind: string; matchedComponents: string[]; oid: string }[] = [];
+    for (const tree of candidateTrees) {
+      const result = await exec(["ls-tree", "-z", tree.oid], repositoryPath);
+      for (const record of result.stdout.split("\0")) {
+        if (record === "") continue;
+        const separatorIndex = record.indexOf("\t");
+        if (separatorIndex < 0) throw new Error("Invalid git ls-tree output");
+        const metadata = record.slice(0, separatorIndex).split(" ");
+        const name = record.slice(separatorIndex + 1);
+        if (portableMaterializationCollisionKey(name) !== expectedKey) continue;
+        matches.push({
+          kind: metadata[1] ?? "",
+          matchedComponents: [...tree.matchedComponents, name],
+          oid: metadata[2] ?? "",
+        });
+      }
+    }
+    if (matches.length === 0) return { status: "absent" };
+    if (matches.length > 1) {
+      const ambiguous = matches[0]!;
       return {
-        kind: kind === "tree" ? "directory" : kind === "commit" ? "symlink" : "file",
-        matchedPath: candidate,
+        kind: ambiguous.kind === "tree" ? "directory" : "file",
+        matchedPath: ambiguous.matchedComponents.join("/"),
         status: "present",
       };
     }
+    const final = index === components.length - 1;
+    const incompatible = matches.find((match) => final || match.kind !== "tree");
+    if (incompatible) {
+      return {
+        kind:
+          incompatible.kind === "tree"
+            ? "directory"
+            : incompatible.kind === "commit"
+              ? "symlink"
+              : "file",
+        matchedPath: incompatible.matchedComponents.join("/"),
+        status: "present",
+      };
+    }
+    candidateTrees = matches.map(({ matchedComponents, oid }) => ({ matchedComponents, oid }));
   }
   return { status: "absent" };
 }

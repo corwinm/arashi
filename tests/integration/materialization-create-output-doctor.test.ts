@@ -390,6 +390,59 @@ printf 'post\\n' >> '${order}'`,
     ).toBe("TOP-SECRET-CONTENT\n");
   });
 
+  test("blocks case-only target-tree destination collisions before create mutation", async () => {
+    const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
+    workspaces.push(workspace);
+    const source = await prepareSources(workspace);
+    await mkdir(join(source, "Config"), { recursive: true });
+    await writeFile(join(source, "Config", "local.json"), "tracked\n");
+    await exec(["add", "Config/local.json"], source);
+    await exec(["-c", "commit.gpgSign=false", "commit", "-m", "case collision fixture"], source);
+    await configure(workspace, { alpha: { copy: ["config/local.json"] } });
+    const branch = "feature/case-only-tree-collision";
+    const marker = join(workspace.workspacePath, ".arashi", "case-collision-hook.log");
+    createRepoSpecificHookInRepo(
+      workspace.hookRootPath,
+      "pre-create",
+      "alpha",
+      `printf reached > '${marker}'`,
+    );
+
+    const result = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "alpha",
+      "--dry-run",
+      "--json",
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(parseSingleDocument(result.stdout)).toMatchObject({
+      error: {
+        code: "MATERIALIZATION_PLAN_BLOCKED",
+        details: {
+          dryRunOutcome: {
+            materializationPlans: [
+              expect.objectContaining({
+                outcomes: [
+                  expect.objectContaining({
+                    path: "config/local.json",
+                    reasonCode: "destination_exists",
+                    status: "blocked",
+                  }),
+                ],
+              }),
+            ],
+          },
+        },
+      },
+    });
+    await absent(marker);
+    await absent(workspace.getChildWorktreePath("alpha", branch));
+  });
+
   test("projects actionable and blocked dry-runs into exact planned-only JSON paths without mutation", async () => {
     const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
     workspaces.push(workspace);

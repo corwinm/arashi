@@ -1,4 +1,5 @@
 import {
+  chmod,
   constants,
   copyFile,
   lstat,
@@ -114,28 +115,47 @@ async function canonicalSource(path: string, sourceRoot: string): Promise<string
   }
 }
 
+interface DirectoryModeRestoration {
+  mode: number;
+  path: string;
+}
+
 async function ensureSafeParents(
+  sourceRoot: string,
   destinationRoot: string,
   destination: string,
   ledger: MaterializationOwnershipEntry[],
+  restorations: DirectoryModeRestoration[],
 ): Promise<void> {
   const parent = dirname(destination);
   const components = relative(resolve(destinationRoot), parent).split(sep).filter(Boolean);
   let current = resolve(destinationRoot);
+  let sourceCurrent = resolve(sourceRoot);
   for (const component of components) {
     current = resolve(current, component);
+    sourceCurrent = resolve(sourceCurrent, component);
     try {
       const entry = await lstat(current);
       if (entry.isSymbolicLink() || !entry.isDirectory()) {
         throw new MaterializationFailure("destination_ancestor_unsafe");
       }
+      if (ledger.some((owned) => owned.kind === "directory" && owned.path === current)) {
+        const sourceEntry = await stat(sourceCurrent);
+        if (!sourceEntry.isDirectory()) throw new MaterializationFailure("copy_failed");
+        await chmod(current, (sourceEntry.mode & 0o777) | 0o700);
+        restorations.push({ mode: sourceEntry.mode & 0o777, path: current });
+      }
     } catch (error) {
       if (error instanceof MaterializationFailure) throw error;
       if (!isMissing(error)) throw new MaterializationFailure("destination_ancestor_unsafe");
       try {
-        await mkdir(current);
+        const sourceEntry = await stat(sourceCurrent);
+        if (!sourceEntry.isDirectory()) throw new MaterializationFailure("copy_failed");
+        await mkdir(current, { mode: (sourceEntry.mode & 0o777) | 0o700 });
         ledger.push({ kind: "directory", path: current });
+        restorations.push({ mode: sourceEntry.mode & 0o777, path: current });
       } catch (mkdirError) {
+        if (mkdirError instanceof MaterializationFailure) throw mkdirError;
         if (
           typeof mkdirError === "object" &&
           mkdirError !== null &&
@@ -147,6 +167,12 @@ async function ensureSafeParents(
         throw new MaterializationFailure("copy_failed");
       }
     }
+  }
+}
+
+async function restoreDirectoryModes(restorations: DirectoryModeRestoration[]): Promise<void> {
+  for (const restoration of restorations.toReversed()) {
+    await chmod(restoration.path, restoration.mode);
   }
 }
 
@@ -167,6 +193,7 @@ async function copyNode(
   destinationRoot: string,
   active: readonly string[],
   ledger: MaterializationOwnershipEntry[],
+  restorations: DirectoryModeRestoration[],
 ): Promise<void> {
   let lexical;
   try {
@@ -190,11 +217,11 @@ async function copyNode(
   }
 
   const sourceKind = classifyRegularMaterializationSource(followed);
-  await ensureSafeParents(destinationRoot, destination, ledger);
+  await ensureSafeParents(sourceRoot, destinationRoot, destination, ledger, restorations);
   await assertDestinationAbsent(destination);
   if (sourceKind === "directory") {
     try {
-      await mkdir(destination);
+      await mkdir(destination, { mode: (followed.mode & 0o777) | 0o700 });
       ledger.push({ kind: "directory", path: destination });
     } catch (error) {
       if (
@@ -222,8 +249,10 @@ async function copyNode(
         destinationRoot,
         nextActive,
         ledger,
+        restorations,
       );
     }
+    await chmod(destination, followed.mode & 0o777);
     return;
   }
   try {
@@ -247,6 +276,20 @@ const defaultRemoveOwnedObject = async (entry: MaterializationOwnershipEntry): P
   else await unlink(entry.path);
 };
 
+async function reopenOwnedDirectories(
+  ledger: readonly MaterializationOwnershipEntry[],
+): Promise<void> {
+  for (const owned of ledger) {
+    if (owned.kind !== "directory") continue;
+    try {
+      const mode = (await stat(owned.path)).mode;
+      await chmod(owned.path, (mode & 0o777) | 0o700);
+    } catch {
+      // Removal confirmation reports any owned object that remains.
+    }
+  }
+}
+
 export async function rollbackMaterializationOwnership(
   repositoryId: string,
   action: MaterializationAction,
@@ -257,13 +300,27 @@ export async function rollbackMaterializationOwnership(
   ) => Promise<void> = defaultRemoveOwnedObject,
 ): Promise<MaterializationResult["materializationRollback"]> {
   const failures: MaterializationRollbackFailure[] = [];
+  await reopenOwnedDirectories(ledger);
   for (const owned of ledger.toReversed()) {
     try {
       await removeOwnedObject(owned);
     } catch {
+      // Confirmation below determines whether the owned object remains.
+    }
+    try {
+      await lstat(owned.path);
       failures.push({
         action,
         message: "Owned materialization object could not be removed",
+        path,
+        reasonCode: "rollback_failed",
+        repositoryId,
+      });
+    } catch (error) {
+      if (isMissing(error)) continue;
+      failures.push({
+        action,
+        message: "Owned materialization object removal could not be confirmed",
         path,
         reasonCode: "rollback_failed",
         repositoryId,
@@ -298,6 +355,7 @@ export async function materializeRepository(
     const normalizedPath = normalizeMaterializationPath(entry.path).path;
     const source = resolveMaterializationPath(input.sourceRoot, normalizedPath);
     const destination = resolveMaterializationPath(input.destinationRoot, normalizedPath);
+    const directoryModeRestorations: DirectoryModeRestoration[] = [];
     try {
       try {
         await lstat(source);
@@ -318,7 +376,16 @@ export async function materializeRepository(
       }
 
       if (entry.action === "copy") {
-        await copyNode(source, destination, canonicalSourceRoot, input.destinationRoot, [], ledger);
+        await copyNode(
+          source,
+          destination,
+          canonicalSourceRoot,
+          input.destinationRoot,
+          [],
+          ledger,
+          directoryModeRestorations,
+        );
+        await restoreDirectoryModes(directoryModeRestorations);
         outcomes.push(
           safeOutcome("copy", normalizedPath, "copied", "none", `Copied '${normalizedPath}'`),
         );
@@ -326,7 +393,13 @@ export async function materializeRepository(
         const canonical = await canonicalSource(source, canonicalSourceRoot);
         const sourceStat = await stat(source);
         const sourceKind = classifyRegularMaterializationSource(sourceStat);
-        await ensureSafeParents(input.destinationRoot, destination, ledger);
+        await ensureSafeParents(
+          input.sourceRoot,
+          input.destinationRoot,
+          destination,
+          ledger,
+          directoryModeRestorations,
+        );
         await assertDestinationAbsent(destination);
         try {
           await (dependencies.createSymlink ?? symlink)(
@@ -335,6 +408,7 @@ export async function materializeRepository(
             sourceKind === "directory" ? "dir" : "file",
           );
           ledger.push({ kind: "symlink", path: destination });
+          await restoreDirectoryModes(directoryModeRestorations);
         } catch (error) {
           if (
             typeof error === "object" &&
@@ -376,6 +450,7 @@ export async function materializeRepository(
   const rollbackFailures: MaterializationRollbackFailure[] = [];
   const retainedLedger: MaterializationOwnershipEntry[] = [];
   if (failure) {
+    await reopenOwnedDirectories(ledger);
     const removeOwnedObject = dependencies.removeOwnedObject ?? defaultRemoveOwnedObject;
     for (const owned of ledger.toReversed()) {
       try {

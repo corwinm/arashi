@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   access,
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -9,6 +10,7 @@ import {
   readlink,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -211,6 +213,93 @@ describe("native filesystem materializer and ownership ledger RED", () => {
       expect.arrayContaining(["directory", "file"]),
     );
   });
+
+  test.skipIf(process.platform === "win32")(
+    "preserves copied directory and derived parent permissions",
+    async () => {
+      const { destinationRoot, sourceRoot } = await fixture();
+      await mkdir(join(sourceRoot, "credentials", "nested"), { recursive: true });
+      await writeFile(join(sourceRoot, "credentials", "nested", "secret.txt"), "secret\n");
+      await chmod(join(sourceRoot, "credentials"), 0o500);
+      await chmod(join(sourceRoot, "credentials", "nested"), 0o500);
+
+      const result = await (
+        await loadMaterializer()
+      )(input(sourceRoot, destinationRoot, { copy: ["credentials/nested"] }));
+
+      expect(result.outcomes[0]).toMatchObject({ reasonCode: "none", status: "copied" });
+      expect((await stat(join(destinationRoot, "credentials"))).mode & 0o777).toBe(0o500);
+      expect((await stat(join(destinationRoot, "credentials", "nested"))).mode & 0o777).toBe(0o500);
+      const { rollbackMaterializationOwnership } = await import("../../src/lib/materializer.ts");
+      await expect(
+        rollbackMaterializationOwnership(
+          "app",
+          "copy",
+          "credentials/nested",
+          result.ownershipLedger,
+        ),
+      ).resolves.toMatchObject({ complete: true, failureCount: 0 });
+      await absent(join(destinationRoot, "credentials"));
+      await Promise.all([
+        chmod(join(sourceRoot, "credentials"), 0o700),
+        chmod(join(sourceRoot, "credentials", "nested"), 0o700),
+      ]);
+    },
+  );
+
+  test("reports retained ownership when an injected rollback remover is a no-op", async () => {
+    const { destinationRoot } = await fixture();
+    const retained = join(destinationRoot, "retained.txt");
+    await writeFile(retained, "retained\n");
+    const { rollbackMaterializationOwnership } = await import("../../src/lib/materializer.ts");
+
+    await expect(
+      rollbackMaterializationOwnership(
+        "app",
+        "copy",
+        "retained.txt",
+        [{ kind: "file", path: retained }],
+        async () => undefined,
+      ),
+    ).resolves.toMatchObject({
+      complete: false,
+      failureCount: 1,
+      failures: [expect.objectContaining({ reasonCode: "rollback_failed" })],
+    });
+    expect(await readFile(retained, "utf8")).toBe("retained\n");
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "rolls back copied restrictive directories after a later entry fails",
+    async () => {
+      const { destinationRoot, sourceRoot } = await fixture();
+      await mkdir(join(sourceRoot, "private"), { recursive: true });
+      await writeFile(join(sourceRoot, "private", "secret.txt"), "secret\n");
+      await chmod(join(sourceRoot, "private"), 0o500);
+      await writeFile(join(sourceRoot, "conflict.txt"), "source\n");
+      await writeFile(join(destinationRoot, "conflict.txt"), "existing\n");
+
+      const result = await (
+        await loadMaterializer()
+      )(input(sourceRoot, destinationRoot, { copy: ["private", "conflict.txt"] }));
+
+      expect(result.outcomes).toEqual([
+        expect.objectContaining({
+          path: "private",
+          reasonCode: "rolled_back",
+          status: "rolled-back",
+        }),
+        expect.objectContaining({
+          path: "conflict.txt",
+          reasonCode: "destination_exists",
+          status: "failed",
+        }),
+      ]);
+      await absent(join(destinationRoot, "private"));
+      expect(await readFile(join(destinationRoot, "conflict.txt"), "utf8")).toBe("existing\n");
+      await chmod(join(sourceRoot, "private"), 0o700);
+    },
+  );
 
   portableSymlinkTest(
     "dereferences contained source links and copies a repeated completed target independently",
