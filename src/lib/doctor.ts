@@ -250,7 +250,6 @@ export const repositoryStatusToDoctorFindings = (
       }),
     );
   } else if (
-    !status.branch.remoteBranch &&
     status.refreshWarning?.kind !== "missing-remote-ref" &&
     upstreamInspection.kind === "missing-fetch-mapping"
   ) {
@@ -445,8 +444,8 @@ const collectRepositoryFindings = async (
       if (
         !status.error &&
         !status.branch.isDetached &&
-        !status.branch.remoteBranch &&
-        !status.refreshWarning
+        status.refreshWarning?.kind !== "missing-remote-ref" &&
+        (!status.branch.remoteBranch || Boolean(status.refreshWarning))
       ) {
         upstreamInspection = await inspectUpstreamTrackingConfiguration(status.path);
       }

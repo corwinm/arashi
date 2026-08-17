@@ -427,6 +427,28 @@ describe("arashi doctor", () => {
       }),
     );
   });
+  test("diagnoses conflicting topology after a configured-ref refresh failure", async () => {
+    const workspaceRoot = await createBareBackedLinkedWorkspace();
+    await runGit(workspaceRoot, [
+      "config",
+      "remote.origin.fetch",
+      "+refs/heads/main:refs/remotes/origin/main/sub",
+    ]);
+
+    const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        code: "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
+        details: expect.objectContaining({
+          conflictingFetchRefspecs: ["+refs/heads/main:refs/remotes/origin/main/sub"],
+        }),
+      }),
+    );
+  });
+
   test("diagnoses an unusable configured upstream in a bare-backed linked worktree", async () => {
     const workspaceRoot = await createBareBackedLinkedWorkspace();
     const canonicalRoot = await realpath(workspaceRoot);
