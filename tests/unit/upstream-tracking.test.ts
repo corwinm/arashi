@@ -132,6 +132,20 @@ describe("inspectUpstreamTrackingConfiguration", () => {
       [],
     ],
     [
+      "unrelated source-only fetch refspec",
+      configuredState({
+        fetchRefspecs: ["refs/tags/v1"],
+      }),
+      [],
+    ],
+    [
+      "matching source-only fetch refspec",
+      configuredState({
+        fetchRefspecs: ["refs/heads/main"],
+      }),
+      ["refs/heads/main"],
+    ],
+    [
       "overlapping wildcard pattern that does not cover the merge source",
       configuredState({
         fetchRefspecs: ["+refs/heads/main*main:refs/remotes/origin/main*"],
@@ -151,6 +165,13 @@ describe("inspectUpstreamTrackingConfiguration", () => {
         fetchRefspecs: ["+refs/heads/release/*:refs/remotes/origin/*"],
       }),
       ["+refs/heads/release/*:refs/remotes/origin/*"],
+    ],
+    [
+      "conflicting wildcard descendant fetch mapping destination",
+      configuredState({
+        fetchRefspecs: ["+refs/heads/other/*:refs/remotes/origin/main/*"],
+      }),
+      ["+refs/heads/other/*:refs/remotes/origin/main/*"],
     ],
     [
       "conflicting descendant fetch mapping destination",

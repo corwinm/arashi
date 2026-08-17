@@ -134,8 +134,19 @@ const fetchRefspecRequiresManualReview = async (
   }
 
   const separator = normalized.indexOf(":");
+  if (separator === -1) {
+    const sourcePattern = normalized;
+    if (!sourcePattern || sourcePattern.split("*").length - 1 > 1) {
+      return true;
+    }
+    try {
+      await runGit(["check-ref-format", sourcePattern.replace("*", "arashi-wildcard")], repoPath);
+      return wildcardPatternMatches(sourcePattern, mergeRef);
+    } catch {
+      return true;
+    }
+  }
   if (
-    !normalized ||
     separator <= 0 ||
     separator !== normalized.lastIndexOf(":") ||
     separator === normalized.length - 1
@@ -224,7 +235,11 @@ const fetchRefspecTargetsDestination = (refspec: string, destination: string): b
     return false;
   }
 
-  return wildcardPatternMatches(destinationPattern, destination);
+  const destinationPrefix = destinationPattern.slice(0, wildcard);
+  return (
+    wildcardPatternMatches(destinationPattern, destination) ||
+    destinationPrefix.startsWith(`${destination}/`)
+  );
 };
 
 const fetchRefspecMapsSource = (refspec: string, source: string): boolean => {
