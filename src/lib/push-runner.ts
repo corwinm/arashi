@@ -1,7 +1,7 @@
 import type { PushResult } from "./push-types.ts";
 import type { WorkspaceRepository } from "./config.ts";
 import { exec as gitExec } from "./git.ts";
-import { fetchRemoteTrackingTarget } from "./git-remote.ts";
+import { fetchRemoteTrackingTarget, resolveConfiguredRemoteTrackingTarget } from "./git-remote.ts";
 
 const ZERO = 0;
 const MILLISECONDS_PER_SECOND = 1000;
@@ -148,19 +148,19 @@ export const planPush = async (
 
   const upstream = await getUpstream(repository.path);
   let comparisonRef: string | undefined;
+  let configuredComparisonTarget: string | undefined;
   if (!upstream && repository.baseBranch) {
-    const fetchResult = await fetchRemoteTrackingTarget(repository.path, {
-      branch: repository.baseBranch,
-      remote,
-      upstream: null,
-    });
-    if (!fetchResult.ok) {
+    const resolution = await resolveConfiguredRemoteTrackingTarget(
+      repository.path,
+      repository.baseBranch,
+    );
+    if (!resolution.ok) {
       return {
         repository,
         result: {
           branch,
           elapsedSeconds: elapsedSeconds(),
-          errorMessage: `Unable to refresh configured base '${remote}/${repository.baseBranch}': ${fetchResult.message}`,
+          errorMessage: `Unable to resolve configured base '${repository.baseBranch}': ${resolution.error}`,
           remote,
           repositoryId: repository.name,
           status: "failed",
@@ -168,7 +168,24 @@ export const planPush = async (
         shouldPush: false,
       };
     }
-    comparisonRef = `refs/remotes/${remote}/${repository.baseBranch}`;
+    const configuredTarget = resolution.target;
+    configuredComparisonTarget = `${configuredTarget.remote}/${configuredTarget.branch}`;
+    const fetchResult = await fetchRemoteTrackingTarget(repository.path, configuredTarget);
+    if (!fetchResult.ok) {
+      return {
+        repository,
+        result: {
+          branch,
+          elapsedSeconds: elapsedSeconds(),
+          errorMessage: `Unable to refresh configured base '${configuredComparisonTarget}': ${fetchResult.message}`,
+          remote,
+          repositoryId: repository.name,
+          status: "failed",
+        },
+        shouldPush: false,
+      };
+    }
+    comparisonRef = `refs/remotes/${configuredTarget.remote}/${configuredTarget.branch}`;
   } else {
     comparisonRef = await getComparisonRef(repository.path, upstream, remote);
   }
@@ -187,7 +204,7 @@ export const planPush = async (
         result: {
           branch,
           elapsedSeconds: elapsedSeconds(),
-          errorMessage: `Unable to compare with configured base '${remote}/${repository.baseBranch}': ${countResult.message ?? (countResult.stderr || "invalid commit count")}`,
+          errorMessage: `Unable to compare with configured base '${configuredComparisonTarget ?? repository.baseBranch}': ${countResult.message ?? (countResult.stderr || "invalid commit count")}`,
           remote,
           repositoryId: repository.name,
           status: "failed",

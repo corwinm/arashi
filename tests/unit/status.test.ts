@@ -237,7 +237,13 @@ describe("checkRepoStatus", () => {
       dependencies: {
         compareCurrentBranchToConfiguredBranch: async (_path, current, branch) => {
           calls.push(`base:${current}:${branch}`);
-          return { ahead: 2, behind: 4, branch, state: "available" as const };
+          return {
+            ahead: 2,
+            behind: 4,
+            branch,
+            compareRef: "refs/remotes/origin/integration",
+            state: "available" as const,
+          };
         },
         compareCurrentBranchToDefaultBranch: async (_path, _current, _detached, skipped) => {
           calls.push(`default-skips:${(skipped ?? []).join(",")}`);
@@ -262,24 +268,36 @@ describe("checkRepoStatus", () => {
 
     expect(calls).toEqual([
       "base:feature/demo:integration",
-      "default-skips:feature/demo,integration",
+      "default-skips:refs/remotes/origin/feature/demo,refs/remotes/origin/integration",
     ]);
     expect(status.baseBranch).toEqual({
       ahead: 2,
       behind: 4,
       branch: "integration",
+      compareRef: "refs/remotes/origin/integration",
       state: "available",
     });
   });
 
-  test("does not compare a configured base that is already the upstream target", async () => {
-    let baseCompared = false;
-    await checkRepoStatus("repo-a", process.cwd(), {
+  test("de-duplicates a configured base only when it resolves to the upstream ref", async () => {
+    let skippedRefs: readonly string[] = [];
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
       baseBranch: "feature/demo",
       dependencies: {
-        compareCurrentBranchToConfiguredBranch: async () => {
-          baseCompared = true;
-          return { ahead: 0, behind: 0, branch: "feature/demo", state: "available" as const };
+        compareCurrentBranchToConfiguredBranch: async (
+          _path,
+          _current,
+          _branch,
+          _detached,
+          skipped,
+        ) => {
+          skippedRefs = skipped ?? [];
+          return {
+            branch: "feature/demo",
+            compareRef: "refs/remotes/origin/feature/demo",
+            reason: "duplicate-target" as const,
+            state: "skipped" as const,
+          };
         },
         compareCurrentBranchToDefaultBranch: async () => ({
           branch: "main",
@@ -298,7 +316,55 @@ describe("checkRepoStatus", () => {
         }),
       },
     });
-    expect(baseCompared).toBe(false);
+    expect(skippedRefs).toEqual(["refs/remotes/origin/feature/demo"]);
+    expect(status.baseBranch).toBeNull();
+  });
+
+  test("compares equal branch names when configured base and upstream use different remotes", async () => {
+    let skippedRefs: readonly string[] = [];
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "main",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async (
+          _path,
+          _current,
+          branch,
+          _detached,
+          skipped,
+        ) => {
+          skippedRefs = skipped ?? [];
+          return {
+            ahead: 1,
+            behind: 3,
+            branch,
+            compareRef: "refs/remotes/origin/main",
+            remote: "origin",
+            remoteRef: "origin/main",
+            state: "available" as const,
+          };
+        },
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          compareRef: "refs/remotes/origin/main",
+          reason: "duplicate-target" as const,
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({ error: null, output: "## main...fork/main" }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "main", remote: "fork", upstream: "fork/main" },
+        }),
+      },
+    });
+
+    expect(skippedRefs).toEqual(["refs/remotes/fork/main"]);
+    expect(status.baseBranch).toMatchObject({
+      behind: 3,
+      compareRef: "refs/remotes/origin/main",
+      state: "available",
+    });
   });
 
   test("skips remote refresh when no tracking target can be resolved", async () => {

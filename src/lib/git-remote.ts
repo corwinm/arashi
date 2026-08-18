@@ -44,7 +44,7 @@ export type DefaultBranchComparison =
     }
   | {
       state: "skipped";
-      reason: "detached-head" | "on-default-branch" | "unresolved";
+      reason: "detached-head" | "duplicate-target" | "on-default-branch" | "unresolved";
       branch: string | null;
       compareRef?: string | null;
       remote?: string | null;
@@ -642,6 +642,7 @@ export async function compareCurrentBranchToConfiguredBranch(
   currentBranch: string,
   branch: string,
   isDetached = false,
+  skipCompareRefs: readonly string[] = [],
 ): Promise<DefaultBranchComparison> {
   const requestedBranch = normalizeLogicalBranchName(branch);
   const resolution = await resolveConfiguredBranchTarget(repoPath, requestedBranch);
@@ -670,11 +671,19 @@ export async function compareCurrentBranchToConfiguredBranch(
       state: "skipped",
     };
   }
-  if (currentBranch === requestedBranch) {
+  if (!target.refreshTarget && currentBranch === requestedBranch) {
     return {
       branch: requestedBranch,
       ...metadata,
       reason: "on-default-branch",
+      state: "skipped",
+    };
+  }
+  if (skipCompareRefs.includes(target.compareRef)) {
+    return {
+      branch: requestedBranch,
+      ...metadata,
+      reason: "duplicate-target",
       state: "skipped",
     };
   }
@@ -712,7 +721,7 @@ export async function compareCurrentBranchToDefaultBranch(
   repoPath: string,
   currentBranch: string,
   isDetached = false,
-  skipBranches: readonly string[] = [],
+  skipCompareRefs: readonly string[] = [],
 ): Promise<DefaultBranchComparison> {
   if (isDetached) {
     return {
@@ -732,10 +741,24 @@ export async function compareCurrentBranchToDefaultBranch(
   }
 
   const { target } = resolution;
-  if (currentBranch === target.branch || skipBranches.includes(target.branch)) {
+  const metadata = {
+    compareRef: target.compareRef,
+    remote: target.refreshTarget?.remote ?? null,
+    remoteRef: target.refreshTarget?.upstream ?? null,
+  };
+  if (!target.refreshTarget && currentBranch === target.branch) {
     return {
       branch: target.branch,
+      ...metadata,
       reason: "on-default-branch",
+      state: "skipped",
+    };
+  }
+  if (skipCompareRefs.includes(target.compareRef)) {
+    return {
+      branch: target.branch,
+      ...metadata,
+      reason: "duplicate-target",
       state: "skipped",
     };
   }
@@ -761,11 +784,13 @@ export async function compareCurrentBranchToDefaultBranch(
       ahead,
       behind,
       branch: target.branch,
+      ...metadata,
       state: "available",
     };
   } catch (error) {
     return {
       branch: target.branch,
+      ...metadata,
       message: error instanceof Error ? error.message : "Unable to compare with default branch",
       state: "unavailable",
     };

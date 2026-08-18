@@ -107,6 +107,37 @@ describe("push planning", () => {
     expect(result.result.reason).toContain("no publishable commits");
   });
 
+  test("resolves a configured base on another remote without changing the push destination", async () => {
+    const { path, repo } = await makeRepo();
+    await addOrigin(path, tempDir!);
+    const upstreamPath = join(tempDir!, "upstream.git");
+    await git(tempDir!, ["init", "--bare", "upstream.git"]);
+    await git(path, ["remote", "add", "upstream", upstreamPath]);
+    await git(path, ["checkout", "-b", "integration"]);
+    await writeFile(join(path, "integration.txt"), "integration\n");
+    await git(path, ["add", "integration.txt"]);
+    await git(path, ["commit", "-m", "integration"]);
+    await git(path, ["push", "upstream", "integration"]);
+    await git(path, ["checkout", "-b", "feature/from-integration"]);
+    await writeFile(join(path, "feature.txt"), "feature\n");
+    await git(path, ["add", "feature.txt"]);
+    await git(path, ["commit", "-m", "feature"]);
+
+    const result = await planPush(
+      { ...repo, baseBranch: "integration" },
+      { dryRun: true, setUpstream: true },
+    );
+
+    expect(result.result.status).toBe("planned");
+    expect(result.result.command).toEqual([
+      "git",
+      "push",
+      "--set-upstream",
+      "origin",
+      "feature/from-integration",
+    ]);
+  });
+
   test("does not fall back when a configured push baseline is unavailable", async () => {
     const { path, repo } = await makeRepo();
     await addOrigin(path, tempDir!);

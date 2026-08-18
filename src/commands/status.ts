@@ -317,10 +317,10 @@ export const checkRepoStatus = async (
 
   try {
     let refreshWarning: RepoRefreshWarning | null = null;
-    let trackingBranch: string | null = null;
+    let trackingCompareRef: string | null = null;
     const trackingTarget = await dependencies.resolveRemoteTrackingTarget(path);
     if (trackingTarget.ok) {
-      trackingBranch = trackingTarget.target.branch;
+      trackingCompareRef = `refs/remotes/${trackingTarget.target.remote}/${trackingTarget.target.branch}`;
       const fetchResult = await dependencies.fetchRemoteTrackingTarget(path, trackingTarget.target);
       if (!fetchResult.ok) {
         refreshWarning = createRefreshWarning(fetchResult);
@@ -346,20 +346,26 @@ export const checkRepoStatus = async (
     const configuredBaseBranch = options.baseBranch
       ? normalizeLogicalBranchName(options.baseBranch)
       : undefined;
+    const resolvedBaseBranch = configuredBaseBranch
+      ? await dependencies.compareCurrentBranchToConfiguredBranch(
+          path,
+          parsed.branch.localBranch,
+          configuredBaseBranch,
+          parsed.branch.isDetached,
+          trackingCompareRef ? [trackingCompareRef] : [],
+        )
+      : null;
     const baseBranch =
-      configuredBaseBranch && configuredBaseBranch !== trackingBranch
-        ? await dependencies.compareCurrentBranchToConfiguredBranch(
-            path,
-            parsed.branch.localBranch,
-            configuredBaseBranch,
-            parsed.branch.isDetached,
-          )
-        : null;
+      resolvedBaseBranch?.state === "skipped" && resolvedBaseBranch.reason === "duplicate-target"
+        ? null
+        : resolvedBaseBranch;
     const resolvedDefaultBranch = await dependencies.compareCurrentBranchToDefaultBranch(
       path,
       parsed.branch.localBranch,
       parsed.branch.isDetached,
-      [trackingBranch, configuredBaseBranch].filter((branch): branch is string => Boolean(branch)),
+      [trackingCompareRef, resolvedBaseBranch?.compareRef].filter(
+        (compareRef): compareRef is string => Boolean(compareRef),
+      ),
     );
     const defaultBranch =
       baseBranch &&

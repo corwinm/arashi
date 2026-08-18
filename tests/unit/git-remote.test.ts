@@ -155,6 +155,9 @@ describe("compareCurrentBranchToDefaultBranch", () => {
         ahead: 0,
         behind: 1,
         branch: "main",
+        compareRef: "refs/remotes/origin/main",
+        remote: "origin",
+        remoteRef: "origin/main",
         state: "available",
       });
     } finally {
@@ -189,6 +192,9 @@ describe("compareCurrentBranchToDefaultBranch", () => {
         ahead: 0,
         behind: 1,
         branch: "main",
+        compareRef: "refs/heads/main",
+        remote: null,
+        remoteRef: null,
         state: "available",
       });
     } finally {
@@ -211,7 +217,10 @@ describe("compareCurrentBranchToDefaultBranch", () => {
 
       expect(result).toEqual({
         branch: "main",
+        compareRef: "refs/heads/main",
         reason: "on-default-branch",
+        remote: null,
+        remoteRef: null,
         state: "skipped",
       });
     } finally {
