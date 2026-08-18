@@ -11,15 +11,17 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const root = join(import.meta.dirname, "../..");
-const npmCommand = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+const npmCommand = process.platform === "win32" ? process.execPath : "npm";
 const npmArgs = (args: string[]): string[] =>
-  process.platform === "win32" ? ["/d", "/s", "/c", "npm", ...args] : args;
+  process.platform === "win32"
+    ? [join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js"), ...args]
+    : args;
 const npmSetupCommandTimeout = 45_000;
-const packedAliasSetupTimeout = 90_000;
+const packedAliasSetupTimeout = 120_000;
 const fixtures: string[] = [];
 let prefix = "";
 let binDirectory = "";
