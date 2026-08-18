@@ -153,67 +153,263 @@ export const classifyManagedPaths = (paths: string[]): ManagedPathClassification
 const resolveGitPath = (workspaceRoot: string, path: string): string =>
   isAbsolute(path) ? path : resolve(workspaceRoot, path);
 
-const inspectEffectiveSource = async (
-  workspaceRoot: string,
-  rule: string,
-  localExcludePath: string,
-): Promise<ManagedIgnoreSource | undefined> => {
-  const args = ["check-ignore", "-z", "-v", "--no-index", "--stdin"];
+interface ManagedIgnoreGitRequest {
+  args: string[];
+  cwd: string;
+  stdin?: string;
+}
+
+interface ManagedIgnoreGitResult {
+  exitCode: number;
+  spawnError?: Error;
+  stderr: string;
+  stdout: string;
+}
+
+type ManagedIgnoreGitRunner = (request: ManagedIgnoreGitRequest) => Promise<ManagedIgnoreGitResult>;
+
+const runManagedIgnoreGit: ManagedIgnoreGitRunner = async ({ args, cwd, stdin }) => {
   const process = runtime.spawn(["git", ...args], {
-    cwd: workspaceRoot,
+    cwd,
     env: normalizeSpawnEnvironment(globalThis.process.env),
     stderr: "pipe",
-    stdin: "pipe",
+    stdin: stdin === undefined ? undefined : "pipe",
     stdout: "pipe",
   });
-  process.stdin?.end(`${rule}\0`);
+  if (stdin !== undefined) {
+    process.stdin?.end(stdin);
+  }
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(process.stdout).text(),
     new Response(process.stderr).text(),
     process.exited,
   ]);
-  if (process.spawnError) {
-    throw new ArashiError(`Failed to spawn git command: ${process.spawnError.message}`, {
-      args,
-      cwd: workspaceRoot,
-      exitCode: -1,
-      stderr: process.spawnError.message,
-      stdout,
-    });
+  return { exitCode, spawnError: process.spawnError ?? undefined, stderr, stdout };
+};
+
+interface ParsedManagedIgnoreSource {
+  pattern: string;
+  sourcePath: string;
+}
+
+type ManagedIgnoreParseResult =
+  | { source: ParsedManagedIgnoreSource; success: true }
+  | { reason: string; success: false };
+
+const parsePrimaryManagedIgnoreSource = (
+  stdout: string,
+  requestedPath: string,
+): ManagedIgnoreParseResult => {
+  const fields = stdout.split("\0");
+  if (fields.length !== 5 || fields[4] !== "") {
+    return { reason: "expected exactly one terminal NUL-delimited record", success: false };
   }
-  if (exitCode === 1) {
+  const [sourcePath = "", , pattern = "", returnedPath = ""] = fields;
+  if (sourcePath.length === 0 || pattern.length === 0 || returnedPath.length === 0) {
+    return { reason: "record contains an empty required field", success: false };
+  }
+  if (returnedPath !== requestedPath) {
+    return { reason: "returned path does not match the requested path", success: false };
+  }
+  return { source: { pattern, sourcePath }, success: true };
+};
+
+const decodeGitQuotedField = (value: string): string | undefined => {
+  if (!value.startsWith('"')) {
+    return value.endsWith('"') ? undefined : value;
+  }
+  if (value.length < 2 || !value.endsWith('"')) {
     return undefined;
   }
-  if (exitCode !== 0) {
-    const errorMessage = stderr.trim() || stdout.trim() || "Git command failed with no output";
-    throw new ArashiError(`Git command failed: ${errorMessage}`, {
-      args,
-      cwd: workspaceRoot,
-      exitCode,
-      stderr,
-      stdout,
-    });
+
+  const bytes: number[] = [];
+  const escapes: Record<string, number> = {
+    '"': 0x22,
+    "\\": 0x5c,
+    a: 0x07,
+    b: 0x08,
+    f: 0x0c,
+    n: 0x0a,
+    r: 0x0d,
+    t: 0x09,
+    v: 0x0b,
+  };
+  const body = value.slice(1, -1);
+  for (let index = 0; index < body.length; ) {
+    const character = body[index]!;
+    if (character !== "\\") {
+      if (character === '"') {
+        return undefined;
+      }
+      const codePoint = body.codePointAt(index)!;
+      bytes.push(...new TextEncoder().encode(String.fromCodePoint(codePoint)));
+      index += codePoint > 0xffff ? 2 : 1;
+      continue;
+    }
+
+    const escaped = body[index + 1];
+    if (escaped === undefined) {
+      return undefined;
+    }
+    const escapedByte = escapes[escaped];
+    if (escapedByte !== undefined) {
+      bytes.push(escapedByte);
+      index += 2;
+      continue;
+    }
+    const octal = body.slice(index + 1, index + 4);
+    if (!/^[0-3][0-7]{2}$/.test(octal)) {
+      return undefined;
+    }
+    bytes.push(Number.parseInt(octal, 8));
+    index += 4;
   }
-  const [sourcePath = "", , pattern = ""] = stdout.split("\0");
-  if (sourcePath.length === 0 || pattern.length === 0) {
-    throw new Error("Git returned malformed managed-ignore source data.");
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes));
+  } catch {
+    return undefined;
   }
-  const absoluteSource = resolveGitPath(workspaceRoot, sourcePath);
+};
+
+const parseFallbackManagedIgnoreSource = (
+  stdout: string,
+  requestedPath: string,
+): ManagedIgnoreParseResult => {
+  let record = stdout;
+  if (record.endsWith("\r\n")) {
+    record = record.slice(0, -2);
+  } else if (record.endsWith("\n")) {
+    record = record.slice(0, -1);
+  }
+  const tabIndex = record.lastIndexOf("\t");
+  if (tabIndex === -1) {
+    return { reason: "payload was malformed (missing path delimiter)", success: false };
+  }
+  const returnedPath = decodeGitQuotedField(record.slice(tabIndex + 1));
+  if (returnedPath === undefined) {
+    return { reason: "payload contained invalid Git path quoting", success: false };
+  }
+  if (returnedPath !== requestedPath) {
+    return { reason: "path mismatch", success: false };
+  }
+
+  const provenance = record.slice(0, tabIndex);
+  const candidates: ParsedManagedIgnoreSource[] = [];
+  for (const match of provenance.matchAll(/(?=:(\d+):)/g)) {
+    const boundaryIndex = match.index;
+    const [, lineNumber] = match;
+    if (boundaryIndex === undefined || lineNumber === undefined) {
+      continue;
+    }
+    const sourcePath = decodeGitQuotedField(provenance.slice(0, boundaryIndex));
+    const pattern = provenance.slice(boundaryIndex + lineNumber.length + 2);
+    if (sourcePath !== undefined && sourcePath.length > 0 && pattern.length > 0) {
+      candidates.push({ pattern, sourcePath });
+    }
+  }
+  if (candidates.length === 0) {
+    return { reason: "payload was malformed (no complete provenance boundary)", success: false };
+  }
+  if (candidates.length !== 1) {
+    return { reason: "payload was delimiter-ambiguous", success: false };
+  }
+  return { source: candidates[0]!, success: true };
+};
+
+const classifyManagedIgnoreSource = (
+  workspaceRoot: string,
+  localExcludePath: string,
+  source: ParsedManagedIgnoreSource,
+): ManagedIgnoreSource => {
+  const absoluteSource = resolveGitPath(workspaceRoot, source.sourcePath);
   let type: ManagedIgnoreSource["type"] = "global";
   if (absoluteSource === localExcludePath) {
     type = "local";
-  } else if (sourcePath === ".gitignore" || sourcePath.endsWith("/.gitignore")) {
+  } else if (source.sourcePath === ".gitignore" || source.sourcePath.endsWith("/.gitignore")) {
     type = "tracked";
   }
-  return { path: sourcePath, pattern, type };
+  return { path: source.sourcePath, pattern: source.pattern, type };
 };
 
-export const inspectManagedIgnore = async ({
-  reposDir,
-  requestedScope,
+const throwManagedIgnoreGitFailure = (
+  result: ManagedIgnoreGitResult,
+  args: string[],
+  workspaceRoot: string,
+): never => {
+  if (result.spawnError) {
+    throw new ArashiError(`Failed to spawn git command: ${result.spawnError.message}`, {
+      args,
+      cwd: workspaceRoot,
+      exitCode: -1,
+      stderr: result.spawnError.message,
+      stdout: result.stdout,
+    });
+  }
+  const errorMessage =
+    result.stderr.trim() || result.stdout.trim() || "Git command failed with no output";
+  throw new ArashiError(`Git command failed: ${errorMessage}`, {
+    args,
+    cwd: workspaceRoot,
+    exitCode: result.exitCode,
+    stderr: result.stderr,
+    stdout: result.stdout,
+  });
+};
+
+interface InspectEffectiveSourceOptions {
+  localExcludePath: string;
+  rule: string;
+  runGit: ManagedIgnoreGitRunner;
+  workspaceRoot: string;
+}
+
+const inspectEffectiveSource = async ({
+  localExcludePath,
+  rule,
+  runGit,
   workspaceRoot,
-  worktreesDir,
-}: InspectManagedIgnoreOptions): Promise<ManagedIgnoreInspection> => {
+}: InspectEffectiveSourceOptions): Promise<ManagedIgnoreSource | undefined> => {
+  const primaryArgs = ["check-ignore", "-z", "-v", "--no-index", "--stdin"];
+  const primary = await runGit({ args: primaryArgs, cwd: workspaceRoot, stdin: `${rule}\0` });
+  if (primary.spawnError || (primary.exitCode !== 0 && primary.exitCode !== 1)) {
+    throwManagedIgnoreGitFailure(primary, primaryArgs, workspaceRoot);
+  }
+  if (primary.exitCode === 1) {
+    return undefined;
+  }
+
+  const parsedPrimary = parsePrimaryManagedIgnoreSource(primary.stdout, rule);
+  if (parsedPrimary.success) {
+    return classifyManagedIgnoreSource(workspaceRoot, localExcludePath, parsedPrimary.source);
+  }
+
+  const fallbackArgs = ["check-ignore", "-v", "--no-index", "--", rule];
+  const fallback = await runGit({ args: fallbackArgs, cwd: workspaceRoot });
+  let fallbackOutcome = "failed without a classified outcome";
+  if (fallback.spawnError) {
+    fallbackOutcome = "failed to spawn";
+  } else if (fallback.exitCode === 1) {
+    fallbackOutcome = "reported no match";
+  } else if (fallback.exitCode === 0) {
+    const parsedFallback = parseFallbackManagedIgnoreSource(fallback.stdout, rule);
+    if (parsedFallback.success) {
+      return classifyManagedIgnoreSource(workspaceRoot, localExcludePath, parsedFallback.source);
+    }
+    fallbackOutcome = parsedFallback.reason;
+  } else {
+    fallbackOutcome = `failed with exit code ${fallback.exitCode}`;
+  }
+
+  throw new Error(
+    `Git managed-ignore inspection failed: primary payload was malformed (${parsedPrimary.reason}); fallback ${fallbackOutcome}.`,
+  );
+};
+
+export const inspectManagedIgnore = async (
+  { reposDir, requestedScope, workspaceRoot, worktreesDir }: InspectManagedIgnoreOptions,
+  runGit: ManagedIgnoreGitRunner = runManagedIgnoreGit,
+): Promise<ManagedIgnoreInspection> => {
   let storedValue: string | null = null;
   try {
     const result = await gitExec(
@@ -257,7 +453,12 @@ export const inspectManagedIgnore = async ({
       .normalize(classification.input.replaceAll("\\", "/"))
       .replace(/^\.\//, "")
       .replace(/\/$/, "")}/`;
-    const source = await inspectEffectiveSource(workspaceRoot, effectivePath, localExcludePath);
+    const source = await inspectEffectiveSource({
+      localExcludePath,
+      rule: effectivePath,
+      runGit,
+      workspaceRoot,
+    });
     paths.push({
       input: classification.input,
       rule: classification.rule,
