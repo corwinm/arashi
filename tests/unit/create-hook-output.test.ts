@@ -92,7 +92,6 @@ describe("formatCreateHookSummary", () => {
       "    Scope: repository",
       "    Source: file (repository:alpha)",
       "    Reason: exit_non_zero",
-      "    Message: Hook exited with code 19",
       `    Script: ${filePath}`,
       "  - FAILED",
       "    Repository: workspace",
@@ -137,6 +136,7 @@ describe("formatCreateHookSummary", () => {
         hookName: "post-create.alpha",
         hookStatus: "failure",
         message: "\u001B[31mfirst diagnostic\u001B[0m\r\nScript: diagnostic text\nthird diagnostic",
+        reasonCode: "validation_failed",
         repositoryId: "alpha",
       }),
     ]);
@@ -147,5 +147,20 @@ describe("formatCreateHookSummary", () => {
     expect(lines).not.toContain(
       "    Message: first diagnostic\r\nScript: diagnostic text\nthird diagnostic",
     );
+  });
+
+  test("does not duplicate nonzero hook stderr into the human summary stream", () => {
+    const lines = formatCreateHookSummary([
+      outcome({
+        hookName: "post-create.alpha",
+        hookStatus: "failure",
+        message: "sensitive hook stderr",
+        reasonCode: "exit_non_zero",
+        repositoryId: "alpha",
+      }),
+    ]);
+
+    expect(lines).toContain("    Reason: exit_non_zero");
+    expect(lines.join("\n")).not.toContain("sensitive hook stderr");
   });
 });

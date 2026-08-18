@@ -31,8 +31,10 @@ export const formatCreateHookSummary = (
       `    Source: ${outcome.sourceKind} (${formatSourceOwner(outcome)})`,
       `    Reason: ${outcome.reasonCode}`,
     );
-    for (const messageLine of stripVTControlCharacters(outcome.message).split(/\r\n?|\n/)) {
-      lines.push(`    Message: ${messageLine}`);
+    if (outcome.reasonCode !== "exit_non_zero") {
+      for (const messageLine of stripVTControlCharacters(outcome.message).split(/\r\n?|\n/)) {
+        lines.push(`    Message: ${messageLine}`);
+      }
     }
     if (outcome.sourceScriptPath) {
       lines.push(`    Script: ${outcome.sourceScriptPath}`);

@@ -61,7 +61,7 @@ exit 19`,
     expect(output).toContain("    Scope: repository");
     expect(output).toContain(`    Source: file (repository:${failingRepo})`);
     expect(output).toContain("    Reason: exit_non_zero");
-    expect(output).toContain("    Message: forced failure for alpha");
+    expect(stdout).not.toContain("    Message: forced failure for alpha");
     expect(output).toContain(`/.arashi/hooks/post-create.${failingRepo}.sh`);
     expect(output).toContain("Next steps:");
     expect(output).toContain(`Inspect hook output for ${failingRepo}`);
