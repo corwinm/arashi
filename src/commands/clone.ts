@@ -428,24 +428,24 @@ export async function executeClone(
           return null;
         }
         if (sourceRepositoryPath && currentBranch && (await exists(sourceRepositoryPath))) {
-          const baseOid = await resolveLocalBase(sourceRepositoryPath, requestedBranch);
+          const localBase = await resolveLocalBase(sourceRepositoryPath, requestedBranch);
+          let baseOid = localBase?.oid;
+          let fetchUrl: string | undefined;
+          if (!localBase || localBase.source === "tracking") {
+            const remoteOid = await preflightRemoteBranch(gitUrl, requestedBranch);
+            baseOid = remoteOid;
+            if (!localBase || localBase.oid !== remoteOid) fetchUrl = gitUrl;
+          }
           const targetOid = await resolveOptionalCommit(
             sourceRepositoryPath,
             `refs/heads/${currentBranch}`,
           );
-          if (targetOid) {
-            clonePlans.set(repository.name, {
-              baseOid,
-              sourceRepositoryPath,
-              targetExists: true,
-            });
-          } else {
-            clonePlans.set(repository.name, {
-              baseOid,
-              sourceRepositoryPath,
-              targetExists: false,
-            });
-          }
+          clonePlans.set(repository.name, {
+            baseOid,
+            ...(fetchUrl && !targetOid ? { fetchUrl } : {}),
+            sourceRepositoryPath,
+            targetExists: Boolean(targetOid),
+          });
         } else {
           const baseOid = await preflightRemoteBranch(gitUrl, requestedBranch);
           clonePlans.set(repository.name, { baseOid });
@@ -733,12 +733,14 @@ export async function resolveOptionalCommit(
   }
 }
 
-async function resolveLocalBase(repositoryPath: string, branch: string): Promise<string> {
-  for (const ref of [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`]) {
-    const oid = await resolveOptionalCommit(repositoryPath, ref);
-    if (oid) return oid;
-  }
-  throw new Error(`Base branch '${branch}' was not found in the canonical source repository`);
+async function resolveLocalBase(
+  repositoryPath: string,
+  branch: string,
+): Promise<{ oid: string; source: "local" | "tracking" } | null> {
+  const localOid = await resolveOptionalCommit(repositoryPath, `refs/heads/${branch}`);
+  if (localOid) return { oid: localOid, source: "local" };
+  const trackingOid = await resolveOptionalCommit(repositoryPath, `refs/remotes/origin/${branch}`);
+  return trackingOid ? { oid: trackingOid, source: "tracking" } : null;
 }
 
 async function resolveCloneWorkspaceRoots(

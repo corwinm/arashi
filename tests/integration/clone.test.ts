@@ -359,6 +359,57 @@ describe("clone command", () => {
     }
   });
 
+  test("fetches an advanced explicit remote branch before creating a coordinated target", async () => {
+    const sourceRoot = join(workspaceRoot, "stale-explicit-source");
+    const remote = join(workspaceRoot, "stale-explicit-remote");
+    const canonical = join(sourceRoot, "repos", "api");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "stale-explicit-target");
+    await mkdir(executionRoot, { recursive: true });
+    await mkdir(remote, { recursive: true });
+    await spawn(["git", "init"], { cwd: remote }).exited;
+    await spawn(["git", "config", "user.email", "test@example.com"], { cwd: remote }).exited;
+    await spawn(["git", "config", "user.name", "Test"], { cwd: remote }).exited;
+    await spawn(["git", "config", "commit.gpgSign", "false"], { cwd: remote }).exited;
+    await writeFile(join(remote, "README.md"), "initial\n");
+    await spawn(["git", "add", "README.md"], { cwd: remote }).exited;
+    await spawn(["git", "commit", "-m", "initial"], { cwd: remote }).exited;
+    await spawn(["git", "switch", "-c", "release/next"], { cwd: remote }).exited;
+    await writeFile(join(remote, "release.txt"), "first\n");
+    await spawn(["git", "add", "release.txt"], { cwd: remote }).exited;
+    await spawn(["git", "commit", "-m", "release first"], { cwd: remote }).exited;
+    await spawn(["git", "switch", "main"], { cwd: remote }).exited;
+    await mkdir(join(sourceRoot, "repos"), { recursive: true });
+    await spawn(["git", "clone", remote, canonical], { cwd: workspaceRoot }).exited;
+    await spawn(["git", "switch", "release/next"], { cwd: remote }).exited;
+    await writeFile(join(remote, "release.txt"), "advanced\n");
+    await spawn(["git", "add", "release.txt"], { cwd: remote }).exited;
+    await spawn(["git", "commit", "-m", "release advanced"], { cwd: remote }).exited;
+    const remoteRelease = await spawn(["git", "rev-parse", "release/next"], { cwd: remote });
+
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => ({
+          repos: {
+            api: { baseBranch: "release/next", gitUrl: remote, path: "./repos/api" },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+        }),
+        resolveCurrentBranch: async () => "feature/stale-explicit",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    const target = await spawn(["git", "rev-parse", "feature/stale-explicit"], { cwd: canonical });
+    expect((await new Response(target.stdout).text()).trim()).toBe(
+      (await new Response(remoteRelease.stdout).text()).trim(),
+    );
+  });
+
   test("fetches an advanced remote HEAD before creating an omitted-base coordinated target", async () => {
     const sourceRoot = join(workspaceRoot, "stale-mixed-source");
     const remoteRoot = join(workspaceRoot, "stale-mixed-remote");
