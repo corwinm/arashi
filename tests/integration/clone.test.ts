@@ -729,6 +729,31 @@ describe("clone command", () => {
     expect(result.failed).toHaveLength(0);
   });
 
+  test("validates repository overrides after an empty interactive selection", async () => {
+    const failure = await executeClone(
+      { repoBase: ["missing=main"] },
+      {
+        loadConfig: async () => ({
+          repos: {
+            configured: {
+              gitUrl: "https://example/configured.git",
+              path: "./repos/configured",
+            },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+        }),
+        promptMultiSelect: async <T>() => ({ status: "ok", value: [] as T[] }),
+        saveConfig: async () => {},
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        workspaceRoot,
+      },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: "BASE_BRANCH_POLICY_INVALID" });
+  });
+
   test("supports interactive selection of missing repositories", async () => {
     const config: Config = {
       repos: {

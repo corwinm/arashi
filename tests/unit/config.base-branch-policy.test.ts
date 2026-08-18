@@ -50,6 +50,15 @@ describe("base branch configuration", () => {
     });
   });
 
+  test("rejects the reserved @meta child repository identifier", () => {
+    expect(() =>
+      normalizeConfig({
+        ...minimal,
+        repos: { "@meta": { path: "./repos/meta-child" } },
+      }),
+    ).toThrow(/repos\.@meta.*reserved/i);
+  });
+
   test.each([
     ["baseBranch", { baseBranch: "bad branch", repos: {} }],
     ["meta.baseBranch", { meta: { baseBranch: "" }, repos: {} }],

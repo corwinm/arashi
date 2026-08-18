@@ -353,6 +353,13 @@ export async function executeClone(
     );
 
     if (selectedRepositories.length === 0) {
+      resolveBaseBranchPolicy({
+        command: "clone",
+        config,
+        globalBase: options.base,
+        repositoryOverrides: options.repoBase,
+        selectedRepositories: [],
+      });
       if (!options.json) {
         info("No repositories selected for cloning.");
       }

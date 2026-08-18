@@ -277,6 +277,30 @@ describe("resolveCreateBasePlan", () => {
     });
   });
 
+  test("reports the failing repository base in mixed resolution errors", async () => {
+    const first = await createRepository("mixed-success");
+    const failed = await createRepository("mixed-failure");
+    await exec(["branch", "first/base"], first.path);
+
+    const error = await resolveCreateBasePlan(
+      [first, failed],
+      [
+        { repositoryName: first.name, requestedBranch: "first/base", source: "cli" },
+        {
+          repositoryName: failed.name,
+          requestedBranch: "missing/base",
+          source: "repository-config",
+        },
+      ],
+    ).catch((failure: unknown) => failure);
+
+    expect(error).toMatchObject({
+      code: "CREATE_BASE_RESOLUTION_FAILED",
+      requestedBranch: "missing/base",
+      source: "repository-config",
+    });
+  });
+
   test("resolves different immutable bases and policy sources per selected repository", async () => {
     const meta = await createRepository("workspace");
     const api = await createRepository("api");

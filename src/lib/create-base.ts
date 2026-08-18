@@ -224,7 +224,12 @@ export const createBaseResolver = (dependencies: CreateBaseResolverDependencies 
     };
     const firstNormalized = normalizedByRequest.get(firstRequest) ?? "";
     if (failures.length > 0) {
-      throw new CreateBaseResolutionError(firstNormalized, firstRequest.source, failures);
+      const firstFailure = failures[0]!;
+      throw new CreateBaseResolutionError(
+        firstFailure.requestedBranch ?? firstNormalized,
+        firstFailure.source ?? firstRequest.source,
+        failures,
+      );
     }
 
     const resolvedRepositories = results.flatMap((result) =>

@@ -1364,6 +1364,10 @@ const normalizeConfigInternal = (
   const normalizedRepos: Record<string, RepoConfig> = {};
   if (isRecord(reposRaw)) {
     for (const [repoName, repoConfig] of Object.entries(reposRaw)) {
+      if (repoName === "@meta") {
+        errors.push("repos.@meta: '@meta' is reserved for the meta repository selector");
+        continue;
+      }
       const normalized = normalizeRepoConfig(repoName, repoConfig, errors);
       if (normalized) {
         normalizedRepos[repoName] = normalized;
