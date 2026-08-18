@@ -1,3 +1,9 @@
+## [1.32.1](https://github.com/corwinm/arashi/compare/v1.32.0...v1.32.1) (2026-08-18)
+
+### Bug Fixes
+
+- recover malformed managed-ignore provenance ([#146](https://github.com/corwinm/arashi/issues/146)) ([0495806](https://github.com/corwinm/arashi/commit/04958061e44b50d00b4b2f1300ad34940e74c8e4))
+
 ## [1.32.0](https://github.com/corwinm/arashi/compare/v1.31.0...v1.32.0) (2026-08-17)
 
 ### Features
