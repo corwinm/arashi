@@ -53,13 +53,16 @@ exit 19`,
     const output = `${stdout}\n${stderr}`;
 
     expect(exitCode).toBe(1);
-    expect(output).toContain("Hook results:");
-    expect(output).toContain(
-      `file repository:${failingRepo} pre-create.${failingRepo} [${failingRepo}] -> skipped (not_found)`,
-    );
-    expect(output).toContain(
-      `file repository:${failingRepo} post-create.${failingRepo} [${failingRepo}] -> failure (exit_non_zero)`,
-    );
+    expect(output).toContain("Hook results: 0 succeeded, 2 skipped, 1 failed");
+    expect(output).not.toContain(`Hook: pre-create.${failingRepo}`);
+    expect(output).toContain("  - FAILED");
+    expect(output).toContain(`    Repository: ${failingRepo}`);
+    expect(output).toContain(`    Hook: post-create.${failingRepo}`);
+    expect(output).toContain("    Scope: repository");
+    expect(output).toContain(`    Source: file (repository:${failingRepo})`);
+    expect(output).toContain("    Reason: exit_non_zero");
+    expect(output).toContain("    Message: forced failure for alpha");
+    expect(output).toContain(`/.arashi/hooks/post-create.${failingRepo}.sh`);
     expect(output).toContain("Next steps:");
     expect(output).toContain(`Inspect hook output for ${failingRepo}`);
   });
@@ -93,13 +96,12 @@ exit 19`,
     const output = `${stdout}\n${stderr}`;
 
     expect(exitCode).toBe(1);
-    expect(output).toContain(
-      `file repository:${timeoutRepo} pre-create.${timeoutRepo} [${timeoutRepo}] -> skipped (not_found)`,
-    );
-    expect(output).toContain(
-      `file repository:${timeoutRepo} post-create.${timeoutRepo} [${timeoutRepo}] -> failure (timeout)`,
-    );
-    expect(output).toContain("timed out");
+    expect(output).toContain("Hook results: 0 succeeded, 2 skipped, 1 failed");
+    expect(output).not.toContain(`Hook: pre-create.${timeoutRepo}`);
+    expect(output).toContain(`    Repository: ${timeoutRepo}`);
+    expect(output).toContain(`    Hook: post-create.${timeoutRepo}`);
+    expect(output).toContain("    Reason: timeout");
+    expect(output).toContain("    Message: Hook timed out after configured limit");
     expect(output).toContain("Next steps:");
   });
 });

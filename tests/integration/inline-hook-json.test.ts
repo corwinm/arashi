@@ -32,6 +32,32 @@ const parseSingleDocument = (stdout: string): Record<string, unknown> => {
   return parsed;
 };
 
+const requiredHookOutcomeKeys = [
+  "executionPath",
+  "hookName",
+  "hookStatus",
+  "message",
+  "reasonCode",
+  "repositoryId",
+  "scope",
+  "sourceKind",
+  "sourceOwnerKind",
+  "sourceOwnerName",
+  "sourceScriptPath",
+  "targetRepositoryName",
+  "targetRepositoryPath",
+  "targetWorktreePath",
+  "workspaceMode",
+];
+
+const expectExactHookOutcomeSchema = (outcome: Record<string, unknown>): void => {
+  const expectedKeys =
+    outcome.durationMs === undefined
+      ? requiredHookOutcomeKeys
+      : [...requiredHookOutcomeKeys, "durationMs"].toSorted();
+  expect(Object.keys(outcome).toSorted()).toEqual(expectedKeys);
+};
+
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
@@ -69,6 +95,19 @@ describe("inline hook public source projection and secrecy RED", () => {
       const envelope = parseSingleDocument(result.stdout) as {
         data?: { hookOutcomes?: Record<string, unknown>[] };
       };
+      expect(Object.keys(envelope).toSorted()).toEqual([
+        "command",
+        "data",
+        "ok",
+        "schemaVersion",
+        "warnings",
+      ]);
+      expect(envelope).toMatchObject({
+        command: "create",
+        ok: true,
+        schemaVersion: 1,
+        warnings: [],
+      });
       expect(result.stdout).not.toContain("ROOT-OUT");
       expect(result.stdout).not.toContain("REPO-OUT");
       expect(result.stderr).not.toContain("ROOT-ERR");
@@ -113,6 +152,9 @@ describe("inline hook public source projection and secrecy RED", () => {
           sourceKind: "file",
         }),
       ]);
+      for (const outcome of envelope.data?.hookOutcomes ?? []) {
+        expectExactHookOutcomeSchema(outcome);
+      }
       expectNoSnippetProjection(result.stdout, result.stderr, envelope);
     },
   );
@@ -142,6 +184,19 @@ describe("inline hook public source projection and secrecy RED", () => {
       const envelope = parseSingleDocument(result.stdout) as {
         error?: { code?: string; details?: { hookOutcomes?: Record<string, unknown>[] } };
       };
+      expect(Object.keys(envelope).toSorted()).toEqual([
+        "command",
+        "error",
+        "ok",
+        "schemaVersion",
+        "warnings",
+      ]);
+      expect(envelope).toMatchObject({
+        command: "create",
+        ok: false,
+        schemaVersion: 1,
+        warnings: [],
+      });
       expect(envelope.error?.code).toBe("CREATE_FAILED");
       expect(envelope.error?.details?.hookOutcomes?.map((outcome) => outcome.hookName)).toEqual([
         "pre-create",
@@ -159,6 +214,9 @@ describe("inline hook public source projection and secrecy RED", () => {
         sourceOwnerName: null,
         sourceScriptPath: null,
       });
+      for (const outcome of envelope.error?.details?.hookOutcomes ?? []) {
+        expectExactHookOutcomeSchema(outcome);
+      }
       expectNoSnippetProjection(result.stdout, result.stderr, envelope);
       await expect(
         access(workspace.getMainWorktreePath("feature-inline-json-failure")),

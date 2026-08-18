@@ -63,7 +63,10 @@ describe("create command child-repo hook success flows", () => {
     }
 
     expect(exitCode).toBe(0);
-    expect(`${stdout}\n${stderr}`).toContain("Hook results:");
+    const output = `${stdout}\n${stderr}`;
+    expect(output).toContain("Hook results: 4 succeeded, 2 skipped, 0 failed");
+    expect(output).not.toContain("pre-create.alpha [alpha]");
+    expect(output).not.toContain(`${workspace.hookRootPath}/.arashi/hooks/post-create.alpha.sh`);
 
     for (const repoName of workspace.childRepoNames) {
       const childWorktreePath = workspace.getChildWorktreePath(repoName, branch);
