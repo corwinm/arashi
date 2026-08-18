@@ -592,7 +592,7 @@ const formatShortBaseIndicator = (status: RepoStatus): string => {
 };
 
 const formatShortDefaultIndicator = (status: RepoStatus): string => {
-  if (!status.defaultBranch) {
+  if (!status.defaultBranch || baseAndDefaultShareTarget(status)) {
     return "";
   }
 

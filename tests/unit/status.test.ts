@@ -537,6 +537,34 @@ describe("status formatting", () => {
     expect(formatShortLine(status)).toContain("base:integration↑2↓4");
   });
 
+  test("combines equal configured-base and default drift in short output", () => {
+    const comparison = {
+      ahead: 0,
+      behind: 4,
+      branch: "main",
+      compareRef: "refs/remotes/origin/main",
+      state: "available" as const,
+    };
+    const line = formatShortLine({
+      baseBranch: comparison,
+      branch: {
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+        localBranch: "feature/demo",
+        remoteBranch: "origin/feature/demo",
+      },
+      defaultBranch: { ...comparison },
+      error: null,
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
+    });
+
+    expect(line).toContain("base/default:main↓4");
+    expect(line).not.toContain("default↓4");
+  });
+
   test("renders missing remote branch inline on the branch line", () => {
     const section = formatRepoSection({
       branch: {
