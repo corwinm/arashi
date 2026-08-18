@@ -359,6 +359,58 @@ describe("clone command", () => {
     }
   });
 
+  test("fetches an advanced remote HEAD before creating an omitted-base coordinated target", async () => {
+    const sourceRoot = join(workspaceRoot, "stale-mixed-source");
+    const remoteRoot = join(workspaceRoot, "stale-mixed-remote");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "stale-mixed-target");
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    const localA = join(sourceRoot, "repos", "a");
+    const canonicalB = join(sourceRoot, "repos", "b");
+    const remoteB = join(remoteRoot, "b");
+    for (const repository of [localA, remoteB]) {
+      await mkdir(repository, { recursive: true });
+      await spawn(["git", "init"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.email", "test@example.com"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.name", "Test"], { cwd: repository }).exited;
+      await spawn(["git", "config", "commit.gpgSign", "false"], { cwd: repository }).exited;
+      await writeFile(join(repository, "README.md"), "initial\n");
+      await spawn(["git", "add", "README.md"], { cwd: repository }).exited;
+      await spawn(["git", "commit", "-m", "initial"], { cwd: repository }).exited;
+    }
+    await spawn(["git", "branch", "integration"], { cwd: localA }).exited;
+    await mkdir(join(sourceRoot, "repos"), { recursive: true });
+    await spawn(["git", "clone", remoteB, canonicalB], { cwd: workspaceRoot }).exited;
+    await writeFile(join(remoteB, "README.md"), "advanced\n");
+    await spawn(["git", "add", "README.md"], { cwd: remoteB }).exited;
+    await spawn(["git", "commit", "-m", "advance"], { cwd: remoteB }).exited;
+    const config: Config = {
+      repos: {
+        a: { baseBranch: "integration", gitUrl: localA, path: "./repos/a" },
+        b: { gitUrl: remoteB, path: "./repos/b" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feature/stale-mixed",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    const target = await spawn(["git", "rev-parse", "feature/stale-mixed"], { cwd: canonicalB });
+    const remoteHead = await spawn(["git", "rev-parse", "HEAD"], { cwd: remoteB });
+    expect((await new Response(target.stdout).text()).trim()).toBe(
+      (await new Response(remoteHead.stdout).text()).trim(),
+    );
+  });
+
   test("checks out the coordinated target for a remote-only omitted base in a mixed-policy run", async () => {
     const sourceRoot = join(workspaceRoot, "remote-only-mixed-source");
     const remoteRoot = join(workspaceRoot, "remote-only-mixed-remotes");

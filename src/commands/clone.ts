@@ -381,7 +381,12 @@ export async function executeClone(
   const policyInvocation = basePolicy.some((policy) => policy.source !== "legacy-omitted");
   const clonePlans = new Map<
     string,
-    { baseOid?: string; sourceRepositoryPath?: string; targetExists?: boolean }
+    {
+      baseOid?: string;
+      fetchUrl?: string;
+      sourceRepositoryPath?: string;
+      targetExists?: boolean;
+    }
   >();
   const preflightResults = await Promise.all(
     selectedRepositories.map(async (repository) => {
@@ -406,6 +411,7 @@ export async function executeClone(
             );
             clonePlans.set(repository.name, {
               baseOid,
+              ...(targetOid ? {} : { fetchUrl: gitUrl }),
               sourceRepositoryPath,
               targetExists: Boolean(targetOid),
             });
@@ -536,6 +542,12 @@ export async function executeClone(
           let createdTarget = false;
           try {
             if (plan?.baseOid && plan.targetExists === false) {
+              if (plan.fetchUrl) {
+                await exec(
+                  ["fetch", "--no-tags", plan.fetchUrl, plan.baseOid],
+                  sourceRepositoryPath,
+                );
+              }
               await exec(["branch", currentBranch, plan.baseOid], sourceRepositoryPath);
               createdTarget = true;
             }
