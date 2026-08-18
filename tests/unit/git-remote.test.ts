@@ -1,6 +1,7 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import {
   classifyRemoteTrackingFetchFailure,
+  compareCurrentBranchToConfiguredBranch,
   compareCurrentBranchToDefaultBranch,
   resolveDefaultBranchTarget,
 } from "../../src/lib/git-remote.ts";
@@ -75,6 +76,76 @@ describe("classifyRemoteTrackingFetchFailure", () => {
       message: "Git command failed: authentication required",
       ok: false,
     });
+  });
+});
+
+describe("compareCurrentBranchToConfiguredBranch", () => {
+  test("reports remote lag while the configured base itself is checked out", async () => {
+    const bareRepoPath = createTempDir();
+    const seedPath = createTempDir();
+    const cloneParent = createTempDir();
+    const clonePath = join(cloneParent, "workspace-clone");
+
+    try {
+      initBareGitRepo(bareRepoPath);
+      initWorkingRepo(seedPath);
+      writeCommit(seedPath, {
+        content: "# seed\n",
+        message: "seed main",
+        path: "README.md",
+      });
+      runGit(seedPath, ["remote", "add", "origin", bareRepoPath]);
+      runGit(seedPath, ["push", "origin", "main"]);
+      runGit(bareRepoPath, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+      runGit(cloneParent, ["clone", bareRepoPath, clonePath]);
+      writeCommit(seedPath, {
+        content: "# seed\n\nremote update\n",
+        message: "advance main",
+        path: "README.md",
+      });
+      runGit(seedPath, ["push", "origin", "main"]);
+
+      const result = await compareCurrentBranchToConfiguredBranch(clonePath, "main", "main");
+
+      expect(result).toMatchObject({
+        ahead: 0,
+        behind: 1,
+        branch: "main",
+        compareRef: "refs/remotes/origin/main",
+        remote: "origin",
+        remoteRef: "origin/main",
+        state: "available",
+      });
+    } finally {
+      removeTempDir(cloneParent);
+      removeTempDir(seedPath);
+      removeTempDir(bareRepoPath);
+    }
+  });
+
+  test("does not substitute a local-only branch for an unavailable configured remote base", async () => {
+    const repoPath = createTempDir();
+    try {
+      initWorkingRepo(repoPath);
+      writeCommit(repoPath, {
+        content: "# local\n",
+        message: "seed main",
+        path: "README.md",
+      });
+
+      const result = await compareCurrentBranchToConfiguredBranch(repoPath, "main", "main");
+
+      expect(result).toMatchObject({
+        branch: "main",
+        compareRef: null,
+        reason: "unresolved-target",
+        remote: null,
+        remoteRef: null,
+        state: "unavailable",
+      });
+    } finally {
+      removeTempDir(repoPath);
+    }
   });
 });
 

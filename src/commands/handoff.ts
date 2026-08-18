@@ -285,10 +285,9 @@ const formatRepositoryLine = (repo: HandoffRepositorySummary): string => {
   const sameBaseDefault =
     repo.baseBranch &&
     repo.defaultBranch &&
-    ((repo.baseBranch.compareRef &&
-      repo.defaultBranch.compareRef &&
-      repo.baseBranch.compareRef === repo.defaultBranch.compareRef) ||
-      repo.baseBranch.branch === repo.defaultBranch.branch);
+    repo.baseBranch.compareRef &&
+    repo.defaultBranch.compareRef &&
+    repo.baseBranch.compareRef === repo.defaultBranch.compareRef;
   if (repo.baseBranch?.state === "available" && repo.baseBranch.behind > ZERO) {
     parts.push(
       `${sameBaseDefault ? "base/default" : "base"} ${repo.baseBranch.remoteRef ?? repo.baseBranch.branch} behind by ${repo.baseBranch.behind}`,

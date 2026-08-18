@@ -6,6 +6,7 @@
  */
 
 import type { PullResult, PullSummary } from "../lib/pull-types.ts";
+import type { ConfiguredBaseOutcome } from "../lib/configured-base-outcome.ts";
 import {
   buildSummary,
   formatProgress,
@@ -18,9 +19,13 @@ import {
   unknownErrorToJsonError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { loadWorkspaceRepositories, type WorkspaceRepositoryRoots } from "../lib/config.ts";
+import {
+  loadWorkspaceRepositories,
+  type WorkspaceRepository,
+  type WorkspaceRepositoryRoots,
+} from "../lib/config.ts";
 import { Command } from "commander";
-import { checkRemoteChanges } from "../lib/git-remote.ts";
+import { checkRemoteChanges, type RemoteChangeStatus } from "../lib/git-remote.ts";
 import {
   collectRepositoryFilterValues,
   EmptyRepositoryFiltersError,
@@ -32,6 +37,7 @@ import { reconcileRepositoryManagedIgnore } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { fileExists } from "../lib/filesystem.ts";
 import { exec } from "../lib/git.ts";
+import { normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
 import {
   ConfiguredWorkspaceRequiredError,
   findConfiguredWorkspaceRoots,
@@ -42,6 +48,37 @@ const ONE = 1;
 const ERROR_EXIT_CODE = 1;
 const USAGE_EXIT_CODE = 2;
 const MILLISECONDS_PER_SECOND = 1000;
+
+const configuredBaseOutcome = (
+  repo: WorkspaceRepository,
+  status: RemoteChangeStatus,
+): ConfiguredBaseOutcome | undefined => {
+  if (!repo.baseBranch || !repo.baseBranchSource) return undefined;
+  const branch = status.branch ?? normalizeLogicalBranchName(repo.baseBranch);
+  const remoteRef = status.remote && status.branch ? `${status.remote}/${status.branch}` : null;
+  if (status.error) {
+    return {
+      branch,
+      compareRef: status.compareRef ?? null,
+      details: { error: status.error },
+      reason: status.errorKind ?? "comparison-failed",
+      remote: status.remote ?? null,
+      remoteRef,
+      source: repo.baseBranchSource,
+      state: "unavailable",
+    };
+  }
+  return {
+    ahead: status.ahead,
+    behind: status.behind,
+    branch,
+    compareRef: status.compareRef ?? null,
+    remote: status.remote ?? null,
+    remoteRef,
+    source: repo.baseBranchSource,
+    state: "available",
+  };
+};
 
 class CliUsageError extends Error {}
 
@@ -174,6 +211,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
       if (remoteStatus.error) {
         const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
         results.push({
+          configuredBase: configuredBaseOutcome(repo, remoteStatus),
           elapsedSeconds,
           errorMessage: `Remote check failed: ${remoteStatus.error}`,
           repositoryId: repo.name,
@@ -192,6 +230,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         });
         const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
         const result: PullResult = {
+          configuredBase: configuredBaseOutcome(repo, remoteStatus),
           elapsedSeconds,
           errorMessage: pullResult.errorMessage,
           output: pullResult.output,
@@ -210,6 +249,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
       } else {
         const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
         results.push({
+          configuredBase: configuredBaseOutcome(repo, remoteStatus),
           elapsedSeconds,
           repositoryId: repo.name,
           status: "skipped",

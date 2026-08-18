@@ -317,12 +317,20 @@ export const checkRepoStatus = async (
 
   try {
     let refreshWarning: RepoRefreshWarning | null = null;
+    let trackingFetchFailure: {
+      error: string;
+      kind: "generic" | "missing-remote-ref";
+      message: string;
+    } | null = null;
     let trackingCompareRef: string | null = null;
     const trackingTarget = await dependencies.resolveRemoteTrackingTarget(path);
     if (trackingTarget.ok) {
-      trackingCompareRef = `refs/remotes/${trackingTarget.target.remote}/${trackingTarget.target.branch}`;
+      trackingCompareRef = trackingTarget.target.upstream
+        ? `refs/remotes/${trackingTarget.target.remote}/${trackingTarget.target.branch}`
+        : null;
       const fetchResult = await dependencies.fetchRemoteTrackingTarget(path, trackingTarget.target);
       if (!fetchResult.ok) {
+        trackingFetchFailure = fetchResult;
         refreshWarning = createRefreshWarning(fetchResult);
       }
     }
@@ -356,8 +364,33 @@ export const checkRepoStatus = async (
         )
       : null;
     const baseBranch =
-      resolvedBaseBranch?.state === "skipped" && resolvedBaseBranch.reason === "duplicate-target"
-        ? null
+      resolvedBaseBranch?.state === "skipped" &&
+      resolvedBaseBranch.reason === "duplicate-target" &&
+      resolvedBaseBranch.compareRef &&
+      resolvedBaseBranch.compareRef === trackingCompareRef
+        ? trackingFetchFailure
+          ? {
+              branch: resolvedBaseBranch.branch!,
+              compareRef: resolvedBaseBranch.compareRef,
+              details: {
+                error: trackingFetchFailure.error,
+                kind: trackingFetchFailure.kind,
+              },
+              message: trackingFetchFailure.message,
+              reason: "refresh-failed" as const,
+              remote: resolvedBaseBranch.remote,
+              remoteRef: resolvedBaseBranch.remoteRef,
+              state: "unavailable" as const,
+            }
+          : {
+              ahead: parsed.branch.ahead,
+              behind: parsed.branch.behind,
+              branch: resolvedBaseBranch.branch!,
+              compareRef: resolvedBaseBranch.compareRef,
+              remote: resolvedBaseBranch.remote,
+              remoteRef: resolvedBaseBranch.remoteRef,
+              state: "available" as const,
+            }
         : resolvedBaseBranch;
     const resolvedDefaultBranch = await dependencies.compareCurrentBranchToDefaultBranch(
       path,
@@ -367,10 +400,39 @@ export const checkRepoStatus = async (
         (compareRef): compareRef is string => Boolean(compareRef),
       ),
     );
-    const defaultBranch =
-      baseBranch &&
+    const defaultMatchesTracking =
       resolvedDefaultBranch.state === "skipped" &&
-      resolvedDefaultBranch.branch === baseBranch.branch
+      resolvedDefaultBranch.reason === "duplicate-target" &&
+      resolvedDefaultBranch.compareRef &&
+      resolvedDefaultBranch.compareRef === trackingCompareRef;
+    const defaultBranch = defaultMatchesTracking
+      ? trackingFetchFailure
+        ? {
+            branch: resolvedDefaultBranch.branch!,
+            compareRef: resolvedDefaultBranch.compareRef!,
+            details: {
+              error: trackingFetchFailure.error,
+              kind: trackingFetchFailure.kind,
+            },
+            message: trackingFetchFailure.message,
+            reason: "refresh-failed" as const,
+            remote: resolvedDefaultBranch.remote,
+            remoteRef: resolvedDefaultBranch.remoteRef,
+            state: "unavailable" as const,
+          }
+        : {
+            ahead: parsed.branch.ahead,
+            behind: parsed.branch.behind,
+            branch: resolvedDefaultBranch.branch!,
+            compareRef: resolvedDefaultBranch.compareRef!,
+            remote: resolvedDefaultBranch.remote,
+            remoteRef: resolvedDefaultBranch.remoteRef,
+            state: "available" as const,
+          }
+      : baseBranch &&
+          resolvedDefaultBranch.state === "skipped" &&
+          baseBranch.compareRef &&
+          resolvedDefaultBranch.compareRef === baseBranch.compareRef
         ? { ...baseBranch }
         : resolvedDefaultBranch;
 
@@ -533,14 +595,23 @@ const shouldShowGenericRefreshWarning = (status: RepoStatus): boolean =>
 
 const baseAndDefaultShareTarget = (status: RepoStatus): boolean => {
   if (!status.baseBranch || !status.defaultBranch) return false;
-  if (status.baseBranch.compareRef && status.defaultBranch.compareRef) {
-    return status.baseBranch.compareRef === status.defaultBranch.compareRef;
-  }
-  return status.baseBranch.branch === status.defaultBranch.branch;
+  return Boolean(
+    status.baseBranch.compareRef &&
+    status.defaultBranch.compareRef &&
+    status.baseBranch.compareRef === status.defaultBranch.compareRef,
+  );
 };
+
+const baseMatchesTrackingTarget = (status: RepoStatus): boolean =>
+  Boolean(
+    status.baseBranch?.remoteRef &&
+    status.branch.remoteBranch &&
+    status.baseBranch.remoteRef === status.branch.remoteBranch,
+  );
 
 const formatBaseBranchLine = (status: RepoStatus): string | null => {
   if (!status.baseBranch) return null;
+  if (baseMatchesTrackingTarget(status)) return null;
   if (status.baseBranch.state === "available") {
     const drift: string[] = [];
     if (status.baseBranch.ahead > ZERO) drift.push(`↑${status.baseBranch.ahead}`);
@@ -577,6 +648,7 @@ const formatDefaultBranchLine = (status: RepoStatus): string | null => {
 
 const formatShortBaseIndicator = (status: RepoStatus): string => {
   if (!status.baseBranch) return "";
+  if (baseMatchesTrackingTarget(status)) return "";
   if (status.baseBranch.state === "available") {
     const drift = [
       status.baseBranch.ahead > ZERO ? `↑${status.baseBranch.ahead}` : "",

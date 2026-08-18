@@ -583,12 +583,9 @@ export const repositoryStatusToDoctorFindings = (
   }
 
   const configuredBaseMatchesDefault = Boolean(
-    status.baseBranch &&
-    status.defaultBranch &&
-    ((status.baseBranch.compareRef &&
-      status.defaultBranch.compareRef &&
-      status.baseBranch.compareRef === status.defaultBranch.compareRef) ||
-      status.baseBranch.branch === status.defaultBranch.branch),
+    status.baseBranch?.compareRef &&
+    status.defaultBranch?.compareRef &&
+    status.baseBranch.compareRef === status.defaultBranch.compareRef,
   );
   if (status.baseBranch?.state === "available" && status.baseBranch.behind > ZERO) {
     const baseRef = status.baseBranch.remoteRef ?? status.baseBranch.branch;
@@ -624,7 +621,9 @@ export const repositoryStatusToDoctorFindings = (
           alsoDefault: configuredBaseMatchesDefault,
           baseBranch: status.baseBranch.branch,
           compareRef: status.baseBranch.compareRef ?? null,
+          failure: status.baseBranch.details,
           message: status.baseBranch.message,
+          reason: status.baseBranch.reason,
           remote: status.baseBranch.remote ?? null,
           remoteRef: status.baseBranch.remoteRef ?? null,
           repository: status.name,

@@ -267,18 +267,23 @@ describe("handoff command", () => {
     await writeWorkspaceConfig(workspaceRoot, "main");
     await runGit(workspaceRoot, ["add", ".arashi/config.json"]);
     await runGit(workspaceRoot, ["commit", "-m", "Configure base branch"]);
+    const remoteRoot = await makeTempDir();
+    await runGit(remoteRoot, ["init", "--bare"]);
+    await runGit(workspaceRoot, ["remote", "add", "origin", remoteRoot]);
+    await runGit(workspaceRoot, ["push", "-u", "origin", "main"]);
     await runGit(workspaceRoot, ["checkout", "-b", "feature/handoff"]);
     await runGit(workspaceRoot, ["checkout", "main"]);
     await writeFile(join(workspaceRoot, "base-update.txt"), "base update\n");
     await runGit(workspaceRoot, ["add", "base-update.txt"]);
     await runGit(workspaceRoot, ["commit", "-m", "Advance configured base"]);
+    await runGit(workspaceRoot, ["push", "origin", "main"]);
     await runGit(workspaceRoot, ["checkout", "feature/handoff"]);
 
     const markdown = await runArashi(workspaceRoot, ["handoff"]);
     const json = await runArashi(workspaceRoot, ["handoff", "--json"]);
 
     expect(markdown.exitCode).toBe(0);
-    expect(markdown.stdout).toContain("base/default main behind by 1");
+    expect(markdown.stdout).toContain("base/default origin/main behind by 1");
     expect(markdown.stdout).toContain("`arashi status --verbose`");
     const repositories = (parseJson(json.stdout).data as Record<string, unknown>)
       .repositories as Record<string, unknown>[];

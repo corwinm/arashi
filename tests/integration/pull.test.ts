@@ -194,12 +194,75 @@ describe("pull command", () => {
       config.repos["repo-a"]!.baseBranch = "integration";
       await writeFile(configPath, JSON.stringify(config, null, 2));
 
-      const result = await runPullCommand(workspaceRoot, ["--only", "repo-a"]);
+      const result = await runPullCommand(workspaceRoot, ["--only", "repo-a", "--json"]);
 
       expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("updated");
+      const envelope = JSON.parse(result.stdout) as {
+        data: { results: Record<string, unknown>[] };
+      };
+      expect(envelope.data.results).toContainEqual(
+        expect.objectContaining({
+          configuredBase: {
+            ahead: 0,
+            behind: 1,
+            branch: "integration",
+            compareRef: "refs/remotes/origin/integration",
+            remote: "origin",
+            remoteRef: "origin/integration",
+            source: "repository-config",
+            state: "available",
+          },
+          repositoryId: "repo-a",
+          status: "updated",
+        }),
+      );
       expect(await readFile(join(repoPath, "integration.txt"), "utf8")).toContain("base update");
       expect(await runGit(repoPath, ["branch", "--show-current"])).toBe("feature/from-integration");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
+
+  test(
+    "rejects configured-base pulls from detached HEAD without mutation",
+    async () => {
+      const { workspaceRoot, repoRemote, repoPath } = await createWorkspaceWithRepo(testDir);
+      await createRemoteBranchCommit(
+        repoRemote,
+        testDir,
+        "detached-integration-update",
+        "integration",
+        "integration.txt",
+      );
+      await runGit(repoPath, ["checkout", "--detach", "HEAD"]);
+      const headBefore = await runGit(repoPath, ["rev-parse", "HEAD"]);
+
+      const configPath = join(workspaceRoot, ".arashi", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        repos: Record<string, Record<string, unknown>>;
+      };
+      config.repos["repo-a"]!.baseBranch = "integration";
+      await writeFile(configPath, JSON.stringify(config, null, 2));
+
+      const result = await runPullCommand(workspaceRoot, ["--only", "repo-a", "--json"]);
+      const envelope = JSON.parse(result.stdout) as {
+        data: { results: Record<string, unknown>[] };
+      };
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(envelope.data.results).toContainEqual(
+        expect.objectContaining({
+          configuredBase: expect.objectContaining({
+            branch: "integration",
+            reason: "detached-head",
+            source: "repository-config",
+            state: "unavailable",
+          }),
+          repositoryId: "repo-a",
+          status: "failed",
+        }),
+      );
+      expect(await runGit(repoPath, ["rev-parse", "HEAD"])).toBe(headBefore);
+      expect(await runGit(repoPath, ["branch", "--show-current"])).toBe("");
     },
     SLOW_PULL_TEST_TIMEOUT,
   );

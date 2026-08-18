@@ -317,7 +317,60 @@ describe("checkRepoStatus", () => {
       },
     });
     expect(skippedRefs).toEqual(["refs/remotes/origin/feature/demo"]);
-    expect(status.baseBranch).toBeNull();
+    expect(status.baseBranch).toMatchObject({
+      ahead: 0,
+      behind: 0,
+      branch: "feature/demo",
+      compareRef: "refs/remotes/origin/feature/demo",
+      state: "available",
+    });
+  });
+
+  test("preserves an upstream refresh failure for a matching configured base", async () => {
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "feature/demo",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async () => ({
+          branch: "feature/demo",
+          compareRef: "refs/remotes/origin/feature/demo",
+          reason: "duplicate-target" as const,
+          remote: "origin",
+          remoteRef: "origin/feature/demo",
+          state: "skipped" as const,
+        }),
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          reason: "on-default-branch" as const,
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({
+          error: "authentication failed",
+          kind: "generic" as const,
+          message: "Unable to refresh origin/feature/demo: authentication failed",
+          ok: false as const,
+        }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: "## feature/demo...origin/feature/demo [ahead 1]",
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "feature/demo", remote: "origin", upstream: "origin/feature/demo" },
+        }),
+      },
+    });
+
+    expect(status.baseBranch).toEqual({
+      branch: "feature/demo",
+      compareRef: "refs/remotes/origin/feature/demo",
+      details: { error: "authentication failed", kind: "generic" },
+      message: "Unable to refresh origin/feature/demo: authentication failed",
+      reason: "refresh-failed",
+      remote: "origin",
+      remoteRef: "origin/feature/demo",
+      state: "unavailable",
+    });
   });
 
   test("compares equal branch names when configured base and upstream use different remotes", async () => {
@@ -365,6 +418,83 @@ describe("checkRepoStatus", () => {
       compareRef: "refs/remotes/origin/main",
       state: "available",
     });
+  });
+
+  test("projects upstream counts into a matching default-branch role", async () => {
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      dependencies: {
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          compareRef: "refs/remotes/origin/main",
+          reason: "duplicate-target" as const,
+          remote: "origin",
+          remoteRef: "origin/main",
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: "## main...origin/main [ahead 2, behind 3]",
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "main", remote: "origin", upstream: "origin/main" },
+        }),
+      },
+    });
+
+    expect(status.defaultBranch).toEqual({
+      ahead: 2,
+      behind: 3,
+      branch: "main",
+      compareRef: "refs/remotes/origin/main",
+      remote: "origin",
+      remoteRef: "origin/main",
+      state: "available",
+    });
+  });
+
+  test("compares a configured base when the synthesized tracking target has no upstream", async () => {
+    let skippedCompareRefs: readonly string[] = ["unexpected"];
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "feature/demo",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async (
+          _path,
+          _currentBranch,
+          _configuredBranch,
+          _detached,
+          skipCompareRefs,
+        ) => {
+          skippedCompareRefs = skipCompareRefs ?? [];
+          return {
+            ahead: 0,
+            behind: 4,
+            branch: "feature/demo",
+            compareRef: "refs/remotes/origin/feature/demo",
+            remote: "origin",
+            remoteRef: "origin/feature/demo",
+            state: "available" as const,
+          };
+        },
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: null,
+          reason: "unresolved" as const,
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({ error: null, output: "## feature/demo" }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "feature/demo", remote: "origin", upstream: null },
+        }),
+      },
+    });
+
+    expect(skippedCompareRefs).toEqual([]);
+    expect(status.baseBranch).toMatchObject({ behind: 4, state: "available" });
   });
 
   test("skips remote refresh when no tracking target can be resolved", async () => {
@@ -485,7 +615,9 @@ describe("checkRepoStatus", () => {
       dependencies: {
         compareCurrentBranchToDefaultBranch: async () => ({
           branch: "main",
+          details: { error: "Git command failed: authentication required" },
           message: "Git command failed: authentication required",
+          reason: "comparison-failed" as const,
           state: "unavailable" as const,
         }),
         fetchRemoteTrackingTarget: async () => ({ ok: true }),
@@ -510,7 +642,9 @@ describe("checkRepoStatus", () => {
     expect(status.files).toHaveLength(1);
     expect(status.defaultBranch).toEqual({
       branch: "main",
+      details: { error: "Git command failed: authentication required" },
       message: "Git command failed: authentication required",
+      reason: "comparison-failed",
       state: "unavailable",
     });
   });
@@ -626,7 +760,9 @@ describe("status formatting", () => {
       },
       defaultBranch: {
         branch: "main",
+        details: { error: "Git command failed: authentication required" },
         message: "Git command failed: authentication required",
+        reason: "comparison-failed",
         state: "unavailable",
       },
       error: null,
@@ -724,7 +860,9 @@ describe("formatShortLine", () => {
       },
       defaultBranch: {
         branch: "main",
+        details: { error: "Git command failed: authentication required" },
         message: "Git command failed: authentication required",
+        reason: "comparison-failed",
         state: "unavailable",
       },
       error: null,

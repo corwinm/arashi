@@ -595,7 +595,7 @@ const validateNoUnknownKeys = ({
       }
       errors.push(
         label === "defaults.create.baseBranch"
-          ? `${label} has been removed; use root baseBranch instead to configure repository base policy`
+          ? `${label} has been removed; use root baseBranch for workspace policy, meta.baseBranch for the meta repository, or repos.<name>.baseBranch for a child repository`
           : `${label}: unknown property`,
       );
     }

@@ -1,3 +1,5 @@
+import type { ConfiguredBaseOutcome } from "./configured-base-outcome.ts";
+
 export type PushResultStatus = "pushed" | "skipped" | "failed" | "planned";
 
 export interface PushOptionsSummary {
@@ -19,6 +21,7 @@ export interface PushResult {
   stderr?: string;
   elapsedSeconds: number;
   upstreamSet?: boolean;
+  configuredBase?: ConfiguredBaseOutcome;
 }
 
 export interface PushTotals {

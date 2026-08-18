@@ -592,12 +592,44 @@ describe("repositoryStatusToDoctorFindings", () => {
     );
   });
 
+  test("keeps same-named configured and default drift distinct across remotes", () => {
+    const status = baseStatus();
+    status.baseBranch = {
+      ahead: 0,
+      behind: 2,
+      branch: "main",
+      compareRef: "refs/remotes/origin/main",
+      remote: "origin",
+      remoteRef: "origin/main",
+      state: "available",
+    };
+    status.defaultBranch = {
+      ahead: 0,
+      behind: 4,
+      branch: "main",
+      compareRef: "refs/remotes/fork/main",
+      remote: "fork",
+      remoteRef: "fork/main",
+      state: "available",
+    };
+
+    const findings = repositoryStatusToDoctorFindings(status);
+    expect(findings).toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_CONFIGURED_BASE_BEHIND" }),
+    );
+    expect(findings).toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_DEFAULT_BRANCH_BEHIND" }),
+    );
+  });
+
   test("reports an unavailable configured base without falling back", () => {
     const status = baseStatus();
     status.baseBranch = {
       branch: "develop",
       compareRef: "refs/remotes/origin/develop",
+      details: { error: "couldn't find remote ref refs/heads/develop" },
       message: "couldn't find remote ref refs/heads/develop",
+      reason: "refresh-failed",
       remote: "origin",
       remoteRef: "origin/develop",
       state: "unavailable",
@@ -606,6 +638,10 @@ describe("repositoryStatusToDoctorFindings", () => {
     expect(repositoryStatusToDoctorFindings(status)).toContainEqual(
       expect.objectContaining({
         code: "REPOSITORY_CONFIGURED_BASE_UNAVAILABLE",
+        details: expect.objectContaining({
+          reason: "refresh-failed",
+          failure: { error: "couldn't find remote ref refs/heads/develop" },
+        }),
         severity: "warning",
       }),
     );

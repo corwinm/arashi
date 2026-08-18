@@ -99,12 +99,21 @@ describe("push planning", () => {
     await git(path, ["checkout", "-b", "feature/from-integration"]);
 
     const result = await planPush(
-      { ...repo, baseBranch: "integration" },
+      { ...repo, baseBranch: "integration", baseBranchSource: "repository-config" },
       { dryRun: true, setUpstream: true },
     );
 
     expect(result.result.status).toBe("skipped");
     expect(result.result.reason).toContain("no publishable commits");
+    expect(result.result.configuredBase).toEqual({
+      ahead: 0,
+      branch: "integration",
+      compareRef: "refs/remotes/origin/integration",
+      remote: "origin",
+      remoteRef: "origin/integration",
+      source: "repository-config",
+      state: "available",
+    });
   });
 
   test("resolves a configured base on another remote without changing the push destination", async () => {
@@ -124,7 +133,7 @@ describe("push planning", () => {
     await git(path, ["commit", "-m", "feature"]);
 
     const result = await planPush(
-      { ...repo, baseBranch: "integration" },
+      { ...repo, baseBranch: "integration", baseBranchSource: "repository-config" },
       { dryRun: true, setUpstream: true },
     );
 
@@ -136,6 +145,15 @@ describe("push planning", () => {
       "origin",
       "feature/from-integration",
     ]);
+    expect(result.result.configuredBase).toMatchObject({
+      ahead: 1,
+      branch: "integration",
+      compareRef: "refs/remotes/upstream/integration",
+      remote: "upstream",
+      remoteRef: "upstream/integration",
+      source: "repository-config",
+      state: "available",
+    });
   });
 
   test("does not fall back when a configured push baseline is unavailable", async () => {
@@ -150,6 +168,13 @@ describe("push planning", () => {
 
     expect(result.result.status).toBe("failed");
     expect(result.result.errorMessage).toContain("configured base 'origin/missing/integration'");
+    expect(result.result.configuredBase).toMatchObject({
+      branch: "missing/integration",
+      compareRef: "refs/remotes/origin/missing/integration",
+      reason: "refresh-failed",
+      remote: "origin",
+      state: "unavailable",
+    });
   });
 
   afterEach(async () => {
