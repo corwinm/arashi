@@ -126,8 +126,8 @@ describe("unified switch mode documentation contract", () => {
     const readme = readProjectFile("README.md");
     const configuration = readProjectFile("docs/configuration.md");
     const switchDocs = readProjectFile("docs/commands/switch.md");
-    expect(readme).toContain("arashi switch --tmux feature-auth-refresh");
-    expect(readme).toContain("arashi create feature-auth-refresh --tmux");
+    expect(readme).toContain("aw switch --tmux feature-auth-refresh");
+    expect(readme).toContain("aw create feature-auth-refresh --tmux");
     for (const contents of [readme, configuration, switchDocs]) {
       expect(contents).toContain("non-empty after trimming");
       expect(contents).toContain("does not fall back");

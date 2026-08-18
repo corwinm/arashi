@@ -5,7 +5,7 @@ Remove worktrees and delete branches across the workspace with a single command.
 ## Usage
 
 ```bash
-arashi remove [branch] [options]
+aw remove [branch] [options]
 ```
 
 ## Options
@@ -22,28 +22,28 @@ arashi remove [branch] [options]
 
 ```bash
 # Remove a single branch with confirmation
-arashi remove feature-login
+aw remove feature-login
 
 # Interactive multi-select removal
-arashi remove
+aw remove
 
 # Skip dirty checks
-arashi remove feature-login --no-check-dirty
+aw remove feature-login --no-check-dirty
 
 # Keep worktree directories
-arashi remove feature-login --keep-worktrees
+aw remove feature-login --keep-worktrees
 
 # Keep git branches
-arashi remove feature-login --keep-branches
+aw remove feature-login --keep-branches
 
 # Preview cleanup before deleting anything
-arashi remove feature-login --dry-run
+aw remove feature-login --dry-run
 
 # Machine-readable preview for automation
-arashi remove feature-login --dry-run --json
+aw remove feature-login --dry-run --json
 
 # Machine-readable output
-arashi remove feature-login --json
+aw remove feature-login --json
 ```
 
 ## Notes

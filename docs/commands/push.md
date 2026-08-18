@@ -1,9 +1,9 @@
-# `arashi push`
+# `aw push`
 
 ## Usage
 
 ```bash
-arashi push [options]
+aw push [options]
 ```
 
 Publish eligible coordinated feature branches across the parent workspace and managed child repositories.
@@ -19,19 +19,19 @@ Publish eligible coordinated feature branches across the parent workspace and ma
 
 ```bash
 # Publish eligible repos that already have upstream tracking
-arashi push
+aw push
 
 # Publish a new coordinated branch and set upstreams where needed
-arashi push --set-upstream
+aw push --set-upstream
 
 # Publish only one child repo
-arashi push --only arashi-docs --set-upstream
+aw push --only arashi-docs --set-upstream
 
 # Preview before publishing
-arashi push --set-upstream --dry-run
+aw push --set-upstream --dry-run
 
 # Automation-safe output
-arashi push --set-upstream --json
+aw push --set-upstream --json
 ```
 
 ## Behavior

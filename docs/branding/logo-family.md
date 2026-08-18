@@ -27,7 +27,7 @@ This document defines the canonical Arashi logo family and placement rules for t
 ## Surface Placement Map
 
 - `repos/arashi/README.md`: full text logo appears before the H1 heading.
-- `arashi -h` output: full/compact/plain variant selected by terminal context.
+- `aw -h` output: full/compact/plain variant selected by terminal context.
 - `repos/arashi-docs` site header and favicon: vector mark family assets.
 
 ## README Rendering Constraints and Fallbacks
