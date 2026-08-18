@@ -18,6 +18,8 @@ const root = join(import.meta.dirname, "../..");
 const npmCommand = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
 const npmArgs = (args: string[]): string[] =>
   process.platform === "win32" ? ["/d", "/s", "/c", "npm", ...args] : args;
+const npmSetupCommandTimeout = 45_000;
+const packedAliasSetupTimeout = 90_000;
 const fixtures: string[] = [];
 let prefix = "";
 let binDirectory = "";
@@ -30,7 +32,7 @@ beforeAll(() => {
   execFileSync(
     npmCommand,
     npmArgs(["pack", "--cache", join(packDir, "npm-cache"), "--pack-destination", packDir]),
-    { cwd: root, encoding: "utf8" },
+    { cwd: root, encoding: "utf8", timeout: npmSetupCommandTimeout },
   );
   const filename = readdirSync(packDir).find((name) => name.endsWith(".tgz"));
   if (!filename) throw new Error("npm pack did not create an archive");
@@ -45,14 +47,14 @@ beforeAll(() => {
       join(prefix, "npm-cache"),
       join(packDir, filename),
     ]),
-    { encoding: "utf8" },
+    { encoding: "utf8", timeout: npmSetupCommandTimeout },
   );
   binDirectory = process.platform === "win32" ? prefix : join(prefix, "bin");
   packageBin = join(
     prefix,
     process.platform === "win32" ? "node_modules/arashi/bin" : "lib/node_modules/arashi/bin",
   );
-});
+}, packedAliasSetupTimeout);
 
 afterAll(() => {
   for (const fixture of fixtures) rmSync(fixture, { force: true, recursive: true });
