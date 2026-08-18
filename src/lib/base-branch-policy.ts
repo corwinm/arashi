@@ -1,7 +1,10 @@
 import type { Config } from "./config.ts";
 import { Option } from "commander";
-import { isValidRequestedBaseBranch } from "./git-branch-name.ts";
-import { normalizeLogicalBranchName } from "./git-branch-name.ts";
+import {
+  isValidGitBranchNameLiteral,
+  isValidRequestedBaseBranch,
+  normalizeLogicalBranchName,
+} from "./git-branch-name.ts";
 
 export type BaseBranchPolicySource =
   | "repository-cli"
@@ -175,7 +178,7 @@ export const resolveBaseBranchPolicy = (
   if (
     input.command === "clone" &&
     globalBaseProvided &&
-    (!normalizedGlobal || !isValidRequestedBaseBranch(normalizedGlobal))
+    (!normalizedGlobal || !isValidGitBranchNameLiteral(normalizedGlobal))
   ) {
     throw new BaseBranchPolicyError([
       {

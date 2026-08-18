@@ -141,6 +141,17 @@ describe("shared repository base branch policy", () => {
     }
   });
 
+  test("normalizes the invocation-wide base exactly once before validation", () => {
+    expect(
+      resolveBaseBranchPolicy({
+        command: "clone",
+        config: config(),
+        globalBase: "origin/origin/HEAD",
+        selectedRepositoryNames: ["api"],
+      }),
+    ).toEqual([{ repositoryName: "api", requestedBranch: "origin/HEAD", source: "cli" }]);
+  });
+
   test("rejects an explicitly empty invocation-wide base", () => {
     expect(() =>
       resolveBaseBranchPolicy({
