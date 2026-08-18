@@ -80,7 +80,7 @@ import {
 } from "../lib/create-base.ts";
 import { planConfiguredRepositoryMaterialization } from "../lib/materialization-preflight.ts";
 import type { RepositoryMaterializationPlan } from "../lib/materialization.ts";
-import { normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
+import { isValidRequestedBaseBranch, normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
 import {
   BaseBranchPolicyError,
   repositoryBaseOption,
@@ -1218,6 +1218,14 @@ export async function executeCreate(
   const emptyFilters = findEmptyRepositoryFilters(options.only, options.group);
   if (emptyFilters.length > ZERO) {
     throw new EmptyRepositoryFiltersError(emptyFilters);
+  }
+
+  if (options.base !== undefined && !isValidRequestedBaseBranch(options.base)) {
+    throw new InvalidBranchNameError(
+      `Invalid base branch name: ${options.base}`,
+      options.base,
+      "Base branch must be a valid Git branch name.",
+    );
   }
 
   const workspaceContext = await (deps.resolveWorkspaceContext ?? resolveWorkspaceContext)();

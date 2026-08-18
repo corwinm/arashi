@@ -308,40 +308,43 @@ describe("standalone lifecycle", () => {
     await expect(access(join(root, ".arashi"))).rejects.toThrow();
   });
 
-  test("invalid explicit base fails before global pre-create hook or standalone mutation", async () => {
-    const root = await repository();
-    await arashi(root, ["init", "--zero-config"]);
-    const home = await mkdtemp(join(tmpdir(), "arashi-standalone-invalid-base-home-"));
-    roots.push(home);
-    const hooks = join(home, ".arashi", "hooks");
-    const marker = join(home, "pre-create-ran");
-    await mkdir(hooks, { recursive: true });
-    await writeFile(join(hooks, "pre-create.sh"), `#!/bin/sh\ntouch "${marker}"\n`);
-    await chmod(join(hooks, "pre-create.sh"), 0o755);
-    const excludePath = join(root, ".git", "info", "exclude");
-    const configPath = join(root, ".git", "config");
-    const excludeBefore = await readFile(excludePath, "utf8");
-    const configBefore = await readFile(configPath, "utf8");
+  test.each(["bad branch", ""])(
+    "invalid explicit base %j fails before global pre-create hook or standalone mutation",
+    async (invalidBase) => {
+      const root = await repository();
+      await arashi(root, ["init", "--zero-config"]);
+      const home = await mkdtemp(join(tmpdir(), "arashi-standalone-invalid-base-home-"));
+      roots.push(home);
+      const hooks = join(home, ".arashi", "hooks");
+      const marker = join(home, "pre-create-ran");
+      await mkdir(hooks, { recursive: true });
+      await writeFile(join(hooks, "pre-create.sh"), `#!/bin/sh\ntouch "${marker}"\n`);
+      await chmod(join(hooks, "pre-create.sh"), 0o755);
+      const excludePath = join(root, ".git", "info", "exclude");
+      const configPath = join(root, ".git", "config");
+      const excludeBefore = await readFile(excludePath, "utf8");
+      const configBefore = await readFile(configPath, "utf8");
 
-    const result = await arashi(
-      root,
-      ["create", "feature/invalid-base-target", "--base", "bad branch", "--json"],
-      { HOME: home },
-    );
+      const result = await arashi(
+        root,
+        ["create", "feature/invalid-base-target", "--base", invalidBase, "--json"],
+        { HOME: home },
+      );
 
-    expect(result.exitCode).not.toBe(0);
-    expect(JSON.parse(result.stdout).error).toMatchObject({ code: "INVALID_BRANCH_NAME" });
-    await expect(access(marker)).rejects.toThrow();
-    expect(
-      (await run(root, ["git", "branch", "--list", "feature/invalid-base-target"])).stdout,
-    ).toBe("");
-    await expect(
-      access(join(root, ".worktrees", "feature", "invalid-base-target")),
-    ).rejects.toThrow();
-    await expect(access(join(root, ".arashi"))).rejects.toThrow();
-    expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
-    expect(await readFile(configPath, "utf8")).toBe(configBefore);
-  });
+      expect(result.exitCode).not.toBe(0);
+      expect(JSON.parse(result.stdout).error).toMatchObject({ code: "INVALID_BRANCH_NAME" });
+      await expect(access(marker)).rejects.toThrow();
+      expect(
+        (await run(root, ["git", "branch", "--list", "feature/invalid-base-target"])).stdout,
+      ).toBe("");
+      await expect(
+        access(join(root, ".worktrees", "feature", "invalid-base-target")),
+      ).rejects.toThrow();
+      await expect(access(join(root, ".arashi"))).rejects.toThrow();
+      expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
+      expect(await readFile(configPath, "utf8")).toBe(configBefore);
+    },
+  );
 
   test("operational base resolver failure occurs before global pre-create hook or standalone mutation", async () => {
     const root = await repository();

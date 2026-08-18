@@ -105,7 +105,7 @@ export interface CloneCommandDependencies {
   discoverCloneRepositories?: typeof discoverCloneRepositories;
   cloneRepository?: typeof cloneRepository;
   preflightRemoteBranch?: (gitUrl: string, branch: string) => Promise<string>;
-  preflightRemoteDefault?: (gitUrl: string) => Promise<void>;
+  preflightRemoteDefault?: (gitUrl: string) => Promise<string>;
   reconcileManagedIgnore?: typeof reconcileRepositoryManagedIgnore;
   restoreManagedIgnore?: typeof restoreManagedIgnore;
   addWorktree?: (
@@ -237,6 +237,13 @@ export async function executeClone(
   let discovery = await discoverRepositories(executionRoot, config);
 
   if (discovery.configuredMissing.length === 0) {
+    resolveBaseBranchPolicy({
+      command: "clone",
+      config,
+      globalBase: options.base,
+      repositoryOverrides: options.repoBase,
+      selectedRepositories: [],
+    });
     const reconcileResult = await reconcileUnmanagedRepositories({
       askInput,
       askSelect,
@@ -386,13 +393,27 @@ export async function executeClone(
         : rawGitUrl;
       const requestedBranch = policy.requestedBranch;
       try {
-        if (!requestedBranch) {
-          if (policyInvocation) await preflightRemoteDefault(gitUrl);
-          return null;
-        }
         const sourceRepositoryPath = sourceWorkspaceRoot
           ? resolve(sourceWorkspaceRoot, repository.config.path)
           : undefined;
+        if (!requestedBranch) {
+          if (!policyInvocation) return null;
+          const baseOid = await preflightRemoteDefault(gitUrl);
+          if (sourceRepositoryPath && currentBranch && (await exists(sourceRepositoryPath))) {
+            const targetOid = await resolveOptionalCommit(
+              sourceRepositoryPath,
+              `refs/heads/${currentBranch}`,
+            );
+            clonePlans.set(repository.name, {
+              baseOid,
+              sourceRepositoryPath,
+              targetExists: Boolean(targetOid),
+            });
+          } else {
+            clonePlans.set(repository.name, { baseOid });
+          }
+          return null;
+        }
         if (sourceRepositoryPath && currentBranch && (await exists(sourceRepositoryPath))) {
           const baseOid = await resolveLocalBase(sourceRepositoryPath, requestedBranch);
           const targetOid = await resolveOptionalCommit(
@@ -667,8 +688,11 @@ async function resolveRemoteBranch(gitUrl: string, branch: string, cwd: string):
   return oid;
 }
 
-async function resolveRemoteDefault(gitUrl: string, cwd: string): Promise<void> {
-  await exec(["ls-remote", gitUrl, "HEAD"], cwd);
+async function resolveRemoteDefault(gitUrl: string, cwd: string): Promise<string> {
+  const result = await exec(["ls-remote", gitUrl, "HEAD"], cwd);
+  const oid = result.stdout.trim().split(/\s+/)[0];
+  if (!oid) throw new Error("Remote default branch was not found");
+  return oid;
 }
 
 export async function resolveOptionalCommit(
