@@ -1267,6 +1267,7 @@ export async function executeCreate(
             ],
             standaloneRequest.requestedBranch,
             standaloneRequest.source,
+            true,
           );
     const standaloneResult = await createStandaloneWorktree(
       workspaceContext,
@@ -1500,6 +1501,13 @@ export async function executeCreate(
   const selectedRepos = await filterRepositories(filter, filteredRepositories);
 
   if (selectedRepos.length === ZERO) {
+    resolveBaseBranchPolicy({
+      command: "create",
+      config: arashiConfig,
+      globalBase: options.base,
+      repositoryOverrides: options.repoBase,
+      selectedRepositories: [],
+    });
     if (options.json) {
       writeJsonEnvelope(
         createJsonSuccessEnvelope("create", {

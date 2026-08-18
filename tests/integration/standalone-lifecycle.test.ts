@@ -202,6 +202,26 @@ describe("standalone lifecycle", () => {
     await expect(access(join(root, ".arashi"))).rejects.toThrow();
   });
 
+  test("normalizes an explicit standalone policy base exactly once", async () => {
+    const root = await repository();
+    await run(root, ["git", "branch", "origin/HEAD"]);
+    const expected = (await run(root, ["git", "rev-parse", "origin/HEAD"])).stdout.trim();
+    await arashi(root, ["init", "--zero-config"]);
+
+    const result = await arashi(root, [
+      "create",
+      "feature/from-prefixed-literal",
+      "--base",
+      "origin/origin/HEAD",
+      "--json",
+    ]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(
+      (await run(root, ["git", "rev-parse", "feature/from-prefixed-literal"])).stdout.trim(),
+    ).toBe(expected);
+  });
+
   test("explicit base falls back to the standalone repository origin branch", async () => {
     const root = await repository();
     const remote = await mkdtemp(join(tmpdir(), "arashi-standalone-origin-base-"));

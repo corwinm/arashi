@@ -167,6 +167,16 @@ describe("configured create base preflight", () => {
     expect(reached).toEqual([]);
   });
 
+  test("validates repository overrides after an empty interactive selection", async () => {
+    const error = await executeCreate(
+      "feature/target",
+      { interactive: true, repoBase: ["missing=main"] },
+      dependencies({ applyRepositoryFilter: async () => [] }),
+    ).catch((failure: unknown) => failure);
+
+    expect(error).toMatchObject({ code: "BASE_BRANCH_POLICY_INVALID" });
+  });
+
   test("uses CLI over generic config and validates only the final filtered interactive selection", async () => {
     const calls: {
       names: string[];

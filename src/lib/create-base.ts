@@ -126,6 +126,7 @@ export const createBaseResolver = (dependencies: CreateBaseResolverDependencies 
     repositories: readonly Repository[],
     requestedBranchOrRequests: string | readonly CreateBaseRequest[],
     legacySource?: CreateBaseSource,
+    requestedBranchIsNormalized = false,
   ): Promise<CreateBaseResolutionPlan> {
     const exec = dependencies.exec ?? gitExec;
     const canonicalizePath = dependencies.realpath ?? realpath;
@@ -170,7 +171,12 @@ export const createBaseResolver = (dependencies: CreateBaseResolverDependencies 
     for (const request of requests) {
       normalizedByRequest.set(
         request,
-        await validateBranch(request.requestedBranch, validationPath, exec, !perRepository),
+        await validateBranch(
+          request.requestedBranch,
+          validationPath,
+          exec,
+          !perRepository && !requestedBranchIsNormalized,
+        ),
       );
     }
 
