@@ -16,10 +16,17 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const root = join(import.meta.dirname, "../..");
 const npmCommand = process.platform === "win32" ? process.execPath : "npm";
-const npmArgs = (args: string[]): string[] =>
+const npmCli =
   process.platform === "win32"
-    ? [join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js"), ...args]
-    : args;
+    ? join(
+        dirname(
+          execFileSync("where.exe", ["npm.cmd"], { encoding: "utf8" }).trim().split(/\r?\n/, 1)[0],
+        ),
+        "node_modules/npm/bin/npm-cli.js",
+      )
+    : "";
+const npmArgs = (args: string[]): string[] =>
+  process.platform === "win32" ? [npmCli, ...args] : args;
 const npmSetupCommandTimeout = 45_000;
 const packedAliasSetupTimeout = 120_000;
 const fixtures: string[] = [];
