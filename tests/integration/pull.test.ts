@@ -115,6 +115,24 @@ async function createRemoteCommit(
   await runGit(workdir, ["push", "origin", "HEAD:main"]);
 }
 
+async function createRemoteBranchCommit(
+  remotePath: string,
+  baseDir: string,
+  name: string,
+  branch: string,
+  fileName: string,
+): Promise<void> {
+  const workdir = join(baseDir, name);
+  await runGit(baseDir, ["clone", remotePath, workdir]);
+  await runGit(workdir, ["checkout", "-B", branch, "origin/main"]);
+  await runGit(workdir, ["config", "user.email", "test@example.com"]);
+  await runGit(workdir, ["config", "user.name", "Test User"]);
+  await writeFile(join(workdir, fileName), `base update ${Date.now()}`);
+  await runGit(workdir, ["add", "."]);
+  await runGit(workdir, ["commit", "-m", `Update ${branch}`]);
+  await runGit(workdir, ["push", "origin", `HEAD:${branch}`]);
+}
+
 async function runPullCommand(workspaceRoot: string, args: string[] = []): Promise<CommandResult> {
   const testFileDir = import.meta.dirname;
   const arashiRoot = join(testFileDir, "..", "..");
@@ -152,6 +170,36 @@ describe("pull command", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("updated");
       expect(result.stdout).toContain("repo-a");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
+
+  test(
+    "pulls the configured base branch into the current branch",
+    async () => {
+      const { workspaceRoot, repoRemote, repoPath } = await createWorkspaceWithRepo(testDir);
+      await createRemoteBranchCommit(
+        repoRemote,
+        testDir,
+        "integration-update",
+        "integration",
+        "integration.txt",
+      );
+      await runGit(repoPath, ["checkout", "-b", "feature/from-integration"]);
+
+      const configPath = join(workspaceRoot, ".arashi", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        repos: Record<string, Record<string, unknown>>;
+      };
+      config.repos["repo-a"]!.baseBranch = "integration";
+      await writeFile(configPath, JSON.stringify(config, null, 2));
+
+      const result = await runPullCommand(workspaceRoot, ["--only", "repo-a"]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("updated");
+      expect(await readFile(join(repoPath, "integration.txt"), "utf8")).toContain("base update");
+      expect(await runGit(repoPath, ["branch", "--show-current"])).toBe("feature/from-integration");
     },
     SLOW_PULL_TEST_TIMEOUT,
   );

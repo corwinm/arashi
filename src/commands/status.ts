@@ -7,6 +7,7 @@
  */
 
 import {
+  compareCurrentBranchToConfiguredBranch,
   compareCurrentBranchToDefaultBranch,
   fetchRemoteTrackingTarget,
   resolveRemoteTrackingTarget,
@@ -22,6 +23,7 @@ import { loadWorkspaceRepositories } from "../lib/config.ts";
 import { findConfiguredWorkspaceRoots, resolveWorkspaceContext } from "../lib/workspace-context.ts";
 import { standaloneWorktrees } from "../lib/standalone.ts";
 import { exec as gitExec, getFullGitStatus, getGitStatus } from "../lib/git.ts";
+import { normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
 import { info, error as logError, spinner } from "../lib/logger.ts";
 import { Command } from "commander";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
@@ -30,6 +32,9 @@ import { basename, join, resolve } from "path";
 import { realpath, stat } from "fs/promises";
 
 type DefaultBranchComparison = Awaited<ReturnType<typeof compareCurrentBranchToDefaultBranch>>;
+type ConfiguredBranchComparison = Awaited<
+  ReturnType<typeof compareCurrentBranchToConfiguredBranch>
+>;
 type JsonWarning = NonNullable<Parameters<typeof createJsonSuccessEnvelope>[2]>[number];
 
 const ZERO = 0;
@@ -134,6 +139,10 @@ export interface RepoStatus {
   branch: BranchTrackingInfo;
   /** Default branch comparison state */
   defaultBranch?: DefaultBranchComparison | null;
+  /** Effective configured base-branch comparison state */
+  baseBranch?: ConfiguredBranchComparison | null;
+  /** Configuration source for the effective configured base */
+  baseBranchSource?: "repository-config" | "workspace-config";
   /** List of changed files */
   files: GitFileStatus[];
   /** Error message if status check failed */
@@ -145,6 +154,7 @@ export interface RepoStatus {
 }
 
 interface StatusCommandDependencies {
+  compareCurrentBranchToConfiguredBranch: typeof compareCurrentBranchToConfiguredBranch;
   compareCurrentBranchToDefaultBranch: typeof compareCurrentBranchToDefaultBranch;
   fetchRemoteTrackingTarget: typeof fetchRemoteTrackingTarget;
   getFullGitStatus: typeof getFullGitStatus;
@@ -153,11 +163,14 @@ interface StatusCommandDependencies {
 }
 
 interface CheckRepoStatusOptions {
-  dependencies?: StatusCommandDependencies;
+  baseBranch?: string;
+  baseBranchSource?: "repository-config" | "workspace-config";
+  dependencies?: Partial<StatusCommandDependencies>;
   verbose?: boolean;
 }
 
 const defaultStatusCommandDependencies: StatusCommandDependencies = {
+  compareCurrentBranchToConfiguredBranch,
   compareCurrentBranchToDefaultBranch,
   fetchRemoteTrackingTarget,
   getFullGitStatus,
@@ -286,10 +299,12 @@ export const checkRepoStatus = async (
   path: string,
   options: CheckRepoStatusOptions = {},
 ): Promise<RepoStatus> => {
-  const { dependencies = defaultStatusCommandDependencies, verbose = false } = options;
+  const dependencies = { ...defaultStatusCommandDependencies, ...options.dependencies };
+  const { verbose = false } = options;
   const repoExists = await pathExists(path);
   if (!repoExists) {
     return {
+      baseBranch: null,
       branch: createEmptyBranchTrackingInfo(true),
       defaultBranch: null,
       error: `Repository is missing at ${path}. Run \`arashi clone\` to clone missing repositories.`,
@@ -302,8 +317,10 @@ export const checkRepoStatus = async (
 
   try {
     let refreshWarning: RepoRefreshWarning | null = null;
+    let trackingBranch: string | null = null;
     const trackingTarget = await dependencies.resolveRemoteTrackingTarget(path);
     if (trackingTarget.ok) {
+      trackingBranch = trackingTarget.target.branch;
       const fetchResult = await dependencies.fetchRemoteTrackingTarget(path, trackingTarget.target);
       if (!fetchResult.ok) {
         refreshWarning = createRefreshWarning(fetchResult);
@@ -314,6 +331,7 @@ export const checkRepoStatus = async (
 
     if (result.error) {
       return {
+        baseBranch: null,
         branch: createEmptyBranchTrackingInfo(true),
         defaultBranch: null,
         error: result.error,
@@ -325,11 +343,30 @@ export const checkRepoStatus = async (
     }
 
     const parsed = parseGitStatus(result.output);
-    const defaultBranch = await dependencies.compareCurrentBranchToDefaultBranch(
+    const configuredBaseBranch = options.baseBranch
+      ? normalizeLogicalBranchName(options.baseBranch)
+      : undefined;
+    const baseBranch =
+      configuredBaseBranch && configuredBaseBranch !== trackingBranch
+        ? await dependencies.compareCurrentBranchToConfiguredBranch(
+            path,
+            parsed.branch.localBranch,
+            configuredBaseBranch,
+            parsed.branch.isDetached,
+          )
+        : null;
+    const resolvedDefaultBranch = await dependencies.compareCurrentBranchToDefaultBranch(
       path,
       parsed.branch.localBranch,
       parsed.branch.isDetached,
+      [trackingBranch, configuredBaseBranch].filter((branch): branch is string => Boolean(branch)),
     );
+    const defaultBranch =
+      baseBranch &&
+      resolvedDefaultBranch.state === "skipped" &&
+      resolvedDefaultBranch.branch === baseBranch.branch
+        ? { ...baseBranch }
+        : resolvedDefaultBranch;
 
     let fullStatus: string | undefined = undefined;
     if (verbose) {
@@ -342,6 +379,8 @@ export const checkRepoStatus = async (
     }
 
     return {
+      baseBranch,
+      baseBranchSource: options.baseBranchSource,
       branch: parsed.branch,
       defaultBranch,
       error: null,
@@ -358,6 +397,7 @@ export const checkRepoStatus = async (
     }
 
     return {
+      baseBranch: null,
       branch: createEmptyBranchTrackingInfo(true),
       defaultBranch: null,
       error: errorMessage,
@@ -386,17 +426,46 @@ export const checkAllRepos = (
   verbose = false,
   includeWorkspaceRoot = true,
 ): Promise<RepoStatus[]> => {
-  const reposToCheck: { name: string; path: string }[] = includeWorkspaceRoot
-    ? [{ name: "Main Repository", path: workspaceRoot }]
+  const reposToCheck: {
+    baseBranch?: string;
+    baseBranchSource?: "repository-config" | "workspace-config";
+    name: string;
+    path: string;
+  }[] = includeWorkspaceRoot
+    ? [
+        {
+          baseBranch: config.meta?.baseBranch ?? config.baseBranch,
+          baseBranchSource: config.meta?.baseBranch
+            ? "repository-config"
+            : config.baseBranch
+              ? "workspace-config"
+              : undefined,
+          name: "Main Repository",
+          path: workspaceRoot,
+        },
+      ]
     : [];
 
   for (const [name, repoConfig] of Object.entries(config.repos)) {
     const absolutePath = resolve(workspaceRoot, repoConfig.path);
-    reposToCheck.push({ name, path: absolutePath });
+    reposToCheck.push({
+      baseBranch: repoConfig.baseBranch ?? config.baseBranch,
+      baseBranchSource: repoConfig.baseBranch
+        ? "repository-config"
+        : config.baseBranch
+          ? "workspace-config"
+          : undefined,
+      name,
+      path: absolutePath,
+    });
   }
 
   const statusPromises = reposToCheck.map((repo) =>
-    checkRepoStatus(repo.name, repo.path, { verbose }),
+    checkRepoStatus(repo.name, repo.path, {
+      baseBranch: repo.baseBranch,
+      baseBranchSource: repo.baseBranchSource,
+      verbose,
+    }),
   );
 
   return Promise.all(statusPromises);
@@ -456,7 +525,35 @@ const formatBranchLine = (status: RepoStatus): string => {
 const shouldShowGenericRefreshWarning = (status: RepoStatus): boolean =>
   status.refreshWarning?.kind === "stale-remote-tracking";
 
+const baseAndDefaultShareTarget = (status: RepoStatus): boolean => {
+  if (!status.baseBranch || !status.defaultBranch) return false;
+  if (status.baseBranch.compareRef && status.defaultBranch.compareRef) {
+    return status.baseBranch.compareRef === status.defaultBranch.compareRef;
+  }
+  return status.baseBranch.branch === status.defaultBranch.branch;
+};
+
+const formatBaseBranchLine = (status: RepoStatus): string | null => {
+  if (!status.baseBranch) return null;
+  if (status.baseBranch.state === "available") {
+    const drift: string[] = [];
+    if (status.baseBranch.ahead > ZERO) drift.push(`↑${status.baseBranch.ahead}`);
+    if (status.baseBranch.behind > ZERO) drift.push(`↓${status.baseBranch.behind}`);
+    const label = baseAndDefaultShareTarget(status) ? "Base/default" : "Base";
+    return drift.length > ZERO
+      ? `  ${label}: ${status.baseBranch.branch} [${drift.join(", ")}]`
+      : `  ${label}: ${status.baseBranch.branch} [up to date]`;
+  }
+  if (status.baseBranch.state === "unavailable") {
+    return `  ${yellow(`Base: ${status.baseBranch.branch} (unavailable)`)}`;
+  }
+  return null;
+};
+
 const formatDefaultBranchLine = (status: RepoStatus): string | null => {
+  if (baseAndDefaultShareTarget(status)) {
+    return null;
+  }
   if (!status.defaultBranch) {
     return null;
   }
@@ -470,6 +567,22 @@ const formatDefaultBranchLine = (status: RepoStatus): string | null => {
   }
 
   return null;
+};
+
+const formatShortBaseIndicator = (status: RepoStatus): string => {
+  if (!status.baseBranch) return "";
+  if (status.baseBranch.state === "available") {
+    const drift = [
+      status.baseBranch.ahead > ZERO ? `↑${status.baseBranch.ahead}` : "",
+      status.baseBranch.behind > ZERO ? `↓${status.baseBranch.behind}` : "",
+    ].join("");
+    const label = baseAndDefaultShareTarget(status) ? "base/default" : "base";
+    return ` ${label}:${status.baseBranch.branch}${drift}`;
+  }
+  if (status.baseBranch.state === "unavailable") {
+    return ` ${yellow(`(base:${status.baseBranch.branch} unavailable)`)}`;
+  }
+  return "";
 };
 
 const formatShortDefaultIndicator = (status: RepoStatus): string => {
@@ -540,6 +653,11 @@ export const formatRepoSection = (status: RepoStatus): string => {
 
   // Branch info
   section += `${formatBranchLine(status)}\n`;
+
+  const baseBranchLine = formatBaseBranchLine(status);
+  if (baseBranchLine) {
+    section += `${baseBranchLine}\n`;
+  }
 
   const defaultBranchLine = formatDefaultBranchLine(status);
   if (defaultBranchLine) {
@@ -639,6 +757,11 @@ export const formatVerboseOutput = (statuses: RepoStatus[]): string => {
     // Branch info
     output += `${formatBranchLine(status)}\n`;
 
+    const baseBranchLine = formatBaseBranchLine(status);
+    if (baseBranchLine) {
+      output += `${baseBranchLine}\n`;
+    }
+
     const defaultBranchLine = formatDefaultBranchLine(status);
     if (defaultBranchLine) {
       output += `${defaultBranchLine}\n`;
@@ -732,6 +855,7 @@ export const formatShortLine = (status: RepoStatus): string => {
     line += ` ${yellow("(remote tracking stale)")}`;
   }
 
+  line += formatShortBaseIndicator(status);
   line += formatShortDefaultIndicator(status);
 
   return line;
@@ -771,11 +895,22 @@ export const collectStatusWarnings = (statuses: RepoStatus[]): JsonWarning[] =>
         message: status.refreshWarning.message,
       });
     }
-    if (status.defaultBranch?.state === "unavailable" && status.defaultBranch.message) {
+    if (
+      status.defaultBranch?.state === "unavailable" &&
+      status.defaultBranch.message &&
+      !baseAndDefaultShareTarget(status)
+    ) {
       warnings.push({
         code: "DEFAULT_BRANCH_COMPARISON_UNAVAILABLE",
         details: { repository: status.name },
         message: status.defaultBranch.message,
+      });
+    }
+    if (status.baseBranch?.state === "unavailable" && status.baseBranch.message) {
+      warnings.push({
+        code: "BASE_BRANCH_COMPARISON_UNAVAILABLE",
+        details: { branch: status.baseBranch.branch, repository: status.name },
+        message: status.baseBranch.message,
       });
     }
     return warnings;

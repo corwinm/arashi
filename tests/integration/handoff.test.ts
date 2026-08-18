@@ -64,12 +64,13 @@ const initializeGitRepository = async (repoPath: string): Promise<void> => {
   await runGit(repoPath, ["commit", "-m", "Initial commit"]);
 };
 
-const writeWorkspaceConfig = async (workspaceRoot: string): Promise<void> => {
+const writeWorkspaceConfig = async (workspaceRoot: string, baseBranch?: string): Promise<void> => {
   await mkdir(join(workspaceRoot, ".arashi"), { recursive: true });
   await writeFile(
     join(workspaceRoot, ".arashi", "config.json"),
     JSON.stringify(
       {
+        baseBranch,
         repos: {
           "repo-a": { path: "./repos/repo-a" },
           "repo-b": { path: "./repos/repo-b" },
@@ -258,6 +259,33 @@ describe("handoff command", () => {
     expect(repositories.find((repo) => repo.name === "repo-a")).toMatchObject({
       changeCount: 1,
       state: "dirty",
+    });
+  });
+
+  test("reports configured-base drift in Markdown and structured handoff data", async () => {
+    const workspaceRoot = await createWorkspace();
+    await writeWorkspaceConfig(workspaceRoot, "main");
+    await runGit(workspaceRoot, ["add", ".arashi/config.json"]);
+    await runGit(workspaceRoot, ["commit", "-m", "Configure base branch"]);
+    await runGit(workspaceRoot, ["checkout", "-b", "feature/handoff"]);
+    await runGit(workspaceRoot, ["checkout", "main"]);
+    await writeFile(join(workspaceRoot, "base-update.txt"), "base update\n");
+    await runGit(workspaceRoot, ["add", "base-update.txt"]);
+    await runGit(workspaceRoot, ["commit", "-m", "Advance configured base"]);
+    await runGit(workspaceRoot, ["checkout", "feature/handoff"]);
+
+    const markdown = await runArashi(workspaceRoot, ["handoff"]);
+    const json = await runArashi(workspaceRoot, ["handoff", "--json"]);
+
+    expect(markdown.exitCode).toBe(0);
+    expect(markdown.stdout).toContain("base/default main behind by 1");
+    expect(markdown.stdout).toContain("`arashi status --verbose`");
+    const repositories = (parseJson(json.stdout).data as Record<string, unknown>)
+      .repositories as Record<string, unknown>[];
+    expect(repositories.find((repo) => repo.name === "Main Repository")).toMatchObject({
+      baseBranch: { behind: 1, branch: "main", state: "available" },
+      baseBranchSource: "workspace-config",
+      defaultBranch: { behind: 1, branch: "main", state: "available" },
     });
   });
 

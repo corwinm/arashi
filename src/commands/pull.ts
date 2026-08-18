@@ -170,7 +170,7 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
       }
       continue;
     } else {
-      const remoteStatus = await checkRemoteChanges(repo.name, repo.path);
+      const remoteStatus = await checkRemoteChanges(repo.name, repo.path, repo.baseBranch);
       if (remoteStatus.error) {
         const elapsedSeconds = (Date.now() - start) / MILLISECONDS_PER_SECOND;
         results.push({

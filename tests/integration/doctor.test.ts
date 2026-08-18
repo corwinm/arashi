@@ -558,6 +558,59 @@ describe("repositoryStatusToDoctorFindings", () => {
     expect(codes).toContain("REPOSITORY_DEFAULT_BRANCH_BEHIND");
   });
 
+  test("reports configured-base drift with remote details and de-duplicates default drift", () => {
+    const status = baseStatus();
+    status.baseBranchSource = "repository-config";
+    status.baseBranch = {
+      ahead: 1,
+      behind: 3,
+      branch: "develop",
+      compareRef: "refs/remotes/origin/develop",
+      remote: "origin",
+      remoteRef: "origin/develop",
+      state: "available",
+    };
+    status.defaultBranch = { ...status.baseBranch };
+
+    const findings = repositoryStatusToDoctorFindings(status);
+    const baseFinding = findings.find(
+      (finding) => finding.code === "REPOSITORY_CONFIGURED_BASE_BEHIND",
+    );
+
+    expect(baseFinding).toEqual(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          alsoDefault: true,
+          remoteRef: "origin/develop",
+          source: "repository-config",
+        }),
+        suggestedCommands: expect.arrayContaining(["arashi pull"]),
+      }),
+    );
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ code: "REPOSITORY_DEFAULT_BRANCH_BEHIND" }),
+    );
+  });
+
+  test("reports an unavailable configured base without falling back", () => {
+    const status = baseStatus();
+    status.baseBranch = {
+      branch: "develop",
+      compareRef: "refs/remotes/origin/develop",
+      message: "couldn't find remote ref refs/heads/develop",
+      remote: "origin",
+      remoteRef: "origin/develop",
+      state: "unavailable",
+    };
+
+    expect(repositoryStatusToDoctorFindings(status)).toContainEqual(
+      expect.objectContaining({
+        code: "REPOSITORY_CONFIGURED_BASE_UNAVAILABLE",
+        severity: "warning",
+      }),
+    );
+  });
+
   test("classifies detached heads and missing remote refs", () => {
     const detached = baseStatus();
     detached.branch = {

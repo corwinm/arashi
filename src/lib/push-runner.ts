@@ -1,6 +1,7 @@
 import type { PushResult } from "./push-types.ts";
 import type { WorkspaceRepository } from "./config.ts";
 import { exec as gitExec } from "./git.ts";
+import { fetchRemoteTrackingTarget } from "./git-remote.ts";
 
 const ZERO = 0;
 const MILLISECONDS_PER_SECOND = 1000;
@@ -146,8 +147,58 @@ export const planPush = async (
   }
 
   const upstream = await getUpstream(repository.path);
-  const comparisonRef = await getComparisonRef(repository.path, upstream, remote);
-  const ahead = await countAhead(repository.path, comparisonRef);
+  let comparisonRef: string | undefined;
+  if (!upstream && repository.baseBranch) {
+    const fetchResult = await fetchRemoteTrackingTarget(repository.path, {
+      branch: repository.baseBranch,
+      remote,
+      upstream: null,
+    });
+    if (!fetchResult.ok) {
+      return {
+        repository,
+        result: {
+          branch,
+          elapsedSeconds: elapsedSeconds(),
+          errorMessage: `Unable to refresh configured base '${remote}/${repository.baseBranch}': ${fetchResult.message}`,
+          remote,
+          repositoryId: repository.name,
+          status: "failed",
+        },
+        shouldPush: false,
+      };
+    }
+    comparisonRef = `refs/remotes/${remote}/${repository.baseBranch}`;
+  } else {
+    comparisonRef = await getComparisonRef(repository.path, upstream, remote);
+  }
+  const configuredComparison = !upstream && Boolean(repository.baseBranch);
+  let ahead: number;
+  if (configuredComparison && comparisonRef) {
+    const countResult = await runGit(repository.path, [
+      "rev-list",
+      "--count",
+      `${comparisonRef}..HEAD`,
+    ]);
+    const parsedCount = Number.parseInt(countResult.stdout.trim(), 10);
+    if (!countResult.ok || !Number.isFinite(parsedCount)) {
+      return {
+        repository,
+        result: {
+          branch,
+          elapsedSeconds: elapsedSeconds(),
+          errorMessage: `Unable to compare with configured base '${remote}/${repository.baseBranch}': ${countResult.message ?? (countResult.stderr || "invalid commit count")}`,
+          remote,
+          repositoryId: repository.name,
+          status: "failed",
+        },
+        shouldPush: false,
+      };
+    }
+    ahead = parsedCount;
+  } else {
+    ahead = await countAhead(repository.path, comparisonRef);
+  }
   if (ahead === ZERO) {
     return {
       repository,

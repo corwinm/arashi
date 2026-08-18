@@ -27,10 +27,9 @@ describe("create base repository documentation contract", () => {
     expect(configuration).toContain(
       "repository CLI → invocation CLI → repository config → workspace config",
     );
-    expect(configuration).toContain("deprecated create-only compatibility input");
-    expect(configuration).toContain("clone never reads `defaults.create.baseBranch`");
-    expect(configuration).toMatch(
-      /Standalone create accepts only the\s+invocation-level\s+`--base`/,
-    );
+    expect(configuration).toContain("`defaults.create.baseBranch` is unsupported");
+    expect(configuration).toContain("before repository discovery, hooks, network");
+    expect(configuration).toContain("`status`, `pull`, no-upstream `push` comparison");
+    expect(configuration).toMatch(/Standalone create accepts only invocation-level\s+`--base`/);
   });
 });

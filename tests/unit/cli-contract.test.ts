@@ -299,7 +299,6 @@ describe("CLI command contract", () => {
           repositoryBase: {
             configuration: {
               child: "repos.<name>.baseBranch",
-              legacyCreateOnly: "defaults.create.baseBranch",
               meta: "meta.baseBranch",
               workspace: "baseBranch",
             },
@@ -308,7 +307,6 @@ describe("CLI command contract", () => {
               "cli",
               "repository-config",
               "workspace-config",
-              "legacy-create-config",
               "legacy-omitted",
             ],
             sources: [

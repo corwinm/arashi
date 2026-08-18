@@ -88,6 +88,39 @@ describe("push planning", () => {
     expect(result.result.upstreamSet).toBe(true);
   });
 
+  test("uses the configured base as the publishability baseline without an upstream", async () => {
+    const { path, repo } = await makeRepo();
+    await addOrigin(path, tempDir!);
+    await git(path, ["checkout", "-b", "integration"]);
+    await writeFile(join(path, "integration.txt"), "integration\n");
+    await git(path, ["add", "integration.txt"]);
+    await git(path, ["commit", "-m", "integration"]);
+    await git(path, ["push", "origin", "integration"]);
+    await git(path, ["checkout", "-b", "feature/from-integration"]);
+
+    const result = await planPush(
+      { ...repo, baseBranch: "integration" },
+      { dryRun: true, setUpstream: true },
+    );
+
+    expect(result.result.status).toBe("skipped");
+    expect(result.result.reason).toContain("no publishable commits");
+  });
+
+  test("does not fall back when a configured push baseline is unavailable", async () => {
+    const { path, repo } = await makeRepo();
+    await addOrigin(path, tempDir!);
+    await git(path, ["checkout", "-b", "feature/push"]);
+
+    const result = await planPush(
+      { ...repo, baseBranch: "missing/integration" },
+      { dryRun: true, setUpstream: true },
+    );
+
+    expect(result.result.status).toBe("failed");
+    expect(result.result.errorMessage).toContain("configured base 'origin/missing/integration'");
+  });
+
   afterEach(async () => {
     if (tempDir) {
       await rm(tempDir, { force: true, recursive: true });

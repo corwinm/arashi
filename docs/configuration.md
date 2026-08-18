@@ -145,21 +145,30 @@ This behavior is configured-workspace-only; standalone create is not supported. 
 
 ## Repository base branches
 
-Root `baseBranch` is the workspace default used by configured `create` and `clone` operations.
-`meta.baseBranch` overrides it for the meta repository during create, and
-`repos.<name>.baseBranch` overrides it for the named child repository. A one-off `--base <branch>`
-applies invocation-wide; repeat `--repo-base <selector=branch>` for repository-specific overrides.
-Create accepts the explicit `@meta` selector, while clone rejects it.
+Root `baseBranch` is the workspace fallback used by configured base-aware commands: `create`, `clone`,
+`status`, `pull`, no-upstream `push` comparison, `handoff`, and `doctor`. `meta.baseBranch` overrides it
+for the meta repository and `repos.<name>.baseBranch` overrides it for a named child repository.
+Create and clone also accept a one-off `--base <branch>` and repeatable
+`--repo-base <selector=branch>` overrides. Create accepts the explicit `@meta` selector, while clone
+rejects it.
 
-The shared precedence is repository CLI → invocation CLI → repository config → workspace config.
-Arashi normalizes one leading `origin/`, validates every selected repository, and resolves every
-effective base before mutating worktrees or clones. Standalone create accepts only the invocation-level
-`--base`; repository-specific overrides require configured repository identities.
+The shared persisted precedence is repository config → workspace config. For create and clone, the
+full precedence is repository CLI → invocation CLI → repository config → workspace config. Arashi
+normalizes one leading `origin/`, validates every selected repository, and resolves every effective
+base before mutation. Standalone create accepts only invocation-level `--base`; standalone status,
+handoff, and doctor retain their existing behavior without configured-base policy.
 
-`defaults.create.baseBranch` remains a deprecated create-only compatibility input for existing
-configurations. Configured create considers it only after the shared precedence has no value, and
-clone never reads `defaults.create.baseBranch`. Move that value to root `baseBranch`; conflicting
-canonical and deprecated values are rejected after logical branch normalization.
+Status retains upstream and detected remote-default information while adding configured-base drift.
+When base and default resolve to the same remote target, human output combines them and structured
+output preserves both roles without duplicate refresh/comparison work. Pull fetches and merges the
+configured remote base into the current branch; when no base is configured it retains current-upstream
+behavior. Push destinations do not change: only a branch with no upstream uses configured base as its
+publishability baseline. Handoff and doctor expose configured-base lag or unavailable states.
+
+`defaults.create.baseBranch` is unsupported. Move a workspace-wide value to root `baseBranch`, or use
+`meta.baseBranch` / `repos.<name>.baseBranch` for a repository-specific value. Configuration validation
+rejects the removed property with migration guidance before repository discovery, hooks, network
+access, or Git mutation.
 
 ## Command Defaults
 
@@ -167,7 +176,6 @@ You can set command-scoped defaults under `defaults`.
 
 ### `defaults.create`
 
-- `baseBranch` (Git branch name): deprecated create-only compatibility input; use root `baseBranch`
 - `switch` (boolean): independent post-create switch handling
 - `launch` (`none` | `auto` | `sesh` | `herdr`): the single post-create launch choice
 

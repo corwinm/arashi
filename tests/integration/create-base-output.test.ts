@@ -53,7 +53,7 @@ const repositories = (workspace: Workspace) => [
 const configureBase = async (workspace: Workspace, baseBranch: string) => {
   const configPath = join(workspace.workspacePath, ".arashi", "config.json");
   const config = JSON.parse(await readFile(configPath, "utf8"));
-  config.defaults = { create: { baseBranch } };
+  config.baseBranch = baseBranch;
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 };
 

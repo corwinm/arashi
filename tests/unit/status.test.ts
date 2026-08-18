@@ -230,6 +230,77 @@ describe("checkRepoStatus", () => {
     });
   });
 
+  test("records configured-base drift and de-duplicates upstream and default targets", async () => {
+    const calls: string[] = [];
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "integration",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async (_path, current, branch) => {
+          calls.push(`base:${current}:${branch}`);
+          return { ahead: 2, behind: 4, branch, state: "available" as const };
+        },
+        compareCurrentBranchToDefaultBranch: async (_path, _current, _detached, skipped) => {
+          calls.push(`default-skips:${(skipped ?? []).join(",")}`);
+          return {
+            branch: "integration",
+            reason: "on-default-branch" as const,
+            state: "skipped" as const,
+          };
+        },
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: "## feature/demo...origin/feature/demo",
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "feature/demo", remote: "origin", upstream: "origin/feature/demo" },
+        }),
+      },
+    });
+
+    expect(calls).toEqual([
+      "base:feature/demo:integration",
+      "default-skips:feature/demo,integration",
+    ]);
+    expect(status.baseBranch).toEqual({
+      ahead: 2,
+      behind: 4,
+      branch: "integration",
+      state: "available",
+    });
+  });
+
+  test("does not compare a configured base that is already the upstream target", async () => {
+    let baseCompared = false;
+    await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "feature/demo",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async () => {
+          baseCompared = true;
+          return { ahead: 0, behind: 0, branch: "feature/demo", state: "available" as const };
+        },
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          reason: "on-default-branch" as const,
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: "## feature/demo...origin/feature/demo",
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "feature/demo", remote: "origin", upstream: "origin/feature/demo" },
+        }),
+      },
+    });
+    expect(baseCompared).toBe(false);
+  });
+
   test("skips remote refresh when no tracking target can be resolved", async () => {
     let fetchCalled = false;
 
@@ -380,6 +451,26 @@ describe("checkRepoStatus", () => {
 });
 
 describe("status formatting", () => {
+  test("renders configured-base ahead and behind counts", () => {
+    const status = {
+      baseBranch: { ahead: 2, behind: 4, branch: "integration", state: "available" as const },
+      branch: {
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+        localBranch: "feature/demo",
+        remoteBranch: "origin/feature/demo",
+      },
+      error: null,
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
+    };
+
+    expect(formatRepoSection(status)).toContain("Base: integration [↑2, ↓4]");
+    expect(formatShortLine(status)).toContain("base:integration↑2↓4");
+  });
+
   test("renders missing remote branch inline on the branch line", () => {
     const section = formatRepoSection({
       branch: {
