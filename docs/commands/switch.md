@@ -5,7 +5,7 @@ Open a new terminal context in an existing worktree, or change the current shell
 ## Usage
 
 ```bash
-arashi switch [filter] [options]
+aw switch [filter] [options]
 ```
 
 ## Options
@@ -24,43 +24,43 @@ arashi switch [filter] [options]
 
 ```bash
 # Choose from parent repository worktrees
-arashi switch
+aw switch
 
 # Choose from child repository worktrees only
-arashi switch --repos
+aw switch --repos
 
 # In --repos mode, filter matches repository names first
-arashi switch --repos docs
+aw switch --repos docs
 
 # Choose across parent + child worktrees
-arashi switch --all
+aw switch --all
 
 # Filter by branch or path text
-arashi switch feature-auth
+aw switch feature-auth
 
 # Use sesh/tmux switching mode
-arashi switch feature-auth --sesh
+aw switch feature-auth --sesh
 
 # Force a plain tmux window
-arashi switch --tmux feature-auth
+aw switch --tmux feature-auth
 
 # Open or focus a persistent Herdr workspace
-arashi switch feature-auth --herdr
+aw switch feature-auth --herdr
 
 # Request a tab/equivalent without window fallback
-arashi switch feature-auth --tab
+aw switch feature-auth --tab
 
 # Change the current shell directory when shell integration is active
-arashi switch feature-auth --cd
+aw switch feature-auth --cd
 
 # Force launch behavior even if switch defaults prefer cd
-arashi switch feature-auth --launch
+aw switch feature-auth --launch
 
 # Bypass a configured sesh or Herdr mode for one run
-arashi switch --ignore-configured-launcher
+aw switch --ignore-configured-launcher
 
 # Force generic automatic launch, bypassing configured sesh or Herdr
-arashi switch --launch --ignore-configured-launcher
+aw switch --launch --ignore-configured-launcher
 ```
 
 ## Notes
@@ -68,7 +68,7 @@ arashi switch --launch --ignore-configured-launcher
 - If one target matches, Arashi switches immediately.
 - If multiple targets match in an interactive terminal, Arashi prompts for selection.
 - In non-interactive mode with multiple matches, provide a narrower filter.
-- By default, `arashi switch` targets parent repository worktrees only.
+- By default, `aw switch` targets parent repository worktrees only.
 - Use `--repos` for child repos in the current workspace, or `--all` for parent + child repos across workspaces.
 - `--all` includes parent workspaces and child repo worktrees nested under each parent workspace.
 - In `--repos` mode, filter text matches repository names first (exact match wins; a unique partial match is auto-selected).
@@ -82,7 +82,7 @@ arashi switch --launch --ignore-configured-launcher
 - Managed Kitty requires Kitty 0.43 or newer and permitted `kitten @` remote control. Arashi queries for its exact worktree marker, focuses and reuses one matching tab, and launches a session-backed tab only when no exact match exists. Duplicate matches fail safely.
 - Once managed Kitty is selected, missing or unsupported tooling, denied remote control, malformed state, locking failures, and focus/launch validation errors are reported directly rather than falling back to another launcher.
 - In Kitty, Ghostty, WezTerm, and iTerm2 terminals without a strict managed context, Arashi may still attempt terminal-native launch commands during generic fallback behavior.
-- Shell integration is configured with `arashi shell install` or manual `arashi shell init <shell>` setup.
+- Shell integration is configured with `aw shell install` or manual `aw shell init <shell>` setup.
 - Configure one default under `defaults.switch.mode`: `auto` | `cd` | `launch` | `sesh` | `herdr`.
 - `auto` checks strict managed contexts in the order tmux → Herdr → cmux → integrated IDE → managed Kitty. If none is detected, it uses parent-shell `cd` when available, then terminal/platform launch fallback.
 - An absent mode preserves built-in automatic `launch` behavior and does not newly prefer `cd`.

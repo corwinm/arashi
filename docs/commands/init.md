@@ -1,15 +1,15 @@
-# `arashi init`
+# `aw init`
 
 Initialize a configured Arashi workspace, or reconcile the managed Git ignore preference of an
 existing workspace.
 
 ```bash
-arashi init
-arashi init --worktrees-dir ../workspace-worktrees
-arashi init --ignore-scope local
-arashi init --ignore-scope tracked
-arashi init --ignore-scope none
-arashi init --dry-run --json
+aw init
+aw init --worktrees-dir ../workspace-worktrees
+aw init --ignore-scope local
+aw init --ignore-scope tracked
+aw init --ignore-scope none
+aw init --dry-run --json
 ```
 
 ## Worktree location

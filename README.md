@@ -35,13 +35,13 @@ curl -fsSL https://arashi.haphazard.dev/install | ARASHI_VERSION=1.4.0 bash
 Verify install:
 
 ```bash
-arashi --version
+aw --version
 ```
 
-By default, the installer places `arashi` in `~/.arashi/bin`, adds that path to your shell config, and in interactive installs offers to enable shell integration for `arashi switch --cd`.
-Supported installations provide both canonical `arashi` and the first-class `aw` shorthand (“Arashi Workspace”). Both run the same implementation; product names, configuration, environment variables, help, and documentation remain canonical `arashi`.
+By default, the installer places `arashi` in `~/.arashi/bin`, adds that path to your shell config, and in interactive installs offers to enable shell integration for `aw switch --cd`.
+Use `aw` for documented workflows. The `arashi` executable remains supported for existing scripts and workflows, and both names run the same implementation. Product names, configuration, environment variables, packages, and native binaries retain their established Arashi names.
 
-The installer transaction verifies identical, non-empty `arashi --version` and `aw --version` output before declaring success.
+The installer transaction verifies that both executable entrypoints report the same non-empty version before declaring success.
 
 If curl installation fails, or if the smoke test reports a bad release artifact, use npm installation below or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
 
@@ -53,7 +53,7 @@ PowerShell is the canonical Windows installer:
 powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 ```
 
-It verifies and installs one `arashi.bin.exe` plus `arashi`/`aw` wrappers for Git Bash, `arashi.ps1`/`aw.ps1`, and `arashi.bat`/`aw.bat` from the same release. The default directory is `%USERPROFILE%\.arashi\bin`; the installer adds it to the persistent user PATH. It does not create or modify `.bashrc` or another shell profile. Open a new Git Bash window before running `arashi --version` or `aw --version` so it inherits the PATH change.
+It verifies and installs one `arashi.bin.exe` plus `arashi`/`aw` wrappers for Git Bash, `arashi.ps1`/`aw.ps1`, and `arashi.bat`/`aw.bat` from the same release. The default directory is `%USERPROFILE%\.arashi\bin`; the installer adds it to the persistent user PATH. It does not create or modify `.bashrc` or another shell profile. Open a new Git Bash window before verifying the installed version so it inherits the PATH change.
 
 ### Option 3: Install with npm
 
@@ -66,23 +66,23 @@ The npm package is script-free: it does not require package-manager lifecycle sc
 To preinstall the binary explicitly, run:
 
 ```bash
-arashi install
+aw install
 ```
 
 To check for package updates or refresh the matching platform binary, run:
 
 ```bash
-arashi update --check
-arashi update --dry-run
-arashi update --yes
+aw update --check
+aw update --dry-run
+aw update --yes
 ```
 
-`arashi update` can update npm-managed installs when it can confidently detect the package manager, including npm, pnpm, Yarn, Bun, and Vite+ (`vp update -g arashi`). For official direct-installer installs, `arashi update --yes` reruns the platform installer against the current binary directory: the POSIX curl installer on macOS/Linux and a deferred PowerShell installer on Windows after the current Arashi process exits.
+`aw update` can update npm-managed installs when it can confidently detect the package manager, including npm, pnpm, Yarn, Bun, and Vite+ (`vp update -g arashi`). For official direct-installer installs, `aw update --yes` reruns the platform installer against the current binary directory: the POSIX curl installer on macOS/Linux and a deferred PowerShell installer on Windows after the current Arashi process exits.
 
 Verify install:
 
 ```bash
-arashi --version
+aw --version
 ```
 
 If npm is unavailable or binary installation fails, use the curl installer command above or the manual release instructions in [`docs/INSTALLATION.md`](./docs/INSTALLATION.md).
@@ -135,60 +135,60 @@ pnpm run build
 
 Arashi currently provides these commands:
 
-- `arashi init`
-- [`arashi init --zero-config`](docs/standalone.md) for a single repository with `.worktrees/<branch>` paths and no persisted Arashi configuration
-- `arashi install`
-- `arashi update [--check] [--dry-run] [--yes]`
-- `arashi add <git-url>`
-- `arashi clone [--all] [--base <branch>] [--repo-base <repository=branch>]`
-- `arashi create <branch> [--base <branch>] [--repo-base <repository=branch>] [--tab] [--tmux|--sesh|--herdr]`
-- `arashi list`
-- `arashi status`
-- `arashi remove <branch|path>`
-- `arashi prune [--dry-run]` - clean stale Git worktree metadata
-- `arashi switch [filter] [--repos|--all] [--tab] [--cd|--launch] [--tmux|--sesh|--herdr] [--ignore-configured-launcher]`
-- `arashi completion <bash|zsh|fish>`
-- `arashi shell init <bash|zsh|fish>`
-- `arashi shell install`
-- `arashi pull`
-- `arashi push [--set-upstream] [--dry-run] [--only <repo>] [--json]`
-- `arashi sync`
-- `arashi setup [--only <repo>] [--verbose]`
+- `aw init`
+- [`aw init --zero-config`](docs/standalone.md) for a single repository with `.worktrees/<branch>` paths and no persisted Arashi configuration
+- `aw install`
+- `aw update [--check] [--dry-run] [--yes]`
+- `aw add <git-url>`
+- `aw clone [--all] [--base <branch>] [--repo-base <repository=branch>]`
+- `aw create <branch> [--base <branch>] [--repo-base <repository=branch>] [--tab] [--tmux|--sesh|--herdr]`
+- `aw list`
+- `aw status`
+- `aw remove <branch|path>`
+- `aw prune [--dry-run]` - clean stale Git worktree metadata
+- `aw switch [filter] [--repos|--all] [--tab] [--cd|--launch] [--tmux|--sesh|--herdr] [--ignore-configured-launcher]`
+- `aw completion <bash|zsh|fish>`
+- `aw shell init <bash|zsh|fish>`
+- `aw shell install`
+- `aw pull`
+- `aw push [--set-upstream] [--dry-run] [--only <repo>] [--json]`
+- `aw sync`
+- `aw setup [--only <repo>] [--verbose]`
 
 ## Quick Example
 
 ```bash
-arashi init                         # repository-local ignore rules (default)
-arashi init --ignore-scope tracked  # opt in to a shared .gitignore block
-arashi add git@github.com:your-org/frontend.git
-arashi add git@github.com:your-org/backend.git
-arashi create feature-auth-refresh
-arashi create feature-auth-refresh --base feature/auth
-arashi create feature-auth-refresh --repo-base @meta=develop --repo-base frontend=release/2.x
-arashi clone --all --base main --repo-base frontend=release/2.x
-arashi create feature-auth-refresh --launch
-arashi create feature-auth-refresh --tmux
-arashi create feature-auth-refresh --herdr
-arashi create feature-auth-refresh --tab
-arashi create feature-auth-refresh --no-launch
-arashi shell install
-arashi status
-arashi switch feature-auth-refresh          # parent repo worktrees
-arashi switch --repos feature-auth-refresh  # child repo worktrees in current workspace
-arashi switch --all feature-auth-refresh    # all repos
-arashi switch --repos docs                  # repo-name matching in child repos
-arashi switch --cd feature-auth-refresh     # parent-shell cd when shell integration is active
-arashi switch --launch feature-auth-refresh # force launch while preserving a configured launcher
-arashi switch --tmux feature-auth-refresh   # force a new plain tmux window
-arashi switch --herdr feature-auth-refresh  # open or focus a persistent Herdr workspace
-arashi switch --tab feature-auth-refresh    # request a true tab or managed equivalent
-arashi switch --ignore-configured-launcher  # bypass configured sesh/Herdr mode once
-arashi switch --launch --ignore-configured-launcher # force generic automatic launch
+aw init                         # repository-local ignore rules (default)
+aw init --ignore-scope tracked  # opt in to a shared .gitignore block
+aw add git@github.com:your-org/frontend.git
+aw add git@github.com:your-org/backend.git
+aw create feature-auth-refresh
+aw create feature-auth-refresh --base feature/auth
+aw create feature-auth-refresh --repo-base @meta=develop --repo-base frontend=release/2.x
+aw clone --all --base main --repo-base frontend=release/2.x
+aw create feature-auth-refresh --launch
+aw create feature-auth-refresh --tmux
+aw create feature-auth-refresh --herdr
+aw create feature-auth-refresh --tab
+aw create feature-auth-refresh --no-launch
+aw shell install
+aw status
+aw switch feature-auth-refresh          # parent repo worktrees
+aw switch --repos feature-auth-refresh  # child repo worktrees in current workspace
+aw switch --all feature-auth-refresh    # all repos
+aw switch --repos docs                  # repo-name matching in child repos
+aw switch --cd feature-auth-refresh     # parent-shell cd when shell integration is active
+aw switch --launch feature-auth-refresh # force launch while preserving a configured launcher
+aw switch --tmux feature-auth-refresh   # force a new plain tmux window
+aw switch --herdr feature-auth-refresh  # open or focus a persistent Herdr workspace
+aw switch --tab feature-auth-refresh    # request a true tab or managed equivalent
+aw switch --ignore-configured-launcher  # bypass configured sesh/Herdr mode once
+aw switch --launch --ignore-configured-launcher # force generic automatic launch
 ```
 
 ### Add from a linked parent worktree
 
-When `arashi add` runs from an active linked parent worktree, Arashi creates one canonical clone in the parent main checkout and leaves it on the child default branch. It then creates the active child as a linked worktree on the coordinated branch and updates only the active parent configuration. Direct-main and configured-bare adds keep their existing single-placement behavior. See the [add command guide](https://arashi.haphazard.dev/commands/add/) for branch, managed-ignore, JSON, and rollback details.
+When `aw add` runs from an active linked parent worktree, Arashi creates one canonical clone in the parent main checkout and leaves it on the child default branch. It then creates the active child as a linked worktree on the coordinated branch and updates only the active parent configuration. Direct-main and configured-bare adds keep their existing single-placement behavior. See the [add command guide](https://arashi.haphazard.dev/commands/add/) for branch, managed-ignore, JSON, and rollback details.
 
 Explicit `--tmux` is a per-invocation launcher override for `create` and `switch`; it is not a persisted configuration mode. It requires an active tmux context whose `TMUX` value is non-empty after trimming, uses the selected worktree path as one argv-safe `tmux new-window -c` argument, and does not fall back to another launcher when the prerequisite or launch fails. On `create`, it implies both launch and switch, while validation failures occur before worktree mutation.
 
@@ -202,10 +202,10 @@ global excludes rule is honored without duplication. Missing safe repository-rel
 the common repository's local exclude file by default, including when a command runs in a linked
 worktree.
 
-Use `arashi init --ignore-scope tracked` when the team wants Arashi-owned rules committed in the
-workspace `.gitignore`. Use `arashi init --ignore-scope none` for a fully manual workflow; Arashi
+Use `aw init --ignore-scope tracked` when the team wants Arashi-owned rules committed in the
+workspace `.gitignore`. Use `aw init --ignore-scope none` for a fully manual workflow; Arashi
 will warn about unignored managed paths but will not edit ignore files. Running
-`arashi init --ignore-scope local` resets that clone-local preference without recreating an
+`aw init --ignore-scope local` resets that clone-local preference without recreating an
 existing workspace. The explicit `tracked` or `none` preference is stored only in local Git config
 as `arashi.ignoreScope`; Arashi never creates or modifies global Git ignore configuration.
 
@@ -230,41 +230,41 @@ Use shell integration for parent-shell directory switching and native tab comple
 The official curl installer can offer this automatically. If you skip it or use npm, install it for the active shell with:
 
 ```bash
-arashi shell install
+aw shell install
 ```
 
-`arashi shell install` adds a managed pair to the active shell startup file: the parent-shell wrapper first and completion activation second. Repeating the command is idempotent and upgrades older wrapper-only blocks.
+`aw shell install` adds a managed pair to the active shell startup file: the parent-shell wrapper first and completion activation second. Repeating the command is idempotent and upgrades older wrapper-only blocks.
 
 For manual setup, activate the wrapper and completion independently:
 
 ```bash
 # Bash
-eval "$(command arashi shell init bash)"
-source <(command arashi completion bash)
+eval "$(command aw shell init bash)"
+source <(command aw completion bash)
 
 # Zsh
-eval "$(command arashi shell init zsh)"
-source <(command arashi completion zsh)
+eval "$(command aw shell init zsh)"
+source <(command aw completion zsh)
 
 # Fish
-command arashi shell init fish | source
-command arashi completion fish | source
+command aw shell init fish | source
+command aw completion fish | source
 ```
 
-`arashi shell init <shell>` remains wrapper-only and defines both parent-shell functions, unless an unrelated `aw` alias or function already owns that shell name. `arashi completion <shell>` registers the same completion model for both executable names and emits only deterministic sourceable shell code, including on npm first use when the platform binary must be installed.
+`aw shell init <shell>` remains wrapper-only and defines both parent-shell functions, unless an unrelated `aw` alias or function already owns that shell name. `aw completion <shell>` registers the same completion model for both executable names and emits only deterministic sourceable shell code, including on npm first use when the platform binary must be installed.
 
 Completion covers commands, aliases, options, finite choices, conflicts, and positional boundaries. In an Arashi workspace it also resolves configured repository and group selector segments, switch/remove worktrees and paths, and move source/target references. Dynamic lookup is local and read-only, silent on unavailable or broken metadata, and limited to a 200 ms whole-query budget; it performs no network requests, hooks, prompts, workspace mutations, or child operations. Static completion remains available outside a workspace.
 
-Once installed, you can use `arashi switch --cd <filter>` for one-off parent-shell switching or set `.arashi/config.json` `defaults.switch.mode` to `"cd"` or contextual `"auto"`. The canonical modes are `auto` | `cd` | `launch` | `sesh` | `herdr`.
+Once installed, you can use `aw switch --cd <filter>` for one-off parent-shell switching or set `.arashi/config.json` `defaults.switch.mode` to `"cd"` or contextual `"auto"`. The canonical modes are `auto` | `cd` | `launch` | `sesh` | `herdr`.
 
-If shell integration is inactive, `arashi switch --cd` warns and skips launch fallback for that invocation.
+If shell integration is inactive, `aw switch --cd` warns and skips launch fallback for that invocation.
 
 For automated installs, set `ARASHI_SHELL_INTEGRATION=yes` to enable it without prompting or `ARASHI_SHELL_INTEGRATION=no` to skip it.
 
 ## Hooks
 
-Arashi can run file-backed or configured inline lifecycle hooks during `arashi create` and
-`arashi remove`. Inline workspace values live only at root `hooks.scripts.<lifecycle>`; repository
+Arashi can run file-backed or configured inline lifecycle hooks during `aw create` and
+`aw remove`. Inline workspace values live only at root `hooks.scripts.<lifecycle>`; repository
 values live only at `repos.<name>.hooks.<lifecycle>`. Use inline config for short reviewable commands
 and native files for substantial scripts. One inline/file source may own a logical location; a
 same-location collision fails preflight instead of running both.
@@ -283,61 +283,61 @@ See [`docs/configuration.md`](./docs/configuration.md#inline-lifecycle-hook-conf
 
 ## Workflow Shortcuts
 
-Use `arashi list` with `fzf` and optional keybinds to speed up daily navigation.
+Use `aw list` with `fzf` and optional keybinds to speed up daily navigation.
 
 ### Jump to a worktree (`cd`)
 
 ```bash
 # One-off jump
-cd "$(arashi list | fzf)"
+cd "$(aw list | fzf)"
 ```
 
 ```bash
 # Bash keybind (Ctrl+G)
-bind '"\C-g":"cd \$(arashi list | fzf)\n"'
+bind '"\C-g":"cd \$(aw list | fzf)\n"'
 ```
 
 ```zsh
 # Zsh keybind (Ctrl+G)
-bindkey -s '^g' 'cd $(arashi list | fzf)\n'
+bindkey -s '^g' 'cd $(aw list | fzf)\n'
 ```
 
 ### Open or switch tmux sessions with `sesh`
 
 ```bash
 # One-off session connect
-sesh connect "$(arashi list | fzf)"
+sesh connect "$(aw list | fzf)"
 ```
 
 ```bash
 # Bash keybind (Ctrl+S)
-bind '"\C-s":"sesh connect \$(arashi list | fzf)\n"'
+bind '"\C-s":"sesh connect \$(aw list | fzf)\n"'
 ```
 
 ```zsh
 # Zsh keybind (Ctrl+S)
-bindkey -s '^s' 'sesh connect $(arashi list | fzf)\n'
+bindkey -s '^s' 'sesh connect $(aw list | fzf)\n'
 ```
 
-You can also use `arashi switch --sesh` directly inside tmux to open the selected worktree in a new tmux window.
+You can also use `aw switch --sesh` directly inside tmux to open the selected worktree in a new tmux window.
 
-`arashi switch` checks managed contexts in this order: tmux → Herdr → cmux → integrated IDE → Kitty. Managed Kitty selection applies when any one of `KITTY_PID`, `KITTY_WINDOW_ID`, or `TERM=xterm-kitty` is present after normalization.
+`aw switch` checks managed contexts in this order: tmux → Herdr → cmux → integrated IDE → Kitty. Managed Kitty selection applies when any one of `KITTY_PID`, `KITTY_WINDOW_ID`, or `TERM=xterm-kitty` is present after normalization.
 
 Managed Kitty requires Kitty 0.43 or newer plus working `kitten @` remote control. Arashi reuses only its exact worktree marker and focuses that tab before launching a new session-backed tab. Once managed Kitty is selected, missing or unsupported tooling, denied remote control, duplicate markers, and validation failures are reported directly instead of falling back to another launcher.
 
-`arashi create --launch` and `defaults.create.launch: "auto"` use the same managed Kitty behavior. If that post-create launch fails, Arashi exits nonzero but preserves the successfully created worktree and reports the launch as partial success. Fix the launcher problem and use `arashi switch`; do not retry creation for the same branch.
+`aw create --launch` and `defaults.create.launch: "auto"` use the same managed Kitty behavior. If that post-create launch fails, Arashi exits nonzero but preserves the successfully created worktree and reports the launch as partial success. Fix the launcher problem and use `aw switch`; do not retry creation for the same branch.
 
 ### Fast remove selection
 
 ```bash
 # Select and remove a worktree quickly
-arashi remove -f "$(arashi list | fzf)"
+aw remove -f "$(aw list | fzf)"
 ```
 
 If you prefer the term `delete`, create a shell alias:
 
 ```bash
-alias arashi-delete='arashi remove -f'
+alias arashi-delete='aw remove -f'
 ```
 
 ## Configuration Schema
@@ -386,7 +386,7 @@ Explicit launcher flags take precedence over `--cd` / `--launch`, which take pre
 
 Legacy switch-only `launchMode` and `launch_mode` fields remain readable for a bounded compatibility window. Arashi warns with the exact replacement `defaults.switch.mode` on stderr; migrate promptly. Ambiguous `cd` plus an explicit legacy launcher and conflicting legacy aliases are rejected.
 
-Use `defaults.create` for terminal `arashi create` behavior. Use `defaults.editors.<host>.create` for editor-specific overrides such as VS Code extension create flows. Supported hosts are `vscode`, `cursor`, and `kiro`. Each scope has one canonical `launch` choice: `none` | `auto` | `sesh` | `herdr`. `switch` stays independent, while any enabled launch implies switch handling for the newly created primary worktree.
+Use `defaults.create` for terminal `aw create` behavior. Use `defaults.editors.<host>.create` for editor-specific overrides such as VS Code extension create flows. Supported hosts are `vscode`, `cursor`, and `kiro`. Each scope has one canonical `launch` choice: `none` | `auto` | `sesh` | `herdr`. `switch` stays independent, while any enabled launch implies switch handling for the newly created primary worktree.
 
 Create precedence is: reject `--sesh` plus `--herdr`; then explicit `--sesh` / `--herdr`; `--tab` or `--launch`; `--no-launch`; the matching configured scope; and built-in `none`. `--tab` bypasses the matching configured scope unless an explicit launcher selector is present. An editor-hosted invocation does not fall back to terminal or another editor scope.
 

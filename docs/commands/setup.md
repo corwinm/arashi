@@ -5,7 +5,7 @@ Run repository setup scripts across the workspace in one command.
 ## Usage
 
 ```bash
-arashi setup [options]
+aw setup [options]
 ```
 
 ## Options
@@ -17,13 +17,13 @@ arashi setup [options]
 
 ```bash
 # Run setup for all configured repositories
-arashi setup
+aw setup
 
 # Run setup only for selected repositories
-arashi setup --only api --only web
+aw setup --only api --only web
 
 # Inspect script output while setup runs
-arashi setup --verbose
+aw setup --verbose
 ```
 
 ## Notes

@@ -5,7 +5,7 @@ Manage shell integration for parent-shell directory switching.
 ## Usage
 
 ```bash
-arashi shell <subcommand>
+aw shell <subcommand>
 ```
 
 ## Subcommands
@@ -17,18 +17,18 @@ arashi shell <subcommand>
 
 ```bash
 # Install shell integration for the active shell
-arashi shell install
+aw shell install
 
 # Print bash wrapper code for manual setup
-arashi shell init bash
+aw shell init bash
 
 # Print fish wrapper code for manual setup
-arashi shell init fish
+aw shell init fish
 ```
 
 ## Notes
 
-- `arashi shell install` supports bash, zsh, and fish in the first release.
-- If automatic install cannot detect a writable startup file, Arashi tells you to use `arashi shell init <shell>` instead.
+- `aw shell install` supports bash, zsh, and fish in the first release.
+- If automatic install cannot detect a writable startup file, Arashi tells you to use `aw shell init <shell>` instead.
 - Restart your shell or source the updated startup file after installation.
-- Shell integration enables `arashi switch --cd`, configured `cd`, and contextual `auto` to change the current shell directory instead of only opening a new terminal context. The full unified switch mode set is `auto` | `cd` | `launch` | `sesh` | `herdr`; `auto` first honors strict managed launcher contexts, then uses `cd` only when none is detected.
+- Shell integration enables `aw switch --cd`, configured `cd`, and contextual `auto` to change the current shell directory instead of only opening a new terminal context. The full unified switch mode set is `auto` | `cd` | `launch` | `sesh` | `herdr`; `auto` first honors strict managed launcher contexts, then uses `cd` only when none is detected.
