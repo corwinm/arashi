@@ -19,10 +19,16 @@
     },
     "Config": {
       "additionalProperties": false,
-      "description": "Root configuration object for Arashi",
+      "description": "Root configuration object for Arashi.",
       "properties": {
         "$schema": {
           "description": "JSON Schema URL for editor validation/autocomplete",
+          "type": "string"
+        },
+        "baseBranch": {
+          "description": "Workspace base branch shared by configured create and clone",
+          "minLength": 1,
+          "pattern": "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
           "type": "string"
         },
         "defaults": {
@@ -46,6 +52,10 @@
             }
           },
           "type": "object"
+        },
+        "meta": {
+          "$ref": "#/definitions/MetaRepositoryConfig",
+          "description": "Optional meta-repository-specific policy"
         },
         "repos": {
           "additionalProperties": {
@@ -208,10 +218,29 @@
       ],
       "description": "Bash shorthand or interpreter-specific alternatives for one inline hook."
     },
+    "MetaRepositoryConfig": {
+      "additionalProperties": false,
+      "description": "Meta-repository-specific configuration.",
+      "properties": {
+        "baseBranch": {
+          "description": "Meta-repository-specific base branch for configured create",
+          "minLength": 1,
+          "pattern": "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "RepoConfig": {
       "additionalProperties": false,
       "description": "Configuration for a single repository",
       "properties": {
+        "baseBranch": {
+          "description": "Repository-specific base branch for configured create and clone",
+          "minLength": 1,
+          "pattern": "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
+          "type": "string"
+        },
         "copy": {
           "description": "Repository-relative paths copied into new worktrees in declaration order",
           "items": {

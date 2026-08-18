@@ -114,6 +114,7 @@ async function initGitRepo(repoPath: string, branch: string): Promise<void> {
   await execGit(["init", "-b", branch], repoPath);
   await execGit(["config", "user.name", "Test User"], repoPath);
   await execGit(["config", "user.email", "test@example.com"], repoPath);
+  await execGit(["config", "commit.gpgSign", "false"], repoPath);
 }
 
 async function execGit(args: string[], cwd: string): Promise<void> {

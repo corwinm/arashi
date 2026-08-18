@@ -43,7 +43,7 @@ afterEach(async () => {
 });
 
 describe("inline hook source-neutral CLI behavior RED", () => {
-  test("keeps --no-hooks create-only and --no-hook-input shared in help and schema-v7 command contract", async () => {
+  test("keeps --no-hooks create-only and --no-hook-input shared in help and schema-v8 command contract", async () => {
     const program = buildProgram({ includeHelpBanner: false });
     const create = program.commands.find((command) => command.name() === "create")!;
     const remove = program.commands.find((command) => command.name() === "remove")!;
@@ -55,7 +55,7 @@ describe("inline hook source-neutral CLI behavior RED", () => {
     const contract = JSON.parse(
       await readFile(join(process.cwd(), "contracts/cli-commands.json"), "utf8"),
     );
-    expect(contract.schemaVersion).toBe(7);
+    expect(contract.schemaVersion).toBe(8);
     const options = (path: string) =>
       contract.commands
         .find((command: { path: string }) => command.path === path)

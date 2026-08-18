@@ -89,6 +89,59 @@ afterEach(async () => {
 });
 
 describe("create base output contracts", () => {
+  test("mixed policy output reports every selected repository while validating only explicit bases", async () => {
+    const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha", "beta"] });
+    cleanups.push(workspace.cleanup);
+    const base = "feature/alpha-base";
+    await git(workspace.childRepoPaths.alpha!, "branch", base, "main");
+    const configPath = join(workspace.workspacePath, ".arashi", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.repos.alpha.baseBranch = base;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const jsonResult = await arashi(
+      workspace.workspacePath,
+      "create",
+      "feature/mixed-output",
+      "--dry-run",
+      "--json",
+    );
+    expect(jsonResult.exitCode, jsonResult.stderr).toBe(0);
+    const records = parseSingleDocument(jsonResult.stdout).data.base.repositories;
+    expect(records).toEqual([
+      expect.objectContaining({
+        repositoryIdentity: "@meta",
+        repositoryName: workspace.workspaceName,
+        requestedBranch: "main",
+        source: "legacy-omitted",
+      }),
+      expect.objectContaining({
+        repositoryIdentity: "alpha",
+        repositoryName: "alpha",
+        requestedBranch: base,
+        source: "repository-config",
+      }),
+      expect.objectContaining({
+        repositoryIdentity: "beta",
+        repositoryName: "beta",
+        requestedBranch: "main",
+        source: "legacy-omitted",
+      }),
+    ]);
+
+    const humanResult = await arashi(
+      workspace.workspacePath,
+      "create",
+      "feature/mixed-output",
+      "--dry-run",
+      "--no-progress",
+    );
+    expect(humanResult.exitCode, humanResult.stderr).toBe(0);
+    expect(humanResult.stdout).toContain(`${workspace.workspaceName}: main (legacy-omitted)`);
+    expect(humanResult.stdout).toContain(`alpha: ${base} (repository-config)`);
+    expect(humanResult.stdout).toContain("beta: main (legacy-omitted)");
+  });
+
   test("configured human dry-run reports normalized requested/resolved bases and planned actions without mutation", async () => {
     const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha", "beta"] });
     cleanups.push(workspace.cleanup);
@@ -110,13 +163,13 @@ describe("create base output contracts", () => {
     );
 
     expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain(`Requested base: ${base} (config)`);
+    expect(result.stdout).toContain("Resolved repository bases:");
     for (const entry of repositories(workspace)) {
       const resolvedRef =
         entry.name === "alpha" ? `refs/remotes/origin/${base}` : `refs/heads/${base}`;
       const action = entry.name === "beta" ? "reused" : "created";
       expect(result.stdout).toContain(
-        `  • ${entry.name}: ${resolvedRef} @ ${baseOids.get(entry.path)} [${action}]`,
+        `  • ${entry.name}: ${base} (workspace-config) -> ${resolvedRef} @ ${baseOids.get(entry.path)} [${action}]`,
       );
       expect(await branchExists(entry.path, target)).toBe(entry.name === "beta");
     }
@@ -150,10 +203,13 @@ describe("create base output contracts", () => {
     const envelope = parseSingleDocument(result.stdout);
     expect(envelope.data.base).toEqual({
       repositories: repositories(workspace).map((entry) => ({
+        repositoryIdentity: entry.path === workspace.workspacePath ? "@meta" : entry.name,
         repositoryName: entry.name,
         repositoryPath: expect.stringMatching(/^\//),
+        requestedBranch: base,
         resolvedOid: baseOids.get(entry.path),
         resolvedRef: entry.name === "alpha" ? `refs/remotes/origin/${base}` : `refs/heads/${base}`,
+        source: "cli",
         targetAction: entry.name === "beta" ? "reused" : "created",
       })),
       requestedBranch: base,
@@ -227,17 +283,20 @@ describe("create base output contracts", () => {
     const envelope = parseSingleDocument(result.stdout);
     expect(envelope.data.base).toEqual({
       repositories: repositories(workspace).map((entry) => ({
+        repositoryIdentity: entry.path === workspace.workspacePath ? "@meta" : entry.name,
         repositoryName: entry.name,
         repositoryPath: expect.stringMatching(/^\//),
+        requestedBranch: base,
         resolvedOid: baseOids.get(entry.path),
         resolvedRef:
           entry.path === workspace.childRepoPaths.workspace
             ? `refs/remotes/origin/${base}`
             : `refs/heads/${base}`,
+        source: "workspace-config",
         targetAction: entry.path === workspace.childRepoPaths.beta ? "reused" : "created",
       })),
       requestedBranch: base,
-      source: "config",
+      source: "workspace-config",
     });
     expect(await oid(workspace.childRepoPaths.beta!, target)).toBe(reusedOid);
   });
@@ -416,13 +475,16 @@ describe("create base output contracts", () => {
         details: {
           repositories: affected.map((entry) => ({
             attemptedRefs: [`refs/heads/${base}`, `refs/remotes/origin/${base}`],
+            repositoryIdentity: entry.path === workspace.workspacePath ? "@meta" : entry.name,
             repositoryName: entry.name,
             repositoryPath: expect.stringMatching(/^\//),
+            requestedBranch: base,
+            source: "cli",
           })),
           requestedBranch: base,
           source: "cli",
         },
-        message: `Base branch '${base}' could not be resolved in: ${affected.map((entry) => entry.name).join(", ")}`,
+        message: `Base branch resolution failed in: ${affected.map((entry) => `${entry.name} (${base})`).join(", ")}`,
       },
       ok: false,
       schemaVersion: 1,
@@ -609,7 +671,7 @@ describe("create base output contracts", () => {
       "--dry-run",
     );
     expect(preview.exitCode, `${preview.stdout}\n${preview.stderr}`).toBe(0);
-    expect(preview.stdout).toContain(`Requested base: ${base} (cli)`);
+    expect(preview.stdout).toContain("Resolved repository bases:");
     expect(preview.stdout).toContain(`refs/heads/${base} @ ${baseOid} [created]`);
     expect(await branchExists(root, "feature/standalone-preview")).toBe(false);
 
@@ -674,7 +736,7 @@ describe("create base output contracts", () => {
         requestedBranch: "missing",
         source: "cli",
       },
-      message: `Base branch 'missing' could not be resolved in: ${basename(root)}`,
+      message: `Base branch resolution failed in: ${basename(root)} (missing)`,
     });
   });
 });

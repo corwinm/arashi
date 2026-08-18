@@ -80,6 +80,13 @@ import {
 } from "../lib/create-base.ts";
 import { planConfiguredRepositoryMaterialization } from "../lib/materialization-preflight.ts";
 import type { RepositoryMaterializationPlan } from "../lib/materialization.ts";
+import { isValidRequestedBaseBranch, normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
+import {
+  BaseBranchPolicyError,
+  repositoryBaseOption,
+  resolveBaseBranchPolicy,
+  type EffectiveBaseBranch,
+} from "../lib/base-branch-policy.ts";
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
@@ -168,6 +175,9 @@ const formatDurationSeconds = (durationMs: number): string =>
   `${(durationMs / MILLISECONDS_PER_SECOND).toFixed(TWO)}s`;
 
 const createCommandErrorCode = (createError: unknown): string => {
+  if (createError instanceof BaseBranchPolicyError) {
+    return createError.code;
+  }
   if (createError instanceof CreateBaseResolutionError) {
     return createError.code;
   }
@@ -203,6 +213,9 @@ const createCommandErrorCode = (createError: unknown): string => {
 };
 
 const createCommandErrorDetails = (createError: unknown): Record<string, unknown> | undefined => {
+  if (createError instanceof BaseBranchPolicyError) {
+    return { issues: createError.issues };
+  }
   if (createError instanceof CreateBaseResolutionError) {
     return {
       requestedBranch: createError.requestedBranch,
@@ -247,7 +260,7 @@ const writeCreateJsonError = (createError: unknown): void => {
 const createBaseJsonData = (plan: CreateBaseResolutionPlan, summary: OperationSummary) => ({
   requestedBranch: plan.requestedBranch,
   source: plan.source,
-  repositories: plan.repositories.map((resolution) => {
+  repositories: (plan.effectiveRepositories ?? plan.repositories).map((resolution) => {
     const targetAction = summary.targetActionByRepositoryPath.get(resolution.repositoryPath);
     if (!targetAction) {
       throw new Error(
@@ -262,10 +275,14 @@ const printCreateBasePlan = (
   plan: CreateBaseResolutionPlan,
   targetAction: (repositoryPath: string) => "created" | "reused",
 ): void => {
-  info(`Requested base: ${plan.requestedBranch} (${plan.source})`);
-  for (const resolution of plan.repositories) {
+  info("Resolved repository bases:");
+  for (const resolution of plan.effectiveRepositories ?? plan.repositories) {
+    const resolved =
+      resolution.resolvedRef && resolution.resolvedOid
+        ? ` -> ${resolution.resolvedRef} @ ${resolution.resolvedOid}`
+        : "";
     console.log(
-      `  • ${resolution.repositoryName}: ${resolution.resolvedRef} @ ${resolution.resolvedOid} [${targetAction(resolution.repositoryPath)}]`,
+      `  • ${resolution.repositoryName}: ${resolution.requestedBranch ?? plan.requestedBranch} (${resolution.source ?? plan.source})${resolved} [${targetAction(resolution.repositoryPath)}]`,
     );
   }
 };
@@ -337,6 +354,9 @@ const createSummaryJsonData = async ({
 export interface CreateCommandOptions {
   /** Base branch requested for new target branches */
   base?: string;
+
+  /** Repository-specific base overrides for configured workspaces */
+  repoBase?: string[];
 
   /** Only create worktrees in specified repositories */
   only?: string[];
@@ -1010,6 +1030,11 @@ export function createCommand(): Command {
     .description("Create coordinated worktrees across multiple repositories")
     .argument("<branch>", "Branch name to create across repositories")
     .option("--base <branch>", "Base branch to use when creating new target branches")
+    .addOption(
+      repositoryBaseOption(
+        "Override the base branch for one selected repository (repeatable; use @meta for the meta repository)",
+      ),
+    )
     .option(
       "-o, --only <repos>",
       "Only create in specified repositories (repeatable, comma-separated)",
@@ -1195,8 +1220,24 @@ export async function executeCreate(
     throw new EmptyRepositoryFiltersError(emptyFilters);
   }
 
+  if (options.base !== undefined && !isValidRequestedBaseBranch(options.base)) {
+    throw new InvalidBranchNameError(
+      `Invalid base branch name: ${options.base}`,
+      options.base,
+      "Base branch must be a valid Git branch name.",
+    );
+  }
+
   const workspaceContext = await (deps.resolveWorkspaceContext ?? resolveWorkspaceContext)();
   if (workspaceContext.mode === "standalone") {
+    const standalonePolicy = resolveBaseBranchPolicy({
+      command: "create",
+      config: workspaceContext.config,
+      globalBase: options.base,
+      repositoryOverrides: options.repoBase,
+      selectedRepositoryNames: [workspaceContext.repository.name],
+      standalone: true,
+    });
     const standaloneDefaults = resolveCreateDefaults(options, workspaceContext.config);
     if (options.json && standaloneDefaults.shouldLaunch) {
       writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
@@ -1211,8 +1252,9 @@ export async function executeCreate(
         "Repository selection is not meaningful in standalone mode; omit --only, --group, and --interactive.",
       );
     }
+    const standaloneRequest = standalonePolicy[0];
     const standaloneBasePlan =
-      options.base === undefined
+      standaloneRequest?.requestedBranch === undefined
         ? undefined
         : await (deps.resolveCreateBasePlan ?? resolveCreateBasePlan)(
             [
@@ -1223,8 +1265,9 @@ export async function executeCreate(
                 path: workspaceContext.mainRoot,
               },
             ],
-            options.base,
-            "cli",
+            standaloneRequest.requestedBranch,
+            standaloneRequest.source,
+            true,
           );
     const standaloneResult = await createStandaloneWorktree(
       workspaceContext,
@@ -1458,6 +1501,13 @@ export async function executeCreate(
   const selectedRepos = await filterRepositories(filter, filteredRepositories);
 
   if (selectedRepos.length === ZERO) {
+    resolveBaseBranchPolicy({
+      command: "create",
+      config: arashiConfig,
+      globalBase: options.base,
+      repositoryOverrides: options.repoBase,
+      selectedRepositories: [],
+    });
     if (options.json) {
       writeJsonEnvelope(
         createJsonSuccessEnvelope("create", {
@@ -1476,15 +1526,65 @@ export async function executeCreate(
     return ZERO;
   }
 
-  const requestedBase = options.base ?? arashiConfig.defaults?.create?.baseBranch;
-  const createBasePlan =
-    requestedBase === undefined
+  const basePolicy = resolveBaseBranchPolicy({
+    command: "create",
+    config: arashiConfig,
+    globalBase: options.base,
+    repositoryOverrides: options.repoBase,
+    selectedRepositories: selectedRepos.map((repository) => {
+      const meta = repository === parentRepository;
+      return {
+        ...(meta ? {} : { configName: repository.name }),
+        identity: meta ? "@meta" : repository.name,
+        kind: meta ? ("meta" as const) : ("child" as const),
+        repositoryName: repository.name,
+      };
+    }),
+  });
+  const createBaseRequests = basePolicy.filter(
+    (request): request is EffectiveBaseBranch & { requestedBranch: string } =>
+      request.requestedBranch !== undefined,
+  );
+  const repositoriesWithBase = selectedRepos.filter(
+    (_repository, index) => basePolicy[index]?.requestedBranch !== undefined,
+  );
+  const strictRequests = createBaseRequests.map((request) => {
+    const selectedIndex = basePolicy.indexOf(request);
+    const repository = selectedRepos[selectedIndex]!;
+    return {
+      ...request,
+      repositoryIdentity: request.repositoryIdentity,
+      repositoryPath: repository.path,
+    };
+  });
+  const strictCreateBasePlan =
+    createBaseRequests.length === ZERO
       ? undefined
-      : await resolveBasePlan(
-          selectedRepos,
-          requestedBase,
-          options.base === undefined ? "config" : "cli",
-        );
+      : await resolveBasePlan(repositoriesWithBase, strictRequests);
+  const createBasePlan = strictCreateBasePlan
+    ? {
+        ...strictCreateBasePlan,
+        effectiveRepositories: await Promise.all(
+          selectedRepos.map(async (repository, index) => {
+            const policy = basePolicy[index]!;
+            const canonicalRepositoryPath = await realpath(repository.path).catch(
+              () => repository.path,
+            );
+            const strictResolution =
+              strictCreateBasePlan.byCanonicalPath.get(canonicalRepositoryPath);
+            return {
+              ...strictResolution,
+              repositoryIdentity: policy.repositoryIdentity ?? repository.name,
+              repositoryName: repository.name,
+              repositoryPath: strictResolution?.repositoryPath ?? canonicalRepositoryPath,
+              requestedBranch:
+                policy.requestedBranch ?? normalizeLogicalBranchName(repository.defaultBranch),
+              source: policy.source,
+            };
+          }),
+        ),
+      }
+    : undefined;
 
   const materializationPlans = await (
     deps.preflightMaterialization ?? preflightConfiguredMaterialization

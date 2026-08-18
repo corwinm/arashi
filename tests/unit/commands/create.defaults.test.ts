@@ -22,9 +22,17 @@ describe("resolveCreateDefaults", () => {
       flags: "--base <branch>",
       required: true,
     });
-    expect(command.helpInformation()).toContain(
-      "--base <branch>        Base branch to use when creating new target branches",
-    );
+    expect(command.helpInformation()).toContain("--base <branch>");
+    expect(command.helpInformation()).toContain("Base branch to use when creating new target");
+  });
+
+  test("registers repeatable repository-specific base overrides", () => {
+    const option = createCommand().options.find((candidate) => candidate.long === "--repo-base");
+    expect(option).toMatchObject({
+      flags: "--repo-base <repository=branch>",
+      required: true,
+    });
+    expect(option?.argParser).toBeTypeOf("function");
   });
 
   test("registers explicit plain tmux launch", () => {

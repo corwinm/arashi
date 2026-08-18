@@ -4,7 +4,7 @@ import { readFile } from "fs/promises";
 
 interface JsonSchemaDefinition {
   enum?: string[];
-  properties?: Record<string, { pattern?: string } & Record<string, unknown>>;
+  properties?: Record<string, { minLength?: number; pattern?: string } & Record<string, unknown>>;
 }
 
 interface ConfigSchema {
@@ -12,6 +12,23 @@ interface ConfigSchema {
 }
 
 describe("generated config schema contracts", () => {
+  test("shares exact Git branch constraints across root, meta, child, and legacy base fields", async () => {
+    const schemaPath = join(import.meta.dirname, "..", "..", "schema", "config.schema.json");
+    const schema = JSON.parse(await readFile(schemaPath, "utf8")) as ConfigSchema;
+    const legacy = schema.definitions.CreateCommandDefaults?.properties?.baseBranch;
+    const fields = [
+      schema.definitions.Config?.properties?.baseBranch,
+      schema.definitions.MetaRepositoryConfig?.properties?.baseBranch,
+      schema.definitions.RepoConfig?.properties?.baseBranch,
+    ];
+
+    for (const field of fields) {
+      expect(field).toMatchObject({ minLength: legacy?.minLength, pattern: legacy?.pattern });
+      expect(field?.minLength).toBe(1);
+      expect(field?.pattern).toBeTruthy();
+    }
+  });
+
   test("advertises canonical create launch and the unified switch mode", async () => {
     const schemaPath = join(import.meta.dirname, "..", "..", "schema", "config.schema.json");
     const schema = JSON.parse(await readFile(schemaPath, "utf8")) as ConfigSchema;

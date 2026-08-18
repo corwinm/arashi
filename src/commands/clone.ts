@@ -22,8 +22,15 @@ import {
   select as promptSelect,
 } from "../lib/prompts.ts";
 import { Command } from "commander";
+import {
+  BaseBranchPolicyError,
+  repositoryBaseOption,
+  resolveBaseBranchPolicy,
+  type EffectiveBaseBranch,
+} from "../lib/base-branch-policy.ts";
 import { removeDir } from "../lib/filesystem.ts";
 import { stat } from "fs/promises";
+import { ArashiError } from "../lib/errors.ts";
 import {
   reconcileRepositoryManagedIgnore,
   restoreManagedIgnore,
@@ -53,7 +60,9 @@ const PARTIAL_FAILURE_STATUS = "partial-failure" as const;
 
 export interface CloneCommandOptions {
   all?: boolean;
+  base?: string;
   json?: boolean;
+  repoBase?: string[];
 }
 
 export interface CloneExecutionResult {
@@ -62,6 +71,27 @@ export interface CloneExecutionResult {
   failed: { name: string; reason: string }[];
   skipped: string[];
   managedIgnore?: ManagedIgnoreReconciliation;
+  base?: readonly EffectiveBaseBranch[];
+}
+
+export interface CloneBasePreflightFailure {
+  repositoryName: string;
+  requestedBranch: string;
+  source: EffectiveBaseBranch["source"];
+  gitUrl: string;
+  reason: string;
+}
+
+export class CloneBasePreflightError extends Error {
+  readonly code = "CLONE_BASE_PREFLIGHT_FAILED";
+  readonly failures: readonly CloneBasePreflightFailure[];
+  constructor(failures: readonly CloneBasePreflightFailure[]) {
+    super(
+      `Clone base preflight failed: ${failures.map((failure) => `${failure.repositoryName} (${failure.requestedBranch})`).join(", ")}`,
+    );
+    this.name = "CloneBasePreflightError";
+    this.failures = failures;
+  }
 }
 
 export interface CloneCommandDependencies {
@@ -74,6 +104,10 @@ export interface CloneCommandDependencies {
   repairRepositoryGitUrls?: typeof repairRepositoryGitUrls;
   discoverCloneRepositories?: typeof discoverCloneRepositories;
   cloneRepository?: typeof cloneRepository;
+  preflightRemoteBranch?: (gitUrl: string, branch: string) => Promise<string>;
+  preflightRemoteDefault?: (gitUrl: string) => Promise<string>;
+  reconcileManagedIgnore?: typeof reconcileRepositoryManagedIgnore;
+  restoreManagedIgnore?: typeof restoreManagedIgnore;
   addWorktree?: (
     sourceRepositoryPath: string,
     destinationPath: string,
@@ -95,6 +129,10 @@ export function createCommand(): Command {
   return new Command("clone")
     .description("Clone missing configured repositories")
     .option("--all", "Clone all missing repositories without interactive selection")
+    .option("--base <branch>", "Base branch to use when cloning configured repositories")
+    .addOption(
+      repositoryBaseOption("Override the base branch for one selected repository (repeatable)"),
+    )
     .option("-j, --json", "Output result as JSON; requires --all")
     .action(async (options: CloneCommandOptions) => {
       if (options.json && !options.all) {
@@ -124,7 +162,17 @@ export function createCommand(): Command {
         process.exit(exitCode);
       } catch (error) {
         if (options.json) {
-          writeJsonEnvelope(createJsonErrorEnvelope("clone", unknownErrorToJsonError(error)));
+          const structured =
+            error instanceof BaseBranchPolicyError
+              ? { code: error.code, details: { issues: error.issues }, message: error.message }
+              : error instanceof CloneBasePreflightError
+                ? {
+                    code: error.code,
+                    details: { repositories: error.failures },
+                    message: error.message,
+                  }
+                : unknownErrorToJsonError(error);
+          writeJsonEnvelope(createJsonErrorEnvelope("clone", structured));
         } else {
           logError(error instanceof Error ? error.message : String(error));
         }
@@ -160,6 +208,11 @@ export async function executeClone(
   );
 
   const { configurationRoot, executionRoot } = await resolveCloneWorkspaceRoots(deps);
+  const preflightRemoteBranch =
+    deps.preflightRemoteBranch ??
+    ((url: string, branch: string) => resolveRemoteBranch(url, branch, executionRoot));
+  const preflightRemoteDefault =
+    deps.preflightRemoteDefault ?? ((url: string) => resolveRemoteDefault(url, executionRoot));
   const sourceWorkspaceRoot =
     resolveSourceRoot(executionRoot) ??
     (configurationRoot === executionRoot ? null : configurationRoot);
@@ -181,40 +234,32 @@ export async function executeClone(
     info(`Recovered missing git URLs from local remotes: ${repairResult.repaired.join(", ")}`);
   }
 
-  if (repairResult.updated) {
-    await writeConfig(configurationRoot, config);
-  }
-
   let discovery = await discoverRepositories(executionRoot, config);
 
-  const reconcileResult = await reconcileUnmanagedRepositories({
-    askInput,
-    askSelect,
-    config,
-    confirm,
-    deleteDirectory,
-    interactive,
-    quiet: Boolean(options.json),
-    unmanagedRepositories: discovery.unmanagedLocal,
-    workspaceRoot: executionRoot,
-  });
-
-  if (reconcileResult.cancelled) {
-    return {
-      cloned: [],
-      failed: [],
-      skipped: [],
-      status: CANCELLED_STATUS,
-    };
-  }
-
-  if (reconcileResult.updatedConfig) {
-    configUpdated = true;
-    await writeConfig(configurationRoot, config);
-    discovery = await discoverRepositories(executionRoot, config);
-  }
-
   if (discovery.configuredMissing.length === 0) {
+    resolveBaseBranchPolicy({
+      command: "clone",
+      config,
+      globalBase: options.base,
+      repositoryOverrides: options.repoBase,
+      selectedRepositories: [],
+    });
+    const reconcileResult = await reconcileUnmanagedRepositories({
+      askInput,
+      askSelect,
+      config,
+      confirm,
+      deleteDirectory,
+      interactive,
+      quiet: Boolean(options.json),
+      unmanagedRepositories: discovery.unmanagedLocal,
+      workspaceRoot: executionRoot,
+    });
+    if (reconcileResult.cancelled) {
+      return { cloned: [], failed: [], skipped: [], status: CANCELLED_STATUS };
+    }
+    configUpdated = configUpdated || reconcileResult.updatedConfig;
+    if (configUpdated) await writeConfig(configurationRoot, config);
     if (!options.json) {
       success("All configured repositories are already present. Nothing to clone.");
     }
@@ -308,6 +353,13 @@ export async function executeClone(
     );
 
     if (selectedRepositories.length === 0) {
+      resolveBaseBranchPolicy({
+        command: "clone",
+        config,
+        globalBase: options.base,
+        repositoryOverrides: options.repoBase,
+        selectedRepositories: [],
+      });
       if (!options.json) {
         info("No repositories selected for cloning.");
       }
@@ -320,14 +372,150 @@ export async function executeClone(
     }
   }
 
+  const basePolicy = resolveBaseBranchPolicy({
+    command: "clone",
+    config,
+    globalBase: options.base,
+    repositoryOverrides: options.repoBase,
+    selectedRepositories: selectedRepositories.map((repository) => ({
+      configName: repository.name,
+      identity: repository.name,
+      kind: "child",
+      repositoryName: repository.name,
+    })),
+  });
+  const policyByName = new Map(basePolicy.map((policy) => [policy.repositoryName, policy]));
+  const policyInvocation = basePolicy.some((policy) => policy.source !== "legacy-omitted");
+  const clonePlans = new Map<
+    string,
+    {
+      baseOid?: string;
+      fetchUrl?: string;
+      sourceRepositoryPath?: string;
+      targetExists?: boolean;
+    }
+  >();
+  const preflightResults = await Promise.all(
+    selectedRepositories.map(async (repository) => {
+      const policy = policyByName.get(repository.name);
+      const rawGitUrl = repository.config.gitUrl;
+      if (!policy || !rawGitUrl) return null;
+      const gitUrl = preferredProtocol
+        ? applyCloneProtocol(rawGitUrl, preferredProtocol)
+        : rawGitUrl;
+      const requestedBranch = policy.requestedBranch;
+      try {
+        const sourceRepositoryPath = sourceWorkspaceRoot
+          ? resolve(sourceWorkspaceRoot, repository.config.path)
+          : undefined;
+        if (!requestedBranch) {
+          if (!policyInvocation) return null;
+          const baseOid = await preflightRemoteDefault(gitUrl);
+          if (sourceRepositoryPath && currentBranch && (await exists(sourceRepositoryPath))) {
+            const targetOid = await resolveOptionalCommit(
+              sourceRepositoryPath,
+              `refs/heads/${currentBranch}`,
+            );
+            clonePlans.set(repository.name, {
+              baseOid,
+              ...(targetOid ? {} : { fetchUrl: gitUrl }),
+              sourceRepositoryPath,
+              targetExists: Boolean(targetOid),
+            });
+          } else {
+            clonePlans.set(repository.name, { baseOid });
+          }
+          return null;
+        }
+        if (sourceRepositoryPath && currentBranch && (await exists(sourceRepositoryPath))) {
+          const localBase = await resolveLocalBase(sourceRepositoryPath, requestedBranch);
+          let baseOid = localBase?.oid;
+          let fetchUrl: string | undefined;
+          if (!localBase || localBase.source === "tracking") {
+            const remoteOid = await preflightRemoteBranch(gitUrl, requestedBranch);
+            baseOid = remoteOid;
+            if (!localBase || localBase.oid !== remoteOid) fetchUrl = gitUrl;
+          }
+          const targetOid = await resolveOptionalCommit(
+            sourceRepositoryPath,
+            `refs/heads/${currentBranch}`,
+          );
+          clonePlans.set(repository.name, {
+            baseOid,
+            ...(fetchUrl && !targetOid ? { fetchUrl } : {}),
+            sourceRepositoryPath,
+            targetExists: Boolean(targetOid),
+          });
+        } else {
+          const baseOid = await preflightRemoteBranch(gitUrl, requestedBranch);
+          clonePlans.set(repository.name, { baseOid });
+        }
+        return null;
+      } catch (error) {
+        return {
+          gitUrl,
+          reason: error instanceof Error ? error.message : String(error),
+          repositoryName: repository.name,
+          requestedBranch: requestedBranch ?? "HEAD",
+          source: policy.source,
+        } satisfies CloneBasePreflightFailure;
+      }
+    }),
+  );
+  const preflightFailures = preflightResults.filter(
+    (failure): failure is CloneBasePreflightFailure => failure !== null,
+  );
+  if (preflightFailures.length > ZERO) throw new CloneBasePreflightError(preflightFailures);
+
+  const reconcileResult = await reconcileUnmanagedRepositories({
+    askInput,
+    askSelect,
+    config,
+    confirm,
+    deleteDirectory,
+    interactive,
+    quiet: Boolean(options.json),
+    unmanagedRepositories: discovery.unmanagedLocal,
+    workspaceRoot: executionRoot,
+  });
+  if (reconcileResult.cancelled) {
+    return {
+      cloned: [],
+      failed: [],
+      skipped: [],
+      status: CANCELLED_STATUS,
+    };
+  }
+  configUpdated = configUpdated || reconcileResult.updatedConfig;
+
+  const hasBasePolicy = policyInvocation;
+  if (hasBasePolicy && !options.json) {
+    info("Resolved repository bases:");
+    for (const policy of basePolicy) {
+      info(
+        `  - ${policy.repositoryName}: ${policy.requestedBranch ?? "remote default"} (${policy.source})`,
+      );
+    }
+  }
+
   const cloned: string[] = [];
   const failed: { name: string; reason: string }[] = [];
   let residualMaterializedState = false;
   const skipped = missingWithUrls
     .map((repository) => repository.name)
     .filter((name) => !selectedRepositories.some((repository) => repository.name === name));
+  const executionConfigUpdated = configUpdated;
+  const originalGitUrls = new Map(
+    selectedRepositories.map((repository) => [repository.name, repository.config.gitUrl]),
+  );
+  const ownership: Array<{
+    createdTarget: boolean;
+    destinationPath: string;
+    sourceRepositoryPath?: string;
+    targetBranch?: string;
+  }> = [];
 
-  const managedIgnore = await reconcileRepositoryManagedIgnore({
+  const managedIgnore = await (deps.reconcileManagedIgnore ?? reconcileRepositoryManagedIgnore)({
     reposDir: config.reposDir,
     workspaceRoot: configurationRoot,
     worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
@@ -357,9 +545,57 @@ export async function executeClone(
 
       try {
         if (canCompleteAsWorktree && sourceRepositoryPath && currentBranch) {
-          await runAddWorktree(sourceRepositoryPath, repository.path, currentBranch);
+          const plan = clonePlans.get(repository.name);
+          let createdTarget = false;
+          try {
+            if (plan?.baseOid && plan.targetExists === false) {
+              if (plan.fetchUrl) {
+                await exec(
+                  ["fetch", "--no-tags", plan.fetchUrl, plan.baseOid],
+                  sourceRepositoryPath,
+                );
+              }
+              await exec(["branch", currentBranch, plan.baseOid], sourceRepositoryPath);
+              createdTarget = true;
+            }
+            await runAddWorktree(sourceRepositoryPath, repository.path, currentBranch);
+            ownership.push({
+              createdTarget,
+              destinationPath: repository.path,
+              sourceRepositoryPath,
+              targetBranch: currentBranch,
+            });
+          } catch (error) {
+            if (createdTarget) {
+              if (await exists(repository.path)) {
+                await deleteDirectory(repository.path).catch(() => {});
+              }
+              await exec(["worktree", "prune"], sourceRepositoryPath).catch(() => {});
+              await exec(["branch", "-D", currentBranch], sourceRepositoryPath).catch(() => {});
+            }
+            throw error;
+          }
         } else {
-          await runClone(cloneUrl, repository.path);
+          const policy = policyByName.get(repository.name);
+          await runClone(
+            cloneUrl,
+            repository.path,
+            policy?.requestedBranch ? { branch: policy.requestedBranch } : undefined,
+          );
+          const plan = clonePlans.get(repository.name);
+          const plannedBase = plan?.baseOid ?? policy?.requestedBranch;
+          if (sourceWorkspaceRoot && currentBranch && plannedBase) {
+            const targetOid = await resolveOptionalCommit(
+              repository.path,
+              `refs/heads/${currentBranch}`,
+            );
+            if (targetOid) {
+              await exec(["checkout", currentBranch], repository.path);
+            } else {
+              await exec(["checkout", "-b", currentBranch, plannedBase], repository.path);
+            }
+          }
+          ownership.push({ createdTarget: false, destinationPath: repository.path });
           configUpdated = configUpdated || repository.config.gitUrl !== cloneUrl;
           repository.config.gitUrl = cloneUrl;
         }
@@ -384,6 +620,7 @@ export async function executeClone(
           name: repository.name,
           reason,
         });
+        if (policyInvocation) break;
       }
     } else {
       failed.push({
@@ -393,19 +630,52 @@ export async function executeClone(
     }
   }
 
+  if (policyInvocation && failed.length > ZERO) {
+    for (const entry of ownership.toReversed()) {
+      if (entry.sourceRepositoryPath) {
+        await exec(
+          ["worktree", "remove", "--force", entry.destinationPath],
+          entry.sourceRepositoryPath,
+        ).catch(async () => {
+          if (await exists(entry.destinationPath)) {
+            await deleteDirectory(entry.destinationPath).catch(() => {});
+          }
+          await exec(["worktree", "prune"], entry.sourceRepositoryPath!).catch(() => {});
+        });
+        if (entry.createdTarget && entry.targetBranch) {
+          await exec(["branch", "-D", entry.targetBranch], entry.sourceRepositoryPath).catch(
+            () => {},
+          );
+        }
+      } else if (await exists(entry.destinationPath)) {
+        await deleteDirectory(entry.destinationPath).catch(() => {});
+      }
+    }
+    for (const repository of selectedRepositories) {
+      repository.config.gitUrl = originalGitUrls.get(repository.name);
+    }
+    configUpdated = executionConfigUpdated;
+    cloned.splice(0);
+    residualMaterializedState = await Promise.any(
+      selectedRepositories.map(
+        async (repository) => (await exists(repository.path)) || Promise.reject(),
+      ),
+    ).catch(() => false);
+  }
+
   try {
     if (configUpdated) {
       await writeConfig(configurationRoot, config);
     }
   } catch (error) {
     if (cloned.length === ZERO && !residualMaterializedState && managedIgnore.changed) {
-      await restoreManagedIgnore(managedIgnore);
+      await (deps.restoreManagedIgnore ?? restoreManagedIgnore)(managedIgnore);
     }
     throw error;
   }
 
   if (cloned.length === ZERO && !residualMaterializedState && managedIgnore.changed) {
-    await restoreManagedIgnore(managedIgnore);
+    await (deps.restoreManagedIgnore ?? restoreManagedIgnore)(managedIgnore);
   }
 
   if (failed.length > 0) {
@@ -425,12 +695,52 @@ export async function executeClone(
   }
 
   return {
+    ...(hasBasePolicy ? { base: basePolicy } : {}),
     cloned,
     failed,
     managedIgnore,
     skipped,
     status,
   };
+}
+
+async function resolveRemoteBranch(gitUrl: string, branch: string, cwd: string): Promise<string> {
+  const result = await exec(["ls-remote", "--heads", gitUrl, `refs/heads/${branch}`], cwd);
+  const oid = result.stdout.trim().split(/\s+/)[0];
+  if (!oid) throw new Error(`Remote branch '${branch}' was not found`);
+  return oid;
+}
+
+async function resolveRemoteDefault(gitUrl: string, cwd: string): Promise<string> {
+  const result = await exec(["ls-remote", gitUrl, "HEAD"], cwd);
+  const oid = result.stdout.trim().split(/\s+/)[0];
+  if (!oid) throw new Error("Remote default branch was not found");
+  return oid;
+}
+
+export async function resolveOptionalCommit(
+  repositoryPath: string,
+  ref: string,
+  runGit: typeof exec = exec,
+): Promise<string | null> {
+  try {
+    return (
+      await runGit(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], repositoryPath)
+    ).stdout.trim();
+  } catch (error) {
+    if (error instanceof ArashiError && error.context.exitCode === 1) return null;
+    throw error;
+  }
+}
+
+async function resolveLocalBase(
+  repositoryPath: string,
+  branch: string,
+): Promise<{ oid: string; source: "local" | "tracking" } | null> {
+  const localOid = await resolveOptionalCommit(repositoryPath, `refs/heads/${branch}`);
+  if (localOid) return { oid: localOid, source: "local" };
+  const trackingOid = await resolveOptionalCommit(repositoryPath, `refs/remotes/origin/${branch}`);
+  return trackingOid ? { oid: trackingOid, source: "tracking" } : null;
 }
 
 async function resolveCloneWorkspaceRoots(

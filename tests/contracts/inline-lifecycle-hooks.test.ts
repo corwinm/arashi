@@ -92,7 +92,7 @@ describe("inline lifecycle hook dedicated contract freshness RED", () => {
       readFile(join(root, "contracts", "cli-commands.json"), "utf8").then(JSON.parse),
     ]);
     expect(schema.definitions.ConfigVersion).toEqual({ const: "1.0.0", type: "string" });
-    expect(commandContract.schemaVersion).toBe(7);
+    expect(commandContract.schemaVersion).toBe(8);
     expect(commandContract).not.toHaveProperty("inlineLifecycleHooks");
   });
 

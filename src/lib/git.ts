@@ -181,7 +181,11 @@ export async function isBareRepo(repoPath: string): Promise<boolean> {
  * @example
  * await clone('https://github.com/user/repo.git', '/path/to/destination');
  */
-export async function clone(gitUrl: string, destPath: string): Promise<CommandResult> {
+export async function clone(
+  gitUrl: string,
+  destPath: string,
+  options: { branch?: string } = {},
+): Promise<CommandResult> {
   if (!gitUrl || typeof gitUrl !== "string" || gitUrl.trim() === "") {
     throw new Error("Git URL cannot be empty");
   }
@@ -195,7 +199,10 @@ export async function clone(gitUrl: string, destPath: string): Promise<CommandRe
   const repoName = basename(destPath);
 
   try {
-    const proc = runtime.spawn(["git", "clone", gitUrl, repoName], {
+    const args = ["clone"];
+    if (options.branch) args.push("--branch", options.branch);
+    args.push(gitUrl, repoName);
+    const proc = runtime.spawn(["git", ...args], {
       cwd: parentDir,
       env: normalizeSpawnEnvironment(process.env),
       stderr: "pipe",
@@ -209,7 +216,7 @@ export async function clone(gitUrl: string, destPath: string): Promise<CommandRe
     if (exitCode !== 0) {
       const errorMessage = stderr.trim() || stdout.trim() || "Git clone failed with no output";
       throw new ArashiError(`Git clone failed: ${errorMessage}`, {
-        args: ["clone", gitUrl, repoName],
+        args,
         cwd: parentDir,
         exitCode,
         stderr,

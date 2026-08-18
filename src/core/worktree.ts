@@ -1974,12 +1974,6 @@ const processRepository = async ({
     const baseResolution = createBasePlan
       ? createBasePlan.byCanonicalPath.get(await realpath(repo.path))
       : undefined;
-    if (createBasePlan && !baseResolution) {
-      throw new Error(
-        `Repository '${repo.name}' is missing immutable create-base plan entry for '${repo.path}'`,
-      );
-    }
-
     if (shouldReuse) {
       if (spinnerInstance) {
         spinnerInstance.text = `Reusing existing branch '${branchName}' in ${repo.name}...`;

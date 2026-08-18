@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { executeClone, resolveCoordinatedSourceWorkspaceRoot } from "../../src/commands/clone.ts";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import {
+  createCommand,
+  executeClone,
+  resolveCoordinatedSourceWorkspaceRoot,
+  resolveOptionalCommit,
+} from "../../src/commands/clone.ts";
+import { ArashiError } from "../../src/lib/errors.ts";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import type { Config } from "../../src/lib/config.ts";
-import { join } from "path";
+import { basename, join } from "path";
 import { tmpdir } from "os";
 import { spawn } from "../helpers/node-runtime.ts";
 
@@ -17,6 +23,733 @@ describe("clone command", () => {
 
   afterEach(async () => {
     await rm(workspaceRoot, { force: true, recursive: true });
+  });
+
+  test("registers shared and repeatable repository base options", () => {
+    const command = createCommand();
+    expect(command.options.find((option) => option.long === "--base")?.flags).toBe(
+      "--base <branch>",
+    );
+    expect(command.options.find((option) => option.long === "--repo-base")?.flags).toBe(
+      "--repo-base <repository=branch>",
+    );
+  });
+
+  test("preflights all selected bases before managed-ignore and uses branch-aware clone", async () => {
+    const config: Config = {
+      baseBranch: "main",
+      repos: {
+        "repo-a": {
+          baseBranch: "integration",
+          gitUrl: "https://example/a.git",
+          path: "./repos/repo-a",
+        },
+        "repo-b": { gitUrl: "https://example/b.git", path: "./repos/repo-b" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+    const events: string[] = [];
+    const cloneCalls: unknown[] = [];
+    const result = await executeClone(
+      { all: true, repoBase: ["repo-b=release"] },
+      {
+        cloneRepository: async (...args) => {
+          cloneCalls.push(args);
+          await mkdir(args[1], { recursive: true });
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        loadConfig: async () => config,
+        preflightRemoteBranch: async (url, branch) => {
+          events.push(`preflight:${url}:${branch}`);
+          return `${branch}-oid`;
+        },
+        reconcileManagedIgnore: async () => {
+          events.push("managed-ignore");
+          return {
+            appliedRules: [],
+            attempted: false,
+            changed: false,
+            fileChanges: { local: false, preference: false, tracked: false },
+            localExcludePath: "",
+            paths: [],
+            plannedRules: [],
+            restored: false,
+            scope: "local",
+            staleRules: [],
+            storedPreference: null,
+            trackedIgnorePath: "",
+            warnings: [],
+          };
+        },
+        saveConfig: async () => {},
+        workspaceRoot,
+      },
+    );
+
+    expect(events).toEqual([
+      "preflight:https://example/a.git:integration",
+      "preflight:https://example/b.git:release",
+      "managed-ignore",
+    ]);
+    expect(cloneCalls).toEqual([
+      ["https://example/a.git", join(workspaceRoot, "repos", "repo-a"), { branch: "integration" }],
+      ["https://example/b.git", join(workspaceRoot, "repos", "repo-b"), { branch: "release" }],
+    ]);
+    expect(result.base).toEqual([
+      {
+        repositoryIdentity: "repo-a",
+        repositoryName: "repo-a",
+        requestedBranch: "integration",
+        source: "repository-config",
+      },
+      {
+        repositoryIdentity: "repo-b",
+        repositoryName: "repo-b",
+        requestedBranch: "release",
+        source: "repository-cli",
+      },
+    ]);
+  });
+
+  test("preflights omitted remote reachability when any selected clone policy applies", async () => {
+    const events: string[] = [];
+    await executeClone(
+      { all: true },
+      {
+        cloneRepository: async (_url, destination) => {
+          await mkdir(destination, { recursive: true });
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        loadConfig: async () => ({
+          repos: {
+            a: { baseBranch: "integration", gitUrl: "https://example/a.git", path: "./repos/a" },
+            b: { gitUrl: "https://example/b.git", path: "./repos/b" },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+        }),
+        preflightRemoteBranch: async (_url, branch) => {
+          events.push(`branch:${branch}`);
+          return "branch-oid";
+        },
+        preflightRemoteDefault: async (url) => {
+          events.push(`default:${url}`);
+          return "default-oid";
+        },
+        reconcileManagedIgnore: async () => {
+          events.push("mutation");
+          return {
+            appliedRules: [],
+            attempted: false,
+            changed: false,
+            fileChanges: { local: false, preference: false, tracked: false },
+            localExcludePath: "",
+            paths: [],
+            plannedRules: [],
+            restored: false,
+            scope: "local",
+            staleRules: [],
+            storedPreference: null,
+            trackedIgnorePath: "",
+            warnings: [],
+          };
+        },
+        saveConfig: async () => {},
+        workspaceRoot,
+      },
+    );
+    expect(events).toEqual(["branch:integration", "default:https://example/b.git", "mutation"]);
+  });
+
+  test("validates a configured base even when the coordinated target already exists", async () => {
+    const sourceRoot = join(workspaceRoot, "existing-target-source");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "existing-target");
+    const sourceRepo = join(sourceRoot, "repos", "repo-a");
+    await mkdir(sourceRepo, { recursive: true });
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    await spawn(["git", "init"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "config", "user.email", "test@example.com"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "config", "user.name", "Test"], { cwd: sourceRepo }).exited;
+    await writeFile(join(sourceRepo, "README.md"), "target\n");
+    await spawn(["git", "add", "README.md"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "commit", "-m", "target"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "branch", "feature/existing"], { cwd: sourceRepo }).exited;
+    let mutated = false;
+    const failure = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => ({
+          repos: {
+            "repo-a": { baseBranch: "missing/base", gitUrl: sourceRepo, path: "./repos/repo-a" },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+        }),
+        reconcileManagedIgnore: async () => {
+          mutated = true;
+          throw new Error("must not mutate");
+        },
+        resolveCurrentBranch: async () => "feature/existing",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    ).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "CLONE_BASE_PREFLIGHT_FAILED" });
+    expect(mutated).toBe(false);
+    expect(await spawn(["git", "rev-parse", "feature/existing"], { cwd: sourceRepo }).exited).toBe(
+      0,
+    );
+  });
+
+  test("propagates operational Git errors instead of treating them as missing refs", async () => {
+    const operational = new ArashiError("permission denied", {
+      args: ["rev-parse"],
+      cwd: workspaceRoot,
+      exitCode: 128,
+      stderr: "denied",
+      stdout: "",
+    });
+    await expect(
+      resolveOptionalCommit(workspaceRoot, "refs/heads/main", async () => {
+        throw operational;
+      }),
+    ).rejects.toBe(operational);
+  });
+
+  test("rolls back earlier selected destinations after a later policy clone fails", async () => {
+    const first = join(workspaceRoot, "repos", "a");
+    const result = await executeClone(
+      { all: true },
+      {
+        cloneRepository: async (url, destination) => {
+          if (url.endsWith("b.git")) throw new Error("second clone failed");
+          await mkdir(destination, { recursive: true });
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        loadConfig: async () => ({
+          baseBranch: "main",
+          repos: {
+            a: { gitUrl: "https://example/a.git", path: "./repos/a" },
+            b: { gitUrl: "https://example/b.git", path: "./repos/b" },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+        }),
+        preflightRemoteBranch: async () => "oid",
+        saveConfig: async () => {},
+        workspaceRoot,
+      },
+    );
+    expect(result.status).toBe("partial-failure");
+    expect(result.cloned).toEqual([]);
+    await expect(access(first)).rejects.toThrow();
+  });
+
+  test("rolls back earlier real-Git coordinated worktree and target ownership after later failure", async () => {
+    const sourceRoot = join(workspaceRoot, "transaction-source");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "transaction-target");
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    const config: Config = {
+      baseBranch: "integration",
+      repos: {
+        a: { gitUrl: join(sourceRoot, "repos", "a"), path: "./repos/a" },
+        b: { gitUrl: join(sourceRoot, "repos", "b"), path: "./repos/b" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+    for (const name of ["a", "b"]) {
+      const repository = join(sourceRoot, "repos", name);
+      await mkdir(repository, { recursive: true });
+      await spawn(["git", "init"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.email", "test@example.com"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.name", "Test"], { cwd: repository }).exited;
+      await writeFile(join(repository, "README.md"), `${name}\n`);
+      await spawn(["git", "add", "README.md"], { cwd: repository }).exited;
+      await spawn(["git", "commit", "-m", "base"], { cwd: repository }).exited;
+      await spawn(["git", "branch", "integration"], { cwd: repository }).exited;
+    }
+
+    const result = await executeClone(
+      { all: true },
+      {
+        addWorktree: async (source, destination, branch) => {
+          if (basename(source) === "b") throw new Error("later coordinated failure");
+          const operation = await spawn(["git", "worktree", "add", destination, branch], {
+            cwd: source,
+          });
+          if ((await operation.exited) !== 0) throw new Error("unexpected worktree add failure");
+        },
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feature/transaction",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.cloned).toEqual([]);
+    for (const name of ["a", "b"]) {
+      const repository = join(sourceRoot, "repos", name);
+      expect(
+        await spawn(["git", "show-ref", "--verify", "refs/heads/feature/transaction"], {
+          cwd: repository,
+        }).exited,
+      ).not.toBe(0);
+      expect(
+        await spawn(["git", "show-ref", "--verify", "refs/heads/integration"], {
+          cwd: repository,
+        }).exited,
+      ).toBe(0);
+      await expect(access(join(executionRoot, "repos", name))).rejects.toThrow();
+    }
+  });
+
+  test("creates missing coordinated targets from remote HEAD in a mixed-policy run", async () => {
+    const sourceRoot = join(workspaceRoot, "mixed-source");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "mixed-target");
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    const config: Config = {
+      repos: {
+        a: {
+          baseBranch: "integration",
+          gitUrl: join(sourceRoot, "repos", "a"),
+          path: "./repos/a",
+        },
+        b: { gitUrl: join(sourceRoot, "repos", "b"), path: "./repos/b" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+    for (const name of ["a", "b"]) {
+      const repository = join(sourceRoot, "repos", name);
+      await mkdir(repository, { recursive: true });
+      await spawn(["git", "init"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.email", "test@example.com"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.name", "Test"], { cwd: repository }).exited;
+      await spawn(["git", "config", "commit.gpgSign", "false"], { cwd: repository }).exited;
+      await writeFile(join(repository, "README.md"), `${name}\n`);
+      await spawn(["git", "add", "README.md"], { cwd: repository }).exited;
+      await spawn(["git", "commit", "-m", "base"], { cwd: repository }).exited;
+      if (name === "a") await spawn(["git", "branch", "integration"], { cwd: repository }).exited;
+    }
+
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feature/mixed",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    expect(result.cloned).toEqual(["a", "b"]);
+    for (const name of ["a", "b"]) {
+      expect(
+        await spawn(["git", "show-ref", "--verify", "refs/heads/feature/mixed"], {
+          cwd: join(sourceRoot, "repos", name),
+        }).exited,
+      ).toBe(0);
+      await expect(access(join(executionRoot, "repos", name))).resolves.toBeUndefined();
+    }
+  });
+
+  test("fetches an advanced explicit remote branch before creating a coordinated target", async () => {
+    const sourceRoot = join(workspaceRoot, "stale-explicit-source");
+    const remote = join(workspaceRoot, "stale-explicit-remote");
+    const canonical = join(sourceRoot, "repos", "api");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "stale-explicit-target");
+    await mkdir(executionRoot, { recursive: true });
+    await mkdir(remote, { recursive: true });
+    await spawn(["git", "init", "-b", "main"], { cwd: remote }).exited;
+    await spawn(["git", "config", "user.email", "test@example.com"], { cwd: remote }).exited;
+    await spawn(["git", "config", "user.name", "Test"], { cwd: remote }).exited;
+    await spawn(["git", "config", "commit.gpgSign", "false"], { cwd: remote }).exited;
+    await writeFile(join(remote, "README.md"), "initial\n");
+    await spawn(["git", "add", "README.md"], { cwd: remote }).exited;
+    await spawn(["git", "commit", "-m", "initial"], { cwd: remote }).exited;
+    await spawn(["git", "switch", "-c", "release/next"], { cwd: remote }).exited;
+    await writeFile(join(remote, "release.txt"), "first\n");
+    await spawn(["git", "add", "release.txt"], { cwd: remote }).exited;
+    await spawn(["git", "commit", "-m", "release first"], { cwd: remote }).exited;
+    await spawn(["git", "switch", "main"], { cwd: remote }).exited;
+    await mkdir(join(sourceRoot, "repos"), { recursive: true });
+    await spawn(["git", "clone", remote, canonical], { cwd: workspaceRoot }).exited;
+    await spawn(["git", "switch", "release/next"], { cwd: remote }).exited;
+    await writeFile(join(remote, "release.txt"), "advanced\n");
+    await spawn(["git", "add", "release.txt"], { cwd: remote }).exited;
+    await spawn(["git", "commit", "-m", "release advanced"], { cwd: remote }).exited;
+    const remoteRelease = await spawn(["git", "rev-parse", "release/next"], { cwd: remote });
+
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => ({
+          repos: {
+            api: { baseBranch: "release/next", gitUrl: remote, path: "./repos/api" },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+        }),
+        resolveCurrentBranch: async () => "feature/stale-explicit",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    const target = await spawn(["git", "rev-parse", "feature/stale-explicit"], { cwd: canonical });
+    expect((await new Response(target.stdout).text()).trim()).toBe(
+      (await new Response(remoteRelease.stdout).text()).trim(),
+    );
+  });
+
+  test("fetches an advanced remote HEAD before creating an omitted-base coordinated target", async () => {
+    const sourceRoot = join(workspaceRoot, "stale-mixed-source");
+    const remoteRoot = join(workspaceRoot, "stale-mixed-remote");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "stale-mixed-target");
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    const localA = join(sourceRoot, "repos", "a");
+    const canonicalB = join(sourceRoot, "repos", "b");
+    const remoteB = join(remoteRoot, "b");
+    for (const repository of [localA, remoteB]) {
+      await mkdir(repository, { recursive: true });
+      await spawn(["git", "init"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.email", "test@example.com"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.name", "Test"], { cwd: repository }).exited;
+      await spawn(["git", "config", "commit.gpgSign", "false"], { cwd: repository }).exited;
+      await writeFile(join(repository, "README.md"), "initial\n");
+      await spawn(["git", "add", "README.md"], { cwd: repository }).exited;
+      await spawn(["git", "commit", "-m", "initial"], { cwd: repository }).exited;
+    }
+    await spawn(["git", "branch", "integration"], { cwd: localA }).exited;
+    await mkdir(join(sourceRoot, "repos"), { recursive: true });
+    await spawn(["git", "clone", remoteB, canonicalB], { cwd: workspaceRoot }).exited;
+    await writeFile(join(remoteB, "README.md"), "advanced\n");
+    await spawn(["git", "add", "README.md"], { cwd: remoteB }).exited;
+    await spawn(["git", "commit", "-m", "advance"], { cwd: remoteB }).exited;
+    const config: Config = {
+      repos: {
+        a: { baseBranch: "integration", gitUrl: localA, path: "./repos/a" },
+        b: { gitUrl: remoteB, path: "./repos/b" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feature/stale-mixed",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    const target = await spawn(["git", "rev-parse", "feature/stale-mixed"], { cwd: canonicalB });
+    const remoteHead = await spawn(["git", "rev-parse", "HEAD"], { cwd: remoteB });
+    expect((await new Response(target.stdout).text()).trim()).toBe(
+      (await new Response(remoteHead.stdout).text()).trim(),
+    );
+  });
+
+  test("checks out the coordinated target for a remote-only omitted base in a mixed-policy run", async () => {
+    const sourceRoot = join(workspaceRoot, "remote-only-mixed-source");
+    const remoteRoot = join(workspaceRoot, "remote-only-mixed-remotes");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "remote-only-mixed-target");
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    const localSource = join(sourceRoot, "repos", "a");
+    const remoteOnlySource = join(remoteRoot, "b");
+    for (const repository of [localSource, remoteOnlySource]) {
+      await mkdir(repository, { recursive: true });
+      await spawn(["git", "init"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.email", "test@example.com"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.name", "Test"], { cwd: repository }).exited;
+      await spawn(["git", "config", "commit.gpgSign", "false"], { cwd: repository }).exited;
+      await writeFile(join(repository, "README.md"), `${repository}\n`);
+      await spawn(["git", "add", "README.md"], { cwd: repository }).exited;
+      await spawn(["git", "commit", "-m", "base"], { cwd: repository }).exited;
+    }
+    await spawn(["git", "branch", "integration"], { cwd: localSource }).exited;
+    const config: Config = {
+      repos: {
+        a: { baseBranch: "integration", gitUrl: localSource, path: "./repos/a" },
+        b: { gitUrl: remoteOnlySource, path: "./repos/b" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feature/mixed-remote",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    const remoteOnlyDestination = join(executionRoot, "repos", "b");
+    expect(
+      await spawn(["git", "branch", "--show-current"], { cwd: remoteOnlyDestination }).exited,
+    ).toBe(0);
+    const branch = await spawn(["git", "branch", "--show-current"], { cwd: remoteOnlyDestination });
+    expect((await new Response(branch.stdout).text()).trim()).toBe("feature/mixed-remote");
+  });
+
+  test("creates a missing coordinated target from the effective base and checks out the target", async () => {
+    const sourceRoot = join(workspaceRoot, "source");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "feature-demo");
+    const sourceRepo = join(sourceRoot, "repos", "repo-a");
+    await mkdir(sourceRepo, { recursive: true });
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    await spawn(["git", "init"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "config", "user.email", "test@example.com"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "config", "user.name", "Test"], { cwd: sourceRepo }).exited;
+    await writeFile(join(sourceRepo, "README.md"), "base\n");
+    await spawn(["git", "add", "README.md"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "commit", "-m", "base"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "branch", "integration"], { cwd: sourceRepo }).exited;
+
+    const config: Config = {
+      repos: {
+        "repo-a": { baseBranch: "integration", gitUrl: sourceRepo, path: "./repos/repo-a" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feature/demo",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    const destination = join(executionRoot, "repos", "repo-a");
+    const branch = await spawn(["git", "branch", "--show-current"], { cwd: destination });
+    expect((await new Response(branch.stdout).text()).trim()).toBe("feature/demo");
+    const ancestry = await spawn(
+      ["git", "merge-base", "--is-ancestor", "integration", "feature/demo"],
+      { cwd: sourceRepo },
+    );
+    expect(await ancestry.exited).toBe(0);
+  });
+
+  test("materializes a remote-only coordinated child on the target rather than its base", async () => {
+    const seed = join(workspaceRoot, "seed");
+    const remote = join(workspaceRoot, "repo-a.git");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "feature-remote");
+    await mkdir(seed, { recursive: true });
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    await spawn(["git", "init"], { cwd: seed }).exited;
+    await spawn(["git", "config", "user.email", "test@example.com"], { cwd: seed }).exited;
+    await spawn(["git", "config", "user.name", "Test"], { cwd: seed }).exited;
+    await writeFile(join(seed, "README.md"), "remote base\n");
+    await spawn(["git", "add", "README.md"], { cwd: seed }).exited;
+    await spawn(["git", "commit", "-m", "base"], { cwd: seed }).exited;
+    await spawn(["git", "branch", "integration"], { cwd: seed }).exited;
+    await spawn(["git", "clone", "--bare", seed, remote], { cwd: workspaceRoot }).exited;
+
+    const config: Config = {
+      repos: {
+        "repo-a": { baseBranch: "integration", gitUrl: remote, path: "./repos/repo-a" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feature/remote",
+        resolveSourceWorkspaceRoot: () => join(workspaceRoot, "missing-source"),
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    const destination = join(executionRoot, "repos", "repo-a");
+    const branch = await spawn(["git", "branch", "--show-current"], { cwd: destination });
+    expect((await new Response(branch.stdout).text()).trim()).toBe("feature/remote");
+  });
+
+  test("reuses the cloned base when a remote-only coordinated target has the same name", async () => {
+    const seed = join(workspaceRoot, "same-base-seed");
+    const remote = join(workspaceRoot, "same-base.git");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "same-base");
+    await mkdir(seed, { recursive: true });
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    await spawn(["git", "init", "-b", "main"], { cwd: seed }).exited;
+    await spawn(["git", "config", "user.email", "test@example.com"], { cwd: seed }).exited;
+    await spawn(["git", "config", "user.name", "Test"], { cwd: seed }).exited;
+    await spawn(["git", "config", "commit.gpgSign", "false"], { cwd: seed }).exited;
+    await writeFile(join(seed, "README.md"), "same base\n");
+    await spawn(["git", "add", "README.md"], { cwd: seed }).exited;
+    await spawn(["git", "commit", "-m", "base"], { cwd: seed }).exited;
+    await spawn(["git", "branch", "integration"], { cwd: seed }).exited;
+    await spawn(["git", "clone", "--bare", seed, remote], { cwd: workspaceRoot }).exited;
+
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => ({
+          repos: {
+            "repo-a": { baseBranch: "integration", gitUrl: remote, path: "./repos/repo-a" },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+        }),
+        resolveCurrentBranch: async () => "integration",
+        resolveSourceWorkspaceRoot: () => join(workspaceRoot, "missing-source"),
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    const destination = join(executionRoot, "repos", "repo-a");
+    const branch = await spawn(["git", "branch", "--show-current"], { cwd: destination });
+    expect((await new Response(branch.stdout).text()).trim()).toBe("integration");
+  });
+
+  test("rolls back an invocation-created coordinated target when worktree add fails", async () => {
+    const sourceRoot = join(workspaceRoot, "rollback-source");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "feature-rollback");
+    const sourceRepo = join(sourceRoot, "repos", "repo-a");
+    const destination = join(executionRoot, "repos", "repo-a");
+    await mkdir(sourceRepo, { recursive: true });
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    await spawn(["git", "init"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "config", "user.email", "test@example.com"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "config", "user.name", "Test"], { cwd: sourceRepo }).exited;
+    await writeFile(join(sourceRepo, "README.md"), "base\n");
+    await spawn(["git", "add", "README.md"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "commit", "-m", "base"], { cwd: sourceRepo }).exited;
+    await spawn(["git", "branch", "integration"], { cwd: sourceRepo }).exited;
+    const config: Config = {
+      repos: {
+        "repo-a": { baseBranch: "integration", gitUrl: sourceRepo, path: "./repos/repo-a" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true },
+      {
+        addWorktree: async () => {
+          await mkdir(destination, { recursive: true });
+          throw new Error("simulated add failure");
+        },
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feature/rollback",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("partial-failure");
+    const target = await spawn(["git", "show-ref", "--verify", "refs/heads/feature/rollback"], {
+      cwd: sourceRepo,
+    });
+    expect(await target.exited).not.toBe(0);
+    expect(
+      await spawn(["git", "show-ref", "--verify", "refs/heads/integration"], { cwd: sourceRepo })
+        .exited,
+    ).toBe(0);
+    await expect(access(destination)).rejects.toThrow();
+  });
+
+  test("rejects invalid base selectors before deleting unmanaged repositories", async () => {
+    const unmanaged = join(workspaceRoot, "repos", "unmanaged");
+    await mkdir(join(workspaceRoot, "repos", "configured", ".git"), { recursive: true });
+    await mkdir(join(unmanaged, ".git"), { recursive: true });
+    let confirmedDelete = false;
+
+    const failure = await executeClone(
+      { all: true, repoBase: ["missing=main"] },
+      {
+        loadConfig: async () => ({
+          repos: {
+            configured: {
+              gitUrl: "https://example/configured.git",
+              path: "./repos/configured",
+            },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+        }),
+        promptConfirm: async () => {
+          confirmedDelete = true;
+          return { status: "ok", value: true };
+        },
+        promptSelect: async <T>() => ({ status: "ok", value: "delete" as T }),
+        saveConfig: async () => {},
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        workspaceRoot,
+      },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: "BASE_BRANCH_POLICY_INVALID" });
+    expect(confirmedDelete).toBe(false);
+    await expect(access(unmanaged)).resolves.toBeUndefined();
+  });
+
+  test("aggregates selected remote failures before managed-ignore mutation", async () => {
+    const config: Config = {
+      baseBranch: "main",
+      repos: {
+        a: { gitUrl: "https://example/a.git", path: "./repos/a" },
+        b: { gitUrl: "https://example/b.git", path: "./repos/b" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+    let mutated = false;
+    const failure = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => config,
+        preflightRemoteBranch: async (_url, branch) => {
+          throw new Error(`missing ${branch}`);
+        },
+        reconcileManagedIgnore: async () => {
+          mutated = true;
+          throw new Error("must not mutate");
+        },
+        saveConfig: async () => {},
+        workspaceRoot,
+      },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      code: "CLONE_BASE_PREFLIGHT_FAILED",
+      failures: [
+        { repositoryName: "a", requestedBranch: "main", source: "workspace-config" },
+        { repositoryName: "b", requestedBranch: "main", source: "workspace-config" },
+      ],
+    });
+    expect(mutated).toBe(false);
   });
 
   test("reports success when no repositories are missing", async () => {
@@ -45,6 +778,31 @@ describe("clone command", () => {
     expect(result.status).toBe("success");
     expect(result.cloned).toHaveLength(0);
     expect(result.failed).toHaveLength(0);
+  });
+
+  test("validates repository overrides after an empty interactive selection", async () => {
+    const failure = await executeClone(
+      { repoBase: ["missing=main"] },
+      {
+        loadConfig: async () => ({
+          repos: {
+            configured: {
+              gitUrl: "https://example/configured.git",
+              path: "./repos/configured",
+            },
+          },
+          reposDir: "./repos",
+          version: "1.0.0",
+        }),
+        promptMultiSelect: async <T>() => ({ status: "ok", value: [] as T[] }),
+        saveConfig: async () => {},
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        workspaceRoot,
+      },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: "BASE_BRANCH_POLICY_INVALID" });
   });
 
   test("supports interactive selection of missing repositories", async () => {

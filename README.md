@@ -140,8 +140,8 @@ Arashi currently provides these commands:
 - `aw install`
 - `aw update [--check] [--dry-run] [--yes]`
 - `aw add <git-url>`
-- `aw clone [--all]`
-- `aw create <branch> [--base <branch>] [--tab] [--tmux|--sesh|--herdr]`
+- `aw clone [--all] [--base <branch>] [--repo-base <repository=branch>]`
+- `aw create <branch> [--base <branch>] [--repo-base <repository=branch>] [--tab] [--tmux|--sesh|--herdr]`
 - `aw list`
 - `aw status`
 - `aw remove <branch|path>`
@@ -164,6 +164,8 @@ aw add git@github.com:your-org/frontend.git
 aw add git@github.com:your-org/backend.git
 aw create feature-auth-refresh
 aw create feature-auth-refresh --base feature/auth
+aw create feature-auth-refresh --repo-base @meta=develop --repo-base frontend=release/2.x
+aw clone --all --base main --repo-base frontend=release/2.x
 aw create feature-auth-refresh --launch
 aw create feature-auth-refresh --tmux
 aw create feature-auth-refresh --herdr
