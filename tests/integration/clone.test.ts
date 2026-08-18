@@ -366,7 +366,7 @@ describe("clone command", () => {
     const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "stale-explicit-target");
     await mkdir(executionRoot, { recursive: true });
     await mkdir(remote, { recursive: true });
-    await spawn(["git", "init"], { cwd: remote }).exited;
+    await spawn(["git", "init", "-b", "main"], { cwd: remote }).exited;
     await spawn(["git", "config", "user.email", "test@example.com"], { cwd: remote }).exited;
     await spawn(["git", "config", "user.name", "Test"], { cwd: remote }).exited;
     await spawn(["git", "config", "commit.gpgSign", "false"], { cwd: remote }).exited;
