@@ -11,13 +11,24 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const root = join(import.meta.dirname, "../..");
-const npmCommand = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "npm";
+const npmCommand = process.platform === "win32" ? process.execPath : "npm";
+const npmCli =
+  process.platform === "win32"
+    ? join(
+        dirname(
+          execFileSync("where.exe", ["npm.cmd"], { encoding: "utf8" }).trim().split(/\r?\n/, 1)[0],
+        ),
+        "node_modules/npm/bin/npm-cli.js",
+      )
+    : "";
 const npmArgs = (args: string[]): string[] =>
-  process.platform === "win32" ? ["/d", "/s", "/c", "npm", ...args] : args;
+  process.platform === "win32" ? [npmCli, ...args] : args;
+const npmSetupCommandTimeout = 45_000;
+const packedAliasSetupTimeout = 120_000;
 const fixtures: string[] = [];
 let prefix = "";
 let binDirectory = "";
@@ -30,7 +41,7 @@ beforeAll(() => {
   execFileSync(
     npmCommand,
     npmArgs(["pack", "--cache", join(packDir, "npm-cache"), "--pack-destination", packDir]),
-    { cwd: root, encoding: "utf8" },
+    { cwd: root, encoding: "utf8", timeout: npmSetupCommandTimeout },
   );
   const filename = readdirSync(packDir).find((name) => name.endsWith(".tgz"));
   if (!filename) throw new Error("npm pack did not create an archive");
@@ -45,14 +56,14 @@ beforeAll(() => {
       join(prefix, "npm-cache"),
       join(packDir, filename),
     ]),
-    { encoding: "utf8" },
+    { encoding: "utf8", timeout: npmSetupCommandTimeout },
   );
   binDirectory = process.platform === "win32" ? prefix : join(prefix, "bin");
   packageBin = join(
     prefix,
     process.platform === "win32" ? "node_modules/arashi/bin" : "lib/node_modules/arashi/bin",
   );
-});
+}, packedAliasSetupTimeout);
 
 afterAll(() => {
   for (const fixture of fixtures) rmSync(fixture, { force: true, recursive: true });
