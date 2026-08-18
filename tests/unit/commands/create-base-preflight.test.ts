@@ -1,6 +1,10 @@
 import type { Config, LoadedConfig } from "../../../src/lib/config.ts";
 import { describe, expect, test } from "vitest";
-import { CreateBaseResolutionError } from "../../../src/lib/create-base.ts";
+import {
+  CreateBaseResolutionError,
+  type CreateBaseRequest,
+  type CreateBaseSource,
+} from "../../../src/lib/create-base.ts";
 import type { Repository } from "../../../src/core/repository.ts";
 import { executeCreate } from "../../../src/commands/create.ts";
 import { normalizeConfig } from "../../../src/lib/config.ts";
@@ -31,20 +35,22 @@ function loadedConfig(baseBranch = "config/base"): LoadedConfig {
 
 function planFor(
   selected: readonly Repository[],
-  requestedBranch: string,
-  source: "cli" | "config",
+  requestedBranch: string | readonly CreateBaseRequest[],
+  source?: CreateBaseSource,
 ) {
+  const first =
+    typeof requestedBranch === "string" ? requestedBranch : requestedBranch[0]!.requestedBranch;
   const entries = selected.map((repository) => ({
     repositoryName: repository.name,
     repositoryPath: repository.path,
     resolvedOid: `${repository.name}-oid`,
-    resolvedRef: `refs/heads/${requestedBranch}`,
+    resolvedRef: `refs/heads/${first}`,
   }));
   return {
     byCanonicalPath: new Map(entries.map((entry) => [entry.repositoryPath, entry])),
     repositories: entries,
-    requestedBranch,
-    source,
+    requestedBranch: first,
+    source: source ?? "cli",
   };
 }
 
@@ -162,7 +168,11 @@ describe("configured create base preflight", () => {
   });
 
   test("uses CLI over generic config and validates only the final filtered interactive selection", async () => {
-    const calls: { names: string[]; requestedBranch: string; source: string }[] = [];
+    const calls: {
+      names: string[];
+      requestedBranch: string | readonly CreateBaseRequest[];
+      source?: CreateBaseSource;
+    }[] = [];
 
     await expect(
       executeCreate(
@@ -184,11 +194,28 @@ describe("configured create base preflight", () => {
       ),
     ).resolves.toBe(0);
 
-    expect(calls).toEqual([{ names: ["beta"], requestedBranch: "cli/base", source: "cli" }]);
+    expect(calls).toEqual([
+      {
+        names: ["beta"],
+        requestedBranch: [
+          {
+            repositoryIdentity: "beta",
+            repositoryName: "beta",
+            repositoryPath: "/workspace/repos/beta",
+            requestedBranch: "cli/base",
+            source: "cli",
+          },
+        ],
+        source: undefined,
+      },
+    ]);
   });
 
   test("uses the workspace-generic config base even in an editor-hosted invocation", async () => {
-    const requests: { requestedBranch: string; source: string }[] = [];
+    const requests: {
+      requestedBranch: string | readonly CreateBaseRequest[];
+      source?: CreateBaseSource;
+    }[] = [];
 
     await executeCreate(
       "feature/target",
@@ -201,7 +228,74 @@ describe("configured create base preflight", () => {
       }),
     );
 
-    expect(requests).toEqual([{ requestedBranch: "config/base", source: "config" }]);
+    expect(requests).toEqual([
+      {
+        requestedBranch: [
+          {
+            repositoryIdentity: "gamma",
+            repositoryName: "gamma",
+            repositoryPath: "/workspace/repos/gamma",
+            requestedBranch: "config/base",
+            source: "workspace-config",
+          },
+        ],
+        source: undefined,
+      },
+    ]);
+  });
+
+  test("keeps a meta basename collision distinct from the child repository ID", async () => {
+    const child: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "workspace",
+      path: "/workspace/repos/workspace",
+    };
+    const captured: Array<readonly CreateBaseRequest[]> = [];
+    await executeCreate(
+      "feature/collision",
+      { repoBase: ["@meta=meta/base", "workspace=child/base"] },
+      dependencies({
+        discoverRepositories: async () => ({
+          duration: 0,
+          errors: [],
+          repositories: [child],
+          scanDepth: 0,
+          scannedDirectories: 1,
+          workspacePath: "/workspace/repos",
+        }),
+        isGitRepository: async () => true,
+        loadConfigWithFallback: async () => ({
+          config: {
+            repos: { workspace: { path: "/workspace/repos/workspace" } },
+            reposDir: "./repos",
+            version: "1.0.0",
+          },
+          configPath: "/workspace/.arashi/config.json",
+          source: "local-file",
+        }),
+        resolveCreateBasePlan: async (selected, request) => {
+          if (typeof request !== "string") captured.push(request);
+          return planFor(selected, request);
+        },
+        resolveCurrentBranch: async () => "main",
+      }),
+    );
+
+    expect(captured).toEqual([
+      [
+        expect.objectContaining({
+          repositoryIdentity: "@meta",
+          repositoryPath: "/workspace",
+          requestedBranch: "meta/base",
+        }),
+        expect.objectContaining({
+          repositoryIdentity: "workspace",
+          repositoryPath: "/workspace/repos/workspace",
+          requestedBranch: "child/base",
+        }),
+      ],
+    ]);
   });
 
   test("preflights every selected repository including mixed reuse candidates before downstream work", async () => {
@@ -261,9 +355,15 @@ describe("configured create base preflight", () => {
           return dependencies().reconcileManagedIgnore!(...args);
         },
         resolveCreateBasePlan: async (selected, requestedBranch, source) => {
+          const first =
+            typeof requestedBranch === "string"
+              ? requestedBranch
+              : requestedBranch[0]!.requestedBranch;
+          const firstSource =
+            source ?? (typeof requestedBranch === "string" ? "cli" : requestedBranch[0]!.source);
           throw new CreateBaseResolutionError(
-            requestedBranch,
-            source,
+            first,
+            firstSource,
             selected.map((repository) => ({
               attemptedRefs,
               repositoryName: repository.name,

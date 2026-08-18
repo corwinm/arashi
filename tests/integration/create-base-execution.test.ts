@@ -190,39 +190,28 @@ describe("immutable configured create-base execution", () => {
     }
   });
 
-  test("fails clearly and rolls back earlier targets when a participating repository is missing from the plan", async () => {
+  test("applies a partial immutable plan while omitted repositories keep legacy default ancestry", async () => {
     workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
     const repositories = repositoriesFor(workspace);
     const [parent, child] = repositories;
-    const baseBranch = "feature/base";
-    const targetBranch = "feature/incomplete-plan";
-
-    for (const repository of repositories) {
-      await createBaseBranch(repository, baseBranch);
-    }
-    const completePlan = await resolveCreateBasePlan(repositories, baseBranch, "cli");
-    const parentResolution = completePlan.repositories.find(
-      (resolution) => resolution.repositoryName === parent!.name,
-    )!;
-    const incompletePlan = {
-      ...completePlan,
-      byCanonicalPath: new Map([[parentResolution.repositoryPath, parentResolution]]),
-      repositories: [parentResolution],
-    };
+    const baseBranch = "feature/parent-base";
+    const targetBranch = "feature/mixed-policy";
+    await createBaseBranch(parent!, baseBranch);
+    const childDefaultOid = await oid(child!.path, child!.defaultBranch);
+    const partialPlan = await resolveCreateBasePlan(
+      [parent!],
+      [{ repositoryName: parent!.name, requestedBranch: baseBranch, source: "repository-config" }],
+    );
 
     const result = await createCoordinatedWorktrees(targetBranch, repositories, {
-      createBasePlan: incompletePlan,
+      createBasePlan: partialPlan,
       executeHooks: false,
       showProgress: false,
       workspaceRoot: workspace.workspacePath,
     });
 
-    expect(result.rolledBack).toBe(true);
-    expect(result.errorSummary).toContain("missing immutable create-base plan entry");
-    for (const repository of [parent!, child!]) {
-      await expect(
-        exec(["show-ref", "--verify", `refs/heads/${targetBranch}`], repository.path),
-      ).rejects.toThrow();
-    }
+    expect(result.rolledBack).toBe(false);
+    expect(await oid(parent!.path, targetBranch)).toBe(partialPlan.repositories[0]!.resolvedOid);
+    expect(await oid(child!.path, targetBranch)).toBe(childDefaultOid);
   });
 });

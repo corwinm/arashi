@@ -256,6 +256,82 @@ describe("resolveCreateBasePlan", () => {
     expect(failure).not.toBeInstanceOf(CreateBaseResolutionError);
   });
 
+  test("resolves different immutable bases and policy sources per selected repository", async () => {
+    const meta = await createRepository("workspace");
+    const api = await createRepository("api");
+    await exec(["branch", "meta/integration"], meta.path);
+    await exec(["branch", "api/integration"], api.path);
+
+    const plan = await resolveCreateBasePlan(
+      [meta, api],
+      [
+        {
+          repositoryName: "workspace",
+          requestedBranch: "meta/integration",
+          source: "repository-config",
+        },
+        { repositoryName: "api", requestedBranch: "api/integration", source: "repository-cli" },
+      ],
+    );
+
+    expect(plan.repositories).toEqual([
+      expect.objectContaining({
+        repositoryName: "workspace",
+        requestedBranch: "meta/integration",
+        resolvedRef: "refs/heads/meta/integration",
+        source: "repository-config",
+      }),
+      expect.objectContaining({
+        repositoryName: "api",
+        requestedBranch: "api/integration",
+        resolvedRef: "refs/heads/api/integration",
+        source: "repository-cli",
+      }),
+    ]);
+  });
+
+  test("resolves colliding display names by repository identity and path", async () => {
+    const meta = await createRepository("workspace");
+    const child = await createRepository("workspace");
+    await exec(["branch", "meta/integration"], meta.path);
+    await exec(["branch", "child/integration"], child.path);
+
+    const plan = await resolveCreateBasePlan(
+      [meta, child],
+      [
+        {
+          repositoryIdentity: "@meta",
+          repositoryName: "workspace",
+          repositoryPath: meta.path,
+          requestedBranch: "meta/integration",
+          source: "repository-config",
+        },
+        {
+          repositoryIdentity: "workspace",
+          repositoryName: "workspace",
+          repositoryPath: child.path,
+          requestedBranch: "child/integration",
+          source: "repository-cli",
+        },
+      ],
+    );
+
+    expect(plan.repositories).toEqual([
+      expect.objectContaining({
+        repositoryIdentity: "@meta",
+        repositoryPath: await realpath(meta.path),
+        requestedBranch: "meta/integration",
+        resolvedRef: "refs/heads/meta/integration",
+      }),
+      expect.objectContaining({
+        repositoryIdentity: "workspace",
+        repositoryPath: await realpath(child.path),
+        requestedBranch: "child/integration",
+        resolvedRef: "refs/heads/child/integration",
+      }),
+    ]);
+  });
+
   test("aggregates a genuine absent ref when both quiet rev-parse probes exit 1", async () => {
     const repository = await createRepository("rev-parse-absent");
 

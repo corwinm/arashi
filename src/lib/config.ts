@@ -17,7 +17,7 @@ import { basename, dirname, join, resolve } from "path";
 import { exec, readTrackedFileFromDefaultBranch } from "./git.ts";
 import { mkdir, realpath } from "fs/promises";
 import { warn } from "./logger.ts";
-import { isValidRequestedBaseBranch } from "./git-branch-name.ts";
+import { isValidRequestedBaseBranch, normalizeLogicalBranchName } from "./git-branch-name.ts";
 import { normalizeMaterializationPath } from "./materialization.ts";
 
 const ZERO = 0;
@@ -57,6 +57,12 @@ export interface RepoConfig {
   groups?: string[];
   /** Optional repository-targeted inline lifecycle hooks */
   hooks?: InlineHookScripts;
+  /**
+   * Repository-specific base branch for configured create and clone
+   * @minLength 1
+   * @pattern ^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\.|//|\.\.|@\{))(?!.*\.lock(?:/|$))(?!.*[/.]$)[^\u0000-\u0020\u007F~^:?*\[\\]+$
+   */
+  baseBranch?: string;
 }
 
 export type InlineHookLifecycle = "pre-create" | "post-create" | "pre-remove" | "post-remove";
@@ -93,9 +99,17 @@ export interface InlineHookScripts {
 export const CURRENT_CONFIG_VERSION = "1.0.0" as const;
 export type ConfigVersion = typeof CURRENT_CONFIG_VERSION;
 
-/**
- * Root configuration object for Arashi
- */
+/** Meta-repository-specific configuration. */
+export interface MetaRepositoryConfig {
+  /**
+   * Meta-repository-specific base branch for configured create
+   * @minLength 1
+   * @pattern ^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\.|//|\.\.|@\{))(?!.*\.lock(?:/|$))(?!.*[/.]$)[^\u0000-\u0020\u007F~^:?*\[\\]+$
+   */
+  baseBranch?: string;
+}
+
+/** Root configuration object for Arashi. */
 export interface Config {
   /** JSON Schema URL for editor validation/autocomplete */
   $schema?: string;
@@ -122,6 +136,14 @@ export interface Config {
     /** Sync timeout in seconds */
     timeoutSeconds?: number;
   };
+  /**
+   * Workspace base branch shared by configured create and clone
+   * @minLength 1
+   * @pattern ^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\.|//|\.\.|@\{))(?!.*\.lock(?:/|$))(?!.*[/.]$)[^\u0000-\u0020\u007F~^:?*\[\\]+$
+   */
+  baseBranch?: string;
+  /** Optional meta-repository-specific policy */
+  meta?: MetaRepositoryConfig;
   /** Optional command-scoped defaults for create and switch */
   defaults?: CommandDefaultsConfig;
   /** Map of repository names to their configurations */
@@ -225,6 +247,13 @@ export interface DeprecatedSwitchLaunchModeDiagnostic {
   replacementMode: SwitchMode;
 }
 
+export interface DeprecatedCreateBaseBranchDiagnostic {
+  code: "DEPRECATED_CREATE_BASE_BRANCH";
+  fields: ["defaults.create.baseBranch"];
+  message: string;
+  replacementPath: "baseBranch";
+}
+
 export interface DeprecatedCreateLaunchFieldsDiagnostic {
   code: "DEPRECATED_CREATE_LAUNCH_FIELDS";
   fields: string[];
@@ -234,6 +263,7 @@ export interface DeprecatedCreateLaunchFieldsDiagnostic {
 }
 
 export type ConfigDiagnostic =
+  | DeprecatedCreateBaseBranchDiagnostic
   | DeprecatedCreateLaunchFieldsDiagnostic
   | DeprecatedSwitchLaunchModeDiagnostic;
 
@@ -500,9 +530,12 @@ const ROOT_ALLOWED_KEYS = new Set([
   "hooks",
   "sync",
   "defaults",
+  "baseBranch",
+  "meta",
 ]);
 
 const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout", "scripts"]);
+const META_ALLOWED_KEYS = new Set(["baseBranch"]);
 const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
 const CREATE_DEFAULTS_ALLOWED_KEYS = new Set([
   "baseBranch",
@@ -532,6 +565,7 @@ const REPO_ALLOWED_KEYS = new Set([
   "worktrees",
   "groups",
   "hooks",
+  "baseBranch",
 ]);
 
 const INLINE_HOOK_LIFECYCLES = new Set<InlineHookLifecycle>([
@@ -706,6 +740,13 @@ const normalizeRepoConfig = (
   }
 
   const normalized: RepoConfig = { path };
+  if (value.baseBranch !== undefined) {
+    if (typeof value.baseBranch === "string" && isValidRequestedBaseBranch(value.baseBranch)) {
+      normalized.baseBranch = value.baseBranch;
+    } else {
+      errors.push(`${prefix}.baseBranch: must be a valid Git branch name if present`);
+    }
+  }
 
   const materializationPaths = new Map<
     string,
@@ -902,6 +943,31 @@ const normalizeSwitchMode = (value: unknown): SwitchMode | undefined => {
 const normalizeCreateLaunchMode = (value: unknown): CreateLaunchMode | undefined => {
   if (value === "none") return value;
   return normalizeLaunchMode(value);
+};
+
+const normalizeBaseBranch = (
+  value: unknown,
+  scope: string,
+  errors: string[],
+): string | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value === "string" && isValidRequestedBaseBranch(value)) return value;
+  errors.push(`${scope}: must be a valid Git branch name if present`);
+  return undefined;
+};
+
+const normalizeMetaConfig = (
+  value: unknown,
+  errors: string[],
+): MetaRepositoryConfig | undefined => {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    errors.push("meta: must be an object if present");
+    return undefined;
+  }
+  validateNoUnknownKeys({ allowedKeys: META_ALLOWED_KEYS, errors, prefix: "meta", value });
+  const baseBranch = normalizeBaseBranch(value.baseBranch, "meta.baseBranch", errors);
+  return baseBranch ? { baseBranch } : undefined;
 };
 
 const normalizeCreateCommandDefaults = (
@@ -1266,6 +1332,26 @@ const normalizeConfigInternal = (
   const hooks = normalizeWorkspaceHooks(config.hooks, "hooks", errors);
   const sync = normalizeSyncConfig(config.sync, "sync", errors);
   const defaults = normalizeCommandDefaults(config.defaults, errors, diagnostics);
+  const baseBranch = normalizeBaseBranch(config.baseBranch, "baseBranch", errors);
+  const meta = normalizeMetaConfig(config.meta, errors);
+  const legacyBaseBranch = defaults?.create?.baseBranch;
+  if (legacyBaseBranch !== undefined) {
+    diagnostics.push({
+      code: "DEPRECATED_CREATE_BASE_BRANCH",
+      fields: ["defaults.create.baseBranch"],
+      message:
+        "defaults.create.baseBranch is deprecated; move it to root baseBranch to share it with clone.",
+      replacementPath: "baseBranch",
+    });
+    if (
+      baseBranch !== undefined &&
+      normalizeLogicalBranchName(baseBranch) !== normalizeLogicalBranchName(legacyBaseBranch)
+    ) {
+      errors.push(
+        `baseBranch: conflicts with defaults.create.baseBranch; remove the legacy field or make both values match`,
+      );
+    }
+  }
 
   if (schema !== undefined && (typeof schema !== "string" || schema.trim() === "")) {
     errors.push("$schema: must be a non-empty string if present");
@@ -1316,6 +1402,8 @@ const normalizeConfigInternal = (
   if (defaults) {
     normalizedConfig.defaults = defaults;
   }
+  if (baseBranch) normalizedConfig.baseBranch = baseBranch;
+  if (meta) normalizedConfig.meta = meta;
 
   return {
     config: normalizedConfig,

@@ -13,7 +13,7 @@ describe("completion canonical contract", () => {
       commandSemantics,
       optionAuditPolicies,
     );
-    expect(contract.schemaVersion).toBe(7);
+    expect(contract.schemaVersion).toBe(8);
     expect(contract.root).toMatchObject({
       name: "arashi",
       description: "Git worktree manager for meta-repositories",
