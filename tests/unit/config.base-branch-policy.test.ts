@@ -3,6 +3,7 @@ import {
   ConfigValidationError,
   normalizeConfig,
   normalizeConfigWithDiagnostics,
+  serializeConfig,
 } from "../../src/lib/config.ts";
 
 const minimal = {
@@ -22,6 +23,27 @@ describe("base branch configuration", () => {
         },
       }),
     ).toMatchObject({
+      baseBranch: "main",
+      meta: { baseBranch: "meta/integration" },
+      repos: { api: { baseBranch: "api/integration", path: "./repos/api" } },
+    });
+  });
+
+  test("persists root, meta, and child base branches during config rewrites", () => {
+    const serialized = JSON.parse(
+      serializeConfig(
+        normalizeConfig({
+          ...minimal,
+          baseBranch: "main",
+          meta: { baseBranch: "meta/integration" },
+          repos: {
+            api: { baseBranch: "api/integration", path: "./repos/api" },
+          },
+        }),
+      ),
+    );
+
+    expect(serialized).toMatchObject({
       baseBranch: "main",
       meta: { baseBranch: "meta/integration" },
       repos: { api: { baseBranch: "api/integration", path: "./repos/api" } },

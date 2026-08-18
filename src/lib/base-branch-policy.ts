@@ -168,13 +168,14 @@ export const resolveBaseBranchPolicy = (
   }
   if (issues.length > 0) throw new BaseBranchPolicyError(issues);
 
-  const normalizedGlobal = input.globalBase
-    ? normalizeLogicalBranchName(input.globalBase)
+  const globalBaseProvided = input.globalBase !== undefined;
+  const normalizedGlobal = globalBaseProvided
+    ? normalizeLogicalBranchName(input.globalBase!)
     : undefined;
   if (
     input.command === "clone" &&
-    normalizedGlobal &&
-    !isValidRequestedBaseBranch(normalizedGlobal)
+    globalBaseProvided &&
+    (!normalizedGlobal || !isValidRequestedBaseBranch(normalizedGlobal))
   ) {
     throw new BaseBranchPolicyError([
       {

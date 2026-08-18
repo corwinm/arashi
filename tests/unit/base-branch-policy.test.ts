@@ -141,6 +141,30 @@ describe("shared repository base branch policy", () => {
     }
   });
 
+  test("rejects an explicitly empty invocation-wide base", () => {
+    expect(() =>
+      resolveBaseBranchPolicy({
+        command: "clone",
+        config: config(),
+        globalBase: "",
+        selectedRepositoryNames: ["api"],
+      }),
+    ).toThrowError(BaseBranchPolicyError);
+
+    try {
+      resolveBaseBranchPolicy({
+        command: "clone",
+        config: config(),
+        globalBase: "",
+        selectedRepositoryNames: ["api"],
+      });
+    } catch (error) {
+      expect((error as BaseBranchPolicyError).issues).toEqual([
+        expect.objectContaining({ code: "INVALID_BRANCH", value: "" }),
+      ]);
+    }
+  });
+
   test("rejects repository overrides in standalone mode", () => {
     expect(() =>
       resolveBaseBranchPolicy({

@@ -8,7 +8,7 @@ import {
 import { ArashiError } from "../../src/lib/errors.ts";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import type { Config } from "../../src/lib/config.ts";
-import { join } from "path";
+import { basename, join } from "path";
 import { tmpdir } from "os";
 import { spawn } from "../helpers/node-runtime.ts";
 
@@ -275,7 +275,7 @@ describe("clone command", () => {
       { all: true },
       {
         addWorktree: async (source, destination, branch) => {
-          if (source.endsWith("/b")) throw new Error("later coordinated failure");
+          if (basename(source) === "b") throw new Error("later coordinated failure");
           const operation = await spawn(["git", "worktree", "add", destination, branch], {
             cwd: source,
           });

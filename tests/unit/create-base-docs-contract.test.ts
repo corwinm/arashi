@@ -9,15 +9,27 @@ const readme = readRepositoryDoc("README.md");
 const configuration = readRepositoryDoc("docs/configuration.md");
 
 describe("create base repository documentation contract", () => {
-  test("exposes the one-off base option in the command surface and example", () => {
-    expect(readme).toContain("arashi create <branch> [--base <branch>]");
-    expect(readme).toContain("arashi create feature-auth-refresh --base feature/auth");
+  test("exposes shared and repeatable repository base options", () => {
+    expect(readme).toContain(
+      "arashi clone [--all] [--base <branch>] [--repo-base <repository=branch>]",
+    );
+    expect(readme).toContain(
+      "arashi create <branch> [--base <branch>] [--repo-base <repository=branch>]",
+    );
+    expect(readme).toContain("arashi create feature-auth-refresh --repo-base @meta=develop");
   });
 
-  test("documents generic configuration, precedence, normalization, and standalone scope", () => {
-    expect(configuration).toContain('"baseBranch": "feature/auth"');
-    expect(configuration).toContain("`--base` → `defaults.create.baseBranch` → legacy behavior");
-    expect(configuration).toContain("removes at most one leading `origin/`");
-    expect(configuration).toContain("Standalone create accepts only the invocation-level `--base`");
+  test("documents canonical shared configuration, precedence, migration, and standalone scope", () => {
+    expect(configuration).toContain('"baseBranch": "main"');
+    expect(configuration).toContain("`meta.baseBranch`");
+    expect(configuration).toContain("`repos.<name>.baseBranch`");
+    expect(configuration).toContain(
+      "repository CLI → invocation CLI → repository config → workspace config",
+    );
+    expect(configuration).toContain("deprecated create-only compatibility input");
+    expect(configuration).toContain("clone never reads `defaults.create.baseBranch`");
+    expect(configuration).toMatch(
+      /Standalone create accepts only the\s+invocation-level\s+`--base`/,
+    );
   });
 });

@@ -140,8 +140,8 @@ Arashi currently provides these commands:
 - `arashi install`
 - `arashi update [--check] [--dry-run] [--yes]`
 - `arashi add <git-url>`
-- `arashi clone [--all]`
-- `arashi create <branch> [--base <branch>] [--tab] [--tmux|--sesh|--herdr]`
+- `arashi clone [--all] [--base <branch>] [--repo-base <repository=branch>]`
+- `arashi create <branch> [--base <branch>] [--repo-base <repository=branch>] [--tab] [--tmux|--sesh|--herdr]`
 - `arashi list`
 - `arashi status`
 - `arashi remove <branch|path>`
@@ -164,6 +164,8 @@ arashi add git@github.com:your-org/frontend.git
 arashi add git@github.com:your-org/backend.git
 arashi create feature-auth-refresh
 arashi create feature-auth-refresh --base feature/auth
+arashi create feature-auth-refresh --repo-base @meta=develop --repo-base frontend=release/2.x
+arashi clone --all --base main --repo-base frontend=release/2.x
 arashi create feature-auth-refresh --launch
 arashi create feature-auth-refresh --tmux
 arashi create feature-auth-refresh --herdr

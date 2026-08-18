@@ -1605,6 +1605,10 @@ const normalizePersistedRepoConfig = (repoConfig: RepoConfig): RepoConfig => {
     normalized.hooks = repoConfig.hooks;
   }
 
+  if (repoConfig.baseBranch) {
+    normalized.baseBranch = repoConfig.baseBranch;
+  }
+
   return normalized;
 };
 
@@ -1633,6 +1637,14 @@ const normalizePersistedConfig = (config: Config): Config => {
 
   if (config.defaults) {
     persisted.defaults = config.defaults;
+  }
+
+  if (config.baseBranch) {
+    persisted.baseBranch = config.baseBranch;
+  }
+
+  if (config.meta) {
+    persisted.meta = config.meta;
   }
 
   return persisted;

@@ -25,24 +25,20 @@ To enable JSON validation and editor autocomplete, include a `$schema` property:
   "$schema": "https://unpkg.com/arashi/schema/config.schema.json",
   "version": "1.0.0",
   "reposDir": "./repos",
+  "baseBranch": "main",
+  "meta": { "baseBranch": "develop" },
   "defaults": {
-    "create": {
-      "baseBranch": "feature/auth",
-      "switch": true,
-      "launch": "auto"
-    },
-    "editors": {
-      "vscode": {
-        "create": {
-          "launch": "sesh"
-        }
-      }
-    },
-    "switch": {
-      "mode": "sesh"
-    }
+    "create": { "switch": true, "launch": "auto" },
+    "editors": { "vscode": { "create": { "launch": "sesh" } } },
+    "switch": { "mode": "sesh" }
   },
-  "repos": {}
+  "repos": {
+    "api": {
+      "path": "./repos/api",
+      "gitUrl": "git@github.com:example/api.git",
+      "baseBranch": "release/2.x"
+    }
+  }
 }
 ```
 
@@ -147,22 +143,36 @@ Use `copy` for independent, isolated local configuration. Use `symlink` only for
 
 This behavior is configured-workspace-only; standalone create is not supported. Globs and remapping are not supported. Use lifecycle hooks for globs, remapping, external sources, interpolation, generated files, or conditional behavior. `arashi create --dry-run` previews the ordered plan without mutation, and `arashi doctor` inspects source availability and managed destination safety without repair.
 
+## Repository base branches
+
+Root `baseBranch` is the workspace default used by configured `create` and `clone` operations.
+`meta.baseBranch` overrides it for the meta repository during create, and
+`repos.<name>.baseBranch` overrides it for the named child repository. A one-off `--base <branch>`
+applies invocation-wide; repeat `--repo-base <selector=branch>` for repository-specific overrides.
+Create accepts the explicit `@meta` selector, while clone rejects it.
+
+The shared precedence is repository CLI → invocation CLI → repository config → workspace config.
+Arashi normalizes one leading `origin/`, validates every selected repository, and resolves every
+effective base before mutating worktrees or clones. Standalone create accepts only the invocation-level
+`--base`; repository-specific overrides require configured repository identities.
+
+`defaults.create.baseBranch` remains a deprecated create-only compatibility input for existing
+configurations. Configured create considers it only after the shared precedence has no value, and
+clone never reads `defaults.create.baseBranch`. Move that value to root `baseBranch`; conflicting
+canonical and deprecated values are rejected after logical branch normalization.
+
 ## Command Defaults
 
 You can set command-scoped defaults under `defaults`.
 
 ### `defaults.create`
 
-- `baseBranch` (Git branch name): the workspace-generic starting point for coordinated create
+- `baseBranch` (Git branch name): deprecated create-only compatibility input; use root `baseBranch`
 - `switch` (boolean): independent post-create switch handling
 - `launch` (`none` | `auto` | `sesh` | `herdr`): the single post-create launch choice
 
-For the create starting point, precedence is `--base` → `defaults.create.baseBranch` → legacy behavior.
-Arashi removes at most one leading `origin/`, resolves the resulting name in every selected repository
-as a local branch first and then as `origin`, and finishes that preflight before creating worktrees or
-running hooks. Editor-hosted create uses this same workspace-generic base; `baseBranch` is not valid in
-an editor-scoped create object. Standalone create accepts only the invocation-level `--base`; it does
-not load or persist workspace defaults.
+Editor-hosted create uses the same shared repository base policy; `baseBranch` is not valid in an
+editor-scoped create object. Standalone create does not load or persist workspace defaults.
 
 An absent `launch` preserves built-in no-launch behavior. `none` disables launch without disabling an independently enabled `switch`; `auto` uses context detection; and `sesh` or `herdr` select that launcher directly. Any enabled launch implies switch handling for the newly created primary worktree.
 
@@ -178,7 +188,6 @@ Example:
 {
   "defaults": {
     "create": {
-      "baseBranch": "feature/auth",
       "switch": true,
       "launch": "none"
     },
@@ -193,7 +202,7 @@ Example:
 }
 ```
 
-In that configuration, terminal `arashi create` uses the generic launch and switch defaults, while VS Code extension `create` uses `defaults.editors.vscode.create` for launch and switch. Both use the workspace-generic `defaults.create.baseBranch`. If an editor-hosted create invocation has no matching host override, Arashi applies no post-create launch or switch defaults unless the user passes explicit CLI flags.
+In that configuration, terminal `arashi create` uses the generic launch and switch defaults, while VS Code extension `create` uses `defaults.editors.vscode.create` for launch and switch. Both use the shared root/meta/repository base policy. If an editor-hosted create invocation has no matching host override, Arashi applies no post-create launch or switch defaults unless the user passes explicit CLI flags.
 
 ### `defaults.switch`
 
