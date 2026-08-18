@@ -103,8 +103,11 @@ const validateBranch = async (
   requestedBranch: string,
   validationPath: string,
   exec: typeof gitExec,
+  normalizeRequest: boolean,
 ): Promise<string> => {
-  const normalizedBranch = normalizeLogicalBranchName(requestedBranch);
+  const normalizedBranch = normalizeRequest
+    ? normalizeLogicalBranchName(requestedBranch)
+    : requestedBranch;
   try {
     await exec(["check-ref-format", "--branch", normalizedBranch], validationPath);
   } catch (error) {
@@ -167,7 +170,7 @@ export const createBaseResolver = (dependencies: CreateBaseResolverDependencies 
     for (const request of requests) {
       normalizedByRequest.set(
         request,
-        await validateBranch(request.requestedBranch, validationPath, exec),
+        await validateBranch(request.requestedBranch, validationPath, exec, !perRepository),
       );
     }
 

@@ -563,14 +563,18 @@ export async function executeClone(
             repository.path,
             policy?.requestedBranch ? { branch: policy.requestedBranch } : undefined,
           );
-          if (
-            sourceWorkspaceRoot &&
-            currentBranch &&
-            policy?.requestedBranch &&
-            currentBranch !== policy.requestedBranch
-          ) {
-            const baseOid = clonePlans.get(repository.name)?.baseOid ?? policy.requestedBranch;
-            await exec(["checkout", "-b", currentBranch, baseOid], repository.path);
+          const plan = clonePlans.get(repository.name);
+          const plannedBase = plan?.baseOid ?? policy?.requestedBranch;
+          if (sourceWorkspaceRoot && currentBranch && plannedBase) {
+            const targetOid = await resolveOptionalCommit(
+              repository.path,
+              `refs/heads/${currentBranch}`,
+            );
+            if (targetOid) {
+              await exec(["checkout", currentBranch], repository.path);
+            } else {
+              await exec(["checkout", "-b", currentBranch, plannedBase], repository.path);
+            }
           }
           ownership.push({ createdTarget: false, destinationPath: repository.path });
           configUpdated = configUpdated || repository.config.gitUrl !== cloneUrl;

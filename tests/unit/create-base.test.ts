@@ -256,6 +256,27 @@ describe("resolveCreateBasePlan", () => {
     expect(failure).not.toBeInstanceOf(CreateBaseResolutionError);
   });
 
+  test("validates already-normalized policy branches as literals", async () => {
+    const repository = await createRepository("policy-literal");
+    await exec(["branch", "origin/HEAD"], repository.path);
+
+    const plan = await resolveCreateBasePlan(
+      [repository],
+      [
+        {
+          repositoryName: repository.name,
+          requestedBranch: "origin/HEAD",
+          source: "cli",
+        },
+      ],
+    );
+
+    expect(plan.repositories[0]).toMatchObject({
+      requestedBranch: "origin/HEAD",
+      resolvedRef: "refs/heads/origin/HEAD",
+    });
+  });
+
   test("resolves different immutable bases and policy sources per selected repository", async () => {
     const meta = await createRepository("workspace");
     const api = await createRepository("api");

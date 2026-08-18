@@ -359,6 +359,53 @@ describe("clone command", () => {
     }
   });
 
+  test("checks out the coordinated target for a remote-only omitted base in a mixed-policy run", async () => {
+    const sourceRoot = join(workspaceRoot, "remote-only-mixed-source");
+    const remoteRoot = join(workspaceRoot, "remote-only-mixed-remotes");
+    const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "remote-only-mixed-target");
+    await mkdir(join(executionRoot, "repos"), { recursive: true });
+    const localSource = join(sourceRoot, "repos", "a");
+    const remoteOnlySource = join(remoteRoot, "b");
+    for (const repository of [localSource, remoteOnlySource]) {
+      await mkdir(repository, { recursive: true });
+      await spawn(["git", "init"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.email", "test@example.com"], { cwd: repository }).exited;
+      await spawn(["git", "config", "user.name", "Test"], { cwd: repository }).exited;
+      await spawn(["git", "config", "commit.gpgSign", "false"], { cwd: repository }).exited;
+      await writeFile(join(repository, "README.md"), `${repository}\n`);
+      await spawn(["git", "add", "README.md"], { cwd: repository }).exited;
+      await spawn(["git", "commit", "-m", "base"], { cwd: repository }).exited;
+    }
+    await spawn(["git", "branch", "integration"], { cwd: localSource }).exited;
+    const config: Config = {
+      repos: {
+        a: { baseBranch: "integration", gitUrl: localSource, path: "./repos/a" },
+        b: { gitUrl: remoteOnlySource, path: "./repos/b" },
+      },
+      reposDir: "./repos",
+      version: "1.0.0",
+    };
+
+    const result = await executeClone(
+      { all: true },
+      {
+        loadConfig: async () => config,
+        resolveCurrentBranch: async () => "feature/mixed-remote",
+        resolveSourceWorkspaceRoot: () => sourceRoot,
+        saveConfig: async () => {},
+        workspaceRoots: { configurationRoot: workspaceRoot, executionRoot },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    const remoteOnlyDestination = join(executionRoot, "repos", "b");
+    expect(
+      await spawn(["git", "branch", "--show-current"], { cwd: remoteOnlyDestination }).exited,
+    ).toBe(0);
+    const branch = await spawn(["git", "branch", "--show-current"], { cwd: remoteOnlyDestination });
+    expect((await new Response(branch.stdout).text()).trim()).toBe("feature/mixed-remote");
+  });
+
   test("creates a missing coordinated target from the effective base and checks out the target", async () => {
     const sourceRoot = join(workspaceRoot, "source");
     const executionRoot = join(workspaceRoot, ".arashi", "worktrees", "feature-demo");
