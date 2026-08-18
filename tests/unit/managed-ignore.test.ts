@@ -87,6 +87,260 @@ describe("managed ignore path classification", () => {
     });
   });
 
+  test("uses Git to discover an effective tracked ignore rule from a CRLF checkout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-crlf-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    await git(root, ["config", "user.email", "test@example.com"]);
+    await git(root, ["config", "user.name", "Test User"]);
+    await git(root, ["config", "core.autocrlf", "true"]);
+    await writeFile(join(root, ".gitignore"), "repos/\n");
+    await git(root, ["add", ".gitignore"]);
+    await git(root, ["commit", "-m", "Track ignore rules"]);
+    await rm(join(root, ".gitignore"));
+    await git(root, ["checkout", "--", ".gitignore"]);
+    expect(await readFile(join(root, ".gitignore"), "utf8")).toBe("repos/\r\n");
+
+    const inspection = await inspectManagedIgnore({
+      reposDir: "repos",
+      workspaceRoot: root,
+      worktreesDir: ".arashi/worktrees",
+    });
+
+    expect(inspection.paths[0]).toMatchObject({
+      source: { path: ".gitignore", pattern: "repos/", type: "tracked" },
+      status: "already-ignored",
+    });
+  });
+
+  test("recovers malformed successful primary output through one direct Git query", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-recovery-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    const requests: { args: string[]; stdin?: string }[] = [];
+
+    const inspection = await inspectManagedIgnore(
+      { reposDir: "repos", workspaceRoot: root, worktreesDir: "." },
+      async ({ args, stdin }) => {
+        requests.push({ args, stdin });
+        return requests.length === 1
+          ? { exitCode: 0, stderr: "", stdout: "malformed-primary" }
+          : { exitCode: 0, stderr: "", stdout: ".gitignore:7:repos/\trepos/\n" };
+      },
+    );
+
+    expect(inspection.paths[0]).toMatchObject({
+      source: { path: ".gitignore", pattern: "repos/", type: "tracked" },
+      status: "already-ignored",
+    });
+    expect(requests).toEqual([
+      {
+        args: ["check-ignore", "-z", "-v", "--no-index", "--stdin"],
+        stdin: "repos/\0",
+      },
+      {
+        args: ["check-ignore", "-v", "--no-index", "--", "repos/"],
+        stdin: undefined,
+      },
+    ]);
+  });
+
+  test.each([
+    [
+      "quoted Unicode requested path",
+      String.raw`.gitignore:7:répos/` + "\t" + String.raw`"r\303\251pos/"` + "\n",
+      "répos",
+      { path: ".gitignore", pattern: "répos/", type: "tracked" },
+    ],
+    [
+      "quoted requested path containing a quote",
+      String.raw`.gitignore:8:quote"dir/` + "\t" + String.raw`"quote\"dir/"` + "\n",
+      'quote"dir',
+      { path: ".gitignore", pattern: 'quote"dir/', type: "tracked" },
+    ],
+    [
+      "quoted local exclude source",
+      String.raw`".git/info/excl\165de":9:repos/` + "\trepos/\n",
+      "repos",
+      { path: ".git/info/exclude", pattern: "repos/", type: "local" },
+    ],
+  ])("decodes Git C-style quoting for %s", async (_case, fallbackStdout, reposDir, source) => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-quoted-recovery-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    let calls = 0;
+
+    const inspection = await inspectManagedIgnore(
+      { reposDir, workspaceRoot: root, worktreesDir: "." },
+      async () => {
+        calls += 1;
+        return calls === 1
+          ? { exitCode: 0, stderr: "", stdout: "malformed-primary" }
+          : { exitCode: 0, stderr: "", stdout: fallbackStdout };
+      },
+    );
+
+    expect(inspection.paths[0]).toMatchObject({ source, status: "already-ignored" });
+    expect(calls).toBe(2);
+  });
+
+  test.each([
+    ["short octal escape", String.raw`.gitignore:7:?/` + "\t" + String.raw`"\77/"` + "\n", "?"],
+    [
+      "out-of-range octal escape",
+      String.raw`.gitignore:7:?/` + "\t" + String.raw`"\477/"` + "\n",
+      "?",
+    ],
+    [
+      "unescaped interior quote",
+      String.raw`.gitignore:7:a"b/` + "\t" + String.raw`"a"b/"` + "\n",
+      'a"b',
+    ],
+  ])("fails closed for fallback output with %s", async (_case, fallbackStdout, reposDir) => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-invalid-quote-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    let calls = 0;
+
+    const inspection = inspectManagedIgnore(
+      { reposDir, workspaceRoot: root, worktreesDir: "." },
+      async () => {
+        calls += 1;
+        return calls === 1
+          ? { exitCode: 0, stderr: "", stdout: "malformed-primary" }
+          : { exitCode: 0, stderr: "", stdout: fallbackStdout };
+      },
+    );
+
+    await expect(inspection).rejects.toThrowError(/invalid Git path quoting/);
+    expect(calls).toBe(2);
+  });
+
+  test.each([
+    ["malformed", ".gitignore:not-a-line:repos/\trepos/\n", "malformed"],
+    ["path-mismatched", ".gitignore:7:repos/\tother/\n", "path mismatch"],
+    ["delimiter-ambiguous", "first:1:middle:2:last\trepos/\n", "ambiguous"],
+  ])("fails closed when fallback output is %s", async (_case, fallbackStdout, outcome) => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-recovery-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    let calls = 0;
+
+    const inspection = inspectManagedIgnore(
+      { reposDir: "repos", workspaceRoot: root, worktreesDir: "." },
+      async () => {
+        calls += 1;
+        return calls === 1
+          ? { exitCode: 0, stderr: "", stdout: "secret-binary\0payload" }
+          : { exitCode: 0, stderr: "", stdout: fallbackStdout };
+      },
+    );
+
+    await expect(inspection).rejects.toThrowError(
+      expect.objectContaining({
+        message: expect.stringContaining("primary payload was malformed"),
+      }),
+    );
+    await expect(inspection).rejects.toThrowError(
+      expect.objectContaining({ message: expect.stringContaining(outcome) }),
+    );
+    await expect(inspection).rejects.not.toThrowError(/secret-binary/);
+    expect(calls).toBe(2);
+  });
+
+  test.each([
+    ["no match", { exitCode: 1, stderr: "", stdout: "" }, "reported no match"],
+    ["fatal exit", { exitCode: 128, stderr: "secret stderr", stdout: "" }, "exit code 128"],
+    [
+      "spawn failure",
+      { exitCode: -1, spawnError: new Error("secret spawn error"), stderr: "", stdout: "" },
+      "failed to spawn",
+    ],
+  ])("reports the fallback %s outcome without raw output", async (_case, fallback, outcome) => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-recovery-outcome-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    let calls = 0;
+
+    const inspection = inspectManagedIgnore(
+      { reposDir: "repos", workspaceRoot: root, worktreesDir: "." },
+      async () => {
+        calls += 1;
+        return calls === 1
+          ? { exitCode: 0, stderr: "", stdout: "secret-primary-output" }
+          : fallback;
+      },
+    );
+
+    await expect(inspection).rejects.toThrowError(
+      expect.objectContaining({ message: expect.stringContaining(outcome) }),
+    );
+    await expect(inspection).rejects.not.toThrowError(
+      /secret-primary-output|secret stderr|secret spawn/,
+    );
+    expect(calls).toBe(2);
+  });
+
+  test("does not recover when the primary query reports no match", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-no-match-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    let calls = 0;
+
+    const inspection = await inspectManagedIgnore(
+      { reposDir: "repos", workspaceRoot: root, worktreesDir: "." },
+      async () => {
+        calls += 1;
+        return { exitCode: 1, stderr: "", stdout: "" };
+      },
+    );
+
+    expect(inspection.paths[0]).toMatchObject({ status: "unignored" });
+    expect(inspection.paths[0]?.source).toBeUndefined();
+    expect(calls).toBe(1);
+  });
+
+  test("does not recover when the primary query fails to spawn", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-primary-spawn-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    let calls = 0;
+
+    const inspection = inspectManagedIgnore(
+      { reposDir: "repos", workspaceRoot: root, worktreesDir: "." },
+      async () => {
+        calls += 1;
+        return {
+          exitCode: -1,
+          spawnError: new Error("primary spawn failed"),
+          stderr: "",
+          stdout: "",
+        };
+      },
+    );
+
+    await expect(inspection).rejects.toThrowError(/primary spawn failed/);
+    expect(calls).toBe(1);
+  });
+
+  test("does not recover when the primary query fails fatally", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-fatal-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    let calls = 0;
+
+    const inspection = inspectManagedIgnore(
+      { reposDir: "repos", workspaceRoot: root, worktreesDir: "." },
+      async () => {
+        calls += 1;
+        return { exitCode: 128, stderr: "fatal: inspection failed", stdout: "" };
+      },
+    );
+
+    await expect(inspection).rejects.toThrowError(/fatal: inspection failed/);
+    expect(calls).toBe(1);
+  });
+
   test("parses delimiter-safe effective source data", async () => {
     if (process.platform === "win32") {
       return;
