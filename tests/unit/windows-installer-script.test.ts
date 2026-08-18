@@ -14,6 +14,15 @@ function functionBody(name: string): string {
 }
 
 describe("Windows PowerShell installer", () => {
+  test("uses aw as the primary command in final PATH verification guidance", () => {
+    expect(script).toContain(
+      "Run 'aw --version' from a new terminal to verify PATH setup. The legacy-compatible 'arashi --version' command remains available.",
+    );
+    expect(script).not.toContain(
+      "Run 'arashi --version' or shorthand 'aw --version' from a new terminal to verify PATH setup.",
+    );
+  });
+
   test("documents the hosted one-line PowerShell install command", () => {
     expect(script).toContain('powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"');
   });

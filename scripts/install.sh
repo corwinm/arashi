@@ -823,7 +823,7 @@ print_post_install_notes() {
       *":$install_dir:"*)
         ;;
       *)
-        warn "$install_dir is not on PATH. Add it to use 'arashi' directly"
+        warn "$install_dir is not on PATH. Add it to use 'aw' directly"
         warn "Example: export PATH=\"$install_dir:\$PATH\""
         ;;
     esac
@@ -840,16 +840,16 @@ spec-driven development workflow in a multi-repository environment.
 
 Get started in a new project:
   cd <project>                  # Open your meta-repository
-  arashi init                   # Initialize arashi
-  arashi add git@github.com:<your-org>/frontend.git # Add a sub-repository
-  arashi add git@github.com:<your-org>/backend.git  # Add another sub-repository
-  arashi create <feature-name>  # Create a new worktrees for your feature branch
-  arashi switch <feature-name>  # Switch to your new feature worktrees
+  aw init                       # Initialize Arashi
+  aw add git@github.com:<your-org>/frontend.git # Add a sub-repository
+  aw add git@github.com:<your-org>/backend.git  # Add another sub-repository
+  aw create <feature-name>      # Create new worktrees for your feature branch
+  aw switch <feature-name>      # Switch to your new feature worktrees
 
 For more information visit https://arashi.haphazard.dev
 
 If you skip shell integration during install, you can enable it later with:
-  arashi shell install
+  aw shell install
 EOF
 }
 
