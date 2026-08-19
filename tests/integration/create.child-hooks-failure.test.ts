@@ -101,7 +101,6 @@ exit 19`,
     expect(output).toContain(`    Repository: ${timeoutRepo}`);
     expect(output).toContain(`    Hook: post-create.${timeoutRepo}`);
     expect(output).toContain("    Reason: timeout");
-    expect(output).toContain("    Message: Hook timed out after configured limit");
     expect(output).toContain("Next steps:");
   });
 });

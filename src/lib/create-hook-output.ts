@@ -31,7 +31,7 @@ export const formatCreateHookSummary = (
       `    Source: ${outcome.sourceKind} (${formatSourceOwner(outcome)})`,
       `    Reason: ${outcome.reasonCode}`,
     );
-    if (outcome.reasonCode !== "exit_non_zero") {
+    if (outcome.reasonCode !== "exit_non_zero" && outcome.reasonCode !== "timeout") {
       for (const messageLine of stripVTControlCharacters(outcome.message).split(/\r\n?|\n/)) {
         lines.push(`    Message: ${messageLine}`);
       }

@@ -99,7 +99,6 @@ describe("formatCreateHookSummary", () => {
       "    Scope: workspace",
       "    Source: inline-config (workspace)",
       "    Reason: timeout",
-      "    Message: Hook timed out after configured limit",
     ]);
   });
 
@@ -149,7 +148,7 @@ describe("formatCreateHookSummary", () => {
     );
   });
 
-  test("does not duplicate nonzero hook stderr into the human summary stream", () => {
+  test("does not duplicate executed hook stderr into the human summary stream", () => {
     const lines = formatCreateHookSummary([
       outcome({
         hookName: "post-create.alpha",
@@ -158,9 +157,18 @@ describe("formatCreateHookSummary", () => {
         reasonCode: "exit_non_zero",
         repositoryId: "alpha",
       }),
+      outcome({
+        hookName: "post-create.beta",
+        hookStatus: "failure",
+        message: "timeout hook stderr",
+        reasonCode: "timeout",
+        repositoryId: "beta",
+      }),
     ]);
 
     expect(lines).toContain("    Reason: exit_non_zero");
+    expect(lines).toContain("    Reason: timeout");
     expect(lines.join("\n")).not.toContain("sensitive hook stderr");
+    expect(lines.join("\n")).not.toContain("timeout hook stderr");
   });
 });
