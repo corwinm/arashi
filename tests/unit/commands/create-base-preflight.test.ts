@@ -20,8 +20,8 @@ const repositories: Repository[] = [
 
 function loadedConfig(baseBranch = "config/base"): LoadedConfig {
   const config: Config = {
+    baseBranch,
     defaults: {
-      create: { baseBranch },
       editors: { vscode: { create: { launch: "none" } } },
     },
     repos: Object.fromEntries(
@@ -161,8 +161,8 @@ describe("configured create base preflight", () => {
     ).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain(
-      "defaults.create.baseBranch: must be a valid Git branch name",
+    expect((error as Error).message).toMatch(
+      /defaults\.create\.baseBranch.*removed.*root baseBranch/i,
     );
     expect(reached).toEqual([]);
   });

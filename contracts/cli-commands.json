@@ -204,7 +204,6 @@
             "repositoryBase": {
               "configuration": {
                 "child": "repos.<name>.baseBranch",
-                "legacyCreateOnly": "defaults.create.baseBranch",
                 "meta": "meta.baseBranch",
                 "workspace": "baseBranch"
               },
@@ -224,7 +223,6 @@
                 "cli",
                 "repository-config",
                 "workspace-config",
-                "legacy-create-config",
                 "legacy-omitted"
               ],
               "sources": [
@@ -237,7 +235,12 @@
               "scope": {
                 "clone": "configured-only",
                 "create": "configured-and-standalone-global",
-                "repositoryOverride": "configured-only"
+                "doctor": "configured-only",
+                "handoff": "configured-only",
+                "pull": "configured-only-with-upstream-fallback-when-absent",
+                "pushFallback": "configured-no-upstream-only",
+                "repositoryOverride": "configured-only",
+                "status": "configured-only"
               },
               "clone": {
                 "coordinated": "checkout-current-target-from-effective-base",
@@ -269,7 +272,6 @@
             "repositoryBase": {
               "configuration": {
                 "child": "repos.<name>.baseBranch",
-                "legacyCreateOnly": "defaults.create.baseBranch",
                 "meta": "meta.baseBranch",
                 "workspace": "baseBranch"
               },
@@ -289,7 +291,6 @@
                 "cli",
                 "repository-config",
                 "workspace-config",
-                "legacy-create-config",
                 "legacy-omitted"
               ],
               "sources": [
@@ -302,7 +303,12 @@
               "scope": {
                 "clone": "configured-only",
                 "create": "configured-and-standalone-global",
-                "repositoryOverride": "configured-only"
+                "doctor": "configured-only",
+                "handoff": "configured-only",
+                "pull": "configured-only-with-upstream-fallback-when-absent",
+                "pushFallback": "configured-no-upstream-only",
+                "repositoryOverride": "configured-only",
+                "status": "configured-only"
               },
               "clone": {
                 "coordinated": "checkout-current-target-from-effective-base",
@@ -501,7 +507,6 @@
             "repositoryBase": {
               "configuration": {
                 "child": "repos.<name>.baseBranch",
-                "legacyCreateOnly": "defaults.create.baseBranch",
                 "meta": "meta.baseBranch",
                 "workspace": "baseBranch"
               },
@@ -521,7 +526,6 @@
                 "cli",
                 "repository-config",
                 "workspace-config",
-                "legacy-create-config",
                 "legacy-omitted"
               ],
               "sources": [
@@ -534,7 +538,12 @@
               "scope": {
                 "clone": "configured-only",
                 "create": "configured-and-standalone-global",
-                "repositoryOverride": "configured-only"
+                "doctor": "configured-only",
+                "handoff": "configured-only",
+                "pull": "configured-only-with-upstream-fallback-when-absent",
+                "pushFallback": "configured-no-upstream-only",
+                "repositoryOverride": "configured-only",
+                "status": "configured-only"
               },
               "clone": {
                 "coordinated": "checkout-current-target-from-effective-base",
@@ -730,7 +739,6 @@
             "repositoryBase": {
               "configuration": {
                 "child": "repos.<name>.baseBranch",
-                "legacyCreateOnly": "defaults.create.baseBranch",
                 "meta": "meta.baseBranch",
                 "workspace": "baseBranch"
               },
@@ -750,7 +758,6 @@
                 "cli",
                 "repository-config",
                 "workspace-config",
-                "legacy-create-config",
                 "legacy-omitted"
               ],
               "sources": [
@@ -763,7 +770,12 @@
               "scope": {
                 "clone": "configured-only",
                 "create": "configured-and-standalone-global",
-                "repositoryOverride": "configured-only"
+                "doctor": "configured-only",
+                "handoff": "configured-only",
+                "pull": "configured-only-with-upstream-fallback-when-absent",
+                "pushFallback": "configured-no-upstream-only",
+                "repositoryOverride": "configured-only",
+                "status": "configured-only"
               },
               "clone": {
                 "coordinated": "checkout-current-target-from-effective-base",

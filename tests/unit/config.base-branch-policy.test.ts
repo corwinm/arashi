@@ -1,10 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  ConfigValidationError,
-  normalizeConfig,
-  normalizeConfigWithDiagnostics,
-  serializeConfig,
-} from "../../src/lib/config.ts";
+import { ConfigValidationError, normalizeConfig, serializeConfig } from "../../src/lib/config.ts";
 
 const minimal = {
   reposDir: "./repos",
@@ -76,56 +71,23 @@ describe("base branch configuration", () => {
     }
   });
 
-  test("keeps the legacy create key and emits one actionable migration diagnostic", () => {
-    const result = normalizeConfigWithDiagnostics({
-      ...minimal,
-      defaults: { create: { baseBranch: "integration" } },
-      repos: {},
-    });
-    expect(result.config.defaults?.create?.baseBranch).toBe("integration");
-    expect(result.diagnostics).toEqual([
-      expect.objectContaining({
-        code: "DEPRECATED_CREATE_BASE_BRANCH",
-        fields: ["defaults.create.baseBranch"],
-        replacementPath: "baseBranch",
-      }),
-    ]);
-  });
-
-  test("rejects conflicting canonical and legacy values but accepts matching values", () => {
+  test("rejects the removed create-specific base branch and points to root baseBranch", () => {
     expect(() =>
       normalizeConfig({
         ...minimal,
-        baseBranch: "main",
-        defaults: { create: { baseBranch: "develop" } },
+        defaults: { create: { baseBranch: "integration" } },
         repos: {},
       }),
-    ).toThrow(/baseBranch.*defaults\.create\.baseBranch/);
-
-    const matching = normalizeConfigWithDiagnostics({
-      ...minimal,
-      baseBranch: "main",
-      defaults: { create: { baseBranch: "main" } },
-      repos: {},
-    });
-    expect(matching.config.baseBranch).toBe("main");
-    expect(
-      matching.diagnostics.filter((item) => item.code === "DEPRECATED_CREATE_BASE_BRANCH"),
-    ).toHaveLength(1);
+    ).toThrow(/defaults\.create\.baseBranch.*removed.*root baseBranch/i);
   });
 
-  test("compares canonical and legacy values after logical branch normalization", () => {
-    const matching = normalizeConfigWithDiagnostics({
-      ...minimal,
-      baseBranch: "origin/main",
-      defaults: { create: { baseBranch: "main" } },
-      repos: {},
-    });
-
-    expect(matching.config.baseBranch).toBe("origin/main");
-    expect(matching.config.defaults?.create?.baseBranch).toBe("main");
+  test("preserves the supported create launch and switch defaults", () => {
     expect(
-      matching.diagnostics.filter((item) => item.code === "DEPRECATED_CREATE_BASE_BRANCH"),
-    ).toHaveLength(1);
+      normalizeConfig({
+        ...minimal,
+        defaults: { create: { launch: "herdr", switch: true } },
+        repos: {},
+      }).defaults?.create,
+    ).toEqual({ launch: "herdr", switch: true });
   });
 });

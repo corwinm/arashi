@@ -230,6 +230,273 @@ describe("checkRepoStatus", () => {
     });
   });
 
+  test("records configured-base drift and de-duplicates upstream and default targets", async () => {
+    const calls: string[] = [];
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "integration",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async (_path, current, branch) => {
+          calls.push(`base:${current}:${branch}`);
+          return {
+            ahead: 2,
+            behind: 4,
+            branch,
+            compareRef: "refs/remotes/origin/integration",
+            state: "available" as const,
+          };
+        },
+        compareCurrentBranchToDefaultBranch: async (_path, _current, _detached, skipped) => {
+          calls.push(`default-skips:${(skipped ?? []).join(",")}`);
+          return {
+            branch: "integration",
+            reason: "on-default-branch" as const,
+            state: "skipped" as const,
+          };
+        },
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: "## feature/demo...origin/feature/demo",
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "feature/demo", remote: "origin", upstream: "origin/feature/demo" },
+        }),
+      },
+    });
+
+    expect(calls).toEqual([
+      "base:feature/demo:integration",
+      "default-skips:refs/remotes/origin/feature/demo,refs/remotes/origin/integration",
+    ]);
+    expect(status.baseBranch).toEqual({
+      ahead: 2,
+      behind: 4,
+      branch: "integration",
+      compareRef: "refs/remotes/origin/integration",
+      state: "available",
+    });
+  });
+
+  test("de-duplicates a configured base only when it resolves to the upstream ref", async () => {
+    let skippedRefs: readonly string[] = [];
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "feature/demo",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async (
+          _path,
+          _current,
+          _branch,
+          _detached,
+          skipped,
+        ) => {
+          skippedRefs = skipped ?? [];
+          return {
+            branch: "feature/demo",
+            compareRef: "refs/remotes/origin/feature/demo",
+            reason: "duplicate-target" as const,
+            state: "skipped" as const,
+          };
+        },
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          reason: "on-default-branch" as const,
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: "## feature/demo...origin/feature/demo",
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "feature/demo", remote: "origin", upstream: "origin/feature/demo" },
+        }),
+      },
+    });
+    expect(skippedRefs).toEqual(["refs/remotes/origin/feature/demo"]);
+    expect(status.baseBranch).toMatchObject({
+      ahead: 0,
+      behind: 0,
+      branch: "feature/demo",
+      compareRef: "refs/remotes/origin/feature/demo",
+      state: "available",
+    });
+  });
+
+  test("preserves an upstream refresh failure for a matching configured base", async () => {
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "feature/demo",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async () => ({
+          branch: "feature/demo",
+          compareRef: "refs/remotes/origin/feature/demo",
+          reason: "duplicate-target" as const,
+          remote: "origin",
+          remoteRef: "origin/feature/demo",
+          state: "skipped" as const,
+        }),
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          reason: "on-default-branch" as const,
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({
+          error: "authentication failed",
+          kind: "generic" as const,
+          message: "Unable to refresh origin/feature/demo: authentication failed",
+          ok: false as const,
+        }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: "## feature/demo...origin/feature/demo [ahead 1]",
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "feature/demo", remote: "origin", upstream: "origin/feature/demo" },
+        }),
+      },
+    });
+
+    expect(status.baseBranch).toEqual({
+      branch: "feature/demo",
+      compareRef: "refs/remotes/origin/feature/demo",
+      details: { error: "authentication failed", kind: "generic" },
+      message: "Unable to refresh origin/feature/demo: authentication failed",
+      reason: "refresh-failed",
+      remote: "origin",
+      remoteRef: "origin/feature/demo",
+      state: "unavailable",
+    });
+  });
+
+  test("compares equal branch names when configured base and upstream use different remotes", async () => {
+    let skippedRefs: readonly string[] = [];
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "main",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async (
+          _path,
+          _current,
+          branch,
+          _detached,
+          skipped,
+        ) => {
+          skippedRefs = skipped ?? [];
+          return {
+            ahead: 1,
+            behind: 3,
+            branch,
+            compareRef: "refs/remotes/origin/main",
+            remote: "origin",
+            remoteRef: "origin/main",
+            state: "available" as const,
+          };
+        },
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          compareRef: "refs/remotes/origin/main",
+          reason: "duplicate-target" as const,
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({ error: null, output: "## main...fork/main" }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "main", remote: "fork", upstream: "fork/main" },
+        }),
+      },
+    });
+
+    expect(skippedRefs).toEqual(["refs/remotes/fork/main"]);
+    expect(status.baseBranch).toMatchObject({
+      behind: 3,
+      compareRef: "refs/remotes/origin/main",
+      state: "available",
+    });
+  });
+
+  test("projects upstream counts into a matching default-branch role", async () => {
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      dependencies: {
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          compareRef: "refs/remotes/origin/main",
+          reason: "duplicate-target" as const,
+          remote: "origin",
+          remoteRef: "origin/main",
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: "## main...origin/main [ahead 2, behind 3]",
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "main", remote: "origin", upstream: "origin/main" },
+        }),
+      },
+    });
+
+    expect(status.defaultBranch).toEqual({
+      ahead: 2,
+      behind: 3,
+      branch: "main",
+      compareRef: "refs/remotes/origin/main",
+      remote: "origin",
+      remoteRef: "origin/main",
+      state: "available",
+    });
+  });
+
+  test("compares a configured base when the synthesized tracking target has no upstream", async () => {
+    let skippedCompareRefs: readonly string[] = ["unexpected"];
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      baseBranch: "feature/demo",
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async (
+          _path,
+          _currentBranch,
+          _configuredBranch,
+          _detached,
+          skipCompareRefs,
+        ) => {
+          skippedCompareRefs = skipCompareRefs ?? [];
+          return {
+            ahead: 0,
+            behind: 4,
+            branch: "feature/demo",
+            compareRef: "refs/remotes/origin/feature/demo",
+            remote: "origin",
+            remoteRef: "origin/feature/demo",
+            state: "available" as const,
+          };
+        },
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: null,
+          reason: "unresolved" as const,
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => ({ ok: true }),
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({ error: null, output: "## feature/demo" }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "feature/demo", remote: "origin", upstream: null },
+        }),
+      },
+    });
+
+    expect(skippedCompareRefs).toEqual([]);
+    expect(status.baseBranch).toMatchObject({ behind: 4, state: "available" });
+  });
+
   test("skips remote refresh when no tracking target can be resolved", async () => {
     let fetchCalled = false;
 
@@ -348,7 +615,9 @@ describe("checkRepoStatus", () => {
       dependencies: {
         compareCurrentBranchToDefaultBranch: async () => ({
           branch: "main",
+          details: { error: "Git command failed: authentication required" },
           message: "Git command failed: authentication required",
+          reason: "comparison-failed" as const,
           state: "unavailable" as const,
         }),
         fetchRemoteTrackingTarget: async () => ({ ok: true }),
@@ -373,13 +642,63 @@ describe("checkRepoStatus", () => {
     expect(status.files).toHaveLength(1);
     expect(status.defaultBranch).toEqual({
       branch: "main",
+      details: { error: "Git command failed: authentication required" },
       message: "Git command failed: authentication required",
+      reason: "comparison-failed",
       state: "unavailable",
     });
   });
 });
 
 describe("status formatting", () => {
+  test("renders configured-base ahead and behind counts", () => {
+    const status = {
+      baseBranch: { ahead: 2, behind: 4, branch: "integration", state: "available" as const },
+      branch: {
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+        localBranch: "feature/demo",
+        remoteBranch: "origin/feature/demo",
+      },
+      error: null,
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
+    };
+
+    expect(formatRepoSection(status)).toContain("Base: integration [↑2, ↓4]");
+    expect(formatShortLine(status)).toContain("base:integration↑2↓4");
+  });
+
+  test("combines equal configured-base and default drift in short output", () => {
+    const comparison = {
+      ahead: 0,
+      behind: 4,
+      branch: "main",
+      compareRef: "refs/remotes/origin/main",
+      state: "available" as const,
+    };
+    const line = formatShortLine({
+      baseBranch: comparison,
+      branch: {
+        ahead: 0,
+        behind: 0,
+        isDetached: false,
+        localBranch: "feature/demo",
+        remoteBranch: "origin/feature/demo",
+      },
+      defaultBranch: { ...comparison },
+      error: null,
+      files: [],
+      name: "repo-a",
+      path: "/tmp/repo-a",
+    });
+
+    expect(line).toContain("base/default:main↓4");
+    expect(line).not.toContain("default↓4");
+  });
+
   test("renders missing remote branch inline on the branch line", () => {
     const section = formatRepoSection({
       branch: {
@@ -441,7 +760,9 @@ describe("status formatting", () => {
       },
       defaultBranch: {
         branch: "main",
+        details: { error: "Git command failed: authentication required" },
         message: "Git command failed: authentication required",
+        reason: "comparison-failed",
         state: "unavailable",
       },
       error: null,
@@ -539,7 +860,9 @@ describe("formatShortLine", () => {
       },
       defaultBranch: {
         branch: "main",
+        details: { error: "Git command failed: authentication required" },
         message: "Git command failed: authentication required",
+        reason: "comparison-failed",
         state: "unavailable",
       },
       error: null,

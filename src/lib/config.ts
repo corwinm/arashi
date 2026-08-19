@@ -58,7 +58,7 @@ export interface RepoConfig {
   /** Optional repository-targeted inline lifecycle hooks */
   hooks?: InlineHookScripts;
   /**
-   * Repository-specific base branch for configured create and clone
+   * Repository-specific base branch for configured base-aware commands
    * @minLength 1
    * @pattern ^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\.|//|\.\.|@\{))(?!.*\.lock(?:/|$))(?!.*[/.]$)[^\u0000-\u0020\u007F~^:?*\[\\]+$
    */
@@ -102,7 +102,7 @@ export type ConfigVersion = typeof CURRENT_CONFIG_VERSION;
 /** Meta-repository-specific configuration. */
 export interface MetaRepositoryConfig {
   /**
-   * Meta-repository-specific base branch for configured create
+   * Meta-repository-specific base branch for configured base-aware commands
    * @minLength 1
    * @pattern ^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\.|//|\.\.|@\{))(?!.*\.lock(?:/|$))(?!.*[/.]$)[^\u0000-\u0020\u007F~^:?*\[\\]+$
    */
@@ -137,7 +137,7 @@ export interface Config {
     timeoutSeconds?: number;
   };
   /**
-   * Workspace base branch shared by configured create and clone
+   * Workspace base branch shared by configured base-aware commands
    * @minLength 1
    * @pattern ^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\.|//|\.\.|@\{))(?!.*\.lock(?:/|$))(?!.*[/.]$)[^\u0000-\u0020\u007F~^:?*\[\\]+$
    */
@@ -156,12 +156,6 @@ export type SwitchMode = "auto" | "cd" | "launch" | "sesh" | "herdr";
 export type CreateDefaultsEditorHost = "vscode" | "cursor" | "kiro";
 
 export interface CreateCommandDefaults {
-  /**
-   * Default base branch for configured create invocations
-   * @minLength 1
-   * @pattern ^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\.|//|\.\.|@\{))(?!.*\.lock(?:/|$))(?!.*[/.]$)[^\u0000-\u0020\u007F~^:?*\[\\]+$
-   */
-  baseBranch?: string;
   /** Default to switching to the new worktree after create */
   switch?: boolean;
   /** Post-create launch choice; omitted preserves built-in no-launch behavior */
@@ -222,6 +216,10 @@ export interface WorkspaceRepository {
   gitUrl?: string;
   /** Optional semantic groups this repository belongs to */
   groups?: string[];
+  /** Effective configured base branch for commands that operate on repository history */
+  baseBranch?: string;
+  /** Configuration source that supplied the effective base branch */
+  baseBranchSource?: "repository-config" | "workspace-config";
 }
 
 /** Separate the canonical configuration location from the active repository tree. */
@@ -247,13 +245,6 @@ export interface DeprecatedSwitchLaunchModeDiagnostic {
   replacementMode: SwitchMode;
 }
 
-export interface DeprecatedCreateBaseBranchDiagnostic {
-  code: "DEPRECATED_CREATE_BASE_BRANCH";
-  fields: ["defaults.create.baseBranch"];
-  message: string;
-  replacementPath: "baseBranch";
-}
-
 export interface DeprecatedCreateLaunchFieldsDiagnostic {
   code: "DEPRECATED_CREATE_LAUNCH_FIELDS";
   fields: string[];
@@ -263,7 +254,6 @@ export interface DeprecatedCreateLaunchFieldsDiagnostic {
 }
 
 export type ConfigDiagnostic =
-  | DeprecatedCreateBaseBranchDiagnostic
   | DeprecatedCreateLaunchFieldsDiagnostic
   | DeprecatedSwitchLaunchModeDiagnostic;
 
@@ -537,13 +527,7 @@ const ROOT_ALLOWED_KEYS = new Set([
 const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout", "scripts"]);
 const META_ALLOWED_KEYS = new Set(["baseBranch"]);
 const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
-const CREATE_DEFAULTS_ALLOWED_KEYS = new Set([
-  "baseBranch",
-  "launch",
-  "launchMode",
-  "launch_mode",
-  "switch",
-]);
+const CREATE_DEFAULTS_ALLOWED_KEYS = new Set(["launch", "launchMode", "launch_mode", "switch"]);
 const EDITOR_CREATE_DEFAULTS_ALLOWED_KEYS = new Set([
   "launch",
   "launchMode",
@@ -609,7 +593,11 @@ const validateNoUnknownKeys = ({
       if (prefix) {
         label = `${prefix}.${key}`;
       }
-      errors.push(`${label}: unknown property`);
+      errors.push(
+        label === "defaults.create.baseBranch"
+          ? `${label} has been removed; use root baseBranch for workspace policy, meta.baseBranch for the meta repository, or repos.<name>.baseBranch for a child repository`
+          : `${label}: unknown property`,
+      );
     }
   }
 };
@@ -991,13 +979,6 @@ const normalizeCreateCommandDefaults = (
   });
 
   const normalized: CreateCommandDefaults = {};
-  if (!editorScoped && value.baseBranch !== undefined) {
-    if (typeof value.baseBranch === "string" && isValidRequestedBaseBranch(value.baseBranch)) {
-      normalized.baseBranch = value.baseBranch;
-    } else {
-      errors.push(`${scope}.baseBranch: must be a valid Git branch name if present`);
-    }
-  }
   if (value.switch !== undefined) {
     if (typeof value.switch === "boolean") normalized.switch = value.switch;
     else errors.push(`${scope}.switch: must be a boolean if present`);
@@ -1334,24 +1315,6 @@ const normalizeConfigInternal = (
   const defaults = normalizeCommandDefaults(config.defaults, errors, diagnostics);
   const baseBranch = normalizeBaseBranch(config.baseBranch, "baseBranch", errors);
   const meta = normalizeMetaConfig(config.meta, errors);
-  const legacyBaseBranch = defaults?.create?.baseBranch;
-  if (legacyBaseBranch !== undefined) {
-    diagnostics.push({
-      code: "DEPRECATED_CREATE_BASE_BRANCH",
-      fields: ["defaults.create.baseBranch"],
-      message:
-        "defaults.create.baseBranch is deprecated; move it to root baseBranch to share it with clone.",
-      replacementPath: "baseBranch",
-    });
-    if (
-      baseBranch !== undefined &&
-      normalizeLogicalBranchName(baseBranch) !== normalizeLogicalBranchName(legacyBaseBranch)
-    ) {
-      errors.push(
-        `baseBranch: conflicts with defaults.create.baseBranch; remove the legacy field or make both values match`,
-      );
-    }
-  }
 
   if (schema !== undefined && (typeof schema !== "string" || schema.trim() === "")) {
     errors.push("$schema: must be a non-empty string if present");
@@ -1769,6 +1732,15 @@ export const loadWorkspaceRepositories = async (
   const mainName = basename(configurationRoot);
 
   repositories.push({
+    baseBranch:
+      config.meta?.baseBranch || config.baseBranch
+        ? normalizeLogicalBranchName(config.meta?.baseBranch ?? config.baseBranch!)
+        : undefined,
+    baseBranchSource: config.meta?.baseBranch
+      ? "repository-config"
+      : config.baseBranch
+        ? "workspace-config"
+        : undefined,
     name: mainName,
     path: resolve(executionRoot),
   });
@@ -1798,6 +1770,15 @@ export const loadWorkspaceRepositories = async (
       }
     }
     repositories.push({
+      baseBranch:
+        repoConfig.baseBranch || config.baseBranch
+          ? normalizeLogicalBranchName(repoConfig.baseBranch ?? config.baseBranch!)
+          : undefined,
+      baseBranchSource: repoConfig.baseBranch
+        ? "repository-config"
+        : config.baseBranch
+          ? "workspace-config"
+          : undefined,
       copy: repoConfig.copy,
       gitUrl: repoConfig.gitUrl,
       groups: repoConfig.groups,

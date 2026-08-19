@@ -112,6 +112,34 @@ export interface BaseBranchRepositoryIdentity {
   repositoryName: string;
 }
 
+export interface ConfiguredBaseBranch {
+  requestedBranch: string;
+  source: "repository-config" | "workspace-config";
+}
+
+export const resolveConfiguredBaseBranch = (
+  config: Config,
+  repository: BaseBranchRepositoryIdentity,
+): ConfiguredBaseBranch | undefined => {
+  const repositoryBranch =
+    repository.kind === "meta"
+      ? config.meta?.baseBranch
+      : config.repos[repository.configName ?? repository.identity]?.baseBranch;
+  if (repositoryBranch) {
+    return {
+      requestedBranch: normalizeLogicalBranchName(repositoryBranch),
+      source: "repository-config",
+    };
+  }
+  if (config.baseBranch) {
+    return {
+      requestedBranch: normalizeLogicalBranchName(config.baseBranch),
+      source: "workspace-config",
+    };
+  }
+  return undefined;
+};
+
 export const resolveBaseBranchPolicy = (
   input: ResolveBaseBranchPolicyInput,
 ): readonly EffectiveBaseBranch[] => {
@@ -191,7 +219,6 @@ export const resolveBaseBranchPolicy = (
 
   return selectedRepositories.map((repository) => {
     const { repositoryName } = repository;
-    const isMeta = repository.kind === "meta";
     const selector = repository.identity;
     const identity = explicitIdentities ? { repositoryIdentity: repository.identity } : {};
     const repositoryCli = overrides.get(selector);
@@ -206,33 +233,12 @@ export const resolveBaseBranchPolicy = (
     if (normalizedGlobal) {
       return { ...identity, repositoryName, requestedBranch: normalizedGlobal, source: "cli" };
     }
-    const repositoryConfig = isMeta
-      ? input.config.meta?.baseBranch
-      : input.config.repos[repository.configName ?? repository.identity]?.baseBranch;
-    if (repositoryConfig) {
+    const configured = resolveConfiguredBaseBranch(input.config, repository);
+    if (configured) {
       return {
         ...identity,
         repositoryName,
-        requestedBranch: normalizeLogicalBranchName(repositoryConfig),
-        source: "repository-config",
-      };
-    }
-    if (input.config.baseBranch) {
-      return {
-        ...identity,
-        repositoryName,
-        requestedBranch: normalizeLogicalBranchName(input.config.baseBranch),
-        source: "workspace-config",
-      };
-    }
-    const legacy =
-      input.command === "create" ? input.config.defaults?.create?.baseBranch : undefined;
-    if (legacy) {
-      return {
-        ...identity,
-        repositoryName,
-        requestedBranch: normalizeLogicalBranchName(legacy),
-        source: "workspace-config",
+        ...configured,
       };
     }
     return { ...identity, repositoryName, source: "legacy-omitted" };
