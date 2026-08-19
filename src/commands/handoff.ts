@@ -53,6 +53,8 @@ interface HandoffContext {
 }
 
 interface HandoffRepositorySummary {
+  baseBranch: RepoStatus["baseBranch"];
+  baseBranchSource: RepoStatus["baseBranchSource"];
   branch: RepoStatus["branch"];
   changeCount: number;
   defaultBranch: RepoStatus["defaultBranch"];
@@ -159,6 +161,8 @@ const statusState = (status: RepoStatus): HandoffRepositorySummary["state"] => {
 };
 
 const summarizeRepo = (status: RepoStatus): HandoffRepositorySummary => ({
+  baseBranch: status.baseBranch,
+  baseBranchSource: status.baseBranchSource,
   branch: status.branch,
   changeCount: status.files.length,
   defaultBranch: status.defaultBranch,
@@ -179,6 +183,10 @@ const collectGeneratedNextCommands = (statuses: RepoStatus[]): string[] => {
         status.files.length > ZERO ||
         status.branch.ahead > ZERO ||
         status.branch.behind > ZERO ||
+        (status.baseBranch?.state === "available" && status.baseBranch.behind > ZERO) ||
+        status.baseBranch?.state === "unavailable" ||
+        (status.defaultBranch?.state === "available" && status.defaultBranch.behind > ZERO) ||
+        status.defaultBranch?.state === "unavailable" ||
         status.refreshWarning,
     )
   ) {
@@ -274,10 +282,30 @@ const formatRepositoryLine = (repo: HandoffRepositorySummary): string => {
   if (repo.refreshWarning && repo.refreshWarning.kind !== "missing-remote-ref") {
     parts.push(repo.refreshWarning.message);
   }
-  if (repo.defaultBranch?.state === "available" && repo.defaultBranch.behind > ZERO) {
+  const sameBaseDefault =
+    repo.baseBranch &&
+    repo.defaultBranch &&
+    repo.baseBranch.compareRef &&
+    repo.defaultBranch.compareRef &&
+    repo.baseBranch.compareRef === repo.defaultBranch.compareRef;
+  if (repo.baseBranch?.state === "available" && repo.baseBranch.behind > ZERO) {
+    parts.push(
+      `${sameBaseDefault ? "base/default" : "base"} ${repo.baseBranch.remoteRef ?? repo.baseBranch.branch} behind by ${repo.baseBranch.behind}`,
+    );
+  }
+  if (repo.baseBranch?.state === "unavailable") {
+    parts.push(
+      `${sameBaseDefault ? "configured base/default" : "configured base"} ${repo.baseBranch.remoteRef ?? repo.baseBranch.branch} unavailable`,
+    );
+  }
+  if (
+    !sameBaseDefault &&
+    repo.defaultBranch?.state === "available" &&
+    repo.defaultBranch.behind > ZERO
+  ) {
     parts.push(`default ${repo.defaultBranch.branch} behind by ${repo.defaultBranch.behind}`);
   }
-  if (repo.defaultBranch?.state === "unavailable") {
+  if (!sameBaseDefault && repo.defaultBranch?.state === "unavailable") {
     parts.push(`default ${repo.defaultBranch.branch} unavailable`);
   }
   return `- ${parts.join("; ")}`;

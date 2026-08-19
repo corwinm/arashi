@@ -1,4 +1,5 @@
 import { exec, getDefaultBranch } from "./git.ts";
+import { normalizeLogicalBranchName } from "./git-branch-name.ts";
 
 export interface RemoteTrackingTarget {
   upstream: string | null;
@@ -19,6 +20,8 @@ export interface RemoteChangeStatus {
   behind: number;
   hasRemoteChanges: boolean;
   error?: string;
+  errorKind?: "comparison-failed" | "detached-head" | "refresh-failed" | "unresolved-target";
+  compareRef?: string | null;
 }
 
 export interface DefaultBranchTarget {
@@ -37,16 +40,30 @@ export type DefaultBranchComparison =
       branch: string;
       ahead: number;
       behind: number;
+      compareRef?: string;
+      remote?: string | null;
+      remoteRef?: string | null;
     }
   | {
       state: "skipped";
-      reason: "detached-head" | "on-default-branch" | "unresolved";
+      reason: "detached-head" | "duplicate-target" | "on-default-branch" | "unresolved";
       branch: string | null;
+      compareRef?: string | null;
+      remote?: string | null;
+      remoteRef?: string | null;
     }
   | {
       state: "unavailable";
       branch: string;
       message: string;
+      reason: "comparison-failed" | "refresh-failed" | "unresolved-target";
+      details: {
+        error: string;
+        kind?: "generic" | "missing-remote-ref";
+      };
+      compareRef?: string | null;
+      remote?: string | null;
+      remoteRef?: string | null;
     };
 
 export type RemoteTrackingFetchResult =
@@ -499,6 +516,32 @@ export async function resolveRemoteTrackingTarget(
   };
 }
 
+export async function resolveConfiguredRemoteTrackingTarget(
+  repoPath: string,
+  branch: string,
+): Promise<RemoteTrackingTargetResolution> {
+  const requestedBranch = normalizeLogicalBranchName(branch);
+  const remote =
+    (await resolveRemoteForBranch(repoPath, requestedBranch)) ??
+    (await pickDefaultRemote(repoPath));
+  if (!remote) {
+    return {
+      error: `No remote is available for configured base branch '${requestedBranch}'`,
+      ok: false,
+      upstream: null,
+    };
+  }
+
+  return {
+    ok: true,
+    target: {
+      branch: requestedBranch,
+      remote,
+      upstream: `${remote}/${requestedBranch}`,
+    },
+  };
+}
+
 export async function fetchRemoteTrackingTarget(
   repoPath: string,
   target: RemoteTrackingTarget,
@@ -569,10 +612,116 @@ export async function resolveDefaultBranchTarget(
   };
 }
 
+export async function resolveConfiguredBranchTarget(
+  repoPath: string,
+  branch: string,
+): Promise<DefaultBranchTargetResolution> {
+  const remoteResolution = await resolveConfiguredRemoteTrackingTarget(repoPath, branch);
+  if (remoteResolution.ok) {
+    const { target } = remoteResolution;
+    return {
+      ok: true,
+      target: {
+        branch: target.branch,
+        compareRef: `refs/remotes/${target.remote}/${target.branch}`,
+        refreshTarget: target,
+      },
+    };
+  }
+
+  return {
+    branch: normalizeLogicalBranchName(branch),
+    error: remoteResolution.error,
+    ok: false,
+  };
+}
+
+export async function compareCurrentBranchToConfiguredBranch(
+  repoPath: string,
+  _currentBranch: string,
+  branch: string,
+  isDetached = false,
+  skipCompareRefs: readonly string[] = [],
+): Promise<DefaultBranchComparison> {
+  const requestedBranch = normalizeLogicalBranchName(branch);
+  const resolution = await resolveConfiguredBranchTarget(repoPath, requestedBranch);
+  if (!resolution.ok) {
+    return {
+      branch: requestedBranch,
+      compareRef: null,
+      details: { error: resolution.error },
+      message: resolution.error,
+      reason: "unresolved-target",
+      remote: null,
+      remoteRef: null,
+      state: "unavailable",
+    };
+  }
+
+  const { target } = resolution;
+  const metadata = {
+    compareRef: target.compareRef,
+    remote: target.refreshTarget?.remote ?? null,
+    remoteRef: target.refreshTarget?.upstream ?? null,
+  };
+  if (isDetached) {
+    return {
+      branch: requestedBranch,
+      ...metadata,
+      reason: "detached-head",
+      state: "skipped",
+    };
+  }
+
+  if (skipCompareRefs.includes(target.compareRef)) {
+    return {
+      branch: requestedBranch,
+      ...metadata,
+      reason: "duplicate-target",
+      state: "skipped",
+    };
+  }
+
+  if (target.refreshTarget) {
+    const fetchResult = await fetchRemoteTrackingTarget(repoPath, target.refreshTarget);
+    if (!fetchResult.ok) {
+      return {
+        branch: target.branch,
+        ...metadata,
+        details: { error: fetchResult.error, kind: fetchResult.kind },
+        message: fetchResult.message,
+        reason: "refresh-failed",
+        state: "unavailable",
+      };
+    }
+  }
+
+  try {
+    const result = await exec(
+      ["rev-list", "--left-right", "--count", `HEAD...${target.compareRef}`],
+      repoPath,
+    );
+    const { ahead, behind } = parseAheadBehind(result.stdout);
+    return { ahead, behind, branch: target.branch, ...metadata, state: "available" };
+  } catch (error) {
+    return {
+      branch: target.branch,
+      ...metadata,
+      details: {
+        error: error instanceof Error ? error.message : `Unable to compare with ${target.branch}`,
+      },
+      message: error instanceof Error ? error.message : `Unable to compare with ${target.branch}`,
+      reason: "comparison-failed",
+      state: "unavailable",
+    };
+  }
+}
+
 export async function compareCurrentBranchToDefaultBranch(
   repoPath: string,
   currentBranch: string,
   isDetached = false,
+  skipCompareRefs: readonly string[] = [],
 ): Promise<DefaultBranchComparison> {
   if (isDetached) {
     return {
@@ -592,10 +741,24 @@ export async function compareCurrentBranchToDefaultBranch(
   }
 
   const { target } = resolution;
-  if (currentBranch === target.branch) {
+  const metadata = {
+    compareRef: target.compareRef,
+    remote: target.refreshTarget?.remote ?? null,
+    remoteRef: target.refreshTarget?.upstream ?? null,
+  };
+  if (!target.refreshTarget && currentBranch === target.branch) {
     return {
       branch: target.branch,
+      ...metadata,
       reason: "on-default-branch",
+      state: "skipped",
+    };
+  }
+  if (skipCompareRefs.includes(target.compareRef)) {
+    return {
+      branch: target.branch,
+      ...metadata,
+      reason: "duplicate-target",
       state: "skipped",
     };
   }
@@ -605,7 +768,10 @@ export async function compareCurrentBranchToDefaultBranch(
     if (!fetchResult.ok) {
       return {
         branch: target.branch,
+        ...metadata,
+        details: { error: fetchResult.error, kind: fetchResult.kind },
         message: fetchResult.message,
+        reason: "refresh-failed",
         state: "unavailable",
       };
     }
@@ -621,12 +787,18 @@ export async function compareCurrentBranchToDefaultBranch(
       ahead,
       behind,
       branch: target.branch,
+      ...metadata,
       state: "available",
     };
   } catch (error) {
     return {
       branch: target.branch,
+      ...metadata,
+      details: {
+        error: error instanceof Error ? error.message : "Unable to compare with default branch",
+      },
       message: error instanceof Error ? error.message : "Unable to compare with default branch",
+      reason: "comparison-failed",
       state: "unavailable",
     };
   }
@@ -635,14 +807,33 @@ export async function compareCurrentBranchToDefaultBranch(
 export async function checkRemoteChanges(
   repositoryId: string,
   repoPath: string,
+  configuredBranch?: string,
 ): Promise<RemoteChangeStatus> {
-  const resolution = await resolveRemoteTrackingTarget(repoPath);
+  if (configuredBranch && !(await getCurrentBranch(repoPath))) {
+    return {
+      ahead: 0,
+      behind: 0,
+      branch: normalizeLogicalBranchName(configuredBranch),
+      compareRef: null,
+      error: "Cannot pull a configured base while HEAD is detached",
+      errorKind: "detached-head",
+      hasRemoteChanges: false,
+      remote: null,
+      repositoryId,
+      upstream: null,
+    };
+  }
+  const resolution = configuredBranch
+    ? await resolveConfiguredRemoteTrackingTarget(repoPath, configuredBranch)
+    : await resolveRemoteTrackingTarget(repoPath);
   if (!resolution.ok) {
     return {
       ahead: 0,
       behind: 0,
       branch: null,
+      compareRef: null,
       error: resolution.error,
+      errorKind: "unresolved-target",
       hasRemoteChanges: false,
       remote: null,
       repositoryId,
@@ -657,7 +848,9 @@ export async function checkRemoteChanges(
       ahead: 0,
       behind: 0,
       branch: target.branch,
+      compareRef: `refs/remotes/${target.remote}/${target.branch}`,
       error: fetchResult.error,
+      errorKind: "refresh-failed",
       hasRemoteChanges: false,
       remote: target.remote,
       repositoryId,
@@ -679,6 +872,7 @@ export async function checkRemoteChanges(
       ahead,
       behind,
       branch,
+      compareRef,
       hasRemoteChanges: behind > 0,
       remote,
       repositoryId,
@@ -690,7 +884,9 @@ export async function checkRemoteChanges(
       ahead: 0,
       behind: 0,
       branch,
+      compareRef: `refs/remotes/${remote}/${branch}`,
       error: message,
+      errorKind: "comparison-failed",
       hasRemoteChanges: false,
       remote,
       repositoryId,

@@ -36,6 +36,22 @@ function source(command: string, env: NodeJS.ProcessEnv = {}) {
 }
 
 describe("POSIX alias installer contract", () => {
+  test("uses aw as the primary command in post-install guidance", () => {
+    expect(script).toContain("  aw init");
+    expect(script).toContain("  aw add git@github.com:<your-org>/frontend.git");
+    expect(script).toContain("  aw create <feature-name>");
+    expect(script).toContain("  aw switch <feature-name>");
+    expect(script).toContain("  aw shell install");
+    expect(script).toContain("Add it to use 'aw' directly");
+
+    expect(script).not.toContain("  arashi init");
+    expect(script).not.toContain("  arashi add git@github.com:<your-org>/frontend.git");
+    expect(script).not.toContain("  arashi create <feature-name>");
+    expect(script).not.toContain("  arashi switch <feature-name>");
+    expect(script).not.toContain("  arashi shell install");
+    expect(script).not.toContain("Add it to use 'arashi' directly");
+  });
+
   test("declares marked alias, ledger, checksum, and three-file transaction", () => {
     expect(script).toContain('ALIAS_ASSET="aw"');
     expect(script).toContain('LEDGER_NAME=".arashi-managed-entrypoints.json"');

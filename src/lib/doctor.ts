@@ -582,7 +582,66 @@ export const repositoryStatusToDoctorFindings = (
     );
   }
 
-  if (status.defaultBranch?.state === "available" && status.defaultBranch.behind > ZERO) {
+  const configuredBaseMatchesDefault = Boolean(
+    status.baseBranch?.compareRef &&
+    status.defaultBranch?.compareRef &&
+    status.baseBranch.compareRef === status.defaultBranch.compareRef,
+  );
+  if (status.baseBranch?.state === "available" && status.baseBranch.behind > ZERO) {
+    const baseRef = status.baseBranch.remoteRef ?? status.baseBranch.branch;
+    findings.push(
+      createFinding({
+        category: "repository",
+        code: "REPOSITORY_CONFIGURED_BASE_BEHIND",
+        details: {
+          ahead: status.baseBranch.ahead,
+          alsoDefault: configuredBaseMatchesDefault,
+          baseBranch: status.baseBranch.branch,
+          behind: status.baseBranch.behind,
+          compareRef: status.baseBranch.compareRef ?? null,
+          currentBranch: status.branch.localBranch,
+          remote: status.baseBranch.remote ?? null,
+          remoteRef: status.baseBranch.remoteRef ?? null,
+          repository: status.name,
+          source: status.baseBranchSource ?? null,
+        },
+        message: `Repository '${status.name}' is behind configured base ${baseRef} by ${status.baseBranch.behind} commit(s).`,
+        scope,
+        severity: "warning",
+        suggestedCommands: ["arashi status --verbose", "arashi pull"],
+      }),
+    );
+  } else if (status.baseBranch?.state === "unavailable") {
+    const baseRef = status.baseBranch.remoteRef ?? status.baseBranch.branch;
+    findings.push(
+      createFinding({
+        category: "repository",
+        code: "REPOSITORY_CONFIGURED_BASE_UNAVAILABLE",
+        details: {
+          alsoDefault: configuredBaseMatchesDefault,
+          baseBranch: status.baseBranch.branch,
+          compareRef: status.baseBranch.compareRef ?? null,
+          failure: status.baseBranch.details,
+          message: status.baseBranch.message,
+          reason: status.baseBranch.reason,
+          remote: status.baseBranch.remote ?? null,
+          remoteRef: status.baseBranch.remoteRef ?? null,
+          repository: status.name,
+          source: status.baseBranchSource ?? null,
+        },
+        message: `Could not compare '${status.name}' with configured base ${baseRef}: ${status.baseBranch.message}`,
+        scope,
+        severity: "warning",
+        suggestedCommands: ["arashi status --verbose", "arashi pull"],
+      }),
+    );
+  }
+
+  if (
+    !configuredBaseMatchesDefault &&
+    status.defaultBranch?.state === "available" &&
+    status.defaultBranch.behind > ZERO
+  ) {
     findings.push(
       createFinding({
         category: "repository",
@@ -601,7 +660,7 @@ export const repositoryStatusToDoctorFindings = (
         ],
       }),
     );
-  } else if (status.defaultBranch?.state === "unavailable") {
+  } else if (!configuredBaseMatchesDefault && status.defaultBranch?.state === "unavailable") {
     findings.push(
       createFinding({
         category: "repository",

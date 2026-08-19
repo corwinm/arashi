@@ -3,6 +3,7 @@
  */
 
 import type { ManagedIgnoreReconciliation } from "./managed-ignore.ts";
+import type { ConfiguredBaseOutcome } from "./configured-base-outcome.ts";
 
 export type PullStatus = "updated" | "skipped" | "failed" | "manual-update";
 
@@ -12,6 +13,7 @@ export interface PullResult {
   elapsedSeconds: number;
   errorMessage?: string;
   output?: string;
+  configuredBase?: ConfiguredBaseOutcome;
 }
 
 export type PullOverallStatus = "success" | "partial-failure" | "failure";

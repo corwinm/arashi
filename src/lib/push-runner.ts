@@ -1,9 +1,32 @@
 import type { PushResult } from "./push-types.ts";
 import type { WorkspaceRepository } from "./config.ts";
+import type { ConfiguredBaseOutcome } from "./configured-base-outcome.ts";
 import { exec as gitExec } from "./git.ts";
+import { fetchRemoteTrackingTarget, resolveConfiguredRemoteTrackingTarget } from "./git-remote.ts";
+import { normalizeLogicalBranchName } from "./git-branch-name.ts";
 
 const ZERO = 0;
 const MILLISECONDS_PER_SECOND = 1000;
+
+const configuredBaseSource = (repository: WorkspaceRepository): ConfiguredBaseOutcome["source"] =>
+  repository.baseBranchSource ?? "workspace-config";
+
+const unresolvedConfiguredBase = (
+  repository: WorkspaceRepository,
+  error: string,
+): ConfiguredBaseOutcome | undefined =>
+  repository.baseBranch
+    ? {
+        branch: normalizeLogicalBranchName(repository.baseBranch),
+        compareRef: null,
+        details: { error },
+        reason: "unresolved-target",
+        remote: null,
+        remoteRef: null,
+        source: configuredBaseSource(repository),
+        state: "unavailable",
+      }
+    : undefined;
 
 interface GitOutcome {
   ok: boolean;
@@ -121,6 +144,7 @@ export const planPush = async (
     return {
       repository,
       result: {
+        configuredBase: unresolvedConfiguredBase(repository, "Repository is not on a named branch"),
         elapsedSeconds: elapsedSeconds(),
         reason: "repository is not on a named branch",
         repositoryId: repository.name,
@@ -136,6 +160,7 @@ export const planPush = async (
       repository,
       result: {
         branch,
+        configuredBase: unresolvedConfiguredBase(repository, "No git remote is configured"),
         elapsedSeconds: elapsedSeconds(),
         reason: "no git remote configured",
         repositoryId: repository.name,
@@ -146,13 +171,111 @@ export const planPush = async (
   }
 
   const upstream = await getUpstream(repository.path);
-  const comparisonRef = await getComparisonRef(repository.path, upstream, remote);
-  const ahead = await countAhead(repository.path, comparisonRef);
+  let comparisonRef: string | undefined;
+  let configuredComparisonTarget: string | undefined;
+  let configuredBase: ConfiguredBaseOutcome | undefined;
+  if (!upstream && repository.baseBranch) {
+    const resolution = await resolveConfiguredRemoteTrackingTarget(
+      repository.path,
+      repository.baseBranch,
+    );
+    if (!resolution.ok) {
+      return {
+        repository,
+        result: {
+          branch,
+          configuredBase: unresolvedConfiguredBase(repository, resolution.error),
+          elapsedSeconds: elapsedSeconds(),
+          errorMessage: `Unable to resolve configured base '${repository.baseBranch}': ${resolution.error}`,
+          remote,
+          repositoryId: repository.name,
+          status: "failed",
+        },
+        shouldPush: false,
+      };
+    }
+    const configuredTarget = resolution.target;
+    configuredComparisonTarget = `${configuredTarget.remote}/${configuredTarget.branch}`;
+    const configuredCompareRef = `refs/remotes/${configuredTarget.remote}/${configuredTarget.branch}`;
+    configuredBase = {
+      branch: configuredTarget.branch,
+      compareRef: configuredCompareRef,
+      remote: configuredTarget.remote,
+      remoteRef: configuredComparisonTarget,
+      source: configuredBaseSource(repository),
+      state: "available",
+    };
+    const fetchResult = await fetchRemoteTrackingTarget(repository.path, configuredTarget);
+    if (!fetchResult.ok) {
+      return {
+        repository,
+        result: {
+          branch,
+          configuredBase: {
+            branch: configuredTarget.branch,
+            compareRef: configuredCompareRef,
+            details: { error: fetchResult.error },
+            reason: "refresh-failed",
+            remote: configuredTarget.remote,
+            remoteRef: configuredComparisonTarget,
+            source: configuredBaseSource(repository),
+            state: "unavailable",
+          },
+          elapsedSeconds: elapsedSeconds(),
+          errorMessage: `Unable to refresh configured base '${configuredComparisonTarget}': ${fetchResult.message}`,
+          remote,
+          repositoryId: repository.name,
+          status: "failed",
+        },
+        shouldPush: false,
+      };
+    }
+    comparisonRef = configuredCompareRef;
+  } else {
+    comparisonRef = await getComparisonRef(repository.path, upstream, remote);
+  }
+  const configuredComparison = !upstream && Boolean(repository.baseBranch);
+  let ahead: number;
+  if (configuredComparison && comparisonRef) {
+    const countResult = await runGit(repository.path, [
+      "rev-list",
+      "--count",
+      `${comparisonRef}..HEAD`,
+    ]);
+    const parsedCount = Number.parseInt(countResult.stdout.trim(), 10);
+    if (!countResult.ok || !Number.isFinite(parsedCount)) {
+      return {
+        repository,
+        result: {
+          branch,
+          configuredBase: {
+            ...configuredBase!,
+            details: {
+              error: countResult.message ?? (countResult.stderr || "invalid commit count"),
+            },
+            reason: "comparison-failed",
+            state: "unavailable",
+          },
+          elapsedSeconds: elapsedSeconds(),
+          errorMessage: `Unable to compare with configured base '${configuredComparisonTarget ?? repository.baseBranch}': ${countResult.message ?? (countResult.stderr || "invalid commit count")}`,
+          remote,
+          repositoryId: repository.name,
+          status: "failed",
+        },
+        shouldPush: false,
+      };
+    }
+    ahead = parsedCount;
+    configuredBase = { ...configuredBase!, ahead };
+  } else {
+    ahead = await countAhead(repository.path, comparisonRef);
+  }
   if (ahead === ZERO) {
     return {
       repository,
       result: {
         branch,
+        configuredBase,
         elapsedSeconds: elapsedSeconds(),
         reason: "branch is already up to date or has no publishable commits",
         remote,
@@ -169,6 +292,7 @@ export const planPush = async (
       repository,
       result: {
         branch,
+        configuredBase,
         elapsedSeconds: elapsedSeconds(),
         reason: "branch has no upstream; rerun with --set-upstream to publish it",
         remote,
@@ -186,6 +310,7 @@ export const planPush = async (
     result: {
       branch,
       command: ["git", ...command],
+      configuredBase,
       elapsedSeconds: elapsedSeconds(),
       remote,
       repositoryId: repository.name,

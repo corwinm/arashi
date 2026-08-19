@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Help } from "commander";
 import { createCommand as createAddCommand } from "./commands/add.ts";
 import { createCommand as createCloneCommand } from "./commands/clone.ts";
 import { createCommand as createCompletionCommand } from "./commands/completion.ts";
@@ -63,6 +63,19 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     createUpdateCommand(pkg.version),
   ])
     program.addCommand(command);
+
+  const defaultHelp = new Help();
+  const commandUsage = (command: Command): string => {
+    const preferredName = command.parent ? "aw" : "aw|arashi";
+    return defaultHelp.commandUsage(command).replace(/^arashi(?=\s|$)/, preferredName);
+  };
+  const pending = [program];
+  while (pending.length > 0) {
+    const command = pending.pop()!;
+    command.configureHelp({ commandUsage });
+    pending.push(...command.commands);
+  }
+
   return program;
 }
 

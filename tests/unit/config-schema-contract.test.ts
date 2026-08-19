@@ -12,18 +12,20 @@ interface ConfigSchema {
 }
 
 describe("generated config schema contracts", () => {
-  test("shares exact Git branch constraints across root, meta, child, and legacy base fields", async () => {
+  test("shares exact Git branch constraints across root, meta, and child base fields", async () => {
     const schemaPath = join(import.meta.dirname, "..", "..", "schema", "config.schema.json");
     const schema = JSON.parse(await readFile(schemaPath, "utf8")) as ConfigSchema;
-    const legacy = schema.definitions.CreateCommandDefaults?.properties?.baseBranch;
     const fields = [
       schema.definitions.Config?.properties?.baseBranch,
       schema.definitions.MetaRepositoryConfig?.properties?.baseBranch,
       schema.definitions.RepoConfig?.properties?.baseBranch,
     ];
 
+    const [root, ...overrides] = fields;
+    for (const field of overrides) {
+      expect(field).toMatchObject({ minLength: root?.minLength, pattern: root?.pattern });
+    }
     for (const field of fields) {
-      expect(field).toMatchObject({ minLength: legacy?.minLength, pattern: legacy?.pattern });
       expect(field?.minLength).toBe(1);
       expect(field?.pattern).toBeTruthy();
     }
@@ -35,13 +37,6 @@ describe("generated config schema contracts", () => {
 
     expect(schema.definitions.CreateLaunchMode?.enum).toEqual(["none", "auto", "sesh", "herdr"]);
     expect(schema.definitions.CreateCommandDefaults?.properties).toEqual({
-      baseBranch: {
-        description: "Default base branch for configured create invocations",
-        minLength: 1,
-        pattern:
-          "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
-        type: "string",
-      },
       launch: {
         $ref: "#/definitions/CreateLaunchMode",
         description: "Post-create launch choice; omitted preserves built-in no-launch behavior",
@@ -104,7 +99,7 @@ describe("generated config schema contracts", () => {
   ])("schema pattern rejects representative malformed Git branch %j", async (branchName) => {
     const schemaPath = join(import.meta.dirname, "..", "..", "schema", "config.schema.json");
     const schema = JSON.parse(await readFile(schemaPath, "utf8")) as ConfigSchema;
-    const pattern = schema.definitions.CreateCommandDefaults?.properties?.baseBranch?.pattern;
+    const pattern = schema.definitions.Config?.properties?.baseBranch?.pattern;
 
     expect(pattern).toBeDefined();
     expect(new RegExp(pattern!).test(branchName)).toBe(false);

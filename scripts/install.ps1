@@ -586,7 +586,7 @@ function Install-Arashi {
         Write-Host ""
         Write-Host "Arashi installed successfully."
         Write-Host "Install directory: $targetInstallDir"
-        Write-Host "Run 'arashi --version' or shorthand 'aw --version' from a new terminal to verify PATH setup."
+        Write-Host "Run 'aw --version' from a new terminal to verify PATH setup. The legacy-compatible 'arashi --version' command remains available."
     } catch {
         Fail-Install $_.Exception.Message
     } finally {

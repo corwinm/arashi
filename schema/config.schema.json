@@ -26,7 +26,7 @@
           "type": "string"
         },
         "baseBranch": {
-          "description": "Workspace base branch shared by configured create and clone",
+          "description": "Workspace base branch shared by configured base-aware commands",
           "minLength": 1,
           "pattern": "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
           "type": "string"
@@ -98,12 +98,6 @@
     "CreateCommandDefaults": {
       "additionalProperties": false,
       "properties": {
-        "baseBranch": {
-          "description": "Default base branch for configured create invocations",
-          "minLength": 1,
-          "pattern": "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
-          "type": "string"
-        },
         "launch": {
           "$ref": "#/definitions/CreateLaunchMode",
           "description": "Post-create launch choice; omitted preserves built-in no-launch behavior"
@@ -223,7 +217,7 @@
       "description": "Meta-repository-specific configuration.",
       "properties": {
         "baseBranch": {
-          "description": "Meta-repository-specific base branch for configured create",
+          "description": "Meta-repository-specific base branch for configured base-aware commands",
           "minLength": 1,
           "pattern": "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
           "type": "string"
@@ -236,7 +230,7 @@
       "description": "Configuration for a single repository",
       "properties": {
         "baseBranch": {
-          "description": "Repository-specific base branch for configured create and clone",
+          "description": "Repository-specific base branch for configured base-aware commands",
           "minLength": 1,
           "pattern": "^(?!HEAD$)(?!origin/(?:HEAD$|-))(?![-/.])(?!.*(?:/\\.|//|\\.\\.|@\\{))(?!.*\\.lock(?:/|$))(?!.*[/.]$)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+$",
           "type": "string"

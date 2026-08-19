@@ -151,14 +151,7 @@ export interface CreateBaseOptionSemanticPolicy {
       targetActions: ["created", "reused"];
     };
   };
-  precedence: [
-    "repository-cli",
-    "cli",
-    "repository-config",
-    "workspace-config",
-    "defaults.create.baseBranch",
-    "legacy-omitted",
-  ];
+  precedence: ["repository-cli", "cli", "repository-config", "workspace-config", "legacy-omitted"];
   resolution: {
     refs: ["refs/heads/<branch>", "refs/remotes/origin/<branch>"];
     repositories: "every-effective-selected-including-reused";
@@ -180,7 +173,6 @@ export interface RepositoryBaseBranchSemanticPolicy {
     workspace: "baseBranch";
     meta: "meta.baseBranch";
     child: "repos.<name>.baseBranch";
-    legacyCreateOnly: "defaults.create.baseBranch";
   };
   options: {
     global: "--base <branch>";
@@ -193,19 +185,17 @@ export interface RepositoryBaseBranchSemanticPolicy {
     fields: ["repositoryIdentity", "repositoryName", "requestedBranch", "source"];
     omitted: "all-legacy-omitted";
   };
-  precedence: [
-    "repository-cli",
-    "cli",
-    "repository-config",
-    "workspace-config",
-    "legacy-create-config",
-    "legacy-omitted",
-  ];
+  precedence: ["repository-cli", "cli", "repository-config", "workspace-config", "legacy-omitted"];
   sources: ["repository-cli", "cli", "repository-config", "workspace-config", "legacy-omitted"];
   scope: {
     create: "configured-and-standalone-global";
     clone: "configured-only";
+    doctor: "configured-only";
+    handoff: "configured-only";
+    pull: "configured-only-with-upstream-fallback-when-absent";
+    pushFallback: "configured-no-upstream-only";
     repositoryOverride: "configured-only";
+    status: "configured-only";
   };
   clone: {
     ordinary: "checkout-effective-base";
@@ -337,7 +327,6 @@ const hookInputPolicy: OptionSemanticPolicy = {
 export const repositoryBasePolicy: RepositoryBaseBranchSemanticPolicy = {
   configuration: {
     child: "repos.<name>.baseBranch",
-    legacyCreateOnly: "defaults.create.baseBranch",
     meta: "meta.baseBranch",
     workspace: "baseBranch",
   },
@@ -352,19 +341,17 @@ export const repositoryBasePolicy: RepositoryBaseBranchSemanticPolicy = {
     fields: ["repositoryIdentity", "repositoryName", "requestedBranch", "source"],
     omitted: "all-legacy-omitted",
   },
-  precedence: [
-    "repository-cli",
-    "cli",
-    "repository-config",
-    "workspace-config",
-    "legacy-create-config",
-    "legacy-omitted",
-  ],
+  precedence: ["repository-cli", "cli", "repository-config", "workspace-config", "legacy-omitted"],
   sources: ["repository-cli", "cli", "repository-config", "workspace-config", "legacy-omitted"],
   scope: {
     clone: "configured-only",
     create: "configured-and-standalone-global",
+    doctor: "configured-only",
+    handoff: "configured-only",
+    pull: "configured-only-with-upstream-fallback-when-absent",
+    pushFallback: "configured-no-upstream-only",
     repositoryOverride: "configured-only",
+    status: "configured-only",
   },
   clone: {
     coordinated: "checkout-current-target-from-effective-base",
