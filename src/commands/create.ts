@@ -69,6 +69,7 @@ import {
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
 import { releaseHookInterruptGuards, resolveHookInputMode } from "../lib/hooks.ts";
+import { formatCreateHookSummary } from "../lib/create-hook-output.ts";
 import {
   createStandaloneWorktree,
   StandaloneDestinationNotIgnoredError,
@@ -746,19 +747,14 @@ const isGitRepository = async (path: string): Promise<boolean> => {
 };
 
 const printHookResults = (hookOutcomes: HookOutcomeRecord[]): void => {
-  if (hookOutcomes.length === ZERO) {
+  const [summaryLine, ...detailLines] = formatCreateHookSummary(hookOutcomes);
+  if (!summaryLine) {
     return;
   }
 
-  info("Hook results:");
-  for (const outcome of hookOutcomes) {
-    let reason = "";
-    if (outcome.reasonCode !== "none") {
-      reason = ` (${outcome.reasonCode})`;
-    }
-    console.log(
-      `  - ${outcome.sourceKind} ${outcome.sourceOwnerKind}${outcome.sourceOwnerName ? `:${outcome.sourceOwnerName}` : ""} ${outcome.hookName} [${outcome.repositoryId}] -> ${outcome.hookStatus}${reason}${outcome.sourceScriptPath ? ` (${outcome.sourceScriptPath})` : ""}`,
-    );
+  info(summaryLine);
+  for (const line of detailLines) {
+    console.log(line);
   }
 };
 

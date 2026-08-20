@@ -17,17 +17,15 @@ afterEach(async () => {
   workspace = null;
 });
 
-function extractHookOutcomeLines(output: string): string[] {
-  const lines = output
+function extractHookSummaryLine(output: string): string | undefined {
+  return output
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.startsWith("-") && line.includes("->"));
-  lines.sort();
-  return lines;
+    .find((line) => line.startsWith("Hook results:"));
 }
 
 describe("create command hook parity between root and child invocation", () => {
-  test("emits equivalent hook outcomes from workspace root and child repository", async () => {
+  test("emits equivalent hook summaries from workspace root and child repository", async () => {
     workspace = await createChildHookWorkspace();
 
     for (const repoName of workspace.childRepoNames) {
@@ -60,6 +58,9 @@ describe("create command hook parity between root and child invocation", () => {
 
     const rootExitCode = await rootRun.exited;
     const rootOutput = `${await new Response(rootRun.stdout).text()}\n${await new Response(rootRun.stderr).text()}`;
+    if (rootExitCode !== 0) {
+      throw new Error(`root create failed (exit=${rootExitCode})\n${rootOutput}`);
+    }
     expect(rootExitCode).toBe(0);
 
     const childRun = runtime.spawn(
@@ -80,12 +81,15 @@ describe("create command hook parity between root and child invocation", () => {
 
     const childExitCode = await childRun.exited;
     const childOutput = `${await new Response(childRun.stdout).text()}\n${await new Response(childRun.stderr).text()}`;
+    if (childExitCode !== 0) {
+      throw new Error(`child create failed (exit=${childExitCode})\n${childOutput}`);
+    }
     expect(childExitCode).toBe(0);
 
-    const rootOutcomeLines = extractHookOutcomeLines(rootOutput);
-    const childOutcomeLines = extractHookOutcomeLines(childOutput);
+    const rootSummaryLine = extractHookSummaryLine(rootOutput);
+    const childSummaryLine = extractHookSummaryLine(childOutput);
 
-    expect(rootOutcomeLines.length).toBeGreaterThan(0);
-    expect(rootOutcomeLines).toEqual(childOutcomeLines);
+    expect(rootSummaryLine).toBe("Hook results: 2 succeeded, 4 skipped, 0 failed");
+    expect(childSummaryLine).toBe(rootSummaryLine);
   });
 });
