@@ -96,42 +96,45 @@ describe("repository configuration editor", () => {
     expect(result.diagnostics[0].message).toMatch(/collision/i);
   });
 
-  test("normalizes inline hooks, omits file-mode config, and never summarizes bodies", () => {
-    const canary = "printf SECRET_EDITOR_CANARY";
-    let state = createRepositoryEditorState(config(), "app");
-    state = setRepositoryInlineHook(state, "pre-create", {
-      bash: canary,
-      powershell: "Write-Output hidden",
-    });
-    state = planRepositoryHookFile(state, "post-remove", {
-      activeConfigRoot: "/workspace",
-      activeRepositoryPath: "/workspace/repos/app",
-      platform: "darwin",
-    });
-    const result = normalizeRepositoryEditorState(state);
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-    expect(result.state.candidate.repos.app.hooks?.["pre-create"]).toEqual({
-      bash: canary,
-      powershell: "Write-Output hidden",
-    });
-    expect(result.state.candidate.repos.app.hooks?.["post-remove"]).toBeUndefined();
-    expect(result.state.scripts[0]).toMatchObject({
-      lifecycle: "post-remove",
-      mode: 0o755,
-      path: "/workspace/repos/app/.arashi/hooks/post-remove.sh",
-    });
-    const summary = JSON.stringify(summarizeRepositoryEditorState(result.state));
-    expect(summary).toContain("pre-create");
-    expect(summary).toContain("post-remove.sh");
-    expect(summary).not.toContain(canary);
-    expect(summary).not.toContain("Write-Output hidden");
-    expect(summary).not.toContain("exit 0");
-  });
+  test.skipIf(process.platform === "win32")(
+    "normalizes inline hooks, omits file-mode config, and never summarizes bodies",
+    () => {
+      const canary = "printf SECRET_EDITOR_CANARY";
+      let state = createRepositoryEditorState(config(), "app");
+      state = setRepositoryInlineHook(state, "pre-create", {
+        bash: canary,
+        powershell: "Write-Output hidden",
+      });
+      state = planRepositoryHookFile(state, "post-remove", {
+        activeConfigRoot: "/workspace",
+        activeRepositoryPath: "/workspace/repos/app",
+        platform: "darwin",
+      });
+      const result = normalizeRepositoryEditorState(state);
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.state.candidate.repos.app.hooks?.["pre-create"]).toEqual({
+        bash: canary,
+        powershell: "Write-Output hidden",
+      });
+      expect(result.state.candidate.repos.app.hooks?.["post-remove"]).toBeUndefined();
+      expect(result.state.scripts[0]).toMatchObject({
+        lifecycle: "post-remove",
+        mode: 0o755,
+        path: "/workspace/repos/app/.arashi/hooks/post-remove.sh",
+      });
+      const summary = JSON.stringify(summarizeRepositoryEditorState(result.state));
+      expect(summary).toContain("pre-create");
+      expect(summary).toContain("post-remove.sh");
+      expect(summary).not.toContain(canary);
+      expect(summary).not.toContain("Write-Output hidden");
+      expect(summary).not.toContain("exit 0");
+    },
+  );
 
-  test.each([
+  test.skipIf(process.platform === "win32").each([
     ["pre-create", "/workspace/.arashi/hooks/pre-create.app.sh"],
     ["post-create", "/workspace/.arashi/hooks/post-create.app.sh"],
     ["pre-remove", "/workspace/repos/app/.arashi/hooks/pre-remove.sh"],
@@ -254,19 +257,22 @@ describe("repository configuration editor", () => {
     },
   );
 
-  test("does not apply create-hook filename validation to repository-owned remove hooks", () => {
-    const repositoryName = "../../legacy-config-name";
-    const planned = planRepositoryHookFile(
-      createRepositoryEditorState(configForRepository(repositoryName), repositoryName),
-      "pre-remove",
-      {
-        activeConfigRoot: "/workspace",
-        activeRepositoryPath: "/workspace/repos/app",
-        platform: "linux",
-      },
-    );
-    expect(planned.scripts[0].path).toBe("/workspace/repos/app/.arashi/hooks/pre-remove.sh");
-  });
+  test.skipIf(process.platform === "win32")(
+    "does not apply create-hook filename validation to repository-owned remove hooks",
+    () => {
+      const repositoryName = "../../legacy-config-name";
+      const planned = planRepositoryHookFile(
+        createRepositoryEditorState(configForRepository(repositoryName), repositoryName),
+        "pre-remove",
+        {
+          activeConfigRoot: "/workspace",
+          activeRepositoryPath: "/workspace/repos/app",
+          platform: "linux",
+        },
+      );
+      expect(planned.scripts[0].path).toBe("/workspace/repos/app/.arashi/hooks/pre-remove.sh");
+    },
+  );
 
   test.each([
     [{ destinationExists: true }, /destination already exists/i],

@@ -36,12 +36,13 @@ const createOwned = async (path: string): Promise<OwnedRepositoryScript> => {
   await writeFile(path, bytes, { mode: 0o755 });
   await chmod(path, 0o755);
   const observed = await lstat(path, { bigint: true });
+  const mode = (await stat(path)).mode & 0o777;
   return {
     birthtimeNs: observed.birthtimeNs,
     bytes,
     dev: Number(observed.dev),
     ino: Number(observed.ino),
-    mode: 0o755,
+    mode,
     path,
   };
 };
@@ -51,31 +52,34 @@ describe("repository script transaction", () => {
     await expect(installRepositoryScripts([])).resolves.toEqual([]);
   });
 
-  test("privately prepares and atomically publishes a complete POSIX script", async () => {
-    const root = await fixture();
-    const path = join(root, ".arashi", "hooks", "pre-create.app.sh");
-    const bytes = repositoryNoOpScaffold(".sh");
+  test.skipIf(process.platform === "win32")(
+    "privately prepares and atomically publishes a complete POSIX script",
+    async () => {
+      const root = await fixture();
+      const path = join(root, ".arashi", "hooks", "pre-create.app.sh");
+      const bytes = repositoryNoOpScaffold(".sh");
 
-    const owned = await installRepositoryScripts([
-      {
-        extension: ".sh",
-        lifecycle: "pre-create",
-        mode: 0o755,
-        ownerRoot: root,
-        path,
-        state: "safe-no-op",
-      },
-    ]);
+      const owned = await installRepositoryScripts([
+        {
+          extension: ".sh",
+          lifecycle: "pre-create",
+          mode: 0o755,
+          ownerRoot: root,
+          path,
+          state: "safe-no-op",
+        },
+      ]);
 
-    expect(await readFile(path)).toEqual(Buffer.from(bytes));
-    expect((await stat(path)).mode & 0o777).toBe(0o755);
-    expect(owned).toHaveLength(1);
-    expect(owned[0]).toMatchObject({ bytes, mode: 0o755, path });
-    expect(owned[0].dev).toBe((await lstat(path)).dev);
-    expect(owned[0].ino).toBe((await lstat(path)).ino);
-    expect(owned[0].birthtimeNs).toBe((await lstat(path, { bigint: true })).birthtimeNs);
-    expect(await readdir(dirname(path))).toEqual(["pre-create.app.sh"]);
-  });
+      expect(await readFile(path)).toEqual(Buffer.from(bytes));
+      expect((await stat(path)).mode & 0o777).toBe(0o755);
+      expect(owned).toHaveLength(1);
+      expect(owned[0]).toMatchObject({ bytes, mode: 0o755, path });
+      expect(owned[0].dev).toBe((await lstat(path)).dev);
+      expect(owned[0].ino).toBe((await lstat(path)).ino);
+      expect(owned[0].birthtimeNs).toBe((await lstat(path, { bigint: true })).birthtimeNs);
+      expect(await readdir(dirname(path))).toEqual(["pre-create.app.sh"]);
+    },
+  );
 
   test("publishes a Windows plan as one complete runtime-ready PowerShell file", async () => {
     const root = await fixture();
@@ -251,8 +255,10 @@ describe("repository script transaction", () => {
   test("reports prior owned scripts when a later no-replace publication fails", async () => {
     const root = await fixture();
     const hooks = join(root, ".arashi", "hooks");
-    const first = join(hooks, "pre-create.app.sh");
-    const second = join(hooks, "post-create.app.sh");
+    const extension = process.platform === "win32" ? ".ps1" : ".sh";
+    const mode = process.platform === "win32" ? null : 0o755;
+    const first = join(hooks, `pre-create.app${extension}`);
+    const second = join(hooks, `post-create.app${extension}`);
     await mkdir(hooks, { recursive: true });
     await writeFile(second, "pre-existing");
     let failure: unknown;
@@ -260,9 +266,9 @@ describe("repository script transaction", () => {
     try {
       await installRepositoryScripts(
         ["pre-create", "post-create"].map((lifecycle, index) => ({
-          extension: ".sh" as const,
+          extension,
           lifecycle: lifecycle as "pre-create" | "post-create",
-          mode: 0o755,
+          mode,
           ownerRoot: root,
           path: index === 0 ? first : second,
           state: "safe-no-op" as const,
@@ -329,7 +335,11 @@ describe("repository script transaction", () => {
     const owned = await Promise.all(paths.map((path) => createOwned(path)));
 
     await writeFile(paths[1], "user edit");
-    await chmod(paths[2], 0o700);
+    if (process.platform === "win32") {
+      owned[2] = { ...owned[2], mode: 0o700 };
+    } else {
+      await chmod(paths[2], 0o700);
+    }
     await rm(paths[3]);
     await writeFile(paths[3], owned[3].bytes, { mode: 0o755 });
     await rm(paths[4]);
@@ -340,7 +350,9 @@ describe("repository script transaction", () => {
     expect(result.preserved).toEqual(paths.slice(1));
     await expect(lstat(paths[0])).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(paths[1], "utf8")).toBe("user edit");
-    expect((await stat(paths[2])).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") {
+      expect((await stat(paths[2])).mode & 0o777).toBe(0o700);
+    }
     expect((await lstat(paths[4])).isSymbolicLink()).toBe(true);
   });
 

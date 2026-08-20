@@ -5,7 +5,9 @@ import { describe, expect, test } from "vitest";
 
 const root = join(import.meta.dirname, "../..");
 
-describe("secret prompt raw PTY", () => {
+// The helper drives a POSIX PTY. Windows secrecy and EOF handling run against the native binary
+// in the dedicated acceptance job.
+describe.skipIf(process.platform === "win32")("secret prompt raw PTY", () => {
   test("terminal bytes disclose no body or body derivative", () => {
     const canary = "SECRET-Pty:/274?body=value";
     const result = spawnSync(

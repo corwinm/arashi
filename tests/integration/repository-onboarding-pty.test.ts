@@ -71,7 +71,9 @@ afterEach(async () => {
   );
 });
 
-describe("repository onboarding raw PTY journeys", () => {
+// The helper drives a POSIX PTY and imports source paths directly. Native Windows terminal
+// behavior is covered by the dedicated built-binary acceptance job.
+describe.skipIf(process.platform === "win32")("repository onboarding raw PTY journeys", () => {
   test("top-level default-no decline is a no-op", async () => {
     const journey = await runJourney([
       { waitFor: "Configure repository worktree setup now?", bytes: enter },
