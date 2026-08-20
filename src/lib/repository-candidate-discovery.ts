@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
 import { opendir } from "node:fs/promises";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 
-const exec = promisify(execFile);
 export interface RepositoryLocalCandidate {
   kind: "file" | "directory";
   path: string;
@@ -30,15 +28,33 @@ export interface RepositoryCandidateDiscoveryDependencies {
 const LIKELY_LOCAL =
   /^(?:\.env(?:\..+)?|\.cache|\.local|local(?:\..+)?|.*\.local\.(?:json|ya?ml|toml))$/i;
 const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
-const defaults: RepositoryCandidateDiscoveryDependencies = {
-  openRoot: (root) => opendir(root),
-  checkIgnored: async (paths, root) => {
-    const { stdout } = await exec("git", ["check-ignore", "--", ...paths], {
+const checkIgnored = (paths: readonly string[], root: string): Promise<readonly string[]> =>
+  new Promise((resolve, reject) => {
+    const child = spawn("git", ["check-ignore", "--stdin", "-z"], {
       cwd: root,
-      maxBuffer: 16_384,
-    }).catch((error: { stdout?: string }) => ({ stdout: error.stdout ?? "" }));
-    return stdout.split(/\r?\n/).filter(Boolean);
-  },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.resume();
+    child.stdin.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") {
+        reject(error);
+      }
+    });
+    child.once("error", reject);
+    child.once("close", (exitCode) => {
+      if (exitCode !== 0 && exitCode !== 1) {
+        reject(new Error("git check-ignore failed"));
+        return;
+      }
+      resolve(Buffer.concat(stdout).toString("utf8").split("\0").filter(Boolean));
+    });
+    child.stdin.end(Buffer.from(`${paths.join("\0")}\0`));
+  });
+const defaults: RepositoryCandidateDiscoveryDependencies = {
+  checkIgnored,
+  openRoot: (root) => opendir(root),
 };
 
 export const discoverRepositoryLocalCandidates = async (

@@ -261,6 +261,9 @@ export const rollbackRepositoryScripts = async (
       const mode = entry.mode === null ? null : (await stat(entry.path)).mode & 0o777;
       const after = await lstat(entry.path, { bigint: true });
       if (
+        entry.birthtimeNs !== 0n &&
+        before.birthtimeNs !== 0n &&
+        after.birthtimeNs !== 0n &&
         after.isFile() &&
         !after.isSymbolicLink() &&
         Number(before.dev) === entry.dev &&

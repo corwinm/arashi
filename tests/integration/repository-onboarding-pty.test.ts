@@ -20,10 +20,14 @@ type JourneyResult = {
     };
   };
   installed: Array<{ content: string; mode: number; path: string }>;
+  existingHookContent?: string;
   transcript: string;
 };
 
-const runJourney = async (interactions: Interaction[]): Promise<JourneyResult> => {
+const runJourney = async (
+  interactions: Interaction[],
+  options: { existingHookContent?: string } = {},
+): Promise<JourneyResult> => {
   const workspace = await mkdtemp(join(tmpdir(), "arashi-onboarding-pty-"));
   temporaryRoots.push(workspace);
   const repository = join(workspace, "repos", "app");
@@ -33,7 +37,7 @@ const runJourney = async (interactions: Interaction[]): Promise<JourneyResult> =
   execFileSync("git", ["init", "-q"], { cwd: repository });
   const resultPath = join(workspace, "result.json");
   const encoded = Buffer.from(
-    JSON.stringify({ interactions, repository, resultPath, workspace }),
+    JSON.stringify({ ...options, interactions, repository, resultPath, workspace }),
   ).toString("base64");
   const processResult = spawnSync(process.execPath, [helper, root, encoded], {
     encoding: "utf8",
@@ -159,6 +163,28 @@ describe.skipIf(process.platform === "win32")("repository onboarding raw PTY jou
     });
     expect(journey.installed).toHaveLength(1);
     expect(journey.installed[0].path).toMatch(/\.arashi\/hooks\/post-create\.app\.sh$/);
+  });
+
+  test("persistent native hook collision can be kept after file and inline retries", async () => {
+    const existingHookContent = "#!/usr/bin/env bash\nprintf 'user-owned'\n";
+    const journey = await runJourney(
+      [
+        ...begin([2]),
+        { waitFor: "Choose repository lifecycle hooks:", bytes: choose(0) },
+        { waitFor: "Choose source for pre-create:", bytes: down + down + enter },
+        { waitFor: "pre-create:", bytes: enter },
+        { waitFor: "Enter Bash command for pre-create:", bytes: "printf-attempted\r" },
+        { waitFor: "pre-create:", bytes: down + down + down + enter },
+        finish(),
+      ],
+      { existingHookContent },
+    );
+
+    expect(journey.result.status).toBe("confirmed");
+    expect(journey.result.editor?.scripts).toEqual([]);
+    expect(journey.result.editor?.candidate.repos.app).not.toHaveProperty("hooks");
+    expect(journey.installed).toEqual([]);
+    expect(journey.existingHookContent).toBe(existingHookContent);
   });
 
   test("validation retries the owning path prompt", async () => {

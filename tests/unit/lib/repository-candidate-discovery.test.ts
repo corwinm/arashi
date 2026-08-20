@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { discoverRepositoryLocalCandidates } from "../../../src/lib/repository-candidate-discovery.ts";
+import { execFile } from "node:child_process";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { tmpdir } from "node:os";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
@@ -77,6 +77,16 @@ describe("bounded repository candidate discovery", () => {
     ]);
     expect(JSON.stringify(result)).not.toContain("DISCOVERY_SECRET_CANARY");
     expect(JSON.stringify(result)).not.toContain("node_modules");
+  });
+
+  test("preserves ignored eligible names that Git quotes or that contain tabs", async () => {
+    const root = await fixture();
+    const names = [".env.é", ".env.a\tb"];
+    await Promise.all(names.map((name) => writeFile(join(root, name), "ignored")));
+
+    const result = await discoverRepositoryLocalCandidates(root);
+
+    expect(result.candidates.map(({ path }) => path)).toEqual(expect.arrayContaining(names));
   });
 
   test("enforces hard root-entry and suggestion limits without recursion", async () => {

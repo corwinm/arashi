@@ -378,4 +378,16 @@ describe("repository script transaction", () => {
     });
     expect(await readFile(path)).toEqual(Buffer.from(owned.bytes));
   });
+
+  test("rollback preserves a file when its recorded birth identity is unavailable", async () => {
+    const root = await fixture();
+    const path = join(root, "unavailable-birthtime.sh");
+    const owned = await createOwned(path);
+
+    await expect(rollbackRepositoryScripts([{ ...owned, birthtimeNs: 0n }])).resolves.toEqual({
+      preserved: [path],
+      removed: [],
+    });
+    expect(await readFile(path)).toEqual(Buffer.from(owned.bytes));
+  });
 });

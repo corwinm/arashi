@@ -262,6 +262,56 @@ describe("repository onboarding controller", () => {
     }
   });
 
+  test("persistent native hook collisions can be kept after trying file and inline sources", async () => {
+    const prompts = promptSet({
+      confirm: vi
+        .fn()
+        .mockImplementationOnce(() => ok(true))
+        .mockImplementationOnce(() => ok(true)),
+      multiSelect: vi
+        .fn()
+        .mockImplementationOnce(() => ok(["hooks"]))
+        .mockImplementationOnce(() => ok(["pre-create"])),
+      secretInput: vi.fn(() => ok("printf attempted")),
+      select: vi
+        .fn()
+        .mockImplementationOnce(() => ok("file"))
+        .mockImplementationOnce(() => ok("inline-bash"))
+        .mockImplementationOnce(() => ok("skip")),
+    });
+    const observeActivePaths = vi.fn(async (request: { lifecycles: readonly unknown[] }) =>
+      request.lifecycles.length > 0
+        ? [{ lifecycle: "pre-create" as const, nativeCandidateCount: 1 }]
+        : [],
+    );
+
+    const result = await collectRepositoryOnboarding({
+      discover: vi.fn(),
+      editor: state(),
+      observeActivePaths,
+      prompts,
+      scriptContext: {
+        activeConfigRoot: "/workspace",
+        activeRepositoryPath: "/workspace/repos/app",
+        platform: "linux",
+      },
+    });
+
+    expect(result.status).toBe("confirmed");
+    expect(prompts.select).toHaveBeenCalledTimes(3);
+    expect((prompts.select as ReturnType<typeof vi.fn>).mock.calls[0][1]).not.toContainEqual(
+      expect.objectContaining({ value: "skip" }),
+    );
+    expect((prompts.select as ReturnType<typeof vi.fn>).mock.calls[2][1]).toContainEqual({
+      name: "Skip / keep existing active hook",
+      value: "skip",
+    });
+    if (result.status === "confirmed") {
+      expect(result.editor.scripts).toEqual([]);
+      expect(result.editor.candidate.repos.app.hooks).toBeUndefined();
+    }
+  });
+
   test("final decline and Ctrl+C are controlled cancellation", async () => {
     const prompts = promptSet({
       confirm: vi

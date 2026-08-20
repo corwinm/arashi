@@ -6,16 +6,27 @@ const encoded = process.argv[3];
 if (!root || !encoded) process.exit(2);
 const config = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
 const source = `
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { collectRepositoryOnboarding } from ${JSON.stringify(`${root}/src/lib/repository-onboarding.ts`)};
 import { createRepositoryEditorState } from ${JSON.stringify(`${root}/src/lib/repository-config-editor.ts`)};
 import { discoverRepositoryLocalCandidates } from ${JSON.stringify(`${root}/src/lib/repository-candidate-discovery.ts`)};
 import { installRepositoryScripts } from ${JSON.stringify(`${root}/src/lib/repository-script-transaction.ts`)};
+import { discoverLifecycleHookCandidates } from ${JSON.stringify(`${root}/src/lib/hooks.ts`)};
 const config = JSON.parse(Buffer.from(process.argv[1], "base64").toString("utf8"));
 const editor = createRepositoryEditorState({ version: "1.0.0", reposDir: "repos", repos: { app: { gitUrl: "x", path: "repos/app" } } }, "app");
+const existingHookPath = config.existingHookContent === undefined ? null : join(config.workspace, ".arashi", "hooks", "pre-create.app.sh");
+if (existingHookPath) {
+  await mkdir(dirname(existingHookPath), { recursive: true });
+  await writeFile(existingHookPath, config.existingHookContent);
+}
 const result = await collectRepositoryOnboarding({
   discover: () => discoverRepositoryLocalCandidates(config.repository),
   editor,
+  observeActivePaths: async (request) => Promise.all(request.lifecycles.map(async ({ lifecycle }) => ({
+    lifecycle,
+    nativeCandidateCount: (await discoverLifecycleHookCandidates(\`${"${lifecycle}"}.app\`, config.workspace, process.platform)).length,
+  }))),
   scriptContext: { activeConfigRoot: config.workspace, activeRepositoryPath: config.repository, platform: process.platform },
 });
 const installed = [];
@@ -26,7 +37,8 @@ if (result.status === "confirmed") {
     installed.push({ content: await readFile(plan.path, "utf8"), mode: observed.mode & 0o777, path: plan.path });
   }
 }
-await writeFile(config.resultPath, JSON.stringify({ installed, result }));
+const existingHookContent = existingHookPath ? await readFile(existingHookPath, "utf8") : undefined;
+await writeFile(config.resultPath, JSON.stringify({ existingHookContent, installed, result }));
 `;
 const terminal = spawnPty(
   process.execPath,

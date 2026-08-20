@@ -167,13 +167,19 @@ export const collectRepositoryOnboarding = async (options: {
     const hooks = await prompts.multiSelect("Choose repository lifecycle hooks:", lifecycles);
     if (cancelled(hooks)) return { reason: hooks.reason, status: "cancelled" };
     for (const lifecycle of hooks.value) {
+      let allowSkip = false;
       for (;;) {
-        const source = await prompts.select(`Choose source for ${lifecycle}:`, [
-          { name: "Inline Bash command", value: "inline-bash" as const },
-          { name: "Inline interpreter map", value: "inline-map" as const },
-          { name: "Editable active file", value: "file" as const },
-        ]);
+        const sourceChoices: Choice<"inline-bash" | "inline-map" | "file" | "skip">[] = [
+          { name: "Inline Bash command", value: "inline-bash" },
+          { name: "Inline interpreter map", value: "inline-map" },
+          { name: "Editable active file", value: "file" },
+        ];
+        if (allowSkip) {
+          sourceChoices.push({ name: "Skip / keep existing active hook", value: "skip" });
+        }
+        const source = await prompts.select(`Choose source for ${lifecycle}:`, sourceChoices);
         if (cancelled(source)) return { reason: source.reason, status: "cancelled" };
+        if (source.value === "skip") break;
         let candidate: RepositoryEditorState;
         if (source.value === "file") {
           if (!options.scriptContext)
@@ -197,6 +203,7 @@ export const collectRepositoryOnboarding = async (options: {
           return { reason: "declined", status: "cancelled" };
         }
         showFieldDiagnostics(prompts, owned, lifecycle);
+        allowSkip = true;
       }
     }
   }
