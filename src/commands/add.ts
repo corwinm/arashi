@@ -10,7 +10,7 @@ import { runtime } from "../lib/runtime.ts";
  */
 
 import { AddCommandError, AddCommandErrorCode, ArashiError } from "../lib/errors.ts";
-import { basename, dirname, join, relative, resolve } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { randomUUID } from "node:crypto";
 import { clone, exec as gitExec, getDefaultBranch } from "../lib/git.ts";
 import {
@@ -37,6 +37,7 @@ import {
   readFile,
   realpath,
   rm,
+  lstat,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -56,6 +57,24 @@ import {
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
 import { resolveGitMainWorktree } from "../lib/workspace-context.ts";
+import {
+  createRepositoryEditorState,
+  type RepositoryActivePathObserver,
+} from "../lib/repository-config-editor.ts";
+import {
+  collectRepositoryOnboarding,
+  isRepositoryOnboardingEligible,
+  type RepositoryOnboardingResult,
+} from "../lib/repository-onboarding.ts";
+import { discoverRepositoryLocalCandidates } from "../lib/repository-candidate-discovery.ts";
+import {
+  installRepositoryScripts,
+  RepositoryScriptTransactionError,
+  rollbackRepositoryScripts,
+  type OwnedRepositoryScript,
+} from "../lib/repository-script-transaction.ts";
+import { isDeepStrictEqual } from "node:util";
+import { discoverLifecycleHookCandidates, resolveLifecycleHookFilePath } from "../lib/hooks.ts";
 
 type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
 type WorkspaceRoots = Awaited<ReturnType<typeof findConfiguredWorkspaceRoots>>;
@@ -184,6 +203,13 @@ export interface AddCommandResult {
   gitUrl: string;
   /** Managed ignore reconciliation retained for the materialized repository. */
   managedIgnore: ManagedIgnoreReconciliation;
+  /** Sanitized state for confirmed active hook files. */
+  activeScripts: Array<{
+    lifecycle: string;
+    path: string;
+    safeNoOp: true;
+    executableReady: boolean;
+  }>;
 }
 
 /**
@@ -194,6 +220,7 @@ export type AddRollbackFailurePhase =
   | "branch-delete"
   | "clone-remove"
   | "config-restore"
+  | "script-remove"
   | "managed-ignore-restore"
   | "final-state-observe";
 
@@ -240,7 +267,70 @@ export interface AddExecutionDependencies {
   restoreIgnore?: typeof restoreManagedIgnore;
   verifyIgnoreRestored?: typeof verifyManagedIgnoreRestored;
   transactionLockHeld?: boolean;
+  stdinIsTTY?: boolean;
+  stdoutIsTTY?: boolean;
+  collectOnboarding?: typeof collectRepositoryOnboarding;
+  discoverCandidates?: typeof discoverRepositoryLocalCandidates;
+  observeActivePaths?: RepositoryActivePathObserver;
+  installScripts?: typeof installRepositoryScripts;
+  rollbackScripts?: typeof rollbackRepositoryScripts;
 }
+
+const pathMetadata = async (path: string): Promise<Awaited<ReturnType<typeof lstat>> | null> => {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+};
+
+/** Metadata-only active hook observation used by interactive add validation. */
+export const observeRepositoryActivePaths = (options: {
+  activeConfigRoot: string;
+  activeRepositoryPath: string;
+  platform?: NodeJS.Platform;
+}): RepositoryActivePathObserver => {
+  const platform = options.platform ?? process.platform;
+  return async (request) =>
+    Promise.all(
+      request.lifecycles.map(async ({ lifecycle, plannedPath }) => {
+        const create = lifecycle === "pre-create" || lifecycle === "post-create";
+        const ownerRoot = create ? options.activeConfigRoot : options.activeRepositoryPath;
+        const hookName = create ? `${lifecycle}.${request.repositoryName}` : lifecycle;
+        const destination =
+          plannedPath ?? resolveLifecycleHookFilePath({ hookName, ownerRoot, platform });
+        const destinationMetadata = await pathMetadata(destination);
+        let cursor = dirname(destination);
+        let symlinkParent = false;
+        let unsafeDestination = Boolean(
+          destinationMetadata &&
+          (destinationMetadata.isSymbolicLink() || !destinationMetadata.isFile()),
+        );
+        for (;;) {
+          const metadata = await pathMetadata(cursor);
+          if (metadata) {
+            symlinkParent ||= metadata.isSymbolicLink();
+            unsafeDestination ||= !metadata.isDirectory() || metadata.isSymbolicLink();
+          }
+          if (cursor === ownerRoot || dirname(cursor) === cursor) break;
+          cursor = dirname(cursor);
+        }
+        const nativeCandidates = await discoverLifecycleHookCandidates(
+          hookName,
+          ownerRoot,
+          platform,
+        );
+        return {
+          destinationExists: destinationMetadata !== null,
+          lifecycle,
+          nativeCandidateCount: nativeCandidates.length,
+          symlinkParent,
+          unsafeDestination,
+        };
+      }),
+    );
+};
 
 const CONFIG_LOCK_RETRY_COUNT = 2_000;
 const CONFIG_LOCK_RETRY_DELAY_MS = 20;
@@ -749,6 +839,10 @@ export const executeAdd = async (
   const afterConfigLoad = dependencies.afterConfigLoad;
   const afterConfigPersist = dependencies.afterConfigPersist;
   const afterIgnoreReconcile = dependencies.afterIgnoreReconcile;
+  const collectOnboarding = dependencies.collectOnboarding ?? collectRepositoryOnboarding;
+  const discoverCandidates = dependencies.discoverCandidates ?? discoverRepositoryLocalCandidates;
+  const installScripts = dependencies.installScripts ?? installRepositoryScripts;
+  const rollbackScripts = dependencies.rollbackScripts ?? rollbackRepositoryScripts;
   const resolveMainWorktree =
     dependencies.resolveMainWorktree ??
     ((path: string) => resolveGitMainWorktree(path, { strict: true }));
@@ -783,6 +877,7 @@ export const executeAdd = async (
   let setupScriptCreated = false;
   let originalConfigBytes: Uint8Array | null = null;
   let persistedConfigBytes: Uint8Array | null = null;
+  let ownedScripts: OwnedRepositoryScript[] = [];
   let currentPhase: "preflight" | "clone" | "branch" | "worktree" | "config" = "preflight";
   let managedIgnore: ManagedIgnoreReconciliation | undefined = undefined;
   const startSpinner = (text: string) => (options.json ? undefined : spinner(text).start());
@@ -1114,15 +1209,50 @@ export const executeAdd = async (
       s4?.info("No setup script found");
     }
 
-    // Step 9: Update configuration
+    // Step 9: Collect optional repository setup, then update configuration once.
+    const minimalRepoConfig: RepoConfig = {
+      gitUrl: urlInfo.url,
+      path: configuredRepositoryPath,
+    };
+    let repoConfig = minimalRepoConfig;
+    let scriptPlans = [] as ReturnType<typeof createRepositoryEditorState>["scripts"];
+    if (
+      isRepositoryOnboardingEligible({
+        force: options.force,
+        json: options.json,
+        stdinIsTTY: dependencies.stdinIsTTY ?? process.stdin.isTTY,
+        stdoutIsTTY: dependencies.stdoutIsTTY ?? process.stdout.isTTY,
+      })
+    ) {
+      const onboardingCandidate = structuredClone(config);
+      onboardingCandidate.repos[repositoryName] = minimalRepoConfig;
+      const scriptContext = {
+        activeConfigRoot: workspaceRoot,
+        activeRepositoryPath: materializedRepositoryPath,
+      };
+      const onboarding: RepositoryOnboardingResult = await collectOnboarding({
+        discover: () => discoverCandidates(canonicalPath),
+        editor: createRepositoryEditorState(onboardingCandidate, repositoryName),
+        observeActivePaths:
+          dependencies.observeActivePaths ?? observeRepositoryActivePaths(scriptContext),
+        scriptContext,
+      });
+      if (onboarding.status === "cancelled") {
+        throw addFailure(
+          "Repository setup cancelled.",
+          AddCommandErrorCode.CONFIG_UPDATE_FAILED,
+          "config",
+        );
+      }
+      if (onboarding.status === "confirmed") {
+        repoConfig = onboarding.editor.candidate.repos[repositoryName];
+        scriptPlans = onboarding.editor.scripts;
+      }
+    }
+
     currentPhase = "config";
     const s5 = startSpinner("Updating configuration...");
     try {
-      const repoConfig: RepoConfig = {
-        gitUrl: urlInfo.url,
-        path: configuredRepositoryPath,
-      };
-
       await withConfigLock(
         getConfigPath(workspaceRoot),
         async () => {
@@ -1131,6 +1261,16 @@ export const executeAdd = async (
             throw new Error(
               "Configuration changed concurrently after add began; preserving the newer file.",
             );
+          }
+          if (scriptPlans.length > 0) {
+            try {
+              ownedScripts = await installScripts(scriptPlans);
+            } catch (error) {
+              if (error instanceof RepositoryScriptTransactionError) {
+                ownedScripts = [...error.owned];
+              }
+              throw error;
+            }
           }
           config.repos[repositoryName] = repoConfig;
           persistedConfigBytes = new TextEncoder().encode(serializeConfig(config));
@@ -1153,6 +1293,12 @@ export const executeAdd = async (
 
     // Success!
     return {
+      activeScripts: scriptPlans.map(({ lifecycle, mode, path }) => ({
+        executableReady: mode === null || mode === 0o755,
+        lifecycle,
+        path,
+        safeNoOp: true,
+      })),
       canonicalPath,
       clonePath: canonicalPath,
       coordinatedBranch,
@@ -1200,19 +1346,10 @@ export const executeAdd = async (
               };
               const currentEntry = currentConfig.repos?.[repositoryName];
               const persistedEntry = persistedConfig.repos?.[repositoryName];
-              const currentRecord =
-                typeof currentEntry === "object" && currentEntry !== null
-                  ? (currentEntry as Record<string, unknown>)
-                  : null;
-              const persistedRecord =
-                typeof persistedEntry === "object" && persistedEntry !== null
-                  ? (persistedEntry as Record<string, unknown>)
-                  : null;
               if (
-                currentRecord &&
-                persistedRecord &&
-                currentRecord.path === persistedRecord.path &&
-                currentRecord.gitUrl === persistedRecord.gitUrl
+                currentEntry &&
+                persistedEntry &&
+                isDeepStrictEqual(currentEntry, persistedEntry)
               ) {
                 delete currentConfig.repos?.[repositoryName];
                 await restoreConfigBytes(
@@ -1227,10 +1364,13 @@ export const executeAdd = async (
               }
             } catch (cleanupError) {
               if (cleanupError instanceof SyntaxError) {
-                await restoreConfigBytes(getConfigPath(workspaceRoot), configBytesBeforeAdd);
-              } else {
-                throw cleanupError;
+                // oxlint-disable-next-line preserve-caught-error -- The parser error is already preserved explicitly as the cause.
+                throw new Error(
+                  "Configuration changed concurrently during add; preserved the unowned newer bytes.",
+                  { cause: cleanupError },
+                );
               }
+              throw cleanupError;
             }
           } else {
             configRestoreFailed = true;
@@ -1247,7 +1387,33 @@ export const executeAdd = async (
         recordFailure("config-restore", cleanupError);
       }
     }
-    if (activePath && worktreeCreated) {
+    const preservedScriptPaths: string[] = [];
+    if (ownedScripts.length > 0) {
+      try {
+        const scriptRollback = await rollbackScripts(ownedScripts);
+        preservedScriptPaths.push(...scriptRollback.preserved);
+        for (const path of scriptRollback.preserved) {
+          recordFailure(
+            "script-remove",
+            new Error(`Preserved modified or unowned active script: ${path}`),
+          );
+        }
+      } catch (cleanupError) {
+        recordFailure("script-remove", cleanupError);
+      }
+    }
+    const pathContainsPreservedScript = (parent: string): boolean =>
+      preservedScriptPaths.some((path) => {
+        const descendant = relative(parent, path);
+        return (
+          descendant !== "" &&
+          descendant !== ".." &&
+          !descendant.startsWith(`..${sep}`) &&
+          !isAbsolute(descendant)
+        );
+      });
+    const activeCleanupBlocked = activePath ? pathContainsPreservedScript(activePath) : false;
+    if (activePath && worktreeCreated && !activeCleanupBlocked) {
       try {
         await removeWorktree(canonicalPath, activePath);
       } catch (cleanupError) {
@@ -1282,7 +1448,13 @@ export const executeAdd = async (
         recordFailure("branch-delete", cleanupError);
       }
     }
-    if (cloneCreated && linkedStateDefinitelyAbsent && !branchSurvives) {
+    const canonicalCleanupBlocked = pathContainsPreservedScript(canonicalPath);
+    if (
+      cloneCreated &&
+      linkedStateDefinitelyAbsent &&
+      !branchSurvives &&
+      !canonicalCleanupBlocked
+    ) {
       try {
         await removeCanonicalClone(canonicalPath);
         cloneCreated = false;
@@ -1411,7 +1583,7 @@ export const executeAdd = async (
 /**
  * Display success message in human-readable format
  */
-const displaySuccess = (result: AddCommandResult): void => {
+export const displayAddSuccess = (result: AddCommandResult): void => {
   success("\nRepository added successfully:");
   console.log(`  Name:              ${result.repositoryName}`);
   console.log(`  Config path:       ${result.path}`);
@@ -1420,6 +1592,10 @@ const displaySuccess = (result: AddCommandResult): void => {
   if (result.worktreePath && result.coordinatedBranch) {
     console.log(`  Active worktree:   ${result.worktreePath}`);
     console.log(`  Coordinated branch: ${result.coordinatedBranch}`);
+  }
+  for (const script of result.activeScripts) {
+    console.log(`  Active hook:       ${script.lifecycle} at ${script.path}`);
+    console.log("                     Active now; safe as generated; ready for editing.");
   }
 
   if (result.setupScript) {
@@ -1508,7 +1684,9 @@ export function createCommand(): Command {
   const cmd = new Command("add");
 
   cmd
-    .description("Add a Git repository to the workspace")
+    .description(
+      "Add a Git repository to the workspace; in a TTY, offers optional repository worktree setup (default no; --json and --force suppress setup)",
+    )
     .argument(
       "<git-url>",
       "Git repository URL (HTTPS, Git, File, [user@]host:path, or ssh://[user@]host/path)",
@@ -1517,6 +1695,10 @@ export function createCommand(): Command {
     .option("--create-setup", "Create setup.sh template if no setup script found", false)
     .option("-f, --force", "Skip confirmation prompts", false)
     .option("-j, --json", "Output result as JSON", false)
+    .addHelpText(
+      "after",
+      "\nWhen stdin and stdout are TTYs, add offers optional repository worktree setup (default: no).\n--json and --force suppress setup. Confirmed setup supports copy/symlink paths and inline-or-file lifecycle hooks.\n",
+    )
     .action(async (gitUrl: string, options: AddCommandOptions) => {
       let workspaceRoots: WorkspaceRoots | null = null;
       try {
@@ -1542,7 +1724,7 @@ export function createCommand(): Command {
             }),
           );
         } else {
-          displaySuccess(result);
+          displayAddSuccess(result);
         }
 
         process.exit(0);

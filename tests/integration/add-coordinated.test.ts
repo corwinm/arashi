@@ -1,8 +1,10 @@
+import { spawnSync } from "node:child_process";
 import { runtime } from "../helpers/node-runtime.ts";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   chmod,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -16,11 +18,21 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   DEFAULT_INCOMPLETE_LOCK_STALE_MS,
+  displayAddSuccess,
   executeAdd,
   type AddExecutionDependencies,
 } from "../../src/commands/add.ts";
 import { AddCommandError } from "../../src/lib/errors.ts";
 import { clone as cloneRepository } from "../../src/lib/git.ts";
+import {
+  normalizeRepositoryEditorState,
+  planRepositoryHookFile,
+  setRepositoryInlineHook,
+  setRepositoryPaths,
+} from "../../src/lib/repository-config-editor.ts";
+import { RepositoryScriptTransactionError } from "../../src/lib/repository-script-transaction.ts";
+import { collectRepositoryOnboarding } from "../../src/lib/repository-onboarding.ts";
+import type { RepositoryOnboardingPrompts } from "../../src/lib/repository-onboarding.ts";
 
 const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
 const temporaryRoots: string[] = [];
@@ -134,6 +146,212 @@ afterEach(async () => {
 });
 
 describe("add coordinated linked materialization", () => {
+  test("observes a real active-file collision before final confirmation and rolls back without config or script mutation", async () => {
+    const topology = await createParentTopology("feature/active-collision");
+    const remote = await seedChildRemote(topology.root);
+    const configPath = join(topology.active, ".arashi", "config.json");
+    const configBefore = await readFile(configPath);
+    const collisionPath = join(topology.active, ".arashi", "hooks", "post-create.child.sh");
+    await mkdir(join(collisionPath, ".."), { recursive: true });
+    await writeFile(collisionPath, "pre-existing\n");
+    let sourceAttempts = 0;
+    let finalConfirmationReached = false;
+    let installCalled = false;
+
+    const failure = await executeAdd(
+      remote,
+      {},
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        collectOnboarding: (options) =>
+          collectRepositoryOnboarding({
+            ...options,
+            prompts: {
+              confirm: async (message) => {
+                if (message.startsWith("Apply this repository setup?")) {
+                  finalConfirmationReached = true;
+                }
+                return { status: "ok", value: true };
+              },
+              input: async () => ({ status: "ok", value: "" }),
+              multiSelect: async (message) => ({
+                status: "ok",
+                value: message.includes("sections") ? ["hooks"] : ["post-create"],
+              }),
+              secretInput: async () => ({ status: "ok", value: "" }),
+              select: async () =>
+                ++sourceAttempts === 1
+                  ? { status: "ok", value: "file" }
+                  : { reason: "abort", status: "cancelled" },
+              showDiagnostic: () => undefined,
+            } as RepositoryOnboardingPrompts,
+          }),
+        installScripts: async () => {
+          installCalled = true;
+          return [];
+        },
+      },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AddCommandError);
+    expect(sourceAttempts).toBe(2);
+    expect(finalConfirmationReached).toBe(false);
+    expect(installCalled).toBe(false);
+    expect(await readFile(configPath)).toEqual(configBefore);
+    expect(await readFile(collisionPath, "utf8")).toBe("pre-existing\n");
+    expect(await runtime.file(join(topology.canonical, "repos", "child")).exists()).toBe(false);
+    expect(await runtime.file(join(topology.active, "repos", "child")).exists()).toBe(false);
+  });
+
+  test.each([
+    ["non-TTY stdin", { stdinIsTTY: false, stdoutIsTTY: true }, {}],
+    ["non-TTY stdout", { stdinIsTTY: true, stdoutIsTTY: false }, {}],
+    ["--json", { stdinIsTTY: true, stdoutIsTTY: true }, { json: true }],
+    ["--force", { stdinIsTTY: true, stdoutIsTTY: true }, { force: true }],
+  ] as const)("suppresses all onboarding work for %s", async (_label, tty, options) => {
+    const topology = await createParentTopology(`feature/suppressed-${temporaryRoots.length}`);
+    const remote = await seedChildRemote(topology.root);
+    const calls = { collect: 0, discover: 0, install: 0, observe: 0 };
+
+    await executeAdd(
+      remote,
+      options,
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        ...tty,
+        collectOnboarding: async () => {
+          calls.collect += 1;
+          throw new Error("onboarding must be suppressed");
+        },
+        discoverCandidates: async () => {
+          calls.discover += 1;
+          return { candidates: [], inspectedEntries: 0 };
+        },
+        observeActivePaths: async () => {
+          calls.observe += 1;
+          return [];
+        },
+        installScripts: async () => {
+          calls.install += 1;
+          return [];
+        },
+      },
+    );
+
+    expect(calls).toEqual({ collect: 0, discover: 0, install: 0, observe: 0 });
+  });
+
+  test("real aw add PTY offers setup and default-no persists only the minimal repository", async () => {
+    const topology = await createParentTopology("feature/real-pty-decline");
+    const remote = await seedChildRemote(topology.root);
+    const pty = spawnSync(
+      process.execPath,
+      [
+        join(import.meta.dirname, "..", "helpers", "pty-command.mjs"),
+        topology.active,
+        "Configure repository worktree setup now?",
+        "",
+        "20",
+        JSON.stringify([process.execPath, CLI_ENTRY, "add", remote]),
+      ],
+      { encoding: "utf8", timeout: 25_000 },
+    );
+
+    expect(pty.status, pty.stderr || pty.stdout).toBe(0);
+    expect(pty.stdout).toContain("Configure repository worktree setup now?");
+    expect(pty.stdout).toContain("Repository added successfully:");
+    expect(
+      JSON.parse(await readFile(join(topology.active, ".arashi", "config.json"), "utf8")),
+    ).toMatchObject({ repos: { child: { gitUrl: remote, path: "repos/child" } } });
+    const persisted = JSON.parse(
+      await readFile(join(topology.active, ".arashi", "config.json"), "utf8"),
+    ) as { repos: { child: Record<string, unknown> } };
+    expect(persisted.repos.child).not.toHaveProperty("copy");
+    expect(persisted.repos.child).not.toHaveProperty("symlink");
+    expect(persisted.repos.child).not.toHaveProperty("hooks");
+  });
+
+  test("persists one complete confirmed candidate and hands exact active linked scripts to the transaction", async () => {
+    const topology = await createParentTopology("feature/onboarding");
+    const remote = await seedChildRemote(topology.root);
+    let discoveryCalled = false;
+    let plannedScripts: ReadonlyArray<{ lifecycle: string; mode: number | null; path: string }> =
+      [];
+    const result = await executeAdd(
+      remote,
+      {},
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        discoverCandidates: async () => {
+          discoveryCalled = true;
+          return { candidates: [], inspectedEntries: 0 };
+        },
+        collectOnboarding: async ({ editor, discover, scriptContext }) => {
+          await discover();
+          let candidate = setRepositoryPaths(editor, "copy", [".env.local"]);
+          candidate = setRepositoryInlineHook(candidate, "pre-create", { bash: "true" });
+          candidate = planRepositoryHookFile(candidate, "post-create", scriptContext!);
+          candidate = planRepositoryHookFile(candidate, "pre-remove", scriptContext!);
+          const normalized = normalizeRepositoryEditorState(candidate);
+          if (!normalized.ok) throw new Error("fixture candidate failed normalization");
+          return { status: "confirmed", editor: normalized.state };
+        },
+        installScripts: async (plans) => {
+          plannedScripts = plans;
+          return [];
+        },
+      },
+    );
+
+    expect(discoveryCalled).toBe(true);
+    const activeRoot = topology.active;
+    const activeChild = result.worktreePath!;
+    expect(
+      JSON.parse(await readFile(join(topology.active, ".arashi", "config.json"), "utf8")),
+    ).toMatchObject({
+      repos: { child: { copy: [".env.local"], hooks: { "pre-create": { bash: "true" } } } },
+    });
+    expect(plannedScripts).toMatchObject([
+      {
+        lifecycle: "post-create",
+        mode: 0o755,
+        path: join(activeRoot, ".arashi", "hooks", "post-create.child.sh"),
+      },
+      {
+        lifecycle: "pre-remove",
+        mode: 0o755,
+        path: join(activeChild, ".arashi", "hooks", "pre-remove.sh"),
+      },
+    ]);
+    expect(result.activeScripts).toEqual([
+      {
+        executableReady: true,
+        lifecycle: "post-create",
+        path: join(activeRoot, ".arashi", "hooks", "post-create.child.sh"),
+        safeNoOp: true,
+      },
+      {
+        executableReady: true,
+        lifecycle: "pre-remove",
+        path: join(activeChild, ".arashi", "hooks", "pre-remove.sh"),
+        safeNoOp: true,
+      },
+    ]);
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    displayAddSuccess(result);
+    const human = output.mock.calls.flat().join("\n");
+    output.mockRestore();
+    expect(human).toContain(`Active hook:       post-create at ${result.activeScripts[0].path}`);
+    expect(human).toContain(`Active hook:       pre-remove at ${result.activeScripts[1].path}`);
+    expect(human).toContain("Active now; safe as generated; ready for editing.");
+    expect(human).not.toContain("#!/usr/bin/env bash");
+    expect(human).not.toContain("exit 0");
+  });
+
   test("process add passes, returns, and persists one normalized SSH alias URL", async () => {
     const topology = await createParentTopology("feature/ssh-alias");
     await seedChildRemote(topology.root);
@@ -679,6 +897,133 @@ describe("add coordinated linked materialization", () => {
     expect(await runtime.file(join(topology.active, "repos", "child")).exists()).toBe(false);
   });
 
+  test("rolls back scripts reported by an Nth-install transaction failure", async () => {
+    const topology = await createParentTopology("feature/partial-script-install");
+    const remote = await seedChildRemote(topology.root);
+    const scriptPath = join(
+      await realpath(topology.active),
+      "repos",
+      "child",
+      ".arashi",
+      "hooks",
+      "pre-remove.sh",
+    );
+    const bytes = new TextEncoder().encode("#!/bin/sh\nexit 0\n");
+    let rolledBackPaths: string[] = [];
+
+    const failure = await executeAdd(
+      remote,
+      {},
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        collectOnboarding: async ({ editor, scriptContext }) => {
+          const planned = planRepositoryHookFile(editor, "pre-remove", scriptContext!);
+          const normalized = normalizeRepositoryEditorState(planned);
+          if (!normalized.ok) throw new Error("fixture candidate failed normalization");
+          return { status: "confirmed", editor: normalized.state };
+        },
+        installScripts: async () => {
+          await mkdir(join(scriptPath, ".."), { recursive: true });
+          await writeFile(scriptPath, bytes, { mode: 0o755 });
+          await chmod(scriptPath, 0o755);
+          const observed = await lstat(scriptPath);
+          const owned = [
+            {
+              bytes,
+              dev: observed.dev,
+              ino: observed.ino,
+              mode: 0o755,
+              path: scriptPath,
+            },
+          ];
+          throw new RepositoryScriptTransactionError(
+            "injected second install failure",
+            owned,
+            undefined,
+          );
+        },
+        rollbackScripts: async (owned) => {
+          rolledBackPaths = owned.map(({ path }) => path);
+          await rm(scriptPath);
+          return { preserved: [], removed: rolledBackPaths };
+        },
+      },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AddCommandError);
+    expect(rolledBackPaths).toEqual([scriptPath]);
+    await expect(lstat(scriptPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("preserves containing repository state when an owned script was edited before rollback", async () => {
+    const topology = await createParentTopology("feature/preserve-edited-script");
+    const remote = await seedChildRemote(topology.root);
+    const scriptPath = join(
+      await realpath(topology.active),
+      "repos",
+      "child",
+      ".arashi",
+      "hooks",
+      "pre-remove.sh",
+    );
+    const original = new TextEncoder().encode("#!/bin/sh\nexit 0\n");
+
+    const failure = await executeAdd(
+      remote,
+      {},
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        collectOnboarding: async ({ editor, scriptContext }) => {
+          const planned = planRepositoryHookFile(editor, "pre-remove", scriptContext!);
+          const normalized = normalizeRepositoryEditorState(planned);
+          if (!normalized.ok) throw new Error("fixture candidate failed normalization");
+          return { status: "confirmed", editor: normalized.state };
+        },
+        installScripts: async () => {
+          await mkdir(join(scriptPath, ".."), { recursive: true });
+          await writeFile(scriptPath, original, { mode: 0o755 });
+          await chmod(scriptPath, 0o755);
+          const observed = await lstat(scriptPath);
+          return [
+            {
+              bytes: original,
+              dev: observed.dev,
+              ino: observed.ino,
+              mode: 0o755,
+              path: scriptPath,
+            },
+          ];
+        },
+        afterConfigPersist: async () => {
+          await writeFile(scriptPath, "user edit\n");
+          throw new Error("injected post-save failure");
+        },
+      },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AddCommandError);
+    expect((failure as AddCommandError).context).toMatchObject({
+      rollback: {
+        complete: false,
+        failures: [
+          {
+            message: `Preserved modified or unowned active script: ${scriptPath}`,
+            phase: "script-remove",
+          },
+        ],
+        finalState: {
+          canonical: { exists: true },
+          worktree: { exists: true, metadataPresent: true },
+        },
+      },
+    });
+    expect(await readFile(scriptPath, "utf8")).toBe("user edit\n");
+  });
+
   test("retains canonical clone, branch, and ignore coverage when worktree removal fails", async () => {
     const topology = await createParentTopology("feature/retain");
     const remote = await seedChildRemote(topology.root);
@@ -889,7 +1234,7 @@ describe("add coordinated linked materialization", () => {
     expect(await runtime.file(activeDestination).exists()).toBe(true);
   });
 
-  test("retains ignore state when config restoration and final config observation fail", async () => {
+  test("retains ignore state when malformed concurrent config cannot be observed", async () => {
     const topology = await createParentTopology("feature/config-observe");
     const remote = await seedChildRemote(topology.root);
     const configPath = join(topology.active, ".arashi", "config.json");
@@ -899,7 +1244,6 @@ describe("add coordinated linked materialization", () => {
       { force: true, json: true },
       { configurationRoot: topology.active, executionRoot: topology.active },
       {
-        restoreConfigBytes: async () => Promise.reject(new Error("injected restore failure")),
         afterConfigPersist: async () => {
           await writeFile(configPath, "not-json\n");
           throw new Error("injected config failure");
@@ -911,13 +1255,53 @@ describe("add coordinated linked materialization", () => {
       rollback: {
         complete: false,
         failures: [
-          { message: "injected restore failure", phase: "config-restore" },
+          {
+            message:
+              "Configuration changed concurrently during add; preserved the unowned newer bytes.",
+            phase: "config-restore",
+          },
           { phase: "final-state-observe" },
         ],
         finalState: {
           configEntryPresent: null,
           managedIgnore: { changed: true, restored: false },
         },
+      },
+    });
+  });
+
+  test("preserves malformed bytes written concurrently after config persistence", async () => {
+    const topology = await createParentTopology("feature/malformed-concurrent-config");
+    const remote = await seedChildRemote(topology.root);
+    const configPath = join(topology.active, ".arashi", "config.json");
+    const malformed = "{newer-unowned-bytes\n";
+
+    const failure = await executeAdd(
+      remote,
+      { force: true, json: true },
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        afterConfigPersist: async () => {
+          await writeFile(configPath, malformed);
+          throw new Error("injected post-save failure");
+        },
+      },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AddCommandError);
+    expect(await readFile(configPath, "utf8")).toBe(malformed);
+    expect((failure as AddCommandError).context).toMatchObject({
+      rollback: {
+        complete: false,
+        failures: [
+          {
+            message:
+              "Configuration changed concurrently during add; preserved the unowned newer bytes.",
+            phase: "config-restore",
+          },
+          { phase: "final-state-observe" },
+        ],
+        finalState: { configEntryPresent: null },
       },
     });
   });

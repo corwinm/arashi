@@ -8,12 +8,14 @@ const mockCheckbox = vi.fn((options?: { choices?: unknown[] }) => {
 });
 const mockConfirm = vi.fn(() => Promise.resolve(true));
 const mockInput = vi.fn(() => Promise.resolve("test input"));
+const mockPassword = vi.fn(() => Promise.resolve("secret input"));
 const mockSelect = vi.fn(() => Promise.resolve("main"));
 
 vi.mock("@inquirer/prompts", () => ({
   checkbox: mockCheckbox,
   confirm: mockConfirm,
   input: mockInput,
+  password: mockPassword,
   select: mockSelect,
 }));
 
@@ -39,6 +41,10 @@ describe("prompt outcomes", () => {
       status: "ok",
       value: "test input",
     });
+    await expect(promptApi.secretInput("Hook body")).resolves.toEqual({
+      status: "ok",
+      value: "secret input",
+    });
     await expect(promptApi.select("Branch", [{ name: "Main", value: "main" }])).resolves.toEqual({
       status: "ok",
       value: "main",
@@ -49,6 +55,7 @@ describe("prompt outcomes", () => {
 
     expect(mockConfirm).toHaveBeenCalledWith({ default: true, message: "Continue?" });
     expect(mockInput).toHaveBeenCalledWith({ default: "default", message: "Name" });
+    expect(mockPassword).toHaveBeenCalledWith({ mask: "", message: "Hook body" });
   });
 
   test.each([

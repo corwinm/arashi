@@ -2,6 +2,7 @@ import {
   checkbox as inquirerCheckbox,
   confirm as inquirerConfirm,
   input as inquirerInput,
+  password as inquirerPassword,
   select as inquirerSelect,
 } from "@inquirer/prompts";
 import readline from "readline";
@@ -217,4 +218,9 @@ export function input(message: string, defaultValue?: string): Promise<PromptOut
       message,
     }),
   );
+}
+
+/** Collect sensitive text without echoing either the value or a length-derived mask. */
+export function secretInput(message: string): Promise<PromptOutcome<string>> {
+  return withPromptOutcome(() => inquirerPassword({ mask: "", message }));
 }
