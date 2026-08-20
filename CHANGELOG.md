@@ -1,3 +1,13 @@
+## [1.33.0](https://github.com/corwinm/arashi/compare/v1.32.1...v1.33.0) (2026-08-19)
+
+### Features
+
+- use configured bases across branch commands ([#150](https://github.com/corwinm/arashi/issues/150)) ([ed485e3](https://github.com/corwinm/arashi/commit/ed485e3816be71314dea1852a505ab027eb39282))
+
+### Bug Fixes
+
+- prefer aw in installer and help output ([#152](https://github.com/corwinm/arashi/issues/152)) ([dd8a1f5](https://github.com/corwinm/arashi/commit/dd8a1f5bdce373a8c1a099898cb706103e203179))
+
 ## [1.32.1](https://github.com/corwinm/arashi/compare/v1.32.0...v1.32.1) (2026-08-18)
 
 ### Bug Fixes
