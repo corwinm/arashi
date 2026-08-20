@@ -123,7 +123,7 @@ Windows (PowerShell and Git Bash):
 
 Windows manual installation requires `arashi-windows-x64.exe`, `arashi`, `arashi.ps1`, `arashi.bat`, `aw`, `aw.ps1`, `aw.bat`, and `arashi-checksums.txt` from the same release. Verify all seven payload files, rename the executable to `arashi.bin.exe`, and keep the payload together on PATH. Manual release installations do not create the direct installer's ownership ledger; deliberately move or remove the manual payload before later using the direct installer.
 
-You can also build from source for local development. Development is pinned to Node.js 24.18.0, which satisfies pnpm 11's Node.js 22.13 minimum, and pnpm 11.20.0; nvm users can select the repository's development runtime with `nvm use`.
+You can also build from source for local development. Development is pinned to Node.js 24.18.0, which satisfies pnpm 11's Node.js 22.13 minimum, and pnpm 11.22.0; nvm users can select the repository's development runtime with `nvm use`.
 
 ```bash
 nvm use # Optional; reads .nvmrc
