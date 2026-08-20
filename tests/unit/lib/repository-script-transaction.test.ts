@@ -35,8 +35,15 @@ const createOwned = async (path: string): Promise<OwnedRepositoryScript> => {
   const bytes = repositoryNoOpScaffold(".sh");
   await writeFile(path, bytes, { mode: 0o755 });
   await chmod(path, 0o755);
-  const observed = await lstat(path);
-  return { bytes, dev: observed.dev, ino: observed.ino, mode: 0o755, path };
+  const observed = await lstat(path, { bigint: true });
+  return {
+    birthtimeNs: observed.birthtimeNs,
+    bytes,
+    dev: Number(observed.dev),
+    ino: Number(observed.ino),
+    mode: 0o755,
+    path,
+  };
 };
 
 describe("repository script transaction", () => {
@@ -66,6 +73,7 @@ describe("repository script transaction", () => {
     expect(owned[0]).toMatchObject({ bytes, mode: 0o755, path });
     expect(owned[0].dev).toBe((await lstat(path)).dev);
     expect(owned[0].ino).toBe((await lstat(path)).ino);
+    expect(owned[0].birthtimeNs).toBe((await lstat(path, { bigint: true })).birthtimeNs);
     expect(await readdir(dirname(path))).toEqual(["pre-create.app.sh"]);
   });
 
@@ -334,5 +342,28 @@ describe("repository script transaction", () => {
     expect(await readFile(paths[1], "utf8")).toBe("user edit");
     expect((await stat(paths[2])).mode & 0o777).toBe(0o700);
     expect((await lstat(paths[4])).isSymbolicLink()).toBe(true);
+  });
+
+  test("rollback preserves a same-path replacement with recycled dev and ino but a new birth identity", async () => {
+    const root = await fixture();
+    const path = join(root, "replaced.sh");
+    const owned = await createOwned(path);
+
+    await rm(path);
+    await writeFile(path, owned.bytes, { mode: 0o755 });
+    await chmod(path, 0o755);
+    const replacement = await lstat(path, { bigint: true });
+    const recycledIdentity = {
+      ...owned,
+      birthtimeNs: replacement.birthtimeNs - 1n,
+      dev: Number(replacement.dev),
+      ino: Number(replacement.ino),
+    };
+
+    await expect(rollbackRepositoryScripts([recycledIdentity])).resolves.toEqual({
+      preserved: [path],
+      removed: [],
+    });
+    expect(await readFile(path)).toEqual(Buffer.from(owned.bytes));
   });
 });

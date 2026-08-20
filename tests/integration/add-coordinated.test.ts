@@ -928,12 +928,13 @@ describe("add coordinated linked materialization", () => {
           await mkdir(join(scriptPath, ".."), { recursive: true });
           await writeFile(scriptPath, bytes, { mode: 0o755 });
           await chmod(scriptPath, 0o755);
-          const observed = await lstat(scriptPath);
+          const observed = await lstat(scriptPath, { bigint: true });
           const owned = [
             {
+              birthtimeNs: observed.birthtimeNs,
               bytes,
-              dev: observed.dev,
-              ino: observed.ino,
+              dev: Number(observed.dev),
+              ino: Number(observed.ino),
               mode: 0o755,
               path: scriptPath,
             },
@@ -987,12 +988,13 @@ describe("add coordinated linked materialization", () => {
           await mkdir(join(scriptPath, ".."), { recursive: true });
           await writeFile(scriptPath, original, { mode: 0o755 });
           await chmod(scriptPath, 0o755);
-          const observed = await lstat(scriptPath);
+          const observed = await lstat(scriptPath, { bigint: true });
           return [
             {
+              birthtimeNs: observed.birthtimeNs,
               bytes: original,
-              dev: observed.dev,
-              ino: observed.ino,
+              dev: Number(observed.dev),
+              ino: Number(observed.ino),
               mode: 0o755,
               path: scriptPath,
             },

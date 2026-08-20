@@ -11,6 +11,7 @@ export interface OwnedRepositoryScript {
   mode: number | null;
   dev: number;
   ino: number;
+  birthtimeNs: bigint;
 }
 
 export interface RepositoryScriptTransactionDependencies {
@@ -120,12 +121,13 @@ const validateParents = async (expected: readonly DirectoryIdentity[]): Promise<
 };
 
 const validateOwnedDestination = async (entry: OwnedRepositoryScript): Promise<void> => {
-  const observed = await lstat(entry.path);
+  const observed = await lstat(entry.path, { bigint: true });
   if (
     !observed.isFile() ||
     observed.isSymbolicLink() ||
-    observed.dev !== entry.dev ||
-    observed.ino !== entry.ino
+    Number(observed.dev) !== entry.dev ||
+    Number(observed.ino) !== entry.ino ||
+    observed.birthtimeNs !== entry.birthtimeNs
   ) {
     throw new Error(`Active hook destination changed identity after publication: ${entry.path}`);
   }
@@ -183,7 +185,7 @@ export const installRepositoryScripts = async (
       try {
         await prepareTemporaryScript(temporaryPath, bytes, plan.mode);
         temporaryExists = true;
-        const prepared = await lstat(temporaryPath);
+        const prepared = await lstat(temporaryPath, { bigint: true });
         if (!prepared.isFile() || prepared.isSymbolicLink()) {
           throw new Error(`Prepared active hook is not a regular file: ${destination}`);
         }
@@ -192,20 +194,22 @@ export const installRepositoryScripts = async (
         await link(temporaryPath, destination);
 
         const entry: OwnedRepositoryScript = {
+          birthtimeNs: prepared.birthtimeNs,
           bytes,
-          dev: prepared.dev,
-          ino: prepared.ino,
+          dev: Number(prepared.dev),
+          ino: Number(prepared.ino),
           mode: plan.mode,
           path: destination,
         };
         owned.push(entry);
         await dependencies.afterPublication?.(plan);
-        const published = await lstat(destination);
+        const published = await lstat(destination, { bigint: true });
         if (
           !published.isFile() ||
           published.isSymbolicLink() ||
           published.dev !== prepared.dev ||
-          published.ino !== prepared.ino
+          published.ino !== prepared.ino ||
+          published.birthtimeNs !== prepared.birthtimeNs
         ) {
           throw new Error(`Published active hook is not a regular file: ${destination}`);
         }
@@ -236,21 +240,23 @@ export const rollbackRepositoryScripts = async (
   const preserved: string[] = [];
   for (const entry of owned.toReversed()) {
     try {
-      const before = await lstat(entry.path);
+      const before = await lstat(entry.path, { bigint: true });
       if (!before.isFile() || before.isSymbolicLink()) {
         preserved.push(entry.path);
         continue;
       }
       const bytes = await readFile(entry.path);
       const mode = entry.mode === null ? null : (await stat(entry.path)).mode & 0o777;
-      const after = await lstat(entry.path);
+      const after = await lstat(entry.path, { bigint: true });
       if (
         after.isFile() &&
         !after.isSymbolicLink() &&
-        before.dev === entry.dev &&
-        before.ino === entry.ino &&
-        after.dev === entry.dev &&
-        after.ino === entry.ino &&
+        Number(before.dev) === entry.dev &&
+        Number(before.ino) === entry.ino &&
+        before.birthtimeNs === entry.birthtimeNs &&
+        Number(after.dev) === entry.dev &&
+        Number(after.ino) === entry.ino &&
+        after.birthtimeNs === entry.birthtimeNs &&
         equalBytes(bytes, entry.bytes) &&
         mode === entry.mode
       ) {
