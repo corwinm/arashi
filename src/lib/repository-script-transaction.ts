@@ -193,23 +193,35 @@ export const installRepositoryScripts = async (
         await validateParents(expectedParents);
         await link(temporaryPath, destination);
 
-        const entry: OwnedRepositoryScript = {
-          birthtimeNs: prepared.birthtimeNs,
-          bytes,
-          dev: Number(prepared.dev),
-          ino: Number(prepared.ino),
-          mode: plan.mode,
-          path: destination,
-        };
-        owned.push(entry);
-        await dependencies.afterPublication?.(plan);
+        // Windows exposes a hard link's creation time per directory entry rather than preserving
+        // the private staging path's value. Capture the published path's birth identity while
+        // still requiring it to reference the prepared file.
         const published = await lstat(destination, { bigint: true });
         if (
           !published.isFile() ||
           published.isSymbolicLink() ||
           published.dev !== prepared.dev ||
-          published.ino !== prepared.ino ||
-          published.birthtimeNs !== prepared.birthtimeNs
+          published.ino !== prepared.ino
+        ) {
+          throw new Error(`Published active hook is not a regular file: ${destination}`);
+        }
+        const entry: OwnedRepositoryScript = {
+          birthtimeNs: published.birthtimeNs,
+          bytes,
+          dev: Number(published.dev),
+          ino: Number(published.ino),
+          mode: plan.mode,
+          path: destination,
+        };
+        owned.push(entry);
+        await dependencies.afterPublication?.(plan);
+        const validated = await lstat(destination, { bigint: true });
+        if (
+          !validated.isFile() ||
+          validated.isSymbolicLink() ||
+          validated.dev !== published.dev ||
+          validated.ino !== published.ino ||
+          validated.birthtimeNs !== published.birthtimeNs
         ) {
           throw new Error(`Published active hook is not a regular file: ${destination}`);
         }
