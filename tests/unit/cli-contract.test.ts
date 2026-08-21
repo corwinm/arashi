@@ -193,13 +193,11 @@ describe("CLI command contract", () => {
     });
 
     const readme = readFileSync(resolve(process.cwd(), "README.md"), "utf8");
-    expect(readme).toContain("Optional repository worktree setup");
-    expect(readme).toContain("Non-TTY input/output, `--json`, and `--force` suppress discovery");
     expect(readme).toContain(
-      "summaries identify only lifecycle/interpreter presence or file path/state",
+      "`aw add` walks you through repository configuration and hook initialization.",
     );
-    expect(readme).toContain("safe no-op");
-    expect(readme).toContain("residual local race");
+    expect(readme).not.toContain("Pure Node/Bun");
+    expect(readme).not.toContain("Rust");
   });
 
   test("publishes enforceable init zero-config option and output policy", () => {
