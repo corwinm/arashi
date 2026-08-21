@@ -79,9 +79,9 @@ describe("bounded repository candidate discovery", () => {
     expect(JSON.stringify(result)).not.toContain("node_modules");
   });
 
-  test("preserves ignored eligible names that Git quotes or that contain tabs", async () => {
+  test("preserves ignored eligible names without mangling Git-quoted output", async () => {
     const root = await fixture();
-    const names = [".env.é", ".env.a\tb"];
+    const names = process.platform === "win32" ? [".env.é"] : [".env.é", ".env.a\tb"];
     await Promise.all(names.map((name) => writeFile(join(root, name), "ignored")));
 
     const result = await discoverRepositoryLocalCandidates(root);
