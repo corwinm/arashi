@@ -22,7 +22,6 @@ const promptSet = (
   confirm: vi.fn(),
   input: vi.fn(),
   multiSelect: vi.fn(),
-  secretInput: vi.fn(),
   select: vi.fn(),
   showDiagnostic: vi.fn(),
   ...overrides,
@@ -49,19 +48,20 @@ describe("repository onboarding controller", () => {
     expect(discover).not.toHaveBeenCalled();
   });
 
-  test("collects mixed setup with secret inline input and sanitized final confirmation", async () => {
-    const canary = "SECRET_CONTROLLER_CANARY";
+  test("collects mixed setup with visible inline input and sanitized final confirmation", async () => {
+    const canary = "VISIBLE_CONTROLLER_CANARY";
     const prompts = promptSet({
       confirm: vi
         .fn()
         .mockImplementationOnce(() => ok(true))
         .mockImplementationOnce(() => ok(true)),
-      input: vi.fn(() => ok(".env.local")),
+      input: vi.fn((message: string) =>
+        ok(message.startsWith("Enter Bash command") ? canary : ".env.local"),
+      ),
       multiSelect: vi
         .fn()
         .mockImplementationOnce(() => ok(["copy", "hooks"]))
         .mockImplementationOnce(() => ok(["pre-create", "post-remove"])),
-      secretInput: vi.fn(() => ok(canary)),
       select: vi
         .fn()
         .mockImplementationOnce(() => ok(false))
@@ -89,7 +89,7 @@ describe("repository onboarding controller", () => {
     expect(finalPrompt).toContain("pre-create");
     expect(finalPrompt).toContain("post-remove.sh");
     expect(finalPrompt).not.toContain(canary);
-    expect(prompts.secretInput).toHaveBeenCalledWith("Enter Bash command for pre-create:");
+    expect(prompts.input).toHaveBeenCalledWith("Enter Bash command for pre-create:");
   });
 
   test("collects direct array entries through an explicit add-another flow", async () => {
@@ -149,7 +149,7 @@ describe("repository onboarding controller", () => {
     expect(prompts.input).toHaveBeenCalledTimes(2);
   });
 
-  test("invalid inline input emits lifecycle diagnostic and retries its secret prompt", async () => {
+  test("invalid inline input emits lifecycle diagnostic and retries its visible prompt", async () => {
     const prompts = promptSet({
       confirm: vi
         .fn()
@@ -159,7 +159,7 @@ describe("repository onboarding controller", () => {
         .fn()
         .mockImplementationOnce(() => ok(["hooks"]))
         .mockImplementationOnce(() => ok(["pre-create"])),
-      secretInput: vi
+      input: vi
         .fn()
         .mockImplementationOnce(() => ok("  "))
         .mockImplementationOnce(() => ok("printf recovered")),
@@ -169,7 +169,7 @@ describe("repository onboarding controller", () => {
       collectRepositoryOnboarding({ discover: vi.fn(), editor: state(), prompts }),
     ).resolves.toMatchObject({ status: "confirmed" });
     expect(prompts.showDiagnostic).toHaveBeenCalledWith(expect.stringMatching(/^pre-create: /));
-    expect(prompts.secretInput).toHaveBeenCalledTimes(2);
+    expect(prompts.input).toHaveBeenCalledTimes(2);
   });
 
   test("active-path validation reports a bounded lifecycle diagnostic and retries its source choice", async () => {
@@ -182,7 +182,7 @@ describe("repository onboarding controller", () => {
         .fn()
         .mockImplementationOnce(() => ok(["hooks"]))
         .mockImplementationOnce(() => ok(["pre-create"])),
-      secretInput: vi.fn(() => ok("printf recovered")),
+      input: vi.fn(() => ok("printf recovered")),
       select: vi
         .fn()
         .mockImplementationOnce(() => ok("file"))
@@ -226,7 +226,7 @@ describe("repository onboarding controller", () => {
         .fn()
         .mockImplementationOnce(() => ok(["hooks"]))
         .mockImplementationOnce(() => ok(["pre-create"])),
-      secretInput: vi.fn(() => ok("printf recovered")),
+      input: vi.fn(() => ok("printf recovered")),
       select: vi
         .fn()
         .mockImplementationOnce(() => ok("file"))
@@ -272,7 +272,7 @@ describe("repository onboarding controller", () => {
         .fn()
         .mockImplementationOnce(() => ok(["hooks"]))
         .mockImplementationOnce(() => ok(["pre-create"])),
-      secretInput: vi.fn(() => ok("printf attempted")),
+      input: vi.fn(() => ok("printf attempted")),
       select: vi
         .fn()
         .mockImplementationOnce(() => ok("file"))

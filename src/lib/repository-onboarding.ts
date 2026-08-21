@@ -1,12 +1,4 @@
-import {
-  confirm,
-  input,
-  multiSelect,
-  secretInput,
-  select,
-  type Choice,
-  type PromptOutcome,
-} from "./prompts.ts";
+import { confirm, input, multiSelect, select, type Choice, type PromptOutcome } from "./prompts.ts";
 import type { InlineHookLifecycle } from "./config.ts";
 import type { RepositoryCandidateDiscovery } from "./repository-candidate-discovery.ts";
 import {
@@ -34,7 +26,6 @@ export const isRepositoryOnboardingEligible = (options: RepositoryOnboardingElig
 export interface RepositoryOnboardingPrompts {
   confirm(message: string, defaultValue?: boolean): Promise<PromptOutcome<boolean>>;
   input(message: string, defaultValue?: string): Promise<PromptOutcome<string>>;
-  secretInput(message: string): Promise<PromptOutcome<string>>;
   multiSelect<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T[]>>;
   select<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T>>;
   showDiagnostic(message: string): void;
@@ -43,7 +34,6 @@ export const repositoryOnboardingPrompts: RepositoryOnboardingPrompts = {
   confirm,
   input,
   multiSelect,
-  secretInput,
   select,
   showDiagnostic: (message) => console.error(message),
 };
@@ -112,12 +102,12 @@ async function collectInlineHook(
   for (;;) {
     const variants: Record<string, string> = {};
     if (source === "inline-bash") {
-      const body = await prompts.secretInput(`Enter Bash command for ${lifecycle}:`);
+      const body = await prompts.input(`Enter Bash command for ${lifecycle}:`);
       if (cancelled(body)) return body;
       if (body.value.trim()) variants.bash = body.value;
     } else {
       for (const interpreter of ["bash", "powershell", "cmd"] as const) {
-        const body = await prompts.secretInput(
+        const body = await prompts.input(
           `Enter ${interpreter} command for ${lifecycle} (blank to omit):`,
         );
         if (cancelled(body)) return body;

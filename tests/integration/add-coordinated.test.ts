@@ -180,7 +180,6 @@ describe("add coordinated linked materialization", () => {
                 status: "ok",
                 value: message.includes("sections") ? ["hooks"] : ["post-create"],
               }),
-              secretInput: async () => ({ status: "ok", value: "" }),
               select: async () =>
                 ++sourceAttempts === 1
                   ? { status: "ok", value: "file" }

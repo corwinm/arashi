@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -109,8 +108,8 @@ describe.skipIf(process.platform === "win32")("repository onboarding raw PTY jou
     },
   );
 
-  test("inline-only input stays absent from terminal bytes and derivatives", async () => {
-    const canary = "SECRET-Pty:/274?inline=value";
+  test("inline command remains visible while the user enters it", async () => {
+    const canary = "VISIBLE-Pty:/274?inline=value";
     const journey = await runJourney([
       ...begin([2]),
       { waitFor: "Choose repository lifecycle hooks:", bytes: choose(0) },
@@ -120,17 +119,7 @@ describe.skipIf(process.platform === "win32")("repository onboarding raw PTY jou
     ]);
     expect(journey.result).toMatchObject({ status: "confirmed" });
     expect(journey.installed).toEqual([]);
-    for (const derivative of [
-      canary,
-      canary.slice(0, 8),
-      Buffer.from(canary).toString("base64"),
-      Buffer.from(canary).toString("hex"),
-      encodeURIComponent(canary),
-      createHash("sha256").update(canary).digest("hex"),
-      "*".repeat(canary.length),
-    ]) {
-      expect(journey.transcript).not.toContain(derivative);
-    }
+    expect(journey.transcript).toContain(canary);
   });
 
   test("file-only installs the exact active filename as executable safe no-op", async () => {
@@ -209,11 +198,11 @@ describe.skipIf(process.platform === "win32")("repository onboarding raw PTY jou
     expect(journey.installed).toEqual([]);
   });
 
-  const partialSecretCanary = 'Part!al-"Secret\\:/274?value';
+  const partialCommandCanary = 'Part!al-"Command\\:/274?value';
   const ctrlCStages: readonly {
     name: string;
     interactions: Interaction[];
-    partialSecret?: string;
+    partialCommand?: string;
   }[] = [
     {
       name: "initial confirmation",
@@ -266,34 +255,34 @@ describe.skipIf(process.platform === "win32")("repository onboarding raw PTY jou
       ],
     },
     {
-      name: "partial inline Bash secret input",
-      partialSecret: partialSecretCanary,
+      name: "partial inline Bash command input",
+      partialCommand: partialCommandCanary,
       interactions: [
         ...begin([2]),
         { waitFor: "Choose repository lifecycle hooks:", bytes: choose(0) },
         { waitFor: "Choose source for pre-create:", bytes: enter },
         {
           waitFor: "Enter Bash command for pre-create:",
-          bytes: `${partialSecretCanary}\x03`,
+          bytes: `${partialCommandCanary}\x03`,
         },
       ],
     },
     {
-      name: "partial interpreter-map Bash secret input",
-      partialSecret: partialSecretCanary,
+      name: "partial interpreter-map Bash command input",
+      partialCommand: partialCommandCanary,
       interactions: [
         ...begin([2]),
         { waitFor: "Choose repository lifecycle hooks:", bytes: choose(0) },
         { waitFor: "Choose source for pre-create:", bytes: down + enter },
         {
           waitFor: "Enter bash command for pre-create (blank to omit):",
-          bytes: `${partialSecretCanary}\x03`,
+          bytes: `${partialCommandCanary}\x03`,
         },
       ],
     },
     {
-      name: "partial interpreter-map PowerShell secret input",
-      partialSecret: partialSecretCanary,
+      name: "partial interpreter-map PowerShell command input",
+      partialCommand: partialCommandCanary,
       interactions: [
         ...begin([2]),
         { waitFor: "Choose repository lifecycle hooks:", bytes: choose(0) },
@@ -301,13 +290,13 @@ describe.skipIf(process.platform === "win32")("repository onboarding raw PTY jou
         { waitFor: "Enter bash command for pre-create (blank to omit):", bytes: enter },
         {
           waitFor: "Enter powershell command for pre-create (blank to omit):",
-          bytes: `${partialSecretCanary}\x03`,
+          bytes: `${partialCommandCanary}\x03`,
         },
       ],
     },
     {
-      name: "partial interpreter-map cmd secret input",
-      partialSecret: partialSecretCanary,
+      name: "partial interpreter-map cmd command input",
+      partialCommand: partialCommandCanary,
       interactions: [
         ...begin([2]),
         { waitFor: "Choose repository lifecycle hooks:", bytes: choose(0) },
@@ -319,7 +308,7 @@ describe.skipIf(process.platform === "win32")("repository onboarding raw PTY jou
         },
         {
           waitFor: "Enter cmd command for pre-create (blank to omit):",
-          bytes: `${partialSecretCanary}\x03`,
+          bytes: `${partialCommandCanary}\x03`,
         },
       ],
     },
@@ -330,25 +319,12 @@ describe.skipIf(process.platform === "win32")("repository onboarding raw PTY jou
   ];
 
   test.each(ctrlCStages)(
-    "Ctrl+C at $name is controlled, mutation-free, and secret-safe",
-    async ({ interactions, partialSecret }) => {
+    "Ctrl+C at $name is controlled and mutation-free",
+    async ({ interactions, partialCommand }) => {
       const journey = await runJourney(interactions);
       expect(journey.result).toMatchObject({ status: "cancelled" });
       expect(journey.installed).toEqual([]);
-      if (partialSecret) {
-        for (const derivative of [
-          partialSecret,
-          partialSecret.slice(0, 8),
-          Buffer.from(partialSecret).toString("base64"),
-          Buffer.from(partialSecret).toString("hex"),
-          encodeURIComponent(partialSecret),
-          JSON.stringify(partialSecret).slice(1, -1),
-          createHash("sha256").update(partialSecret).digest("hex"),
-          "*".repeat(partialSecret.length),
-        ]) {
-          expect(journey.transcript).not.toContain(derivative);
-        }
-      }
+      if (partialCommand) expect(journey.transcript).toContain(partialCommand);
     },
     20_000,
   );
