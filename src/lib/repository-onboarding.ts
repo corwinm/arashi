@@ -204,10 +204,33 @@ export const collectRepositoryOnboarding = async (options: {
     return { reason: "declined", status: "cancelled" };
   }
   editor = validated.state;
-  const final = await prompts.confirm(
-    `Apply this repository setup?\n${JSON.stringify(summarizeRepositoryEditorState(editor), null, 2)}`,
-    false,
-  );
+  const preview = summarizeRepositoryEditorState(editor);
+  const activeFiles = preview.hooks.filter((hook) => hook.source === "file");
+  const previewSections = [
+    "Apply this repository setup?",
+    "Resulting repository configuration:",
+    JSON.stringify(
+      {
+        repos: {
+          [editor.repositoryName]: editor.candidate.repos[editor.repositoryName],
+        },
+      },
+      null,
+      2,
+    ),
+  ];
+  if (activeFiles.length > 0) {
+    previewSections.push(
+      "Files to create:",
+      ...activeFiles.map(
+        (file) => `  • ${file.lifecycle}: ${file.path} (active safe no-op; ready to edit)`,
+      ),
+    );
+  }
+  if (preview.warnings.length > 0) {
+    previewSections.push("Warnings:", ...preview.warnings);
+  }
+  const final = await prompts.confirm(previewSections.join("\n"), false);
   if (cancelled(final)) return { reason: final.reason, status: "cancelled" };
   if (!final.value) return { reason: "declined", status: "cancelled" };
   return { editor, status: "confirmed" };

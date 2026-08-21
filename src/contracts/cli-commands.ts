@@ -73,8 +73,9 @@ export interface AddOnboardingPolicy {
     jsonActiveFiles: "excluded-because-json-suppresses-onboarding";
   };
   secrecy: {
+    confirmationPreview: "resulting-repository-config-json";
     entry: "visible-plaintext";
-    postEntry: "presence-and-path-state-only";
+    postConfirmation: "presence-and-path-state-only";
   };
   suggestions: { bounded: true; contentFree: true; selectedByDefault: false };
   safety: {
@@ -606,8 +607,9 @@ export const commandSemantics: CommandSemantics = {
         jsonActiveFiles: "excluded-because-json-suppresses-onboarding",
       },
       secrecy: {
+        confirmationPreview: "resulting-repository-config-json",
         entry: "visible-plaintext",
-        postEntry: "presence-and-path-state-only",
+        postConfirmation: "presence-and-path-state-only",
       },
       suggestions: { bounded: true, contentFree: true, selectedByDefault: false },
       safety: {

@@ -48,7 +48,7 @@ describe("repository onboarding controller", () => {
     expect(discover).not.toHaveBeenCalled();
   });
 
-  test("collects mixed setup with visible inline input and sanitized final confirmation", async () => {
+  test("previews the resulting repository JSON and active files before confirmation", async () => {
     const canary = "VISIBLE_CONTROLLER_CANARY";
     const prompts = promptSet({
       confirm: vi
@@ -86,9 +86,15 @@ describe("repository onboarding controller", () => {
     const finalPrompt = (prompts.confirm as ReturnType<typeof vi.fn>).mock.calls.at(
       -1,
     )?.[0] as string;
-    expect(finalPrompt).toContain("pre-create");
-    expect(finalPrompt).toContain("post-remove.sh");
-    expect(finalPrompt).not.toContain(canary);
+    expect(finalPrompt).toContain("Resulting repository configuration:");
+    expect(finalPrompt).toContain('"repos"');
+    expect(finalPrompt).toContain('"app"');
+    expect(finalPrompt).toContain('"pre-create"');
+    expect(finalPrompt).toContain(canary);
+    expect(finalPrompt).toContain("Files to create:");
+    expect(finalPrompt).toContain(
+      "  • post-remove: /workspace/repos/app/.arashi/hooks/post-remove.sh (active safe no-op; ready to edit)",
+    );
     expect(prompts.input).toHaveBeenCalledWith("Enter Bash command for pre-create:");
   });
 
