@@ -72,7 +72,10 @@ export interface AddOnboardingPolicy {
     humanActiveFiles: "lifecycle-path-and-readiness-only";
     jsonActiveFiles: "excluded-because-json-suppresses-onboarding";
   };
-  secrecy: "presence-and-path-state-only";
+  secrecy: {
+    entry: "visible-plaintext";
+    postEntry: "presence-and-path-state-only";
+  };
   suggestions: { bounded: true; contentFree: true; selectedByDefault: false };
   safety: {
     implementation: "pure-node-bun-metadata-and-atomic-no-replace";
@@ -602,7 +605,10 @@ export const commandSemantics: CommandSemantics = {
         humanActiveFiles: "lifecycle-path-and-readiness-only",
         jsonActiveFiles: "excluded-because-json-suppresses-onboarding",
       },
-      secrecy: "presence-and-path-state-only",
+      secrecy: {
+        entry: "visible-plaintext",
+        postEntry: "presence-and-path-state-only",
+      },
       suggestions: { bounded: true, contentFree: true, selectedByDefault: false },
       safety: {
         implementation: "pure-node-bun-metadata-and-atomic-no-replace",
