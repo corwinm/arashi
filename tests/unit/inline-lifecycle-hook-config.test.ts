@@ -160,7 +160,13 @@ describe("inline lifecycle hook configuration RED contract", () => {
       sync: { timeoutSeconds: 42 },
       version: "1.0.0",
     });
-    expect(JSON.parse(await readFile(getConfigPath(root), "utf8"))).toMatchObject(loaded);
+    const persisted = JSON.parse(await readFile(getConfigPath(root), "utf8"));
+    expect(persisted.hooks.scripts["pre-create"]).toBe("printf prepare");
+    expect(persisted.hooks.scripts["post-remove"]).toEqual({
+      cmd: "echo cleanup",
+      powershell: "Write-Output cleanup",
+    });
+    expect(persisted.repos.api.hooks["post-create"]).toBe("printf ready");
   });
 
   test.each([

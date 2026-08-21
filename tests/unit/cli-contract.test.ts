@@ -178,6 +178,7 @@ describe("CLI command contract", () => {
       },
       fields: ["copy", "symlink", "pre-create", "post-create", "pre-remove", "post-remove"],
       hookSources: ["inline-bash", "inline-interpreter-map", "active-file"],
+      inlineBashPersistence: "string-shorthand",
       output: {
         humanActiveFiles: "lifecycle-path-and-readiness-only",
         jsonActiveFiles: "excluded-because-json-suppresses-onboarding",

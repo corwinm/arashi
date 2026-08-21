@@ -68,6 +68,7 @@ export interface AddOnboardingPolicy {
   };
   fields: ["copy", "symlink", "pre-create", "post-create", "pre-remove", "post-remove"];
   hookSources: ["inline-bash", "inline-interpreter-map", "active-file"];
+  inlineBashPersistence: "string-shorthand";
   output: {
     humanActiveFiles: "lifecycle-path-and-readiness-only";
     jsonActiveFiles: "excluded-because-json-suppresses-onboarding";
@@ -602,6 +603,7 @@ export const commandSemantics: CommandSemantics = {
       },
       fields: ["copy", "symlink", "pre-create", "post-create", "pre-remove", "post-remove"],
       hookSources: ["inline-bash", "inline-interpreter-map", "active-file"],
+      inlineBashPersistence: "string-shorthand",
       output: {
         humanActiveFiles: "lifecycle-path-and-readiness-only",
         jsonActiveFiles: "excluded-because-json-suppresses-onboarding",

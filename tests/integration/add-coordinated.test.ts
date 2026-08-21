@@ -312,7 +312,7 @@ describe("add coordinated linked materialization", () => {
     expect(
       JSON.parse(await readFile(join(topology.active, ".arashi", "config.json"), "utf8")),
     ).toMatchObject({
-      repos: { child: { copy: [".env.local"], hooks: { "pre-create": { bash: "true" } } } },
+      repos: { child: { copy: [".env.local"], hooks: { "pre-create": "true" } } },
     });
     expect(plannedScripts).toMatchObject([
       {

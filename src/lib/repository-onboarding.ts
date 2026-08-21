@@ -1,5 +1,5 @@
 import { confirm, input, multiSelect, select, type Choice, type PromptOutcome } from "./prompts.ts";
-import type { InlineHookLifecycle } from "./config.ts";
+import { serializeConfig, type Config, type InlineHookLifecycle } from "./config.ts";
 import type { RepositoryCandidateDiscovery } from "./repository-candidate-discovery.ts";
 import {
   normalizeRepositoryEditorState,
@@ -119,7 +119,11 @@ async function collectInlineHook(
       continue;
     }
     const normalized = normalizeRepositoryEditorState(
-      setRepositoryInlineHook(editor, lifecycle, variants),
+      setRepositoryInlineHook(
+        editor,
+        lifecycle,
+        source === "inline-bash" ? (variants.bash as string) : variants,
+      ),
     );
     if (normalized.ok) return normalized.state;
     showFieldDiagnostics(prompts, normalized.diagnostics, lifecycle);
@@ -205,6 +209,7 @@ export const collectRepositoryOnboarding = async (options: {
   }
   editor = validated.state;
   const preview = summarizeRepositoryEditorState(editor);
+  const persistedCandidate = JSON.parse(serializeConfig(editor.candidate)) as Config;
   const activeFiles = preview.hooks.filter((hook) => hook.source === "file");
   const previewSections = [
     "Apply this repository setup?",
@@ -212,7 +217,7 @@ export const collectRepositoryOnboarding = async (options: {
     JSON.stringify(
       {
         repos: {
-          [editor.repositoryName]: editor.candidate.repos[editor.repositoryName],
+          [editor.repositoryName]: persistedCandidate.repos[editor.repositoryName],
         },
       },
       null,

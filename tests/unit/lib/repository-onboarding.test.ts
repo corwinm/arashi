@@ -98,6 +98,36 @@ describe("repository onboarding controller", () => {
     expect(prompts.input).toHaveBeenCalledWith("Enter Bash command for pre-create:");
   });
 
+  test("stores an Inline Bash command using the string shorthand", async () => {
+    const command = "printf shorthand";
+    const prompts = promptSet({
+      confirm: vi
+        .fn()
+        .mockImplementationOnce(() => ok(true))
+        .mockImplementationOnce(() => ok(true)),
+      input: vi.fn(() => ok(command)),
+      multiSelect: vi
+        .fn()
+        .mockImplementationOnce(() => ok(["hooks"]))
+        .mockImplementationOnce(() => ok(["pre-create"])),
+      select: vi.fn(() => ok("inline-bash")) as RepositoryOnboardingPrompts["select"],
+    });
+
+    const result = await collectRepositoryOnboarding({
+      discover: vi.fn(),
+      editor: state(),
+      prompts,
+    });
+
+    expect(result.status).toBe("confirmed");
+    if (result.status !== "confirmed") return;
+    const finalPrompt = (prompts.confirm as ReturnType<typeof vi.fn>).mock.calls.at(
+      -1,
+    )?.[0] as string;
+    expect(finalPrompt).toContain(`"pre-create": "${command}"`);
+    expect(finalPrompt).not.toContain('"bash"');
+  });
+
   test("collects direct array entries through an explicit add-another flow", async () => {
     const prompts = promptSet({
       confirm: vi
