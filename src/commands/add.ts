@@ -1604,10 +1604,10 @@ export const displayAddSuccess = (result: AddCommandResult): void => {
     console.log(
       `  1. Run setup: cd ${result.worktreePath ?? result.canonicalPath} && ./${basename(result.setupScript)}`,
     );
-    console.log(`  2. Create worktree: arashi create my-branch`);
+    console.log(`  2. Create worktree: aw create my-branch`);
   } else {
     console.log("\nNext steps:");
-    console.log(`  Create worktree: arashi create my-branch`);
+    console.log(`  Create worktree: aw create my-branch`);
   }
 };
 

@@ -343,12 +343,20 @@ describe("add coordinated linked materialization", () => {
     const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
     displayAddSuccess(result);
     const human = output.mock.calls.flat().join("\n");
-    output.mockRestore();
     expect(human).toContain(`Active hook:       post-create at ${result.activeScripts[0].path}`);
     expect(human).toContain(`Active hook:       pre-remove at ${result.activeScripts[1].path}`);
     expect(human).toContain("Active now; safe as generated; ready for editing.");
+    expect(human).toContain("Create worktree: aw create my-branch");
+    expect(human).not.toContain("Create worktree: arashi create my-branch");
     expect(human).not.toContain("#!/usr/bin/env bash");
     expect(human).not.toContain("exit 0");
+
+    output.mockClear();
+    displayAddSuccess({ ...result, setupScript: null });
+    const withoutSetup = output.mock.calls.flat().join("\n");
+    expect(withoutSetup).toContain("Next steps:\n  Create worktree: aw create my-branch");
+    expect(withoutSetup).not.toContain("arashi create my-branch");
+    output.mockRestore();
   });
 
   test("process add passes, returns, and persists one normalized SSH alias URL", async () => {
