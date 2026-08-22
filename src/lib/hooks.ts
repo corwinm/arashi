@@ -1227,8 +1227,8 @@ export const lifecycleHookExtensions = (
 /** Pure active-file resolver shared by runtime discovery owners and planners. */
 export const resolveLifecycleHooksDirectory = (
   ownerRoot: string,
-  platform: NodeJS.Platform = process.platform,
-): string => (platform === "win32" ? win32 : posix).join(ownerRoot, ".arashi", "hooks");
+  _platform: NodeJS.Platform = process.platform,
+): string => join(ownerRoot, ".arashi", "hooks");
 
 export const resolveLifecycleHookFilePath = (options: {
   hookName: string;
@@ -1238,7 +1238,9 @@ export const resolveLifecycleHookFilePath = (options: {
   const platform = options.platform ?? process.platform;
   const pathApi = platform === "win32" ? win32 : posix;
   return pathApi.join(
-    resolveLifecycleHooksDirectory(options.ownerRoot, platform),
+    options.ownerRoot,
+    ".arashi",
+    "hooks",
     `${options.hookName}${platform === "win32" ? ".ps1" : ".sh"}`,
   );
 };
