@@ -26,6 +26,7 @@ export interface ConfigureTransactionDependencies {
   rollbackScripts(
     owned: readonly OwnedRepositoryScript[],
   ): Promise<{ removed: string[]; preserved: string[] }>;
+  restoreConfig?(originalBytes: Uint8Array, expectedCandidateBytes: Uint8Array): Promise<boolean>;
   saveConfig(candidate: Config): Promise<void>;
   withLock<T>(operation: () => Promise<T>): Promise<T>;
 }
@@ -41,18 +42,45 @@ export const runConfigureTransaction = async (options: {
     if (!equalBytes(current, options.expectedBytes))
       throw new Error("Configuration changed concurrently; preserved the newer bytes.");
     let owned: OwnedRepositoryScript[] = [];
+    let saveAttempted = false;
     try {
       await options.dependencies.revalidatePlans?.(options.plans);
       owned = await options.dependencies.installScripts(options.plans);
       const afterInstall = await options.dependencies.readConfigBytes();
       if (!equalBytes(afterInstall, options.expectedBytes))
         throw new Error("Configuration changed concurrently; preserved the newer bytes.");
+      saveAttempted = true;
       await options.dependencies.saveConfig(options.candidate);
     } catch (error) {
       if (error instanceof RepositoryScriptTransactionError) {
         owned = [...error.owned];
       }
-      if (owned.length > 0) await options.dependencies.rollbackScripts(owned);
+      const cleanupErrors: unknown[] = [];
+      if (saveAttempted && options.dependencies.restoreConfig) {
+        try {
+          await options.dependencies.restoreConfig(
+            options.expectedBytes,
+            new TextEncoder().encode(serializeConfig(options.candidate)),
+          );
+        } catch (recoveryError) {
+          cleanupErrors.push(recoveryError);
+        }
+      }
+      if (owned.length > 0) {
+        try {
+          await options.dependencies.rollbackScripts(owned);
+        } catch (rollbackError) {
+          cleanupErrors.push(rollbackError);
+        }
+      }
+      if (cleanupErrors.length > 0) {
+        const aggregateError = new AggregateError(
+          [error, ...cleanupErrors],
+          "Configuration transaction failed and recovery was incomplete; inspect the nested errors.",
+        );
+        aggregateError.cause = error;
+        throw aggregateError;
+      }
       throw error;
     }
   });
@@ -83,6 +111,62 @@ const atomicPersistenceDefaults: AtomicConfigurePersistenceDependencies = {
     `.${basename(configPath)}.arashi-${process.pid}-${randomUUID()}.tmp`,
 };
 
+/** Atomically replaces live bytes only when they still equal the exact expected snapshot. */
+export const persistExpectedBytesAtomically = async (
+  configPath: string,
+  replacementBytes: Uint8Array,
+  expectedBytes: Uint8Array,
+  dependencies: AtomicConfigurePersistenceDependencies = atomicPersistenceDefaults,
+): Promise<boolean> => {
+  const beforeStage = await dependencies.readFile(configPath);
+  if (!equalBytes(beforeStage, expectedBytes)) return false;
+  const temporaryPath = join(dirname(configPath), dependencies.temporaryName(configPath));
+  let temporaryExists = false;
+  let failure: unknown;
+  let persisted = false;
+  try {
+    const handle = await dependencies.open(temporaryPath, "wx", 0o600);
+    temporaryExists = true;
+    try {
+      await handle.writeFile(replacementBytes);
+      await handle.sync();
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      await handle.close();
+    } catch (closeError) {
+      failure = failure
+        ? new AggregateError([failure, closeError], "Atomic configuration staging failed to close.")
+        : closeError;
+    }
+    if (failure) throw failure;
+    const beforeReplace = await dependencies.readFile(configPath);
+    if (equalBytes(beforeReplace, expectedBytes)) {
+      await dependencies.rename(temporaryPath, configPath);
+      temporaryExists = false;
+      persisted = true;
+    }
+  } catch (error) {
+    failure = error;
+  } finally {
+    if (temporaryExists) {
+      try {
+        await dependencies.rm(temporaryPath, { force: true });
+      } catch (cleanupError) {
+        failure = failure
+          ? new AggregateError(
+              [failure, cleanupError],
+              `Atomic configuration staging failed and could not clean ${temporaryPath}.`,
+            )
+          : cleanupError;
+      }
+    }
+  }
+  if (failure) throw failure;
+  return persisted;
+};
+
 /** Privately stage complete canonical bytes before atomically replacing the live configuration. */
 export const persistConfigureAtomically = async (
   configPath: string,
@@ -90,28 +174,13 @@ export const persistConfigureAtomically = async (
   expectedBytes: Uint8Array,
   dependencies: AtomicConfigurePersistenceDependencies = atomicPersistenceDefaults,
 ): Promise<void> => {
-  const beforeStage = await dependencies.readFile(configPath);
-  if (!equalBytes(beforeStage, expectedBytes))
-    throw new Error("Configuration changed concurrently; preserved the newer bytes.");
-  const temporaryPath = join(dirname(configPath), dependencies.temporaryName(configPath));
-  let temporaryExists = false;
-  try {
-    const handle = await dependencies.open(temporaryPath, "wx", 0o600);
-    temporaryExists = true;
-    try {
-      await handle.writeFile(new TextEncoder().encode(serializeConfig(candidate)));
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    const beforeReplace = await dependencies.readFile(configPath);
-    if (!equalBytes(beforeReplace, expectedBytes))
-      throw new Error("Configuration changed concurrently; preserved the newer bytes.");
-    await dependencies.rename(temporaryPath, configPath);
-    temporaryExists = false;
-  } finally {
-    if (temporaryExists) await dependencies.rm(temporaryPath, { force: true }).catch(() => {});
-  }
+  const persisted = await persistExpectedBytesAtomically(
+    configPath,
+    new TextEncoder().encode(serializeConfig(candidate)),
+    expectedBytes,
+    dependencies,
+  );
+  if (!persisted) throw new Error("Configuration changed concurrently; preserved the newer bytes.");
 };
 
 export const revalidateRepositoryScriptPlans = async (
@@ -146,6 +215,8 @@ export const defaultConfigureTransactionDependencies = (
     installScripts: installRepositoryScripts,
     readConfigBytes: () => readFile(configPath),
     revalidatePlans: revalidateRepositoryScriptPlans,
+    restoreConfig: (originalBytes, expectedCandidateBytes) =>
+      persistExpectedBytesAtomically(configPath, originalBytes, expectedCandidateBytes),
     rollbackScripts: rollbackRepositoryScripts,
     saveConfig: (candidate) => persistConfigureAtomically(configPath, candidate, expectedBytes),
     withLock: async (operation) => {

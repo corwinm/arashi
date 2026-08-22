@@ -193,6 +193,7 @@ describe("configure controller", () => {
     const result = await collectConfigurationEdits({
       activeConfigRoot: "/workspace",
       config: configuration,
+      platform: "linux",
       prompts,
     });
     expect(result.status).toBe("declined");
@@ -221,6 +222,7 @@ describe("configure controller", () => {
     const result = await collectConfigurationEdits({
       activeConfigRoot: "/workspace",
       config: baseConfig(),
+      platform: "linux",
       prompts,
     });
     expect(result.status).toBe("declined");
@@ -281,6 +283,7 @@ describe("configure controller", () => {
       activeConfigRoot: "/bare/config-root",
       executionRoot: "/linked/feature",
       config: baseConfig(),
+      platform: "linux",
       prompts,
     });
     expect(result.status).toBe("declined");
@@ -335,6 +338,7 @@ describe("configure controller", () => {
     await collectConfigurationEdits({
       activeConfigRoot: "/workspace",
       config: configuration,
+      platform: "linux",
       prompts,
       resolvePathIdentity: async () => "/workspace",
     });

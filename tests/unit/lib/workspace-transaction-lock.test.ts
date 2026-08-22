@@ -17,15 +17,21 @@ describe("shared workspace transaction lock", () => {
     });
     const events: string[] = [];
     let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+    let firstOwnerEntered!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstEntered = new Promise<void>((resolve) => {
+      firstOwnerEntered = resolve;
+    });
     const first = withWorkspaceTransactionLock(lockPath, async () => {
       events.push("add-start");
+      firstOwnerEntered();
       await firstGate;
       events.push("add-end");
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await firstEntered;
     const second = withWorkspaceTransactionLock(lockPath, async () => events.push("configure"));
-    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(events).toEqual(["add-start"]);
     releaseFirst();
     await Promise.all([first, second]);

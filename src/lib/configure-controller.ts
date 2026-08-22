@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { resolve, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 import { serializeConfig, type Config, type InlineHookLifecycle } from "./config.ts";
 import { confirm, input, select, type Choice, type PromptOutcome } from "./prompts.ts";
 import {
@@ -51,7 +51,7 @@ export const samePathIdentity = (
 ): boolean =>
   platform === "win32"
     ? win32.normalize(left).toLowerCase() === win32.normalize(right).toLowerCase()
-    : resolve(left) === resolve(right);
+    : posix.resolve(left) === posix.resolve(right);
 const scopeChoices: Choice<ConfigureScope>[] = [
   { name: "Workspace settings", value: "workspace-settings" },
   { name: "Workspace lifecycle hooks", value: "workspace-hooks" },
@@ -97,6 +97,7 @@ const editWorkspaceHook = async (
   activeConfigRoot: string,
   prompts: ConfigurePrompts,
   observeActivePaths?: RepositoryActivePathObserver,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<ConfigurationSession | { status: "cancelled"; reason: "exit" | "abort" }> => {
   const lifecycle = descriptor.id.slice("hooks.scripts.".length) as InlineHookLifecycle;
   for (;;) {
@@ -109,7 +110,7 @@ const editWorkspaceHook = async (
     if (source.value === "file") {
       let planned: ConfigurationSession;
       try {
-        planned = planWorkspaceHookFile(session, lifecycle, { activeConfigRoot });
+        planned = planWorkspaceHookFile(session, lifecycle, { activeConfigRoot, platform });
       } catch (error) {
         prompts.showDiagnostic(`${lifecycle}: ${bounded(error)}`);
         continue;
@@ -185,6 +186,7 @@ const editRepository = async (
   observeActivePaths?: RepositoryActivePathObserver,
   discoverCandidates?: (root: string) => Promise<RepositoryCandidateDiscovery>,
   rootRepository = false,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<ConfigurationSession | { status: "cancelled"; reason: "exit" | "abort" }> => {
   const inspection = inspectConfiguration(session.candidate, repositoryName, session.persisted)
     .repositories[0]!;
@@ -264,7 +266,10 @@ const editRepository = async (
     } else if (setting.value === "copy" || setting.value === "symlink") {
       const discovery = discoverCandidates
         ? await discoverCandidates(
-            resolve(executionRoot, session.candidate.repos[repositoryName].path),
+            (platform === "win32" ? win32 : posix).resolve(
+              executionRoot,
+              session.candidate.repos[repositoryName].path,
+            ),
           )
         : { candidates: [], inspectedEntries: 0 };
       if (discovery.diagnostic) prompts.showDiagnostic(bounded(discovery.diagnostic));
@@ -290,10 +295,11 @@ const editRepository = async (
           try {
             trial = planRepositoryHookFile(editor, lifecycle, {
               activeConfigRoot,
-              activeRepositoryPath: resolve(
+              activeRepositoryPath: (platform === "win32" ? win32 : posix).resolve(
                 executionRoot,
                 session.candidate.repos[repositoryName].path,
               ),
+              platform,
             });
           } catch (error) {
             prompts.showDiagnostic(`${lifecycle}: ${bounded(error)}`);
@@ -351,6 +357,7 @@ const editRepository = async (
       observeActivePaths,
       discoverCandidates,
       rootRepository,
+      platform,
     );
   }
   const candidate = normalized.state.candidate;
@@ -399,11 +406,15 @@ export const collectConfigurationEdits = async (options: {
   observeWorkspaceActivePaths?: RepositoryActivePathObserver;
   discoverRepositoryCandidates?: (root: string) => Promise<RepositoryCandidateDiscovery>;
   resolvePathIdentity?: (path: string) => Promise<string>;
+  platform?: NodeJS.Platform;
 }): Promise<ConfigureControllerResult> => {
   const prompts = options.prompts ?? configurePrompts;
+  const platform = options.platform ?? process.platform;
+  const pathApi = platform === "win32" ? win32 : posix;
   const executionRoot = options.executionRoot ?? options.activeConfigRoot;
   const resolvePathIdentity =
-    options.resolvePathIdentity ?? ((path: string) => realpath(path).catch(() => resolve(path)));
+    options.resolvePathIdentity ??
+    ((path: string) => realpath(path).catch(() => pathApi.resolve(path)));
   const configurationRootIdentity = await resolvePathIdentity(options.activeConfigRoot);
   let session = createConfigurationSession(options.config, options.persisted ?? options.config);
   const initialSerialized = serializeConfig(session.candidate);
@@ -419,13 +430,14 @@ export const collectConfigurationEdits = async (options: {
             .map((name) => ({ name: `${name} — repos.${name}`, value: name })),
         );
         if (cancelled(repository)) return repository;
-        const configuredRepositoryPath = resolve(
+        const configuredRepositoryPath = pathApi.resolve(
           options.activeConfigRoot,
           session.candidate.repos[repository.value].path,
         );
         const rootRepository = samePathIdentity(
           await resolvePathIdentity(configuredRepositoryPath),
           configurationRootIdentity,
+          platform,
         );
         const result = await editRepository(
           session,
@@ -435,7 +447,7 @@ export const collectConfigurationEdits = async (options: {
           prompts,
           options.observeRepositoryActivePaths?.({
             activeConfigRoot: options.activeConfigRoot,
-            activeRepositoryPath: resolve(
+            activeRepositoryPath: pathApi.resolve(
               executionRoot,
               session.candidate.repos[repository.value].path,
             ),
@@ -443,6 +455,7 @@ export const collectConfigurationEdits = async (options: {
           }),
           options.discoverRepositoryCandidates,
           rootRepository,
+          platform,
         );
         if ("status" in result) return result;
         session = result;
@@ -496,6 +509,7 @@ export const collectConfigurationEdits = async (options: {
               options.activeConfigRoot,
               prompts,
               options.observeWorkspaceActivePaths,
+              platform,
             );
             if ("status" in result) return result;
             session = result;

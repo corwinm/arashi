@@ -10,6 +10,7 @@ import {
 } from "../../../src/commands/configure.ts";
 
 const canary = "printf JSON_BODY_CANARY";
+const nativeExtension = process.platform === "win32" ? ".ps1" : ".sh";
 const config: Config = {
   hooks: { scripts: { "pre-create": canary } },
   repos: { app: { hooks: { "post-remove": canary }, path: "repos/app" } },
@@ -124,9 +125,9 @@ describe("configure command", () => {
     const hooks = join(root, ".arashi", "hooks");
     await mkdir(hooks, { recursive: true });
     await mkdir(join(root, "repos", "app", ".arashi", "hooks"), { recursive: true });
-    await writeFile(join(hooks, "pre-create.sh"), "NATIVE_WORKSPACE_BODY");
+    await writeFile(join(hooks, `pre-create${nativeExtension}`), "NATIVE_WORKSPACE_BODY");
     await writeFile(
-      join(root, "repos", "app", ".arashi", "hooks", "post-remove.sh"),
+      join(root, "repos", "app", ".arashi", "hooks", `post-remove${nativeExtension}`),
       "NATIVE_REPOSITORY_BODY",
     );
     const snapshot = {
@@ -150,8 +151,11 @@ describe("configure command", () => {
     const linked = await mkdtemp(join(tmpdir(), "arashi-configure-linked-exec-"));
     await mkdir(join(root, ".arashi", "hooks"), { recursive: true });
     await mkdir(join(linked, ".arashi", "hooks"), { recursive: true });
-    await writeFile(join(root, ".arashi", "hooks", "pre-remove.sh"), "ROOT_ONLY");
-    await writeFile(join(linked, ".arashi", "hooks", "post-remove.sh"), "LINKED_ONLY");
+    await writeFile(join(root, ".arashi", "hooks", `pre-remove${nativeExtension}`), "ROOT_ONLY");
+    await writeFile(
+      join(linked, ".arashi", "hooks", `post-remove${nativeExtension}`),
+      "LINKED_ONLY",
+    );
     const inspection = await inspectConfigureSnapshot({
       bytes: new Uint8Array(),
       config,
@@ -169,8 +173,11 @@ describe("configure command", () => {
     const linked = await mkdtemp(join(tmpdir(), "arashi-configure-linked-interactive-exec-"));
     await mkdir(join(root, ".arashi", "hooks"), { recursive: true });
     await mkdir(join(linked, ".arashi", "hooks"), { recursive: true });
-    await writeFile(join(root, ".arashi", "hooks", "pre-remove.sh"), "ROOT_ONLY");
-    await writeFile(join(linked, ".arashi", "hooks", "post-remove.sh"), "LINKED_ONLY");
+    await writeFile(join(root, ".arashi", "hooks", `pre-remove${nativeExtension}`), "ROOT_ONLY");
+    await writeFile(
+      join(linked, ".arashi", "hooks", `post-remove${nativeExtension}`),
+      "LINKED_ONLY",
+    );
     const observed: Array<{ lifecycle: string; nativeCandidateCount?: number }> = [];
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     await executeConfigure(
