@@ -11,7 +11,6 @@ import { runtime } from "../lib/runtime.ts";
 
 import { AddCommandError, AddCommandErrorCode, ArashiError } from "../lib/errors.ts";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "path";
-import { randomUUID } from "node:crypto";
 import { clone, exec as gitExec, getDefaultBranch } from "../lib/git.ts";
 import {
   configExists,
@@ -28,19 +27,15 @@ import { info, error as logError, spinner, success } from "../lib/logger.ts";
 import { Command } from "commander";
 import { executeClone } from "./clone.ts";
 import { confirm as promptConfirm } from "../lib/prompts.ts";
+import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import {
-  chmod,
-  link,
-  mkdir,
-  open,
-  readdir,
-  readFile,
-  realpath,
-  rm,
-  lstat,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+  DEFAULT_INCOMPLETE_LOCK_STALE_MS,
+  resolveWorkspaceTransactionLockPath,
+  withWorkspaceTransactionLock,
+} from "../lib/workspace-transaction-lock.ts";
+export { DEFAULT_INCOMPLETE_LOCK_STALE_MS } from "../lib/workspace-transaction-lock.ts";
+import { observeRepositoryActivePaths } from "../lib/repository-active-path-observer.ts";
+export { observeRepositoryActivePaths } from "../lib/repository-active-path-observer.ts";
 import {
   reconcileRepositoryManagedIgnore,
   classifyManagedPaths,
@@ -74,7 +69,6 @@ import {
   type OwnedRepositoryScript,
 } from "../lib/repository-script-transaction.ts";
 import { isDeepStrictEqual } from "node:util";
-import { discoverLifecycleHookCandidates, resolveLifecycleHookFilePath } from "../lib/hooks.ts";
 
 type RepoConfig = Awaited<ReturnType<typeof loadConfig>>["repos"][string];
 type WorkspaceRoots = Awaited<ReturnType<typeof findConfiguredWorkspaceRoots>>;
@@ -276,224 +270,25 @@ export interface AddExecutionDependencies {
   rollbackScripts?: typeof rollbackRepositoryScripts;
 }
 
-const pathMetadata = async (path: string): Promise<Awaited<ReturnType<typeof lstat>> | null> => {
-  try {
-    return await lstat(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-};
-
-/** Metadata-only active hook observation used by interactive add validation. */
-export const observeRepositoryActivePaths = (options: {
-  activeConfigRoot: string;
-  activeRepositoryPath: string;
-  platform?: NodeJS.Platform;
-}): RepositoryActivePathObserver => {
-  const platform = options.platform ?? process.platform;
-  return async (request) =>
-    Promise.all(
-      request.lifecycles.map(async ({ lifecycle, plannedPath }) => {
-        const create = lifecycle === "pre-create" || lifecycle === "post-create";
-        const ownerRoot = create ? options.activeConfigRoot : options.activeRepositoryPath;
-        const hookName = create ? `${lifecycle}.${request.repositoryName}` : lifecycle;
-        const destination =
-          plannedPath ?? resolveLifecycleHookFilePath({ hookName, ownerRoot, platform });
-        const destinationMetadata = await pathMetadata(destination);
-        let cursor = dirname(destination);
-        let symlinkParent = false;
-        let unsafeDestination = Boolean(
-          destinationMetadata &&
-          (destinationMetadata.isSymbolicLink() || !destinationMetadata.isFile()),
-        );
-        for (;;) {
-          const metadata = await pathMetadata(cursor);
-          if (metadata) {
-            symlinkParent ||= metadata.isSymbolicLink();
-            unsafeDestination ||= !metadata.isDirectory() || metadata.isSymbolicLink();
-          }
-          if (cursor === ownerRoot || dirname(cursor) === cursor) break;
-          cursor = dirname(cursor);
-        }
-        const nativeCandidates = await discoverLifecycleHookCandidates(
-          hookName,
-          ownerRoot,
-          platform,
-        );
-        return {
-          destinationExists: destinationMetadata !== null,
-          lifecycle,
-          nativeCandidateCount: nativeCandidates.length,
-          symlinkParent,
-          unsafeDestination,
-        };
-      }),
-    );
-};
-
-const CONFIG_LOCK_RETRY_COUNT = 2_000;
-const CONFIG_LOCK_RETRY_DELAY_MS = 20;
-export const DEFAULT_INCOMPLETE_LOCK_STALE_MS = 30_000;
-const TRANSACTION_LOCK_RETRY_COUNT = 90_000;
-
-interface LockOwner {
-  pid: number;
-  token: string;
-}
-
-const readLockOwner = async (lockPath: string): Promise<LockOwner | null> => {
-  try {
-    const owner = JSON.parse(await readFile(lockPath, "utf8")) as Partial<LockOwner>;
-    return Number.isInteger(owner.pid) && typeof owner.token === "string"
-      ? { pid: owner.pid as number, token: owner.token }
-      : null;
-  } catch {
-    return null;
-  }
-};
-
-const lockOwnerIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
-  }
-};
-
-const reclaimAbandonedLock = async (
-  lockPath: string,
-  incompleteLockStaleMs: number,
-): Promise<boolean> => {
-  let lockStat: Awaited<ReturnType<typeof stat>>;
-  try {
-    lockStat = await stat(lockPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
-    throw error;
-  }
-  const legacyClaimPath = `${lockPath}.reclaim-${lockStat.dev}-${lockStat.ino}`;
-  const claimPrefix = `${legacyClaimPath}-`;
-  const claimPath = `${claimPrefix}${process.pid}-${randomUUID()}`;
-  try {
-    await link(lockPath, claimPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
-    throw error;
-  }
-
-  try {
-    const claimedStat = await stat(claimPath);
-    const currentStat = await stat(lockPath).catch(() => null);
-    if (
-      !currentStat ||
-      claimedStat.dev !== currentStat.dev ||
-      claimedStat.ino !== currentStat.ino
-    ) {
-      return true;
-    }
-    const claimDirectory = dirname(lockPath);
-    const claimNamePrefix = basename(claimPrefix);
-    const liveClaims: string[] = [];
-    for (const name of await readdir(claimDirectory)) {
-      if (!name.startsWith(claimNamePrefix)) continue;
-      const pid = Number(name.slice(claimNamePrefix.length).split("-", 1)[0]);
-      const contenderPath = join(claimDirectory, name);
-      if (!Number.isInteger(pid) || !lockOwnerIsAlive(pid)) {
-        await rm(contenderPath, { force: true });
-        continue;
-      }
-      liveClaims.push(name);
-    }
-    if (liveClaims.some((name) => name !== basename(claimPath))) return false;
-    const owner = await readLockOwner(claimPath);
-    if (owner && lockOwnerIsAlive(owner.pid)) return false;
-    if (!owner && Date.now() - claimedStat.mtimeMs < incompleteLockStaleMs) return false;
-    const finalCurrentStat = await stat(lockPath).catch(() => null);
-    if (
-      !finalCurrentStat ||
-      claimedStat.dev !== finalCurrentStat.dev ||
-      claimedStat.ino !== finalCurrentStat.ino
-    ) {
-      return true;
-    }
-    await rm(lockPath);
-    await rm(legacyClaimPath, { force: true });
-    return true;
-  } finally {
-    await rm(claimPath, { force: true });
-  }
-};
-
-const withFileLock = async <T>(
-  lockPath: string,
-  retryCount: number,
-  operation: () => Promise<T>,
-  incompleteLockStaleMs = DEFAULT_INCOMPLETE_LOCK_STALE_MS,
-): Promise<T> => {
-  let lock: Awaited<ReturnType<typeof open>> | undefined;
-  const owner: LockOwner = { pid: process.pid, token: randomUUID() };
-  for (let attempt = 0; attempt < retryCount; attempt += 1) {
-    try {
-      const candidate = await open(lockPath, "wx");
-      try {
-        await candidate.writeFile(JSON.stringify(owner));
-        await candidate.sync();
-        lock = candidate;
-      } catch (error) {
-        await candidate.close();
-        await rm(lockPath, { force: true });
-        throw error;
-      }
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (await reclaimAbandonedLock(lockPath, incompleteLockStaleMs)) continue;
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, CONFIG_LOCK_RETRY_DELAY_MS));
-    }
-  }
-  if (!lock) throw new Error(`Timed out waiting for configuration lock: ${lockPath}`);
-  try {
-    return await operation();
-  } finally {
-    await lock.close();
-    const currentOwner = await readLockOwner(lockPath);
-    if (currentOwner?.token === owner.token) await rm(lockPath, { force: true });
-  }
-};
-
 const withConfigLock = <T>(
   configPath: string,
   operation: () => Promise<T>,
   incompleteLockStaleMs?: number,
 ): Promise<T> =>
-  withFileLock(
+  withWorkspaceTransactionLock(
     join(dirname(dirname(configPath)), ".arashi-config.add.lock"),
-    CONFIG_LOCK_RETRY_COUNT,
     operation,
     incompleteLockStaleMs,
+    2_000,
   );
 
 const withAddTransactionLock = <T>(
   lockPath: string,
   operation: () => Promise<T>,
   incompleteLockStaleMs?: number,
-): Promise<T> =>
-  withFileLock(lockPath, TRANSACTION_LOCK_RETRY_COUNT, operation, incompleteLockStaleMs);
+): Promise<T> => withWorkspaceTransactionLock(lockPath, operation, incompleteLockStaleMs);
 
-const resolveAddTransactionLockPath = async (workspaceRoot: string): Promise<string> => {
-  try {
-    const result = await gitExec(["rev-parse", "--git-common-dir"], workspaceRoot);
-    const commonDirectory = result.stdout.trim();
-    if (!commonDirectory) throw new Error("Git returned an empty common directory.");
-    const absoluteCommonDirectory = resolve(workspaceRoot, commonDirectory);
-    return join(await realpath(absoluteCommonDirectory), ".arashi-add.transaction.lock");
-  } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes("not a git repository")) throw error;
-    return join(await realpath(workspaceRoot), ".arashi-add.transaction.lock");
-  }
-};
+const resolveAddTransactionLockPath = resolveWorkspaceTransactionLockPath;
 
 // ============================================================================
 // URL Validation and Parsing

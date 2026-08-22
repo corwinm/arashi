@@ -398,7 +398,10 @@ export const configExists = async (repoPath: string): Promise<boolean> => {
  * // Returns: /workspace
  * ```
  */
-export const findWorkspaceRoot = async (startPath: string = process.cwd()): Promise<string> => {
+export const findWorkspaceRoot = async (
+  startPath: string = process.cwd(),
+  options: { validate?: boolean } = {},
+): Promise<string> => {
   const { dirname, isAbsolute, resolve, parse } = await import("path");
 
   let currentPath = resolve(startPath);
@@ -411,7 +414,7 @@ export const findWorkspaceRoot = async (startPath: string = process.cwd()): Prom
       // Validate the local configuration before probing Git topology. Commands use
       // this discovery path before any hook or mutation preflight, so malformed
       // configuration must fail without starting even a read-only Git process.
-      await loadConfig(currentPath);
+      if (options.validate !== false) await loadConfig(currentPath);
       try {
         const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
         const rawCommonDirectory = common.stdout.trim();
@@ -527,6 +530,10 @@ const ROOT_ALLOWED_KEYS = new Set([
 const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout", "scripts"]);
 const META_ALLOWED_KEYS = new Set(["baseBranch"]);
 const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
+const COMMAND_DEFAULTS_ALLOWED_KEYS = new Set(["create", "editors", "switch"]);
+const EDITOR_DEFAULTS_ALLOWED_KEYS = new Set(["vscode", "cursor", "kiro"]);
+const EDITOR_COMMAND_DEFAULTS_ALLOWED_KEYS = new Set(["create"]);
+const SWITCH_DEFAULTS_ALLOWED_KEYS = new Set(["mode", "launchMode", "launch_mode"]);
 const CREATE_DEFAULTS_ALLOWED_KEYS = new Set(["launch", "launchMode", "launch_mode", "switch"]);
 const EDITOR_CREATE_DEFAULTS_ALLOWED_KEYS = new Set([
   "launch",
@@ -1064,9 +1071,17 @@ const normalizeSwitchCommandDefaults = (
   errors: string[],
   diagnostics: ConfigDiagnostic[],
 ): SwitchCommandDefaults | undefined => {
+  if (value === undefined) return undefined;
   if (!isRecord(value)) {
+    errors.push("defaults.switch: must be an object if present");
     return undefined;
   }
+  validateNoUnknownKeys({
+    allowedKeys: SWITCH_DEFAULTS_ALLOWED_KEYS,
+    errors,
+    prefix: "defaults.switch",
+    value,
+  });
 
   const mode = normalizeSwitchMode(value.mode);
   if (value.mode !== undefined && mode === undefined) {
@@ -1142,9 +1157,17 @@ const normalizeEditorCommandDefaults = (
   errors: string[],
   diagnostics: ConfigDiagnostic[],
 ): EditorCommandDefaults | undefined => {
+  if (value === undefined) return undefined;
   if (!isRecord(value)) {
+    errors.push(`defaults.editors.${host}: must be an object if present`);
     return undefined;
   }
+  validateNoUnknownKeys({
+    allowedKeys: EDITOR_COMMAND_DEFAULTS_ALLOWED_KEYS,
+    errors,
+    prefix: `defaults.editors.${host}`,
+    value,
+  });
 
   const createDefaults = normalizeCreateCommandDefaults(
     value.create,
@@ -1167,9 +1190,17 @@ const normalizeEditorDefaultsConfig = (
   errors: string[],
   diagnostics: ConfigDiagnostic[],
 ): EditorDefaultsConfig | undefined => {
+  if (value === undefined) return undefined;
   if (!isRecord(value)) {
+    errors.push("defaults.editors: must be an object if present");
     return undefined;
   }
+  validateNoUnknownKeys({
+    allowedKeys: EDITOR_DEFAULTS_ALLOWED_KEYS,
+    errors,
+    prefix: "defaults.editors",
+    value,
+  });
 
   const normalized: EditorDefaultsConfig = {};
 
@@ -1210,9 +1241,17 @@ const normalizeCommandDefaults = (
   errors: string[],
   diagnostics: ConfigDiagnostic[],
 ): CommandDefaultsConfig | undefined => {
+  if (value === undefined) return undefined;
   if (!isRecord(value)) {
+    errors.push("defaults: must be an object if present");
     return undefined;
   }
+  validateNoUnknownKeys({
+    allowedKeys: COMMAND_DEFAULTS_ALLOWED_KEYS,
+    errors,
+    prefix: "defaults",
+    value,
+  });
 
   const createDefaults = normalizeCreateCommandDefaults(
     value.create,
@@ -1608,6 +1647,7 @@ const normalizePersistedConfig = (config: Config): Config => {
     version: config.version,
     worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
   };
+  if (config.worktreesDir === undefined) delete persisted.worktreesDir;
 
   if (config.hooks) {
     persisted.hooks = { ...config.hooks };
@@ -1652,8 +1692,11 @@ const normalizePersistedConfig = (config: Config): Config => {
  * await saveConfig('/path/to/repo', config);
  * ```
  */
-export const serializeConfig = (config: Config): string =>
-  JSON.stringify(normalizePersistedConfig(normalizeConfig(config)), null, TWO);
+export const serializeConfig = (config: Config): string => {
+  const normalized = normalizeConfig(config);
+  if (config.worktreesDir === undefined) delete normalized.worktreesDir;
+  return JSON.stringify(normalizePersistedConfig(normalized), null, TWO);
+};
 
 export const saveConfig = async (repoPath: string, config: Config): Promise<void> => {
   const configPath = getConfigPath(repoPath);

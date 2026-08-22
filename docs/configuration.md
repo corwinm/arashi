@@ -2,6 +2,10 @@
 
 Arashi stores workspace settings in `.arashi/config.json`.
 
+For supported existing-workspace settings, run [`aw configure`](commands/configure.md). The command
+keeps persisted state separate from effective runtime defaults and inheritance. Use direct JSON
+editing for canonical fields outside its deliberately finite scope.
+
 The personal managed-ignore preference is deliberately not stored in that shared file. In non-bare
 worktrees, safe configured `reposDir` and `worktreesDir` paths default to repository-local Git
 excludes. Bare repository roots instead report administrative subdirectories as non-applicable to

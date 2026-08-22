@@ -141,6 +141,7 @@ Arashi currently provides these commands:
 - `aw update [--check] [--dry-run] [--yes]`
 - `aw add <git-url>`
 - `aw clone [--all] [--base <branch>] [--repo-base <repository=branch>]`
+- `aw configure [--json]`
 - `aw create <branch> [--base <branch>] [--repo-base <repository=branch>] [--tab] [--tmux|--sesh|--herdr]`
 - `aw list`
 - `aw status`
@@ -345,6 +346,14 @@ alias arashi-delete='aw remove -f'
 ```
 
 ## Configuration Schema
+
+`aw configure` interactively edits supported existing-workspace settings across workspace,
+workspace-hook, command-default, editor-default, meta-policy, and existing-repository scopes. It
+labels persisted fields as `Configured` and `Not configured`, shows inherited or built-in effective
+values separately, and asks you to keep, edit, or clear a selected field. TTY editing ends with the
+exact serialized JSON preview plus a separate active-hook-file list. `aw configure --json` is sanitized, non-mutating inspection
+and omits inline command bodies. The command is intentionally not
+a generic schema editor; edit `.arashi/config.json` directly for unsupported fields.
 
 ### Configured worktree files
 

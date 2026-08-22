@@ -23,7 +23,12 @@ const isSafeRepositoryHookNameSegment = (
   return !repositoryName.includes("/") && !repositoryName.includes("\0");
 };
 
-export type RepositoryEditorFieldId = "copy" | "symlink" | InlineHookLifecycle;
+export type RepositoryEditorFieldId =
+  | "groups"
+  | "baseBranch"
+  | "copy"
+  | "symlink"
+  | InlineHookLifecycle;
 export interface RepositoryFieldDescriptor {
   id: RepositoryEditorFieldId;
   scope: "repository";
@@ -32,61 +37,116 @@ export interface RepositoryFieldDescriptor {
   label: string;
   sensitive: boolean;
   acceptedShape:
+    | "string-array"
+    | "git-branch"
     | "repository-relative-string-array"
     | "inline-bash-or-interpreter-map-or-native-file";
   ownership: "repository";
   precedence: "explicit-editor";
   projection: "paths" | "source-presence";
   validation: "canonical-config" | "canonical-config-and-active-path";
+  purpose: string;
+  safeDisplay: "value" | "source-presence";
+  validationAdapter: "canonical-config" | "canonical-config-and-active-path";
+  effectiveResolver: "none" | "workspace-inheritance";
 }
 
+type RepositoryFieldDescriptorInput = Omit<
+  RepositoryFieldDescriptor,
+  "purpose" | "safeDisplay" | "validationAdapter" | "effectiveResolver"
+>;
+const completeRepositoryDescriptor = (
+  entry: RepositoryFieldDescriptorInput,
+): RepositoryFieldDescriptor => ({
+  ...entry,
+  effectiveResolver: entry.id === "baseBranch" ? "workspace-inheritance" : "none",
+  purpose: `Configure repository ${entry.id}`,
+  safeDisplay: entry.projection === "source-presence" ? "source-presence" : "value",
+  validationAdapter: entry.validation,
+});
+
 export const REPOSITORY_ONBOARDING_DESCRIPTORS: readonly RepositoryFieldDescriptor[] =
-  Object.freeze([
-    {
+  Object.freeze(
+    [
+      {
+        action: "config",
+        canonicalPath: "repos.<name>.copy",
+        id: "copy",
+        label: "Copy paths",
+        scope: "repository",
+        sensitive: false,
+        acceptedShape: "repository-relative-string-array",
+        ownership: "repository",
+        precedence: "explicit-editor",
+        projection: "paths",
+        validation: "canonical-config",
+      },
+      {
+        action: "config",
+        canonicalPath: "repos.<name>.symlink",
+        id: "symlink",
+        label: "Symlink paths",
+        scope: "repository",
+        sensitive: false,
+        acceptedShape: "repository-relative-string-array",
+        ownership: "repository",
+        precedence: "explicit-editor",
+        projection: "paths",
+        validation: "canonical-config",
+      },
+      ...(["pre-create", "post-create", "pre-remove", "post-remove"] as const).map((id) => ({
+        action: "inline-or-file" as const,
+        canonicalPath: `repos.<name>.hooks.${id}`,
+        id,
+        label: id,
+        scope: "repository" as const,
+        sensitive: true,
+        acceptedShape: "inline-bash-or-interpreter-map-or-native-file" as const,
+        ownership: "repository" as const,
+        precedence: "explicit-editor" as const,
+        projection: "source-presence" as const,
+        validation: "canonical-config-and-active-path" as const,
+      })),
+    ].map((entry) => completeRepositoryDescriptor(entry as RepositoryFieldDescriptorInput)),
+  );
+
+export const REPOSITORY_CONFIGURE_DESCRIPTORS: readonly RepositoryFieldDescriptor[] = Object.freeze(
+  [
+    completeRepositoryDescriptor({
       action: "config",
-      canonicalPath: "repos.<name>.copy",
-      id: "copy",
-      label: "Copy paths",
+      canonicalPath: "repos.<name>.groups",
+      id: "groups",
+      label: "Groups",
       scope: "repository",
       sensitive: false,
-      acceptedShape: "repository-relative-string-array",
+      acceptedShape: "string-array",
       ownership: "repository",
       precedence: "explicit-editor",
       projection: "paths",
       validation: "canonical-config",
-    },
-    {
+    }),
+    completeRepositoryDescriptor({
       action: "config",
-      canonicalPath: "repos.<name>.symlink",
-      id: "symlink",
-      label: "Symlink paths",
+      canonicalPath: "repos.<name>.baseBranch",
+      id: "baseBranch",
+      label: "Base branch",
       scope: "repository",
       sensitive: false,
-      acceptedShape: "repository-relative-string-array",
+      acceptedShape: "git-branch",
       ownership: "repository",
       precedence: "explicit-editor",
       projection: "paths",
       validation: "canonical-config",
-    },
-    ...(["pre-create", "post-create", "pre-remove", "post-remove"] as const).map((id) => ({
-      action: "inline-or-file" as const,
-      canonicalPath: `repos.<name>.hooks.${id}`,
-      id,
-      label: id,
-      scope: "repository" as const,
-      sensitive: true,
-      acceptedShape: "inline-bash-or-interpreter-map-or-native-file" as const,
-      ownership: "repository" as const,
-      precedence: "explicit-editor" as const,
-      projection: "source-presence" as const,
-      validation: "canonical-config-and-active-path" as const,
-    })),
-  ]);
+    }),
+    ...REPOSITORY_ONBOARDING_DESCRIPTORS,
+  ],
+);
 
 export interface RepositoryScriptPlan {
   readonly lifecycle: InlineHookLifecycle;
   readonly ownerRoot: string;
   readonly path: string;
+  readonly repositoryName?: string;
   readonly extension: ".sh" | ".ps1";
   readonly mode: number | null;
   readonly state: "safe-no-op";
@@ -97,6 +157,7 @@ export interface RepositoryEditorState {
   readonly fields: readonly (RepositoryFieldDescriptor & { state: "configured" | "unset" })[];
   readonly scripts: readonly RepositoryScriptPlan[];
   readonly warnings: readonly string[];
+  readonly descriptors: readonly RepositoryFieldDescriptor[];
 }
 export interface EditorDiagnostic {
   field: RepositoryEditorFieldId;
@@ -124,10 +185,12 @@ export type RepositoryActivePathObserver = (
 
 const clone = <T>(value: T): T => structuredClone(value);
 const fieldConfigured = (repo: RepoConfig, id: RepositoryEditorFieldId): boolean =>
-  id === "copy" || id === "symlink" ? repo[id] !== undefined : repo.hooks?.[id] !== undefined;
+  id === "copy" || id === "symlink" || id === "groups" || id === "baseBranch"
+    ? repo[id] !== undefined
+    : repo.hooks?.[id] !== undefined;
 const rebuildFields = (state: Omit<RepositoryEditorState, "fields">): RepositoryEditorState => ({
   ...state,
-  fields: REPOSITORY_ONBOARDING_DESCRIPTORS.map((descriptor) => ({
+  fields: state.descriptors.map((descriptor) => ({
     ...descriptor,
     state:
       fieldConfigured(state.candidate.repos[state.repositoryName], descriptor.id) ||
@@ -147,8 +210,54 @@ export const createRepositoryEditorState = (
   return rebuildFields({
     candidate: clone(candidate),
     repositoryName,
+    descriptors: REPOSITORY_ONBOARDING_DESCRIPTORS,
     scripts: Object.freeze([]),
     warnings: Object.freeze([]),
+  });
+};
+
+export const createExistingRepositoryEditorState = (
+  candidate: Config,
+  repositoryName: string,
+  scripts: readonly RepositoryScriptPlan[] = [],
+): RepositoryEditorState => {
+  if (!candidate.repos[repositoryName]) throw new Error(`Unknown repository '${repositoryName}'.`);
+  return rebuildFields({
+    candidate: clone(candidate),
+    descriptors: REPOSITORY_CONFIGURE_DESCRIPTORS,
+    repositoryName,
+    scripts: Object.freeze([...scripts]),
+    warnings: Object.freeze([]),
+  });
+};
+
+export const setRepositoryScalarField = (
+  state: RepositoryEditorState,
+  field: "groups" | "baseBranch",
+  value: readonly string[] | string,
+): RepositoryEditorState => {
+  const candidate = clone(state.candidate);
+  if (field === "groups") candidate.repos[state.repositoryName].groups = [...(value as string[])];
+  else candidate.repos[state.repositoryName].baseBranch = value as string;
+  return rebuildFields({ ...state, candidate });
+};
+
+export const clearRepositoryField = (
+  state: RepositoryEditorState,
+  field: RepositoryEditorFieldId,
+): RepositoryEditorState => {
+  const candidate = clone(state.candidate);
+  const repo = candidate.repos[state.repositoryName];
+  if (field === "copy" || field === "symlink" || field === "groups" || field === "baseBranch") {
+    delete repo[field];
+  } else if (repo.hooks) {
+    delete repo.hooks[field];
+    if (Object.keys(repo.hooks).length === 0) delete repo.hooks;
+  }
+  return rebuildFields({
+    ...state,
+    candidate,
+    scripts: state.scripts.filter(({ lifecycle }) => lifecycle !== field),
   });
 };
 
@@ -175,7 +284,11 @@ export const setRepositoryInlineHook = (
 ): RepositoryEditorState => {
   const candidate = clone(state.candidate);
   const repo = candidate.repos[state.repositoryName];
-  repo.hooks = { ...repo.hooks, [lifecycle]: value };
+  const normalizedValue =
+    typeof value !== "string" && Object.keys(value).length === 1 && value.bash !== undefined
+      ? value.bash
+      : value;
+  repo.hooks = { ...repo.hooks, [lifecycle]: normalizedValue };
   const scripts = state.scripts.filter((script) => script.lifecycle !== lifecycle);
   return rebuildFields({ ...state, candidate, scripts });
 };
@@ -214,6 +327,7 @@ export const planRepositoryHookFile = (
       mode: platform === "win32" ? null : 0o755,
       ownerRoot: root,
       path,
+      repositoryName: state.repositoryName,
       state: "safe-no-op" as const,
     },
   ];
@@ -312,7 +426,7 @@ export const summarizeRepositoryEditorState = (state: RepositoryEditorState) => 
   const inline = Object.entries(repo.hooks ?? {}).map(([lifecycle, value]) => ({
     interpreters: typeof value === "string" ? ["bash"] : Object.keys(value as object),
     lifecycle,
-    source: "inline" as const,
+    sourceKind: "inline-config" as const,
   }));
   const scripts = state.scripts.map(({ lifecycle, mode, path }) => ({
     executableReady: mode === null || mode === 0o755,
