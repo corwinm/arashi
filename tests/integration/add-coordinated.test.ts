@@ -16,6 +16,7 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import {
   DEFAULT_INCOMPLETE_LOCK_STALE_MS,
   displayAddSuccess,
@@ -1318,10 +1319,11 @@ describe("add coordinated linked materialization", () => {
   test("preserves materialization when a concurrent writer augments the added config entry", async () => {
     const topology = await createParentTopology("feature/augmented-concurrent-config");
     const remote = await seedChildRemote(topology.root);
+    const remoteUrl = pathToFileURL(remote).href;
     const configPath = join(topology.active, ".arashi", "config.json");
 
     const failure = await executeAdd(
-      remote,
+      remoteUrl,
       { force: true, json: true },
       { configurationRoot: topology.active, executionRoot: topology.active },
       {
@@ -1337,6 +1339,10 @@ describe("add coordinated linked materialization", () => {
     ).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(AddCommandError);
+    expect(failure).toMatchObject({
+      code: "CONFIG_UPDATE_FAILED",
+      context: { error: "injected post-save failure" },
+    });
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
       repos: { child: { groups: ["concurrent-owner"] } },
     });
