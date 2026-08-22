@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { discoverRepositoryLocalCandidates } from "../../../src/lib/repository-candidate-discovery.ts";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
@@ -73,6 +73,7 @@ describe("bounded repository candidate discovery", () => {
     const result = await discoverRepositoryLocalCandidates(root);
     expect(result.candidates).toEqual([
       { kind: "directory", path: ".cache", selected: false },
+      { kind: "file", path: ".env", selected: false },
       { kind: "file", path: ".env.local", selected: false },
     ]);
     expect(JSON.stringify(result)).not.toContain("DISCOVERY_SECRET_CANARY");
@@ -87,6 +88,35 @@ describe("bounded repository candidate discovery", () => {
     const result = await discoverRepositoryLocalCandidates(root);
 
     expect(result.candidates.map(({ path }) => path)).toEqual(expect.arrayContaining(names));
+  });
+
+  test("suggests ignored likely-local paths from clone-surviving ignore rules", async () => {
+    const source = await mkdtemp(join(tmpdir(), "arashi-discovery-source-"));
+    const clone = await mkdtemp(join(tmpdir(), "arashi-discovery-clone-"));
+    roots.push(source, clone);
+    await exec("git", ["init", "-q", source]);
+    await writeFile(join(source, ".gitignore"), ".env*\n");
+    await writeFile(join(source, ".env.example"), "template");
+    await exec("git", ["-C", source, "add", ".gitignore"]);
+    await exec("git", ["-C", source, "add", "-f", ".env.example"]);
+    await exec("git", [
+      "-C",
+      source,
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "-qm",
+      "seed",
+    ]);
+    await rm(clone, { recursive: true });
+    await exec("git", ["clone", "-q", source, clone]);
+
+    await expect(access(join(clone, ".env"))).rejects.toMatchObject({ code: "ENOENT" });
+    const result = await discoverRepositoryLocalCandidates(clone);
+
+    expect(result.candidates).toContainEqual({ kind: "file", path: ".env", selected: false });
   });
 
   test("enforces hard root-entry and suggestion limits without recursion", async () => {

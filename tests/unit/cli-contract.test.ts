@@ -188,11 +188,18 @@ describe("CLI command contract", () => {
         entry: "visible-plaintext",
         postConfirmation: "presence-and-path-state-only",
       },
-      suggestions: { bounded: true, contentFree: true, selectedByDefault: false },
+      suggestions: {
+        bounded: true,
+        contentFree: true,
+        promptRendering: "control-escaped",
+        selectedByDefault: false,
+        source: "root-metadata-and-ignore-rule-probes",
+      },
       safety: {
         implementation: "pure-node-bun-metadata-and-atomic-no-replace",
         residualRace:
           "hostile-local-ancestor-substitution-between-final-validation-and-publication",
+        rollbackResidualRace: "path-replacement-between-final-rollback-identity-check-and-unlink",
       },
       futureScope: "existing-entry-editing-reserved-for-316",
     });

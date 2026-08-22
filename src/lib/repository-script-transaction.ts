@@ -245,6 +245,12 @@ export const installRepositoryScripts = async (
   }
 };
 
+/**
+ * Removes only entries that still match every observable ownership marker. Pure Node/Bun exposes
+ * path-based unlink rather than a conditional identity-preserving unlink, so another local writer
+ * can still replace the path after the final identity check. That narrow residual race is part of
+ * the published CLI contract; callers must report preserved paths whenever ownership is uncertain.
+ */
 export const rollbackRepositoryScripts = async (
   owned: readonly OwnedRepositoryScript[],
 ): Promise<{ removed: string[]; preserved: string[] }> => {

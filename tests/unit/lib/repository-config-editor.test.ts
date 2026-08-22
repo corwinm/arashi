@@ -302,6 +302,25 @@ describe("repository configuration editor", () => {
     },
   );
 
+  test("ignores native-file parent diagnostics for inline-only hooks", async () => {
+    const editor = setRepositoryInlineHook(
+      createRepositoryEditorState(config(), "app"),
+      "pre-create",
+      "printf ready",
+    );
+
+    const result = await validateRepositoryEditorState(editor, async () => [
+      {
+        destinationExists: true,
+        lifecycle: "pre-create",
+        symlinkParent: true,
+        unsafeDestination: true,
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+  });
+
   test("rejects inline/native ambiguity through the metadata-only validation boundary", async () => {
     const editor = setRepositoryInlineHook(
       createRepositoryEditorState(config(), "app"),

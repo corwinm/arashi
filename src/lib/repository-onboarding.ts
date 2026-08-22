@@ -58,6 +58,13 @@ const yesNo: Choice<boolean>[] = [
 ];
 const boundedDiagnostic = (diagnostic: EditorDiagnostic): string =>
   `${diagnostic.field}: ${diagnostic.message.replaceAll(/\s+/g, " ")}`.slice(0, 240);
+const escapedSuggestion = (path: string): string =>
+  JSON.stringify(path)
+    .slice(1, -1)
+    .replaceAll(
+      /[\u007F-\u009F]/g,
+      (control) => `\\u${control.codePointAt(0)!.toString(16).padStart(4, "0")}`,
+    );
 const showFieldDiagnostics = (
   prompts: RepositoryOnboardingPrompts,
   diagnostics: readonly EditorDiagnostic[],
@@ -149,7 +156,7 @@ export const collectRepositoryOnboarding = async (options: {
   if (selected.value.includes("copy") || selected.value.includes("symlink")) {
     const discovery = await options.discover();
     if (discovery.diagnostic) prompts.showDiagnostic(discovery.diagnostic.slice(0, 240));
-    const suggestions = discovery.candidates.map(({ path }) => path).join(", ");
+    const suggestions = discovery.candidates.map(({ path }) => escapedSuggestion(path)).join(", ");
     for (const field of ["copy", "symlink"] as const) {
       if (!selected.value.includes(field)) continue;
       const result = await collectPaths(editor, field, suggestions, prompts);
@@ -178,7 +185,19 @@ export const collectRepositoryOnboarding = async (options: {
         if (source.value === "file") {
           if (!options.scriptContext)
             throw new Error(`Script context is required for ${lifecycle}.`);
-          candidate = planRepositoryHookFile(editor, lifecycle, options.scriptContext);
+          try {
+            candidate = planRepositoryHookFile(editor, lifecycle, options.scriptContext);
+          } catch (error) {
+            prompts.showDiagnostic(
+              boundedDiagnostic({
+                field: lifecycle,
+                message: (error as Error).message,
+                retryable: true,
+              }),
+            );
+            allowSkip = true;
+            continue;
+          }
         } else {
           const result = await collectInlineHook(editor, lifecycle, source.value, prompts);
           if ("status" in result) return result;

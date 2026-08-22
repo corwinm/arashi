@@ -6,14 +6,20 @@ import {
 } from "../../../src/lib/repository-onboarding.ts";
 import { createRepositoryEditorState } from "../../../src/lib/repository-config-editor.ts";
 
-const state = () =>
+const state = (repositoryName = "app") =>
   createRepositoryEditorState(
     {
-      repos: { app: { path: "repos/app", gitUrl: "x", groups: ["keep"] } },
+      repos: {
+        [repositoryName]: {
+          path: `repos/${repositoryName}`,
+          gitUrl: "x",
+          groups: ["keep"],
+        },
+      },
       reposDir: "repos",
       version: "1.0.0",
     },
-    "app",
+    repositoryName,
   );
 const ok = <T>(value: T) => Promise.resolve({ status: "ok", value } as const);
 const promptSet = (
@@ -156,6 +162,35 @@ describe("repository onboarding controller", () => {
       { name: "Yes", value: true },
       { name: "No", value: false },
     ]);
+  });
+
+  test("escapes terminal controls in displayed path suggestions", async () => {
+    const unsafeSuggestion = ".env.\u001b[31mspoof\nnext\u009b2J";
+    const prompts = promptSet({
+      confirm: vi
+        .fn()
+        .mockImplementationOnce(() => ok(true))
+        .mockImplementationOnce(() => ok(true)),
+      input: vi.fn(() => ok(".env")),
+      multiSelect: vi.fn(() => ok(["copy"])) as RepositoryOnboardingPrompts["multiSelect"],
+      select: vi.fn(() => ok(false)) as RepositoryOnboardingPrompts["select"],
+    });
+
+    await collectRepositoryOnboarding({
+      discover: () =>
+        Promise.resolve({
+          candidates: [{ kind: "file" as const, path: unsafeSuggestion, selected: false as const }],
+          inspectedEntries: 1,
+        }),
+      editor: state(),
+      prompts,
+    });
+
+    const message = (prompts.input as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(message).not.toContain("\u001b");
+    expect(message).not.toContain("\u009b");
+    expect(message).not.toContain("spoof\nnext");
+    expect(message).toContain("\\u001b[31mspoof\\nnext\\u009b2J");
   });
 
   test("shows bounded field diagnostic and retries the owning path prompt", async () => {
@@ -346,6 +381,43 @@ describe("repository onboarding controller", () => {
       expect(result.editor.scripts).toEqual([]);
       expect(result.editor.candidate.repos.app.hooks).toBeUndefined();
     }
+  });
+
+  test("invalid create-hook filenames become retryable diagnostics instead of aborting add", async () => {
+    const prompts = promptSet({
+      confirm: vi
+        .fn()
+        .mockImplementationOnce(() => ok(true))
+        .mockImplementationOnce(() => ok(true)),
+      multiSelect: vi
+        .fn()
+        .mockImplementationOnce(() => ok(["hooks"]))
+        .mockImplementationOnce(() => ok(["pre-create"])),
+      select: vi
+        .fn()
+        .mockImplementationOnce(() => ok("file"))
+        .mockImplementationOnce(() => ok("skip")),
+    });
+
+    const result = await collectRepositoryOnboarding({
+      discover: vi.fn(),
+      editor: state("team/app"),
+      prompts,
+      scriptContext: {
+        activeConfigRoot: "/workspace",
+        activeRepositoryPath: "/workspace/repos/team/app",
+        platform: "linux",
+      },
+    });
+
+    expect(result.status).toBe("confirmed");
+    expect(prompts.showDiagnostic).toHaveBeenCalledWith(
+      expect.stringMatching(/^pre-create: .*cannot be used in an active hook filename/i),
+    );
+    expect((prompts.select as ReturnType<typeof vi.fn>).mock.calls[1][1]).toContainEqual({
+      name: "Skip / keep existing active hook",
+      value: "skip",
+    });
   });
 
   test("final decline and Ctrl+C are controlled cancellation", async () => {

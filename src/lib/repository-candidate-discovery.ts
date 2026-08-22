@@ -24,9 +24,26 @@ export interface RepositoryCandidateDiscoveryDependencies {
     root: string,
   ): Promise<AsyncIterable<RootMetadataEntry>> | AsyncIterable<RootMetadataEntry>;
   checkIgnored(paths: readonly string[], root: string): Promise<readonly string[]>;
+  probeLikelyPaths?(
+    root: string,
+  ): Promise<readonly RootMetadataEntry[]> | readonly RootMetadataEntry[];
 }
 const LIKELY_LOCAL =
   /^(?:\.env(?:\..+)?|\.cache|\.local|local(?:\..+)?|.*\.local\.(?:json|ya?ml|toml))$/i;
+const CLONE_SURVIVING_PROBES: readonly RootMetadataEntry[] = [
+  { isDirectory: () => true, name: ".cache" },
+  { isDirectory: () => false, name: ".env" },
+  { isDirectory: () => false, name: ".env.local" },
+  { isDirectory: () => true, name: ".local" },
+  { isDirectory: () => false, name: "config.local.json" },
+  { isDirectory: () => false, name: "config.local.toml" },
+  { isDirectory: () => false, name: "config.local.yaml" },
+  { isDirectory: () => false, name: "config.local.yml" },
+  { isDirectory: () => false, name: "local.json" },
+  { isDirectory: () => false, name: "local.toml" },
+  { isDirectory: () => false, name: "local.yaml" },
+  { isDirectory: () => false, name: "local.yml" },
+];
 const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 const checkIgnored = (paths: readonly string[], root: string): Promise<readonly string[]> =>
   new Promise((resolve, reject) => {
@@ -55,6 +72,7 @@ const checkIgnored = (paths: readonly string[], root: string): Promise<readonly 
 const defaults: RepositoryCandidateDiscoveryDependencies = {
   checkIgnored,
   openRoot: (root) => opendir(root),
+  probeLikelyPaths: () => CLONE_SURVIVING_PROBES,
 };
 
 export const discoverRepositoryLocalCandidates = async (
@@ -75,8 +93,12 @@ export const discoverRepositoryLocalCandidates = async (
         if (inspectedEntries >= maxRootEntries) break;
       }
     }
-    entries.sort((left, right) => compare(left.name, right.name));
-    const likely = entries.filter((entry) => LIKELY_LOCAL.test(entry.name));
+    const probes = (await dependencies.probeLikelyPaths?.(root)) ?? [];
+    const byName = new Map(probes.map((entry) => [entry.name, entry]));
+    for (const entry of entries) byName.set(entry.name, entry);
+    const likely = [...byName.values()]
+      .filter((entry) => LIKELY_LOCAL.test(entry.name))
+      .toSorted((left, right) => compare(left.name, right.name));
     if (likely.length === 0 || maxSuggestions === 0) {
       return { candidates: [], inspectedEntries };
     }

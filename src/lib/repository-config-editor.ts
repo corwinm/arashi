@@ -285,17 +285,19 @@ export const validateRepositoryEditorState = async (
   const diagnostics: EditorDiagnostic[] = [];
   for (const observation of observations) {
     const field = observation.lifecycle;
-    if (observation.destinationExists) {
-      diagnostics.push(lifecycleDiagnostic(field, "Active hook destination already exists."));
-    }
-    if (observation.symlinkParent) {
-      diagnostics.push(lifecycleDiagnostic(field, "Active hook has a symlinked parent."));
-    }
-    if (observation.unsafeDestination) {
-      diagnostics.push(lifecycleDiagnostic(field, "Active hook destination is unsafe."));
+    const filePlanned = normalized.state.scripts.some(({ lifecycle }) => lifecycle === field);
+    if (filePlanned) {
+      if (observation.destinationExists) {
+        diagnostics.push(lifecycleDiagnostic(field, "Active hook destination already exists."));
+      }
+      if (observation.symlinkParent) {
+        diagnostics.push(lifecycleDiagnostic(field, "Active hook has a symlinked parent."));
+      }
+      if (observation.unsafeDestination) {
+        diagnostics.push(lifecycleDiagnostic(field, "Active hook destination is unsafe."));
+      }
     }
     const nativeCandidateCount = observation.nativeCandidateCount ?? 0;
-    const filePlanned = normalized.state.scripts.some(({ lifecycle }) => lifecycle === field);
     if (nativeCandidateCount > 1 || (nativeCandidateCount > 0 && filePlanned)) {
       diagnostics.push(lifecycleDiagnostic(field, "Ambiguous native hook candidates exist."));
     } else if (nativeCandidateCount > 0 && repoHooks[field] !== undefined) {
