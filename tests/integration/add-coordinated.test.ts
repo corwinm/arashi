@@ -1315,6 +1315,46 @@ describe("add coordinated linked materialization", () => {
     });
   });
 
+  test("preserves materialization when a concurrent writer augments the added config entry", async () => {
+    const topology = await createParentTopology("feature/augmented-concurrent-config");
+    const remote = await seedChildRemote(topology.root);
+    const configPath = join(topology.active, ".arashi", "config.json");
+
+    const failure = await executeAdd(
+      remote,
+      { force: true, json: true },
+      { configurationRoot: topology.active, executionRoot: topology.active },
+      {
+        afterConfigPersist: async () => {
+          const concurrent = JSON.parse(await readFile(configPath, "utf8")) as {
+            repos: Record<string, { groups?: string[] }>;
+          };
+          concurrent.repos.child.groups = ["concurrent-owner"];
+          await writeFile(configPath, `${JSON.stringify(concurrent, null, 2)}\n`);
+          throw new Error("injected post-save failure");
+        },
+      },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AddCommandError);
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
+      repos: { child: { groups: ["concurrent-owner"] } },
+    });
+    expect((failure as AddCommandError).context).toMatchObject({
+      rollback: {
+        complete: false,
+        failures: [{ phase: "config-restore" }],
+        finalState: {
+          canonical: { exists: true },
+          configEntryPresent: true,
+          worktree: { exists: true, metadataPresent: true },
+        },
+      },
+    });
+    expect(await runtime.file(join(topology.canonical, "repos", "child")).exists()).toBe(true);
+    expect(await runtime.file(join(topology.active, "repos", "child")).exists()).toBe(true);
+  });
+
   test("reports clone-phase rollback with an observed-absent active metadata record", async () => {
     const topology = await createParentTopology("feature/clone-failure");
     const missingRemote = join(topology.root, "missing.git");

@@ -1412,7 +1412,11 @@ export const executeAdd = async (
           !isAbsolute(descendant)
         );
       });
-    const activeCleanupBlocked = activePath ? pathContainsPreservedScript(activePath) : false;
+    // If the config entry could not be restored, it may still reference this invocation's
+    // materialization. Preserve that materialization with the unowned config bytes rather than
+    // leaving a valid-looking repository entry pointed at a deleted clone or worktree.
+    const activeCleanupBlocked =
+      configRestoreFailed || (activePath ? pathContainsPreservedScript(activePath) : false);
     if (activePath && worktreeCreated && !activeCleanupBlocked) {
       try {
         await removeWorktree(canonicalPath, activePath);
@@ -1448,7 +1452,8 @@ export const executeAdd = async (
         recordFailure("branch-delete", cleanupError);
       }
     }
-    const canonicalCleanupBlocked = pathContainsPreservedScript(canonicalPath);
+    const canonicalCleanupBlocked =
+      configRestoreFailed || pathContainsPreservedScript(canonicalPath);
     if (
       cloneCreated &&
       linkedStateDefinitelyAbsent &&
