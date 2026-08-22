@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, parse, resolve } from "node:path";
 import { Command } from "commander";
 import {
@@ -6,10 +6,9 @@ import {
   getConfigPath,
   ConfigParseError,
   normalizeConfig,
-  saveConfig,
   type Config,
 } from "../lib/config.ts";
-import { collectConfigurationEdits } from "../lib/configure-controller.ts";
+import { collectConfigurationEdits, samePathIdentity } from "../lib/configure-controller.ts";
 import {
   defaultConfigureTransactionDependencies,
   runConfigureTransaction,
@@ -91,7 +90,7 @@ export const inspectConfigureSnapshot = async (snapshot: ConfigureSnapshot) => {
   }> = [];
   const workspaceObserver = observeRepositoryActivePaths({
     activeConfigRoot: snapshot.workspaceRoot,
-    activeRepositoryPath: snapshot.executionRoot ?? snapshot.workspaceRoot,
+    activeRepositoryPath: snapshot.workspaceRoot,
     repositoryScopedCreate: false,
   });
   const workspaceObservations = await workspaceObserver({
@@ -111,19 +110,31 @@ export const inspectConfigureSnapshot = async (snapshot: ConfigureSnapshot) => {
       });
   }
   for (const [name, repository] of Object.entries(snapshot.config.repos)) {
+    const configuredRepositoryPath = resolve(snapshot.workspaceRoot, repository.path);
+    const repositoryPath = resolve(
+      snapshot.executionRoot ?? snapshot.workspaceRoot,
+      repository.path,
+    );
+    const [repositoryIdentity, workspaceIdentity] = await Promise.all([
+      realpath(configuredRepositoryPath).catch(() => resolve(configuredRepositoryPath)),
+      realpath(snapshot.workspaceRoot).catch(() => resolve(snapshot.workspaceRoot)),
+    ]);
+    const rootRepository = samePathIdentity(repositoryIdentity, workspaceIdentity);
     const observer = observeRepositoryActivePaths({
       activeConfigRoot: snapshot.workspaceRoot,
-      activeRepositoryPath: resolve(
-        snapshot.executionRoot ?? snapshot.workspaceRoot,
-        repository.path,
-      ),
+      activeRepositoryPath: repositoryPath,
     });
     const observations = await observer({
-      lifecycles: configureLifecycles.map((lifecycle) => ({
-        inlineConfigured: repository.hooks?.[lifecycle] !== undefined,
-        lifecycle,
-        plannedPath: null,
-      })),
+      lifecycles: configureLifecycles
+        .filter(
+          (lifecycle) =>
+            !rootRepository || lifecycle === "pre-create" || lifecycle === "post-create",
+        )
+        .map((lifecycle) => ({
+          inlineConfigured: repository.hooks?.[lifecycle] !== undefined,
+          lifecycle,
+          plannedPath: null,
+        })),
       repositoryName: name,
     });
     for (const observation of observations) {
@@ -140,6 +151,7 @@ export const inspectConfigureSnapshot = async (snapshot: ConfigureSnapshot) => {
 };
 export interface ConfigureDependencies {
   loadSnapshot: () => Promise<ConfigureSnapshot>;
+  inspectSnapshot?: typeof inspectConfigureSnapshot;
   collectEdits: typeof collectConfigurationEdits;
   transact: typeof runConfigureTransaction;
   writeJson: (value: JsonEnvelope<Record<string, unknown>>) => void;
@@ -147,6 +159,7 @@ export interface ConfigureDependencies {
 const defaults: ConfigureDependencies = {
   collectEdits: collectConfigurationEdits,
   loadSnapshot: loadConfigureSnapshot,
+  inspectSnapshot: inspectConfigureSnapshot,
   transact: runConfigureTransaction,
   writeJson: writeJsonEnvelope,
 };
@@ -166,10 +179,23 @@ export const executeConfigure = async (
     return 1;
   }
   if (options.json) {
-    dependencies.writeJson(
-      createJsonSuccessEnvelope("configure", await inspectConfigureSnapshot(snapshot)),
-    );
-    return 0;
+    try {
+      dependencies.writeJson(
+        createJsonSuccessEnvelope(
+          "configure",
+          await (dependencies.inspectSnapshot ?? inspectConfigureSnapshot)(snapshot),
+        ),
+      );
+      return 0;
+    } catch (error) {
+      dependencies.writeJson(
+        createJsonErrorEnvelope(
+          "configure",
+          unknownErrorToJsonError(error, "CONFIG_INSPECTION_FAILED"),
+        ),
+      );
+      return 1;
+    }
   }
   if (options.stdinIsTTY !== true || options.stdoutIsTTY !== true)
     throw new Error(
@@ -184,7 +210,7 @@ export const executeConfigure = async (
     observeRepositoryActivePaths: (context) => observeRepositoryActivePaths(context),
     observeWorkspaceActivePaths: observeRepositoryActivePaths({
       activeConfigRoot: snapshot.workspaceRoot,
-      activeRepositoryPath: snapshot.executionRoot ?? snapshot.workspaceRoot,
+      activeRepositoryPath: snapshot.workspaceRoot,
       repositoryScopedCreate: false,
     }),
     originalSerialized: new TextDecoder().decode(snapshot.bytes),
@@ -202,7 +228,7 @@ export const executeConfigure = async (
     dependencies: defaultConfigureTransactionDependencies(
       snapshot.workspaceRoot,
       configPath,
-      (candidate) => saveConfig(snapshot.workspaceRoot, candidate),
+      snapshot.bytes,
     ),
   });
   console.log("Configuration updated.");

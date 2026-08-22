@@ -32,6 +32,16 @@ const advance = () => {
   searchOffset = found + step.waitFor.length;
   interaction += 1;
   setTimeout(() => {
+    if (
+      step.replaceConfig === undefined &&
+      readFileSync(config.configPath, "utf8") !== config.original
+    ) {
+      terminal.kill();
+      console.error(
+        `Configuration mutated before final confirmation at interaction ${interaction}.`,
+      );
+      process.exit(127);
+    }
     if (step.replaceConfig !== undefined) writeFileSync(config.configPath, step.replaceConfig);
     terminal.write(step.bytes);
     sending = false;

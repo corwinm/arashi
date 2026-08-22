@@ -1,6 +1,10 @@
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { serializeConfig, type Config } from "../../../src/lib/config.ts";
 import {
+  persistConfigureAtomically,
   revalidateRepositoryScriptPlans,
   runConfigureTransaction,
 } from "../../../src/lib/configure-transaction.ts";
@@ -17,6 +21,78 @@ const config = (reposDir: string): Config => ({
 const bytes = (value: string) => new TextEncoder().encode(value);
 
 describe("configure transaction", () => {
+  test("atomically persists exact canonical bytes through a sibling stage", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-configure-atomic-"));
+    const configPath = join(root, ".arashi", "config.json");
+    await mkdir(join(root, ".arashi"));
+    const original = bytes("original bytes");
+    await writeFile(configPath, original);
+
+    await persistConfigureAtomically(configPath, config("children"), original);
+
+    expect(await readFile(configPath, "utf8")).toBe(serializeConfig(config("children")));
+    expect(await readdir(join(root, ".arashi"))).toEqual(["config.json"]);
+  });
+
+  test.each(["write", "sync", "rename"] as const)(
+    "cleans the sibling stage and preserves live bytes on %s failure",
+    async (failure) => {
+      const original = bytes("original bytes");
+      const stageBytes: Uint8Array[] = [];
+      const remove = vi.fn(async () => {});
+      const close = vi.fn(async () => {});
+      await expect(
+        persistConfigureAtomically("/workspace/.arashi/config.json", config("children"), original, {
+          open: async () => ({
+            close,
+            sync: async () => {
+              if (failure === "sync") throw new Error("sync failed");
+            },
+            writeFile: async (value: Uint8Array) => {
+              stageBytes.push(value.subarray(0, 7));
+              if (failure === "write") throw new Error("partial stage write");
+            },
+          }),
+          readFile: async () => original,
+          rename: async () => {
+            if (failure === "rename") throw new Error("rename failed");
+          },
+          rm: remove,
+          temporaryName: () => ".config.json.test.tmp",
+        }),
+      ).rejects.toThrow(failure === "write" ? /partial stage write/ : new RegExp(failure));
+      expect(stageBytes).toHaveLength(1);
+      expect(close).toHaveBeenCalledOnce();
+      expect(remove).toHaveBeenCalledWith(
+        "/workspace/.arashi/.config.json.test.tmp",
+        expect.objectContaining({ force: true }),
+      );
+    },
+  );
+
+  test("does not replace newer bytes observed after complete staging", async () => {
+    const original = bytes("original bytes");
+    const newer = bytes("newer external bytes");
+    const rename = vi.fn(async () => {});
+    const remove = vi.fn(async () => {});
+    let reads = 0;
+    await expect(
+      persistConfigureAtomically("/workspace/.arashi/config.json", config("children"), original, {
+        open: async () => ({
+          close: async () => {},
+          sync: async () => {},
+          writeFile: async () => {},
+        }),
+        readFile: async () => (++reads === 1 ? original : newer),
+        rename,
+        rm: remove,
+        temporaryName: () => ".config.json.test.tmp",
+      }),
+    ).rejects.toThrow(/changed concurrently.*preserv/i);
+    expect(rename).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledOnce();
+  });
+
   test("checks expected bytes, installs files, and saves exactly once", async () => {
     const expected = bytes("original");
     const save = vi.fn(async () => {});
@@ -81,10 +157,8 @@ describe("configure transaction", () => {
     expect(rollback).toHaveBeenCalledWith(owned);
   });
 
-  test("does not restore a partial candidate prefix after a save failure", async () => {
+  test("does not attempt live-file restoration after a save failure", async () => {
     const expected = bytes("original bytes");
-    const restore = vi.fn(async () => {});
-    let reads = 0;
     await expect(
       runConfigureTransaction({
         candidate: config("children"),
@@ -92,9 +166,7 @@ describe("configure transaction", () => {
         plans: [],
         dependencies: {
           installScripts: async () => [],
-          readConfigBytes: async () =>
-            ++reads < 3 ? expected : bytes("partially written by this save"),
-          restoreConfigBytes: restore,
+          readConfigBytes: async () => expected,
           rollbackScripts: async () => ({ preserved: [], removed: [] }),
           saveConfig: async () => {
             throw new Error("save failed after write");
@@ -103,60 +175,6 @@ describe("configure transaction", () => {
         },
       }),
     ).rejects.toThrow("save failed after write");
-    expect(restore).not.toHaveBeenCalled();
-  });
-
-  test("restores only bytes exactly matching the complete candidate this transaction wrote", async () => {
-    const expected = bytes("original bytes");
-    const candidate = config("children");
-    const written = bytes(serializeConfig(candidate));
-    const restore = vi.fn(async () => {});
-    let reads = 0;
-    await expect(
-      runConfigureTransaction({
-        candidate,
-        expectedBytes: expected,
-        plans: [],
-        dependencies: {
-          installScripts: async () => [],
-          readConfigBytes: async () => (++reads < 3 ? expected : written),
-          restoreConfigBytes: restore,
-          rollbackScripts: async () => ({ preserved: [], removed: [] }),
-          saveConfig: async () => {
-            throw new Error("save failed after complete write");
-          },
-          withLock: async (operation) => operation(),
-        },
-      }),
-    ).rejects.toThrow("save failed after complete write");
-    expect(restore).toHaveBeenCalledOnce();
-    expect(restore).toHaveBeenCalledWith(expected, written);
-  });
-
-  test("preserves an arbitrary concurrent prefix of the candidate", async () => {
-    const expected = bytes("original bytes");
-    const candidate = config("children");
-    const concurrent = bytes(serializeConfig(candidate).slice(0, 12));
-    const restore = vi.fn(async () => {});
-    let reads = 0;
-    await expect(
-      runConfigureTransaction({
-        candidate,
-        expectedBytes: expected,
-        plans: [],
-        dependencies: {
-          installScripts: async () => [],
-          readConfigBytes: async () => (++reads < 3 ? expected : concurrent),
-          restoreConfigBytes: restore,
-          rollbackScripts: async () => ({ preserved: [], removed: [] }),
-          saveConfig: async () => {
-            throw new Error("concurrent prefix");
-          },
-          withLock: async (operation) => operation(),
-        },
-      }),
-    ).rejects.toThrow("concurrent prefix");
-    expect(restore).not.toHaveBeenCalled();
   });
 
   test("revalidates the complete accumulated plan under the lock before no-replace install", async () => {

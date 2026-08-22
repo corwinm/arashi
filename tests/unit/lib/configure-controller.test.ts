@@ -4,6 +4,7 @@ import type { RepositoryActivePathObserver } from "../../../src/lib/repository-c
 import {
   buildConfigurationPreview,
   collectConfigurationEdits,
+  samePathIdentity,
   type ConfigurePrompts,
 } from "../../../src/lib/configure-controller.ts";
 import {
@@ -44,6 +45,14 @@ const existingNativeObserver: RepositoryActivePathObserver = async (request) =>
   request.lifecycles.map(({ lifecycle }) => ({ lifecycle, nativeCandidateCount: 1 }));
 
 describe("configure controller", () => {
+  test.each([
+    ["POSIX", "/workspace/./", "/workspace", "linux", true],
+    ["Windows case and separators", "C:\\WORKSPACE\\.", "c:/workspace", "win32", true],
+    ["Windows child", "C:\\workspace\\child", "c:/workspace", "win32", false],
+  ] as const)("compares %s resolved path identities", (_name, left, right, platform, expected) => {
+    expect(samePathIdentity(left, right, platform)).toBe(expected);
+  });
+
   test("exits before preview confirmation when serialized bytes and plans are unchanged", async () => {
     const original = JSON.stringify(baseConfig());
     const { messages, prompts } = scriptedPrompts([
@@ -155,7 +164,12 @@ describe("configure controller", () => {
     });
     expect(
       selections.find(({ message }) => message === "Choose source for pre-create:")?.choices,
-    ).toEqual(expect.arrayContaining(["Inline Bash command", "Inline interpreter map"]));
+    ).toEqual(
+      expect.arrayContaining([
+        "Inline Bash command (visible plaintext)",
+        "Inline interpreter map (visible plaintext)",
+      ]),
+    );
   });
 
   test("preserves plans accumulated across edits to different repositories", async () => {
@@ -271,6 +285,60 @@ describe("configure controller", () => {
     });
     expect(result.status).toBe("declined");
     expect(messages.at(-1)).toContain("/linked/feature/repos/app/.arashi/hooks/pre-remove.sh");
+  });
+
+  test.each([
+    ["POSIX alias", "/workspace/alias", "/workspace", "/workspace"],
+    ["Windows normalized", "C:\\WORKSPACE\\.", "c:\\workspace", "c:\\workspace"],
+  ])(
+    "does not offer repository-native remove files for a root repository resolved by %s identity",
+    async (_name, repositoryPath, configurationRoot, canonicalIdentity) => {
+      const configuration = baseConfig();
+      configuration.repos.root = { path: repositoryPath };
+      const { prompts, selections } = scriptedPrompts([
+        "repository",
+        "root",
+        "pre-remove",
+        "edit",
+        "inline-bash",
+        "echo valid",
+        false,
+        false,
+      ]);
+      await collectConfigurationEdits({
+        activeConfigRoot: configurationRoot,
+        config: configuration,
+        prompts,
+        resolvePathIdentity: async () => canonicalIdentity,
+      });
+      expect(
+        selections.find(({ message }) => message === "Choose source for pre-remove:")?.choices,
+      ).toEqual([
+        "Inline Bash command (visible plaintext)",
+        "Inline interpreter map (visible plaintext)",
+      ]);
+    },
+  );
+
+  test("keeps repository create file planning for a configured root repository", async () => {
+    const configuration = baseConfig();
+    configuration.repos.root = { path: "." };
+    const { messages, prompts } = scriptedPrompts([
+      "repository",
+      "root",
+      "pre-create",
+      "edit",
+      "file",
+      false,
+      false,
+    ]);
+    await collectConfigurationEdits({
+      activeConfigRoot: "/workspace",
+      config: configuration,
+      prompts,
+      resolvePathIdentity: async () => "/workspace",
+    });
+    expect(messages.at(-1)).toContain("/workspace/.arashi/hooks/pre-create.root.sh");
   });
   test("retries an invalid repository branch at the owning value prompt", async () => {
     const { messages, prompts } = scriptedPrompts([

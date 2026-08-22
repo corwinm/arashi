@@ -27,9 +27,9 @@ const journey = async (
   );
   await writeFile(configPath, original);
   await options.setup?.(workspace);
-  const encoded = Buffer.from(JSON.stringify({ configPath, interactions, workspace })).toString(
-    "base64",
-  );
+  const encoded = Buffer.from(
+    JSON.stringify({ configPath, interactions, original, workspace }),
+  ).toString("base64");
   const result = spawnSync(process.execPath, [helper, root, encoded], {
     encoding: "utf8",
     timeout: 20_000,
@@ -190,6 +190,150 @@ describe.skipIf(process.platform === "win32")("configure raw PTY journeys", () =
     ]);
     expect(result.config).toMatchObject({ repos: { app: { copy: [".env"] } } });
     expect(result.transcript).not.toContain("comma-separated repository-relative");
+  });
+
+  test("successfully edits command defaults with an exact persisted preview", async () => {
+    const result = await journey([
+      { waitFor: "Choose configuration scope:", bytes: downs(2) + enter },
+      { waitFor: "Choose setting in command-defaults:", bytes: down + enter },
+      { waitFor: "Choose action for defaults.create.launch:", bytes: down + enter },
+      { waitFor: "Enter value for defaults.create.launch:", bytes: "sesh\r" },
+      { waitFor: "Edit another setting?", bytes: enter },
+      { waitFor: "Apply this workspace configuration?", bytes: "y\r" },
+    ]);
+    expect(result.config).toMatchObject({ defaults: { create: { launch: "sesh" } } });
+    expect(result.transcript).toContain(`Exact configuration JSON:\n${result.bytes}`);
+  });
+
+  test("successfully edits editor defaults", async () => {
+    const result = await journey([
+      { waitFor: "Choose configuration scope:", bytes: downs(3) + enter },
+      { waitFor: "Choose setting in editor-defaults:", bytes: down + enter },
+      { waitFor: "Choose action for defaults.editors.vscode.create.launch:", bytes: down + enter },
+      { waitFor: "Enter value for defaults.editors.vscode.create.launch:", bytes: "herdr\r" },
+      { waitFor: "Edit another setting?", bytes: enter },
+      { waitFor: "Apply this workspace configuration?", bytes: "y\r" },
+    ]);
+    expect(result.config).toMatchObject({
+      defaults: { editors: { vscode: { create: { launch: "herdr" } } } },
+    });
+    expect(result.transcript).toContain(result.bytes);
+  });
+
+  test("successfully edits meta policy", async () => {
+    const result = await journey([
+      { waitFor: "Choose configuration scope:", bytes: downs(4) + enter },
+      { waitFor: "Choose setting in meta-policy:", bytes: enter },
+      { waitFor: "Choose action for meta.baseBranch:", bytes: down + enter },
+      { waitFor: "Enter value for meta.baseBranch:", bytes: "release/meta\r" },
+      { waitFor: "Edit another setting?", bytes: enter },
+      { waitFor: "Apply this workspace configuration?", bytes: "y\r" },
+    ]);
+    expect(result.config).toMatchObject({ meta: { baseBranch: "release/meta" } });
+    expect(result.transcript).toContain(result.bytes);
+  });
+
+  test("retries repository scalar validation and persists the valid replacement", async () => {
+    const result = await journey([
+      { waitFor: "Choose configuration scope:", bytes: downs(5) + enter },
+      { waitFor: "Choose configured repository:", bytes: enter },
+      { waitFor: "Choose setting in repos.app", bytes: down + enter },
+      { waitFor: "Choose action for repos.app.baseBranch:", bytes: down + enter },
+      { waitFor: "Enter base branch:", bytes: "bad branch\r" },
+      { waitFor: "Enter base branch:", bytes: "feature/valid\r" },
+      { waitFor: "Edit another setting?", bytes: enter },
+      { waitFor: "Apply this workspace configuration?", bytes: "y\r" },
+    ]);
+    expect(result.config).toMatchObject({ repos: { app: { baseBranch: "feature/valid" } } });
+    expect(result.transcript.match(/✔ Choose configured repository:/g)).toHaveLength(1);
+  });
+
+  test("persists repository lifecycle Bash shorthand only at entry and exact preview", async () => {
+    const body = "printf REPOSITORY_BASH_VISIBLE";
+    const result = await journey([
+      { waitFor: "Choose configuration scope:", bytes: downs(5) + enter },
+      { waitFor: "Choose configured repository:", bytes: enter },
+      { waitFor: "Choose setting in repos.app", bytes: downs(4) + enter },
+      { waitFor: "Choose action for repos.app.hooks.pre-create:", bytes: down + enter },
+      { waitFor: "Choose source for pre-create:", bytes: enter },
+      { waitFor: "Enter Bash command for pre-create:", bytes: `${body}\r` },
+      { waitFor: "Edit another setting?", bytes: enter },
+      { waitFor: "Apply this workspace configuration?", bytes: "y\r" },
+    ]);
+    expect(result.config).toMatchObject({ repos: { app: { hooks: { "pre-create": body } } } });
+    const previewStart = result.transcript.indexOf("Exact configuration JSON:");
+    expect(previewStart).toBeGreaterThan(result.transcript.indexOf("visible plaintext"));
+    expect(result.transcript.slice(previewStart)).toContain(result.bytes);
+  });
+
+  test("persists a repository lifecycle interpreter map", async () => {
+    const result = await journey([
+      { waitFor: "Choose configuration scope:", bytes: downs(5) + enter },
+      { waitFor: "Choose configured repository:", bytes: enter },
+      { waitFor: "Choose setting in repos.app", bytes: downs(5) + enter },
+      { waitFor: "Choose action for repos.app.hooks.post-create:", bytes: down + enter },
+      { waitFor: "Choose source for post-create:", bytes: down + enter },
+      { waitFor: "Enter bash command", bytes: "echo bash\r" },
+      { waitFor: "Enter powershell command", bytes: "Write-Host pwsh\r" },
+      { waitFor: "Enter cmd command", bytes: "\r" },
+      { waitFor: "Edit another setting?", bytes: enter },
+      { waitFor: "Apply this workspace configuration?", bytes: "y\r" },
+    ]);
+    expect(result.config).toMatchObject({
+      repos: {
+        app: { hooks: { "post-create": { bash: "echo bash", powershell: "Write-Host pwsh" } } },
+      },
+    });
+  });
+
+  test("plans and installs a valid repository lifecycle file with separate preview boundaries", async () => {
+    const result = await journey(
+      [
+        { waitFor: "Choose configuration scope:", bytes: downs(5) + enter },
+        { waitFor: "Choose configured repository:", bytes: enter },
+        { waitFor: "Choose setting in repos.app", bytes: downs(6) + enter },
+        { waitFor: "Choose action for repos.app.hooks.pre-remove:", bytes: down + enter },
+        { waitFor: "Choose source for pre-remove:", bytes: downs(2) + enter },
+        { waitFor: "Edit another setting?", bytes: enter },
+        { waitFor: "Apply this workspace configuration?", bytes: "y\r" },
+      ],
+      {},
+      {
+        setup: async (workspace) => {
+          await mkdir(join(workspace, "repos", "app"), { recursive: true });
+        },
+      },
+    );
+    const activePath = join(result.workspace, "repos", "app", ".arashi", "hooks", "pre-remove.sh");
+    expect(await readFile(activePath, "utf8")).toContain(
+      "Safe active Arashi lifecycle hook scaffold",
+    );
+    const jsonEnd = result.transcript.indexOf(result.bytes) + result.bytes.length;
+    expect(result.transcript.indexOf("Active files to create:")).toBeGreaterThan(jsonEnd);
+    expect(result.transcript).toContain(activePath);
+  });
+
+  test("keeps an existing repository native hook without mutation or final preview", async () => {
+    const result = await journey(
+      [
+        { waitFor: "Choose configuration scope:", bytes: downs(5) + enter },
+        { waitFor: "Choose configured repository:", bytes: enter },
+        { waitFor: "Choose setting in repos.app", bytes: downs(6) + enter },
+        { waitFor: "Native active hook configured", bytes: enter },
+        { waitFor: "Edit another setting?", bytes: enter },
+      ],
+      {},
+      {
+        setup: async (workspace) => {
+          const hooks = join(workspace, "repos", "app", ".arashi", "hooks");
+          await mkdir(hooks, { recursive: true });
+          await writeFile(join(hooks, "pre-remove.sh"), "KEEP_REPOSITORY_NATIVE");
+        },
+      },
+    );
+    expect(result.bytes).toBe(result.original);
+    expect(result.transcript).not.toContain("KEEP_REPOSITORY_NATIVE");
+    expect(result.transcript).not.toContain("Apply this workspace configuration?");
   });
 
   test("shows plaintext inline entry only during entry and exact final preview", async () => {

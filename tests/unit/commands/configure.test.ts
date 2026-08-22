@@ -145,6 +145,102 @@ describe("configure command", () => {
     expect(serialized).not.toContain("NATIVE_REPOSITORY_BODY");
   });
 
+  test("linked inspection observes workspace remove hooks at the configuration root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-configure-linked-root-"));
+    const linked = await mkdtemp(join(tmpdir(), "arashi-configure-linked-exec-"));
+    await mkdir(join(root, ".arashi", "hooks"), { recursive: true });
+    await mkdir(join(linked, ".arashi", "hooks"), { recursive: true });
+    await writeFile(join(root, ".arashi", "hooks", "pre-remove.sh"), "ROOT_ONLY");
+    await writeFile(join(linked, ".arashi", "hooks", "post-remove.sh"), "LINKED_ONLY");
+    const inspection = await inspectConfigureSnapshot({
+      bytes: new Uint8Array(),
+      config,
+      executionRoot: linked,
+      persisted: config,
+      workspaceRoot: root,
+    });
+    const workspaceFiles = inspection.nativeSources.filter(({ scope }) => scope === "workspace");
+    expect(workspaceFiles.map(({ lifecycle }) => lifecycle)).toContain("pre-remove");
+    expect(workspaceFiles.map(({ lifecycle }) => lifecycle)).not.toContain("post-remove");
+  });
+
+  test("linked interactive editing observes workspace remove hooks at the configuration root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-configure-linked-interactive-root-"));
+    const linked = await mkdtemp(join(tmpdir(), "arashi-configure-linked-interactive-exec-"));
+    await mkdir(join(root, ".arashi", "hooks"), { recursive: true });
+    await mkdir(join(linked, ".arashi", "hooks"), { recursive: true });
+    await writeFile(join(root, ".arashi", "hooks", "pre-remove.sh"), "ROOT_ONLY");
+    await writeFile(join(linked, ".arashi", "hooks", "post-remove.sh"), "LINKED_ONLY");
+    const observed: Array<{ lifecycle: string; nativeCandidateCount?: number }> = [];
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await executeConfigure(
+      { stdinIsTTY: true, stdoutIsTTY: true },
+      {
+        collectEdits: async (options) => {
+          observed.push(
+            ...(await options.observeWorkspaceActivePaths!({
+              lifecycles: [
+                { inlineConfigured: false, lifecycle: "pre-remove", plannedPath: null },
+                { inlineConfigured: false, lifecycle: "post-remove", plannedPath: null },
+              ],
+              repositoryName: "@workspace",
+            })),
+          );
+          return { status: "no-changes" };
+        },
+        loadSnapshot: async () => ({
+          bytes: new TextEncoder().encode(JSON.stringify(config)),
+          config,
+          executionRoot: linked,
+          workspaceRoot: root,
+        }),
+        transact: vi.fn(),
+        writeJson: vi.fn(),
+      },
+    );
+    expect(observed.find(({ lifecycle }) => lifecycle === "pre-remove")?.nativeCandidateCount).toBe(
+      1,
+    );
+    expect(
+      observed.find(({ lifecycle }) => lifecycle === "post-remove")?.nativeCandidateCount,
+    ).toBe(0);
+    log.mockRestore();
+  });
+
+  test("JSON inspection failures emit exactly one standard error envelope", async () => {
+    const output: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitCode = await executeConfigure(
+      { json: true },
+      {
+        collectEdits: vi.fn(),
+        inspectSnapshot: async () => {
+          throw Object.assign(new Error("observer denied"), { code: "EACCES" });
+        },
+        loadSnapshot: async () => ({
+          bytes: new Uint8Array([1]),
+          config,
+          workspaceRoot: "/workspace",
+        }),
+        transact: vi.fn(),
+        writeJson: (value) => output.push(value),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(output).toEqual([
+      expect.objectContaining({
+        command: "configure",
+        error: expect.objectContaining({ message: "observer denied" }),
+        ok: false,
+      }),
+    ]);
+    expect(log).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    log.mockRestore();
+    error.mockRestore();
+  });
+
   test("emits one JSON error envelope when strict loading fails", async () => {
     const output: unknown[] = [];
     const exitCode = await executeConfigure(

@@ -1,8 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { basename as posixBasename, win32 } from "node:path";
+import { randomUUID } from "node:crypto";
+import { open, readFile, rename, rm } from "node:fs/promises";
+import { basename, dirname, join, win32 } from "node:path";
 import type { Config } from "./config.ts";
 import { serializeConfig } from "./config.ts";
-import { runtime } from "./runtime.ts";
 import type { RepositoryScriptPlan } from "./repository-config-editor.ts";
 import {
   RepositoryScriptTransactionError,
@@ -26,7 +26,6 @@ export interface ConfigureTransactionDependencies {
   rollbackScripts(
     owned: readonly OwnedRepositoryScript[],
   ): Promise<{ removed: string[]; preserved: string[] }>;
-  restoreConfigBytes?(expected: Uint8Array, observed: Uint8Array): Promise<void>;
   saveConfig(candidate: Config): Promise<void>;
   withLock<T>(operation: () => Promise<T>): Promise<T>;
 }
@@ -37,34 +36,82 @@ export const runConfigureTransaction = async (options: {
   plans: readonly RepositoryScriptPlan[];
   dependencies: ConfigureTransactionDependencies;
 }): Promise<void> => {
-  const transactionBytes = new TextEncoder().encode(serializeConfig(options.candidate));
   return options.dependencies.withLock(async () => {
     const current = await options.dependencies.readConfigBytes();
     if (!equalBytes(current, options.expectedBytes))
       throw new Error("Configuration changed concurrently; preserved the newer bytes.");
     let owned: OwnedRepositoryScript[] = [];
-    let saveStarted = false;
     try {
       await options.dependencies.revalidatePlans?.(options.plans);
       owned = await options.dependencies.installScripts(options.plans);
       const afterInstall = await options.dependencies.readConfigBytes();
       if (!equalBytes(afterInstall, options.expectedBytes))
         throw new Error("Configuration changed concurrently; preserved the newer bytes.");
-      saveStarted = true;
       await options.dependencies.saveConfig(options.candidate);
     } catch (error) {
       if (error instanceof RepositoryScriptTransactionError) {
         owned = [...error.owned];
       }
       if (owned.length > 0) await options.dependencies.rollbackScripts(owned);
-      if (saveStarted && options.dependencies.restoreConfigBytes) {
-        const observed = await options.dependencies.readConfigBytes();
-        if (equalBytes(observed, transactionBytes))
-          await options.dependencies.restoreConfigBytes(options.expectedBytes, observed);
-      }
       throw error;
     }
   });
+};
+
+interface AtomicConfigurePersistenceDependencies {
+  open(
+    path: string,
+    flags: "wx",
+    mode: number,
+  ): Promise<{
+    close(): Promise<void>;
+    sync(): Promise<void>;
+    writeFile(bytes: Uint8Array): Promise<void>;
+  }>;
+  readFile(path: string): Promise<Uint8Array>;
+  rename(from: string, to: string): Promise<void>;
+  rm(path: string, options: { force: true }): Promise<void>;
+  temporaryName: (configPath: string) => string;
+}
+
+const atomicPersistenceDefaults: AtomicConfigurePersistenceDependencies = {
+  open,
+  readFile,
+  rename,
+  rm,
+  temporaryName: (configPath) =>
+    `.${basename(configPath)}.arashi-${process.pid}-${randomUUID()}.tmp`,
+};
+
+/** Privately stage complete canonical bytes before atomically replacing the live configuration. */
+export const persistConfigureAtomically = async (
+  configPath: string,
+  candidate: Config,
+  expectedBytes: Uint8Array,
+  dependencies: AtomicConfigurePersistenceDependencies = atomicPersistenceDefaults,
+): Promise<void> => {
+  const beforeStage = await dependencies.readFile(configPath);
+  if (!equalBytes(beforeStage, expectedBytes))
+    throw new Error("Configuration changed concurrently; preserved the newer bytes.");
+  const temporaryPath = join(dirname(configPath), dependencies.temporaryName(configPath));
+  let temporaryExists = false;
+  try {
+    const handle = await dependencies.open(temporaryPath, "wx", 0o600);
+    temporaryExists = true;
+    try {
+      await handle.writeFile(new TextEncoder().encode(serializeConfig(candidate)));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    const beforeReplace = await dependencies.readFile(configPath);
+    if (!equalBytes(beforeReplace, expectedBytes))
+      throw new Error("Configuration changed concurrently; preserved the newer bytes.");
+    await dependencies.rename(temporaryPath, configPath);
+    temporaryExists = false;
+  } finally {
+    if (temporaryExists) await dependencies.rm(temporaryPath, { force: true }).catch(() => {});
+  }
 };
 
 export const revalidateRepositoryScriptPlans = async (
@@ -78,7 +125,7 @@ export const revalidateRepositoryScriptPlans = async (
   const destinations = new Set<string>();
   for (const plan of plans) {
     const platform: NodeJS.Platform = plan.extension === ".ps1" ? "win32" : process.platform;
-    const pathName = platform === "win32" ? win32.basename(plan.path) : posixBasename(plan.path);
+    const pathName = platform === "win32" ? win32.basename(plan.path) : basename(plan.path);
     const hookName = pathName.slice(0, -plan.extension.length);
     const destinationKey = platform === "win32" ? plan.path.toLowerCase() : plan.path;
     if (destinations.has(destinationKey))
@@ -93,15 +140,14 @@ export const revalidateRepositoryScriptPlans = async (
 export const defaultConfigureTransactionDependencies = (
   workspaceRoot: string,
   configPath: string,
-  save: (candidate: Config) => Promise<void>,
+  expectedBytes: Uint8Array,
 ): ConfigureTransactionDependencies => {
   return {
     installScripts: installRepositoryScripts,
     readConfigBytes: () => readFile(configPath),
     revalidatePlans: revalidateRepositoryScriptPlans,
-    restoreConfigBytes: async (expected) => runtime.write(configPath, expected),
     rollbackScripts: rollbackRepositoryScripts,
-    saveConfig: save,
+    saveConfig: (candidate) => persistConfigureAtomically(configPath, candidate, expectedBytes),
     withLock: async (operation) => {
       const lockPath = await resolveWorkspaceTransactionLockPath(workspaceRoot);
       return withWorkspaceTransactionLock(lockPath, operation);

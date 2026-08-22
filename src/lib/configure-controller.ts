@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { realpath } from "node:fs/promises";
+import { resolve, win32 } from "node:path";
 import { serializeConfig, type Config, type InlineHookLifecycle } from "./config.ts";
 import { confirm, input, select, type Choice, type PromptOutcome } from "./prompts.ts";
 import {
@@ -43,6 +44,14 @@ export const configurePrompts: ConfigurePrompts = {
   showDiagnostic: (message) => console.error(message),
 };
 const cancelled = <T>(outcome: PromptOutcome<T>) => outcome.status === "cancelled";
+export const samePathIdentity = (
+  left: string,
+  right: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean =>
+  platform === "win32"
+    ? win32.normalize(left).toLowerCase() === win32.normalize(right).toLowerCase()
+    : resolve(left) === resolve(right);
 const scopeChoices: Choice<ConfigureScope>[] = [
   { name: "Workspace settings", value: "workspace-settings" },
   { name: "Workspace lifecycle hooks", value: "workspace-hooks" },
@@ -175,6 +184,7 @@ const editRepository = async (
   prompts: ConfigurePrompts,
   observeActivePaths?: RepositoryActivePathObserver,
   discoverCandidates?: (root: string) => Promise<RepositoryCandidateDiscovery>,
+  rootRepository = false,
 ): Promise<ConfigurationSession | { status: "cancelled"; reason: "exit" | "abort" }> => {
   const inspection = inspectConfiguration(session.candidate, repositoryName, session.persisted)
     .repositories[0]!;
@@ -268,9 +278,11 @@ const editRepository = async (
       const lifecycle = setting.value as InlineHookLifecycle;
       for (;;) {
         const source = await prompts.select(`Choose source for ${lifecycle}:`, [
-          { name: "Inline Bash command", value: "inline-bash" as const },
-          { name: "Inline interpreter map", value: "inline-map" as const },
-          { name: "Editable active file", value: "file" as const },
+          { name: "Inline Bash command (visible plaintext)", value: "inline-bash" as const },
+          { name: "Inline interpreter map (visible plaintext)", value: "inline-map" as const },
+          ...(rootRepository && (lifecycle === "pre-remove" || lifecycle === "post-remove")
+            ? []
+            : [{ name: "Editable active file", value: "file" as const }]),
         ]);
         if (cancelled(source)) return source;
         let trial;
@@ -338,6 +350,7 @@ const editRepository = async (
       prompts,
       observeActivePaths,
       discoverCandidates,
+      rootRepository,
     );
   }
   const candidate = normalized.state.candidate;
@@ -385,9 +398,13 @@ export const collectConfigurationEdits = async (options: {
   }) => RepositoryActivePathObserver;
   observeWorkspaceActivePaths?: RepositoryActivePathObserver;
   discoverRepositoryCandidates?: (root: string) => Promise<RepositoryCandidateDiscovery>;
+  resolvePathIdentity?: (path: string) => Promise<string>;
 }): Promise<ConfigureControllerResult> => {
   const prompts = options.prompts ?? configurePrompts;
   const executionRoot = options.executionRoot ?? options.activeConfigRoot;
+  const resolvePathIdentity =
+    options.resolvePathIdentity ?? ((path: string) => realpath(path).catch(() => resolve(path)));
+  const configurationRootIdentity = await resolvePathIdentity(options.activeConfigRoot);
   let session = createConfigurationSession(options.config, options.persisted ?? options.config);
   const initialSerialized = serializeConfig(session.candidate);
   for (;;) {
@@ -402,6 +419,14 @@ export const collectConfigurationEdits = async (options: {
             .map((name) => ({ name: `${name} — repos.${name}`, value: name })),
         );
         if (cancelled(repository)) return repository;
+        const configuredRepositoryPath = resolve(
+          options.activeConfigRoot,
+          session.candidate.repos[repository.value].path,
+        );
+        const rootRepository = samePathIdentity(
+          await resolvePathIdentity(configuredRepositoryPath),
+          configurationRootIdentity,
+        );
         const result = await editRepository(
           session,
           repository.value,
@@ -417,6 +442,7 @@ export const collectConfigurationEdits = async (options: {
             repositoryName: repository.value,
           }),
           options.discoverRepositoryCandidates,
+          rootRepository,
         );
         if ("status" in result) return result;
         session = result;
