@@ -95,7 +95,7 @@ describe("bounded repository candidate discovery", () => {
     const clone = await mkdtemp(join(tmpdir(), "arashi-discovery-clone-"));
     roots.push(source, clone);
     await exec("git", ["init", "-q", source]);
-    await writeFile(join(source, ".gitignore"), ".env*\n");
+    await writeFile(join(source, ".gitignore"), ".env*\n.cache/\n");
     await writeFile(join(source, ".env.example"), "template");
     await exec("git", ["-C", source, "add", ".gitignore"]);
     await exec("git", ["-C", source, "add", "-f", ".env.example"]);
@@ -116,6 +116,11 @@ describe("bounded repository candidate discovery", () => {
     await expect(access(join(clone, ".env"))).rejects.toMatchObject({ code: "ENOENT" });
     const result = await discoverRepositoryLocalCandidates(clone);
 
+    expect(result.candidates).toContainEqual({
+      kind: "directory",
+      path: ".cache",
+      selected: false,
+    });
     expect(result.candidates).toContainEqual({ kind: "file", path: ".env", selected: false });
   });
 

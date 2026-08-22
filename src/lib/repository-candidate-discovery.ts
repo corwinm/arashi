@@ -45,6 +45,8 @@ const CLONE_SURVIVING_PROBES: readonly RootMetadataEntry[] = [
   { isDirectory: () => false, name: "local.yml" },
 ];
 const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+const ignoredProbePath = (entry: RootMetadataEntry): string =>
+  entry.isDirectory() ? `${entry.name}/` : entry.name;
 const checkIgnored = (paths: readonly string[], root: string): Promise<readonly string[]> =>
   new Promise((resolve, reject) => {
     const child = spawn("git", ["check-ignore", "--stdin", "-z"], {
@@ -102,14 +104,9 @@ export const discoverRepositoryLocalCandidates = async (
     if (likely.length === 0 || maxSuggestions === 0) {
       return { candidates: [], inspectedEntries };
     }
-    const ignored = new Set(
-      await dependencies.checkIgnored(
-        likely.map(({ name }) => name),
-        root,
-      ),
-    );
+    const ignored = new Set(await dependencies.checkIgnored(likely.map(ignoredProbePath), root));
     const candidates = likely
-      .filter(({ name }) => ignored.has(name))
+      .filter((entry) => ignored.has(ignoredProbePath(entry)))
       .slice(0, maxSuggestions)
       .map(
         (entry): RepositoryLocalCandidate => ({
