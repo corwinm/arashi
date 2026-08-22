@@ -92,7 +92,7 @@ describe("repository onboarding controller", () => {
     expect(finalPrompt).toContain('"pre-create"');
     expect(finalPrompt).toContain(canary);
     expect(finalPrompt).toContain("Files to create:");
-    expect(finalPrompt).toContain(
+    expect(finalPrompt.replaceAll("\\", "/")).toContain(
       "  • post-remove: /workspace/repos/app/.arashi/hooks/post-remove.sh (active safe no-op; ready to edit)",
     );
     expect(prompts.input).toHaveBeenCalledWith("Enter Bash command for pre-create:");
