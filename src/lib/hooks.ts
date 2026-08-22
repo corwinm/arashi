@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "fs";
 import { homedir, tmpdir } from "os";
-import { delimiter, isAbsolute, join, normalize, resolve, win32 } from "path";
+import { delimiter, isAbsolute, join, normalize, posix, resolve, win32 } from "path";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 import { withSpinnerPaused } from "./logger.ts";
 import type { PausableSpinner } from "./logger.ts";
@@ -1224,6 +1224,25 @@ export const lifecycleHookExtensions = (
   platform: NodeJS.Platform = process.platform,
 ): readonly string[] => (platform === "win32" ? [".ps1", ".cmd", ".bat"] : [".sh"]);
 
+/** Pure active-file resolver shared by runtime discovery owners and planners. */
+export const resolveLifecycleHooksDirectory = (
+  ownerRoot: string,
+  _platform: NodeJS.Platform = process.platform,
+): string => join(ownerRoot, ".arashi", "hooks");
+
+export const resolveLifecycleHookFilePath = (options: {
+  hookName: string;
+  ownerRoot: string;
+  platform?: NodeJS.Platform;
+}): string => {
+  const platform = options.platform ?? process.platform;
+  const pathApi = platform === "win32" ? win32 : posix;
+  return pathApi.join(
+    resolveLifecycleHooksDirectory(options.ownerRoot, platform),
+    `${options.hookName}${platform === "win32" ? ".ps1" : ".sh"}`,
+  );
+};
+
 export class LifecycleHookAmbiguityError extends Error {
   readonly candidates: string[];
   readonly code = "HOOK_AMBIGUOUS" as const;
@@ -1285,7 +1304,7 @@ export const discoverLifecycleHookCandidates = async (
 ): Promise<readonly string[]> =>
   discoverLifecycleHookCandidatesInDirectory(
     hookName,
-    join(repoPath, ".arashi", "hooks"),
+    resolveLifecycleHooksDirectory(repoPath, platform),
     platform,
   );
 
@@ -1294,7 +1313,7 @@ export const discoverLifecycleHook = async (
   repoPath: string,
   platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> => {
-  const hooksDirectory = join(repoPath, ".arashi", "hooks");
+  const hooksDirectory = resolveLifecycleHooksDirectory(repoPath, platform);
   return discoverLifecycleHookInDirectory(hookName, hooksDirectory, platform);
 };
 

@@ -39,6 +39,7 @@ describe("prompt outcomes", () => {
       status: "ok",
       value: "test input",
     });
+
     await expect(promptApi.select("Branch", [{ name: "Main", value: "main" }])).resolves.toEqual({
       status: "ok",
       value: "main",

@@ -1,4 +1,6 @@
 import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { Command, Option } from "commander";
 import pkg from "../../package.json";
 import { buildProgram, discoverCommandPaths } from "../../src/cli-program.ts";
@@ -146,6 +148,68 @@ describe("CLI command contract", () => {
     const addArgument = contract.commands.find((command) => command.path === "add")?.arguments[0];
     expect(addArgument?.description).toContain("[user@]host:path");
     expect(addArgument?.description).toContain("ssh://[user@]host/path");
+  });
+
+  test("publishes the complete optional add-onboarding contract and practical filesystem safety guidance", () => {
+    const program = buildProgram({ includeHelpBanner: false });
+    const add = program.commands.find((command) => command.name() === "add");
+    const help = (add?.helpInformation() ?? "").replaceAll(/\s+/g, " ");
+    expect(help).toContain("optional repository worktree setup");
+    expect(help).toContain("TTY");
+    expect(help).toContain("--json and --force suppress setup");
+
+    const contract = generateCommandContract(program, commandSemantics, optionAuditPolicies);
+    expect(
+      contract.commands.find((command) => command.path === "add")?.semantics.addOnboarding,
+    ).toEqual({
+      activeFiles: {
+        createOwner: "active-config-root",
+        removeOwner: "runtime-resolved-target-repository",
+        safeNoOp: true,
+        executableReady: true,
+        noOverwrite: true,
+      },
+      cancellation: { finalDeclineAndInterrupt: "rollback", topLevelDecline: "minimal-success" },
+      candidate: { isolatedUntilConfirmed: true, oneConfigSave: true },
+      eligibility: {
+        defaultNo: true,
+        requires: ["stdin-tty", "stdout-tty"],
+        suppresses: ["--json", "--force"],
+      },
+      fields: ["copy", "symlink", "pre-create", "post-create", "pre-remove", "post-remove"],
+      hookSources: ["inline-bash", "inline-interpreter-map", "active-file"],
+      inlineBashPersistence: "string-shorthand",
+      output: {
+        humanActiveFiles: "lifecycle-path-and-readiness-only",
+        jsonActiveFiles: "excluded-because-json-suppresses-onboarding",
+      },
+      secrecy: {
+        confirmationPreview: "resulting-repository-config-json",
+        entry: "visible-plaintext",
+        postConfirmation: "presence-and-path-state-only",
+      },
+      suggestions: {
+        bounded: true,
+        contentFree: true,
+        promptRendering: "control-escaped",
+        selectedByDefault: false,
+        source: "root-metadata-and-ignore-rule-probes",
+      },
+      safety: {
+        implementation: "pure-node-bun-metadata-and-atomic-no-replace",
+        residualRace:
+          "hostile-local-ancestor-substitution-between-final-validation-and-publication",
+        rollbackResidualRace: "path-replacement-between-final-rollback-identity-check-and-unlink",
+      },
+      futureScope: "existing-entry-editing-reserved-for-316",
+    });
+
+    const readme = readFileSync(resolve(process.cwd(), "README.md"), "utf8");
+    expect(readme).toContain(
+      "`aw add` walks you through repository configuration and hook initialization.",
+    );
+    expect(readme).not.toContain("Pure Node/Bun");
+    expect(readme).not.toContain("Rust");
   });
 
   test("publishes enforceable init zero-config option and output policy", () => {

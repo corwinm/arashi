@@ -46,6 +46,51 @@ export interface CommandSemanticMetadata {
   optionPolicies?: Record<string, ExplicitOptionPolicy>;
   zeroConfig?: ZeroConfigCommandPolicy;
   addMaterialization?: AddMaterializationPolicy;
+  addOnboarding?: AddOnboardingPolicy;
+}
+export interface AddOnboardingPolicy {
+  activeFiles: {
+    createOwner: "active-config-root";
+    removeOwner: "runtime-resolved-target-repository";
+    safeNoOp: true;
+    executableReady: true;
+    noOverwrite: true;
+  };
+  cancellation: {
+    finalDeclineAndInterrupt: "rollback";
+    topLevelDecline: "minimal-success";
+  };
+  candidate: { isolatedUntilConfirmed: true; oneConfigSave: true };
+  eligibility: {
+    defaultNo: true;
+    requires: ["stdin-tty", "stdout-tty"];
+    suppresses: ["--json", "--force"];
+  };
+  fields: ["copy", "symlink", "pre-create", "post-create", "pre-remove", "post-remove"];
+  hookSources: ["inline-bash", "inline-interpreter-map", "active-file"];
+  inlineBashPersistence: "string-shorthand";
+  output: {
+    humanActiveFiles: "lifecycle-path-and-readiness-only";
+    jsonActiveFiles: "excluded-because-json-suppresses-onboarding";
+  };
+  secrecy: {
+    confirmationPreview: "resulting-repository-config-json";
+    entry: "visible-plaintext";
+    postConfirmation: "presence-and-path-state-only";
+  };
+  suggestions: {
+    bounded: true;
+    contentFree: true;
+    promptRendering: "control-escaped";
+    selectedByDefault: false;
+    source: "root-metadata-and-ignore-rule-probes";
+  };
+  safety: {
+    implementation: "pure-node-bun-metadata-and-atomic-no-replace";
+    residualRace: "hostile-local-ancestor-substitution-between-final-validation-and-publication";
+    rollbackResidualRace: "path-replacement-between-final-rollback-identity-check-and-unlink";
+  };
+  futureScope: "existing-entry-editing-reserved-for-316";
 }
 export interface AddMaterializationPolicy {
   activeConfigOwnership: true;
@@ -544,6 +589,51 @@ export const commandSemantics: CommandSemantics = {
         "setupScript",
         "setupScriptCreated",
       ],
+    },
+    addOnboarding: {
+      activeFiles: {
+        createOwner: "active-config-root",
+        removeOwner: "runtime-resolved-target-repository",
+        safeNoOp: true,
+        executableReady: true,
+        noOverwrite: true,
+      },
+      cancellation: {
+        finalDeclineAndInterrupt: "rollback",
+        topLevelDecline: "minimal-success",
+      },
+      candidate: { isolatedUntilConfirmed: true, oneConfigSave: true },
+      eligibility: {
+        defaultNo: true,
+        requires: ["stdin-tty", "stdout-tty"],
+        suppresses: ["--json", "--force"],
+      },
+      fields: ["copy", "symlink", "pre-create", "post-create", "pre-remove", "post-remove"],
+      hookSources: ["inline-bash", "inline-interpreter-map", "active-file"],
+      inlineBashPersistence: "string-shorthand",
+      output: {
+        humanActiveFiles: "lifecycle-path-and-readiness-only",
+        jsonActiveFiles: "excluded-because-json-suppresses-onboarding",
+      },
+      secrecy: {
+        confirmationPreview: "resulting-repository-config-json",
+        entry: "visible-plaintext",
+        postConfirmation: "presence-and-path-state-only",
+      },
+      suggestions: {
+        bounded: true,
+        contentFree: true,
+        promptRendering: "control-escaped",
+        selectedByDefault: false,
+        source: "root-metadata-and-ignore-rule-probes",
+      },
+      safety: {
+        implementation: "pure-node-bun-metadata-and-atomic-no-replace",
+        residualRace:
+          "hostile-local-ancestor-substitution-between-final-validation-and-publication",
+        rollbackResidualRace: "path-replacement-between-final-rollback-identity-check-and-unlink",
+      },
+      futureScope: "existing-entry-editing-reserved-for-316",
     },
   },
   clone: standard(

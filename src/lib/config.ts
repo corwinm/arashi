@@ -1547,6 +1547,21 @@ export const loadConfigWithFallback = async (
   }
 };
 
+const compactInlineHookScripts = (scripts: InlineHookScripts): InlineHookScripts => {
+  const compacted: InlineHookScripts = {};
+  for (const [lifecycle, value] of Object.entries(scripts)) {
+    const shorthand =
+      typeof value === "object" &&
+      value !== null &&
+      Object.keys(value).length === 1 &&
+      typeof value.bash === "string"
+        ? value.bash
+        : value;
+    compacted[lifecycle as InlineHookLifecycle] = shorthand;
+  }
+  return compacted;
+};
+
 const normalizePersistedRepoConfig = (repoConfig: RepoConfig): RepoConfig => {
   const normalized: RepoConfig = {
     path: repoConfig.path,
@@ -1569,7 +1584,7 @@ const normalizePersistedRepoConfig = (repoConfig: RepoConfig): RepoConfig => {
   }
 
   if (repoConfig.hooks) {
-    normalized.hooks = repoConfig.hooks;
+    normalized.hooks = compactInlineHookScripts(repoConfig.hooks);
   }
 
   if (repoConfig.baseBranch) {
@@ -1595,7 +1610,10 @@ const normalizePersistedConfig = (config: Config): Config => {
   };
 
   if (config.hooks) {
-    persisted.hooks = config.hooks;
+    persisted.hooks = { ...config.hooks };
+    if (config.hooks.scripts) {
+      persisted.hooks.scripts = compactInlineHookScripts(config.hooks.scripts);
+    }
   }
 
   if (config.sync) {
