@@ -539,6 +539,33 @@ describe("configure transaction", () => {
     expect(rollback).toHaveBeenCalledWith(owned);
   });
 
+  test("reports preserved active hooks as incomplete recovery after save failure", async () => {
+    const owned = [{ path: "/owned.sh" }] as OwnedRepositoryScript[];
+    const failure = new Error("save failed");
+    const promise = runConfigureTransaction({
+      candidate: config("children"),
+      expectedBytes: bytes("original"),
+      plans: [],
+      dependencies: {
+        installScripts: async () => owned,
+        readConfigBytes: async () => bytes("original"),
+        rollbackScripts: async () => ({ preserved: ["/owned.sh"], removed: [] }),
+        saveConfig: async () => {
+          throw failure;
+        },
+        withLock: async (operation) => operation(),
+      },
+    });
+
+    await expect(promise).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof AggregateError &&
+        error.message.includes("recovery was incomplete") &&
+        error.errors.some((entry) => entry === failure) &&
+        error.errors.some((entry) => entry instanceof Error && entry.message.includes("/owned.sh")),
+    );
+  });
+
   test.each([
     ["unchanged original", "original bytes", false],
     ["partial candidate prefix", '{\n  "repos":', false],

@@ -68,7 +68,12 @@ export const runConfigureTransaction = async (options: {
       }
       if (owned.length > 0) {
         try {
-          await options.dependencies.rollbackScripts(owned);
+          const rollback = await options.dependencies.rollbackScripts(owned);
+          for (const path of rollback.preserved) {
+            cleanupErrors.push(
+              new Error(`Preserved modified or unowned active hook during rollback: ${path}`),
+            );
+          }
         } catch (rollbackError) {
           cleanupErrors.push(rollbackError);
         }
