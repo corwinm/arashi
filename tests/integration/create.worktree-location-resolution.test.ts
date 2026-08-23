@@ -243,15 +243,24 @@ describe("create command worktree location resolution", () => {
     const result = await runCreateResult(branch, ["--conflict", "REUSE_EXISTING", "--json"]);
 
     expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const envelope = JSON.parse(result.stdout) as {
+      error: {
+        code: string;
+        details: { conflict: { repositoryName: string; worktreePath: string } };
+      };
+      ok: boolean;
+    };
+    expect(envelope).toMatchObject({
       error: {
         code: "WORKTREE_DESTINATION_COLLISION",
-        details: {
-          conflict: { repositoryName: "workspace", worktreePath: plannedDestination },
-        },
+        details: { conflict: { repositoryName: "workspace" } },
       },
       ok: false,
     });
+    const reportedPath = envelope.error.details.conflict.worktreePath;
+    const reportedWorkspace = dirname(dirname(dirname(reportedPath)));
+    const reportedSuffix = relative(reportedWorkspace, reportedPath);
+    expect(resolve(await realpath(reportedWorkspace), reportedSuffix)).toBe(plannedDestination);
     expect(await runtime.file(marker).exists()).toBe(false);
     expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
     expect(await runtime.file(join(registeredPath, "README.md")).exists()).toBe(true);
