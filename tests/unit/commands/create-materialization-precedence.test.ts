@@ -47,6 +47,17 @@ describe("configured create materialization precedence RED", () => {
       source: "local-file",
     };
     const events: string[] = [];
+    const plannedDestination = join(workspaceRoot, "custom-parent", "feature", "materialization");
+    const worktreePathPlan = new Map([
+      [
+        repository,
+        {
+          path: plannedDestination,
+          repositoryType: "child" as const,
+          strategy: "nested" as const,
+        },
+      ],
+    ]);
     const blocker = Object.assign(new Error("Tracked destination blocks materialization"), {
       code: "MATERIALIZATION_PLAN_BLOCKED",
       details: {
@@ -70,17 +81,7 @@ describe("configured create materialization precedence RED", () => {
 
     const dependencies = {
       applyRepositoryFilter: async (_filter: unknown, selected: Repository[]) => selected,
-      calculateWorktreePathPlan: async (selected: Repository[]) =>
-        new Map(
-          selected.map((selectedRepository) => [
-            selectedRepository,
-            {
-              path: join(workspaceRoot, "worktrees", selectedRepository.name),
-              repositoryType: "meta-repo" as const,
-              strategy: "sibling" as const,
-            },
-          ]),
-        ),
+      calculateWorktreePathPlan: async () => worktreePathPlan,
       createCoordinatedWorktrees: async () => {
         events.push("create");
         return {
@@ -108,8 +109,13 @@ describe("configured create materialization precedence RED", () => {
       isGitRepository: async () => false,
       listRegisteredWorktreePaths: async () => [],
       loadConfigWithFallback: async () => loaded,
-      preflightMaterialization: async (input: { reuseExisting: boolean }) => {
+      preflightMaterialization: async (input: {
+        reuseExisting: boolean;
+        worktreePathPlan?: ReadonlyMap<Repository, { path: string }>;
+      }) => {
         expect(input.reuseExisting).toBe(true);
+        expect(input.worktreePathPlan).toBe(worktreePathPlan);
+        expect(input.worktreePathPlan?.get(repository)?.path).toBe(plannedDestination);
         events.push("materialization-preflight");
         throw blocker;
       },

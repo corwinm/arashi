@@ -172,6 +172,9 @@ describe("create command worktree location resolution", () => {
     expect(`${result.stdout}\n${result.stderr}`).toContain(
       join("custom-worktrees", "feature", "collision"),
     );
+    expect(result.stderr).not.toContain("Unexpected error");
+    expect(result.stderr).not.toContain("WorktreeDestinationCollisionError");
+    expect(result.stderr).not.toContain("src/commands/create.ts");
     expect(await runtime.file(marker).exists()).toBe(false);
     expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
     const branchProbe = runtime.spawn(["git", "show-ref", "--verify", `refs/heads/${branch}`], {
@@ -351,6 +354,65 @@ describe("create command worktree location resolution", () => {
       await realpath(JSON.parse(result.stdout).data.repositories[0].worktreePath as string),
     );
   });
+
+  test("reports an exact live registration as reusable during dry-run", async () => {
+    await writeWorkspaceConfig("custom-worktrees");
+    const branch = "feature/dry-run-existing";
+    const destination = resolve(workspacePath, "custom-worktrees", "feature", "dry-run-existing");
+    await mkdir(dirname(destination), { recursive: true });
+    await runGit(["worktree", "add", "-b", branch, destination, "main"], workspacePath);
+
+    const result = await runCreateResult(branch, [
+      "--dry-run",
+      "--conflict",
+      "REUSE_EXISTING",
+      "--json",
+    ]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: {
+        dryRunOutcome: {
+          conflicts: [
+            {
+              blocking: false,
+              conflictType: "branch_exists",
+              repositoryName: "workspace",
+            },
+          ],
+          plannedWorktrees: [
+            {
+              planStatus: "actionable",
+              repositoryName: "workspace",
+              worktreePath: expect.any(String),
+            },
+          ],
+          summaryCounts: { blockingTotal: 0 },
+        },
+      },
+      ok: true,
+    });
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "reuses an exact live registration whose path contains a newline",
+    async () => {
+      await writeWorkspaceConfig("custom\nworktrees");
+      const branch = "feature/newline-path";
+      const destination = resolve(workspacePath, "custom\nworktrees", "feature", "newline-path");
+      await mkdir(dirname(destination), { recursive: true });
+      await runGit(["worktree", "add", "-b", branch, destination, "main"], workspacePath);
+
+      const result = await runCreateResult(branch, ["--conflict", "REUSE_EXISTING", "--json"]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(await realpath(JSON.parse(result.stdout).data.repositories[0].worktreePath)).toBe(
+        await realpath(destination),
+      );
+    },
+  );
 
   test("reports the authoritative colliding destination in one JSON failure envelope", async () => {
     await writeWorkspaceConfig("custom-worktrees");

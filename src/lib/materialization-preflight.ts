@@ -3,6 +3,8 @@ import {
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
+  readlink,
   realpath,
   rm,
   stat,
@@ -14,8 +16,10 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { exec } from "./git.ts";
 import {
   classifyRegularMaterializationSource,
+  normalizeMaterializationPath,
   planRepositoryMaterialization,
   portableMaterializationCollisionKey,
+  resolveMaterializationPath,
   type DestinationInspection,
   type MaterializationAction,
   type MaterializationPlannerInput,
@@ -26,6 +30,90 @@ import {
 
 const missing = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+
+const copiedEntriesMatch = async (source: string, destination: string): Promise<boolean> => {
+  try {
+    const [sourceStat, destinationStat] = await Promise.all([lstat(source), lstat(destination)]);
+    if (sourceStat.isSymbolicLink() || destinationStat.isSymbolicLink()) {
+      return (
+        sourceStat.isSymbolicLink() &&
+        destinationStat.isSymbolicLink() &&
+        (await readlink(source)) === (await readlink(destination))
+      );
+    }
+    if (sourceStat.isFile() || destinationStat.isFile()) {
+      return (
+        sourceStat.isFile() &&
+        destinationStat.isFile() &&
+        (await readFile(source)).equals(await readFile(destination))
+      );
+    }
+    if (!sourceStat.isDirectory() || !destinationStat.isDirectory()) return false;
+    const [sourceEntries, destinationEntries] = await Promise.all([
+      readdir(source),
+      readdir(destination),
+    ]);
+    sourceEntries.sort();
+    destinationEntries.sort();
+    if (sourceEntries.join("\0") !== destinationEntries.join("\0")) return false;
+    return (
+      await Promise.all(
+        sourceEntries.map((entry) =>
+          copiedEntriesMatch(join(source, entry), join(destination, entry)),
+        ),
+      )
+    ).every(Boolean);
+  } catch {
+    return false;
+  }
+};
+
+export async function preserveCorrectReusableMaterialization(input: {
+  copy: readonly string[];
+  destinationRoot: string;
+  plan: RepositoryMaterializationPlan;
+  sourceRoot: string;
+  symlink: readonly string[];
+}): Promise<RepositoryMaterializationPlan> {
+  const copyPaths = new Set(input.copy.map((path) => normalizeMaterializationPath(path).path));
+  const symlinkPaths = new Set(
+    input.symlink.map((path) => normalizeMaterializationPath(path).path),
+  );
+  const outcomes = await Promise.all(
+    input.plan.outcomes.map(async (outcome) => {
+      if (outcome.status !== "blocked" || outcome.reasonCode !== "destination_exists")
+        return outcome;
+      const source = resolveMaterializationPath(input.sourceRoot, outcome.path);
+      const destination = resolveMaterializationPath(input.destinationRoot, outcome.path);
+      let correct = false;
+      if (copyPaths.has(outcome.path)) {
+        correct = await copiedEntriesMatch(source, destination);
+      } else if (symlinkPaths.has(outcome.path)) {
+        try {
+          correct =
+            (await lstat(destination)).isSymbolicLink() && (await readlink(destination)) === source;
+        } catch {
+          correct = false;
+        }
+      }
+      return correct
+        ? {
+            ...outcome,
+            message: "Existing materialization is already correct",
+            reasonCode: "none" as const,
+            status: "skipped" as const,
+          }
+        : outcome;
+    }),
+  );
+  return {
+    ...input.plan,
+    classification: outcomes.some((outcome) => outcome.status === "blocked")
+      ? "blocked"
+      : "actionable",
+    outcomes,
+  };
+}
 
 const contained = (root: string, candidate: string): boolean => {
   const fromRoot = relative(resolve(root), resolve(candidate));
