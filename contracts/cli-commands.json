@@ -523,6 +523,135 @@
       }
     },
     {
+      "path": "configure",
+      "aliasPaths": [],
+      "description": "Inspect or interactively edit supported workspace configuration",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Inspect supported configured and effective values without prompting or mutation",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Configuration editing and inspection require persisted workspace configuration."
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Interactive configuration is intentionally a terminal-owned workflow."
+        },
+        "configure": {
+          "actions": ["keep", "edit", "clear"],
+          "descriptors": {
+            "commandDefaults": [
+              "defaults.create.switch",
+              "defaults.create.launch",
+              "defaults.switch.mode"
+            ],
+            "editorDefaults": [
+              "defaults.editors.vscode.create.switch",
+              "defaults.editors.vscode.create.launch",
+              "defaults.editors.cursor.create.switch",
+              "defaults.editors.cursor.create.launch",
+              "defaults.editors.kiro.create.switch",
+              "defaults.editors.kiro.create.launch"
+            ],
+            "meta": ["meta.baseBranch"],
+            "repository": [
+              "groups",
+              "baseBranch",
+              "copy",
+              "symlink",
+              "pre-create",
+              "post-create",
+              "pre-remove",
+              "post-remove"
+            ],
+            "workspace": ["reposDir", "worktreesDir", "baseBranch", "sync.timeoutSeconds"],
+            "workspaceHooks": [
+              "hooks.timeout",
+              "hooks.scripts.pre-create",
+              "hooks.scripts.post-create",
+              "hooks.scripts.pre-remove",
+              "hooks.scripts.post-remove"
+            ]
+          },
+          "invocation": {
+            "editing": "tty-stdin-and-stdout",
+            "json": "sanitized-inspection-only"
+          },
+          "loading": "exact-bytes-strict-no-migration-or-repair",
+          "noOp": "preserve-original-bytes-before-confirmation",
+          "preview": {
+            "activeFiles": "separate-body-free-list",
+            "config": "exact-serialized-json-including-inline-bodies"
+          },
+          "scopes": [
+            "workspace-settings",
+            "workspace-hooks",
+            "command-defaults",
+            "editor-defaults",
+            "meta-policy",
+            "repository"
+          ],
+          "secrecy": {
+            "inlineEntry": "visible-plaintext",
+            "ordinaryAndJson": "lifecycle-and-interpreter-presence-only"
+          },
+          "state": {
+            "effective": ["inherited", "built-in"],
+            "persisted": ["configured", "not-configured"]
+          },
+          "transaction": {
+            "activeFiles": "atomic-no-replace-with-owned-rollback",
+            "configSavesAtMost": 1,
+            "expectedBytes": true,
+            "lock": "shared-workspace-add-configure-lock",
+            "nativeFiles": "metadata-only-observe-keep-skip-never-overwrite"
+          }
+        }
+      }
+    },
+    {
       "path": "create",
       "aliasPaths": [],
       "description": "Create coordinated worktrees across multiple repositories",

@@ -47,6 +47,45 @@ export interface CommandSemanticMetadata {
   zeroConfig?: ZeroConfigCommandPolicy;
   addMaterialization?: AddMaterializationPolicy;
   addOnboarding?: AddOnboardingPolicy;
+  configure?: ConfigurePolicy;
+}
+export interface ConfigurePolicy {
+  descriptors: {
+    workspace: string[];
+    workspaceHooks: string[];
+    commandDefaults: string[];
+    editorDefaults: string[];
+    meta: string[];
+    repository: string[];
+  };
+  scopes: [
+    "workspace-settings",
+    "workspace-hooks",
+    "command-defaults",
+    "editor-defaults",
+    "meta-policy",
+    "repository",
+  ];
+  state: { persisted: ["configured", "not-configured"]; effective: ["inherited", "built-in"] };
+  actions: ["keep", "edit", "clear"];
+  invocation: { editing: "tty-stdin-and-stdout"; json: "sanitized-inspection-only" };
+  loading: "exact-bytes-strict-no-migration-or-repair";
+  noOp: "preserve-original-bytes-before-confirmation";
+  preview: {
+    config: "exact-serialized-json-including-inline-bodies";
+    activeFiles: "separate-body-free-list";
+  };
+  transaction: {
+    expectedBytes: true;
+    configSavesAtMost: 1;
+    activeFiles: "atomic-no-replace-with-owned-rollback";
+    lock: "shared-workspace-add-configure-lock";
+    nativeFiles: "metadata-only-observe-keep-skip-never-overwrite";
+  };
+  secrecy: {
+    ordinaryAndJson: "lifecycle-and-interpreter-presence-only";
+    inlineEntry: "visible-plaintext";
+  };
 }
 export interface AddOnboardingPolicy {
   activeFiles: {
@@ -653,6 +692,82 @@ export const commandSemantics: CommandSemantics = {
     skills: excluded("The lossless completion query is an internal implementation detail."),
     standalone: notApplicable("The query degrades silently when workspace state is unavailable."),
     vscode: excluded("The internal native-shell protocol is outside VS Code extension scope."),
+  },
+  configure: {
+    ...standard(
+      { support: "full" },
+      configuredOnly(
+        "Configuration editing and inspection require persisted workspace configuration.",
+      ),
+    ),
+    vscode: excluded("Interactive configuration is intentionally a terminal-owned workflow."),
+    configure: {
+      actions: ["keep", "edit", "clear"],
+      descriptors: {
+        commandDefaults: [
+          "defaults.create.switch",
+          "defaults.create.launch",
+          "defaults.switch.mode",
+        ],
+        editorDefaults: [
+          "defaults.editors.vscode.create.switch",
+          "defaults.editors.vscode.create.launch",
+          "defaults.editors.cursor.create.switch",
+          "defaults.editors.cursor.create.launch",
+          "defaults.editors.kiro.create.switch",
+          "defaults.editors.kiro.create.launch",
+        ],
+        meta: ["meta.baseBranch"],
+        repository: [
+          "groups",
+          "baseBranch",
+          "copy",
+          "symlink",
+          "pre-create",
+          "post-create",
+          "pre-remove",
+          "post-remove",
+        ],
+        workspace: ["reposDir", "worktreesDir", "baseBranch", "sync.timeoutSeconds"],
+        workspaceHooks: [
+          "hooks.timeout",
+          "hooks.scripts.pre-create",
+          "hooks.scripts.post-create",
+          "hooks.scripts.pre-remove",
+          "hooks.scripts.post-remove",
+        ],
+      },
+      invocation: { editing: "tty-stdin-and-stdout", json: "sanitized-inspection-only" },
+      loading: "exact-bytes-strict-no-migration-or-repair",
+      noOp: "preserve-original-bytes-before-confirmation",
+      preview: {
+        activeFiles: "separate-body-free-list",
+        config: "exact-serialized-json-including-inline-bodies",
+      },
+      scopes: [
+        "workspace-settings",
+        "workspace-hooks",
+        "command-defaults",
+        "editor-defaults",
+        "meta-policy",
+        "repository",
+      ],
+      secrecy: {
+        inlineEntry: "visible-plaintext",
+        ordinaryAndJson: "lifecycle-and-interpreter-presence-only",
+      },
+      state: {
+        effective: ["inherited", "built-in"],
+        persisted: ["configured", "not-configured"],
+      },
+      transaction: {
+        activeFiles: "atomic-no-replace-with-owned-rollback",
+        configSavesAtMost: 1,
+        expectedBytes: true,
+        lock: "shared-workspace-add-configure-lock",
+        nativeFiles: "metadata-only-observe-keep-skip-never-overwrite",
+      },
+    },
   },
   create: {
     ...standard(

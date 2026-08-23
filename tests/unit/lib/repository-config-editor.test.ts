@@ -1,11 +1,15 @@
 import { describe, expect, test } from "vitest";
 import {
+  REPOSITORY_CONFIGURE_DESCRIPTORS,
   REPOSITORY_ONBOARDING_DESCRIPTORS,
+  clearRepositoryField,
+  createExistingRepositoryEditorState,
   createRepositoryEditorState,
   normalizeRepositoryEditorState,
   planRepositoryHookFile,
   setRepositoryInlineHook,
   setRepositoryPaths,
+  setRepositoryScalarField,
   summarizeRepositoryEditorState,
   validateRepositoryEditorState,
 } from "../../../src/lib/repository-config-editor.ts";
@@ -31,6 +35,73 @@ const configForRepository = (repositoryName: string): Config => ({
 });
 
 describe("repository configuration editor", () => {
+  test("extends the shared editor explicitly for configure without changing add onboarding", () => {
+    expect(REPOSITORY_ONBOARDING_DESCRIPTORS.map(({ id }) => id)).toEqual([
+      "copy",
+      "symlink",
+      "pre-create",
+      "post-create",
+      "pre-remove",
+      "post-remove",
+    ]);
+    expect(REPOSITORY_CONFIGURE_DESCRIPTORS.map(({ id }) => id)).toEqual([
+      "groups",
+      "baseBranch",
+      "copy",
+      "symlink",
+      "pre-create",
+      "post-create",
+      "pre-remove",
+      "post-remove",
+    ]);
+    expect(
+      REPOSITORY_CONFIGURE_DESCRIPTORS.map(({ canonicalPath }) => canonicalPath),
+    ).not.toContain("repos.<name>.path");
+    expect(
+      REPOSITORY_CONFIGURE_DESCRIPTORS.map(({ canonicalPath }) => canonicalPath),
+    ).not.toContain("repos.<name>.gitUrl");
+  });
+
+  test("publishes complete descriptor metadata and sanitized inline projections", () => {
+    for (const descriptor of REPOSITORY_CONFIGURE_DESCRIPTORS) {
+      expect(descriptor).toMatchObject({
+        acceptedShape: expect.any(String),
+        effectiveResolver: expect.any(String),
+        ownership: "repository",
+        purpose: expect.any(String),
+        safeDisplay: expect.any(String),
+        validationAdapter: expect.any(String),
+      });
+    }
+    const state = setRepositoryInlineHook(
+      createExistingRepositoryEditorState(config(), "app"),
+      "pre-create",
+      { bash: "secret", powershell: "also secret" },
+    );
+    expect(summarizeRepositoryEditorState(state).hooks).toContainEqual({
+      interpreters: ["bash", "powershell"],
+      lifecycle: "pre-create",
+      sourceKind: "inline-config",
+    });
+    expect(JSON.stringify(summarizeRepositoryEditorState(state))).not.toContain("secret");
+  });
+
+  test("edits and clears groups and base policy immutably while preserving identity", () => {
+    const initial = createExistingRepositoryEditorState(config(), "app");
+    const edited = setRepositoryScalarField(initial, "baseBranch", "release");
+    const grouped = setRepositoryScalarField(edited, "groups", ["core", "shared"]);
+    const cleared = clearRepositoryField(grouped, "baseBranch");
+
+    expect(initial.candidate.repos.app.baseBranch).toBeUndefined();
+    expect(cleared.candidate.repos.app).toMatchObject({
+      gitUrl: "ssh://example/app",
+      groups: ["core", "shared"],
+      path: "repos/app",
+    });
+    expect(cleared.candidate.repos.app.baseBranch).toBeUndefined();
+    expect(cleared.fields.find(({ id }) => id === "baseBranch")?.state).toBe("unset");
+  });
+
   test("exposes only explicit repository onboarding descriptors with unset state", () => {
     const state = createRepositoryEditorState(config(), "app");
     expect(

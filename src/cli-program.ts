@@ -2,6 +2,7 @@ import { Command, Help } from "commander";
 import { createCommand as createAddCommand } from "./commands/add.ts";
 import { createCommand as createCloneCommand } from "./commands/clone.ts";
 import { createCommand as createCompletionCommand } from "./commands/completion.ts";
+import { createCommand as createConfigureCommand } from "./commands/configure.ts";
 import { createCommand } from "./commands/create.ts";
 import { createCommand as createDoctorCommand } from "./commands/doctor.ts";
 import { createCommand as createExecCommand } from "./commands/exec.ts";
@@ -45,6 +46,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     createAddCommand(),
     createCloneCommand(),
     createCompletionCommand(),
+    createConfigureCommand(),
     createCommand(),
     createDoctorCommand(),
     createExecCommand(),

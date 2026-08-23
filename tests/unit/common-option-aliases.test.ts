@@ -6,6 +6,7 @@ import { optionAuditPolicies, validateOptionAudit } from "../../src/contracts/cl
 const expectedCommonAliases: Record<string, Record<string, string>> = {
   add: { "--force": "-f", "--json": "-j" },
   clone: { "--json": "-j" },
+  configure: { "--json": "-j" },
   create: {
     "--dry-run": "-n",
     "--group": "-g",

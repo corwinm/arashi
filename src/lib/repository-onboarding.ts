@@ -30,6 +30,10 @@ export interface RepositoryOnboardingPrompts {
   select<T>(message: string, choices: Choice<T>[]): Promise<PromptOutcome<T>>;
   showDiagnostic(message: string): void;
 }
+type RepositoryFieldPrompts = Pick<
+  RepositoryOnboardingPrompts,
+  "input" | "select" | "showDiagnostic"
+>;
 export const repositoryOnboardingPrompts: RepositoryOnboardingPrompts = {
   confirm,
   input,
@@ -58,7 +62,7 @@ const yesNo: Choice<boolean>[] = [
 ];
 const boundedDiagnostic = (diagnostic: EditorDiagnostic): string =>
   `${diagnostic.field}: ${diagnostic.message.replaceAll(/\s+/g, " ")}`.slice(0, 240);
-const escapedSuggestion = (path: string): string =>
+export const escapeRepositoryPathSuggestion = (path: string): string =>
   JSON.stringify(path)
     .slice(1, -1)
     .replaceAll(
@@ -66,7 +70,7 @@ const escapedSuggestion = (path: string): string =>
       (control) => `\\u${control.codePointAt(0)!.toString(16).padStart(4, "0")}`,
     );
 const showFieldDiagnostics = (
-  prompts: RepositoryOnboardingPrompts,
+  prompts: Pick<RepositoryOnboardingPrompts, "showDiagnostic">,
   diagnostics: readonly EditorDiagnostic[],
   field: EditorDiagnostic["field"],
 ): void => {
@@ -76,11 +80,11 @@ const showFieldDiagnostics = (
   }
 };
 
-async function collectPaths(
+export async function collectRepositoryPaths(
   editor: RepositoryEditorState,
   field: "copy" | "symlink",
   suggestions: string,
-  prompts: RepositoryOnboardingPrompts,
+  prompts: RepositoryFieldPrompts,
 ): Promise<RepositoryEditorState | { reason: "exit" | "abort"; status: "cancelled" }> {
   for (;;) {
     const paths: string[] = [];
@@ -100,11 +104,11 @@ async function collectPaths(
   }
 }
 
-async function collectInlineHook(
+export async function collectRepositoryInlineHook(
   editor: RepositoryEditorState,
   lifecycle: InlineHookLifecycle,
   source: "inline-bash" | "inline-map",
-  prompts: RepositoryOnboardingPrompts,
+  prompts: RepositoryFieldPrompts,
 ): Promise<RepositoryEditorState | { reason: "exit" | "abort"; status: "cancelled" }> {
   for (;;) {
     const variants: Record<string, string> = {};
@@ -156,10 +160,12 @@ export const collectRepositoryOnboarding = async (options: {
   if (selected.value.includes("copy") || selected.value.includes("symlink")) {
     const discovery = await options.discover();
     if (discovery.diagnostic) prompts.showDiagnostic(discovery.diagnostic.slice(0, 240));
-    const suggestions = discovery.candidates.map(({ path }) => escapedSuggestion(path)).join(", ");
+    const suggestions = discovery.candidates
+      .map(({ path }) => escapeRepositoryPathSuggestion(path))
+      .join(", ");
     for (const field of ["copy", "symlink"] as const) {
       if (!selected.value.includes(field)) continue;
-      const result = await collectPaths(editor, field, suggestions, prompts);
+      const result = await collectRepositoryPaths(editor, field, suggestions, prompts);
       if ("status" in result) return result;
       editor = result;
     }
@@ -199,7 +205,12 @@ export const collectRepositoryOnboarding = async (options: {
             continue;
           }
         } else {
-          const result = await collectInlineHook(editor, lifecycle, source.value, prompts);
+          const result = await collectRepositoryInlineHook(
+            editor,
+            lifecycle,
+            source.value,
+            prompts,
+          );
           if ("status" in result) return result;
           candidate = result;
         }
@@ -229,7 +240,10 @@ export const collectRepositoryOnboarding = async (options: {
   editor = validated.state;
   const preview = summarizeRepositoryEditorState(editor);
   const persistedCandidate = JSON.parse(serializeConfig(editor.candidate)) as Config;
-  const activeFiles = preview.hooks.filter((hook) => hook.source === "file");
+  const activeFiles = preview.hooks.filter(
+    (hook): hook is Extract<(typeof preview.hooks)[number], { source: "file" }> =>
+      "source" in hook && hook.source === "file",
+  );
   const previewSections = [
     "Apply this repository setup?",
     "Resulting repository configuration:",
