@@ -93,7 +93,9 @@ interface AtomicConfigurePersistenceDependencies {
     mode: number,
   ): Promise<{
     chmod(mode: number): Promise<void>;
+    chown(uid: number, gid: number): Promise<void>;
     close(): Promise<void>;
+    stat(): Promise<{ gid: number; uid: number }>;
     sync(): Promise<void>;
     writeFile(bytes: Uint8Array): Promise<void>;
   }>;
@@ -101,7 +103,7 @@ interface AtomicConfigurePersistenceDependencies {
   platform: NodeJS.Platform;
   rename(from: string, to: string): Promise<void>;
   rm(path: string, options: { force: true }): Promise<void>;
-  stat(path: string): Promise<{ mode: number }>;
+  stat(path: string): Promise<{ gid: number; mode: number }>;
   temporaryName: (configPath: string) => string;
 }
 
@@ -139,8 +141,12 @@ export const persistExpectedBytesAtomically = async (
       const beforeReplace = await dependencies.readFile(configPath);
       if (equalBytes(beforeReplace, expectedBytes)) {
         if (dependencies.platform !== "win32") {
-          const liveMode = (await dependencies.stat(configPath)).mode & 0o777;
-          await handle.chmod(liveMode);
+          const liveMetadata = await dependencies.stat(configPath);
+          const stagedMetadata = await handle.stat();
+          if (stagedMetadata.gid !== liveMetadata.gid) {
+            await handle.chown(stagedMetadata.uid, liveMetadata.gid);
+          }
+          await handle.chmod(liveMetadata.mode & 0o777);
           await handle.sync();
         }
         replace = true;

@@ -51,6 +51,75 @@ describe("configure transaction", () => {
     },
   );
 
+  test("transfers the existing POSIX group before replacing the live config", async () => {
+    const original = bytes("original bytes");
+    const chownStage = vi.fn(async () => {});
+    const chmodStage = vi.fn(async () => {});
+
+    expect(
+      await persistExpectedBytesAtomically(
+        join("workspace", ".arashi", "config.json"),
+        bytes("replacement bytes"),
+        original,
+        {
+          open: async () => ({
+            chmod: chmodStage,
+            chown: chownStage,
+            close: async () => {},
+            stat: async () => ({ gid: 20, uid: 501 }),
+            sync: async () => {},
+            writeFile: async () => {},
+          }),
+          platform: "linux",
+          readFile: async () => original,
+          rename: async () => {},
+          rm: async () => {},
+          stat: async () => ({ gid: 4242, mode: 0o100640 }),
+          temporaryName: () => ".config.json.group.tmp",
+        },
+      ),
+    ).toBe(true);
+    expect(chownStage).toHaveBeenCalledOnce();
+    expect(chownStage).toHaveBeenCalledWith(501, 4242);
+    expect(chownStage.mock.invocationCallOrder[0]).toBeLessThan(
+      chmodStage.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  test("skips POSIX ownership transfer when the staged file already inherited the live group", async () => {
+    const original = bytes("original bytes");
+    const chownStage = vi.fn(async () => {
+      throw new Error("matching staged group must not be reassigned");
+    });
+    const chmodStage = vi.fn(async () => {});
+
+    expect(
+      await persistExpectedBytesAtomically(
+        join("workspace", ".arashi", "config.json"),
+        bytes("replacement bytes"),
+        original,
+        {
+          open: async () => ({
+            chmod: chmodStage,
+            chown: chownStage,
+            close: async () => {},
+            stat: async () => ({ gid: 4242, uid: 501 }),
+            sync: async () => {},
+            writeFile: async () => {},
+          }),
+          platform: "linux",
+          readFile: async () => original,
+          rename: async () => {},
+          rm: async () => {},
+          stat: async () => ({ gid: 4242, mode: 0o100640 }),
+          temporaryName: () => ".config.json.inherited-group.tmp",
+        },
+      ),
+    ).toBe(true);
+    expect(chownStage).not.toHaveBeenCalled();
+    expect(chmodStage).toHaveBeenCalledWith(0o640);
+  });
+
   test.runIf(process.platform !== "win32")(
     "preserves the exact existing POSIX mode through rollback restoration",
     async () => {
@@ -70,8 +139,8 @@ describe("configure transaction", () => {
     },
   );
 
-  test.each(["stat", "chmod"] as const)(
-    "preserves live bytes and cleans the stage when POSIX %s mode transfer fails",
+  test.each(["stat", "stage-stat", "chown", "chmod"] as const)(
+    "preserves live bytes and cleans the stage when POSIX %s metadata transfer fails",
     async (failure) => {
       const original = bytes("original bytes");
       let live = original;
@@ -99,7 +168,21 @@ describe("configure transaction", () => {
                     throw new Error("chmod failed");
                   }
                 },
+                chown: async (uid: number, gid: number) => {
+                  if (failure !== "stage-stat") {
+                    expect([uid, gid]).toEqual([501, 4242]);
+                  }
+                  if (failure === "chown") {
+                    throw new Error("chown failed");
+                  }
+                },
                 close: async () => {},
+                stat: async () => {
+                  if (failure === "stage-stat") {
+                    throw new Error("stage-stat failed");
+                  }
+                  return { gid: 20, uid: 501 };
+                },
                 sync: async () => {},
                 writeFile: async () => {},
               };
@@ -112,7 +195,7 @@ describe("configure transaction", () => {
               if (failure === "stat") {
                 throw new Error("stat failed");
               }
-              return { mode: 0o640 };
+              return { gid: 4242, mode: 0o640 };
             },
             temporaryName: () => ".config.json.mode.tmp",
           },
@@ -133,6 +216,12 @@ describe("configure transaction", () => {
     const chmodStage = vi.fn(async () => {
       throw new Error("Windows chmod must not be called");
     });
+    const chownStage = vi.fn(async () => {
+      throw new Error("Windows chown must not be called");
+    });
+    const statStage = vi.fn(async () => {
+      throw new Error("Windows staged stat must not be called");
+    });
     const statLive = vi.fn(async () => {
       throw new Error("Windows stat must not be called");
     });
@@ -145,7 +234,9 @@ describe("configure transaction", () => {
         {
           open: async () => ({
             chmod: chmodStage,
+            chown: chownStage,
             close: async () => {},
+            stat: statStage,
             sync: async () => {},
             writeFile: async (value) => {
               stage = value;
@@ -164,6 +255,8 @@ describe("configure transaction", () => {
     ).toBe(true);
     expect(text(live)).toBe("replacement bytes");
     expect(statLive).not.toHaveBeenCalled();
+    expect(statStage).not.toHaveBeenCalled();
+    expect(chownStage).not.toHaveBeenCalled();
     expect(chmodStage).not.toHaveBeenCalled();
   });
 
@@ -186,7 +279,9 @@ describe("configure transaction", () => {
             staged = true;
             return {
               chmod: async () => {},
+              chown: async () => {},
               close,
+              stat: async () => ({ gid: 20, uid: 501 }),
               sync: async () => {
                 if (failure === "sync") throw new Error("sync failed");
               },
@@ -204,7 +299,7 @@ describe("configure transaction", () => {
             staged = false;
           },
           rm: remove,
-          stat: async () => ({ mode: 0o600 }),
+          stat: async () => ({ gid: 4242, mode: 0o600 }),
           temporaryName: () => ".config.json.test.tmp",
         }),
       ).rejects.toThrow(failure === "write" ? /partial stage write/ : new RegExp(failure));
@@ -240,8 +335,15 @@ describe("configure transaction", () => {
             chmod: async () => {
               events.push("chmod-stage");
             },
+            chown: async () => {
+              events.push("chown-stage");
+            },
             close: async () => {
               events.push("close-stage");
+            },
+            stat: async () => {
+              events.push("stat-stage");
+              return { gid: 20, uid: 501 };
             },
             sync: async () => {
               events.push("sync-stage");
@@ -263,7 +365,7 @@ describe("configure transaction", () => {
           events.push("remove-stage");
           stage = undefined;
         },
-        stat: async () => ({ mode: 0o100640 }),
+        stat: async () => ({ gid: 4242, mode: 0o100640 }),
         temporaryName: () => ".config.json.restore.tmp",
       },
     );
@@ -274,6 +376,8 @@ describe("configure transaction", () => {
       "open-stage",
       "write-stage",
       "sync-stage",
+      "stat-stage",
+      "chown-stage",
       "chmod-stage",
       "sync-stage",
       "close-stage",
@@ -291,7 +395,9 @@ describe("configure transaction", () => {
       persistConfigureAtomically("/workspace/.arashi/config.json", config("children"), original, {
         open: async () => ({
           chmod: async () => {},
+          chown: async () => {},
           close: async () => {},
+          stat: async () => ({ gid: 20, uid: 501 }),
           sync: async () => {},
           writeFile: async () => {},
         }),
@@ -299,7 +405,7 @@ describe("configure transaction", () => {
         readFile: async () => (++reads === 1 ? original : newer),
         rename,
         rm: remove,
-        stat: async () => ({ mode: 0o600 }),
+        stat: async () => ({ gid: 4242, mode: 0o600 }),
         temporaryName: () => ".config.json.test.tmp",
       }),
     ).rejects.toThrow(/changed concurrently.*preserv/i);
@@ -319,7 +425,9 @@ describe("configure transaction", () => {
         {
           open: async () => ({
             chmod: async () => {},
+            chown: async () => {},
             close: async () => {},
+            stat: async () => ({ gid: 20, uid: 501 }),
             sync: async () => {},
             writeFile: async () => {},
           }),
@@ -329,7 +437,7 @@ describe("configure transaction", () => {
           rm: async () => {
             throw new Error("stage cleanup failed");
           },
-          stat: async () => ({ mode: 0o600 }),
+          stat: async () => ({ gid: 4242, mode: 0o600 }),
           temporaryName: () => ".config.json.cleanup.tmp",
         },
       ),
