@@ -141,13 +141,7 @@ describe("configured create launch in a real workspace", () => {
       );
       const canonicalRoot = await realpath(root);
       const expectedWorktree = configured
-        ? join(
-            canonicalRoot,
-            ".arashi",
-            "worktrees",
-            `${basename(canonicalRoot)}-feature`,
-            "configured-real-tab",
-          )
+        ? join(canonicalRoot, ".arashi", "worktrees", "feature", "configured-real-tab")
         : join(canonicalRoot, ".worktrees", "feature", "standalone-real-tab");
       const canonicalExpectedWorktree = await realpath(expectedWorktree);
 
@@ -278,9 +272,7 @@ describe("configured create launch in a real workspace", () => {
     });
 
     await expect(
-      access(
-        join(root, ".arashi", "worktrees", `${basename(root)}-feature`, "kitty-launch-failure"),
-      ),
+      access(join(root, ".arashi", "worktrees", "feature", "kitty-launch-failure")),
     ).resolves.toBeUndefined();
   }, 20_000);
 
@@ -313,7 +305,7 @@ describe("configured create launch in a real workspace", () => {
         ok: false,
       });
       await expect(
-        access(join(root, ".arashi", "worktrees", `${basename(root)}-feature`, "argv-precedence")),
+        access(join(root, ".arashi", "worktrees", "feature", "argv-precedence")),
       ).rejects.toThrow();
     },
   );
@@ -381,7 +373,7 @@ describe("configured create launch in a real workspace", () => {
       ok: false,
     });
     await expect(
-      access(join(root, ".arashi", "worktrees", `${basename(root)}-feature`, "json-conflict")),
+      access(join(root, ".arashi", "worktrees", "feature", "json-conflict")),
     ).rejects.toThrow();
   });
 
@@ -403,6 +395,6 @@ describe("configured create launch in a real workspace", () => {
 
     expect(exitCode).toBe(0);
     expect(launchCalls).toBe(0);
-    await access(join(root, ".arashi", "worktrees", `${basename(root)}-feature`, "no-launch"));
+    await access(join(root, ".arashi", "worktrees", "feature", "no-launch"));
   }, 20_000);
 });

@@ -98,9 +98,8 @@ export async function createChildHookWorkspace(
       await rm(rootPath, { force: true, recursive: true });
     },
     getChildWorktreePath: (repoName: string, branchName: string) =>
-      join(worktreesRootPath, `${workspaceName}-${branchName}`, "repos", repoName),
-    getMainWorktreePath: (branchName: string) =>
-      join(worktreesRootPath, `${workspaceName}-${branchName}`),
+      join(worktreesRootPath, branchName, "repos", repoName),
+    getMainWorktreePath: (branchName: string) => join(worktreesRootPath, branchName),
     hookRootPath,
     nestedChildInvocationPath,
     reposDirPath,

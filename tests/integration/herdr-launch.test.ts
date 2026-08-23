@@ -86,6 +86,17 @@ function loadedConfig(overrides: Partial<Config> = {}): LoadedConfig {
 function createDeps(overrides: Record<string, unknown> = {}): CreateCommandDependencies {
   return {
     applyRepositoryFilter: async (_filter: unknown, repositories: unknown[]) => repositories,
+    calculateWorktreePathPlan: async (repositories: { name: string }[]) =>
+      new Map(
+        repositories.map((repository) => [
+          repository,
+          {
+            path: `/worktrees/${repository.name}`,
+            repositoryType: "meta-repo" as const,
+            strategy: "sibling" as const,
+          },
+        ]),
+      ),
     createCoordinatedWorktrees: async () => createSummary(),
     discoverRepositories: async () => ({
       duration: 1,
@@ -96,6 +107,7 @@ function createDeps(overrides: Record<string, unknown> = {}): CreateCommandDepen
       workspacePath: "/workspace/repos",
     }),
     isGitRepository: async () => true,
+    listRegisteredWorktreePaths: async () => [],
     loadConfigWithFallback: async () => loadedConfig(),
     pathExists: () => true,
     reconcileManagedIgnore: async () => ({

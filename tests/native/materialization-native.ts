@@ -12,7 +12,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import process from "node:process";
 
@@ -106,7 +106,7 @@ const writeConfig = async (
         },
         reposDir: "./repos",
         version: "1.0.0",
-        worktreesDir: ".arashi/worktrees",
+        worktreesDir: "native-worktrees",
       },
       null,
       2,
@@ -217,7 +217,7 @@ const main = async () => {
     const orderPath = join(workspace, ".arashi", "native-order.log");
     await writeHooks(workspace, orderPath);
 
-    const previewBranch = "native-materialization-preview";
+    const previewBranch = "native/materialization-preview";
     const preview = await run(
       binary,
       ["create", previewBranch, "--only", "app", "--dry-run", "--json"],
@@ -253,15 +253,10 @@ const main = async () => {
         ]),
       `unexpected dry-run plan: ${JSON.stringify(previewData.dryRunOutcome.materializationPlans)}`,
     );
-    const previewPath = join(
-      workspace,
-      ".arashi",
-      "worktrees",
-      `${basename(workspace)}-${previewBranch}`,
-    );
+    const previewPath = join(workspace, "native-worktrees", previewBranch);
     assert(!(await exists(previewPath)), "dry-run created a worktree");
 
-    const branch = "native-materialization-create";
+    const branch = "native/materialization-create";
     const created = await run(
       binary,
       ["create", branch, "--only", "app", "--no-progress", "--json"],
@@ -282,14 +277,7 @@ const main = async () => {
     assert(!created.stdout.includes("NATIVE-SECRET-CONTENT"), "JSON leaked copied file contents");
     assert(created.stderr === "", `JSON leaked human stderr: ${created.stderr}`);
 
-    const destination = join(
-      workspace,
-      ".arashi",
-      "worktrees",
-      `${basename(workspace)}-${branch}`,
-      "repos",
-      "app",
-    );
+    const destination = join(workspace, "native-worktrees", branch, "repos", "app");
     assert(
       (await readFile(join(destination, ".env.local"), "utf8")) === "NATIVE-SECRET-CONTENT\n",
       "copy missing",
@@ -355,15 +343,47 @@ const main = async () => {
     const aliasEnvelope = parseJson(alias);
     assert(aliasEnvelope.ok === false, "portable alias did not return a structured failure");
     assert(
-      !(await exists(
-        join(
-          workspace,
-          ".arashi",
-          "worktrees",
-          `${basename(workspace)}-native-materialization-alias`,
-        ),
-      )),
+      !(await exists(join(workspace, ".arashi", "worktrees", "native-materialization-alias"))),
       "alias failure mutated Git/filesystem",
+    );
+
+    const bareSeed = join(root, "bare-seed");
+    const bareSource = join(root, "example.git");
+    await initRepository(bareSeed, "bare source");
+    await mkdir(join(bareSeed, ".arashi"), { recursive: true });
+    await writeFile(
+      join(bareSeed, ".arashi", "config.json"),
+      `${JSON.stringify(
+        { repos: {}, reposDir: "./repos", version: "1.0.0", worktreesDir: ".." },
+        null,
+        2,
+      )}\n`,
+    );
+    await git(bareSeed, "add", ".arashi/config.json");
+    await git(bareSeed, "commit", "-m", "Configure bare worktree namespace");
+    await git(root, "clone", "--bare", bareSeed, bareSource);
+    const bareBranch = "native/bare-layout";
+    const bareCreate = await run(
+      binary,
+      ["create", bareBranch, "--no-hooks", "--no-progress", "--no-launch", "--no-switch", "--json"],
+      { cwd: bareSource, env: environment },
+    );
+    assert(
+      bareCreate.code === 0,
+      `configured bare create failed:\n${bareCreate.stdout}\n${bareCreate.stderr}`,
+    );
+    const bareEnvelope = parseJson(bareCreate);
+    const bareData = bareEnvelope.data as { repositories: { worktreePath: string }[] };
+    const bareDestination = join(root, "example", "native", "bare-layout");
+    const canonicalBareDestination = await realpath(bareDestination);
+    assert(
+      resolve(bareData.repositories[0]?.worktreePath ?? "") === canonicalBareDestination,
+      `bare JSON reported the wrong destination: ${JSON.stringify(bareData.repositories)}`,
+    );
+    assert(await exists(join(bareDestination, "README.md")), "bare namespace checkout missing");
+    assert(
+      !(await exists(join(bareSource, "native", "bare-layout", "README.md"))),
+      "bare checkout was placed inside Git storage",
     );
 
     process.stdout.write(`native materialization RED acceptance passed on ${process.platform}\n`);

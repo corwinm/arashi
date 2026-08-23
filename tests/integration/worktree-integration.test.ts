@@ -93,17 +93,16 @@ describe("Basic Coordinated Worktree Creation (Integration)", () => {
 // ============================================================================
 
 describe("Rollback on Repository Failure (Integration)", () => {
-  test("should rollback first 2 worktrees when 3rd repository fails", async () => {
+  test("preflights every destination before a later invalid repository can mutate earlier ones", async () => {
     // Setup: Create 3 test repositories
     workspace = await createTestWorkspace();
 
     const { createCoordinatedWorktrees } = await import("../../src/core/worktree.ts");
 
-    // First, verify we can successfully create worktrees
     const branchName = "test-rollback";
 
     // Keep the path canonicalizable while making the 3rd entry a non-repository.
-    // This lets action planning complete before repository processing reaches the failure.
+    // Complete destination planning must reject it before processing repositories 1 and 2.
     const invalidRepositoryPath = workspace.repositories[2].path;
     await rm(invalidRepositoryPath, { force: true, recursive: true });
     await mkdir(invalidRepositoryPath, { recursive: true });
@@ -118,24 +117,15 @@ describe("Rollback on Repository Failure (Integration)", () => {
       showProgress: false,
     });
 
-    // Verify rollback was triggered
     expect(result.rolledBack).toBe(true);
     expect(result.errorSummary).not.toBeNull();
 
-    // Verify the first two repositories had their worktrees cleaned up (rolled back)
-    // Since rollback was triggered, the operation log should have reversed the changes
-    // We can verify by checking that branches don't exist in the original repos
     const branch1Exists = await verifyBranchExists(workspace.repositories[0].path, branchName);
     const branch2Exists = await verifyBranchExists(workspace.repositories[1].path, branchName);
 
-    // After rollback, branches should be removed
     expect(branch1Exists).toBe(false);
     expect(branch2Exists).toBe(false);
-    expect(result.repositoryResults.map(({ status }) => status)).toEqual([
-      "success",
-      "success",
-      "failed",
-    ]);
+    expect(result.repositoryResults).toEqual([]);
   });
 });
 

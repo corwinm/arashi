@@ -206,6 +206,12 @@ export interface RepositoryTypeInfo {
  * Options for worktree creation operation
  */
 export interface WorktreeOperationOptions {
+  /** Immutable configured destination plan captured before command-layer mutation. */
+  worktreePathPlan?: ReadonlyMap<Repository, CalculatedWorktreePath>;
+
+  /** Existing exact Git registrations that command preflight proved safe to reuse. */
+  reusableWorktreePaths?: ReadonlySet<string>;
+
   /** Immutable per-repository base resolutions captured before mutation */
   createBasePlan?: CreateBaseResolutionPlan;
 
@@ -498,19 +504,27 @@ interface CalculateWorktreePathOptions {
   branchName: string;
   config: ArashiConfig;
   knownType?: RepositoryTypeInfo;
+  authoritativeParentWorktreePath?: string;
 }
 
 type CalculateWorktreePathArgs =
   | [repo: Repository, branchName: string, config: ArashiConfig, knownType?: RepositoryTypeInfo]
   | [options: CalculateWorktreePathOptions];
 
+export interface CalculatedWorktreePath {
+  path: string;
+  repositoryType: RepositoryType;
+  strategy: "sibling" | "nested";
+  parentWorktreePath?: string;
+}
+
 interface BuildDryRunOutcomeOptions {
   branchName: string;
   repositories: Repository[];
   conflictCheck: ConflictCheckResult;
   options: NormalizedWorktreeOptions;
-  config: ArashiConfig;
   targetActionByRepositoryPath: ReadonlyMap<string, TargetAction>;
+  worktreePathPlan: ReadonlyMap<Repository, CalculatedWorktreePath>;
 }
 
 interface ProcessRepositoryOptions {
@@ -522,7 +536,9 @@ interface ProcessRepositoryOptions {
   mainRepoPath: string;
   createBasePlan?: CreateBaseResolutionPlan;
   targetAction: TargetAction;
+  reuseExistingWorktree: boolean;
   preparedHooks: PreparedCreateHooks;
+  plannedPath: CalculatedWorktreePath;
 }
 
 interface ShouldReuseBranchOptions {
@@ -1126,6 +1142,11 @@ export const calculateChildWorktreePath = (
   reposDir: string,
 ): string => join(repo.path, "..", "..", "..", parentWorktreeName, reposDir, repo.name);
 
+const fallbackBareWorktreeNamespace = (repositoryName: string): string => {
+  const withoutGitSuffix = repositoryName.replace(/\.git$/i, "");
+  return withoutGitSuffix || repositoryName;
+};
+
 /**
  * Calculate destination path for a new worktree based on repository type
  * Feature: 001-nested-worktree-paths (T010)
@@ -1160,13 +1181,9 @@ const normalizeCalculateWorktreePathArgs = (
 
 export const calculateWorktreePath = async (
   ...args: CalculateWorktreePathArgs
-): Promise<{
-  path: string;
-  repositoryType: RepositoryType;
-  strategy: "sibling" | "nested";
-  parentWorktreePath?: string;
-}> => {
-  const { branchName, config, knownType, repo } = normalizeCalculateWorktreePathArgs(...args);
+): Promise<CalculatedWorktreePath> => {
+  const { authoritativeParentWorktreePath, branchName, config, knownType, repo } =
+    normalizeCalculateWorktreePathArgs(...args);
   // Detect repository type (or use provided type)
   let typeInfo = knownType;
   if (!typeInfo) {
@@ -1192,14 +1209,16 @@ export const calculateWorktreePath = async (
     // Check if parent is bare to determine worktree naming
     const parentIsBare = await isBareRepo(parentRepoPath);
 
-    // Bare parent: Use branch name only
-    // Non-bare parent: Combine parent name + branch
+    // Bare parent: Namespace the branch beneath the canonical parent name
+    // Non-bare parent: Use the branch name only
     let parentWorktreeName = branchName;
-    if (!parentIsBare) {
-      parentWorktreeName = `${typeInfo.parentName}-${branchName}`;
+    if (parentIsBare) {
+      const parentNamespace = fallbackBareWorktreeNamespace(typeInfo.parentName);
+      parentWorktreeName = join(parentNamespace, branchName);
     }
 
-    const parentWorktreePath = join(worktreeBasePath, parentWorktreeName);
+    const parentWorktreePath =
+      authoritativeParentWorktreePath ?? join(worktreeBasePath, parentWorktreeName);
     const worktreePath = join(
       parentWorktreePath,
       typeInfo.reposDir,
@@ -1217,11 +1236,12 @@ export const calculateWorktreePath = async (
   // Check if repository is bare to determine naming convention
   const isBare = await isBareRepo(repo.path);
 
-  // Bare repos: Use branch name only (e.g., 'feature-branch/')
-  // Non-bare repos: Combine folder name + branch (e.g., 'my-repo-feature-branch/')
+  // Bare repos: Namespace the branch beneath the canonical worktree name
+  // Non-bare repos: Use the branch name only (e.g., 'feature-branch/')
   let worktreeName = branchName;
-  if (!isBare) {
-    worktreeName = `${repo.worktreeName ?? repo.name}-${branchName}`;
+  if (isBare) {
+    const repositoryNamespace = repo.worktreeName ?? fallbackBareWorktreeNamespace(repo.name);
+    worktreeName = join(repositoryNamespace, branchName);
   }
   const worktreePath = join(worktreeBasePath, worktreeName);
 
@@ -1230,6 +1250,28 @@ export const calculateWorktreePath = async (
     repositoryType: typeInfo.type,
     strategy: "sibling",
   };
+};
+
+export const calculateWorktreePathPlan = async (
+  repositories: Repository[],
+  branchName: string,
+  config: ArashiConfig,
+): Promise<ReadonlyMap<Repository, CalculatedWorktreePath>> => {
+  const plan = new Map<Repository, CalculatedWorktreePath>();
+  let authoritativeParentWorktreePath: string | undefined;
+  for (const repo of repositories) {
+    const calculated = await calculateWorktreePath({
+      authoritativeParentWorktreePath,
+      branchName,
+      config,
+      repo,
+    });
+    plan.set(repo, calculated);
+    if (calculated.repositoryType === "meta-repo") {
+      authoritativeParentWorktreePath = calculated.path;
+    }
+  }
+  return plan;
 };
 
 // ============================================================================
@@ -1429,11 +1471,11 @@ export const isValidBranchName = (branchName: string): boolean => {
 
 const buildDryRunOutcome = async ({
   branchName,
-  config,
   conflictCheck,
   options,
   repositories,
   targetActionByRepositoryPath,
+  worktreePathPlan,
 }: BuildDryRunOutcomeOptions): Promise<DryRunOutcome> => {
   const plannedWorktrees: PlannedWorktree[] = [];
   const conflicts: DryRunConflict[] = [];
@@ -1448,7 +1490,8 @@ const buildDryRunOutcome = async ({
     let planStatus: DryRunPlanStatus = "actionable";
 
     try {
-      const pathResult = await calculateWorktreePath({ branchName, config, repo });
+      const pathResult = worktreePathPlan.get(repo);
+      if (!pathResult) throw new Error(`Repository '${repo.name}' is missing a planned path`);
       worktreePath = pathResult.path;
 
       if (existsSync(worktreePath)) {
@@ -1662,6 +1705,21 @@ export const createCoordinatedWorktrees = async (
 
     // 4. Load canonical workspace configuration after the target-action plan is complete.
     const config = await loadResolvedConfig(mainRepoPath, options.resolvedConfig);
+    const worktreePathPlan =
+      options.worktreePathPlan ??
+      (await calculateWorktreePathPlan(repositories, branchName, config));
+
+    if (!opts.dryRun) {
+      for (const [repository, plannedPath] of worktreePathPlan) {
+        const repositoryPath = await realpath(repository.path);
+        const reusableExistingPath =
+          targetActionByRepositoryPath.get(repositoryPath) === "reused" &&
+          options.reusableWorktreePaths?.has(resolve(plannedPath.path)) === true;
+        if (existsSync(plannedPath.path) && !reusableExistingPath) {
+          throw new Error(`Worktree path already exists: ${plannedPath.path} (${repository.name})`);
+        }
+      }
+    }
 
     if (opts.executeHooks && !opts.dryRun) {
       preparedHooks = await preflightConfiguredCreateHooks(
@@ -1675,11 +1733,11 @@ export const createCoordinatedWorktrees = async (
     if (opts.dryRun) {
       const dryRunOutcome = await buildDryRunOutcome({
         branchName,
-        config,
         conflictCheck,
         options: opts,
         repositories,
         targetActionByRepositoryPath,
+        worktreePathPlan,
       });
 
       let errorSummary: string | null = NULL_SUMMARY;
@@ -1736,6 +1794,10 @@ export const createCoordinatedWorktrees = async (
       if (!targetAction) {
         throw new Error(`Repository '${repo.name}' is missing a planned target action`);
       }
+      const plannedPath = worktreePathPlan.get(repo);
+      if (!plannedPath) {
+        throw new Error(`Repository '${repo.name}' is missing a planned path`);
+      }
       const repoResult = await processRepository({
         branchName,
         config,
@@ -1743,8 +1805,12 @@ export const createCoordinatedWorktrees = async (
         mainRepoPath,
         operationLog,
         options: opts,
+        plannedPath,
         preparedHooks,
         repo,
+        reuseExistingWorktree:
+          targetAction === "reused" &&
+          options.reusableWorktreePaths?.has(resolve(plannedPath.path)) === true,
         targetAction,
       });
       results.push(repoResult);
@@ -1947,8 +2013,10 @@ const processRepository = async ({
   mainRepoPath,
   operationLog,
   options,
+  plannedPath,
   preparedHooks,
   repo,
+  reuseExistingWorktree,
   targetAction,
 }: ProcessRepositoryOptions): Promise<RepositoryResult> => {
   const startTime = Date.now();
@@ -2012,37 +2080,41 @@ const processRepository = async ({
       });
     }
 
-    // T021: Create worktree for the branch (whether new or existing)
+    // T021: Create a worktree unless command preflight proved this exact registration reusable.
     if (spinnerInstance) {
-      spinnerInstance.text = `Creating worktree for ${repo.name}...`;
+      spinnerInstance.text = reuseExistingWorktree
+        ? `Reusing existing worktree for ${repo.name}...`
+        : `Creating worktree for ${repo.name}...`;
     }
 
-    const pathResult = await calculateWorktreePath({ branchName, config, repo });
+    const pathResult = plannedPath;
     worktreePath = pathResult.path;
-    try {
-      await exec(["worktree", "add", worktreePath, branchName], repo.path);
-    } catch (error) {
-      if (spinnerInstance) {
-        spinnerInstance.fail(`Failed to create worktree in ${repo.name}`);
+    if (!reuseExistingWorktree) {
+      try {
+        await exec(["worktree", "add", worktreePath, branchName], repo.path);
+      } catch (error) {
+        if (spinnerInstance) {
+          spinnerInstance.fail(`Failed to create worktree in ${repo.name}`);
+        }
+        throw new GitOperationError({
+          message: `Failed to create worktree in ${repo.name}`,
+          operation: "worktree_create",
+          originalError: error as Error,
+          repository: repo,
+        });
       }
-      throw new GitOperationError({
-        message: `Failed to create worktree in ${repo.name}`,
-        operation: "worktree_create",
-        originalError: error as Error,
-        repository: repo,
+
+      // T022: Log worktree creation for rollback
+      operationLog.add({
+        data: {
+          branchName,
+          repositoryPath: repo.path,
+          worktreePath,
+        },
+        timestamp: Date.now(),
+        type: "worktree_created",
       });
     }
-
-    // T022: Log worktree creation for rollback
-    operationLog.add({
-      data: {
-        branchName,
-        repositoryPath: repo.path,
-        worktreePath,
-      },
-      timestamp: Date.now(),
-      type: "worktree_created",
-    });
 
     const parentRepoPath = pathResult.parentWorktreePath ?? mainRepoPath;
     const repoOperationData = buildHookOperationData({

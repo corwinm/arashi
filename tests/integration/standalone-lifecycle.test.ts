@@ -828,7 +828,7 @@ describe("standalone lifecycle", () => {
           TMUX: "/tmp/tmux/client",
         });
         const worktreePath = configured
-          ? join(canonicalRoot, ".arashi", "worktrees", `${basename(canonicalRoot)}-${branch}`)
+          ? join(canonicalRoot, ".arashi", "worktrees", branch)
           : join(canonicalRoot, ".worktrees", branch);
 
         expect(result.exitCode, result.stderr).toBe(0);

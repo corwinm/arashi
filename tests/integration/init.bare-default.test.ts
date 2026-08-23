@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { executeInit } from "../../src/commands/init.ts";
@@ -511,7 +511,12 @@ describe("init output and persisted create placement", () => {
       "--no-progress",
     ]);
     expect(create.exitCode, `${create.stdout}\n${create.stderr}`).toBe(0);
-    const expected = join(dirname(fixture.bareRoot), "feature", "example");
+    const expected = join(
+      dirname(fixture.bareRoot),
+      basename(fixture.bareRoot, ".git"),
+      "feature",
+      "example",
+    );
     expect(existsSync(expected)).toBe(true);
     expect(existsSync(join(fixture.bareRoot, "feature", "example"))).toBe(false);
     const expectedGitPath = await git(expected, ["rev-parse", "--show-toplevel"]);
@@ -536,7 +541,16 @@ describe("init output and persisted create placement", () => {
       "--no-progress",
     ]);
     expect(followUp.exitCode, `${followUp.stdout}\n${followUp.stderr}`).toBe(0);
-    expect(existsSync(join(dirname(fixture.bareRoot), "feature", "from-linked"))).toBe(true);
+    expect(
+      existsSync(
+        join(
+          dirname(fixture.bareRoot),
+          basename(fixture.bareRoot, ".git"),
+          "feature",
+          "from-linked",
+        ),
+      ),
+    ).toBe(true);
   });
 
   test("bare init persists and create uses an explicit worktree base", async () => {
@@ -562,7 +576,9 @@ describe("init output and persisted create placement", () => {
       "--no-progress",
     ]);
     expect(create.exitCode, `${create.stdout}\n${create.stderr}`).toBe(0);
-    expect(existsSync(join(explicitBase, "feature", "explicit"))).toBe(true);
+    expect(
+      existsSync(join(explicitBase, basename(fixture.bareRoot, ".git"), "feature", "explicit")),
+    ).toBe(true);
   });
 
   test.each([
