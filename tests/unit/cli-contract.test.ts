@@ -20,6 +20,7 @@ const expectedPaths = [
   "clone",
   "completion",
   "completion __query",
+  "configure",
   "create",
   "doctor",
   "exec",
@@ -210,6 +211,68 @@ describe("CLI command contract", () => {
     );
     expect(readme).not.toContain("Pure Node/Bun");
     expect(readme).not.toContain("Rust");
+  });
+
+  test("publishes the exact configure scope, descriptor, invocation, preview, and transaction policy", () => {
+    expect(commandSemantics.configure.configure).toMatchObject({
+      actions: ["keep", "edit", "clear"],
+      descriptors: {
+        workspace: ["reposDir", "worktreesDir", "baseBranch", "sync.timeoutSeconds"],
+        workspaceHooks: [
+          "hooks.timeout",
+          "hooks.scripts.pre-create",
+          "hooks.scripts.post-create",
+          "hooks.scripts.pre-remove",
+          "hooks.scripts.post-remove",
+        ],
+        commandDefaults: [
+          "defaults.create.switch",
+          "defaults.create.launch",
+          "defaults.switch.mode",
+        ],
+        editorDefaults: [
+          "defaults.editors.vscode.create.switch",
+          "defaults.editors.vscode.create.launch",
+          "defaults.editors.cursor.create.switch",
+          "defaults.editors.cursor.create.launch",
+          "defaults.editors.kiro.create.switch",
+          "defaults.editors.kiro.create.launch",
+        ],
+        meta: ["meta.baseBranch"],
+        repository: [
+          "groups",
+          "baseBranch",
+          "copy",
+          "symlink",
+          "pre-create",
+          "post-create",
+          "pre-remove",
+          "post-remove",
+        ],
+      },
+      invocation: { editing: "tty-stdin-and-stdout", json: "sanitized-inspection-only" },
+      loading: "exact-bytes-strict-no-migration-or-repair",
+      noOp: "preserve-original-bytes-before-confirmation",
+      preview: {
+        activeFiles: "separate-body-free-list",
+        config: "exact-serialized-json-including-inline-bodies",
+      },
+      transaction: {
+        activeFiles: "atomic-no-replace-with-owned-rollback",
+        configSavesAtMost: 1,
+        expectedBytes: true,
+        lock: "shared-workspace-add-configure-lock",
+        nativeFiles: "metadata-only-observe-keep-skip-never-overwrite",
+      },
+    });
+    const readme = readFileSync(resolve(process.cwd(), "README.md"), "utf8");
+    expect(readme).toContain(
+      "`aw configure` interactively edits supported existing-workspace settings",
+    );
+    expect(readme).toContain("Configured` and `Not configured");
+    expect(readme).toContain("keep, edit, or clear");
+    expect(readme).toContain("`aw configure --json` is sanitized, non-mutating inspection");
+    expect(readme).toContain("edit `.arashi/config.json` directly for unsupported fields");
   });
 
   test("publishes enforceable init zero-config option and output policy", () => {
@@ -903,8 +966,8 @@ describe("CLI command contract", () => {
     );
     const options = contract.commands.flatMap((command) => command.options);
 
-    expect(contract.commands).toHaveLength(24);
-    expect(options).toHaveLength(137);
+    expect(contract.commands).toHaveLength(25);
+    expect(options).toHaveLength(139);
     expect(new Set(options.map((option) => option.long))).toHaveLength(62);
     expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
     expect(

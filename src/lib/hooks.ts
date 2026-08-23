@@ -1238,7 +1238,9 @@ export const resolveLifecycleHookFilePath = (options: {
   const platform = options.platform ?? process.platform;
   const pathApi = platform === "win32" ? win32 : posix;
   return pathApi.join(
-    resolveLifecycleHooksDirectory(options.ownerRoot, platform),
+    options.ownerRoot,
+    ".arashi",
+    "hooks",
     `${options.hookName}${platform === "win32" ? ".ps1" : ".sh"}`,
   );
 };
