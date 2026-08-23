@@ -224,6 +224,39 @@ describe("create command worktree location resolution", () => {
     },
   );
 
+  test("rejects a target branch registered at another live path before mutation", async () => {
+    await writeWorkspaceConfig("custom-worktrees");
+    const branch = "feature/wrong-location";
+    const registeredPath = resolve(testRoot, "other-registration");
+    await runGit(["worktree", "add", "-b", branch, registeredPath, "main"], workspacePath);
+    const marker = join(workspacePath, "pre-create-ran");
+    await writePreCreateMarker(marker);
+    const excludePath = join(workspacePath, ".git", "info", "exclude");
+    const excludeBefore = await readFile(excludePath, "utf8");
+    const plannedDestination = resolve(
+      await realpath(workspacePath),
+      "custom-worktrees",
+      "feature",
+      "wrong-location",
+    );
+
+    const result = await runCreateResult(branch, ["--conflict", "REUSE_EXISTING", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      error: {
+        code: "WORKTREE_DESTINATION_COLLISION",
+        details: {
+          conflict: { repositoryName: "workspace", worktreePath: plannedDestination },
+        },
+      },
+      ok: false,
+    });
+    expect(await runtime.file(marker).exists()).toBe(false);
+    expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
+    expect(await runtime.file(join(registeredPath, "README.md")).exists()).toBe(true);
+  });
+
   test("reuses an exact live Git registration for the target branch", async () => {
     await writeWorkspaceConfig("custom-worktrees");
     const branch = "feature/existing";

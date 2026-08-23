@@ -1688,6 +1688,8 @@ export async function executeCreate(
             : registeredWorktree,
       );
       let registration: (typeof registeredWorktrees)[number] | undefined = undefined;
+      let targetBranchRegisteredElsewhere = false;
+      const targetBranchRef = `refs/heads/${branchName}`;
       for (const registeredWorktree of registeredWorktrees) {
         let canonicalRegisteredPath = resolve(registeredWorktree.path);
         try {
@@ -1697,16 +1699,17 @@ export async function executeCreate(
         }
         if (canonicalRegisteredPath === canonicalDestination) {
           registration = registeredWorktree;
-          break;
+        } else if (registeredWorktree.branch === targetBranchRef) {
+          targetBranchRegisteredElsewhere = true;
         }
       }
-      const reusableRegistration =
-        filesystemCollision && registration?.branch === `refs/heads/${branchName}`;
+      const reusableRegistration = filesystemCollision && registration?.branch === targetBranchRef;
       if (reusableRegistration) {
         reusableWorktreePaths.add(normalizedDestination);
       }
       if (
         duplicatePlan ||
+        targetBranchRegisteredElsewhere ||
         (filesystemCollision && !reusableRegistration) ||
         (registration !== undefined && !reusableRegistration)
       ) {
