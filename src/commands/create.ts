@@ -1660,13 +1660,33 @@ export async function executeCreate(
       const filesystemCollision = destinationPathExists(normalizedDestination);
       plannedDestinations.add(normalizedDestination);
 
-      const registration = (await listRegisteredWorktreePaths(repository.path))
-        .map((registeredWorktree) =>
+      let canonicalDestination = normalizedDestination;
+      if (filesystemCollision) {
+        try {
+          canonicalDestination = await realpath(normalizedDestination);
+        } catch {
+          // Tests and injected filesystems may report a collision without a host path.
+        }
+      }
+      const registeredWorktrees = (await listRegisteredWorktreePaths(repository.path)).map(
+        (registeredWorktree) =>
           typeof registeredWorktree === "string"
             ? { branch: null, path: registeredWorktree }
             : registeredWorktree,
-        )
-        .find(({ path }) => resolve(path) === normalizedDestination);
+      );
+      let registration: (typeof registeredWorktrees)[number] | undefined = undefined;
+      for (const registeredWorktree of registeredWorktrees) {
+        let canonicalRegisteredPath = resolve(registeredWorktree.path);
+        try {
+          canonicalRegisteredPath = await realpath(canonicalRegisteredPath);
+        } catch {
+          // Keep the normalized registration path for stale or injected registrations.
+        }
+        if (canonicalRegisteredPath === canonicalDestination) {
+          registration = registeredWorktree;
+          break;
+        }
+      }
       const reusableRegistration =
         filesystemCollision && registration?.branch === `refs/heads/${branchName}`;
       if (reusableRegistration) {
