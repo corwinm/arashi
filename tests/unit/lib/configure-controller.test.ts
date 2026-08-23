@@ -323,6 +323,41 @@ describe("configure controller", () => {
     },
   );
 
+  test("allows a root repository inline remove hook beside the workspace native file", async () => {
+    const configuration = baseConfig();
+    configuration.repos.root = { path: "." };
+    const { prompts, selections } = scriptedPrompts([
+      "repository",
+      "root",
+      "pre-remove",
+      "edit",
+      "inline-bash",
+      "echo repository-inline",
+      false,
+      false,
+    ]);
+
+    const result = await collectConfigurationEdits({
+      activeConfigRoot: "/workspace",
+      config: configuration,
+      observeRepositoryActivePaths: () => existingNativeObserver,
+      platform: "linux",
+      prompts,
+      resolvePathIdentity: async () => "/workspace",
+    });
+
+    expect(result.status).toBe("declined");
+    expect(
+      selections.find(({ message }) => message.includes("repos.root.hooks.pre-remove"))?.choices,
+    ).toEqual(["Keep persisted value", "Edit / replace", "Clear canonical field"]);
+    expect(
+      selections.find(({ message }) => message === "Choose source for pre-remove:")?.choices,
+    ).toEqual([
+      "Inline Bash command (visible plaintext)",
+      "Inline interpreter map (visible plaintext)",
+    ]);
+  });
+
   test("keeps repository create file planning for a configured root repository", async () => {
     const configuration = baseConfig();
     configuration.repos.root = { path: "." };

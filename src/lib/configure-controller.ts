@@ -205,7 +205,9 @@ const editRepository = async (
   );
   const descriptor = REPOSITORY_CONFIGURE_DESCRIPTORS.find(({ id }) => id === setting.value)!;
   const lifecycleSelected = descriptor.action === "inline-or-file";
-  if (lifecycleSelected && observeActivePaths) {
+  const rootRemoveLifecycle =
+    rootRepository && (setting.value === "pre-remove" || setting.value === "post-remove");
+  if (lifecycleSelected && observeActivePaths && !rootRemoveLifecycle) {
     const lifecycle = setting.value as InlineHookLifecycle;
     const observations = await observeActivePaths({
       lifecycles: [
@@ -321,7 +323,13 @@ const editRepository = async (
                 ...request,
                 lifecycles: request.lifecycles.filter((entry) => entry.lifecycle === lifecycle),
               };
-              return observeActivePaths(selectedRequest);
+              const observations = await observeActivePaths(selectedRequest);
+              return rootRemoveLifecycle
+                ? observations.map((observation) => ({
+                    ...observation,
+                    nativeCandidateCount: 0,
+                  }))
+                : observations;
             })
           : normalizeRepositoryEditorState(trial);
         if (normalized.ok) {
