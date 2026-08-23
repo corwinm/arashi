@@ -131,10 +131,10 @@ describe("versioned executable distribution contract", () => {
   });
 
   test("manual POSIX release instructions install the native payload and both wrappers together", () => {
-    const readme = read("README.md");
-    const manual = readme.slice(
-      readme.indexOf("### Manual install from GitHub Releases"),
-      readme.indexOf("You can also build from source"),
+    const installation = read("docs/INSTALLATION.md");
+    const manual = installation.slice(
+      installation.indexOf("## Manual macOS and Linux release fallback"),
+      installation.indexOf("## Manual Windows release fallback"),
     );
     for (const nativeAsset of ["arashi-macos-arm64", "arashi-linux-x64"]) {
       expect(manual).toContain(`latest/download/${nativeAsset} -o arashi.bin`);

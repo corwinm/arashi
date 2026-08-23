@@ -132,6 +132,30 @@ powershell -c "irm https://arashi.haphazard.dev/install.ps1 | iex"
 - First-use download failure: retry `aw install` once, then use direct/manual release assets if the network or release asset remains unavailable.
 - Verification fails during `aw install` or first use: partial downloads are removed automatically; switch to direct/manual release flow and report the bad release artifact.
 
+## Manual macOS and Linux release fallback
+
+If you do not want to pipe a remote script into a shell, download the native payload and both wrappers from the same release, then place them together on `PATH`.
+
+macOS (Apple Silicon):
+
+```bash
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-macos-arm64 -o arashi.bin
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi -o arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/aw -o aw
+chmod +x arashi.bin arashi aw
+sudo install -m 0755 arashi.bin arashi aw /usr/local/bin/
+```
+
+Linux (x64):
+
+```bash
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi-linux-x64 -o arashi.bin
+curl -L https://github.com/corwinm/arashi/releases/latest/download/arashi -o arashi
+curl -L https://github.com/corwinm/arashi/releases/latest/download/aw -o aw
+chmod +x arashi.bin arashi aw
+sudo install -m 0755 arashi.bin arashi aw /usr/local/bin/
+```
+
 ## Manual Windows release fallback
 
 If you do not want to pipe a remote script into PowerShell or the installer fails:
