@@ -92,6 +92,25 @@ import {
   type EffectiveBaseBranch,
 } from "../lib/base-branch-policy.ts";
 
+async function canonicalizePlannedDestination(path: string): Promise<string> {
+  let ancestor = resolve(path);
+  const unresolvedSegments: string[] = [];
+
+  while (true) {
+    try {
+      const canonicalAncestor = await realpath(ancestor);
+      return resolve(canonicalAncestor, ...unresolvedSegments.toReversed());
+    } catch {
+      const parent = dirname(ancestor);
+      if (parent === ancestor) {
+        return resolve(ancestor, ...unresolvedSegments.toReversed());
+      }
+      unresolvedSegments.push(basename(ancestor));
+      ancestor = parent;
+    }
+  }
+}
+
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
 type MoveSummary = Awaited<ReturnType<typeof executeMovePlan>>;
@@ -1701,11 +1720,11 @@ export async function executeCreate(
   const reusableWorktreePaths = new Set<string>();
   const plannedDestinations = new Set<string>();
   for (const [repository, plannedPath] of worktreePathPlan) {
-    const normalizedDestination = resolve(plannedPath.path);
-    if (plannedDestinations.has(normalizedDestination)) {
+    const canonicalDestination = await canonicalizePlannedDestination(plannedPath.path);
+    if (plannedDestinations.has(canonicalDestination)) {
       throw new WorktreeDestinationCollisionError(repository.name, plannedPath.path);
     }
-    plannedDestinations.add(normalizedDestination);
+    plannedDestinations.add(canonicalDestination);
   }
 
   const discoverReusableRegistrations = !options.dryRun || options.conflict === "REUSE_EXISTING";
