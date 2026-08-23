@@ -1684,7 +1684,20 @@ export async function executeCreate(
       }
     : undefined;
 
-  const worktreePathPlan = await resolveWorktreePathPlan(selectedRepos, branchName, arashiConfig);
+  const completeWorktreePathPlan = await resolveWorktreePathPlan(
+    allRepositories,
+    branchName,
+    arashiConfig,
+  );
+  const worktreePathPlan = new Map(
+    selectedRepos.map((repository) => {
+      const plannedPath = completeWorktreePathPlan.get(repository);
+      if (!plannedPath) {
+        throw new Error(`Repository '${repository.name}' is missing a planned path`);
+      }
+      return [repository, plannedPath] as const;
+    }),
+  );
   const reusableWorktreePaths = new Set<string>();
   const discoverReusableRegistrations = !options.dryRun || options.conflict === "REUSE_EXISTING";
   if (discoverReusableRegistrations) {
@@ -1733,11 +1746,10 @@ export async function executeCreate(
         reusableWorktreePaths.add(normalizedDestination);
       }
       if (
-        !options.dryRun &&
-        (duplicatePlan ||
-          targetBranchRegisteredElsewhere ||
-          (filesystemCollision && !reusableRegistration) ||
-          (registration !== undefined && !reusableRegistration))
+        duplicatePlan ||
+        targetBranchRegisteredElsewhere ||
+        (filesystemCollision && !reusableRegistration) ||
+        (registration !== undefined && !reusableRegistration)
       ) {
         throw new WorktreeDestinationCollisionError(repository.name, plannedPath.path);
       }

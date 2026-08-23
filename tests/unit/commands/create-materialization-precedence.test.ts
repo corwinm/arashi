@@ -114,7 +114,7 @@ describe("configured create materialization precedence RED", () => {
         worktreePathPlan?: ReadonlyMap<Repository, { path: string }>;
       }) => {
         expect(input.reuseExisting).toBe(true);
-        expect(input.worktreePathPlan).toBe(worktreePathPlan);
+        expect(input.worktreePathPlan).toStrictEqual(worktreePathPlan);
         expect(input.worktreePathPlan?.get(repository)?.path).toBe(plannedDestination);
         events.push("materialization-preflight");
         throw blocker;

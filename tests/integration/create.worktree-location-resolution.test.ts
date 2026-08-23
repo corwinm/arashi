@@ -243,6 +243,21 @@ describe("create command worktree location resolution", () => {
       "wrong-location",
     );
 
+    const dryRun = await runCreateResult(branch, [
+      "--dry-run",
+      "--conflict",
+      "REUSE_EXISTING",
+      "--json",
+    ]);
+    expect(dryRun.exitCode, `${dryRun.stdout}\n${dryRun.stderr}`).toBe(1);
+    expect(JSON.parse(dryRun.stdout)).toMatchObject({
+      error: {
+        code: "WORKTREE_DESTINATION_COLLISION",
+        details: { conflict: { repositoryName: "workspace" } },
+      },
+      ok: false,
+    });
+
     const result = await runCreateResult(branch, ["--conflict", "REUSE_EXISTING", "--json"]);
 
     expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);

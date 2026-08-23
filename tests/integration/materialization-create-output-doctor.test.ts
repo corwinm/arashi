@@ -257,33 +257,36 @@ printf 'post\\n' >> '${order}'`,
       "create",
       branch,
       "--only",
-      "beta",
+      "alpha,beta",
       "--dry-run",
       "--no-hooks",
       "--json",
     );
 
     expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(parseSingleDocument(result.stdout)).toMatchObject({
+    const envelope = parseSingleDocument(result.stdout) as {
       data: {
         dryRunOutcome: {
-          plannedWorktrees: [
-            {
-              repositoryName: "beta",
-              worktreePath: join(
-                await realpath(workspace.workspacePath),
-                ".arashi",
-                "worktrees",
-                branch,
-                "repos",
-                "beta",
-              ),
-            },
-          ],
-        },
-      },
-      ok: true,
-    });
+          plannedWorktrees: { repositoryName: string; worktreePath: string }[];
+        };
+      };
+      ok: boolean;
+    };
+    expect(envelope.ok).toBe(true);
+    expect(
+      envelope.data.dryRunOutcome.plannedWorktrees.find(
+        (worktree) => worktree.repositoryName === "beta",
+      )?.worktreePath,
+    ).toBe(
+      join(
+        await realpath(workspace.workspacePath),
+        ".arashi",
+        "worktrees",
+        branch,
+        "repos",
+        "beta",
+      ),
+    );
   });
 
   test("preserves correct copy and symlink entries in an exact reused worktree as no-ops", async () => {
