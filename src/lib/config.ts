@@ -400,7 +400,7 @@ export const configExists = async (repoPath: string): Promise<boolean> => {
  */
 export const findWorkspaceRoot = async (
   startPath: string = process.cwd(),
-  options: { validate?: boolean } = {},
+  options: { validate?: boolean | ((workspaceRoot: string) => Promise<void>) } = {},
 ): Promise<string> => {
   const { dirname, isAbsolute, resolve, parse } = await import("path");
 
@@ -414,7 +414,11 @@ export const findWorkspaceRoot = async (
       // Validate the local configuration before probing Git topology. Commands use
       // this discovery path before any hook or mutation preflight, so malformed
       // configuration must fail without starting even a read-only Git process.
-      if (options.validate !== false) await loadConfig(currentPath);
+      if (typeof options.validate === "function") {
+        await options.validate(currentPath);
+      } else if (options.validate !== false) {
+        await loadConfig(currentPath);
+      }
       try {
         const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
         const rawCommonDirectory = common.stdout.trim();

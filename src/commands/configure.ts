@@ -61,7 +61,19 @@ const resolveExecutionRoot = async (configurationRoot: string, invocationPath: s
 
 export const loadConfigureSnapshot = async (root?: string): Promise<ConfigureSnapshot> => {
   const invocationPath = root ?? process.cwd();
-  const workspaceRoot = root ?? (await findWorkspaceRoot(invocationPath, { validate: false }));
+  const validateWithoutMigration = async (candidateRoot: string) => {
+    const candidatePath = getConfigPath(candidateRoot);
+    const candidateBytes = await readFile(candidatePath);
+    let candidate: unknown;
+    try {
+      candidate = JSON.parse(new TextDecoder().decode(candidateBytes));
+    } catch (error) {
+      throw new ConfigParseError(candidatePath, error as Error);
+    }
+    normalizeConfig(candidate);
+  };
+  const workspaceRoot =
+    root ?? (await findWorkspaceRoot(invocationPath, { validate: validateWithoutMigration }));
   const bytes = await readFile(getConfigPath(workspaceRoot));
   let persisted: unknown;
   try {

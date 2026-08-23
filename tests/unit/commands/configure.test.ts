@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test, vi } from "vitest";
-import type { Config } from "../../../src/lib/config.ts";
+import { ConfigParseError, type Config } from "../../../src/lib/config.ts";
+import { createBareCreateWorkspace } from "../../helpers/create-bare-create-workspace.ts";
 import {
   executeConfigure,
   inspectConfigureSnapshot,
@@ -94,6 +95,30 @@ describe("configure command", () => {
     await expect(loadConfigureSnapshot(root)).rejects.toThrow();
     expect(await readFile(configPath, "utf8")).toBe(original);
   });
+
+  test("rejects a malformed nearer config before linked-worktree bare-root redirection", async () => {
+    const workspace = await createBareCreateWorkspace({ includeConfig: false });
+    const localConfigPath = join(workspace.worktreePath, ".arashi", "config.json");
+    const bareConfigPath = join(workspace.bareRepoPath, ".arashi", "config.json");
+    const malformed = "{";
+    const validBare = '{"version":"1.0.0","reposDir":"bare-repos","repos":{}}';
+    const originalCwd = process.cwd();
+    await mkdir(join(workspace.worktreePath, ".arashi"), { recursive: true });
+    await mkdir(join(workspace.bareRepoPath, ".arashi"), { recursive: true });
+    await writeFile(localConfigPath, malformed);
+    await writeFile(bareConfigPath, validBare);
+
+    try {
+      process.chdir(workspace.worktreePath);
+      await expect(loadConfigureSnapshot()).rejects.toBeInstanceOf(ConfigParseError);
+      expect(await readFile(localConfigPath, "utf8")).toBe(malformed);
+      expect(await readFile(bareConfigPath, "utf8")).toBe(validBare);
+    } finally {
+      process.chdir(originalCwd);
+      await workspace.cleanup();
+    }
+  });
+
   test("emits one sanitized body-free JSON inspection and never prompts or mutates", async () => {
     const output: string[] = [];
     const collect = vi.fn();
