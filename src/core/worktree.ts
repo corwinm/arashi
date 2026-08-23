@@ -209,6 +209,9 @@ export interface WorktreeOperationOptions {
   /** Immutable configured destination plan captured before command-layer mutation. */
   worktreePathPlan?: ReadonlyMap<Repository, CalculatedWorktreePath>;
 
+  /** Existing exact Git registrations that command preflight proved safe to reuse. */
+  reusableWorktreePaths?: ReadonlySet<string>;
+
   /** Immutable per-repository base resolutions captured before mutation */
   createBasePlan?: CreateBaseResolutionPlan;
 
@@ -533,6 +536,7 @@ interface ProcessRepositoryOptions {
   mainRepoPath: string;
   createBasePlan?: CreateBaseResolutionPlan;
   targetAction: TargetAction;
+  reuseExistingWorktree: boolean;
   preparedHooks: PreparedCreateHooks;
   plannedPath: CalculatedWorktreePath;
 }
@@ -1700,7 +1704,11 @@ export const createCoordinatedWorktrees = async (
 
     if (!opts.dryRun) {
       for (const [repository, plannedPath] of worktreePathPlan) {
-        if (existsSync(plannedPath.path)) {
+        const repositoryPath = await realpath(repository.path);
+        const reusableExistingPath =
+          targetActionByRepositoryPath.get(repositoryPath) === "reused" &&
+          options.reusableWorktreePaths?.has(resolve(plannedPath.path)) === true;
+        if (existsSync(plannedPath.path) && !reusableExistingPath) {
           throw new Error(`Worktree path already exists: ${plannedPath.path} (${repository.name})`);
         }
       }
@@ -1793,6 +1801,9 @@ export const createCoordinatedWorktrees = async (
         plannedPath,
         preparedHooks,
         repo,
+        reuseExistingWorktree:
+          targetAction === "reused" &&
+          options.reusableWorktreePaths?.has(resolve(plannedPath.path)) === true,
         targetAction,
       });
       results.push(repoResult);
@@ -1998,6 +2009,7 @@ const processRepository = async ({
   plannedPath,
   preparedHooks,
   repo,
+  reuseExistingWorktree,
   targetAction,
 }: ProcessRepositoryOptions): Promise<RepositoryResult> => {
   const startTime = Date.now();
@@ -2061,37 +2073,41 @@ const processRepository = async ({
       });
     }
 
-    // T021: Create worktree for the branch (whether new or existing)
+    // T021: Create a worktree unless command preflight proved this exact registration reusable.
     if (spinnerInstance) {
-      spinnerInstance.text = `Creating worktree for ${repo.name}...`;
+      spinnerInstance.text = reuseExistingWorktree
+        ? `Reusing existing worktree for ${repo.name}...`
+        : `Creating worktree for ${repo.name}...`;
     }
 
     const pathResult = plannedPath;
     worktreePath = pathResult.path;
-    try {
-      await exec(["worktree", "add", worktreePath, branchName], repo.path);
-    } catch (error) {
-      if (spinnerInstance) {
-        spinnerInstance.fail(`Failed to create worktree in ${repo.name}`);
+    if (!reuseExistingWorktree) {
+      try {
+        await exec(["worktree", "add", worktreePath, branchName], repo.path);
+      } catch (error) {
+        if (spinnerInstance) {
+          spinnerInstance.fail(`Failed to create worktree in ${repo.name}`);
+        }
+        throw new GitOperationError({
+          message: `Failed to create worktree in ${repo.name}`,
+          operation: "worktree_create",
+          originalError: error as Error,
+          repository: repo,
+        });
       }
-      throw new GitOperationError({
-        message: `Failed to create worktree in ${repo.name}`,
-        operation: "worktree_create",
-        originalError: error as Error,
-        repository: repo,
+
+      // T022: Log worktree creation for rollback
+      operationLog.add({
+        data: {
+          branchName,
+          repositoryPath: repo.path,
+          worktreePath,
+        },
+        timestamp: Date.now(),
+        type: "worktree_created",
       });
     }
-
-    // T022: Log worktree creation for rollback
-    operationLog.add({
-      data: {
-        branchName,
-        repositoryPath: repo.path,
-        worktreePath,
-      },
-      timestamp: Date.now(),
-      type: "worktree_created",
-    });
 
     const parentRepoPath = pathResult.parentWorktreePath ?? mainRepoPath;
     const repoOperationData = buildHookOperationData({

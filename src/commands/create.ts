@@ -1651,6 +1651,7 @@ export async function executeCreate(
     : undefined;
 
   const worktreePathPlan = await resolveWorktreePathPlan(selectedRepos, branchName, arashiConfig);
+  const reusableWorktreePaths = new Set<string>();
   if (!options.dryRun) {
     const plannedDestinations = new Set<string>();
     for (const [repository, plannedPath] of worktreePathPlan) {
@@ -1668,6 +1669,9 @@ export async function executeCreate(
         .find(({ path }) => resolve(path) === normalizedDestination);
       const reusableRegistration =
         filesystemCollision && registration?.branch === `refs/heads/${branchName}`;
+      if (reusableRegistration) {
+        reusableWorktreePaths.add(normalizedDestination);
+      }
       if (
         duplicatePlan ||
         (filesystemCollision && !reusableRegistration) ||
@@ -1726,6 +1730,7 @@ export async function executeCreate(
     resolvedConfig: arashiConfig,
     showProgress: options.json ? false : progressEnabled,
     worktreePathPlan,
+    reusableWorktreePaths,
     workspaceRoot: context.workspaceRoot,
   };
 

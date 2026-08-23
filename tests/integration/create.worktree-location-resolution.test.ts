@@ -1,6 +1,6 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { dirname, join, resolve } from "path";
+import { dirname, join, relative, resolve } from "path";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 
@@ -173,6 +173,34 @@ describe("create command worktree location resolution", () => {
     expect(await branchProbe.exited).toBe(0);
   });
 
+  test("reuses an exact live Git registration for the target branch", async () => {
+    await writeWorkspaceConfig("custom-worktrees");
+    const branch = "feature/existing";
+    const destination = resolve(workspacePath, "custom-worktrees", "feature", "existing");
+    await mkdir(dirname(destination), { recursive: true });
+    await runGit(["worktree", "add", "-b", branch, destination, "main"], workspacePath);
+
+    const result = await runCreateResult(branch, ["--conflict", "REUSE_EXISTING", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: {
+        repositories: [
+          {
+            repositoryName: "workspace",
+            worktreePath: expect.any(String),
+          },
+        ],
+      },
+      ok: true,
+    });
+    expect(await runtime.file(join(destination, "README.md")).exists()).toBe(true);
+    expect(await realpath(destination)).toBe(
+      await realpath(JSON.parse(result.stdout).data.repositories[0].worktreePath as string),
+    );
+  });
+
   test("reports the authoritative colliding destination in one JSON failure envelope", async () => {
     await writeWorkspaceConfig("custom-worktrees");
     const branch = "feature/json-collision";
@@ -242,9 +270,8 @@ describe("create command worktree location resolution", () => {
     });
     const reportedPath = envelope.data.dryRunOutcome.plannedWorktrees[0]!.worktreePath;
     const reportedWorkspace = dirname(dirname(dirname(reportedPath)));
-    expect(
-      resolve(await realpath(reportedWorkspace), "custom-worktrees", "feature", "json-preview"),
-    ).toBe(destination);
+    const reportedSuffix = relative(reportedWorkspace, reportedPath);
+    expect(resolve(await realpath(reportedWorkspace), reportedSuffix)).toBe(destination);
     expect(await runtime.file(destination).exists()).toBe(false);
   });
 });
