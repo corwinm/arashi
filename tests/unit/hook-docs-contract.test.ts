@@ -24,14 +24,12 @@ describe("canonical lifecycle-hook documentation", () => {
   });
 
   test("documents safe activation and configured timeout", async () => {
-    const [init, configuration, readme] = await Promise.all([
+    const [init, configuration] = await Promise.all([
       read("docs/commands/init.md"),
       read("docs/configuration.md"),
-      read("README.md"),
     ]);
     expect(init).toContain("install -m 755");
     expect(init).toContain("setup.sh.example");
     expect(configuration).toMatch(/hooks[\s\S]*timeout[\s\S]*300000/);
-    expect(readme).toContain("docs/hooks.md");
   });
 });

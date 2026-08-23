@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
 import { Command, Option } from "commander";
 import pkg from "../../package.json";
 import { buildProgram, discoverCommandPaths } from "../../src/cli-program.ts";
@@ -204,13 +205,6 @@ describe("CLI command contract", () => {
       },
       futureScope: "existing-entry-editing-reserved-for-316",
     });
-
-    const readme = readFileSync(resolve(process.cwd(), "README.md"), "utf8");
-    expect(readme).toContain(
-      "`aw add` walks you through repository configuration and hook initialization.",
-    );
-    expect(readme).not.toContain("Pure Node/Bun");
-    expect(readme).not.toContain("Rust");
   });
 
   test("publishes the exact configure scope, descriptor, invocation, preview, and transaction policy", () => {
@@ -265,14 +259,19 @@ describe("CLI command contract", () => {
         nativeFiles: "metadata-only-observe-keep-skip-never-overwrite",
       },
     });
-    const readme = readFileSync(resolve(process.cwd(), "README.md"), "utf8");
-    expect(readme).toContain(
-      "`aw configure` interactively edits supported existing-workspace settings",
+    const configureGuide = readFileSync(
+      resolve(process.cwd(), "docs/commands/configure.md"),
+      "utf8",
     );
-    expect(readme).toContain("Configured` and `Not configured");
-    expect(readme).toContain("keep, edit, or clear");
-    expect(readme).toContain("`aw configure --json` is sanitized, non-mutating inspection");
-    expect(readme).toContain("edit `.arashi/config.json` directly for unsupported fields");
+    expect(configureGuide).toContain(
+      "Inspect or interactively edit supported settings in an existing configured workspace.",
+    );
+    expect(configureGuide).toContain("Configured` or `Not configured");
+    expect(configureGuide).toContain("keep, edit, or clear");
+    expect(configureGuide).toContain("JSON form is sanitized, non-mutating");
+    expect(configureGuide).toMatch(
+      /Edit\s+`\.arashi\/config\.json` directly for other schema fields/,
+    );
   });
 
   test("publishes enforceable init zero-config option and output policy", () => {

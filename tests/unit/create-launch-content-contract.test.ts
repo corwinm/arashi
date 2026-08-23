@@ -45,17 +45,14 @@ describe("maintained create launch contracts", () => {
     });
   });
 
-  test.each(["README.md", "docs/configuration.md"])(
-    "%s documents one create launch field and migration behavior",
-    async (relativePath) => {
-      const content = await readFile(join(root, relativePath), "utf8");
-      expect(content).toContain('"launch": "sesh"');
-      expect(content).toContain("`none` | `auto` | `sesh` | `herdr`");
-      expect(content).toContain("launch implies switch");
-      expect(content).toContain("does not fall back");
-      expect(content).toContain("bounded compatibility window");
-      expect(content).not.toContain('"launch": true');
-      expect(content).not.toContain("defaults.create.launchMode remains");
-    },
-  );
+  test("the configuration reference documents one create launch field and migration behavior", async () => {
+    const content = await readFile(join(root, "docs/configuration.md"), "utf8");
+    expect(content).toContain('"launch": "sesh"');
+    expect(content).toContain("`none` | `auto` | `sesh` | `herdr`");
+    expect(content).toContain("launch implies switch");
+    expect(content).toContain("does not fall back");
+    expect(content).toContain("bounded compatibility window");
+    expect(content).not.toContain('"launch": true');
+    expect(content).not.toContain("defaults.create.launchMode remains");
+  });
 });

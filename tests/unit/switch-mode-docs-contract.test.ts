@@ -13,17 +13,12 @@ const readProjectFile = (path: string): string =>
   readFileSync(resolve(process.cwd(), path), "utf8");
 
 const maintainedSwitchDocs = [
-  "README.md",
   "docs/configuration.md",
   "docs/commands/switch.md",
   "docs/commands/shell.md",
 ] as const;
 
-const canonicalSwitchDocs = [
-  "README.md",
-  "docs/configuration.md",
-  "docs/commands/switch.md",
-] as const;
+const canonicalSwitchDocs = ["docs/configuration.md", "docs/commands/switch.md"] as const;
 
 describe("unified switch mode documentation contract", () => {
   test("uses one canonical switch mode vocabulary without stale switch launch fields", () => {
@@ -123,12 +118,10 @@ describe("unified switch mode documentation contract", () => {
   });
 
   test("documents explicit tmux switch and create launch without changing config modes", () => {
-    const readme = readProjectFile("README.md");
     const configuration = readProjectFile("docs/configuration.md");
     const switchDocs = readProjectFile("docs/commands/switch.md");
-    expect(readme).toContain("aw switch --tmux feature-auth-refresh");
-    expect(readme).toContain("aw create feature-auth-refresh --tmux");
-    for (const contents of [readme, configuration, switchDocs]) {
+    expect(switchDocs).toContain("aw switch --tmux feature-auth");
+    for (const contents of [configuration, switchDocs]) {
       expect(contents).toContain("non-empty after trimming");
       expect(contents).toContain("does not fall back");
       expect(contents).toContain("per-invocation");

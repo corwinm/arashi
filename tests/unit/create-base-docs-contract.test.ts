@@ -5,19 +5,15 @@ import { describe, expect, test } from "vitest";
 const readRepositoryDoc = (path: string): string =>
   readFileSync(join(import.meta.dirname, "../..", path), "utf8");
 
-const readme = readRepositoryDoc("README.md");
 const configuration = readRepositoryDoc("docs/configuration.md");
 
 describe("create base repository documentation contract", () => {
   test("exposes shared and repeatable repository base options", () => {
-    expect(readme).toContain(
-      "aw clone [--all] [--base <branch>] [--repo-base <repository=branch>]",
+    expect(configuration).toContain(
+      "Create and clone also accept a one-off `--base <branch>` and repeatable",
     );
-    expect(readme).toContain(
-      "aw create <branch> [--base <branch>] [--repo-base <repository=branch>]",
-    );
-    expect(readme).toContain("aw create feature-auth-refresh --repo-base @meta=develop");
-    expect(readme).toContain("aw create feature-auth-refresh --base feature/auth");
+    expect(configuration).toContain("`--repo-base <selector=branch>` overrides");
+    expect(configuration).toContain("Create accepts the explicit `@meta` selector");
   });
 
   test("documents canonical shared configuration, precedence, migration, and standalone scope", () => {
