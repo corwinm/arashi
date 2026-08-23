@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, rename, rm, stat } from "node:fs/promises";
+import { open, readFile, realpath, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, win32 } from "node:path";
 import type { Config } from "./config.ts";
 import { serializeConfig } from "./config.ts";
@@ -100,6 +100,7 @@ interface AtomicConfigurePersistenceDependencies {
     writeFile(bytes: Uint8Array): Promise<void>;
   }>;
   readFile(path: string): Promise<Uint8Array>;
+  realpath?(path: string): Promise<string>;
   platform: NodeJS.Platform;
   rename(from: string, to: string): Promise<void>;
   rm(path: string, options: { force: true }): Promise<void>;
@@ -111,6 +112,7 @@ const atomicPersistenceDefaults: AtomicConfigurePersistenceDependencies = {
   open,
   platform: process.platform,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
@@ -125,9 +127,12 @@ export const persistExpectedBytesAtomically = async (
   expectedBytes: Uint8Array,
   dependencies: AtomicConfigurePersistenceDependencies = atomicPersistenceDefaults,
 ): Promise<boolean> => {
-  const beforeStage = await dependencies.readFile(configPath);
+  const persistencePath = dependencies.realpath
+    ? await dependencies.realpath(configPath)
+    : configPath;
+  const beforeStage = await dependencies.readFile(persistencePath);
   if (!equalBytes(beforeStage, expectedBytes)) return false;
-  const temporaryPath = join(dirname(configPath), dependencies.temporaryName(configPath));
+  const temporaryPath = join(dirname(persistencePath), dependencies.temporaryName(persistencePath));
   let temporaryExists = false;
   let failure: unknown;
   let persisted = false;
@@ -138,10 +143,10 @@ export const persistExpectedBytesAtomically = async (
     try {
       await handle.writeFile(replacementBytes);
       await handle.sync();
-      const beforeReplace = await dependencies.readFile(configPath);
+      const beforeReplace = await dependencies.readFile(persistencePath);
       if (equalBytes(beforeReplace, expectedBytes)) {
         if (dependencies.platform !== "win32") {
-          const liveMetadata = await dependencies.stat(configPath);
+          const liveMetadata = await dependencies.stat(persistencePath);
           const stagedMetadata = await handle.stat();
           if (stagedMetadata.gid !== liveMetadata.gid) {
             await handle.chown(stagedMetadata.uid, liveMetadata.gid);
@@ -163,7 +168,7 @@ export const persistExpectedBytesAtomically = async (
     }
     if (failure) throw failure;
     if (replace) {
-      await dependencies.rename(temporaryPath, configPath);
+      await dependencies.rename(temporaryPath, persistencePath);
       temporaryExists = false;
       persisted = true;
     }

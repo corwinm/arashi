@@ -1,4 +1,14 @@
-import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
@@ -35,6 +45,27 @@ describe("configure transaction", () => {
     expect(await readFile(configPath, "utf8")).toBe(serializeConfig(config("children")));
     expect(await readdir(join(root, ".arashi"))).toEqual(["config.json"]);
   });
+
+  test.runIf(process.platform !== "win32")(
+    "atomically updates a symlinked config target without replacing the link",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "arashi-configure-symlink-"));
+      const configDirectory = join(root, ".arashi");
+      const configPath = join(configDirectory, "config.json");
+      const targetPath = join(root, "shared-config.json");
+      const original = bytes("original bytes");
+      await mkdir(configDirectory);
+      await writeFile(targetPath, original);
+      await symlink(targetPath, configPath);
+
+      await persistConfigureAtomically(configPath, config("children"), original);
+
+      expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+      expect(await readFile(targetPath, "utf8")).toBe(serializeConfig(config("children")));
+      expect(await readFile(configPath, "utf8")).toBe(serializeConfig(config("children")));
+      expect(await readdir(configDirectory)).toEqual(["config.json"]);
+    },
+  );
 
   test.runIf(process.platform !== "win32")(
     "preserves the exact existing POSIX mode after a successful canonical save",
