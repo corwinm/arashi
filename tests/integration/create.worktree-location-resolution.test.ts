@@ -266,6 +266,64 @@ describe("create command worktree location resolution", () => {
     expect(await runtime.file(join(registeredPath, "README.md")).exists()).toBe(true);
   });
 
+  test("rejects an exact prunable registration backed by an empty directory", async () => {
+    await writeWorkspaceConfig("custom-worktrees");
+    const branch = "feature/stale-exact";
+    const destination = resolve(workspacePath, "custom-worktrees", "feature", "stale-exact");
+    await mkdir(dirname(destination), { recursive: true });
+    await runGit(["worktree", "add", "-b", branch, destination, "main"], workspacePath);
+    await rm(destination, { recursive: true });
+    await mkdir(destination);
+    const marker = join(workspacePath, "pre-create-ran");
+    await writePreCreateMarker(marker);
+    const excludePath = join(workspacePath, ".git", "info", "exclude");
+    const excludeBefore = await readFile(excludePath, "utf8");
+
+    const result = await runCreateResult(branch, ["--conflict", "REUSE_EXISTING", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      error: {
+        code: "WORKTREE_DESTINATION_COLLISION",
+        details: { conflict: { repositoryName: "workspace" } },
+      },
+      ok: false,
+    });
+    expect(await runtime.file(marker).exists()).toBe(false);
+    expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
+    expect(await runtime.file(join(destination, "README.md")).exists()).toBe(false);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "rejects an exact prunable registration backed by a dangling symlink",
+    async () => {
+      await writeWorkspaceConfig("custom-worktrees");
+      const branch = "feature/stale-symlink";
+      const destination = resolve(workspacePath, "custom-worktrees", "feature", "stale-symlink");
+      await mkdir(dirname(destination), { recursive: true });
+      await runGit(["worktree", "add", "-b", branch, destination, "main"], workspacePath);
+      await rm(destination, { recursive: true });
+      await symlink(join(testRoot, "missing-stale-target"), destination);
+      const marker = join(workspacePath, "pre-create-ran");
+      await writePreCreateMarker(marker);
+      const excludePath = join(workspacePath, ".git", "info", "exclude");
+      const excludeBefore = await readFile(excludePath, "utf8");
+
+      const result = await runCreateResult(branch, ["--conflict", "REUSE_EXISTING", "--json"]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        error: {
+          code: "WORKTREE_DESTINATION_COLLISION",
+          details: { conflict: { repositoryName: "workspace" } },
+        },
+        ok: false,
+      });
+      expect(await runtime.file(marker).exists()).toBe(false);
+      expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
+    },
+  );
+
   test("reuses an exact live Git registration for the target branch", async () => {
     await writeWorkspaceConfig("custom-worktrees");
     const branch = "feature/existing";

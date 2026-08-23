@@ -628,7 +628,7 @@ export interface CreateCommandDependencies {
   calculateWorktreePathPlan?: typeof calculateWorktreePathPlan;
   listRegisteredWorktreePaths?: (
     repositoryPath: string,
-  ) => Promise<readonly (string | { branch: string | null; path: string })[]>;
+  ) => Promise<readonly (string | { branch: string | null; path: string; prunable?: boolean })[]>;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
   reconcileManagedIgnore?: typeof reconcileRepositoryManagedIgnore;
   restoreManagedIgnore?: typeof restoreManagedIgnore;
@@ -1393,18 +1393,24 @@ export async function executeCreate(
     deps.listRegisteredWorktreePaths ??
     (async (
       repositoryPath: string,
-    ): Promise<readonly { branch: string | null; path: string }[]> => {
+    ): Promise<readonly { branch: string | null; path: string; prunable: boolean }[]> => {
       const registrations = await exec(["worktree", "list", "--porcelain"], repositoryPath);
-      const worktrees: { branch: string | null; path: string }[] = [];
-      let current: { branch: string | null; path: string } | null = null;
+      const worktrees: { branch: string | null; path: string; prunable: boolean }[] = [];
+      let current: { branch: string | null; path: string; prunable: boolean } | null = null;
       for (const line of registrations.stdout.split("\n")) {
         if (line.startsWith("worktree ")) {
           if (current) {
             worktrees.push(current);
           }
-          current = { branch: null, path: resolve(line.slice("worktree ".length)) };
+          current = {
+            branch: null,
+            path: resolve(line.slice("worktree ".length)),
+            prunable: false,
+          };
         } else if (current && line.startsWith("branch ")) {
           current.branch = line.slice("branch ".length);
+        } else if (current && line.startsWith("prunable")) {
+          current.prunable = true;
         }
       }
       if (current) {
@@ -1684,7 +1690,7 @@ export async function executeCreate(
       const registeredWorktrees = (await listRegisteredWorktreePaths(repository.path)).map(
         (registeredWorktree) =>
           typeof registeredWorktree === "string"
-            ? { branch: null, path: registeredWorktree }
+            ? { branch: null, path: registeredWorktree, prunable: false }
             : registeredWorktree,
       );
       let registration: (typeof registeredWorktrees)[number] | undefined = undefined;
@@ -1703,7 +1709,10 @@ export async function executeCreate(
           targetBranchRegisteredElsewhere = true;
         }
       }
-      const reusableRegistration = filesystemCollision && registration?.branch === targetBranchRef;
+      const reusableRegistration =
+        filesystemCollision &&
+        registration?.branch === targetBranchRef &&
+        registration.prunable !== true;
       if (reusableRegistration) {
         reusableWorktreePaths.add(normalizedDestination);
       }
