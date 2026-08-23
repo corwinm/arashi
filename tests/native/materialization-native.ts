@@ -12,7 +12,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import process from "node:process";
 
@@ -106,7 +106,7 @@ const writeConfig = async (
         },
         reposDir: "./repos",
         version: "1.0.0",
-        worktreesDir: ".arashi/worktrees",
+        worktreesDir: "native-worktrees",
       },
       null,
       2,
@@ -217,7 +217,7 @@ const main = async () => {
     const orderPath = join(workspace, ".arashi", "native-order.log");
     await writeHooks(workspace, orderPath);
 
-    const previewBranch = "native-materialization-preview";
+    const previewBranch = "native/materialization-preview";
     const preview = await run(
       binary,
       ["create", previewBranch, "--only", "app", "--dry-run", "--json"],
@@ -253,15 +253,10 @@ const main = async () => {
         ]),
       `unexpected dry-run plan: ${JSON.stringify(previewData.dryRunOutcome.materializationPlans)}`,
     );
-    const previewPath = join(
-      workspace,
-      ".arashi",
-      "worktrees",
-      `${basename(workspace)}-${previewBranch}`,
-    );
+    const previewPath = join(workspace, "native-worktrees", previewBranch);
     assert(!(await exists(previewPath)), "dry-run created a worktree");
 
-    const branch = "native-materialization-create";
+    const branch = "native/materialization-create";
     const created = await run(
       binary,
       ["create", branch, "--only", "app", "--no-progress", "--json"],
@@ -282,14 +277,7 @@ const main = async () => {
     assert(!created.stdout.includes("NATIVE-SECRET-CONTENT"), "JSON leaked copied file contents");
     assert(created.stderr === "", `JSON leaked human stderr: ${created.stderr}`);
 
-    const destination = join(
-      workspace,
-      ".arashi",
-      "worktrees",
-      `${basename(workspace)}-${branch}`,
-      "repos",
-      "app",
-    );
+    const destination = join(workspace, "native-worktrees", branch, "repos", "app");
     assert(
       (await readFile(join(destination, ".env.local"), "utf8")) === "NATIVE-SECRET-CONTENT\n",
       "copy missing",
@@ -355,14 +343,7 @@ const main = async () => {
     const aliasEnvelope = parseJson(alias);
     assert(aliasEnvelope.ok === false, "portable alias did not return a structured failure");
     assert(
-      !(await exists(
-        join(
-          workspace,
-          ".arashi",
-          "worktrees",
-          `${basename(workspace)}-native-materialization-alias`,
-        ),
-      )),
+      !(await exists(join(workspace, ".arashi", "worktrees", "native-materialization-alias"))),
       "alias failure mutated Git/filesystem",
     );
 

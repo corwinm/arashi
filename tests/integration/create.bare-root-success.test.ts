@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
 import { existsSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
-import { join } from "path";
+import { basename, join } from "path";
 
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
@@ -51,7 +51,12 @@ describe("create command from bare root", () => {
 
     expect(exitCode).toBe(0);
 
-    const expectedWorktreePath = join(workspace.bareRepoPath, ".arashi", "worktrees", branch);
+    const expectedWorktreePath = join(
+      workspace.bareRepoPath,
+      ".arashi",
+      "worktrees",
+      `${basename(workspace.bareRepoPath)}-${branch}`,
+    );
     expect(existsSync(expectedWorktreePath)).toBe(true);
   });
 
@@ -99,7 +104,7 @@ describe("create command from bare root", () => {
     ]);
 
     expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
-    const targetPath = join(workspace.rootPath, branch);
+    const targetPath = join(workspace.rootPath, `${basename(workspace.bareRepoPath)}-${branch}`);
     expect((await readFile(join(targetPath, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
       changedContent,
     );
@@ -144,7 +149,12 @@ describe("create command from bare root", () => {
     ]);
 
     expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
-    const worktreePath = join(workspace.bareRepoPath, ".arashi", "worktrees", branch);
+    const worktreePath = join(
+      workspace.bareRepoPath,
+      ".arashi",
+      "worktrees",
+      `${basename(workspace.bareRepoPath)}-${branch}`,
+    );
     expect(existsSync(worktreePath)).toBe(true);
     expect(existsSync(join(workspace.bareRepoPath, ".gitignore"))).toBe(false);
     expect(existsSync(join(worktreePath, ".gitignore"))).toBe(false);
@@ -184,7 +194,16 @@ describe("create command from bare root", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr).toContain("require an existing linked worktree");
-    expect(existsSync(join(workspace.bareRepoPath, ".arashi", "worktrees", branch))).toBe(false);
+    expect(
+      existsSync(
+        join(
+          workspace.bareRepoPath,
+          ".arashi",
+          "worktrees",
+          `${basename(workspace.bareRepoPath)}-${branch}`,
+        ),
+      ),
+    ).toBe(false);
   });
 
   test("creates the first worktree when the bare repository has no linked worktrees", async () => {
@@ -207,7 +226,16 @@ describe("create command from bare root", () => {
       throw new Error(`create failed (exit=${exitCode})\nstdout:\n${stdout}\nstderr:\n${stderr}`);
     }
 
-    expect(existsSync(join(workspace.bareRepoPath, ".arashi", "worktrees", branch))).toBe(true);
+    expect(
+      existsSync(
+        join(
+          workspace.bareRepoPath,
+          ".arashi",
+          "worktrees",
+          `${basename(workspace.bareRepoPath)}-${branch}`,
+        ),
+      ),
+    ).toBe(true);
     const localExclude = await readFile(join(workspace.bareRepoPath, "info", "exclude"), "utf8");
     expect(localExclude).toContain("/.arashi/worktrees/");
   });

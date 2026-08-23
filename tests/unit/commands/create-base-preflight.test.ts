@@ -59,6 +59,17 @@ function dependencies(
 ): CreateCommandDependencies {
   return {
     applyRepositoryFilter: async (_filter, selected) => selected,
+    calculateWorktreePathPlan: async (selected) =>
+      new Map(
+        selected.map((repository) => [
+          repository,
+          {
+            path: `/worktrees/${repository.path.replaceAll("/", "-")}`,
+            repositoryType: "meta-repo" as const,
+            strategy: "sibling" as const,
+          },
+        ]),
+      ),
     createCoordinatedWorktrees: async (branchName, selected) => ({
       errorSummary: null,
       failureCount: 0,
@@ -93,6 +104,7 @@ function dependencies(
       workspacePath: "/workspace/repos",
     }),
     isGitRepository: async () => false,
+    listRegisteredWorktreePaths: async () => [],
     loadConfigWithFallback: async () => loadedConfig(),
     reconcileManagedIgnore: async () => ({
       appliedRules: [],

@@ -537,6 +537,7 @@ describe("create base output contracts", () => {
         "branchName",
         "dirtyWorkspaceGuidance",
         "dryRun",
+        "dryRunOutcome",
         "errorSummary",
         "failureCount",
         "hookOutcomes",

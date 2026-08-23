@@ -20,6 +20,7 @@ import {
   UserAbortedError,
   applyRepositoryFilter,
   calculateWorktreePath,
+  calculateWorktreePathPlan,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
@@ -175,7 +176,23 @@ const describeConflictScope = (existsLocally: boolean, existsRemotely: boolean):
 const formatDurationSeconds = (durationMs: number): string =>
   `${(durationMs / MILLISECONDS_PER_SECOND).toFixed(TWO)}s`;
 
+class WorktreeDestinationCollisionError extends Error {
+  readonly code = "WORKTREE_DESTINATION_COLLISION";
+  readonly details: {
+    conflict: { repositoryName: string; worktreePath: string };
+  };
+
+  constructor(repositoryName: string, worktreePath: string) {
+    super(`Worktree path already exists: ${worktreePath} (${repositoryName})`);
+    this.name = "WorktreeDestinationCollisionError";
+    this.details = { conflict: { repositoryName, worktreePath } };
+  }
+}
+
 const createCommandErrorCode = (createError: unknown): string => {
+  if (createError instanceof WorktreeDestinationCollisionError) {
+    return createError.code;
+  }
   if (createError instanceof BaseBranchPolicyError) {
     return createError.code;
   }
@@ -214,6 +231,9 @@ const createCommandErrorCode = (createError: unknown): string => {
 };
 
 const createCommandErrorDetails = (createError: unknown): Record<string, unknown> | undefined => {
+  if (createError instanceof WorktreeDestinationCollisionError) {
+    return createError.details;
+  }
   if (createError instanceof BaseBranchPolicyError) {
     return { issues: createError.issues };
   }
@@ -328,9 +348,27 @@ const createSummaryJsonData = async ({
     ...(createBasePlan ? { base: await createBaseJsonData(createBasePlan, summary) } : {}),
     dirtyWorkspaceGuidance,
     dryRun: summary.isDryRun === true,
-    ...(hasMaterialization && summary.dryRunOutcome
+    ...(summary.dryRunOutcome
       ? {
-          dryRunOutcome: { materializationPlans: summary.dryRunOutcome.materializationPlans ?? [] },
+          dryRunOutcome: {
+            conflicts: summary.dryRunOutcome.conflicts.map((conflict) => ({
+              blocking: conflict.blocking,
+              conflictType: conflict.conflictType,
+              message: conflict.message,
+              repositoryName: conflict.repositoryName,
+              scope: conflict.scope,
+            })),
+            ...(hasMaterialization
+              ? { materializationPlans: summary.dryRunOutcome.materializationPlans ?? [] }
+              : {}),
+            plannedWorktrees: summary.dryRunOutcome.plannedWorktrees.map((planned) => ({
+              branchName: planned.branchName,
+              planStatus: planned.planStatus,
+              repositoryName: planned.repositoryName,
+              worktreePath: planned.worktreePath,
+            })),
+            summaryCounts: summary.dryRunOutcome.summaryCounts,
+          },
         }
       : {}),
     errorSummary: summary.errorSummary,
@@ -574,9 +612,13 @@ export interface CreateCommandDependencies {
     reuseExisting: boolean;
     workspaceRoot: string;
   }) => Promise<readonly RepositoryMaterializationPlan[]>;
+  calculateWorktreePathPlan?: typeof calculateWorktreePathPlan;
+  branchExistsLocally?: (repositoryPath: string, branchName: string) => Promise<boolean>;
+  listRegisteredWorktreePaths?: (repositoryPath: string) => Promise<readonly string[]>;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
   reconcileManagedIgnore?: typeof reconcileRepositoryManagedIgnore;
   restoreManagedIgnore?: typeof restoreManagedIgnore;
+  destinationPathExists?: (path: string) => boolean;
   pathExists?: (path: string) => boolean;
   launchSwitchTarget?: (
     candidate: SwitchCandidate,
@@ -1332,9 +1374,30 @@ export async function executeCreate(
     });
   const filterRepositories = deps.applyRepositoryFilter ?? applyRepositoryFilter;
   const resolveBasePlan = deps.resolveCreateBasePlan ?? resolveCreateBasePlan;
+  const resolveWorktreePathPlan = deps.calculateWorktreePathPlan ?? calculateWorktreePathPlan;
+  const branchExistsLocally =
+    deps.branchExistsLocally ??
+    (async (repositoryPath: string, targetBranch: string): Promise<boolean> => {
+      try {
+        await exec(["show-ref", "--verify", `refs/heads/${targetBranch}`], repositoryPath);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  const listRegisteredWorktreePaths =
+    deps.listRegisteredWorktreePaths ??
+    (async (repositoryPath: string): Promise<readonly string[]> => {
+      const registrations = await exec(["worktree", "list", "--porcelain"], repositoryPath);
+      return registrations.stdout
+        .split("\n")
+        .filter((line) => line.startsWith("worktree "))
+        .map((line) => resolve(line.slice("worktree ".length)));
+    });
   const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
   const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileRepositoryManagedIgnore;
   const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
+  const destinationPathExists = deps.destinationPathExists ?? existsSync;
   const pathExists = deps.pathExists ?? existsSync;
 
   // 1. Resolve invocation context and load configuration
@@ -1582,6 +1645,27 @@ export async function executeCreate(
       }
     : undefined;
 
+  const worktreePathPlan = await resolveWorktreePathPlan(selectedRepos, branchName, arashiConfig);
+  if (!options.dryRun) {
+    const plannedDestinations = new Set<string>();
+    for (const [repository, plannedPath] of worktreePathPlan) {
+      const normalizedDestination = resolve(plannedPath.path);
+      const duplicatePlan = plannedDestinations.has(normalizedDestination);
+      const filesystemCollision = destinationPathExists(normalizedDestination);
+      plannedDestinations.add(normalizedDestination);
+
+      const registrationCollision = (await listRegisteredWorktreePaths(repository.path))
+        .map((registeredPath) => resolve(registeredPath))
+        .includes(normalizedDestination);
+      if (
+        (duplicatePlan || filesystemCollision || registrationCollision) &&
+        !(await branchExistsLocally(repository.path, branchName))
+      ) {
+        throw new WorktreeDestinationCollisionError(repository.name, plannedPath.path);
+      }
+    }
+  }
+
   const materializationPlans = await (
     deps.preflightMaterialization ?? preflightConfiguredMaterialization
   )({
@@ -1629,6 +1713,7 @@ export async function executeCreate(
     materializationPlans,
     resolvedConfig: arashiConfig,
     showProgress: options.json ? false : progressEnabled,
+    worktreePathPlan,
     workspaceRoot: context.workspaceRoot,
   };
 

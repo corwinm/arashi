@@ -70,6 +70,17 @@ describe("configured create materialization precedence RED", () => {
 
     const dependencies = {
       applyRepositoryFilter: async (_filter: unknown, selected: Repository[]) => selected,
+      calculateWorktreePathPlan: async (selected: Repository[]) =>
+        new Map(
+          selected.map((selectedRepository) => [
+            selectedRepository,
+            {
+              path: join(workspaceRoot, "worktrees", selectedRepository.name),
+              repositoryType: "meta-repo" as const,
+              strategy: "sibling" as const,
+            },
+          ]),
+        ),
       createCoordinatedWorktrees: async () => {
         events.push("create");
         return {
@@ -95,6 +106,7 @@ describe("configured create materialization precedence RED", () => {
         workspacePath: join(workspaceRoot, "repos"),
       }),
       isGitRepository: async () => false,
+      listRegisteredWorktreePaths: async () => [],
       loadConfigWithFallback: async () => loaded,
       preflightMaterialization: async (input: { reuseExisting: boolean }) => {
         expect(input.reuseExisting).toBe(true);

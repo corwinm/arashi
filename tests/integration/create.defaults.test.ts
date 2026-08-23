@@ -60,6 +60,17 @@ function createSummary(worktreePath = `${workspaceRoot}/${branchName}`): Operati
 function baseDeps(overrides: Partial<CreateCommandDependencies> = {}): CreateCommandDependencies {
   return {
     applyRepositoryFilter: async (_filter, repositories) => repositories,
+    calculateWorktreePathPlan: async (repositories) =>
+      new Map(
+        repositories.map((repository) => [
+          repository,
+          {
+            path: `${workspaceRoot}/${repository.name}/${branchName}`,
+            repositoryType: "meta-repo" as const,
+            strategy: "sibling" as const,
+          },
+        ]),
+      ),
     createCoordinatedWorktrees: async () => createSummary(),
     discoverRepositories: async () => ({
       duration: 1,
@@ -70,6 +81,7 @@ function baseDeps(overrides: Partial<CreateCommandDependencies> = {}): CreateCom
       workspacePath: `${workspaceRoot}/repos`,
     }),
     isGitRepository: async () => true,
+    listRegisteredWorktreePaths: async () => [],
     loadConfigWithFallback: async () => createLoadedConfig(),
     reconcileManagedIgnore: async () => ({
       appliedRules: [],
@@ -188,6 +200,39 @@ describe("create defaults integration", () => {
     ).resolves.toBe(0);
     expect(reconciled).toBe(true);
     expect(created).toBe(true);
+  });
+
+  test("rejects a destination collision before managed-ignore or create mutation", async () => {
+    const events: string[] = [];
+    await expect(
+      executeCreate(
+        branchName,
+        {},
+        baseDeps({
+          calculateWorktreePathPlan: async (repositories) =>
+            new Map(
+              repositories.map((repository) => [
+                repository,
+                {
+                  path: `${workspaceRoot}/${repository.name}/${branchName}`,
+                  repositoryType: "meta-repo" as const,
+                  strategy: "sibling" as const,
+                },
+              ]),
+            ),
+          createCoordinatedWorktrees: async (...args) => {
+            events.push("create");
+            return baseDeps().createCoordinatedWorktrees!(...args);
+          },
+          destinationPathExists: () => true,
+          reconcileManagedIgnore: async (...args) => {
+            events.push("managed-ignore");
+            return baseDeps().reconcileManagedIgnore!(...args);
+          },
+        } as Partial<CreateCommandDependencies>),
+      ),
+    ).rejects.toThrow(/Worktree path already exists/);
+    expect(events).toEqual([]);
   });
 
   test("preflights a knowably unsupported tab before managed ignore or creation", async () => {

@@ -1,11 +1,12 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { basename, dirname, join, resolve } from "path";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { dirname, join, resolve } from "path";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 
 const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
 
+let testRoot = "";
 let workspacePath = "";
 
 async function runGit(args: string[], cwd: string): Promise<void> {
@@ -68,9 +69,28 @@ async function runCreate(branch: string): Promise<void> {
   }
 }
 
+async function runCreateResult(
+  branch: string,
+  extraArgs: string[] = [],
+): Promise<{
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+}> {
+  const proc = runtime.spawn(
+    [process.execPath, CLI_ENTRY, "create", branch, "--no-progress", ...extraArgs],
+    { cwd: workspacePath, stderr: "pipe", stdout: "pipe" },
+  );
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  return { exitCode: await proc.exited, stderr, stdout };
+}
+
 describe("create command worktree location resolution", () => {
   beforeEach(async () => {
-    workspacePath = await mkdtemp(join(tmpdir(), "arashi-worktree-location-"));
+    testRoot = await mkdtemp(join(tmpdir(), "arashi-worktree-location-"));
+    workspacePath = join(testRoot, "workspace");
+    await mkdir(workspacePath);
 
     await runGit(["init", "-b", "main"], workspacePath);
     await runGit(["config", "user.name", "Test User"], workspacePath);
@@ -82,38 +102,31 @@ describe("create command worktree location resolution", () => {
   });
 
   afterEach(async () => {
-    if (workspacePath.length > 0) {
-      await rm(workspacePath, { force: true, recursive: true });
+    if (testRoot.length > 0) {
+      await rm(testRoot, { force: true, recursive: true });
     }
   });
 
   test("resolves ../, ., ./, .arashi/worktrees, and trailing slash variants", async () => {
-    const repoName = basename(workspacePath);
-
     await writeWorkspaceConfig("../");
     await runCreate("feature-parent");
-    const parentPath = resolve(workspacePath, "..", `${repoName}-feature-parent`);
+    const parentPath = resolve(workspacePath, "..", "feature-parent");
     expect(await runtime.file(join(parentPath, "README.md")).exists()).toBe(true);
 
     await writeWorkspaceConfig(".");
     await runCreate("feature-dot");
-    const dotPath = resolve(workspacePath, `${repoName}-feature-dot`);
+    const dotPath = resolve(workspacePath, "feature-dot");
     expect(await runtime.file(join(dotPath, "README.md")).exists()).toBe(true);
 
     await writeWorkspaceConfig("./");
     await runCreate("feature-dot-slash");
-    const dotSlashPath = resolve(workspacePath, `${repoName}-feature-dot-slash`);
+    const dotSlashPath = resolve(workspacePath, "feature-dot-slash");
     expect(await runtime.file(join(dotSlashPath, "README.md")).exists()).toBe(true);
     expect(dirname(dotPath)).toBe(dirname(dotSlashPath));
 
     await writeWorkspaceConfig(".arashi/worktrees");
     await runCreate("feature-managed");
-    const managedPath = resolve(
-      workspacePath,
-      ".arashi",
-      "worktrees",
-      `${repoName}-feature-managed`,
-    );
+    const managedPath = resolve(workspacePath, ".arashi", "worktrees", "feature-managed");
     expect(await runtime.file(join(managedPath, "README.md")).exists()).toBe(true);
 
     await writeWorkspaceConfig(".arashi/worktrees/");
@@ -122,9 +135,101 @@ describe("create command worktree location resolution", () => {
       workspacePath,
       ".arashi",
       "worktrees",
-      `${repoName}-feature-managed-slash`,
+      "feature-managed-slash",
     );
     expect(await runtime.file(join(managedSlashPath, "README.md")).exists()).toBe(true);
     expect(dirname(managedPath)).toBe(dirname(managedSlashPath));
   }, 20_000);
+
+  test("rejects a destination collision before branch or hook mutation", async () => {
+    await writeWorkspaceConfig("custom-worktrees");
+    const branch = "feature/collision";
+    const destination = resolve(workspacePath, "custom-worktrees", "feature", "collision");
+    await mkdir(destination, { recursive: true });
+    const marker = join(workspacePath, "pre-create-ran");
+    const hooksDir = join(workspacePath, ".arashi", "hooks");
+    await mkdir(hooksDir, { recursive: true });
+    await writeFile(join(hooksDir, "pre-create"), `#!/bin/sh\ntouch '${marker}'\n`, {
+      mode: 0o755,
+    });
+    const excludePath = join(workspacePath, ".git", "info", "exclude");
+    const excludeBefore = await readFile(excludePath, "utf8");
+
+    const result = await runCreateResult(branch);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("Worktree path already exists:");
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      join("custom-worktrees", "feature", "collision"),
+    );
+    expect(await runtime.file(marker).exists()).toBe(false);
+    expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
+    const branchProbe = runtime.spawn(["git", "show-ref", "--verify", `refs/heads/${branch}`], {
+      cwd: workspacePath,
+      stderr: "ignore",
+      stdout: "ignore",
+    });
+    expect(await branchProbe.exited).not.toBe(0);
+  });
+
+  test("reports the authoritative colliding destination in one JSON failure envelope", async () => {
+    await writeWorkspaceConfig("custom-worktrees");
+    const branch = "feature/json-collision";
+    const destination = resolve(
+      await realpath(workspacePath),
+      "custom-worktrees",
+      "feature",
+      "json-collision",
+    );
+    await mkdir(destination, { recursive: true });
+
+    const result = await runCreateResult(branch, ["--json"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      command: "create",
+      error: {
+        code: "WORKTREE_DESTINATION_COLLISION",
+        details: {
+          conflict: {
+            repositoryName: "workspace",
+            worktreePath: destination,
+          },
+        },
+      },
+      ok: false,
+    });
+  });
+
+  test("reports the authoritative parent destination in dry-run JSON", async () => {
+    await writeWorkspaceConfig("custom-worktrees");
+    const branch = "feature/json-preview";
+    const destination = resolve(
+      await realpath(workspacePath),
+      "custom-worktrees",
+      "feature",
+      "json-preview",
+    );
+
+    const result = await runCreateResult(branch, ["--dry-run", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: {
+        dryRunOutcome: {
+          plannedWorktrees: [
+            {
+              branchName: branch,
+              repositoryName: "workspace",
+              worktreePath: destination,
+            },
+          ],
+        },
+      },
+      ok: true,
+    });
+    expect(await runtime.file(destination).exists()).toBe(false);
+  });
 });

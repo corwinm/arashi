@@ -54,7 +54,7 @@ describe("calculateWorktreePath integration", () => {
     await rm(testDir, { force: true, recursive: true });
   });
 
-  test("calculates sibling path with repo name prefix for non-bare meta-repo", async () => {
+  test("uses the branch-only path for a configured non-bare meta-repo", async () => {
     const metaRepoPath = join(testDir, "my-project");
     await createGitRepo(metaRepoPath, false);
     await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
@@ -73,12 +73,12 @@ describe("calculateWorktreePath integration", () => {
 
     const result = await calculateWorktreePath(repo, "feature-123", config);
 
-    expect(result.path).toBe(join(metaRepoPath, ".arashi", "worktrees", "my-project-feature-123"));
+    expect(result.path).toBe(join(metaRepoPath, ".arashi", "worktrees", "feature-123"));
     expect(result.repositoryType).toBe("meta-repo");
     expect(result.strategy).toBe("sibling");
   });
 
-  test("uses branch name only for bare repositories", async () => {
+  test("prefixes configured bare worktrees with the canonical worktree name", async () => {
     const bareRepoPath = join(testDir, "my-project.git");
     await createGitRepo(bareRepoPath, true);
     await mkdir(join(bareRepoPath, ".arashi"), { recursive: true });
@@ -90,18 +90,19 @@ describe("calculateWorktreePath integration", () => {
     const repo: Repository = {
       defaultBranch: "main",
       hasSetupScript: false,
-      name: "my-project.git",
+      name: "configured-project",
       path: bareRepoPath,
+      worktreeName: "my-project",
     };
     const config: ArashiConfig = { repos: {}, reposDir: "./repos", version: "1.0.0" };
 
     const result = await calculateWorktreePath(repo, "feature-123", config);
 
-    expect(result.path).toBe(join(bareRepoPath, ".arashi", "worktrees", "feature-123"));
+    expect(result.path).toBe(join(bareRepoPath, ".arashi", "worktrees", "my-project-feature-123"));
     expect(result.strategy).toBe("sibling");
   });
 
-  test("nests child repos inside non-bare parent worktrees", async () => {
+  test("nests child repos inside the branch-only non-bare parent destination", async () => {
     const metaRepoPath = join(testDir, "parent-repo");
     await createGitRepo(metaRepoPath, false);
     await mkdir(join(metaRepoPath, ".arashi"), { recursive: true });
@@ -124,13 +125,13 @@ describe("calculateWorktreePath integration", () => {
     const result = await calculateWorktreePath(childRepo, "feature-123", config);
 
     expect(result.path).toBe(
-      join(metaRepoPath, ".arashi", "worktrees", "parent-repo-feature-123", "repos", "child-repo"),
+      join(metaRepoPath, ".arashi", "worktrees", "feature-123", "repos", "child-repo"),
     );
     expect(result.repositoryType).toBe("child");
     expect(result.strategy).toBe("nested");
   });
 
-  test("nests child repos inside bare parent worktrees with branch-only parent names", async () => {
+  test("nests child repos inside the repository-prefixed bare parent destination", async () => {
     const bareMetaRepoPath = join(testDir, "parent.git");
     await createGitRepo(bareMetaRepoPath, true);
     await mkdir(join(bareMetaRepoPath, ".arashi"), { recursive: true });
@@ -153,10 +154,78 @@ describe("calculateWorktreePath integration", () => {
     const result = await calculateWorktreePath(childRepo, "feature-123", config);
 
     expect(result.path).toBe(
-      join(bareMetaRepoPath, ".arashi", "worktrees", "feature-123", "repos", "child-repo"),
+      join(
+        bareMetaRepoPath,
+        ".arashi",
+        "worktrees",
+        "parent.git-feature-123",
+        "repos",
+        "child-repo",
+      ),
     );
     expect(result.parentWorktreePath).toBe(
-      join(bareMetaRepoPath, ".arashi", "worktrees", "feature-123"),
+      join(bareMetaRepoPath, ".arashi", "worktrees", "parent.git-feature-123"),
     );
+  });
+
+  test("preserves slash branches beneath a custom configured worktree root", async () => {
+    const bareRepoPath = join(testDir, "canonical.git");
+    await createGitRepo(bareRepoPath, true);
+    const repo: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "configured-name",
+      path: bareRepoPath,
+      worktreeName: "canonical",
+    };
+    const config: ArashiConfig = {
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+      worktreesDir: "../custom-worktrees",
+    };
+
+    const result = await calculateWorktreePath(repo, "feature/auth", config, {
+      reason: "configured parent",
+      type: "meta-repo",
+    });
+
+    expect(result.path).toBe(join(testDir, "custom-worktrees", "canonical-feature", "auth"));
+  });
+
+  test("uses the authoritative parent destination instead of deriving a second parent name", async () => {
+    const bareMetaRepoPath = join(testDir, "filesystem-name.git");
+    await createGitRepo(bareMetaRepoPath, true);
+    const childRepoPath = join(bareMetaRepoPath, "repos", "child-checkout");
+    await createGitRepo(childRepoPath, false);
+    const authoritativeParentWorktreePath = join(
+      bareMetaRepoPath,
+      ".arashi",
+      "worktrees",
+      "canonical-parent-feature",
+      "auth",
+    );
+
+    const result = await calculateWorktreePath({
+      authoritativeParentWorktreePath,
+      branchName: "feature/auth",
+      config: { repos: {}, reposDir: "./repos", version: "1.0.0" },
+      knownType: {
+        parentName: "filesystem-name.git",
+        reason: "configured child",
+        reposDir: "repos",
+        type: "child",
+      },
+      repo: {
+        defaultBranch: "main",
+        hasSetupScript: false,
+        name: "configured-child",
+        path: childRepoPath,
+        worktreeName: "child-checkout",
+      },
+    });
+
+    expect(result.parentWorktreePath).toBe(authoritativeParentWorktreePath);
+    expect(result.path).toBe(join(authoritativeParentWorktreePath, "repos", "child-checkout"));
   });
 });
