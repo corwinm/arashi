@@ -281,6 +281,69 @@ describe("create defaults integration", () => {
     ).rejects.toMatchObject({ details: { conflict: { repositoryName: "workspace" } } });
   });
 
+  test.each([
+    ["human", { dryRun: true }],
+    ["JSON", { dryRun: true, json: true }],
+  ])(
+    "rejects duplicate absent planned destinations in %s dry-run before mutation",
+    async (_mode, options) => {
+      const selected = [
+        {
+          defaultBranch: "main",
+          hasSetupScript: false,
+          name: "workspace",
+          path: workspaceRoot,
+        },
+        {
+          defaultBranch: "main",
+          hasSetupScript: false,
+          name: "child",
+          path: `${workspaceRoot}/repos/child`,
+        },
+      ];
+      const events: string[] = [];
+      const duplicateDestination = `${workspaceRoot}/shared/${branchName}`;
+
+      await expect(
+        executeCreate(
+          branchName,
+          options,
+          baseDeps({
+            calculateWorktreePathPlan: async (repositories) =>
+              new Map(
+                repositories.map((repository) => [
+                  repository,
+                  {
+                    path: duplicateDestination,
+                    repositoryType: "meta-repo" as const,
+                    strategy: "sibling" as const,
+                  },
+                ]),
+              ),
+            createCoordinatedWorktrees: async (...args) => {
+              events.push("create");
+              return baseDeps().createCoordinatedWorktrees!(...args);
+            },
+            discoverRepositories: async () => ({
+              duration: 1,
+              errors: [],
+              repositories: selected,
+              scanDepth: 1,
+              scannedDirectories: 2,
+              workspacePath: `${workspaceRoot}/repos`,
+            }),
+            isGitRepository: async () => false,
+            reconcileManagedIgnore: async (...args) => {
+              events.push("managed-ignore");
+              return baseDeps().reconcileManagedIgnore!(...args);
+            },
+          }),
+        ),
+      ).rejects.toMatchObject({ details: { conflict: { repositoryName: "child" } } });
+      expect(events).toEqual([]);
+    },
+  );
+
   test("preflights a knowably unsupported tab before managed ignore or creation", async () => {
     let reconciled = false;
     let created = false;

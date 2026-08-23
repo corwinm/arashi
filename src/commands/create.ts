@@ -1699,14 +1699,20 @@ export async function executeCreate(
     }),
   );
   const reusableWorktreePaths = new Set<string>();
+  const plannedDestinations = new Set<string>();
+  for (const [repository, plannedPath] of worktreePathPlan) {
+    const normalizedDestination = resolve(plannedPath.path);
+    if (plannedDestinations.has(normalizedDestination)) {
+      throw new WorktreeDestinationCollisionError(repository.name, plannedPath.path);
+    }
+    plannedDestinations.add(normalizedDestination);
+  }
+
   const discoverReusableRegistrations = !options.dryRun || options.conflict === "REUSE_EXISTING";
   if (discoverReusableRegistrations) {
-    const plannedDestinations = new Set<string>();
     for (const [repository, plannedPath] of worktreePathPlan) {
       const normalizedDestination = resolve(plannedPath.path);
-      const duplicatePlan = plannedDestinations.has(normalizedDestination);
       const filesystemCollision = destinationPathExists(normalizedDestination);
-      plannedDestinations.add(normalizedDestination);
 
       let canonicalDestination = normalizedDestination;
       if (filesystemCollision) {
@@ -1746,7 +1752,6 @@ export async function executeCreate(
         reusableWorktreePaths.add(normalizedDestination);
       }
       if (
-        duplicatePlan ||
         targetBranchRegisteredElsewhere ||
         (filesystemCollision && !reusableRegistration) ||
         (registration !== undefined && !reusableRegistration)
