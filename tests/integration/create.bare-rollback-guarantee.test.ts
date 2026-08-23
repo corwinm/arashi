@@ -1,7 +1,7 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import { createBareCreateWorkspace } from "../helpers/create-bare-create-workspace.ts";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
 import { mkdir } from "node:fs/promises";
 type BareCreateWorkspace = Awaited<ReturnType<typeof createBareCreateWorkspace>>;
 
@@ -26,9 +26,10 @@ describe("create rollback guarantees in bare context", () => {
       workspace.bareRepoPath,
       ".arashi",
       "worktrees",
-      `${basename(workspace.bareRepoPath)}-${branch}`,
+      basename(workspace.bareRepoPath, ".git"),
+      branch,
     );
-    await mkdir(join(workspace.bareRepoPath, ".arashi", "worktrees"), { recursive: true });
+    await mkdir(dirname(blockedPath), { recursive: true });
     await runtime.write(blockedPath, "block worktree path");
 
     const proc = runtime.spawn(

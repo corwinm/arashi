@@ -513,7 +513,8 @@ describe("init output and persisted create placement", () => {
     expect(create.exitCode, `${create.stdout}\n${create.stderr}`).toBe(0);
     const expected = join(
       dirname(fixture.bareRoot),
-      `${basename(fixture.bareRoot)}-feature`,
+      basename(fixture.bareRoot, ".git"),
+      "feature",
       "example",
     );
     expect(existsSync(expected)).toBe(true);
@@ -542,7 +543,12 @@ describe("init output and persisted create placement", () => {
     expect(followUp.exitCode, `${followUp.stdout}\n${followUp.stderr}`).toBe(0);
     expect(
       existsSync(
-        join(dirname(fixture.bareRoot), `${basename(fixture.bareRoot)}-feature`, "from-linked"),
+        join(
+          dirname(fixture.bareRoot),
+          basename(fixture.bareRoot, ".git"),
+          "feature",
+          "from-linked",
+        ),
       ),
     ).toBe(true);
   });
@@ -571,7 +577,7 @@ describe("init output and persisted create placement", () => {
     ]);
     expect(create.exitCode, `${create.stdout}\n${create.stderr}`).toBe(0);
     expect(
-      existsSync(join(explicitBase, `${basename(fixture.bareRoot)}-feature`, "explicit")),
+      existsSync(join(explicitBase, basename(fixture.bareRoot, ".git"), "feature", "explicit")),
     ).toBe(true);
   });
 

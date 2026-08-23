@@ -1142,6 +1142,11 @@ export const calculateChildWorktreePath = (
   reposDir: string,
 ): string => join(repo.path, "..", "..", "..", parentWorktreeName, reposDir, repo.name);
 
+const fallbackBareWorktreeNamespace = (repositoryName: string): string => {
+  const withoutGitSuffix = repositoryName.replace(/\.git$/i, "");
+  return withoutGitSuffix || repositoryName;
+};
+
 /**
  * Calculate destination path for a new worktree based on repository type
  * Feature: 001-nested-worktree-paths (T010)
@@ -1204,11 +1209,12 @@ export const calculateWorktreePath = async (
     // Check if parent is bare to determine worktree naming
     const parentIsBare = await isBareRepo(parentRepoPath);
 
-    // Bare parent: Combine the canonical parent name + branch
+    // Bare parent: Namespace the branch beneath the canonical parent name
     // Non-bare parent: Use the branch name only
     let parentWorktreeName = branchName;
     if (parentIsBare) {
-      parentWorktreeName = `${typeInfo.parentName}-${branchName}`;
+      const parentNamespace = fallbackBareWorktreeNamespace(typeInfo.parentName);
+      parentWorktreeName = join(parentNamespace, branchName);
     }
 
     const parentWorktreePath =
@@ -1230,11 +1236,12 @@ export const calculateWorktreePath = async (
   // Check if repository is bare to determine naming convention
   const isBare = await isBareRepo(repo.path);
 
-  // Bare repos: Combine the canonical worktree name + branch (e.g., 'my-repo-feature-branch/')
+  // Bare repos: Namespace the branch beneath the canonical worktree name
   // Non-bare repos: Use the branch name only (e.g., 'feature-branch/')
   let worktreeName = branchName;
   if (isBare) {
-    worktreeName = `${repo.worktreeName ?? repo.name}-${branchName}`;
+    const repositoryNamespace = repo.worktreeName ?? fallbackBareWorktreeNamespace(repo.name);
+    worktreeName = join(repositoryNamespace, branchName);
   }
   const worktreePath = join(worktreeBasePath, worktreeName);
 

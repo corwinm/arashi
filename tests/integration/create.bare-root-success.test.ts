@@ -55,7 +55,8 @@ describe("create command from bare root", () => {
       workspace.bareRepoPath,
       ".arashi",
       "worktrees",
-      `${basename(workspace.bareRepoPath)}-${branch}`,
+      basename(workspace.bareRepoPath, ".git"),
+      branch,
     );
     expect(existsSync(expectedWorktreePath)).toBe(true);
   });
@@ -104,7 +105,7 @@ describe("create command from bare root", () => {
     ]);
 
     expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
-    const targetPath = join(workspace.rootPath, `${basename(workspace.bareRepoPath)}-${branch}`);
+    const targetPath = join(workspace.rootPath, basename(workspace.bareRepoPath, ".git"), branch);
     expect((await readFile(join(targetPath, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
       changedContent,
     );
@@ -153,7 +154,8 @@ describe("create command from bare root", () => {
       workspace.bareRepoPath,
       ".arashi",
       "worktrees",
-      `${basename(workspace.bareRepoPath)}-${branch}`,
+      basename(workspace.bareRepoPath, ".git"),
+      branch,
     );
     expect(existsSync(worktreePath)).toBe(true);
     expect(existsSync(join(workspace.bareRepoPath, ".gitignore"))).toBe(false);
@@ -200,7 +202,8 @@ describe("create command from bare root", () => {
           workspace.bareRepoPath,
           ".arashi",
           "worktrees",
-          `${basename(workspace.bareRepoPath)}-${branch}`,
+          basename(workspace.bareRepoPath, ".git"),
+          branch,
         ),
       ),
     ).toBe(false);
@@ -232,7 +235,8 @@ describe("create command from bare root", () => {
           workspace.bareRepoPath,
           ".arashi",
           "worktrees",
-          `${basename(workspace.bareRepoPath)}-${branch}`,
+          basename(workspace.bareRepoPath, ".git"),
+          branch,
         ),
       ),
     ).toBe(true);

@@ -347,6 +347,45 @@ const main = async () => {
       "alias failure mutated Git/filesystem",
     );
 
+    const bareSeed = join(root, "bare-seed");
+    const bareSource = join(root, "example.git");
+    await initRepository(bareSeed, "bare source");
+    await mkdir(join(bareSeed, ".arashi"), { recursive: true });
+    await writeFile(
+      join(bareSeed, ".arashi", "config.json"),
+      `${JSON.stringify(
+        { repos: {}, reposDir: "./repos", version: "1.0.0", worktreesDir: ".." },
+        null,
+        2,
+      )}\n`,
+    );
+    await git(bareSeed, "add", ".arashi/config.json");
+    await git(bareSeed, "commit", "-m", "Configure bare worktree namespace");
+    await git(root, "clone", "--bare", bareSeed, bareSource);
+    const bareBranch = "native/bare-layout";
+    const bareCreate = await run(
+      binary,
+      ["create", bareBranch, "--no-hooks", "--no-progress", "--no-launch", "--no-switch", "--json"],
+      { cwd: bareSource, env: environment },
+    );
+    assert(
+      bareCreate.code === 0,
+      `configured bare create failed:\n${bareCreate.stdout}\n${bareCreate.stderr}`,
+    );
+    const bareEnvelope = parseJson(bareCreate);
+    const bareData = bareEnvelope.data as { repositories: { worktreePath: string }[] };
+    const bareDestination = join(root, "example", "native", "bare-layout");
+    const canonicalBareDestination = await realpath(bareDestination);
+    assert(
+      resolve(bareData.repositories[0]?.worktreePath ?? "") === canonicalBareDestination,
+      `bare JSON reported the wrong destination: ${JSON.stringify(bareData.repositories)}`,
+    );
+    assert(await exists(join(bareDestination, "README.md")), "bare namespace checkout missing");
+    assert(
+      !(await exists(join(bareSource, "native", "bare-layout", "README.md"))),
+      "bare checkout was placed inside Git storage",
+    );
+
     process.stdout.write(`native materialization RED acceptance passed on ${process.platform}\n`);
   } finally {
     await rm(root, { force: true, recursive: true });
