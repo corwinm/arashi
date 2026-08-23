@@ -24,7 +24,7 @@ import {
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
@@ -125,6 +125,19 @@ interface ApplyPostCreateDefaultsOptions {
 }
 
 const ZERO = 0;
+
+const destinationEntryExists = (path: string): boolean => {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return false;
+    }
+    throw error;
+  }
+};
 const ONE = 1;
 const TWO = 2;
 const ERROR_EXIT_CODE = 1;
@@ -1402,7 +1415,7 @@ export async function executeCreate(
   const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
   const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileRepositoryManagedIgnore;
   const restoreIgnore = deps.restoreManagedIgnore ?? restoreManagedIgnore;
-  const destinationPathExists = deps.destinationPathExists ?? existsSync;
+  const destinationPathExists = deps.destinationPathExists ?? destinationEntryExists;
   const pathExists = deps.pathExists ?? existsSync;
 
   // 1. Resolve invocation context and load configuration

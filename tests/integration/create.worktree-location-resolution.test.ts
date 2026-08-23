@@ -1,7 +1,7 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { dirname, join, relative, resolve } from "path";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 
 const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
@@ -39,6 +39,19 @@ async function writeWorkspaceConfig(worktreesDir: string): Promise<void> {
       null,
       2,
     ),
+  );
+}
+
+async function writePreCreateMarker(marker: string): Promise<void> {
+  const hooksDir = join(workspacePath, ".arashi", "hooks");
+  await mkdir(hooksDir, { recursive: true });
+  const windows = process.platform === "win32";
+  await writeFile(
+    join(hooksDir, windows ? "pre-create.ps1" : "pre-create.sh"),
+    windows
+      ? `New-Item -ItemType File -Path '${marker}' | Out-Null\n`
+      : `#!/bin/sh\ntouch '${marker}'\n`,
+    { mode: 0o755 },
   );
 }
 
@@ -148,11 +161,7 @@ describe("create command worktree location resolution", () => {
     const destination = resolve(workspacePath, "custom-worktrees", "feature", "collision");
     await mkdir(destination, { recursive: true });
     const marker = join(workspacePath, "pre-create-ran");
-    const hooksDir = join(workspacePath, ".arashi", "hooks");
-    await mkdir(hooksDir, { recursive: true });
-    await writeFile(join(hooksDir, "pre-create"), `#!/bin/sh\ntouch '${marker}'\n`, {
-      mode: 0o755,
-    });
+    await writePreCreateMarker(marker);
     const excludePath = join(workspacePath, ".git", "info", "exclude");
     const excludeBefore = await readFile(excludePath, "utf8");
 
@@ -172,6 +181,48 @@ describe("create command worktree location resolution", () => {
     });
     expect(await branchProbe.exited).toBe(0);
   });
+
+  test.skipIf(process.platform === "win32")(
+    "rejects a dangling symlink destination before mutation",
+    async () => {
+      await writeWorkspaceConfig("custom-worktrees");
+      const branch = "feature/dangling";
+      const destination = resolve(workspacePath, "custom-worktrees", "feature", "dangling");
+      await mkdir(dirname(destination), { recursive: true });
+      await symlink(join(testRoot, "missing-target"), destination);
+      const marker = join(workspacePath, "pre-create-ran");
+      await writePreCreateMarker(marker);
+      const excludePath = join(workspacePath, ".git", "info", "exclude");
+      const excludeBefore = await readFile(excludePath, "utf8");
+
+      const result = await runCreateResult(branch, ["--json"]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
+      const canonicalDestination = resolve(
+        await realpath(workspacePath),
+        "custom-worktrees",
+        "feature",
+        "dangling",
+      );
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        error: {
+          code: "WORKTREE_DESTINATION_COLLISION",
+          details: {
+            conflict: { repositoryName: "workspace", worktreePath: canonicalDestination },
+          },
+        },
+        ok: false,
+      });
+      expect(await runtime.file(marker).exists()).toBe(false);
+      expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
+      const branchProbe = runtime.spawn(["git", "show-ref", "--verify", `refs/heads/${branch}`], {
+        cwd: workspacePath,
+        stderr: "ignore",
+        stdout: "ignore",
+      });
+      expect(await branchProbe.exited).not.toBe(0);
+    },
+  );
 
   test("reuses an exact live Git registration for the target branch", async () => {
     await writeWorkspaceConfig("custom-worktrees");
