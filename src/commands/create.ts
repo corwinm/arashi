@@ -613,8 +613,9 @@ export interface CreateCommandDependencies {
     workspaceRoot: string;
   }) => Promise<readonly RepositoryMaterializationPlan[]>;
   calculateWorktreePathPlan?: typeof calculateWorktreePathPlan;
-  branchExistsLocally?: (repositoryPath: string, branchName: string) => Promise<boolean>;
-  listRegisteredWorktreePaths?: (repositoryPath: string) => Promise<readonly string[]>;
+  listRegisteredWorktreePaths?: (
+    repositoryPath: string,
+  ) => Promise<readonly (string | { branch: string | null; path: string })[]>;
   createCoordinatedWorktrees?: typeof createCoordinatedWorktrees;
   reconcileManagedIgnore?: typeof reconcileRepositoryManagedIgnore;
   restoreManagedIgnore?: typeof restoreManagedIgnore;
@@ -1375,24 +1376,28 @@ export async function executeCreate(
   const filterRepositories = deps.applyRepositoryFilter ?? applyRepositoryFilter;
   const resolveBasePlan = deps.resolveCreateBasePlan ?? resolveCreateBasePlan;
   const resolveWorktreePathPlan = deps.calculateWorktreePathPlan ?? calculateWorktreePathPlan;
-  const branchExistsLocally =
-    deps.branchExistsLocally ??
-    (async (repositoryPath: string, targetBranch: string): Promise<boolean> => {
-      try {
-        await exec(["show-ref", "--verify", `refs/heads/${targetBranch}`], repositoryPath);
-        return true;
-      } catch {
-        return false;
-      }
-    });
   const listRegisteredWorktreePaths =
     deps.listRegisteredWorktreePaths ??
-    (async (repositoryPath: string): Promise<readonly string[]> => {
+    (async (
+      repositoryPath: string,
+    ): Promise<readonly { branch: string | null; path: string }[]> => {
       const registrations = await exec(["worktree", "list", "--porcelain"], repositoryPath);
-      return registrations.stdout
-        .split("\n")
-        .filter((line) => line.startsWith("worktree "))
-        .map((line) => resolve(line.slice("worktree ".length)));
+      const worktrees: { branch: string | null; path: string }[] = [];
+      let current: { branch: string | null; path: string } | null = null;
+      for (const line of registrations.stdout.split("\n")) {
+        if (line.startsWith("worktree ")) {
+          if (current) {
+            worktrees.push(current);
+          }
+          current = { branch: null, path: resolve(line.slice("worktree ".length)) };
+        } else if (current && line.startsWith("branch ")) {
+          current.branch = line.slice("branch ".length);
+        }
+      }
+      if (current) {
+        worktrees.push(current);
+      }
+      return worktrees;
     });
   const runCreate = deps.createCoordinatedWorktrees ?? createCoordinatedWorktrees;
   const reconcileIgnore = deps.reconcileManagedIgnore ?? reconcileRepositoryManagedIgnore;
@@ -1654,12 +1659,19 @@ export async function executeCreate(
       const filesystemCollision = destinationPathExists(normalizedDestination);
       plannedDestinations.add(normalizedDestination);
 
-      const registrationCollision = (await listRegisteredWorktreePaths(repository.path))
-        .map((registeredPath) => resolve(registeredPath))
-        .includes(normalizedDestination);
+      const registration = (await listRegisteredWorktreePaths(repository.path))
+        .map((registeredWorktree) =>
+          typeof registeredWorktree === "string"
+            ? { branch: null, path: registeredWorktree }
+            : registeredWorktree,
+        )
+        .find(({ path }) => resolve(path) === normalizedDestination);
+      const reusableRegistration =
+        filesystemCollision && registration?.branch === `refs/heads/${branchName}`;
       if (
-        (duplicatePlan || filesystemCollision || registrationCollision) &&
-        !(await branchExistsLocally(repository.path, branchName))
+        duplicatePlan ||
+        (filesystemCollision && !reusableRegistration) ||
+        (registration !== undefined && !reusableRegistration)
       ) {
         throw new WorktreeDestinationCollisionError(repository.name, plannedPath.path);
       }

@@ -235,6 +235,52 @@ describe("create defaults integration", () => {
     expect(events).toEqual([]);
   });
 
+  test("reports the first selected repository when multiple planned destinations collide", async () => {
+    const selected = [
+      {
+        defaultBranch: "main",
+        hasSetupScript: false,
+        name: "workspace",
+        path: workspaceRoot,
+      },
+      {
+        defaultBranch: "main",
+        hasSetupScript: false,
+        name: "child",
+        path: `${workspaceRoot}/repos/child`,
+      },
+    ];
+
+    await expect(
+      executeCreate(
+        branchName,
+        {},
+        baseDeps({
+          calculateWorktreePathPlan: async (repositories) =>
+            new Map(
+              repositories.map((repository) => [
+                repository,
+                {
+                  path: `${workspaceRoot}/${repository.name}/${branchName}`,
+                  repositoryType: "meta-repo" as const,
+                  strategy: "sibling" as const,
+                },
+              ]),
+            ),
+          destinationPathExists: () => true,
+          discoverRepositories: async () => ({
+            duration: 1,
+            errors: [],
+            repositories: selected,
+            scanDepth: 1,
+            scannedDirectories: 2,
+            workspacePath: `${workspaceRoot}/repos`,
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({ details: { conflict: { repositoryName: "workspace" } } });
+  });
+
   test("preflights a knowably unsupported tab before managed ignore or creation", async () => {
     let reconciled = false;
     let created = false;

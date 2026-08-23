@@ -141,9 +141,10 @@ describe("create command worktree location resolution", () => {
     expect(dirname(managedPath)).toBe(dirname(managedSlashPath));
   }, 20_000);
 
-  test("rejects a destination collision before branch or hook mutation", async () => {
+  test("rejects an unregistered destination before mutation when the branch already exists", async () => {
     await writeWorkspaceConfig("custom-worktrees");
     const branch = "feature/collision";
+    await runGit(["branch", branch, "main"], workspacePath);
     const destination = resolve(workspacePath, "custom-worktrees", "feature", "collision");
     await mkdir(destination, { recursive: true });
     const marker = join(workspacePath, "pre-create-ran");
@@ -169,7 +170,7 @@ describe("create command worktree location resolution", () => {
       stderr: "ignore",
       stdout: "ignore",
     });
-    expect(await branchProbe.exited).not.toBe(0);
+    expect(await branchProbe.exited).toBe(0);
   });
 
   test("reports the authoritative colliding destination in one JSON failure envelope", async () => {

@@ -532,6 +532,13 @@ describe("create base output contracts", () => {
     expect(result.exitCode, result.stderr).toBe(0);
     const { data } = parseSingleDocument(result.stdout);
     expect(data).not.toHaveProperty("base");
+    expect(
+      (
+        data.dryRunOutcome as {
+          plannedWorktrees: { repositoryName: string }[];
+        }
+      ).plannedWorktrees.map(({ repositoryName }) => repositoryName),
+    ).toEqual(repositories(workspace).map(({ name }) => name));
     expect(Object.keys(data).toSorted()).toEqual(
       [
         "branchName",
