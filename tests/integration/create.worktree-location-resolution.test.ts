@@ -187,19 +187,25 @@ describe("create command worktree location resolution", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const envelope = JSON.parse(result.stdout) as {
+      error: { details: { conflict: { worktreePath: string } } };
+    };
+    expect(envelope).toMatchObject({
       command: "create",
       error: {
         code: "WORKTREE_DESTINATION_COLLISION",
         details: {
           conflict: {
             repositoryName: "workspace",
-            worktreePath: destination,
+            worktreePath: expect.any(String),
           },
         },
       },
       ok: false,
     });
+    expect(await realpath(envelope.error.details.conflict.worktreePath)).toBe(
+      await realpath(destination),
+    );
   });
 
   test("reports the authoritative parent destination in dry-run JSON", async () => {
@@ -216,20 +222,28 @@ describe("create command worktree location resolution", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const envelope = JSON.parse(result.stdout) as {
+      data: { dryRunOutcome: { plannedWorktrees: { worktreePath: string }[] } };
+    };
+    expect(envelope).toMatchObject({
       data: {
         dryRunOutcome: {
           plannedWorktrees: [
             {
               branchName: branch,
               repositoryName: "workspace",
-              worktreePath: destination,
+              worktreePath: expect.any(String),
             },
           ],
         },
       },
       ok: true,
     });
+    const reportedPath = envelope.data.dryRunOutcome.plannedWorktrees[0]!.worktreePath;
+    const reportedWorkspace = dirname(dirname(dirname(reportedPath)));
+    expect(
+      resolve(await realpath(reportedWorkspace), "custom-worktrees", "feature", "json-preview"),
+    ).toBe(destination);
     expect(await runtime.file(destination).exists()).toBe(false);
   });
 });
