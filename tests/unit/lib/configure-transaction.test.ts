@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
@@ -36,6 +36,137 @@ describe("configure transaction", () => {
     expect(await readdir(join(root, ".arashi"))).toEqual(["config.json"]);
   });
 
+  test.runIf(process.platform !== "win32")(
+    "preserves the exact existing POSIX mode after a successful canonical save",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "arashi-configure-mode-save-"));
+      const configPath = join(root, "config.json");
+      const original = bytes("original bytes");
+      await writeFile(configPath, original);
+      await chmod(configPath, 0o640);
+
+      await persistConfigureAtomically(configPath, config("children"), original);
+
+      expect((await stat(configPath)).mode & 0o777).toBe(0o640);
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "preserves the exact existing POSIX mode through rollback restoration",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "arashi-configure-mode-restore-"));
+      const configPath = join(root, "config.json");
+      const original = bytes("original bytes");
+      const candidate = bytes("candidate bytes");
+      await writeFile(configPath, original);
+      await chmod(configPath, 0o664);
+
+      expect(await persistExpectedBytesAtomically(configPath, candidate, original)).toBe(true);
+      expect((await stat(configPath)).mode & 0o777).toBe(0o664);
+      expect(await persistExpectedBytesAtomically(configPath, original, candidate)).toBe(true);
+
+      expect(await readFile(configPath, "utf8")).toBe("original bytes");
+      expect((await stat(configPath)).mode & 0o777).toBe(0o664);
+    },
+  );
+
+  test.each(["stat", "chmod"] as const)(
+    "preserves live bytes and cleans the stage when POSIX %s mode transfer fails",
+    async (failure) => {
+      const original = bytes("original bytes");
+      let live = original;
+      let staged = false;
+      const rename = vi.fn(async () => {
+        live = bytes("replacement bytes");
+        staged = false;
+      });
+      const remove = vi.fn(async () => {
+        staged = false;
+      });
+
+      await expect(
+        persistExpectedBytesAtomically(
+          join("workspace", ".arashi", "config.json"),
+          bytes("replacement bytes"),
+          original,
+          {
+            open: async () => {
+              staged = true;
+              return {
+                chmod: async (mode: number) => {
+                  expect(mode).toBe(0o640);
+                  if (failure === "chmod") {
+                    throw new Error("chmod failed");
+                  }
+                },
+                close: async () => {},
+                sync: async () => {},
+                writeFile: async () => {},
+              };
+            },
+            platform: "linux",
+            readFile: async () => live,
+            rename,
+            rm: remove,
+            stat: async () => {
+              if (failure === "stat") {
+                throw new Error("stat failed");
+              }
+              return { mode: 0o640 };
+            },
+            temporaryName: () => ".config.json.mode.tmp",
+          },
+        ),
+      ).rejects.toThrow(`${failure} failed`);
+
+      expect(text(live)).toBe("original bytes");
+      expect(staged).toBe(false);
+      expect(rename).not.toHaveBeenCalled();
+      expect(remove).toHaveBeenCalledOnce();
+    },
+  );
+
+  test("does not impose POSIX mode transfer on Windows", async () => {
+    const original = bytes("original bytes");
+    let live = original;
+    let stage = original;
+    const chmodStage = vi.fn(async () => {
+      throw new Error("Windows chmod must not be called");
+    });
+    const statLive = vi.fn(async () => {
+      throw new Error("Windows stat must not be called");
+    });
+
+    expect(
+      await persistExpectedBytesAtomically(
+        String.raw`C:\workspace\.arashi\config.json`,
+        bytes("replacement bytes"),
+        original,
+        {
+          open: async () => ({
+            chmod: chmodStage,
+            close: async () => {},
+            sync: async () => {},
+            writeFile: async (value) => {
+              stage = value;
+            },
+          }),
+          platform: "win32",
+          readFile: async () => live,
+          rename: async () => {
+            live = stage;
+          },
+          rm: async () => {},
+          stat: statLive,
+          temporaryName: () => ".config.json.windows.tmp",
+        },
+      ),
+    ).toBe(true);
+    expect(text(live)).toBe("replacement bytes");
+    expect(statLive).not.toHaveBeenCalled();
+    expect(chmodStage).not.toHaveBeenCalled();
+  });
+
   test.each(["open", "write", "sync", "rename"] as const)(
     "cleans the sibling stage and preserves live bytes on %s failure",
     async (failure) => {
@@ -54,6 +185,7 @@ describe("configure transaction", () => {
             if (failure === "open") throw new Error("open failed");
             staged = true;
             return {
+              chmod: async () => {},
               close,
               sync: async () => {
                 if (failure === "sync") throw new Error("sync failed");
@@ -64,6 +196,7 @@ describe("configure transaction", () => {
               },
             };
           },
+          platform: "linux",
           readFile: async () => live,
           rename: async () => {
             if (failure === "rename") throw new Error("rename failed");
@@ -71,6 +204,7 @@ describe("configure transaction", () => {
             staged = false;
           },
           rm: remove,
+          stat: async () => ({ mode: 0o600 }),
           temporaryName: () => ".config.json.test.tmp",
         }),
       ).rejects.toThrow(failure === "write" ? /partial stage write/ : new RegExp(failure));
@@ -103,6 +237,9 @@ describe("configure transaction", () => {
         open: async () => {
           events.push("open-stage");
           return {
+            chmod: async () => {
+              events.push("chmod-stage");
+            },
             close: async () => {
               events.push("close-stage");
             },
@@ -115,6 +252,7 @@ describe("configure transaction", () => {
             },
           };
         },
+        platform: "linux",
         readFile: async () => live,
         rename: async () => {
           events.push("replace-live");
@@ -125,6 +263,7 @@ describe("configure transaction", () => {
           events.push("remove-stage");
           stage = undefined;
         },
+        stat: async () => ({ mode: 0o100640 }),
         temporaryName: () => ".config.json.restore.tmp",
       },
     );
@@ -134,6 +273,8 @@ describe("configure transaction", () => {
     expect(events).toEqual([
       "open-stage",
       "write-stage",
+      "sync-stage",
+      "chmod-stage",
       "sync-stage",
       "close-stage",
       "replace-live",
@@ -149,13 +290,16 @@ describe("configure transaction", () => {
     await expect(
       persistConfigureAtomically("/workspace/.arashi/config.json", config("children"), original, {
         open: async () => ({
+          chmod: async () => {},
           close: async () => {},
           sync: async () => {},
           writeFile: async () => {},
         }),
+        platform: "linux",
         readFile: async () => (++reads === 1 ? original : newer),
         rename,
         rm: remove,
+        stat: async () => ({ mode: 0o600 }),
         temporaryName: () => ".config.json.test.tmp",
       }),
     ).rejects.toThrow(/changed concurrently.*preserv/i);
@@ -174,15 +318,18 @@ describe("configure transaction", () => {
         original,
         {
           open: async () => ({
+            chmod: async () => {},
             close: async () => {},
             sync: async () => {},
             writeFile: async () => {},
           }),
+          platform: "linux",
           readFile: async () => (++reads === 1 ? original : newer),
           rename: async () => {},
           rm: async () => {
             throw new Error("stage cleanup failed");
           },
+          stat: async () => ({ mode: 0o600 }),
           temporaryName: () => ".config.json.cleanup.tmp",
         },
       ),

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, rename, rm } from "node:fs/promises";
+import { open, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, win32 } from "node:path";
 import type { Config } from "./config.ts";
 import { serializeConfig } from "./config.ts";
@@ -92,21 +92,26 @@ interface AtomicConfigurePersistenceDependencies {
     flags: "wx",
     mode: number,
   ): Promise<{
+    chmod(mode: number): Promise<void>;
     close(): Promise<void>;
     sync(): Promise<void>;
     writeFile(bytes: Uint8Array): Promise<void>;
   }>;
   readFile(path: string): Promise<Uint8Array>;
+  platform: NodeJS.Platform;
   rename(from: string, to: string): Promise<void>;
   rm(path: string, options: { force: true }): Promise<void>;
+  stat(path: string): Promise<{ mode: number }>;
   temporaryName: (configPath: string) => string;
 }
 
 const atomicPersistenceDefaults: AtomicConfigurePersistenceDependencies = {
   open,
+  platform: process.platform,
   readFile,
   rename,
   rm,
+  stat,
   temporaryName: (configPath) =>
     `.${basename(configPath)}.arashi-${process.pid}-${randomUUID()}.tmp`,
 };
@@ -127,9 +132,19 @@ export const persistExpectedBytesAtomically = async (
   try {
     const handle = await dependencies.open(temporaryPath, "wx", 0o600);
     temporaryExists = true;
+    let replace = false;
     try {
       await handle.writeFile(replacementBytes);
       await handle.sync();
+      const beforeReplace = await dependencies.readFile(configPath);
+      if (equalBytes(beforeReplace, expectedBytes)) {
+        if (dependencies.platform !== "win32") {
+          const liveMode = (await dependencies.stat(configPath)).mode & 0o777;
+          await handle.chmod(liveMode);
+          await handle.sync();
+        }
+        replace = true;
+      }
     } catch (error) {
       failure = error;
     }
@@ -141,8 +156,7 @@ export const persistExpectedBytesAtomically = async (
         : closeError;
     }
     if (failure) throw failure;
-    const beforeReplace = await dependencies.readFile(configPath);
-    if (equalBytes(beforeReplace, expectedBytes)) {
+    if (replace) {
       await dependencies.rename(temporaryPath, configPath);
       temporaryExists = false;
       persisted = true;
