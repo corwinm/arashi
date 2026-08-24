@@ -3,7 +3,11 @@ import {
   buildShellInitScript,
   installShellIntegration,
   isSupportedShell,
+  planShellUninstall,
+  applyShellUninstall,
+  type ShellUninstallPlan,
 } from "../lib/shell-integration.ts";
+import { confirm as promptConfirm, type PromptOutcome } from "../lib/prompts.ts";
 import { info, error as logError, success } from "../lib/logger.ts";
 import { unsupportedJsonModeError, writeJsonEnvelope } from "../lib/json-output.ts";
 import { Argument, Command } from "commander";
@@ -44,6 +48,20 @@ export function createCommand(): Command {
     });
 
   shellCommand
+    .command("uninstall")
+    .description("Remove exact managed shell integration")
+    .option("-n, --dry-run", "Inspect the shell removal plan without changing anything")
+    .option("-y, --yes", "Apply the completely preflighted shell removal plan")
+    .action(async (options: { dryRun?: boolean; yes?: boolean }) => {
+      try {
+        await executeShellUninstall(options);
+        process.exit(0);
+      } catch (error) {
+        handleShellCommandError(error);
+      }
+    });
+
+  shellCommand
     .command("install")
     .description("Install shell integration into the active shell startup file")
     .action(async () => {
@@ -75,6 +93,39 @@ export function executeShellInit(shellName: string): string {
 
 export async function executeShellInstall() {
   return await installShellIntegration();
+}
+
+export async function executeShellUninstall(
+  options: { dryRun?: boolean; yes?: boolean },
+  dependencies: {
+    apply?: (plan: ShellUninstallPlan) => Promise<void>;
+    confirm?: (message: string, defaultValue: boolean) => Promise<PromptOutcome<boolean>>;
+    interactive?: boolean;
+    plan?: () => Promise<ShellUninstallPlan>;
+    write?: (line: string) => void;
+  } = {},
+): Promise<"absent" | "applied" | "declined" | "dry-run"> {
+  const plan = await (dependencies.plan ?? planShellUninstall)();
+  const write = dependencies.write ?? console.log;
+  write(
+    plan.status === "absent"
+      ? `No managed Arashi shell block exists in ${plan.startupFilePath}.`
+      : `Remove the exact managed Arashi shell block from ${plan.startupFilePath}.`,
+  );
+  if (options.dryRun) return "dry-run";
+  if (plan.status === "absent") return "absent";
+  if (!options.yes) {
+    const interactive =
+      dependencies.interactive ?? Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    if (!interactive) throw new Error("Non-interactive shell uninstall requires --yes.");
+    const outcome = await (dependencies.confirm ?? promptConfirm)(
+      "Remove shell integration?",
+      false,
+    );
+    if (outcome.status !== "ok" || !outcome.value) return "declined";
+  }
+  await (dependencies.apply ?? applyShellUninstall)(plan);
+  return "applied";
 }
 
 function handleShellCommandError(error: unknown): never {

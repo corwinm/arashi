@@ -57,9 +57,10 @@ describe("Windows PowerShell installer", () => {
     expect(script).toContain('$AliasBashWrapperAsset = "aw"');
     expect(script).toContain('$AliasPowerShellWrapperAsset = "aw.ps1"');
     expect(script).toContain('$AliasCmdWrapperAsset = "aw.bat"');
+    expect(script).toContain('$UninstallHelperAsset = "uninstall.ps1"');
     expect(script).toContain('$ChecksumManifestAsset = "arashi-checksums.txt"');
     expect(script).toContain(
-      "$AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset, $ChecksumManifestAsset",
+      "$AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset, $UninstallHelperAsset, $ChecksumManifestAsset",
     );
   });
 
@@ -96,6 +97,11 @@ describe("Windows PowerShell installer", () => {
 
     expect(body).toContain('[Environment]::GetEnvironmentVariable("Path", "User")');
     expect(body).toContain(String.raw`TrimEnd("\") -ieq $Directory.TrimEnd("\")`);
+    expect(body).toContain(
+      '$updatedPath = if ([string]::IsNullOrEmpty($currentUserPath)) { $Directory } else { "$currentUserPath;$Directory" }',
+    );
+    expect(body).toContain("Before = $currentUserPath");
+    expect(body).toContain("After = $updatedPath");
     expect(body).toContain('[Environment]::SetEnvironmentVariable("Path", $updatedPath, "User")');
     expect(body).toContain("new Git Bash window");
   });
@@ -163,6 +169,24 @@ describe("Windows PowerShell installer", () => {
     expect(body).toContain("Get-Item -LiteralPath $item.DestinationPath -Force");
     expect(body).toContain("[System.IO.FileAttributes]::ReparsePoint");
     expect(body).toContain("is not a regular file");
+  });
+
+  test("validates a schema-v2 refresh without executing the installed uninstall helper", () => {
+    const body = functionBody("Assert-ArashiAliasOwnership");
+
+    expect(body).not.toContain("-File $currentHelper");
+    expect(body).not.toContain("& $currentHelper");
+    expect(body).toContain("Get-ArashiFileHash -Path $currentPath");
+    expect(body).toContain("Current ownership manifest payload mismatch");
+  });
+
+  test("preserves validated installer-owned PATH provenance across refresh", () => {
+    const ownership = functionBody("Assert-ArashiAliasOwnership");
+    const install = functionBody("Install-Arashi");
+
+    expect(ownership).toContain("return $ledger.pathMutation");
+    expect(install).toContain("$existingPathMutation = Assert-ArashiAliasOwnership");
+    expect(install).toContain("$pathMutation = $existingPathMutation");
   });
 
   test("restores exact prior state and retains backups when rollback fails", () => {

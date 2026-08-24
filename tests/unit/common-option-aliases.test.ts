@@ -26,9 +26,11 @@ const expectedCommonAliases: Record<string, Record<string, string>> = {
   remove: { "--dry-run": "-n", "--force": "-f", "--json": "-j" },
   setup: { "--group": "-g", "--json": "-j", "--only": "-o", "--verbose": "-v" },
   "shell init": { "--json": "-j" },
+  "shell uninstall": { "--dry-run": "-n" },
   status: { "--group": "-g", "--json": "-j", "--only": "-o", "--verbose": "-v" },
   switch: { "--json": "-j" },
   sync: { "--group": "-g", "--json": "-j", "--only": "-o", "--verbose": "-v" },
+  uninstall: { "--dry-run": "-n" },
   update: { "--dry-run": "-n", "--json": "-j" },
 };
 

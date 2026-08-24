@@ -431,12 +431,12 @@
       "arguments": [
         {
           "candidateKind": "shell",
-          "choices": ["bash", "fish", "zsh"],
+          "choices": ["bash", "fish", "powershell", "zsh"],
           "hidden": false,
           "name": "shell",
           "required": false,
           "variadic": false,
-          "description": "Shell name (bash, zsh, fish)"
+          "description": "Shell name (bash, zsh, fish, powershell)"
         }
       ],
       "options": [
@@ -3016,6 +3016,94 @@
       }
     },
     {
+      "path": "shell uninstall",
+      "aliasPaths": [],
+      "description": "Remove exact managed shell integration",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "Inspect the shell removal plan without changing anything",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-y, --yes",
+          "description": "Apply the completely preflighted shell removal plan",
+          "hidden": false,
+          "long": "--yes",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-y",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "Shell uninstall has no JSON or force mode."
+        },
+        "docs": {
+          "expectation": "excluded",
+          "reason": "This subcommand is documented on the parent shell command page."
+        },
+        "skills": {
+          "expectation": "represented",
+          "reason": "Shell removal is covered as part of the shell workflow."
+        },
+        "standalone": {
+          "support": "not-applicable",
+          "reason": "Shell uninstall does not consume workspace context."
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Shell configuration removal is outside extension scope."
+        },
+        "uninstall": {
+          "channelPolicy": "exact-managed-shell-block",
+          "consent": {
+            "interactiveDefault": false,
+            "nonInteractiveRequiresYes": true
+          },
+          "force": false,
+          "json": false,
+          "options": ["--dry-run", "--yes"],
+          "workspaceIndependent": true
+        }
+      }
+    },
+    {
       "path": "status",
       "aliasPaths": [],
       "description": "Show status of all managed repositories",
@@ -3973,6 +4061,93 @@
         },
         "vscode": {
           "expectation": "required"
+        }
+      }
+    },
+    {
+      "path": "uninstall",
+      "aliasPaths": [],
+      "description": "Conservatively remove a proven Arashi installation",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "Inspect the uninstall plan without changing anything",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-y, --yes",
+          "description": "Apply the completely preflighted uninstall plan",
+          "hidden": false,
+          "long": "--yes",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-y",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "Product uninstall has no JSON or force mode."
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "excluded",
+          "reason": "Packaged-skill uninstall guidance is outside the conservative MVP."
+        },
+        "standalone": {
+          "support": "not-applicable",
+          "reason": "Product uninstall does not consume workspace context."
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Product removal is an explicit terminal lifecycle operation."
+        },
+        "uninstall": {
+          "channelPolicy": "exactly-one-proven-owner",
+          "consent": {
+            "interactiveDefault": false,
+            "nonInteractiveRequiresYes": true
+          },
+          "force": false,
+          "json": false,
+          "options": ["--dry-run", "--yes"],
+          "workspaceIndependent": true
         }
       }
     },

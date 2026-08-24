@@ -3,6 +3,7 @@ import {
   ensureInstalled,
   isExplicitInstallCommand,
   isExplicitUpdateCommand,
+  isExplicitUninstallCommand,
   runEntrypoint,
 } from "../../bin/arashi.js";
 
@@ -33,6 +34,157 @@ describe("npm JavaScript entrypoint", () => {
   test("recognizes explicit update as an entrypoint-level command", () => {
     expect(isExplicitUpdateCommand(["update"])).toBe(true);
     expect(isExplicitUpdateCommand(["install"])).toBe(false);
+  });
+
+  test("recognizes uninstall before first-use native dispatch", () => {
+    expect(isExplicitUninstallCommand(["uninstall"])).toBe(true);
+    expect(isExplicitUninstallCommand(["shell", "uninstall"])).toBe(false);
+  });
+
+  test.each([
+    ["npm", "npm", ["uninstall", "-g", "arashi"]],
+    ["pnpm", "pnpm", ["remove", "-g", "arashi"]],
+    ["yarn-classic", "yarn", ["global", "remove", "arashi"]],
+    ["bun", "bun", ["remove", "-g", "arashi"]],
+    ["vite-plus", "vp", ["uninstall", "-g", "arashi"]],
+  ])("delegates the %s owner with exact argv once", async (owner, command, args) => {
+    const spawn = createSuccessfulSpawn();
+    let installed = false;
+    const exitCode = await runEntrypoint(["uninstall", "--yes"], {
+      ownerEvidence: [owner],
+      installBinaryImpl: async () => {
+        installed = true;
+      },
+      spawnImpl: spawn.spawnImpl,
+      log: () => {},
+    });
+    expect(exitCode).toBe(0);
+    expect(installed).toBe(false);
+    expect(spawn.calls).toEqual([{ command, args }]);
+  });
+
+  test("detects npm ownership under standard and configured global prefixes", async () => {
+    for (const [rootDir, options] of [
+      ["/opt/homebrew/lib/node_modules/arashi", {}],
+      [
+        "/custom/npm-prefix/lib/node_modules/arashi",
+        { env: { NPM_CONFIG_PREFIX: "/custom/npm-prefix" } },
+      ],
+      [
+        "C:\\custom\\npm-prefix\\node_modules\\arashi",
+        { env: { NPM_CONFIG_PREFIX: "C:\\custom\\npm-prefix" } },
+      ],
+      ["/detected/global/node_modules/arashi", { npmGlobalRoot: "/detected/global/node_modules" }],
+    ] as const) {
+      const spawn = createSuccessfulSpawn();
+      expect(
+        await runEntrypoint(["uninstall", "--yes"], {
+          ...options,
+          rootDir,
+          realpathSyncImpl: (path: string) => path,
+          spawnImpl: spawn.spawnImpl,
+          log: () => {},
+        }),
+      ).toBe(0);
+      expect(spawn.calls).toEqual([{ command: "npm", args: ["uninstall", "-g", "arashi"] }]);
+    }
+  });
+
+  test("does not infer global npm ownership from a project-local lib/node_modules path", async () => {
+    const spawn = createSuccessfulSpawn();
+    const errors: string[] = [];
+    expect(
+      await runEntrypoint(["uninstall", "--yes"], {
+        error: (line: string) => errors.push(line),
+        realpathSyncImpl: (path: string) => path,
+        rootDir: "/workspace/project/lib/node_modules/arashi",
+        spawnImpl: spawn.spawnImpl,
+      }),
+    ).toBe(1);
+    expect(errors.join("\n")).toMatch(/not proven/i);
+    expect(spawn.calls).toEqual([]);
+  });
+
+  test("recognizes the Yarn Classic Windows LocalAppData global package root", async () => {
+    const spawn = createSuccessfulSpawn();
+    expect(
+      await runEntrypoint(["uninstall", "--yes"], {
+        env: { LOCALAPPDATA: "C:\\Users\\A\\AppData\\Local" },
+        realpathSyncImpl: (path: string) => path,
+        rootDir: "C:\\Users\\A\\AppData\\Local\\Yarn\\Data\\global\\node_modules\\arashi",
+        spawnImpl: spawn.spawnImpl,
+        log: () => {},
+      }),
+    ).toBe(0);
+    expect(spawn.calls).toEqual([{ command: "yarn", args: ["global", "remove", "arashi"] }]);
+  });
+
+  test("refuses ambiguous inferred roots without executing a manager", async () => {
+    const spawn = createSuccessfulSpawn();
+    const errors: string[] = [];
+    expect(
+      await runEntrypoint(["uninstall", "--yes"], {
+        env: { HOME: "/home/a" },
+        npmGlobalRoot: "/home/a/.config/yarn/global/node_modules",
+        realpathSyncImpl: (path: string) => path,
+        rootDir: "/home/a/.config/yarn/global/node_modules/arashi",
+        error: (line: string) => errors.push(line),
+        spawnImpl: spawn.spawnImpl,
+      }),
+    ).toBe(1);
+    expect(errors.join("\n")).toMatch(/ambiguous/i);
+    expect(spawn.calls).toEqual([]);
+  });
+
+  test("dry-run prints one exact manager command without spawning", async () => {
+    const spawn = createSuccessfulSpawn();
+    const output: string[] = [];
+    expect(
+      await runEntrypoint(["uninstall", "-n"], {
+        ownerEvidence: ["pnpm"],
+        spawnImpl: spawn.spawnImpl,
+        log: (line: string) => output.push(line),
+      }),
+    ).toBe(0);
+    expect(output.join("\n")).toContain("pnpm remove -g arashi");
+    expect(spawn.calls).toEqual([]);
+  });
+
+  test("interactive package removal defaults to no", async () => {
+    const spawn = createSuccessfulSpawn();
+    const confirmCalls: boolean[] = [];
+    expect(
+      await runEntrypoint(["uninstall"], {
+        confirm: async (defaultValue: boolean) => {
+          confirmCalls.push(defaultValue);
+          return false;
+        },
+        interactive: true,
+        ownerEvidence: ["npm"],
+        spawnImpl: spawn.spawnImpl,
+        log: () => {},
+      }),
+    ).toBe(0);
+    expect(confirmCalls).toEqual([false]);
+    expect(spawn.calls).toEqual([]);
+  });
+
+  test.each([
+    [["npm", "pnpm"], /ambiguous/i],
+    [["yarn-berry"], /unsupported/i],
+    [[], /not proven/i],
+  ])("refuses conflicting, unsupported, or absent evidence", async (ownerEvidence, message) => {
+    const spawn = createSuccessfulSpawn();
+    const errors: string[] = [];
+    expect(
+      await runEntrypoint(["uninstall", "--yes"], {
+        ownerEvidence,
+        error: (line: string) => errors.push(line),
+        spawnImpl: spawn.spawnImpl,
+      }),
+    ).toBe(1);
+    expect(errors.join("\n")).toMatch(message);
+    expect(spawn.calls).toEqual([]);
   });
 
   test("first-use fallback installs a missing binary before spawning arashi", async () => {

@@ -13,37 +13,47 @@ const run = (args: string[]) =>
   });
 
 describe("completion command and generated artifacts", () => {
-  test.each(["bash", "zsh", "fish"])("emits isolated sourceable %s completion", (shell) => {
-    const result = run(["completion", shell]);
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("command arashi");
-    expect(result.stdout).not.toMatch(/Downloading|Installing|WARNING|Arashi v/);
-    if (shell === "bash") {
-      expect(result.stdout).toContain("printf -v quoted '%q' \"$value\"");
-      expect(result.stdout).toContain("complete -F _arashi arashi");
-      expect(result.stdout).not.toContain("complete -o filenames");
-      expect(spawnSync("bash", ["-n"], { input: result.stdout }).status).toBe(0);
-    } else if (shell === "zsh") {
-      expect(result.stdout).toContain("autoload -Uz compinit && compinit -i");
-      expect(result.stdout).toContain("compdef _arashi arashi");
-      if (process.platform !== "win32")
-        expect(spawnSync("zsh", ["-n"], { input: result.stdout }).status).toBe(0);
-    } else {
-      expect(result.stdout).toContain('string escape --no-quoted -- "$fields[$index]"');
-      expect(result.stdout).toContain(
-        "string replace -ar '[\\t\\r\\n]' ' ' -- \"$fields[$description_index]\"",
-      );
-      expect(result.stdout).toContain("complete -c arashi");
-    }
-  });
+  test.each(["bash", "zsh", "fish", "powershell"])(
+    "emits isolated sourceable %s completion",
+    (shell) => {
+      const result = run(["completion", shell]);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      if (shell !== "powershell") expect(result.stdout).toContain("command arashi");
+      expect(result.stdout).not.toMatch(/Downloading|Installing|WARNING|Arashi v/);
+      if (shell === "bash") {
+        expect(result.stdout).toContain("printf -v quoted '%q' \"$value\"");
+        expect(result.stdout).toContain("complete -F _arashi arashi");
+        expect(result.stdout).not.toContain("complete -o filenames");
+        expect(spawnSync("bash", ["-n"], { input: result.stdout }).status).toBe(0);
+      } else if (shell === "zsh") {
+        expect(result.stdout).toContain("autoload -Uz compinit && compinit -i");
+        expect(result.stdout).toContain("compdef _arashi arashi");
+        if (process.platform !== "win32")
+          expect(spawnSync("zsh", ["-n"], { input: result.stdout }).status).toBe(0);
+      } else if (shell === "fish") {
+        expect(result.stdout).toContain('string escape --no-quoted -- "$fields[$index]"');
+        expect(result.stdout).toContain(
+          "string replace -ar '[\\t\\r\\n]' ' ' -- \"$fields[$description_index]\"",
+        );
+        expect(result.stdout).toContain("complete -c arashi");
+      } else {
+        expect(result.stdout).toContain("Register-ArgumentCompleter -Native");
+        expect(result.stdout).toContain("completion __query");
+        expect(result.stdout).toContain("arashi, aw");
+      }
+    },
+  );
 
-  test.each([[[]], [["powershell"]]])("rejects missing or unsupported shell %j cleanly", (args) => {
-    const result = run(["completion", ...args]);
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("bash, zsh, fish");
-  });
+  test.each([[[]], [["unsupported"]]])(
+    "rejects missing or unsupported shell %j cleanly",
+    (args) => {
+      const result = run(["completion", ...args]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("bash, zsh, fish, powershell");
+    },
+  );
 
   test("keeps normalized wrapper generation separate from completion", () => {
     const wrapper = run(["shell", "init", "bash"]);

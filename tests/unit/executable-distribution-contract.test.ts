@@ -16,13 +16,22 @@ const expectedPolicy = {
   alias: { expansion: "Arashi Workspace", name: "aw" },
   canonical: "arashi",
   completionNames: ["arashi", "aw"],
-  ledger: { name: ".arashi-managed-entrypoints.json", schemaVersion: 1 },
+  ledger: { name: ".arashi-managed-entrypoints.json", schemaVersion: 2 },
   nativeBinaries: { posix: "arashi.bin", windows: "arashi.bin.exe" },
   npmBins: { arashi: "./bin/arashi.js", aw: "./bin/arashi.js" },
-  posix: { installed: ["arashi.bin", "arashi", "aw"] },
+  posix: { installed: ["arashi.bin", "arashi", "aw", "uninstall.sh"] },
   shellWrapperNames: ["arashi", "aw"],
   windows: {
-    installed: ["arashi.bin.exe", "arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat"],
+    installed: [
+      "arashi.bin.exe",
+      "arashi",
+      "arashi.ps1",
+      "arashi.bat",
+      "aw",
+      "aw.ps1",
+      "aw.bat",
+      "uninstall.ps1",
+    ],
   },
 };
 
@@ -30,7 +39,7 @@ describe("versioned executable distribution contract", () => {
   test("is generated from one typed source policy with canonical identity boundaries", () => {
     expect(existsSync(join(root, "src/contracts/executable-distribution.ts"))).toBe(true);
     const artifact = JSON.parse(read("contracts/executable-distribution.json"));
-    expect(artifact.schemaVersion).toBe(1);
+    expect(artifact.schemaVersion).toBe(2);
     expect(artifact).toMatchObject(expectedPolicy);
     expect(artifact.identity).toMatchObject({
       branding: "arashi",

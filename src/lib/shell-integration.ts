@@ -1,14 +1,17 @@
 import { runtime } from "./runtime.ts";
 import { basename, dirname, join } from "path";
 import { homedir } from "os";
-import { mkdir } from "fs/promises";
+import { lstat, mkdir, open } from "node:fs/promises";
+import { constants } from "node:fs";
 
 const START_MARKER = "# >>> arashi shell integration >>>";
 const END_MARKER = "# <<< arashi shell integration <<<";
 
 export const SUPPORTED_SHELLS = ["bash", "zsh", "fish"] as const;
+export const SUPPORTED_COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"] as const;
 
 export type SupportedShell = (typeof SUPPORTED_SHELLS)[number];
+export type SupportedCompletionShell = (typeof SUPPORTED_COMPLETION_SHELLS)[number];
 
 export interface ShellInstallResult {
   created: boolean;
@@ -17,8 +20,21 @@ export interface ShellInstallResult {
   updated: boolean;
 }
 
+export interface ShellUninstallPlan {
+  startupFilePath: string;
+  status: "absent" | "removable";
+  currentBytes?: Buffer;
+  nextBytes?: Buffer;
+  currentContents?: string;
+  nextContents?: string;
+}
+
 export function isSupportedShell(value: string): value is SupportedShell {
   return SUPPORTED_SHELLS.includes(value as SupportedShell);
+}
+
+export function isSupportedCompletionShell(value: string): value is SupportedCompletionShell {
+  return SUPPORTED_COMPLETION_SHELLS.includes(value as SupportedCompletionShell);
 }
 
 export function detectSupportedShell(
@@ -165,6 +181,147 @@ export async function resolveStartupFilePath(
   return candidates[0] ?? null;
 }
 
+export async function planShellUninstall(
+  options: { env?: Record<string, string | undefined>; shell?: SupportedShell } = {},
+): Promise<ShellUninstallPlan> {
+  const env = options.env ?? process.env;
+  const shell = options.shell ?? detectSupportedShell(env);
+  if (!shell) throw new Error("Unable to detect a supported shell for `arashi shell uninstall`.");
+  const startupFilePath = await resolveStartupFilePath(shell, env);
+  if (!startupFilePath) throw new Error(`Unable to determine a startup file for ${shell}.`);
+  return planShellUninstallPath(startupFilePath);
+}
+
+export async function planSupportedShellUninstalls(
+  env: Record<string, string | undefined> = process.env,
+): Promise<ShellUninstallPlan[]> {
+  const home = env.HOME?.trim();
+  if (!home) return [];
+  const candidates = ["zsh", "fish", "bash"].flatMap((shell) =>
+    getStartupFileCandidates(home, shell as SupportedShell),
+  );
+  const plans: ShellUninstallPlan[] = [];
+  for (const startupFilePath of new Set(candidates)) {
+    if (await runtime.file(startupFilePath).exists()) {
+      plans.push(await planShellUninstallPath(startupFilePath));
+    }
+  }
+  return plans;
+}
+
+async function planShellUninstallPath(startupFilePath: string): Promise<ShellUninstallPlan> {
+  const startupFile = runtime.file(startupFilePath);
+  if (!(await startupFile.exists())) return { startupFilePath, status: "absent" };
+  const startupStat = await lstat(startupFilePath);
+  if (startupStat.isSymbolicLink()) {
+    throw new Error(`Shell startup target is a symbolic link: ${startupFilePath}`);
+  }
+  if (!startupStat.isFile()) {
+    throw new Error(`Shell startup target is not a regular file: ${startupFilePath}`);
+  }
+
+  const currentBytes = await startupFile.bytes();
+  const startMarkerBytes = Buffer.from(START_MARKER);
+  const endMarkerBytes = Buffer.from(END_MARKER);
+  const starts = findCanonicalMarkerByteLines(currentBytes, startMarkerBytes);
+  const ends = findCanonicalMarkerByteLines(currentBytes, endMarkerBytes);
+  const rawStartCount = findByteOccurrences(currentBytes, startMarkerBytes).length;
+  const rawEndCount = findByteOccurrences(currentBytes, endMarkerBytes).length;
+  if (rawStartCount === 0 && rawEndCount === 0) return { startupFilePath, status: "absent" };
+  if (
+    starts.length !== 1 ||
+    ends.length !== 1 ||
+    rawStartCount !== 1 ||
+    rawEndCount !== 1 ||
+    starts[0] >= ends[0]
+  ) {
+    throw new Error(`Ambiguous Arashi shell integration marker state in ${startupFilePath}.`);
+  }
+  const blockEnd = ends[0] + endMarkerBytes.length;
+  const nextBytes = Buffer.concat([
+    currentBytes.subarray(0, starts[0]),
+    currentBytes.subarray(blockEnd),
+  ]);
+  return {
+    currentBytes,
+    currentContents: currentBytes.toString("utf8"),
+    nextBytes,
+    nextContents: nextBytes.toString("utf8"),
+    startupFilePath,
+    status: "removable",
+  };
+}
+
+export async function applyShellUninstall(plan: ShellUninstallPlan): Promise<void> {
+  if (plan.status === "absent") return;
+  if (plan.currentBytes === undefined || plan.nextBytes === undefined) {
+    throw new Error("Shell uninstall plan is incomplete.");
+  }
+  const pathStat = await lstat(plan.startupFilePath);
+  if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
+    throw new Error(`Shell startup file changed after preflight: ${plan.startupFilePath}`);
+  }
+  const handle = await open(plan.startupFilePath, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const openedStat = await handle.stat();
+    if (openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
+      throw new Error(`Shell startup file changed after preflight: ${plan.startupFilePath}`);
+    }
+    const current = await handle.readFile();
+    if (!current.equals(plan.currentBytes)) {
+      throw new Error(`Shell startup file changed after preflight: ${plan.startupFilePath}`);
+    }
+    const latestPathStat = await lstat(plan.startupFilePath);
+    if (
+      latestPathStat.isSymbolicLink() ||
+      !latestPathStat.isFile() ||
+      latestPathStat.dev !== openedStat.dev ||
+      latestPathStat.ino !== openedStat.ino
+    ) {
+      throw new Error(`Shell startup file changed after preflight: ${plan.startupFilePath}`);
+    }
+    await handle.truncate(0);
+    await handle.write(plan.nextBytes, 0, plan.nextBytes.length, 0);
+  } finally {
+    await handle.close();
+  }
+}
+
+function findByteOccurrences(contents: Buffer, value: Buffer): number[] {
+  const matches: number[] = [];
+  for (
+    let offset = contents.indexOf(value);
+    offset !== -1;
+    offset = contents.indexOf(value, offset + value.length)
+  ) {
+    matches.push(offset);
+  }
+  return matches;
+}
+
+function findCanonicalMarkerByteLines(contents: Buffer, marker: Buffer): number[] {
+  return findByteOccurrences(contents, marker).filter((offset) => {
+    const beginsLine = offset === 0 || contents[offset - 1] === 0x0a;
+    const after = offset + marker.length;
+    const endsLine =
+      after === contents.length ||
+      contents[after] === 0x0a ||
+      (contents[after] === 0x0d && contents[after + 1] === 0x0a);
+    return beginsLine && endsLine;
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findCanonicalMarkerLines(contents: string, marker: string): number[] {
+  const matches = [
+    ...contents.matchAll(new RegExp(`(^|\\n)${escapeRegExp(marker)}(?=\\r?\\n|$)`, "g")),
+  ];
+  return matches.map((match) => match.index! + match[1].length);
+}
+
 function getStartupFileCandidates(home: string, shell: SupportedShell): string[] {
   if (shell === "bash") {
     if (process.platform === "darwin") {
@@ -192,8 +349,10 @@ export function buildShellInstallBlock(shell: SupportedShell): string {
 
 function upsertManagedBlock(currentContents: string, block: string): string {
   const trimmedBlock = `${block.trim()}\n`;
-  const startIndex = currentContents.indexOf(START_MARKER);
-  const endIndex = currentContents.indexOf(END_MARKER);
+  const starts = findCanonicalMarkerLines(currentContents, START_MARKER);
+  const ends = findCanonicalMarkerLines(currentContents, END_MARKER);
+  const startIndex = starts.length === 1 ? starts[0] : -1;
+  const endIndex = ends.length === 1 ? ends[0] : -1;
 
   if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
     const blockEnd = endIndex + END_MARKER.length;

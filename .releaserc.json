@@ -106,6 +106,14 @@
             "label": "arashi-windows-x64.exe (Windows x64)"
           },
           {
+            "path": "scripts/uninstall.sh",
+            "label": "uninstall.sh (POSIX recovery helper)"
+          },
+          {
+            "path": "scripts/uninstall.ps1",
+            "label": "uninstall.ps1 (Windows recovery helper)"
+          },
+          {
             "path": "bin/arashi-checksums.txt",
             "label": "arashi-checksums.txt (SHA-256 checksums)"
           }
