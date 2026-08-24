@@ -262,6 +262,42 @@ describe("configured worktree naming matrix", () => {
     });
   });
 
+  test("preserves the full configured path for nested coordinated children", async () => {
+    const repositoryPath = join(root, "nested-coordinated");
+    const childPath = join(repositoryPath, "packages", "repos", "group", "child");
+    await mkdir(join(repositoryPath, ".arashi"), { recursive: true });
+    await mkdir(childPath, { recursive: true });
+    await exec(["init", "-b", "main"], repositoryPath);
+    await exec(["init", "-b", "main"], childPath);
+    const parent: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "nested-coordinated",
+      path: repositoryPath,
+      worktreeName: "parent",
+    };
+    const child: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "child",
+      path: childPath,
+    };
+    const config: Config = {
+      repos: {},
+      reposDir: "./packages/repos",
+      version: "1.0.0",
+      worktreeNaming: { branchSlashes: "flatten", style: "repo-branch" },
+    };
+
+    const plan = await calculateWorktreePathPlan([parent, child], "feature/auth", config, parent);
+    const parentDestination = join(repositoryPath, ".arashi", "worktrees", "parent-feature-auth");
+    expect(plan.get(child)).toMatchObject({
+      parentWorktreePath: parentDestination,
+      path: join(parentDestination, "packages", "repos", "group", "child"),
+      repositoryType: "child",
+    });
+  });
+
   test("keeps bare coordinated children beneath the authoritative parent without a physical config file", async () => {
     const repositoryPath = join(root, "coordinated.git");
     const childPath = join(repositoryPath, "repos", "child");

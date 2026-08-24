@@ -509,6 +509,8 @@ interface CalculateWorktreePathOptions {
   config: ArashiConfig;
   knownType?: RepositoryTypeInfo;
   authoritativeParentWorktreePath?: string;
+  configuredChildPath?: string;
+  coordinatedParentRepositoryPath?: string;
 }
 
 type CalculateWorktreePathArgs =
@@ -1270,8 +1272,15 @@ const normalizeCalculateWorktreePathArgs = (
 export const calculateWorktreePath = async (
   ...args: CalculateWorktreePathArgs
 ): Promise<CalculatedWorktreePath> => {
-  const { authoritativeParentWorktreePath, branchName, config, knownType, repo } =
-    normalizeCalculateWorktreePathArgs(...args);
+  const {
+    authoritativeParentWorktreePath,
+    branchName,
+    config,
+    configuredChildPath,
+    coordinatedParentRepositoryPath,
+    knownType,
+    repo,
+  } = normalizeCalculateWorktreePathArgs(...args);
   const isExplicitStandalone = knownType?.type === "standalone";
   // Detect repository type (or use provided type)
   let typeInfo = knownType;
@@ -1281,7 +1290,9 @@ export const calculateWorktreePath = async (
 
   let workspaceRoot = resolve(repo.path);
   if (typeInfo.type === "child") {
-    workspaceRoot = join(repo.path, "..", "..");
+    workspaceRoot = coordinatedParentRepositoryPath
+      ? resolve(coordinatedParentRepositoryPath)
+      : join(repo.path, "..", "..");
   }
   const worktreeBasePath = isExplicitStandalone
     ? join(workspaceRoot, ".worktrees")
@@ -1290,8 +1301,8 @@ export const calculateWorktreePath = async (
   // Apply appropriate path calculation strategy
   if (typeInfo.type === "child") {
     // Nested strategy for child repositories
-    if (!typeInfo.parentName || !typeInfo.reposDir) {
-      throw new Error(`Child repository type missing parentName or reposDir: ${repo.name}`);
+    if (!typeInfo.parentName || (!typeInfo.reposDir && !configuredChildPath)) {
+      throw new Error(`Child repository type missing parentName or child path: ${repo.name}`);
     }
 
     // Determine parent repository path (navigate up from child: ../../../)
@@ -1311,11 +1322,10 @@ export const calculateWorktreePath = async (
 
     const parentWorktreePath =
       authoritativeParentWorktreePath ?? join(worktreeBasePath, parentWorktreeName);
-    const worktreePath = join(
-      parentWorktreePath,
-      typeInfo.reposDir,
-      repo.worktreeName ?? repo.name,
-    );
+    const childPath =
+      configuredChildPath ?? join(typeInfo.reposDir!, repo.worktreeName ?? repo.name);
+    const worktreePath = join(parentWorktreePath, childPath);
+    await assertConfiguredDestinationContained(parentWorktreePath, worktreePath, repo.name);
     await assertConfiguredDestinationContained(worktreeBasePath, worktreePath, repo.name);
 
     return {
@@ -1352,7 +1362,6 @@ export const calculateWorktreePathPlan = async (
   parentRepository?: Repository | null,
 ): Promise<ReadonlyMap<Repository, CalculatedWorktreePath>> => {
   const plan = new Map<Repository, CalculatedWorktreePath>();
-  const reposDir = basename(config.reposDir ?? "./repos");
   let authoritativeParentWorktreePath: string | undefined;
   if (parentRepository) {
     const parentCalculation = await calculateWorktreePath({
@@ -1368,11 +1377,13 @@ export const calculateWorktreePathPlan = async (
   }
   for (const repo of repositories) {
     if (repo === parentRepository) continue;
+    const configuredChildPath = parentRepository
+      ? relative(resolve(parentRepository.path), resolve(repo.path))
+      : undefined;
     const knownType: RepositoryTypeInfo | undefined = parentRepository
       ? {
           parentName: basename(parentRepository.path),
           reason: "Configured child of authoritative create parent",
-          reposDir,
           type: "child",
         }
       : undefined;
@@ -1380,6 +1391,8 @@ export const calculateWorktreePathPlan = async (
       authoritativeParentWorktreePath,
       branchName,
       config,
+      configuredChildPath,
+      coordinatedParentRepositoryPath: parentRepository?.path,
       knownType,
       repo,
     });
