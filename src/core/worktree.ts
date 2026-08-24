@@ -1349,14 +1349,38 @@ export const calculateWorktreePathPlan = async (
   repositories: Repository[],
   branchName: string,
   config: ArashiConfig,
+  parentRepository?: Repository | null,
 ): Promise<ReadonlyMap<Repository, CalculatedWorktreePath>> => {
   const plan = new Map<Repository, CalculatedWorktreePath>();
+  const reposDir = basename(config.reposDir ?? "./repos");
   let authoritativeParentWorktreePath: string | undefined;
+  if (parentRepository) {
+    const parentCalculation = await calculateWorktreePath({
+      branchName,
+      config,
+      knownType: { reason: "Configured create parent", type: "meta-repo" },
+      repo: parentRepository,
+    });
+    authoritativeParentWorktreePath = parentCalculation.path;
+    if (repositories.includes(parentRepository)) {
+      plan.set(parentRepository, parentCalculation);
+    }
+  }
   for (const repo of repositories) {
+    if (repo === parentRepository) continue;
+    const knownType: RepositoryTypeInfo | undefined = parentRepository
+      ? {
+          parentName: basename(parentRepository.path),
+          reason: "Configured child of authoritative create parent",
+          reposDir,
+          type: "child",
+        }
+      : undefined;
     const calculated = await calculateWorktreePath({
       authoritativeParentWorktreePath,
       branchName,
       config,
+      knownType,
       repo,
     });
     plan.set(repo, calculated);

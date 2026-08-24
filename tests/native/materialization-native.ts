@@ -305,9 +305,7 @@ const runNativeNamingMatrix = async (
         base,
         expectedNamingRelativePath(bare, repositoryComponent, branch, namingCase.policy),
       );
-      const childDestination = bare
-        ? join(source, "repos", expectedNamingRelativePath(false, "app", branch, namingCase.policy))
-        : join(parentDestination, "repos", "app");
+      const childDestination = join(parentDestination, "repos", "app");
       assert(
         await exists(childDestination),
         `${bare ? "bare" : "non-bare"} ${namingCase.id} coordinated child destination is missing at ${childDestination}: ${JSON.stringify(data.repositories)}`,
@@ -322,12 +320,10 @@ const runNativeNamingMatrix = async (
         data.repositories.some(({ worktreePath }) => resolve(worktreePath) === canonicalChild),
         `${bare ? "bare" : "non-bare"} ${namingCase.id} JSON omitted coordinated child ${canonicalChild}: ${JSON.stringify(data.repositories)}`,
       );
-      if (!bare) {
-        assert(
-          canonicalChild === (await realpath(join(canonicalParent, "repos", "app"))),
-          `non-bare ${namingCase.id} child escaped the authoritative parent`,
-        );
-      }
+      assert(
+        canonicalChild === (await realpath(join(canonicalParent, "repos", "app"))),
+        `${bare ? "bare" : "non-bare"} ${namingCase.id} child escaped the authoritative parent`,
+      );
       assert(
         (await git(source, "show-ref", "--verify", `refs/heads/${branch}`)).length > 0,
         `${bare ? "bare" : "non-bare"} ${namingCase.id} changed the parent Git branch identity`,

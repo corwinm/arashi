@@ -262,6 +262,46 @@ describe("configured worktree naming matrix", () => {
     });
   });
 
+  test("keeps bare coordinated children beneath the authoritative parent without a physical config file", async () => {
+    const repositoryPath = join(root, "coordinated.git");
+    const childPath = join(repositoryPath, "repos", "child");
+    await mkdir(childPath, { recursive: true });
+    await exec(["init", "--bare"], repositoryPath);
+    await exec(["init", "-b", "main"], childPath);
+    const parent: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "coordinated.git",
+      path: repositoryPath,
+    };
+    const child: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "child",
+      path: childPath,
+    };
+    const config: Config = {
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+      worktreeNaming: { branchSlashes: "flatten", style: "repo-branch" },
+    };
+
+    const plan = await calculateWorktreePathPlan([parent, child], "feature/auth", config, parent);
+    const parentDestination = join(
+      repositoryPath,
+      ".arashi",
+      "worktrees",
+      "coordinated-feature-auth",
+    );
+    expect(plan.get(parent)?.path).toBe(parentDestination);
+    expect(plan.get(child)).toMatchObject({
+      parentWorktreePath: parentDestination,
+      path: join(parentDestination, "repos", "child"),
+      repositoryType: "child",
+    });
+  });
+
   test("keeps the Git branch exact, reports one flattened destination, and rejects its alias", async () => {
     const repositoryPath = join(root, "cli-parity");
     await mkdir(join(repositoryPath, ".arashi"), { recursive: true });

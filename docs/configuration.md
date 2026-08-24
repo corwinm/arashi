@@ -56,7 +56,8 @@ Use the stable URL for normal workflows, and the version-pinned URL when you wan
 ## Configured worktree naming
 
 `worktreeNaming` controls only destinations created by configured `aw create`; it never changes the
-Git branch name and does not apply to standalone `.worktrees/<branch>` creation.
+Git branch name and does not apply to standalone `.worktrees/<branch>` creation. Edit the root object
+directly in `.arashi/config.json`; this setting is not available in interactive `aw configure`.
 
 ```json
 {

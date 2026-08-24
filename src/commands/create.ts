@@ -1789,6 +1789,7 @@ export async function executeCreate(
     allRepositories,
     branchName,
     arashiConfig,
+    parentRepository,
   );
   const worktreePathPlan = new Map(
     selectedRepos.map((repository) => {
