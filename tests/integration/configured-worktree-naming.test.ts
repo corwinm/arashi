@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { mkdir, rm, symlink } from "fs/promises";
 import { join } from "path";
 import { exec } from "../../src/lib/git.ts";
+import { serializeConfig } from "../../src/lib/config.ts";
 import { runtime } from "../helpers/node-runtime.ts";
 import type {
   Config,
@@ -33,6 +34,22 @@ const expectedRelative = (
 };
 
 describe("configured worktree naming matrix", () => {
+  test("preserves naming policy through configuration serialization", () => {
+    const serialized = JSON.parse(
+      serializeConfig({
+        repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
+        worktreeNaming: { branchSlashes: "flatten", style: "repo-branch" },
+      }),
+    );
+
+    expect(serialized.worktreeNaming).toEqual({
+      branchSlashes: "flatten",
+      style: "repo-branch",
+    });
+  });
+
   afterEach(async () => rm(root, { force: true, recursive: true }));
 
   test.each(

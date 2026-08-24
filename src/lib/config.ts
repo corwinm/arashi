@@ -1726,6 +1726,10 @@ const normalizePersistedConfig = (config: Config): Config => {
     persisted.meta = config.meta;
   }
 
+  if (config.worktreeNaming) {
+    persisted.worktreeNaming = config.worktreeNaming;
+  }
+
   return persisted;
 };
 
