@@ -53,6 +53,29 @@ To enable JSON validation and editor autocomplete, include a `$schema` property:
 
 Use the stable URL for normal workflows, and the version-pinned URL when you want schema behavior to stay fixed for a specific release.
 
+## Configured worktree naming
+
+`worktreeNaming` controls only destinations created by configured `aw create`; it never changes the
+Git branch name and does not apply to standalone `.worktrees/<branch>` creation.
+
+```json
+{
+  "worktreeNaming": {
+    "style": "repo-branch",
+    "branchSlashes": "flatten"
+  }
+}
+```
+
+`style` is `default`, `branch`, or `repo-branch`. `branchSlashes` is `preserve` or `flatten`.
+Omitting either field uses `default` and `preserve` effectively while leaving the omitted field
+omitted when configuration is normalized or saved. For branch `feature/auth`, `branch` produces
+`feature/auth` (or `feature-auth` when flattened); `repo-branch` produces
+`repo-feature/auth` (or `repo-feature-auth`). The shape-aware `default` uses the branch path for a
+non-bare configured repository and `repo/feature/auth` for a bare configured repository. Existing
+worktrees are not renamed when this policy changes, and coordinated children retain their configured
+paths beneath the single resolved parent destination.
+
 ## Canonical Key Format
 
 Newly written config files use camelCase keys:

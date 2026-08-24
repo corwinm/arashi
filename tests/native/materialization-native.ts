@@ -90,6 +90,7 @@ const writeConfig = async (
   workspace: string,
   repoPath: string,
   policy: { copy: string[]; symlink: string[] },
+  worktreeNaming?: { branchSlashes: "flatten"; style: "repo-branch" },
 ) => {
   await mkdir(join(workspace, ".arashi", "hooks"), { recursive: true });
   await writeFile(
@@ -106,6 +107,7 @@ const writeConfig = async (
         },
         reposDir: "./repos",
         version: "1.0.0",
+        ...(worktreeNaming ? { worktreeNaming } : {}),
         worktreesDir: "native-worktrees",
       },
       null,
@@ -328,6 +330,48 @@ const main = async () => {
     assert(
       (await readFile(join(app, ".shared-cache", "cache.txt"), "utf8")) === "cache-target\n",
       "remove followed and deleted symlink target",
+    );
+
+    await writeConfig(
+      workspace,
+      "./repos/app",
+      { copy: [], symlink: [] },
+      { branchSlashes: "flatten", style: "repo-branch" },
+    );
+    const namingBranch = "native/naming-layout";
+    const namedCreate = await run(
+      binary,
+      ["create", namingBranch, "--only", "app", "--no-hooks", "--no-progress", "--json"],
+      { cwd: workspace, env: environment },
+    );
+    assert(
+      namedCreate.code === 0,
+      `configured naming create failed:\n${namedCreate.stdout}\n${namedCreate.stderr}`,
+    );
+    const namedEnvelope = parseJson(namedCreate);
+    const namedData = namedEnvelope.data as { repositories: { worktreePath: string }[] };
+    const namedParent = join(workspace, "native-worktrees", "workspace-native-naming-layout");
+    const namedChild = join(namedParent, "repos", "app");
+    assert(await exists(namedChild), `configured naming destination is missing: ${namedChild}`);
+    const canonicalNamedChild = await realpath(namedChild);
+    assert(
+      namedData.repositories.some(
+        ({ worktreePath }) => resolve(worktreePath) === canonicalNamedChild,
+      ),
+      `configured naming JSON omitted the canonical child path: ${JSON.stringify(namedData.repositories)}`,
+    );
+    assert(
+      (await git(app, "show-ref", "--verify", `refs/heads/${namingBranch}`)).length > 0,
+      "configured naming changed the exact selected-child Git branch",
+    );
+    const namedRemove = await run(
+      binary,
+      ["remove", namingBranch, "--force", "--keep-branches", "--json"],
+      { cwd: workspace, env: environment },
+    );
+    assert(
+      namedRemove.code === 0,
+      `configured naming cleanup failed:\n${namedRemove.stdout}\n${namedRemove.stderr}`,
     );
 
     await writeConfig(workspace, "./repos/app", {
