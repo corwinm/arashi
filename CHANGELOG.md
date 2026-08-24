@@ -1,3 +1,16 @@
+## [1.34.0](https://github.com/corwinm/arashi/compare/v1.33.0...v1.34.0) (2026-08-24)
+
+### Features
+
+- **add:** configure repositories interactively ([#155](https://github.com/corwinm/arashi/issues/155)) ([6a02d7f](https://github.com/corwinm/arashi/commit/6a02d7f0a0495a8a22fdc045735a8a72ee56183e))
+- configure existing workspaces interactively ([#157](https://github.com/corwinm/arashi/issues/157)) ([fefa426](https://github.com/corwinm/arashi/commit/fefa426850ad819ae72c1d2a2274586646512fa9))
+- **create:** summarize lifecycle hook outcomes ([#151](https://github.com/corwinm/arashi/issues/151)) ([5a4edb4](https://github.com/corwinm/arashi/commit/5a4edb42fe762bc8c3a3eff92e319bd3f0e28602))
+
+### Bug Fixes
+
+- correct configured worktree naming defaults ([#158](https://github.com/corwinm/arashi/issues/158)) ([acd417d](https://github.com/corwinm/arashi/commit/acd417df309d05f0468102ab47f010f6b71efcbe))
+- make exact worktree reuse transactional ([#161](https://github.com/corwinm/arashi/issues/161)) ([c012ff0](https://github.com/corwinm/arashi/commit/c012ff0a214beb18b59ca3b2b40a23d4d13ee01f))
+
 ## [1.33.0](https://github.com/corwinm/arashi/compare/v1.32.1...v1.33.0) (2026-08-19)
 
 ### Features
