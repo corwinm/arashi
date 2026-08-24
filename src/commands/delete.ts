@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { Command } from "commander";
 import { loadConfigureSnapshot, type ConfigureSnapshot } from "./configure.ts";
+import { ConfigError } from "../lib/config.ts";
 import { inspectGitWorktreeTopology, type WorktreeRemovalPlan } from "../lib/delete-topology.ts";
 import { exec as gitExec } from "../lib/git.ts";
 import { GitFetchUrlIdentityError, gitFetchUrlsMatch } from "../lib/delete-git-url.ts";
@@ -17,6 +18,7 @@ import {
   captureDeletionIdentity,
   quarantineAndRemoveIdentity,
   validateDeletionIdentity,
+  validateExpectedAbsence,
   type DeletionPathIdentity,
 } from "../lib/delete-identity.ts";
 import {
@@ -36,13 +38,13 @@ import {
   readValidatedDeleteReceipt,
   readValidatedDeleteReceiptBytes,
   receiptPathForRepositoryKey,
+  receiptPlanConfigDigest,
   removeDeleteResumeReceipt,
   runDeleteBatchTransaction,
   updateDeleteResumeReceipt,
   type DeleteResumeReceipt,
   type ValidatedDeleteReceipt,
 } from "../lib/delete-transaction.ts";
-import { ConfigError } from "../lib/config.ts";
 import resolveUnaliasedPhysicalPath from "../lib/physical-path.ts";
 import {
   ConfiguredWorkspaceRequiredError,
@@ -571,6 +573,7 @@ class DeleteCommandError extends Error {
 }
 
 interface PlannedRepositoryRuntime {
+  acceptedConfigDigest: string;
   configPath: string;
   expectedConfigBytes: Uint8Array;
   nextConfigBytes: Uint8Array;
@@ -624,6 +627,18 @@ export const validateRuntimeDeletionIdentities = async (
   await validateDeletionIdentity(identities.clone);
   for (const identity of [...identities.worktrees, ...identities.metadata, ...identities.hooks]) {
     await validateDeletionIdentity(identity);
+  }
+};
+
+const validatePresentOrExpectedAbsent = async (
+  identity: DeletionPathIdentity,
+): Promise<"present" | "absent"> => {
+  try {
+    await validateDeletionIdentity(identity);
+    return "present";
+  } catch {
+    await validateExpectedAbsence(identity);
+    return "absent";
   }
 };
 
@@ -754,9 +769,19 @@ const serializeWithoutRepository = (
   repositoryKey: string,
 ): Uint8Array => {
   const persisted = structuredClone(snapshot.persisted) as Record<string, unknown>;
-  const repos = persisted.repos as Record<string, unknown>;
+  const repositoryMapKey = persisted.repos
+    ? "repos"
+    : persisted.discoveredRepos
+      ? "discoveredRepos"
+      : "discovered_repos";
+  const repos = persisted[repositoryMapKey] as Record<string, unknown>;
   delete repos[repositoryKey];
   return new TextEncoder().encode(`${JSON.stringify(persisted, null, 2)}\n`);
+};
+
+const containsPath = (ancestor: string, candidate: string): boolean => {
+  const offset = relative(resolve(ancestor), resolve(candidate));
+  return offset === "" || (!offset.startsWith("..") && !isAbsolute(offset));
 };
 
 const planConfiguredRepository = async (
@@ -796,6 +821,12 @@ const planConfiguredRepository = async (
   const parentCommon = await gitExec(["rev-parse", "--git-common-dir"], snapshot.workspaceRoot)
     .then(({ stdout }) => realpath(resolve(snapshot.workspaceRoot, stdout.trim())))
     .catch(() => null);
+  if (!containsPath(clonePath, commonDirectory))
+    throw deleteError(
+      "DELETE_TOPOLOGY_INVALID",
+      "Configured repository Git metadata is outside the owned canonical clone.",
+      { repositoryKey, reason: "external-git-metadata" },
+    );
   if (parentCommon === commonDirectory)
     throw deleteError(
       "DELETE_TOPOLOGY_INVALID",
@@ -805,17 +836,71 @@ const planConfiguredRepository = async (
         reason: "parent-identity",
       },
     );
+  const protectedParentPaths = [
+    snapshot.workspaceRoot,
+    snapshot.executionRoot ?? snapshot.workspaceRoot,
+    ...(parentCommon ? [parentCommon] : []),
+  ];
+  if (
+    [clonePath, ...topology.linkedWorktrees.map(({ path }) => path)].some((target) =>
+      protectedParentPaths.some((protectedPath) => containsPath(target, protectedPath)),
+    )
+  )
+    throw deleteError(
+      "DELETE_TOPOLOGY_INVALID",
+      "Configured repository deletion target contains parent workspace state.",
+      { repositoryKey, reason: "parent-containment" },
+    );
+  const topologyPaths = new Set(topology.inventory.map(({ path }) => resolve(path)));
+  const deletionRoots = [clonePath, ...topology.linkedWorktrees.map(({ path }) => path)];
+  for (const [otherKey, otherRepository] of Object.entries(snapshot.config.repos)) {
+    if (otherKey === repositoryKey) continue;
+    const configuredOtherPath = resolve(
+      snapshot.executionRoot ?? snapshot.workspaceRoot,
+      otherRepository.path,
+    );
+    if (deletionRoots.some((root) => containsPath(root, configuredOtherPath)))
+      throw deleteError(
+        "DELETE_TOPOLOGY_INVALID",
+        "Another configured repository path is contained by the selected deletion topology.",
+        { repositoryKey, otherRepositoryKey: otherKey, reason: "shared-configured-topology" },
+      );
+    try {
+      const otherPath = await realpath(configuredOtherPath);
+      const otherCommon = await gitExec(["rev-parse", "--git-common-dir"], otherPath)
+        .then(({ stdout }) => realpath(resolve(otherPath, stdout.trim())))
+        .catch(() => null);
+      if (
+        topologyPaths.has(resolve(otherPath)) ||
+        deletionRoots.some((root) => containsPath(root, otherPath)) ||
+        otherCommon === commonDirectory
+      )
+        throw deleteError(
+          "DELETE_TOPOLOGY_INVALID",
+          "Another configured repository key references the selected Git topology.",
+          { repositoryKey, otherRepositoryKey: otherKey, reason: "shared-configured-topology" },
+        );
+    } catch (error) {
+      if (error instanceof DeleteCommandError) throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
   try {
-    if (typeof repository.gitUrl !== "string" || !repository.gitUrl.trim())
-      throw new Error("configured Git URL is unavailable");
     const storedFetchOutput = (await gitExec(["remote", "get-url", "--all", "origin"], clonePath))
       .stdout;
     const storedFetchUrl = (
       storedFetchOutput.endsWith("\n") ? storedFetchOutput.slice(0, -1) : storedFetchOutput
-    ).split("\n");
+    )
+      .split("\n")
+      .filter(Boolean);
+    const configuredUrl =
+      typeof repository.gitUrl === "string" && repository.gitUrl.trim()
+        ? repository.gitUrl
+        : storedFetchUrl[0];
+    if (!configuredUrl) throw new Error("configured Git URL is unavailable");
     await gitFetchUrlsMatch({
-      configuredCwd: snapshot.workspaceRoot,
-      configuredUrl: repository.gitUrl,
+      configuredCwd: snapshot.executionRoot ?? snapshot.workspaceRoot,
+      configuredUrl,
       fetchCwd: clonePath,
       fetchUrls: storedFetchUrl,
     });
@@ -942,7 +1027,13 @@ const planConfiguredRepository = async (
       kind: "config-entry",
       ownership: "delete",
       path: configPath,
-      ref: `repos.${repositoryKey}`,
+      ref: `${
+        (snapshot.persisted as Record<string, unknown>).repos
+          ? "repos"
+          : (snapshot.persisted as Record<string, unknown>).discoveredRepos
+            ? "discoveredRepos"
+            : "discovered_repos"
+      }.${repositoryKey}`,
       oid: null,
       planned: true,
       completed: false,
@@ -956,6 +1047,7 @@ const planConfiguredRepository = async (
       configDigest: createHash("sha256").update(snapshot.bytes).digest("hex"),
     }),
     runtime: {
+      acceptedConfigDigest: createHash("sha256").update(snapshot.bytes).digest("hex"),
       cloneIdentity,
       clonePath,
       configPath,
@@ -1013,6 +1105,7 @@ const reconstructReceiptPlan = (
   return {
     plan: reconstructedPlan,
     runtime: {
+      acceptedConfigDigest: receipt.configDigest,
       cloneIdentity: receipt.runtime.identities.clone.leaf?.identity ?? "",
       clonePath: receipt.runtime.clonePath,
       configPath: receipt.runtime.configPath,
@@ -1032,9 +1125,10 @@ const reconstructReceiptPlan = (
 
 const probeDeleteReceipt = async (
   repositoryKey: string,
+  workspaceRoot: string,
 ): Promise<ValidatedDeleteReceipt | null> => {
-  const commonRaw = (await gitExec(["rev-parse", "--git-common-dir"], process.cwd())).stdout.trim();
-  const parentCommon = await realpath(resolve(process.cwd(), commonRaw));
+  const commonRaw = (await gitExec(["rev-parse", "--git-common-dir"], workspaceRoot)).stdout.trim();
+  const parentCommon = await realpath(resolve(workspaceRoot, commonRaw));
   const path = receiptPathForRepositoryKey(parentCommon, repositoryKey);
   try {
     return await readValidatedDeleteReceipt(path, {
@@ -1126,7 +1220,7 @@ const createReceiptRecord = (
   planId: plan.id,
   parentIdentity: runtime.parentIdentity,
   repositoryKey,
-  configDigest: createHash("sha256").update(runtime.expectedConfigBytes).digest("hex"),
+  configDigest: receiptPlanConfigDigest(runtime.acceptedConfigDigest, runtime.expectedConfigBytes),
   originalEntryDigest: runtime.originalEntryDigest,
   identities: plan.items.map(({ id, kind, path, ref, oid }) => ({ id, kind, path, ref, oid })),
   completedItemIds,
@@ -1166,6 +1260,32 @@ const executePlannedRepository = async (
   const completedItemIds: string[] = [];
   let activePhase: DeletePhase | null = null;
   let activeItemId: string | null = null;
+  const expectedIdentityForItem = (item: DeleteRepositoryItem): DeletionPathIdentity | null => {
+    if (item.kind === "canonical-clone") return runtime.identities.clone;
+    if (item.kind === "linked-worktree")
+      return runtime.identities.worktrees.find(({ path }) => path === item.path) ?? null;
+    if (item.kind === "worktree-metadata")
+      return runtime.identities.metadata.find(({ path }) => path === item.path) ?? null;
+    if (item.kind === "workspace-hook")
+      return runtime.identities.hooks.find(({ path }) => path === item.path) ?? null;
+    return null;
+  };
+  const proveCompleted = async (items: DeleteRepositoryItem[]): Promise<boolean> => {
+    if (items.some(({ kind }) => kind === "config-entry")) {
+      const current = await readFile(runtime.configPath);
+      return Buffer.from(current).equals(Buffer.from(runtime.nextConfigBytes));
+    }
+    const identities = items
+      .map(expectedIdentityForItem)
+      .filter((identity): identity is DeletionPathIdentity => identity !== null);
+    if (identities.length === 0) return false;
+    try {
+      for (const identity of identities) await validateExpectedAbsence(identity);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const persist = async (): Promise<void> => {
     receiptBytes = await updateDeleteResumeReceipt(
       runtime.receiptPath,
@@ -1195,7 +1315,7 @@ const executePlannedRepository = async (
     activeItemId = items.find(({ id }) => !completedItemIds.includes(id))?.id ?? null;
     irreversible = true;
     durable = false;
-    await action();
+    if (!(await proveCompleted(items))) await action();
     for (const item of items) {
       if (!completedItemIds.includes(item.id)) completedItemIds.push(item.id);
       const resultItem = result.items.find(({ id }) => id === item.id);
@@ -1402,7 +1522,8 @@ export const executeDelete = async (
         snapshot.config.worktreesDir ?? ".arashi/worktrees",
       ),
     };
-    if (repository !== undefined) existingReceipt = await probeDeleteReceipt(repository);
+    if (repository !== undefined)
+      existingReceipt = await probeDeleteReceipt(repository, snapshot.workspaceRoot);
   } catch (error) {
     const baseFailure =
       error instanceof ConfiguredWorkspaceRequiredError
@@ -1572,73 +1693,89 @@ export const executeDelete = async (
               );
               return item ? completed.has(item.id) : false;
             };
-            const expected = isCompleted("config-entry")
-              ? runtime.nextConfigBytes
-              : runtime.expectedConfigBytes;
             const current = await readFile(runtime.configPath);
-            if (!Buffer.from(current).equals(Buffer.from(expected)))
+            const expectedConfigStates = isCompleted("config-entry")
+              ? [runtime.nextConfigBytes]
+              : [runtime.expectedConfigBytes, runtime.nextConfigBytes];
+            if (
+              !expectedConfigStates.some((expected) =>
+                Buffer.from(current).equals(Buffer.from(expected)),
+              )
+            )
               throw deleteError(
                 "DELETE_CONCURRENT_CHANGE",
                 "Configuration chain changed before target execution.",
                 { repositoryKey, reason: "config-chain-changed" },
               );
             if (!isCompleted("canonical-clone")) {
-              await validateDeletionIdentity(runtime.identities.clone);
+              const cloneState = await validatePresentOrExpectedAbsent(runtime.identities.clone);
+              const absentWorktreePaths = new Set<string>();
               for (const identity of runtime.identities.worktrees) {
-                if (!isCompleted("linked-worktree", identity.path))
-                  await validateDeletionIdentity(identity);
+                if (
+                  !isCompleted("linked-worktree", identity.path) &&
+                  (await validatePresentOrExpectedAbsent(identity)) === "absent"
+                )
+                  absentWorktreePaths.add(identity.path);
               }
               for (const identity of runtime.identities.metadata) {
                 if (!isCompleted("worktree-metadata", identity.path))
-                  await validateDeletionIdentity(identity);
+                  await validatePresentOrExpectedAbsent(identity);
               }
-              const refreshed = await inspectGitWorktreeTopology(runtime.clonePath);
-              const expectedTopology = {
-                ...runtime.topology,
-                linkedWorktrees: runtime.topology.linkedWorktrees.filter(
-                  ({ path }) => !isCompleted("linked-worktree", path),
-                ),
-              };
-              if (
-                stableHash(topologyIdentity(refreshed)) !==
-                stableHash(topologyIdentity(expectedTopology))
-              )
-                throw deleteError(
-                  "DELETE_CONCURRENT_CHANGE",
-                  "Git topology changed before target execution.",
-                  { repositoryKey, reason: "git-topology-changed" },
-                );
-              const refreshedLoss = await inspectRepositoryGitLoss(refreshed);
-              const completedWorktreePaths = runtime.topology.linkedWorktrees
-                .filter(({ path }) => isCompleted("linked-worktree", path))
-                .map(({ path }) => path);
-              const expectedWarnings = plan.warnings.filter(
-                (warning) =>
-                  !completedWorktreePaths.some((path) =>
-                    warning.startsWith(`DELETE_GIT_DATA_LOSS: ${path}:`),
+              if (cloneState === "present") {
+                const refreshed = await inspectGitWorktreeTopology(runtime.clonePath);
+                const expectedTopology = {
+                  ...runtime.topology,
+                  linkedWorktrees: runtime.topology.linkedWorktrees.filter(
+                    ({ path }) =>
+                      !isCompleted("linked-worktree", path) && !absentWorktreePaths.has(path),
                   ),
-              );
-              if (
-                stableHash({
-                  items: refEvidence(refreshedLoss.items),
-                  warnings: refreshedLoss.warnings,
-                }) !== stableHash({ items: refEvidence(plan.items), warnings: expectedWarnings })
-              )
-                throw deleteError(
-                  "DELETE_CONCURRENT_CHANGE",
-                  "Git evidence changed before target execution.",
-                  { repositoryKey, reason: "git-evidence-changed" },
+                };
+                if (
+                  stableHash(topologyIdentity(refreshed)) !==
+                  stableHash(topologyIdentity(expectedTopology))
+                )
+                  throw deleteError(
+                    "DELETE_CONCURRENT_CHANGE",
+                    "Git topology changed before target execution.",
+                    { repositoryKey, reason: "git-topology-changed" },
+                  );
+                const refreshedLoss = await inspectRepositoryGitLoss(refreshed);
+                const completedWorktreePaths = runtime.topology.linkedWorktrees
+                  .filter(
+                    ({ path }) =>
+                      isCompleted("linked-worktree", path) || absentWorktreePaths.has(path),
+                  )
+                  .map(({ path }) => path);
+                const expectedWarnings = plan.warnings.filter(
+                  (warning) =>
+                    !completedWorktreePaths.some((path) =>
+                      warning.startsWith(`DELETE_GIT_DATA_LOSS: ${path}:`),
+                    ),
                 );
+                if (
+                  stableHash({
+                    items: refEvidence(refreshedLoss.items),
+                    warnings: refreshedLoss.warnings,
+                  }) !== stableHash({ items: refEvidence(plan.items), warnings: expectedWarnings })
+                )
+                  throw deleteError(
+                    "DELETE_CONCURRENT_CHANGE",
+                    "Git evidence changed before target execution.",
+                    { repositoryKey, reason: "git-evidence-changed" },
+                  );
+              }
             }
+            const presentHooks = new Set<string>();
             for (const identity of runtime.identities.hooks) {
-              if (!isCompleted("workspace-hook", identity.path))
-                await validateDeletionIdentity(identity);
+              if (
+                !isCompleted("workspace-hook", identity.path) &&
+                (await validatePresentOrExpectedAbsent(identity)) === "present"
+              )
+                presentHooks.add(identity.path);
             }
             const refreshedHooks = (await discoverHookPaths(runtime.workspaceRoot, repositoryKey))
               .owned;
-            const expectedHooks = runtime.hookPaths.filter(
-              (path) => !isCompleted("workspace-hook", path),
-            );
+            const expectedHooks = runtime.hookPaths.filter((path) => presentHooks.has(path));
             if (stableHash(refreshedHooks) !== stableHash(expectedHooks))
               throw deleteError(
                 "DELETE_CONCURRENT_CHANGE",
@@ -1661,11 +1798,13 @@ export const executeDelete = async (
                 if (phase === "worktrees") {
                   if (remaining("linked-worktree").length === 0) return;
                   await validateDeletionIdentity(runtime.identities.clone);
+                  const absentPaths = new Set<string>();
                   for (const identity of runtime.identities.worktrees) {
                     const item = remaining("linked-worktree").find(
                       ({ path }) => path === identity.path,
                     );
-                    if (item) await validateDeletionIdentity(identity);
+                    if (item && (await validatePresentOrExpectedAbsent(identity)) === "absent")
+                      absentPaths.add(identity.path);
                   }
                   const refreshed = await inspectGitWorktreeTopology(runtime.clonePath);
                   const completedPaths = new Set(
@@ -1676,7 +1815,7 @@ export const executeDelete = async (
                   const expectedTopology = {
                     ...topologyIdentity(runtime.topology),
                     linkedWorktrees: runtime.topology.linkedWorktrees.filter(
-                      ({ path }) => !completedPaths.has(path),
+                      ({ path }) => !completedPaths.has(path) && !absentPaths.has(path),
                     ),
                   };
                   if (stableHash(topologyIdentity(refreshed)) !== stableHash(expectedTopology))
@@ -1690,10 +1829,13 @@ export const executeDelete = async (
                     const item = remaining("worktree-metadata").find(
                       ({ path }) => path === identity.path,
                     );
-                    if (item) await validateDeletionIdentity(identity);
+                    if (item) await validatePresentOrExpectedAbsent(identity);
                   }
                 } else if (phase === "canonical-clone" && remaining("canonical-clone").length) {
-                  await validateDeletionIdentity(runtime.identities.clone);
+                  if (
+                    (await validatePresentOrExpectedAbsent(runtime.identities.clone)) === "absent"
+                  )
+                    return;
                   const refreshed = await inspectGitWorktreeTopology(runtime.clonePath);
                   const refreshedLoss = await inspectRepositoryGitLoss(refreshed);
                   const completedWorktreePaths = runtime.topology.linkedWorktrees
@@ -1726,7 +1868,14 @@ export const executeDelete = async (
                 } else if (phase === "workspace-hooks") {
                   const refreshed = (await discoverHookPaths(runtime.workspaceRoot, repositoryKey))
                     .owned;
-                  const expected = remaining("workspace-hook").map(({ path }) => path!);
+                  const expected: string[] = [];
+                  for (const item of remaining("workspace-hook")) {
+                    const identity = runtime.identities.hooks.find(
+                      ({ path }) => path === item.path,
+                    );
+                    if (identity && (await validatePresentOrExpectedAbsent(identity)) === "present")
+                      expected.push(item.path!);
+                  }
                   if (stableHash(refreshed) !== stableHash(expected))
                     throw deleteError(
                       "DELETE_CONCURRENT_CHANGE",
@@ -1736,10 +1885,14 @@ export const executeDelete = async (
                 } else if (phase === "configuration") {
                   const current = await readFile(runtime.configPath);
                   const configItem = plan.items.find(({ kind }) => kind === "config-entry")!;
-                  const expected = completed.has(configItem.id)
-                    ? runtime.nextConfigBytes
-                    : runtime.expectedConfigBytes;
-                  if (!Buffer.from(current).equals(Buffer.from(expected)))
+                  const expectedStates = completed.has(configItem.id)
+                    ? [runtime.nextConfigBytes]
+                    : [runtime.expectedConfigBytes, runtime.nextConfigBytes];
+                  if (
+                    !expectedStates.some((expected) =>
+                      Buffer.from(current).equals(Buffer.from(expected)),
+                    )
+                  )
                     throw deleteError(
                       "DELETE_CONCURRENT_CHANGE",
                       "Configuration changed before persistence.",

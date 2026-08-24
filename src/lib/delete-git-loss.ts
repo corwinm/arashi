@@ -139,8 +139,7 @@ export const parseGitRefInventory = (input: Uint8Array | string): GitRefEvidence
       string,
       string,
     ];
-    if (!/^(?:refs\/heads\/.+|refs\/tags\/.+|refs\/remotes\/.+|refs\/stash)$/u.test(ref))
-      refError(`unexpected ref ${ref}`);
+    if (!/^refs\/.+/u.test(ref)) refError(`unexpected ref ${ref}`);
     if (seen.has(ref)) refError(`duplicate ref ${ref}`);
     seen.add(ref);
     if (!OID.test(objectOid)) refError(`invalid object ID for ${ref}`);
@@ -159,8 +158,15 @@ export const parseGitRefInventory = (input: Uint8Array | string): GitRefEvidence
       } else {
         refError(`tag does not identify a commit: ${ref}`);
       }
-    } else if (objectType !== "commit" || peeledOid || peeledType) {
+    } else if (
+      (ref.startsWith("refs/heads/") || ref.startsWith("refs/remotes/") || ref === "refs/stash") &&
+      (objectType !== "commit" || peeledOid || peeledType)
+    ) {
       refError(`commit ref has unusable object evidence: ${ref}`);
+    } else if (peeledOid || peeledType) {
+      refError(`non-tag ref has unexpected peeled evidence: ${ref}`);
+    } else if (!/^(?:blob|commit|tag|tree)$/u.test(objectType)) {
+      refError(`local ref has unusable object evidence: ${ref}`);
     }
     return { objectOid, objectType, peeledOid, peeledType, ref };
   });
@@ -191,16 +197,36 @@ export const analyzeLocalRefLoss = async (input: {
       refs.filter(({ ref }) => ref.startsWith("refs/remotes/")).map(({ objectOid }) => objectOid),
     ),
   ].toSorted(bytewise);
+  const hasCandidates =
+    refs.some(({ ref }) => !ref.startsWith("refs/remotes/")) || input.detachedCommits.length > 0;
+  if (!hasCandidates) return { items: [], warnings: [] };
   if (remoteOids.length === 0)
     throw new GitLossEvidenceError("remote-tracking commit evidence is unavailable");
 
-  const candidates: Array<{ ref: string; oid: string; blocks: boolean }> = [];
+  const candidates: Array<{
+    ref: string;
+    oid: string;
+    blocks: boolean;
+    alwaysProtected?: boolean;
+  }> = [];
   for (const evidence of refs) {
     if (evidence.ref.startsWith("refs/remotes/")) continue;
     if (evidence.ref.startsWith("refs/tags/")) {
       const commitOid = evidence.peeledOid ?? evidence.objectOid;
-      candidates.push({ blocks: false, oid: evidence.objectOid, ref: evidence.ref });
+      candidates.push({
+        blocks: true,
+        oid: evidence.objectOid,
+        ref: evidence.ref,
+        alwaysProtected: evidence.objectType === "tag",
+      });
       candidates.push({ blocks: true, oid: commitOid, ref: `${evidence.ref}^{}` });
+    } else if (!evidence.ref.startsWith("refs/heads/") && evidence.ref !== "refs/stash") {
+      candidates.push({
+        blocks: true,
+        oid: evidence.objectOid,
+        ref: evidence.ref,
+        alwaysProtected: true,
+      });
     } else {
       candidates.push({ blocks: true, oid: evidence.objectOid, ref: evidence.ref });
     }
@@ -214,7 +240,9 @@ export const analyzeLocalRefLoss = async (input: {
   const outcomes: Array<{ candidate: (typeof candidates)[number]; protectedData: boolean }> = [];
   for (const candidate of candidates) {
     let protectedData = false;
-    if (candidate.blocks) {
+    if (candidate.alwaysProtected) {
+      protectedData = true;
+    } else if (candidate.blocks) {
       try {
         protectedData = !(await input.isReachableFromRemote(candidate.oid, remoteOids));
       } catch {
@@ -248,6 +276,16 @@ export const inspectRepositoryGitLoss = async (
     .toSorted((left, right) => bytewise(left.path, right.path));
   try {
     for (const worktree of presentWorktrees) {
+      const gitlinks = (await gitExecRaw(["ls-files", "--stage", "-z"], worktree.path)).stdout;
+      if (
+        Buffer.from(gitlinks)
+          .toString("utf8")
+          .split("\0")
+          .some((entry) => entry.startsWith("160000 "))
+      )
+        throw new GitLossEvidenceError(
+          "configured submodule evidence is not recursively established",
+        );
       const output = (
         await gitExecRaw(
           ["status", "--porcelain=v2", "-z", "--ignored=matching", "--untracked-files=all"],
@@ -266,10 +304,7 @@ export const inspectRepositoryGitLoss = async (
         [
           "for-each-ref",
           "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)",
-          "refs/heads",
-          "refs/tags",
-          "refs/remotes",
-          "refs/stash",
+          "refs",
         ],
         topology.primaryPath,
       )

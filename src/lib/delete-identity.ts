@@ -185,6 +185,27 @@ export const validateDeletionIdentity = async (
   await inspectForValidation(captured.leaf, io, "identity-changed");
 };
 
+export const validateExpectedAbsence = async (
+  captured: DeletionPathIdentity,
+  overrides: Partial<DeletionIdentityIO> = {},
+): Promise<void> => {
+  const io = resolveIO(overrides);
+  for (const ancestor of captured.ancestors) {
+    await inspectForValidation(ancestor, io, "ancestor-identity-changed");
+  }
+  try {
+    await io.lstat(captured.path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  changed(
+    captured.path,
+    "expected-path-still-present",
+    "A deletion target expected to be absent is still present.",
+  );
+};
+
 const validateMovedLeaf = async (
   quarantine: string,
   captured: DeletionPathIdentity,

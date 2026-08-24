@@ -15,6 +15,7 @@ import {
   captureDeletionIdentity,
   quarantineAndRemoveIdentity,
   validateDeletionIdentity,
+  validateExpectedAbsence,
   type DeletionIdentityIO,
 } from "../../src/lib/delete-identity.ts";
 
@@ -64,6 +65,20 @@ describe("identity-anchored deletion", () => {
       reason: "identity-changed",
     });
     expect(await readFile(join(owned, "REPLACEMENT"), "utf8")).toBe("keep\n");
+  });
+
+  test("proves a completed mutation only when the leaf is absent under unchanged ancestors", async () => {
+    const { owned } = await fixture();
+    const captured = await captureDeletionIdentity(owned, "directory");
+    await rm(owned, { recursive: true });
+
+    await expect(validateExpectedAbsence(captured)).resolves.toBeUndefined();
+
+    await mkdir(owned);
+    await expect(validateExpectedAbsence(captured)).rejects.toMatchObject({
+      code: "DELETE_CONCURRENT_CHANGE",
+      reason: "expected-path-still-present",
+    });
   });
 
   test("refuses ancestor replacement captured before locked execution", async () => {

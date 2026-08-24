@@ -83,9 +83,22 @@ describe("strict local ref inventory", () => {
     expect(() => parseGitRefInventory(input)).toThrow(/valid UTF-8/u);
   });
 
+  test("accepts notes and custom local ref namespaces", () => {
+    const input = [
+      `refs/notes/review\0${oid("1")}\0commit\0\0`,
+      `refs/archive/release\0${oid("2")}\0commit\0\0`,
+      "",
+    ].join("\n");
+
+    expect(parseGitRefInventory(input).map(({ ref: name }) => name)).toEqual([
+      "refs/notes/review",
+      "refs/archive/release",
+    ]);
+  });
+
   test.each([
     `refs/heads/main\0bad\0commit\0\0\n`,
-    `refs/other/main\0${oid("1")}\0commit\0\0\n`,
+    `not-refs/other/main\0${oid("1")}\0commit\0\0\n`,
     `refs/tags/t\0${oid("1")}\0tag\0\0\n`,
     `refs/heads/main\0${oid("1")}\0blob\0\0\n`,
   ])("rejects malformed or unusable ref evidence", (input) => {
@@ -135,6 +148,7 @@ describe("deterministic local-ref planning", () => {
       `DELETE_GIT_DATA_LOSS: HEAD(detached) ${oid("7")} is not reachable from local remote-tracking refs`,
       `DELETE_GIT_DATA_LOSS: refs/heads/local ${oid("2")} is not reachable from local remote-tracking refs`,
       `DELETE_GIT_DATA_LOSS: refs/stash ${oid("3")} is not reachable from local remote-tracking refs`,
+      `DELETE_GIT_DATA_LOSS: refs/tags/annotated ${oid("5")} is not reachable from local remote-tracking refs`,
       `DELETE_GIT_DATA_LOSS: refs/tags/annotated^{} ${oid("6")} is not reachable from local remote-tracking refs`,
       "DELETE_GIT_REFLOG_BOUNDARY: reflog-only unreachable objects are outside the local publication check",
       "DELETE_GIT_REMOTE_EVIDENCE: reachability uses local remote-tracking refs only; no fetch was performed",
@@ -149,6 +163,39 @@ describe("deterministic local-ref planning", () => {
         isReachableFromRemote: async () => false,
       }),
     ).rejects.toThrow(/remote-tracking commit evidence is unavailable/u);
+  });
+
+  test("permits an empty repository when there are no local ref candidates", async () => {
+    await expect(
+      analyzeLocalRefLoss({
+        detachedCommits: [],
+        refs: [],
+        isReachableFromRemote: async () => false,
+      }),
+    ).resolves.toMatchObject({ items: [], warnings: expect.any(Array) });
+  });
+
+  test("protects an annotated tag object even when its peeled commit is published", async () => {
+    const tagObject = oid("4");
+    const commit = oid("5");
+    const result = await analyzeLocalRefLoss({
+      detachedCommits: [],
+      refs: [
+        ref({ ref: "refs/remotes/origin/main", objectOid: commit }),
+        ref({
+          ref: "refs/tags/signed",
+          objectOid: tagObject,
+          objectType: "tag",
+          peeledOid: commit,
+          peeledType: "commit",
+        }),
+      ],
+      isReachableFromRemote: async (candidate) => candidate === commit,
+    });
+
+    expect(result.warnings).toContain(
+      `DELETE_GIT_DATA_LOSS: refs/tags/signed ${tagObject} is not reachable from local remote-tracking refs`,
+    );
   });
 
   test("fails closed when reachability comparison is unavailable", async () => {

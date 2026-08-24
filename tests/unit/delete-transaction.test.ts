@@ -1,9 +1,21 @@
-import { chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rename,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import {
   createDeleteResumeReceipt,
+  receiptPlanConfigDigest,
+  parseWindowsOwnerOnlyAcl,
   readValidatedDeleteReceipt,
   readValidatedDeleteReceiptBytes,
   receiptPathForRepositoryKey,
@@ -69,6 +81,67 @@ const receipt = (repositoryKey: string, receiptPath = "/receipt"): DeleteResumeR
 });
 
 describe("delete resume receipts", () => {
+  test("accepts only a Windows ACL owned by and granting access to the current user", () => {
+    const owner = "S-1-5-21-1000";
+    expect(
+      parseWindowsOwnerOnlyAcl(
+        JSON.stringify({
+          owner,
+          currentUser: owner,
+          access: [{ identity: owner, type: "Allow" }],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      parseWindowsOwnerOnlyAcl(
+        JSON.stringify({
+          owner,
+          currentUser: owner,
+          access: [
+            { identity: owner, type: "Allow" },
+            { identity: "S-1-5-32-545", type: "Allow" },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(parseWindowsOwnerOnlyAcl("not-json")).toBe(false);
+  });
+
+  test("applies and verifies owner-only ACLs for Windows receipt creation", async () => {
+    const root = await createTempDir("delete-receipt-windows-acl-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const setWindowsOwnerOnly = vi.fn(async () => undefined);
+    const assertWindowsOwnerOnly = vi.fn(async () => true);
+
+    await createDeleteResumeReceipt(path, receipt("api", path), {
+      platform: "win32",
+      assertWindowsOwnerOnly,
+      setWindowsOwnerOnly,
+    });
+
+    expect(setWindowsOwnerOnly).toHaveBeenNthCalledWith(1, join(root, ".arashi-delete-receipts"));
+    expect(setWindowsOwnerOnly).toHaveBeenNthCalledWith(2, path);
+    expect(assertWindowsOwnerOnly).toHaveBeenCalledWith(join(root, ".arashi-delete-receipts"));
+    expect(assertWindowsOwnerOnly).toHaveBeenCalledWith(path);
+  });
+
+  test("installs inheritable owner-only Windows ACLs on receipt directories", async () => {
+    const source = await readFile(
+      new URL("../../src/lib/delete-transaction.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("ContainerInherit,ObjectInherit");
+    expect(source).toContain("PropagationFlags]::None");
+  });
+
+  test("keeps the accepted batch plan digest independent of per-target config bytes", () => {
+    const acceptedDigest = "a".repeat(64);
+    expect(receiptPlanConfigDigest(acceptedDigest, Buffer.from("later target bytes"))).toBe(
+      acceptedDigest,
+    );
+  });
+
   test("uses the lowercase SHA-256 of the exact UTF-8 key", () => {
     expect(receiptPathForRepositoryKey("/common", "Api/β")).toBe(
       join(
@@ -94,6 +167,52 @@ describe("delete resume receipts", () => {
       createDeleteResumeReceipt(path, receipt("api", path), provenReceiptSafety),
     ).rejects.toMatchObject({ code: "EEXIST" });
     expect(Buffer.from(created).equals(await readFile(path))).toBe(true);
+  });
+
+  test("removes the exact partial receipt when its initial write fails", async () => {
+    const root = await createTempDir("delete-receipt-partial-");
+    const path = receiptPathForRepositoryKey(root, "api");
+
+    await expect(
+      createDeleteResumeReceipt(path, receipt("api", path), {
+        openExclusive: async (target, flags, mode) => {
+          const handle = await open(target, flags, mode);
+          return {
+            chmod: handle.chmod.bind(handle),
+            close: handle.close.bind(handle),
+            stat: handle.stat.bind(handle),
+            sync: handle.sync.bind(handle),
+            writeFile: async () => {
+              throw new Error("injected initial write failure");
+            },
+          };
+        },
+      }),
+    ).rejects.toThrow("injected initial write failure");
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("preserves a replacement installed while Windows ACL setup fails", async () => {
+    const root = await createTempDir("delete-receipt-windows-acl-race-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const moved = `${path}.moved`;
+    const replacement = "replacement receipt\n";
+
+    await expect(
+      createDeleteResumeReceipt(path, receipt("api", path), {
+        platform: "win32",
+        assertWindowsOwnerOnly: async () => true,
+        setWindowsOwnerOnly: async (target) => {
+          if (target !== path) return;
+          await rename(path, moved);
+          await writeFile(path, replacement, { mode: 0o600 });
+          throw new Error("injected Windows ACL failure after replacement");
+        },
+      }),
+    ).rejects.toThrow("injected Windows ACL failure after replacement");
+
+    await expect(readFile(path, "utf8")).resolves.toBe(replacement);
+    await expect(stat(moved)).resolves.toBeDefined();
   });
 
   test("updates only the exact expected bytes and rejects unsafe permissions", async () => {
@@ -130,6 +249,70 @@ describe("delete resume receipts", () => {
       ).rejects.toThrow(/owner-only/u);
     }
   });
+
+  test("sets and verifies the staged Windows receipt ACL before atomic replacement", async () => {
+    const root = await createTempDir("delete-receipt-windows-update-acl-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const initial = await createDeleteResumeReceipt(
+      path,
+      receipt("api", path),
+      provenReceiptSafety,
+    );
+    const events: string[] = [];
+    const setWindowsOwnerOnly = vi.fn(async (target: string) => {
+      events.push(`set:${target}`);
+    });
+    const assertWindowsOwnerOnly = vi.fn(async (target: string) => {
+      events.push(`assert:${target}`);
+      return true;
+    });
+
+    await updateDeleteResumeReceipt(path, initial, receipt("api", path), {
+      platform: "win32",
+      assertWindowsOwnerOnly,
+      setWindowsOwnerOnly,
+    });
+
+    const stagedSet = events.findIndex(
+      (event) => event.startsWith("set:") && event !== `set:${path}`,
+    );
+    expect(stagedSet).toBeGreaterThanOrEqual(0);
+    const stagedPath = events[stagedSet]!.slice("set:".length);
+    const stagedAssert = events.indexOf(`assert:${stagedPath}`, stagedSet + 1);
+    const liveAssert = events.lastIndexOf(`assert:${path}`);
+    expect(stagedAssert).toBeGreaterThan(stagedSet);
+    expect(liveAssert).toBeGreaterThan(stagedAssert);
+  });
+
+  test.skipIf(process.platform !== "win32")(
+    "creates, updates, and reads a receipt with native owner-only Windows ACLs",
+    async () => {
+      const root = await createTempDir("delete-receipt-native-windows-acl-");
+      const path = receiptPathForRepositoryKey(root, "api");
+      const initial = await createDeleteResumeReceipt(path, receipt("api", path));
+      const next = {
+        ...receipt("api", path),
+        completedItemIds: ["receipt"],
+        completedPhases: ["provenance"],
+        remainingPhases: [
+          "worktrees",
+          "metadata",
+          "canonical-clone",
+          "workspace-hooks",
+          "configuration",
+          "verification",
+        ],
+      };
+
+      await updateDeleteResumeReceipt(path, initial, next);
+      await expect(
+        readValidatedDeleteReceipt(path, {
+          parentIdentity: "d".repeat(64),
+          repositoryKey: "api",
+        }),
+      ).resolves.toMatchObject({ receipt: next });
+    },
+  );
 
   test("removes only the exact expected receipt bytes", async () => {
     const root = await createTempDir("delete-receipt-remove-");

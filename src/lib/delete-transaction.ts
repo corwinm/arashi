@@ -1,7 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  type FileHandle,
+} from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { persistExpectedBytesAtomically } from "./configure-transaction.ts";
 import type { DeletionPathIdentity } from "./delete-identity.ts";
 import type { WorktreeRemovalPlan } from "./delete-topology.ts";
@@ -65,16 +77,116 @@ export class DeleteReceiptError extends Error {
 export interface DeleteReceiptSafetyIO {
   platform: NodeJS.Platform;
   assertWindowsOwnerOnly: (path: string) => Promise<boolean>;
+  setWindowsOwnerOnly: (path: string) => Promise<void>;
+  openExclusive: (
+    path: string,
+    flags: string,
+    mode: number,
+  ) => Promise<Pick<FileHandle, "chmod" | "close" | "stat" | "sync" | "writeFile">>;
 }
+
+const execFileAsync = promisify(execFile);
+const windowsAclProbe = String.raw`
+$acl = Get-Acl -LiteralPath $args[0]
+$sidType = [System.Security.Principal.SecurityIdentifier]
+$access = @($acl.Access | ForEach-Object {
+  @{ identity = $_.IdentityReference.Translate($sidType).Value; type = $_.AccessControlType.ToString() }
+})
+@{
+  owner = $acl.GetOwner($sidType).Value
+  currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  access = $access
+} | ConvertTo-Json -Compress -Depth 3
+`;
+const windowsAclSet = String.raw`
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl = Get-Acl -LiteralPath $args[0]
+$acl.SetOwner($identity)
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleAll($rule) }
+$rights = [System.Security.AccessControl.FileSystemRights]::FullControl
+$inheritance = [System.Security.AccessControl.InheritanceFlags]::None
+if ((Get-Item -LiteralPath $args[0]).PSIsContainer) {
+  $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
+}
+$propagation = [System.Security.AccessControl.PropagationFlags]::None
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+  $identity, $rights, $inheritance, $propagation, [System.Security.AccessControl.AccessControlType]::Allow
+)
+$acl.AddAccessRule($rule)
+Set-Acl -LiteralPath $args[0] -AclObject $acl
+`;
+
+export const parseWindowsOwnerOnlyAcl = (output: string): boolean => {
+  try {
+    const value = JSON.parse(output) as {
+      owner?: unknown;
+      currentUser?: unknown;
+      access?: unknown;
+    };
+    return (
+      typeof value.owner === "string" &&
+      value.owner === value.currentUser &&
+      Array.isArray(value.access) &&
+      value.access.length > 0 &&
+      value.access.every(
+        (entry) =>
+          entry !== null &&
+          typeof entry === "object" &&
+          (entry as Record<string, unknown>).identity === value.currentUser &&
+          (entry as Record<string, unknown>).type === "Allow",
+      )
+    );
+  } catch {
+    return false;
+  }
+};
 
 const defaultReceiptSafety: DeleteReceiptSafetyIO = {
   platform: process.platform,
-  // Node does not expose a trustworthy effective-ACL query. Windows callers must inject one.
-  assertWindowsOwnerOnly: async () => false,
+  assertWindowsOwnerOnly: async (path) => {
+    try {
+      const { stdout } = await execFileAsync("powershell.exe", [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        windowsAclProbe,
+        path,
+      ]);
+      return parseWindowsOwnerOnlyAcl(stdout);
+    } catch {
+      return false;
+    }
+  },
+  setWindowsOwnerOnly: async (path) => {
+    await execFileAsync("powershell.exe", [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      windowsAclSet,
+      path,
+    ]);
+  },
+  openExclusive: (path, flags, mode) => open(path, flags, mode),
 };
 
 const serializeReceipt = (receipt: DeleteResumeReceipt): Uint8Array =>
   new TextEncoder().encode(`${JSON.stringify(receipt, null, 2)}\n`);
+
+export const receiptPlanConfigDigest = (
+  acceptedConfigDigest: string,
+  _targetExpectedConfigBytes: Uint8Array,
+): string => acceptedConfigDigest;
+
+const removePartialReceipt = async (path: string, expectedIdentity: string): Promise<void> => {
+  if ((await assertPlainReceiptNoFollow(path)) !== expectedIdentity) return;
+  const quarantine = join(dirname(path), `.${basename(path)}.${randomUUID()}.partial`);
+  await rename(path, quarantine);
+  if ((await assertPlainReceiptNoFollow(quarantine)) !== expectedIdentity) return;
+  await rm(quarantine);
+};
 
 export const receiptPathForRepositoryKey = (
   parentCommonDirectory: string,
@@ -93,21 +205,43 @@ export const createDeleteResumeReceipt = async (
 ): Promise<Uint8Array> => {
   const bytes = serializeReceipt(receipt);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const resolvedSafety = { ...defaultReceiptSafety, ...safety };
+  if (resolvedSafety.platform === "win32") {
+    const directory = await lstat(dirname(path));
+    if (!directory.isDirectory() || directory.isSymbolicLink())
+      throw new DeleteReceiptError(
+        "DELETE_RECEIPT_UNSAFE",
+        "Delete receipt directory is not a plain directory.",
+      );
+    await resolvedSafety.setWindowsOwnerOnly(dirname(path));
+  }
   await assertReceiptDirectory(path, safety);
-  const handle = await open(path, "wx", 0o600);
+  const handle = await resolvedSafety.openExclusive(path, "wx", 0o600);
+  const createdMetadata = await handle.stat({ bigint: true });
+  const createdIdentity = `${createdMetadata.dev.toString()}:${createdMetadata.ino.toString()}`;
   try {
     await handle.writeFile(bytes);
     if (process.platform !== "win32") await handle.chmod(0o600);
     await handle.sync();
   } catch (error) {
     await handle.close().catch(() => undefined);
+    try {
+      await removePartialReceipt(path, createdIdentity);
+    } catch {
+      // Never remove a path whose identity no longer proves it is the file created above.
+    }
     throw error;
   }
   await handle.close();
   try {
+    if (resolvedSafety.platform === "win32") await resolvedSafety.setWindowsOwnerOnly(path);
     await assertOwnerOnly(path, safety);
   } catch (error) {
-    await rm(path).catch(() => undefined);
+    try {
+      await removePartialReceipt(path, createdIdentity);
+    } catch {
+      // Never remove a path whose identity no longer proves it is the file created above.
+    }
     throw error;
   }
   return bytes;
@@ -510,7 +644,19 @@ export const updateDeleteResumeReceipt = async (
   if (!Buffer.from(current).equals(Buffer.from(expectedBytes)))
     throw new Error("Delete receipt changed concurrently; preserved the newer bytes.");
   const replacement = serializeReceipt(receipt);
-  const persisted = await persistExpectedBytesAtomically(path, replacement, expectedBytes);
+  const resolvedSafety = { ...defaultReceiptSafety, ...safety };
+  const persisted = await persistExpectedBytesAtomically(
+    path,
+    replacement,
+    expectedBytes,
+    undefined,
+    resolvedSafety.platform === "win32"
+      ? async (stagedPath) => {
+          await resolvedSafety.setWindowsOwnerOnly(stagedPath);
+          await assertOwnerOnly(stagedPath, safety);
+        }
+      : undefined,
+  );
   if (!persisted)
     throw new Error("Delete receipt changed concurrently; preserved the newer bytes.");
   await assertOwnerOnly(path, safety);

@@ -131,6 +131,7 @@ export const persistExpectedBytesAtomically = async (
   replacementBytes: Uint8Array,
   expectedBytes: Uint8Array,
   dependencies: AtomicConfigurePersistenceDependencies = atomicPersistenceDefaults,
+  prepareReplacement?: (temporaryPath: string) => Promise<void>,
 ): Promise<boolean> => {
   const persistencePath = dependencies.realpath
     ? await dependencies.realpath(configPath)
@@ -148,6 +149,7 @@ export const persistExpectedBytesAtomically = async (
     try {
       await handle.writeFile(replacementBytes);
       await handle.sync();
+      await prepareReplacement?.(temporaryPath);
       const beforeReplace = await dependencies.readFile(persistencePath);
       if (equalBytes(beforeReplace, expectedBytes)) {
         if (dependencies.platform !== "win32") {

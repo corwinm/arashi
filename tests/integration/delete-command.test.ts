@@ -81,6 +81,51 @@ const fixture = () => {
   return { configPath, remote, workspace };
 };
 
+const bareParentFixture = () => {
+  const root = mkdtempSync(join(tmpdir(), "arashi-delete-bare-parent-"));
+  roots.push(root);
+  const parentSource = join(root, "parent-source");
+  const parentCommon = join(root, "parent.git");
+  const executionRoot = join(root, "parent-linked");
+  const childSeed = join(root, "child-seed");
+  const childRemote = join(root, "child.git");
+  mkdirSync(parentSource);
+  git(parentSource, "init", "--initial-branch=main");
+  writeFileSync(join(parentSource, "README.md"), "parent\n");
+  git(parentSource, "add", "README.md");
+  git(parentSource, "commit", "-m", "parent");
+  git(root, "clone", "--bare", parentSource, parentCommon);
+  git(parentCommon, "worktree", "add", executionRoot, "main");
+
+  mkdirSync(childSeed);
+  git(childSeed, "init", "--initial-branch=main");
+  writeFileSync(join(childSeed, "README.md"), "child\n");
+  git(childSeed, "add", "README.md");
+  git(childSeed, "commit", "-m", "child");
+  git(root, "init", "--bare", childRemote);
+  git(childSeed, "remote", "add", "origin", childRemote);
+  git(childSeed, "push", "-u", "origin", "main");
+  mkdirSync(join(executionRoot, "repos"));
+  git(executionRoot, "clone", childRemote, join(executionRoot, "repos", "api"));
+
+  const configPath = join(parentCommon, ".arashi", "config.json");
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        version: "1.0.0",
+        reposDir: "repos",
+        worktreesDir: ".arashi/worktrees",
+        repos: { api: { path: "repos/api", gitUrl: childRemote } },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return { childRemote, configPath, executionRoot, parentCommon, root };
+};
+
 const run = (cwd: string, args: string[], envOverrides: NodeJS.ProcessEnv = {}) =>
   spawnSync(process.execPath, [cli, ...args], {
     cwd,
@@ -140,6 +185,21 @@ describe("spawned configured repository delete", () => {
     expect(existsSync(join(workspace, "repos", "api"))).toBe(true);
   });
 
+  test("finds the parent workspace receipt when invoked from the configured child", () => {
+    const { workspace } = fixture();
+    const receipts = join(workspace, ".git", ".arashi-delete-receipts");
+    mkdirSync(receipts, { recursive: true, mode: 0o700 });
+    const name = createHash("sha256").update("api", "utf8").digest("hex");
+    writeFileSync(join(receipts, `${name}.json`), '{"version":1,"surprise":true}\n', {
+      mode: 0o600,
+    });
+
+    const result = run(join(workspace, "repos", "api"), ["delete", "api", "--dry-run", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("DELETE_RECEIPT_INVALID");
+  });
+
   test("JSON dry-run is deterministic, closed, and mutation-free", () => {
     const { configPath, workspace } = fixture();
     const before = readFileSync(configPath);
@@ -177,6 +237,194 @@ describe("spawned configured repository delete", () => {
     expect(readFileSync(configPath)).toEqual(before);
     expect(existsSync(join(workspace, "repos", "api"))).toBe(true);
     expect(existsSync(join(workspace, ".git", ".arashi-add.transaction.lock"))).toBe(false);
+  });
+
+  test("deletes from the persisted legacy repository map selected by normalization", () => {
+    const { configPath, workspace } = fixture();
+    const persisted = JSON.parse(readFileSync(configPath, "utf8"));
+    persisted.discovered_repos = persisted.repos;
+    delete persisted.repos;
+    writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
+
+    const result = run(workspace, ["delete", "api", "--force", "--json"]);
+
+    expect(result.status, result.stdout).toBe(0);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).discovered_repos.api).toBeUndefined();
+    expect(existsSync(join(workspace, "repos", "api"))).toBe(false);
+  });
+
+  test("fails closed when another configured key aliases the selected topology", () => {
+    const { configPath, workspace } = fixture();
+    const persisted = JSON.parse(readFileSync(configPath, "utf8"));
+    persisted.repos.alias = { ...persisted.repos.api };
+    writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
+
+    const result = run(workspace, ["delete", "api", "--dry-run", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error).toMatchObject({
+      code: "DELETE_TOPOLOGY_INVALID",
+      details: { repositoryKey: "api" },
+    });
+  });
+
+  test("fails closed when another configured key references a linked worktree", () => {
+    const { configPath, workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    const linked = join(workspace, ".arashi", "worktrees", "topic", "repos", "api");
+    mkdirSync(dirname(linked), { recursive: true });
+    git(clone, "worktree", "add", linked, "-b", "topic");
+    const persisted = JSON.parse(readFileSync(configPath, "utf8"));
+    persisted.repos.linkedAlias = { ...persisted.repos.api, path: linked };
+    writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
+
+    const result = run(workspace, ["delete", "api", "--dry-run", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("DELETE_TOPOLOGY_INVALID");
+  });
+
+  test("fails closed when another configured path is nested inside the selected deletion root", () => {
+    const { configPath, workspace } = fixture();
+    const nested = join(workspace, "repos", "api", "nested-configured");
+    mkdirSync(nested);
+    const persisted = JSON.parse(readFileSync(configPath, "utf8"));
+    persisted.repos.nested = { gitUrl: persisted.repos.api.gitUrl, path: nested };
+    writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
+
+    const result = run(workspace, ["delete", "api", "--dry-run", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("DELETE_TOPOLOGY_INVALID");
+    expect(existsSync(join(workspace, "repos", "api"))).toBe(true);
+  });
+
+  test("uses local origin identity for a legacy entry without gitUrl", () => {
+    const { configPath, workspace } = fixture();
+    const persisted = JSON.parse(readFileSync(configPath, "utf8"));
+    delete persisted.repos.api.gitUrl;
+    writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
+
+    const result = run(workspace, ["delete", "api", "--dry-run", "--json"]);
+
+    expect(result.status, result.stdout).toBe(0);
+  });
+
+  test("repairs a missing gitUrl from the selected clone under a bare-backed parent", () => {
+    const { configPath, executionRoot } = bareParentFixture();
+    const persisted = JSON.parse(readFileSync(configPath, "utf8"));
+    delete persisted.repos.api.gitUrl;
+    writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
+
+    const result = run(executionRoot, ["delete", "api", "--dry-run", "--json"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  });
+
+  test("fails closed when the canonical clone uses an external Git common directory", () => {
+    const { remote, workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    const external = join(workspace, ".arashi", "external-api.git");
+    rmSync(clone, { recursive: true, force: true });
+    git(workspace, "clone", "--separate-git-dir", external, remote, clone);
+
+    const result = run(workspace, ["delete", "api", "--dry-run", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("DELETE_TOPOLOGY_INVALID");
+  });
+
+  test("rejects a canonical clone that contains the parent workspace", () => {
+    const { configPath, remote, workspace } = fixture();
+    const root = dirname(workspace);
+    git(root, "init", "--initial-branch=main");
+    git(root, "remote", "add", "origin", remote);
+    const persisted = JSON.parse(readFileSync(configPath, "utf8"));
+    persisted.repos.api.path = "..";
+    writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
+
+    const result = run(workspace, ["delete", "api", "--dry-run", "--json", "--force"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("DELETE_TOPOLOGY_INVALID");
+  });
+
+  test("rejects a deletion root containing the active bare-backed parent worktree", () => {
+    const root = mkdtempSync(join(tmpdir(), "arashi-delete-execution-containment-"));
+    roots.push(root);
+    const childSeed = join(root, "child-seed");
+    const childRemote = join(root, "child.git");
+    const selectedRoot = join(root, "selected");
+    mkdirSync(childSeed);
+    git(childSeed, "init", "--initial-branch=main");
+    writeFileSync(join(childSeed, "README.md"), "child\n");
+    git(childSeed, "add", "README.md");
+    git(childSeed, "commit", "-m", "child");
+    git(root, "init", "--bare", childRemote);
+    git(childSeed, "remote", "add", "origin", childRemote);
+    git(childSeed, "push", "-u", "origin", "main");
+    git(root, "clone", childRemote, selectedRoot);
+
+    const parentSource = join(root, "parent-source");
+    const parentCommon = join(root, "parent.git");
+    const executionRoot = join(selectedRoot, "active-parent");
+    mkdirSync(parentSource);
+    git(parentSource, "init", "--initial-branch=main");
+    writeFileSync(join(parentSource, "README.md"), "parent\n");
+    git(parentSource, "add", "README.md");
+    git(parentSource, "commit", "-m", "parent");
+    git(root, "clone", "--bare", parentSource, parentCommon);
+    git(parentCommon, "worktree", "add", executionRoot, "main");
+    const configPath = join(parentCommon, ".arashi", "config.json");
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: "1.0.0",
+          reposDir: "..",
+          worktreesDir: ".arashi/worktrees",
+          repos: { api: { path: "..", gitUrl: childRemote } },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const result = run(executionRoot, ["delete", "api", "--dry-run", "--force", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("DELETE_TOPOLOGY_INVALID");
+    expect(existsSync(selectedRoot)).toBe(true);
+  });
+
+  test("fails closed instead of ignoring initialized submodule Git data", () => {
+    const { remote, workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    git(clone, "-c", "protocol.file.allow=always", "submodule", "add", remote, "nested");
+    git(clone, "commit", "-am", "add initialized submodule");
+    git(clone, "push", "origin", "HEAD:main");
+
+    const result = run(workspace, ["delete", "api", "--dry-run", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("DELETE_GIT_DATA_LOSS");
+  });
+
+  test("fails closed when only a linked worktree index contains an initialized submodule", () => {
+    const { remote, workspace } = fixture();
+    const primary = join(workspace, "repos", "api");
+    const linked = join(workspace, ".arashi", "worktrees", "submodule", "repos", "api");
+    mkdirSync(dirname(linked), { recursive: true });
+    git(primary, "worktree", "add", linked, "-b", "linked-submodule");
+    git(linked, "-c", "protocol.file.allow=always", "submodule", "add", remote, "nested");
+    expect(git(primary, "ls-files", "--stage")).not.toContain("160000");
+    expect(git(linked, "ls-files", "--stage")).toContain("160000");
+
+    const result = run(workspace, ["delete", "api", "--dry-run", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("DELETE_GIT_DATA_LOSS");
   });
 
   test("clean JSON mutation without force returns the closed delete payload as error details", () => {
@@ -375,8 +623,12 @@ describe("spawned configured repository delete", () => {
     expect(existsSync(globalHook)).toBe(true);
   });
 
-  test("a terminal durable receipt resumes after the config entry and clone are gone", async () => {
+  test("reconciles an unledgered worktree removal and a terminal durable receipt", async () => {
     const { configPath, workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    const linked = join(workspace, ".arashi", "worktrees", "gap", "repos", "api");
+    mkdirSync(dirname(linked), { recursive: true });
+    git(clone, "worktree", "add", linked, "-b", "gap");
     const dryRun = run(workspace, ["delete", "api", "--dry-run", "--json"]);
     expect(dryRun.status, dryRun.stderr).toBe(0);
     const dryData = JSON.parse(dryRun.stdout).data;
@@ -435,6 +687,7 @@ describe("spawned configured repository delete", () => {
       },
     };
     await createDeleteResumeReceipt(receiptPath, initialReceipt);
+    git(clone, "worktree", "remove", "--force", linked);
 
     const deleted = run(workspace, ["delete", "api", "--force", "--json"]);
     expect(deleted.status, deleted.stderr).toBe(0);

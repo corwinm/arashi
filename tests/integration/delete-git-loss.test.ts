@@ -43,6 +43,23 @@ afterEach(() => {
 });
 
 describe("real Git loss inspection", () => {
+  test("permits a valid empty clone without refs", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "arashi-delete-empty-loss-")));
+    roots.push(root);
+    const remote = join(root, "remote.git");
+    const primary = join(root, "primary");
+    mkdirSync(remote);
+    git(remote, "init", "--bare", "--initial-branch=main");
+    git(root, "clone", remote, primary);
+
+    const loss = await inspectRepositoryGitLoss(await inspectGitWorktreeTopology(primary));
+
+    expect(loss.items).toEqual([]);
+    expect(loss.warnings.some((warning) => warning.startsWith("DELETE_GIT_DATA_LOSS:"))).toBe(
+      false,
+    );
+  });
+
   test("fails closed on an invalid UTF-8 status path emitted by Git", async () => {
     const { primary } = fixture();
     const blob = git(primary, "rev-parse", "HEAD:tracked.txt");
@@ -156,5 +173,20 @@ describe("real Git loss inspection", () => {
       loss.warnings.some((warning) => warning.startsWith("DELETE_GIT_DATA_LOSS: refs/heads/main")),
     ).toBe(false);
     expect(after).toBe(before);
+  });
+
+  test("inventories a custom local ref even when it points at a published commit", async () => {
+    const { primary } = fixture();
+    const published = git(primary, "rev-parse", "HEAD");
+    git(primary, "update-ref", "refs/archive/release", published);
+
+    const loss = await inspectRepositoryGitLoss(await inspectGitWorktreeTopology(primary));
+
+    expect(loss.items).toContainEqual(
+      expect.objectContaining({ ref: "refs/archive/release", oid: published }),
+    );
+    expect(loss.warnings).toContain(
+      `DELETE_GIT_DATA_LOSS: refs/archive/release ${published} is not reachable from local remote-tracking refs`,
+    );
   });
 });
