@@ -119,6 +119,17 @@ $acl.AddAccessRule($rule)
 Set-Acl -LiteralPath $target -AclObject $acl
 `;
 
+export const windowsAclPowerShellEnvironment = (
+  path: string,
+  inherited: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...inherited, ARASHI_DELETE_RECEIPT_PATH: path };
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === "psmodulepath") delete env[key];
+  }
+  return env;
+};
+
 const execWindowsAclPowerShell = (script: string, path: string) =>
   execFileAsync(
     "powershell.exe",
@@ -129,7 +140,7 @@ const execWindowsAclPowerShell = (script: string, path: string) =>
       "-EncodedCommand",
       Buffer.from(script, "utf16le").toString("base64"),
     ],
-    { env: { ...process.env, ARASHI_DELETE_RECEIPT_PATH: path } },
+    { env: windowsAclPowerShellEnvironment(path) },
   );
 
 export const parseWindowsOwnerOnlyAcl = (output: string): boolean => {

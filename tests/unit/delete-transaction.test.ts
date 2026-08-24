@@ -22,6 +22,7 @@ import {
   removeDeleteResumeReceipt,
   runDeleteBatchTransaction,
   updateDeleteResumeReceipt,
+  windowsAclPowerShellEnvironment,
   type DeleteResumeReceipt,
 } from "../../src/lib/delete-transaction.ts";
 const createTempDir = (prefix: string): Promise<string> => mkdtemp(join(tmpdir(), prefix));
@@ -81,6 +82,19 @@ const receipt = (repositoryKey: string, receiptPath = "/receipt"): DeleteResumeR
 });
 
 describe("delete resume receipts", () => {
+  test("isolates Windows PowerShell from an incompatible inherited module path", () => {
+    expect(
+      windowsAclPowerShellEnvironment("C:\\receipt", {
+        Path: "C:\\Windows",
+        PSModulePath: "C:\\Program Files\\PowerShell\\Modules",
+        pSmOdUlEpAtH: "C:\\other-modules",
+      }),
+    ).toEqual({
+      ARASHI_DELETE_RECEIPT_PATH: "C:\\receipt",
+      Path: "C:\\Windows",
+    });
+  });
+
   test("accepts only a Windows ACL owned by and granting access to the current user", () => {
     const owner = "S-1-5-21-1000";
     expect(
