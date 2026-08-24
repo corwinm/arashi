@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -67,13 +68,15 @@ describe("real Git loss inspection", () => {
 
     const topology = await inspectGitWorktreeTopology(primary);
     const loss = await inspectRepositoryGitLoss(topology);
+    const physicalLinked = await realpath(linked);
+    const physicalPrimary = await realpath(primary);
 
     expect(loss.warnings).toEqual(
       expect.arrayContaining([
-        expect.stringContaining(`${primary}: tracked .M tracked.txt`),
-        expect.stringContaining(`${primary}: tracked A. staged.txt`),
-        expect.stringContaining(`${primary}: untracked ? untracked.txt`),
-        expect.stringContaining(`${linked}: ignored ! ignored.log`),
+        expect.stringContaining(`${physicalPrimary}: tracked .M tracked.txt`),
+        expect.stringContaining(`${physicalPrimary}: tracked A. staged.txt`),
+        expect.stringContaining(`${physicalPrimary}: untracked ? untracked.txt`),
+        expect.stringContaining(`${physicalLinked}: ignored ! ignored.log`),
       ]),
     );
   });
@@ -93,7 +96,9 @@ describe("real Git loss inspection", () => {
 
     const loss = await inspectRepositoryGitLoss(await inspectGitWorktreeTopology(primary));
 
-    expect(loss.warnings).toContain(`DELETE_GIT_DATA_LOSS: ${linked}: conflicted UU tracked.txt`);
+    expect(loss.warnings).toContain(
+      `DELETE_GIT_DATA_LOSS: ${await realpath(linked)}: conflicted UU tracked.txt`,
+    );
   });
 
   test("plans heads, stash, detached commits, and exact lightweight/annotated tag pairs", async () => {

@@ -8,6 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -47,9 +48,11 @@ const fixture = () => {
   return { configuredActive, primary, root };
 };
 
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+afterEach(async () => {
+  for (const root of roots.splice(0)) {
+    const physicalRoot = await realpath(root).catch(() => root);
+    await rm(physicalRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 });
 
 describe("real Git linked-worktree topology", () => {
@@ -57,12 +60,14 @@ describe("real Git linked-worktree topology", () => {
     const { configuredActive, primary } = fixture();
 
     const plan = await inspectGitWorktreeTopology(configuredActive);
+    const physicalConfigured = await realpath(configuredActive);
+    const physicalPrimary = await realpath(primary);
 
-    expect(plan.configuredActivePath).toBe(configuredActive);
-    expect(plan.primaryPath).toBe(primary);
-    expect(plan.canonicalClonePath).toBe(primary);
-    expect(plan.linkedWorktrees.map((entry) => entry.path)).toEqual([configuredActive]);
-    expect(plan.commonDirectory).toBe(join(primary, ".git"));
+    expect(plan.configuredActivePath).toBe(physicalConfigured);
+    expect(plan.primaryPath).toBe(physicalPrimary);
+    expect(plan.canonicalClonePath).toBe(physicalPrimary);
+    expect(plan.linkedWorktrees.map((entry) => entry.path)).toEqual([physicalConfigured]);
+    expect(plan.commonDirectory).toBe(await realpath(join(primary, ".git")));
   });
 
   test("removes a registered active linked worktree through Git before clone quarantine", async () => {
@@ -83,7 +88,8 @@ describe("real Git linked-worktree topology", () => {
     rmSync(stale, { recursive: true });
 
     const plan = await inspectGitWorktreeTopology(configuredActive);
-    const staleItem = plan.staleMetadata.find((entry) => entry.worktreePath === stale);
+    const physicalStale = join(await realpath(root), "stale");
+    const staleItem = plan.staleMetadata.find((entry) => entry.worktreePath === physicalStale);
     expect(staleItem?.path).toMatch(/\.git[/\\]worktrees[/\\]/u);
 
     await executeWorktreeRemovalPlan(plan);
