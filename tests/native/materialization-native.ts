@@ -312,12 +312,15 @@ const runNativeNamingMatrix = async (
       );
       const canonicalParent = await realpath(parentDestination);
       const canonicalChild = await realpath(childDestination);
+      const canonicalReportedPaths = await Promise.all(
+        data.repositories.map(({ worktreePath }) => realpath(worktreePath)),
+      );
       assert(
-        data.repositories.some(({ worktreePath }) => resolve(worktreePath) === canonicalParent),
+        canonicalReportedPaths.includes(canonicalParent),
         `${bare ? "bare" : "non-bare"} ${namingCase.id} JSON omitted parent ${canonicalParent}: ${JSON.stringify(data.repositories)}`,
       );
       assert(
-        data.repositories.some(({ worktreePath }) => resolve(worktreePath) === canonicalChild),
+        canonicalReportedPaths.includes(canonicalChild),
         `${bare ? "bare" : "non-bare"} ${namingCase.id} JSON omitted coordinated child ${canonicalChild}: ${JSON.stringify(data.repositories)}`,
       );
       assert(
@@ -502,10 +505,11 @@ const main = async () => {
     const namedChild = join(namedParent, "repos", "app");
     assert(await exists(namedChild), `configured naming destination is missing: ${namedChild}`);
     const canonicalNamedChild = await realpath(namedChild);
+    const canonicalReportedPaths = await Promise.all(
+      namedData.repositories.map(({ worktreePath }) => realpath(worktreePath)),
+    );
     assert(
-      namedData.repositories.some(
-        ({ worktreePath }) => resolve(worktreePath) === canonicalNamedChild,
-      ),
+      canonicalReportedPaths.includes(canonicalNamedChild),
       `configured naming JSON omitted the canonical child path: ${JSON.stringify(namedData.repositories)}`,
     );
     assert(
@@ -570,8 +574,11 @@ const main = async () => {
     const bareData = bareEnvelope.data as { repositories: { worktreePath: string }[] };
     const bareDestination = join(root, "example", "native", "bare-layout");
     const canonicalBareDestination = await realpath(bareDestination);
+    const canonicalReportedBareDestination = await realpath(
+      bareData.repositories[0]?.worktreePath ?? "",
+    );
     assert(
-      resolve(bareData.repositories[0]?.worktreePath ?? "") === canonicalBareDestination,
+      canonicalReportedBareDestination === canonicalBareDestination,
       `bare JSON reported the wrong destination: ${JSON.stringify(bareData.repositories)}`,
     );
     assert(await exists(join(bareDestination, "README.md")), "bare namespace checkout missing");
