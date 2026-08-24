@@ -24,7 +24,7 @@ import {
 } from "../core/worktree.ts";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
 import { existsSync, lstatSync } from "node:fs";
-import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, realpath, rm, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   buildDirtyGuidance,
@@ -123,6 +123,19 @@ async function isCaseInsensitivePath(path: string): Promise<boolean> {
   }
 }
 
+async function normalizesUnicodePath(path: string): Promise<boolean> {
+  if (process.platform !== "darwin") {
+    return false;
+  }
+  try {
+    // APFS and HFS+ report this Darwin type and compare canonically equivalent paths.
+    return (await statfs(path)).type === 0x1a;
+  } catch {
+    // Fail closed on Darwin when the target filesystem cannot be inspected.
+    return true;
+  }
+}
+
 async function canonicalizePlannedDestination(path: string): Promise<string | null> {
   let ancestor = resolve(path);
   const unresolvedSegments: string[] = [];
@@ -131,7 +144,12 @@ async function canonicalizePlannedDestination(path: string): Promise<string | nu
     try {
       const canonicalAncestor = await realpath(ancestor);
       const identity = resolve(canonicalAncestor, ...unresolvedSegments.toReversed());
-      return (await isCaseInsensitivePath(canonicalAncestor)) ? identity.toLowerCase() : identity;
+      const normalizedIdentity = (await normalizesUnicodePath(canonicalAncestor))
+        ? identity.normalize("NFC")
+        : identity;
+      return (await isCaseInsensitivePath(canonicalAncestor))
+        ? normalizedIdentity.toLowerCase()
+        : normalizedIdentity;
     } catch {
       try {
         if ((await lstat(ancestor)).isSymbolicLink()) {

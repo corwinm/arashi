@@ -2,7 +2,7 @@ import type { Config, LoadedConfig } from "../../src/lib/config.ts";
 import { describe, expect, test, vi } from "vitest";
 import type { OperationSummary } from "../../src/core/worktree.ts";
 import { executeCreate, resolveCreateDefaults } from "../../src/commands/create.ts";
-import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 type CreateCommandDependencies = NonNullable<Parameters<typeof executeCreate>[2]>;
@@ -462,6 +462,93 @@ describe("create defaults integration", () => {
                     repository,
                     {
                       path: join(existingParent, "missing", index === 0 ? "LEAF" : "leaf"),
+                      repositoryType: "meta-repo" as const,
+                      strategy: "sibling" as const,
+                    },
+                  ]),
+                ),
+              createCoordinatedWorktrees: async (...args) => {
+                events.push("create");
+                return baseDeps().createCoordinatedWorktrees!(...args);
+              },
+              discoverRepositories: async () => ({
+                duration: 1,
+                errors: [],
+                repositories: selected,
+                scanDepth: 1,
+                scannedDirectories: 2,
+                workspacePath: `${workspaceRoot}/repos`,
+              }),
+              isGitRepository: async () => false,
+              reconcileManagedIgnore: async (...args) => {
+                events.push("managed-ignore");
+                return baseDeps().reconcileManagedIgnore!(...args);
+              },
+            }),
+          ),
+        ).rejects.toMatchObject({ details: { conflict: { repositoryName: "child" } } });
+        expect(events).toEqual([]);
+      } finally {
+        await rm(fixtureRoot, { force: true, recursive: true });
+      }
+    },
+  );
+
+  test.each([
+    ["human", { dryRun: true }],
+    ["JSON", { dryRun: true, json: true }],
+  ])(
+    "rejects normalization-equivalent absent planned destinations in %s dry-run on normalizing filesystems",
+    async (_mode, options) => {
+      const fixtureRoot = await mkdtemp(join(tmpdir(), "arashi-duplicate-plan-normalization-"));
+      const composed = "é";
+      const decomposed = "e\u0301";
+      const probe = join(fixtureRoot, composed);
+      await mkdir(probe);
+      const normalizationAliases = await Promise.all([
+        lstat(probe),
+        lstat(join(fixtureRoot, decomposed)),
+      ])
+        .then(([first, second]) => first.dev === second.dev && first.ino === second.ino)
+        .catch(() => false);
+      await rm(probe, { force: true, recursive: true });
+      if (!normalizationAliases) {
+        await rm(fixtureRoot, { force: true, recursive: true });
+        return;
+      }
+      const selected = [
+        {
+          defaultBranch: "main",
+          hasSetupScript: false,
+          name: "workspace",
+          path: workspaceRoot,
+        },
+        {
+          defaultBranch: "main",
+          hasSetupScript: false,
+          name: "child",
+          path: `${workspaceRoot}/repos/child`,
+        },
+      ];
+      const events: string[] = [];
+
+      try {
+        await expect(
+          executeCreate(
+            branchName,
+            options,
+            baseDeps({
+              calculateWorktreePathPlan: async (repositories) =>
+                new Map(
+                  repositories.map((repository, index) => [
+                    repository,
+                    {
+                      path: join(
+                        fixtureRoot,
+                        "planned",
+                        index === 0 ? composed : decomposed,
+                        "leaf",
+                      ),
                       repositoryType: "meta-repo" as const,
                       strategy: "sibling" as const,
                     },
