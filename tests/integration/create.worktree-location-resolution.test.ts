@@ -201,13 +201,17 @@ describe("create command worktree location resolution", () => {
     const result = await runCreateResult(branch, ["--dry-run", "--json"]);
 
     expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const output = JSON.parse(result.stdout);
+    expect(output).toMatchObject({
       error: {
         code: "WORKTREE_DESTINATION_COLLISION",
-        details: { conflict: { repositoryName: "workspace", worktreePath: destination } },
+        details: { conflict: { repositoryName: "workspace" } },
       },
       ok: false,
     });
+    expect(await realpath(output.error.details.conflict.worktreePath)).toBe(
+      await realpath(destination),
+    );
     expect(await runtime.file(marker).exists()).toBe(false);
     const branchProbe = runtime.spawn(["git", "show-ref", "--verify", `refs/heads/${branch}`], {
       cwd: workspacePath,

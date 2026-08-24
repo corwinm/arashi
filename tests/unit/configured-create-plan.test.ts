@@ -4,10 +4,9 @@ import { join } from "path";
 
 describe("configured create immutable destination plan", () => {
   test("hook preflight consumes the caller-owned plan instead of recalculating destinations", async () => {
-    const source = await readFile(
-      join(import.meta.dirname, "..", "..", "src", "core", "worktree.ts"),
-      "utf8",
-    );
+    const source = (
+      await readFile(join(import.meta.dirname, "..", "..", "src", "core", "worktree.ts"), "utf8")
+    ).replaceAll("\r\n", "\n");
     const preflight = source.slice(
       source.indexOf("const preflightConfiguredCreateHooks"),
       source.indexOf(
