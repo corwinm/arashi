@@ -123,13 +123,26 @@ async function isCaseInsensitivePath(path: string): Promise<boolean> {
   }
 }
 
+const DARWIN_APFS_FILESYSTEM_TYPE = 26;
+const DARWIN_HFS_PLUS_FILESYSTEM_TYPE = 25;
+
+export function isNormalizingDarwinFilesystemType(
+  filesystemType: number,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return (
+    platform === "darwin" &&
+    (filesystemType === DARWIN_HFS_PLUS_FILESYSTEM_TYPE ||
+      filesystemType === DARWIN_APFS_FILESYSTEM_TYPE)
+  );
+}
+
 async function normalizesUnicodePath(path: string): Promise<boolean> {
   if (process.platform !== "darwin") {
     return false;
   }
   try {
-    // APFS and HFS+ report this Darwin type and compare canonically equivalent paths.
-    return (await statfs(path)).type === 0x1a;
+    return isNormalizingDarwinFilesystemType((await statfs(path)).type);
   } catch {
     // Fail closed on Darwin when the target filesystem cannot be inspected.
     return true;

@@ -1,7 +1,11 @@
 import type { Config, LoadedConfig } from "../../src/lib/config.ts";
 import { describe, expect, test, vi } from "vitest";
 import type { OperationSummary } from "../../src/core/worktree.ts";
-import { executeCreate, resolveCreateDefaults } from "../../src/commands/create.ts";
+import {
+  executeCreate,
+  isNormalizingDarwinFilesystemType,
+  resolveCreateDefaults,
+} from "../../src/commands/create.ts";
 import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -113,6 +117,13 @@ function baseDeps(overrides: Partial<CreateCommandDependencies> = {}): CreateCom
 }
 
 describe("create defaults integration", () => {
+  test("classifies APFS and HFS+ as Darwin Unicode-normalizing filesystems", () => {
+    expect(isNormalizingDarwinFilesystemType(25, "darwin")).toBe(true);
+    expect(isNormalizingDarwinFilesystemType(26, "darwin")).toBe(true);
+    expect(isNormalizingDarwinFilesystemType(25, "linux")).toBe(false);
+    expect(isNormalizingDarwinFilesystemType(42, "darwin")).toBe(false);
+  });
+
   test.each([
     { interactive: true },
     { launch: true },
