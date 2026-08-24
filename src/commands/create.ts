@@ -24,7 +24,7 @@ import {
 } from "../core/worktree.ts";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
 import { existsSync, lstatSync } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   buildDirtyGuidance,
@@ -92,15 +92,54 @@ import {
   type EffectiveBaseBranch,
 } from "../lib/base-branch-policy.ts";
 
-async function canonicalizePlannedDestination(path: string): Promise<string> {
+async function isCaseInsensitivePath(path: string): Promise<boolean> {
+  let candidate = path;
+  while (true) {
+    const name = basename(candidate);
+    const characterIndex = [...name].findIndex(
+      (character) => character.toLowerCase() !== character.toUpperCase(),
+    );
+    if (characterIndex >= ZERO) {
+      const characters = [...name];
+      const character = characters[characterIndex]!;
+      characters[characterIndex] =
+        character === character.toLowerCase() ? character.toUpperCase() : character.toLowerCase();
+      const caseAlias = join(dirname(candidate), characters.join(""));
+      try {
+        const [canonicalCandidate, canonicalAlias] = await Promise.all([
+          realpath(candidate),
+          realpath(caseAlias),
+        ]);
+        return canonicalCandidate === canonicalAlias;
+      } catch {
+        return false;
+      }
+    }
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      return process.platform === "win32";
+    }
+    candidate = parent;
+  }
+}
+
+async function canonicalizePlannedDestination(path: string): Promise<string | null> {
   let ancestor = resolve(path);
   const unresolvedSegments: string[] = [];
 
   while (true) {
     try {
       const canonicalAncestor = await realpath(ancestor);
-      return resolve(canonicalAncestor, ...unresolvedSegments.toReversed());
+      const identity = resolve(canonicalAncestor, ...unresolvedSegments.toReversed());
+      return (await isCaseInsensitivePath(canonicalAncestor)) ? identity.toLowerCase() : identity;
     } catch {
+      try {
+        if ((await lstat(ancestor)).isSymbolicLink()) {
+          return null;
+        }
+      } catch {
+        // Continue to the next ancestor for ordinary absent path components.
+      }
       const parent = dirname(ancestor);
       if (parent === ancestor) {
         return resolve(ancestor, ...unresolvedSegments.toReversed());
@@ -1721,7 +1760,7 @@ export async function executeCreate(
   const plannedDestinations = new Set<string>();
   for (const [repository, plannedPath] of worktreePathPlan) {
     const canonicalDestination = await canonicalizePlannedDestination(plannedPath.path);
-    if (plannedDestinations.has(canonicalDestination)) {
+    if (canonicalDestination === null || plannedDestinations.has(canonicalDestination)) {
       throw new WorktreeDestinationCollisionError(repository.name, plannedPath.path);
     }
     plannedDestinations.add(canonicalDestination);
