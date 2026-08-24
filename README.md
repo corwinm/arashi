@@ -57,7 +57,6 @@ aw switch feature-auth-refresh    # return to a worktree
 aw pull                           # update repositories
 aw push --set-upstream            # publish branches
 aw remove feature-auth-refresh    # remove the coordinated worktrees
-aw delete backend --dry-run       # preview deleting a configured dependency
 ```
 
 For a single repository without persisted Arashi configuration, use `aw init --zero-config`. See the [standalone workflow](https://arashi.haphazard.dev/workflows/standalone/).
