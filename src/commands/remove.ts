@@ -698,7 +698,10 @@ export async function executeRemove(
       ? workspaceContext.config
       : await loadWorkspaceConfig(workspaceRoot);
   const reposDirName = basename(config.reposDir);
-  const childRepoNames = new Set(Object.keys(config.repos));
+  const configuredChildPaths = new Map(
+    Object.entries(config.repos).map(([name, repository]) => [name, repository.path]),
+  );
+  const childRepoNames = new Set(configuredChildPaths.keys());
   const repositories = buildRepositoryTargets(workspaceRoot, config.repos);
 
   if (repositories.length === 0) {
@@ -878,7 +881,11 @@ export async function executeRemove(
       inspectedHierarchyPaths.add(parentIdentity);
 
       for (const repo of configuredRepositories) {
-        const nestedPath = resolve(parentPath, reposDirName, repo.name);
+        const configuredChildPath = configuredChildPaths.get(repo.name);
+        if (!configuredChildPath) {
+          continue;
+        }
+        const nestedPath = resolve(parentPath, configuredChildPath);
         if (!pathExistsFailClosed(nestedPath)) {
           continue;
         }
@@ -903,12 +910,7 @@ export async function executeRemove(
     worktreesToRemove.splice(ZERO, worktreesToRemove.length, ...plan.worktrees);
     const unsafePlannedDescendant =
       findUnplannedRegisteredDescendant(worktreesToRemove, discoveredInventory, repositories) ??
-      findUnplannedConfiguredDescendant(
-        worktreesToRemove,
-        repositories,
-        childRepoNames,
-        reposDirName,
-      );
+      findUnplannedConfiguredDescendant(worktreesToRemove, repositories, configuredChildPaths);
     if (unsafePlannedDescendant) {
       throw new Error(
         `Removal of ${unsafePlannedDescendant.blockingWorktree.path} blocked because configured descendant ${unsafePlannedDescendant.repository.name}: ${unsafePlannedDescendant.path} exists outside the authoritative plan`,
@@ -1167,12 +1169,7 @@ export async function executeRemove(
     });
     invalidatedRemovalPlan =
       findUnplannedRegisteredDescendant(worktreesToRemove, refreshedInventory, repositories) ??
-      findUnplannedConfiguredDescendant(
-        worktreesToRemove,
-        repositories,
-        childRepoNames,
-        reposDirName,
-      );
+      findUnplannedConfiguredDescendant(worktreesToRemove, repositories, configuredChildPaths);
     if (invalidatedRemovalPlan) {
       const message = `Removal of ${invalidatedRemovalPlan.blockingWorktree.path} blocked because unplanned configured descendant ${invalidatedRemovalPlan.repository.name}: ${invalidatedRemovalPlan.path} appeared after planning`;
       summary.operations.push({
@@ -1365,11 +1362,10 @@ const findUnplannedRegisteredDescendant = (
 const findUnplannedConfiguredDescendant = (
   worktrees: WorktreeEntry[],
   repositories: RepositoryTarget[],
-  childRepoNames: Set<string>,
-  reposDirName: string,
+  configuredChildPaths: ReadonlyMap<string, string>,
 ): UnplannedConfiguredDescendant | undefined => {
   const plannedPaths = new Set(worktrees.map((worktree) => canonicalPhysicalPath(worktree.path)));
-  const configuredRepositories = repositories.filter((repo) => childRepoNames.has(repo.name));
+  const configuredRepositories = repositories.filter((repo) => configuredChildPaths.has(repo.name));
 
   for (const blockingWorktree of worktrees) {
     const hierarchy = [blockingWorktree.path];
@@ -1386,7 +1382,11 @@ const findUnplannedConfiguredDescendant = (
       inspectedPaths.add(parentIdentity);
 
       for (const repository of configuredRepositories) {
-        const nestedPath = resolve(parentPath, reposDirName, repository.name);
+        const configuredChildPath = configuredChildPaths.get(repository.name);
+        if (!configuredChildPath) {
+          continue;
+        }
+        const nestedPath = resolve(parentPath, configuredChildPath);
         if (!pathExistsFailClosed(nestedPath)) {
           continue;
         }

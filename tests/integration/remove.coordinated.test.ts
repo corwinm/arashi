@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { existsSync } from "fs";
 import { chmod, mkdir, readFile, realpath, rename, rm, writeFile } from "fs/promises";
-import { join } from "path";
+import { dirname, join } from "path";
 import {
   createNestedWorktrees,
   createRemoveWorkspace,
@@ -270,6 +270,46 @@ describe("remove command - coordinated child-first removal", () => {
     expect(normalizePathForComparison(await worktreeList(workspace.repos[1].path))).toContain(
       normalizePathForComparison(await realpath(grandchildPath)),
     );
+  });
+
+  test("blocks parent removal for an unregistered child at its full configured path", async () => {
+    const nestedSource = join(workspace.rootPath, "packages", "repos", "group", "child-dir");
+    await mkdir(dirname(nestedSource), { recursive: true });
+    await rename(workspace.repos[0].path, nestedSource);
+    workspace.repos[0].path = nestedSource;
+    await writeFile(
+      join(workspace.rootPath, ".arashi", "config.json"),
+      JSON.stringify(
+        {
+          repos: {
+            "repo-a": { defaultBranch: "main", path: "./packages/repos/group/child-dir" },
+            "repo-b": { defaultBranch: "main", path: "./repos/repo-b" },
+          },
+          reposDir: "./packages/repos",
+          version: "1.0.0",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const parentPath = join(workspace.rootPath, "worktrees", "parent-full-configured-path");
+    await createWorktree(workspace.rootPath, "parent-full-configured-path", parentPath);
+    const unregisteredChildPath = join(parentPath, "packages", "repos", "group", "child-dir");
+    await mkdir(unregisteredChildPath, { recursive: true });
+    await writeFile(join(unregisteredChildPath, "preserve.txt"), "must survive\n");
+
+    await expect(
+      runRemove(await realpath(parentPath), {
+        dryRun: true,
+        force: true,
+        keepBranches: true,
+        path: true,
+      }),
+    ).rejects.toThrow(/repo-a.*outside the authoritative plan/i);
+
+    expect(existsSync(parentPath)).toBe(true);
+    expect(existsSync(join(unregisteredChildPath, "preserve.txt"))).toBe(true);
   });
 
   test("fails closed before parent mutation when configured descendant inventory cannot be inspected", async () => {
