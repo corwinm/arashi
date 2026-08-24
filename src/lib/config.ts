@@ -109,6 +109,17 @@ export interface MetaRepositoryConfig {
   baseBranch?: string;
 }
 
+export type WorktreeNamingStyle = "default" | "branch" | "repo-branch";
+export type WorktreeNamingBranchSlashes = "preserve" | "flatten";
+
+/** Filesystem naming policy for configured create destinations. */
+export interface WorktreeNamingConfig {
+  /** Repository-shape-aware default, branch-only, or repository-prefixed naming */
+  style?: WorktreeNamingStyle;
+  /** Preserve branch slash hierarchy or flatten slashes to hyphens */
+  branchSlashes?: WorktreeNamingBranchSlashes;
+}
+
 /** Root configuration object for Arashi. */
 export interface Config {
   /** JSON Schema URL for editor validation/autocomplete */
@@ -119,6 +130,8 @@ export interface Config {
   reposDir: string;
   /** Base directory where worktrees are created (workspace-relative) */
   worktreesDir?: string;
+  /** Optional filesystem naming policy for configured create */
+  worktreeNaming?: WorktreeNamingConfig;
   /** Optional workspace-level hooks settings */
   hooks?: {
     /**
@@ -521,6 +534,7 @@ const ROOT_ALLOWED_KEYS = new Set([
   "repos_dir",
   "worktreesDir",
   "worktrees_dir",
+  "worktreeNaming",
   "repos",
   "discoveredRepos",
   "discovered_repos",
@@ -533,6 +547,7 @@ const ROOT_ALLOWED_KEYS = new Set([
 
 const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout", "scripts"]);
 const META_ALLOWED_KEYS = new Set(["baseBranch"]);
+const WORKTREE_NAMING_ALLOWED_KEYS = new Set(["style", "branchSlashes"]);
 const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
 const COMMAND_DEFAULTS_ALLOWED_KEYS = new Set(["create", "editors", "switch"]);
 const EDITOR_DEFAULTS_ALLOWED_KEYS = new Set(["vscode", "cursor", "kiro"]);
@@ -1309,6 +1324,39 @@ const normalizeWorktreesDirConfig = (value: unknown, errors: string[]): string =
   }
 };
 
+const normalizeWorktreeNamingConfig = (
+  value: unknown,
+  errors: string[],
+): WorktreeNamingConfig | undefined => {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    errors.push("worktreeNaming: must be an object if present");
+    return undefined;
+  }
+  validateNoUnknownKeys({
+    allowedKeys: WORKTREE_NAMING_ALLOWED_KEYS,
+    errors,
+    prefix: "worktreeNaming",
+    value,
+  });
+  const normalized: WorktreeNamingConfig = {};
+  if (value.style !== undefined) {
+    if (value.style === "default" || value.style === "branch" || value.style === "repo-branch") {
+      normalized.style = value.style;
+    } else {
+      errors.push('worktreeNaming.style: must be one of "default", "branch", or "repo-branch"');
+    }
+  }
+  if (value.branchSlashes !== undefined) {
+    if (value.branchSlashes === "preserve" || value.branchSlashes === "flatten") {
+      normalized.branchSlashes = value.branchSlashes;
+    } else {
+      errors.push('worktreeNaming.branchSlashes: must be one of "preserve" or "flatten"');
+    }
+  }
+  return normalized;
+};
+
 /**
  * Normalize legacy/snake_case config keys to canonical camelCase format.
  *
@@ -1353,6 +1401,7 @@ const normalizeConfigInternal = (
     config.discovered_repos as Record<string, unknown> | undefined,
   );
   const worktreesDir = normalizeWorktreesDirConfig(worktreesDirRaw, errors);
+  const worktreeNaming = normalizeWorktreeNamingConfig(config.worktreeNaming, errors);
   const hooks = normalizeWorkspaceHooks(config.hooks, "hooks", errors);
   const sync = normalizeSyncConfig(config.sync, "sync", errors);
   const defaults = normalizeCommandDefaults(config.defaults, errors, diagnostics);
@@ -1414,6 +1463,7 @@ const normalizeConfigInternal = (
   }
   if (baseBranch) normalizedConfig.baseBranch = baseBranch;
   if (meta) normalizedConfig.meta = meta;
+  if (worktreeNaming) normalizedConfig.worktreeNaming = worktreeNaming;
 
   return {
     config: normalizedConfig,
@@ -1674,6 +1724,10 @@ const normalizePersistedConfig = (config: Config): Config => {
 
   if (config.meta) {
     persisted.meta = config.meta;
+  }
+
+  if (config.worktreeNaming) {
+    persisted.worktreeNaming = config.worktreeNaming;
   }
 
   return persisted;

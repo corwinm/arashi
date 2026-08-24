@@ -83,6 +83,10 @@
           "$ref": "#/definitions/ConfigVersion",
           "description": "Configuration schema version for migrations"
         },
+        "worktreeNaming": {
+          "$ref": "#/definitions/WorktreeNamingConfig",
+          "description": "Optional filesystem naming policy for configured create"
+        },
         "worktreesDir": {
           "description": "Base directory where worktrees are created (workspace-relative)",
           "type": "string"
@@ -284,6 +288,29 @@
     },
     "SwitchMode": {
       "enum": ["auto", "cd", "launch", "sesh", "herdr"],
+      "type": "string"
+    },
+    "WorktreeNamingBranchSlashes": {
+      "enum": ["preserve", "flatten"],
+      "type": "string"
+    },
+    "WorktreeNamingConfig": {
+      "additionalProperties": false,
+      "description": "Filesystem naming policy for configured create destinations.",
+      "properties": {
+        "branchSlashes": {
+          "$ref": "#/definitions/WorktreeNamingBranchSlashes",
+          "description": "Preserve branch slash hierarchy or flatten slashes to hyphens"
+        },
+        "style": {
+          "$ref": "#/definitions/WorktreeNamingStyle",
+          "description": "Repository-shape-aware default, branch-only, or repository-prefixed naming"
+        }
+      },
+      "type": "object"
+    },
+    "WorktreeNamingStyle": {
+      "enum": ["default", "branch", "repo-branch"],
       "type": "string"
     }
   }

@@ -185,6 +185,42 @@ describe("create command worktree location resolution", () => {
     expect(await branchProbe.exited).toBe(0);
   });
 
+  test("rejects an unregistered destination during dry-run before mutation", async () => {
+    await writeWorkspaceConfig("custom-worktrees");
+    const branch = "feature/dry-run-collision";
+    const destination = resolve(
+      await realpath(workspacePath),
+      "custom-worktrees",
+      "feature",
+      "dry-run-collision",
+    );
+    await mkdir(destination, { recursive: true });
+    const marker = join(workspacePath, "pre-create-ran");
+    await writePreCreateMarker(marker);
+
+    const result = await runCreateResult(branch, ["--dry-run", "--json"]);
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
+    const output = JSON.parse(result.stdout);
+    expect(output).toMatchObject({
+      error: {
+        code: "WORKTREE_DESTINATION_COLLISION",
+        details: { conflict: { repositoryName: "workspace" } },
+      },
+      ok: false,
+    });
+    expect(await realpath(output.error.details.conflict.worktreePath)).toBe(
+      await realpath(destination),
+    );
+    expect(await runtime.file(marker).exists()).toBe(false);
+    const branchProbe = runtime.spawn(["git", "show-ref", "--verify", `refs/heads/${branch}`], {
+      cwd: workspacePath,
+      stderr: "ignore",
+      stdout: "ignore",
+    });
+    expect(await branchProbe.exited).not.toBe(0);
+  });
+
   test.skipIf(process.platform === "win32")(
     "rejects a dangling symlink destination before mutation",
     async () => {

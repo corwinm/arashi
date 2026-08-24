@@ -74,6 +74,34 @@ describe("generated config schema contracts", () => {
     expect(JSON.stringify(schema.definitions.Config?.properties?.hooks)).not.toContain('"input"');
   });
 
+  test("publishes the closed optional worktree naming policy without changing config version", async () => {
+    const schemaPath = join(import.meta.dirname, "..", "..", "schema", "config.schema.json");
+    const schema = JSON.parse(await readFile(schemaPath, "utf8")) as ConfigSchema;
+
+    expect(schema.definitions.WorktreeNamingStyle?.enum).toEqual([
+      "default",
+      "branch",
+      "repo-branch",
+    ]);
+    expect(schema.definitions.WorktreeNamingBranchSlashes?.enum).toEqual(["preserve", "flatten"]);
+    expect(schema.definitions.WorktreeNamingConfig).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        branchSlashes: { $ref: "#/definitions/WorktreeNamingBranchSlashes" },
+        style: { $ref: "#/definitions/WorktreeNamingStyle" },
+      },
+      type: "object",
+    });
+    expect(schema.definitions.Config?.properties?.worktreeNaming).toEqual({
+      $ref: "#/definitions/WorktreeNamingConfig",
+      description: "Optional filesystem naming policy for configured create",
+    });
+    expect(schema.definitions.Config?.properties?.version).toMatchObject({
+      $ref: "#/definitions/ConfigVersion",
+    });
+    expect(schema.definitions.ConfigVersion).toMatchObject({ const: "1.0.0" });
+  });
+
   test.each([
     "feature branch",
     "-feature",

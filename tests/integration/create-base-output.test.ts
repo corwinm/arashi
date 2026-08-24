@@ -352,7 +352,7 @@ describe("create base output contracts", () => {
     await expect(access(workspace.getChildWorktreePath("alpha", target))).rejects.toThrow();
   });
 
-  test("configured JSON invalid target preserves validation failure and complete pre-action base ledger", async () => {
+  test("configured JSON invalid target preserves established branch validation before base planning", async () => {
     const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha", "beta"] });
     cleanups.push(workspace.cleanup);
     const base = "feature/valid-invalid-target-base";
@@ -374,24 +374,12 @@ describe("create base output contracts", () => {
 
     expect(result.exitCode).toBe(1);
     const envelope = parseSingleDocument(result.stdout);
-    const expectedBaseRepositories = await Promise.all(
-      repositories(workspace).map(async (entry) => ({
-        repositoryName: entry.name,
-        repositoryPath: await realpath(entry.path),
-        resolvedOid: await oid(entry.path, base),
-        resolvedRef: `refs/heads/${base}`,
-        targetAction: "created",
-      })),
-    );
     expect(envelope).toMatchObject({
       error: {
-        code: "CREATE_FAILED",
+        code: "INVALID_BRANCH_NAME",
         details: {
-          base: {
-            repositories: expectedBaseRepositories,
-            requestedBranch: base,
-            source: "cli",
-          },
+          branchName: target,
+          reason: "Branch name contains invalid characters or format",
         },
         message: `Invalid branch name: ${target}`,
       },
