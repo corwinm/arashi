@@ -48,6 +48,9 @@ const parseUrl = (input: string): URL => {
 
 export const canonicalizeGitFetchUrl = async (input: string, cwd: string): Promise<string> => {
   const rewritten = await rewrittenUrl(input, cwd);
+  if (isAbsolute(rewritten)) {
+    return `file:${stripRepositorySuffix(await realpath(rewritten))}`;
+  }
   const hasHierarchicalScheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(rewritten);
   const scp = hasHierarchicalScheme ? null : /^(?:([^@/:]+)@)?([^/:]+):(.+)$/u.exec(rewritten);
   if (scp && !isAbsolute(rewritten)) {

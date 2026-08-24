@@ -144,6 +144,16 @@ const assertReceiptDirectory = async (
   await assertOwnerOnly(dirname(path), overrides);
 };
 
+const assertPlainReceiptNoFollow = async (path: string): Promise<string> => {
+  const metadata = await lstat(path, { bigint: true });
+  if (!metadata.isFile() || metadata.isSymbolicLink())
+    throw new DeleteReceiptError(
+      "DELETE_RECEIPT_UNSAFE",
+      "Delete receipt is not a plain no-follow file.",
+    );
+  return `${metadata.dev.toString()}:${metadata.ino.toString()}`;
+};
+
 const receiptKeys = [
   "version",
   "planId",
@@ -438,6 +448,7 @@ export const readValidatedDeleteReceipt = async (
   overrides: Partial<DeleteReceiptSafetyIO> = {},
 ): Promise<ValidatedDeleteReceipt> => {
   await assertReceiptDirectory(path, overrides);
+  const expectedIdentity = await assertPlainReceiptNoFollow(path);
   await assertOwnerOnly(path, overrides);
   let handle;
   try {
@@ -449,6 +460,15 @@ export const readValidatedDeleteReceipt = async (
   }
   try {
     const metadata = await handle.stat({ bigint: true });
+    const openedIdentity = `${metadata.dev.toString()}:${metadata.ino.toString()}`;
+    if (
+      openedIdentity !== expectedIdentity ||
+      (await assertPlainReceiptNoFollow(path)) !== expectedIdentity
+    )
+      throw new DeleteReceiptError(
+        "DELETE_RECEIPT_UNSAFE",
+        "Delete receipt identity changed while opening it.",
+      );
     if (!metadata.isFile())
       throw new DeleteReceiptError("DELETE_RECEIPT_UNSAFE", "Delete receipt is not a plain file.");
     if (
@@ -471,7 +491,7 @@ export const readValidatedDeleteReceipt = async (
       );
     return {
       bytes,
-      identity: `${metadata.dev.toString()}:${metadata.ino.toString()}`,
+      identity: openedIdentity,
       receipt,
     };
   } finally {
@@ -502,6 +522,7 @@ export const readValidatedDeleteReceiptBytes = async (
   safety: Partial<DeleteReceiptSafetyIO> = {},
 ): Promise<Uint8Array> => {
   await assertReceiptDirectory(path, safety);
+  const expectedIdentity = await assertPlainReceiptNoFollow(path);
   await assertOwnerOnly(path, safety);
   let handle;
   try {
@@ -512,10 +533,19 @@ export const readValidatedDeleteReceiptBytes = async (
     throw error;
   }
   try {
-    const metadata = await handle.stat();
+    const metadata = await handle.stat({ bigint: true });
+    const openedIdentity = `${metadata.dev.toString()}:${metadata.ino.toString()}`;
+    if (
+      openedIdentity !== expectedIdentity ||
+      (await assertPlainReceiptNoFollow(path)) !== expectedIdentity
+    )
+      throw new DeleteReceiptError(
+        "DELETE_RECEIPT_UNSAFE",
+        "Delete receipt identity changed while opening it.",
+      );
     if (!metadata.isFile())
       throw new DeleteReceiptError("DELETE_RECEIPT_UNSAFE", "Delete receipt is not a plain file.");
-    if ((safety.platform ?? process.platform) !== "win32" && (metadata.mode & 0o077) !== 0)
+    if ((safety.platform ?? process.platform) !== "win32" && (Number(metadata.mode) & 0o077) !== 0)
       throw new DeleteReceiptError("DELETE_RECEIPT_UNSAFE", "Delete receipt is not owner-only.");
     return await handle.readFile();
   } finally {
@@ -530,6 +560,7 @@ export const removeDeleteResumeReceipt = async (
   safety: Partial<DeleteReceiptSafetyIO> = {},
 ): Promise<void> => {
   await assertReceiptDirectory(path, safety);
+  const originalIdentity = await assertPlainReceiptNoFollow(path);
   await assertOwnerOnly(path, safety);
   const parentBefore = await stat(dirname(path), { bigint: true });
   const parentIdentity = `${parentBefore.dev.toString()}:${parentBefore.ino.toString()}`;
@@ -556,13 +587,16 @@ export const removeDeleteResumeReceipt = async (
   };
   try {
     await assertOwnerOnly(quarantine, safety);
-    if (expectedIdentity) {
-      const metadata = await stat(quarantine, { bigint: true });
-      const movedIdentity = `${metadata.dev.toString()}:${metadata.ino.toString()}`;
-      if (movedIdentity !== expectedIdentity) {
-        await restore();
-        throw new Error("Delete receipt identity changed concurrently; preserved the newer file.");
-      }
+    const metadata = await lstat(quarantine, { bigint: true });
+    const movedIdentity = `${metadata.dev.toString()}:${metadata.ino.toString()}`;
+    if (
+      !metadata.isFile() ||
+      metadata.isSymbolicLink() ||
+      movedIdentity !== originalIdentity ||
+      (expectedIdentity !== undefined && movedIdentity !== expectedIdentity)
+    ) {
+      await restore();
+      throw new Error("Delete receipt identity changed concurrently; preserved the newer file.");
     }
     const movedBytes = await readFile(quarantine);
     if (!Buffer.from(movedBytes).equals(Buffer.from(expectedBytes))) {

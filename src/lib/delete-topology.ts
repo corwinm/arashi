@@ -228,7 +228,14 @@ const attachMetadataPaths = async (
     const metadataPath = join(metadataRoot, entry.name);
     const gitdir = (await readFile(join(metadataPath, "gitdir"), "utf8")).trim();
     if (!isAbsolute(gitdir)) throw topologyError(`relative metadata gitdir: ${metadataPath}`);
-    const record = byWorktree.get(resolve(gitdir, ".."));
+    const worktreePath = resolve(gitdir, "..");
+    let physicalWorktreePath = worktreePath;
+    try {
+      physicalWorktreePath = await realpath(worktreePath);
+    } catch {
+      // A prunable worktree is expected to be absent; keep Git's exact path.
+    }
+    const record = byWorktree.get(physicalWorktreePath);
     if (!record || record.metadataPath)
       throw topologyError(`orphaned or duplicate metadata: ${metadataPath}`);
     record.metadataPath = metadataPath;
@@ -242,8 +249,9 @@ export const inspectGitWorktreeTopology = async (
   const configuredMetadata = await lstat(configured);
   if (!configuredMetadata.isDirectory() || configuredMetadata.isSymbolicLink())
     throw topologyError("configured active path is not a plain directory");
+  let physicalConfigured: string;
   try {
-    await resolveUnaliasedPhysicalPath(configured);
+    physicalConfigured = await resolveUnaliasedPhysicalPath(configured);
   } catch {
     throw topologyError("configured active path traverses a physical alias");
   }
@@ -257,11 +265,18 @@ export const inspectGitWorktreeTopology = async (
       if (presence === "unsafe-occupied")
         throw topologyError(`registered worktree path is occupied unsafely: ${record.path}`);
       record.present = presence === "plain-directory";
-      if (record.present) await verifyRegisteredWorktreeIdentity(record, commonDirectory);
+      if (record.present) {
+        await verifyRegisteredWorktreeIdentity(record, commonDirectory);
+        record.path = await realpath(record.path);
+      }
     }),
   );
   await attachMetadataPaths(records, commonDirectory);
-  return createWorktreeRemovalPlan({ commonDirectory, configuredActivePath: configured, records });
+  return createWorktreeRemovalPlan({
+    commonDirectory,
+    configuredActivePath: physicalConfigured,
+    records,
+  });
 };
 
 export const executeLinkedWorktreeRemovals = async (plan: WorktreeRemovalPlan): Promise<void> => {
