@@ -87,7 +87,8 @@ export interface DeleteReceiptSafetyIO {
 
 const execFileAsync = promisify(execFile);
 const windowsAclProbe = String.raw`
-$acl = Get-Acl -LiteralPath $args[0]
+$target = $env:ARASHI_DELETE_RECEIPT_PATH
+$acl = Get-Acl -LiteralPath $target
 $sidType = [System.Security.Principal.SecurityIdentifier]
 $access = @($acl.Access | ForEach-Object {
   @{ identity = $_.IdentityReference.Translate($sidType).Value; type = $_.AccessControlType.ToString() }
@@ -99,14 +100,15 @@ $access = @($acl.Access | ForEach-Object {
 } | ConvertTo-Json -Compress -Depth 3
 `;
 const windowsAclSet = String.raw`
+$target = $env:ARASHI_DELETE_RECEIPT_PATH
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$acl = Get-Acl -LiteralPath $args[0]
+$acl = Get-Acl -LiteralPath $target
 $acl.SetOwner($identity)
 $acl.SetAccessRuleProtection($true, $false)
 foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleAll($rule) }
 $rights = [System.Security.AccessControl.FileSystemRights]::FullControl
 $inheritance = [System.Security.AccessControl.InheritanceFlags]::None
-if ((Get-Item -LiteralPath $args[0]).PSIsContainer) {
+if ((Get-Item -LiteralPath $target).PSIsContainer) {
   $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
 }
 $propagation = [System.Security.AccessControl.PropagationFlags]::None
@@ -114,8 +116,21 @@ $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
   $identity, $rights, $inheritance, $propagation, [System.Security.AccessControl.AccessControlType]::Allow
 )
 $acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $args[0] -AclObject $acl
+Set-Acl -LiteralPath $target -AclObject $acl
 `;
+
+const execWindowsAclPowerShell = (script: string, path: string) =>
+  execFileAsync(
+    "powershell.exe",
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
+    { env: { ...process.env, ARASHI_DELETE_RECEIPT_PATH: path } },
+  );
 
 export const parseWindowsOwnerOnlyAcl = (output: string): boolean => {
   try {
@@ -146,28 +161,14 @@ const defaultReceiptSafety: DeleteReceiptSafetyIO = {
   platform: process.platform,
   assertWindowsOwnerOnly: async (path) => {
     try {
-      const { stdout } = await execFileAsync("powershell.exe", [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        windowsAclProbe,
-        path,
-      ]);
+      const { stdout } = await execWindowsAclPowerShell(windowsAclProbe, path);
       return parseWindowsOwnerOnlyAcl(stdout);
     } catch {
       return false;
     }
   },
   setWindowsOwnerOnly: async (path) => {
-    await execFileAsync("powershell.exe", [
-      "-NoLogo",
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      windowsAclSet,
-      path,
-    ]);
+    await execWindowsAclPowerShell(windowsAclSet, path);
   },
   openExclusive: (path, flags, mode) => open(path, flags, mode),
 };

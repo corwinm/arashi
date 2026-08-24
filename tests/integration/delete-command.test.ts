@@ -56,6 +56,7 @@ const fixture = () => {
   git(root, "init", "--bare", remote);
   git(seed, "remote", "add", "origin", remote);
   git(seed, "push", "-u", "origin", "main");
+  git(remote, "symbolic-ref", "HEAD", "refs/heads/main");
   mkdirSync(join(workspace, "repos"));
   git(workspace, "clone", remote, join(workspace, "repos", "api"));
   mkdirSync(join(workspace, ".arashi", "hooks"), { recursive: true });
@@ -105,6 +106,7 @@ const bareParentFixture = () => {
   git(root, "init", "--bare", childRemote);
   git(childSeed, "remote", "add", "origin", childRemote);
   git(childSeed, "push", "-u", "origin", "main");
+  git(childRemote, "symbolic-ref", "HEAD", "refs/heads/main");
   mkdirSync(join(executionRoot, "repos"));
   git(executionRoot, "clone", childRemote, join(executionRoot, "repos", "api"));
 
