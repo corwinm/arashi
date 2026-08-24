@@ -73,7 +73,8 @@ omitted when configuration is normalized or saved. For branch `feature/auth`, `b
 `feature/auth` (or `feature-auth` when flattened); `repo-branch` produces
 `repo-feature/auth` (or `repo-feature-auth`). The shape-aware `default` uses the branch path for a
 non-bare configured repository and `repo/feature/auth` for a bare configured repository. Existing
-worktrees are not renamed when this policy changes, and coordinated children retain their configured
+worktrees are not renamed when this policy changes; recorded worktree metadata remains authoritative, and a
+chosen destination collision fails without appending an alternate suffix. Coordinated children retain their configured
 paths beneath the single resolved parent destination.
 
 ## Canonical Key Format
