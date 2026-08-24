@@ -312,6 +312,50 @@ describe("remove command - coordinated child-first removal", () => {
     expect(existsSync(join(unregisteredChildPath, "preserve.txt"))).toBe(true);
   });
 
+  test("blocks child removal for an unregistered descendant relative to that child", async () => {
+    const parentSource = join(workspace.rootPath, "packages", "a");
+    const descendantSource = join(parentSource, "deps", "b");
+    await mkdir(dirname(parentSource), { recursive: true });
+    await rename(workspace.repos[0].path, parentSource);
+    await mkdir(dirname(descendantSource), { recursive: true });
+    await rename(workspace.repos[1].path, descendantSource);
+    workspace.repos[0].path = parentSource;
+    workspace.repos[1].path = descendantSource;
+    await writeFile(
+      join(workspace.rootPath, ".arashi", "config.json"),
+      JSON.stringify(
+        {
+          repos: {
+            alpha: { defaultBranch: "main", path: "./packages/a" },
+            beta: { defaultBranch: "main", path: "./packages/a/deps/b" },
+          },
+          reposDir: "./packages",
+          version: "1.0.0",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const parentWorktreePath = join(workspace.rootPath, "worktrees", "alpha-target");
+    await createWorktree(parentSource, "alpha-target", parentWorktreePath);
+    const unregisteredDescendantPath = join(parentWorktreePath, "deps", "b");
+    await mkdir(unregisteredDescendantPath, { recursive: true });
+    await writeFile(join(unregisteredDescendantPath, "preserve.txt"), "must survive\n");
+
+    await expect(
+      runRemove(await realpath(parentWorktreePath), {
+        dryRun: true,
+        force: true,
+        keepBranches: true,
+        path: true,
+      }),
+    ).rejects.toThrow(/beta.*outside the authoritative plan/i);
+
+    expect(existsSync(parentWorktreePath)).toBe(true);
+    expect(existsSync(join(unregisteredDescendantPath, "preserve.txt"))).toBe(true);
+  });
+
   test("fails closed before parent mutation when configured descendant inventory cannot be inspected", async () => {
     const { childPaths, parentPath } = await createNestedWorktrees(workspace, "parent-inspection", {
       "repo-a": "child-inspection",
