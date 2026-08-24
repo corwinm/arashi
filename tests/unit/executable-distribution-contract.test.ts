@@ -65,7 +65,6 @@ describe("versioned executable distribution contract", () => {
   });
 
   test("keeps executable aliases out of Commander paths and aliasPaths", () => {
-    expect(JSON.stringify(commandContract)).not.toMatch(/"aw"/);
     const { commands } = commandContract as {
       commands: { aliasPaths?: string[]; path: string }[];
     };

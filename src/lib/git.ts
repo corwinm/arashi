@@ -10,23 +10,23 @@ import { runtime } from "./runtime.ts";
 
 import { basename, dirname } from "path";
 import { ArashiError } from "./errors.ts";
-import type { CommandResult } from "../types/git.ts";
+import type { CommandResult, RawCommandResult } from "../types/git.ts";
 import { normalizeSpawnEnvironment } from "./shell-directives.ts";
 
 /**
- * Execute a git command and capture output
+ * Execute a Git command and capture stdout/stderr as original bytes.
  *
  * @param args - Git command arguments (e.g., ['status', '--porcelain'])
  * @param cwd - Working directory to execute command in
- * @returns Command result with stdout, stderr, and exit code
+ * @returns Raw command result with byte buffers and exit code
  * @throws {ArashiError} If command fails (non-zero exit code)
  * @throws {Error} If args is empty or cwd is invalid
  *
  * @example
- * const result = await exec(['status', '--porcelain'], '/path/to/repo');
+ * const result = await execRaw(['status', '--porcelain', '-z'], '/path/to/repo');
  * console.log(result.stdout);
  */
-export async function exec(args: string[], cwd: string): Promise<CommandResult> {
+export async function execRaw(args: string[], cwd: string): Promise<RawCommandResult> {
   // T012: Input validation
   if (!args || args.length === 0) {
     throw new Error("Git command arguments cannot be empty");
@@ -70,13 +70,13 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
   if (!proc) {
     throw new Error("Failed to spawn git process");
   }
-  let stdout: string;
-  let stderr: string;
+  let stdout: Buffer;
+  let stderr: Buffer;
   let exitCode: number;
   try {
     [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+      new Response(proc.stdout).arrayBuffer().then((value) => Buffer.from(value)),
+      new Response(proc.stderr).arrayBuffer().then((value) => Buffer.from(value)),
       proc.exited,
     ]);
   } catch (error) {
@@ -91,13 +91,16 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
 
   // T011: Error handling - throw ArashiError on non-zero exit code
   if (exitCode !== 0) {
-    const errorMessage = stderr.trim() || stdout.trim() || "Git command failed with no output";
+    const stderrText = stderr.toString("utf8");
+    const stdoutText = stdout.toString("utf8");
+    const errorMessage =
+      stderrText.trim() || stdoutText.trim() || "Git command failed with no output";
     throw new ArashiError(`Git command failed: ${errorMessage}`, {
       args,
       cwd,
       exitCode,
-      stderr,
-      stdout,
+      stderr: stderrText,
+      stdout: stdoutText,
     });
   }
 
@@ -105,6 +108,15 @@ export async function exec(args: string[], cwd: string): Promise<CommandResult> 
     exitCode,
     stderr,
     stdout,
+  };
+}
+
+export async function exec(args: string[], cwd: string): Promise<CommandResult> {
+  const result = await execRaw(args, cwd);
+  return {
+    exitCode: result.exitCode,
+    stderr: result.stderr.toString("utf8"),
+    stdout: result.stdout.toString("utf8"),
   };
 }
 

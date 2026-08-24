@@ -79,6 +79,16 @@ removal mutation. After pre-remove succeeds, Arashi revalidates the authoritativ
 runs after all removal attempts, continues across failures, and participates in partial-failure
 finalization rather than create-style rollback.
 
+## Configured repository deletion
+
+`aw delete <repository>` removes only exact workspace-owned `pre-create.<repository>` and
+`post-create.<repository>` native hook candidates plus each concrete `.example` template formed by
+appending `.example` to an exact native candidate path. Generic `<repo>`/`REPO` templates and shared
+workspace hooks are not selected. Repository-local hooks disappear only as part of their owned clone
+or worktree. Repository-specific user-global hooks are preserved and reported as guidance; all other
+user-global hooks are preserved as well. Plans and results expose hook identity/path/status, never
+file contents or inline command bodies.
+
 ## Standalone lifecycle
 
 Standalone lifecycle support is file-only: zero-config standalone create and remove use only targeted

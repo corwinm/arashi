@@ -13,6 +13,7 @@ const expectedCommonAliases: Record<string, Record<string, string>> = {
     "--json": "-j",
     "--only": "-o",
   },
+  delete: { "--dry-run": "-n", "--force": "-f", "--json": "-j" },
   doctor: { "--json": "-j" },
   exec: { "--group": "-g", "--json": "-j", "--only": "-o" },
   handoff: { "--json": "-j" },

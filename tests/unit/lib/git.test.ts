@@ -18,6 +18,7 @@ import {
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   exec,
+  execRaw,
   getDefaultBranch,
   isBareRepo,
   readTrackedFileFromDefaultBranch,
@@ -58,6 +59,13 @@ describe("exec()", () => {
     expect(result.exitCode).toBe(0);
     expect(toComparablePath(result.stdout.trim())).toBe(toComparablePath(testRepo.path));
     expect(result.stderr).toBe("");
+  });
+
+  test("execRaw preserves stdout bytes without UTF-8 decoding", async () => {
+    const result = await execRaw(["show", "-s", "--format=%xFF"], testRepo.path);
+
+    expect(Buffer.from(result.stdout)).toEqual(Buffer.from([0xff, 0x0a]));
+    expect(Buffer.isBuffer(result.stdout)).toBe(true);
   });
 
   test("should throw ArashiError on git command failure", async () => {

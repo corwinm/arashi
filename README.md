@@ -63,21 +63,22 @@ For a single repository without persisted Arashi configuration, use `aw init --z
 
 ## Core commands
 
-| Command                           | Purpose                          |
-| --------------------------------- | -------------------------------- |
-| `aw init`                         | Initialize a workspace           |
-| `aw add`                          | Add a repository                 |
-| `aw clone`                        | Clone configured repositories    |
-| `aw configure`                    | Edit existing workspace settings |
-| `aw create`                       | Create coordinated worktrees     |
-| `aw list`                         | List worktrees                   |
-| `aw status`                       | Show repository status           |
-| `aw switch`                       | Select and open a worktree       |
-| `aw pull` / `aw push` / `aw sync` | Synchronize repositories         |
-| `aw setup`                        | Run repository setup steps       |
-| `aw remove` / `aw prune`          | Clean up worktrees and metadata  |
-| `aw doctor`                       | Diagnose workspace problems      |
-| `aw update`                       | Update Arashi                    |
+| Command                           | Purpose                                   |
+| --------------------------------- | ----------------------------------------- |
+| `aw init`                         | Initialize a workspace                    |
+| `aw add`                          | Add a repository                          |
+| `aw delete`                       | Delete configured repository dependencies |
+| `aw clone`                        | Clone configured repositories             |
+| `aw configure`                    | Edit existing workspace settings          |
+| `aw create`                       | Create coordinated worktrees              |
+| `aw list`                         | List worktrees                            |
+| `aw status`                       | Show repository status                    |
+| `aw switch`                       | Select and open a worktree                |
+| `aw pull` / `aw push` / `aw sync` | Synchronize repositories                  |
+| `aw setup`                        | Run repository setup steps                |
+| `aw remove` / `aw prune`          | Clean up branch worktrees and metadata    |
+| `aw doctor`                       | Diagnose workspace problems               |
+| `aw update`                       | Update Arashi                             |
 
 Run `aw --help`, `aw <command> --help`, or use the [complete command reference](https://arashi.haphazard.dev/commands/) for options and examples.
 

@@ -431,6 +431,35 @@ describe("lossless bounded dynamic completion query", () => {
     expect(completedInline).not.toContain("REUSE_EXISTING");
   });
 
+  test("delete completes only exact configured keys in its zero-or-one positional slot", () => {
+    const root = mkdtempSync(join(tmpdir(), "arashi-completion-delete-"));
+    temporaryDirectories.push(root);
+    mkdirSync(join(root, ".arashi"));
+    writeFileSync(
+      join(root, ".arashi", "config.json"),
+      JSON.stringify({
+        repos: {
+          alpha: { path: "repos/alpha", groups: ["backend"] },
+          zeta: { path: "repos/zeta", groups: ["frontend"] },
+        },
+        version: "1.0.0",
+      }),
+    );
+
+    expect(records(runQuery(root, ["arashi", "delete", ""]).stdout)).toEqual([
+      { description: "Configured repository", value: "alpha" },
+      { description: "Configured repository", value: "zeta" },
+    ]);
+    expect(records(runQuery(root, ["arashi", "delete", "a"]).stdout)).toEqual([
+      { description: "Configured repository", value: "alpha" },
+    ]);
+    expect(records(runQuery(root, ["arashi", "delete", "alpha", ""]).stdout)).toEqual([]);
+    const values = records(runQuery(root, ["arashi", "delete", ""]).stdout).map(
+      ({ value }) => value,
+    );
+    expect(values).not.toEqual(expect.arrayContaining(["backend", "frontend", "repos/alpha"]));
+  });
+
   test("keeps repeatable handoff options available after an occurrence", () => {
     const values = records(
       runQuery(process.cwd(), ["arashi", "handoff", "--risk", "first", "--"]).stdout,
