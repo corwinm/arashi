@@ -72,7 +72,7 @@ describe("npm JavaScript entrypoint", () => {
       ],
       [
         "C:\\custom\\npm-prefix\\node_modules\\arashi",
-        { env: { NPM_CONFIG_PREFIX: "C:\\custom\\npm-prefix" } },
+        { env: { NPM_CONFIG_PREFIX: "C:\\custom\\npm-prefix" }, platform: "win32" },
       ],
       ["/detected/global/node_modules/arashi", { npmGlobalRoot: "/detected/global/node_modules" }],
     ] as const) {
@@ -88,6 +88,23 @@ describe("npm JavaScript entrypoint", () => {
       ).toBe(0);
       expect(spawn.calls).toEqual([{ command: "npm", args: ["uninstall", "-g", "arashi"] }]);
     }
+  });
+
+  test("keeps POSIX package ownership paths case-sensitive", async () => {
+    const spawn = createSuccessfulSpawn();
+    const errors: string[] = [];
+    expect(
+      await runEntrypoint(["uninstall", "--yes"], {
+        env: { HOME: "/home/Alice" },
+        error: (line: string) => errors.push(line),
+        platform: "linux",
+        realpathSyncImpl: (path: string) => path,
+        rootDir: "/home/alice/.bun/install/global/node_modules/arashi",
+        spawnImpl: spawn.spawnImpl,
+      }),
+    ).toBe(1);
+    expect(errors.join("\n")).toMatch(/not proven/i);
+    expect(spawn.calls).toEqual([]);
   });
 
   test("does not infer global npm ownership from a project-local lib/node_modules path", async () => {
@@ -110,6 +127,7 @@ describe("npm JavaScript entrypoint", () => {
     expect(
       await runEntrypoint(["uninstall", "--yes"], {
         env: { LOCALAPPDATA: "C:\\Users\\A\\AppData\\Local" },
+        platform: "win32",
         realpathSyncImpl: (path: string) => path,
         rootDir: "C:\\Users\\A\\AppData\\Local\\Yarn\\Data\\global\\node_modules\\arashi",
         spawnImpl: spawn.spawnImpl,

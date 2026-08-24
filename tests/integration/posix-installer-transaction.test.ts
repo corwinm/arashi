@@ -106,7 +106,7 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
 
     const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
       encoding: "utf8",
-      env: state.env,
+      env: { ...state.env, SHELL: "/bin/bash" },
     });
     expect(refresh.status, refresh.stderr).toBe(0);
     const refreshedLedger = JSON.parse(

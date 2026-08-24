@@ -264,9 +264,18 @@ function Assert-ArashiAliasOwnership {
     $ledgerExists = $null -ne $ledgerItem
     $ledger = $null
     if (-not $ledgerExists) {
+        $legacyPayloadNames = @($InstalledBinaryName, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset)
+        $legacyPayloadComplete = $true
+        foreach ($legacyName in $legacyPayloadNames) {
+            $legacyItem = Get-Item -LiteralPath (Join-Path $InstallDirectory $legacyName) -Force -ErrorAction SilentlyContinue
+            if ($null -eq $legacyItem -or $legacyItem.PSIsContainer -or ($legacyItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                $legacyPayloadComplete = $false
+                break
+            }
+        }
         foreach ($unmanagedName in @($InstalledBinaryName, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset, $UninstallHelperAsset)) {
             $unmanagedPath = Join-Path $InstallDirectory $unmanagedName
-            if (Test-Path -LiteralPath $unmanagedPath) { throw "Unmanifested install collision at $unmanagedPath; move it aside before installing." }
+            if ((Test-Path -LiteralPath $unmanagedPath) -and (-not $legacyPayloadComplete -or $unmanagedName -notin $legacyPayloadNames)) { throw "Unmanifested install collision at $unmanagedPath; move it aside before installing." }
         }
     }
     if ($ledgerExists) {

@@ -140,7 +140,7 @@ describe("uninstall command consent", () => {
     expect(apply).not.toHaveBeenCalled();
   });
 
-  test("stages the manifest-owned helper and passes exact directory and parent PID", async () => {
+  test("stages the manifest-owned helper and passes its declared directory and parent PID", async () => {
     const copies: string[][] = [];
     const spawns: { args: string[]; command: string; options: unknown }[] = [];
     const unref = vi.fn();
@@ -148,16 +148,16 @@ describe("uninstall command consent", () => {
       {
         files: [
           {
-            absolutePath: "/owned/uninstall.sh",
+            absolutePath: "/canonical/owned/uninstall.sh",
             digest: createHash("sha256").update("helper").digest("hex"),
             relativePath: "uninstall.sh",
             role: "uninstall-helper",
             status: "removable",
           },
         ],
-        installDirectory: "/owned",
-        manifest: { platform: "posix" } as never,
-        manifestPath: "/owned/manifest",
+        installDirectory: "/canonical/owned",
+        manifest: { installDirectory: "/linked/owned", platform: "posix" } as never,
+        manifestPath: "/canonical/owned/manifest",
       },
       {
         chmod: async () => {},
@@ -173,11 +173,13 @@ describe("uninstall command consent", () => {
         },
       },
     );
-    expect(copies).toEqual([["/owned/uninstall.sh", "/tmp/arashi-uninstall-unique/uninstall.sh"]]);
+    expect(copies).toEqual([
+      ["/canonical/owned/uninstall.sh", "/tmp/arashi-uninstall-unique/uninstall.sh"],
+    ]);
     expect(spawns).toEqual([
       {
         command: "/tmp/arashi-uninstall-unique/uninstall.sh",
-        args: ["--install-dir", "/owned", "--parent-pid", "42", "--yes", "--temporary-self"],
+        args: ["--install-dir", "/linked/owned", "--parent-pid", "42", "--yes", "--temporary-self"],
         options: { detached: true, stdio: "inherit" },
       },
     ]);

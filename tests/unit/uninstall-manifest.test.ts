@@ -171,6 +171,8 @@ describe("direct uninstall plan and apply", () => {
     expect(plan.installDirectory).toBe(join(realParent, "bin"));
     expect(plan.files.find((file) => file.relativePath === "aw")?.status).toBe("removable");
     expect(await readFile(join(realParent, "bin", "aw"), "utf8")).toBe("alias");
+    await applyDirectUninstall(plan);
+    await expect(readFile(join(realParent, "bin", MANIFEST_NAME), "utf8")).rejects.toThrow();
     installDirectory = fixtureRoot;
   });
 

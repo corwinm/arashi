@@ -211,7 +211,7 @@ export async function readDirectInstallManifest(installDirectory: string) {
   const requestedDirectory =
     declaredDirectory === canonicalDirectory ? canonicalDirectory : normalizedDirectory;
   const manifest = validateManifest(parsed, requestedDirectory);
-  return { ...manifest, installDirectory: canonicalDirectory };
+  return manifest;
 }
 
 function countOccurrences(contents: Buffer, needle: Buffer): number {
@@ -226,10 +226,11 @@ function countOccurrences(contents: Buffer, needle: Buffer): number {
 
 export async function planDirectUninstall(installDirectory: string): Promise<DirectUninstallPlan> {
   const manifest = await readDirectInstallManifest(installDirectory);
+  const canonicalDirectory = await realpath(resolve(installDirectory));
   const blockers: string[] = [];
   const files: PlannedDirectFile[] = [];
   for (const file of manifest.files) {
-    const absolutePath = join(manifest.installDirectory, file.relativePath);
+    const absolutePath = join(canonicalDirectory, file.relativePath);
     const stat = await optionalLstat(absolutePath);
     if (!stat) {
       files.push({ ...file, absolutePath, status: "absent" });
@@ -293,9 +294,9 @@ export async function planDirectUninstall(installDirectory: string): Promise<Dir
   }
   return {
     files,
-    installDirectory: manifest.installDirectory,
+    installDirectory: canonicalDirectory,
     manifest,
-    manifestPath: join(manifest.installDirectory, MANIFEST_NAME),
+    manifestPath: join(canonicalDirectory, MANIFEST_NAME),
     ...(pathMutation ? { pathMutation } : {}),
   };
 }
@@ -304,7 +305,7 @@ export async function applyDirectUninstall(
   plan: DirectUninstallPlan,
   options: { removeFile?: (path: string) => Promise<void> } = {},
 ): Promise<void> {
-  const freshPlan = await planDirectUninstall(plan.installDirectory);
+  const freshPlan = await planDirectUninstall(plan.manifest.installDirectory);
   const removeFile = options.removeFile ?? ((path: string) => rm(path));
   if (freshPlan.pathMutation?.status === "removable" && "profilePath" in freshPlan.pathMutation) {
     const stat = await optionalLstat(freshPlan.pathMutation.profilePath);

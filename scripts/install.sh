@@ -83,6 +83,9 @@ parse_args() {
   if [ -n "${ARASHI_SHELL_INTEGRATION:-}" ]; then
     SHELL_INTEGRATION_MODE="$ARASHI_SHELL_INTEGRATION"
   fi
+  if [ "${ARASHI_NO_MODIFY_PATH:-}" = "1" ]; then
+    NO_MODIFY_PATH=true
+  fi
 
   while [ "$#" -gt 0 ]; do
     case "$1" in

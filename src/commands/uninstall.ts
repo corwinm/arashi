@@ -90,7 +90,7 @@ export async function stageDirectUninstallHelper(
             "-File",
             temporaryHelper,
             "-InstallDir",
-            plan.installDirectory,
+            plan.manifest.installDirectory,
             "-ParentPid",
             parentPid,
             "-Yes",
@@ -102,7 +102,7 @@ export async function stageDirectUninstallHelper(
           temporaryHelper,
           [
             "--install-dir",
-            plan.installDirectory,
+            plan.manifest.installDirectory,
             "--parent-pid",
             parentPid,
             "--yes",

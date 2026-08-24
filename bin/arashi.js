@@ -101,21 +101,27 @@ const removalCommands = {
   "vite-plus": ["vp", ["uninstall", "-g", "arashi"]],
 };
 
-function normalizeEvidencePath(value) {
-  return String(value ?? "")
+function normalizeEvidencePath(value, platform = currentPlatform) {
+  const normalized = String(value ?? "")
     .replaceAll("\\", "/")
-    .replace(/\/+$/, "")
-    .toLowerCase();
+    .replace(/\/+$/, "");
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-function inferOwnerEvidence(rootDir, env = process.env, realpath = realpathSync, npmGlobalRoot) {
-  const normalized = realpath(rootDir).replaceAll("\\", "/").toLowerCase();
-  const home = normalizeEvidencePath(env.HOME ?? env.USERPROFILE);
-  const pnpmHome = normalizeEvidencePath(env.PNPM_HOME);
-  const localAppData = normalizeEvidencePath(env.LOCALAPPDATA);
-  const appData = normalizeEvidencePath(env.APPDATA);
-  const configuredNpmPrefix = normalizeEvidencePath(env.NPM_CONFIG_PREFIX);
-  const detectedNpmRoot = normalizeEvidencePath(npmGlobalRoot);
+function inferOwnerEvidence(
+  rootDir,
+  env = process.env,
+  realpath = realpathSync,
+  npmGlobalRoot,
+  platform = currentPlatform,
+) {
+  const normalized = normalizeEvidencePath(realpath(rootDir), platform);
+  const home = normalizeEvidencePath(env.HOME ?? env.USERPROFILE, platform);
+  const pnpmHome = normalizeEvidencePath(env.PNPM_HOME, platform);
+  const localAppData = normalizeEvidencePath(env.LOCALAPPDATA, platform);
+  const appData = normalizeEvidencePath(env.APPDATA, platform);
+  const configuredNpmPrefix = normalizeEvidencePath(env.NPM_CONFIG_PREFIX, platform);
+  const detectedNpmRoot = normalizeEvidencePath(npmGlobalRoot, platform);
   const evidence = [];
   const add = (owner) => {
     if (!evidence.includes(owner)) evidence.push(owner);
@@ -180,6 +186,7 @@ async function runPackageUninstall(argv, options) {
       options.env ?? process.env,
       options.realpathSyncImpl ?? realpathSync,
       options.npmGlobalRoot,
+      options.platform ?? currentPlatform,
     );
   if (evidence.length > 1) {
     (options.error ?? console.error)(`Package-manager ownership is ambiguous: ${evidence.join(", ")}. No command was run.`);

@@ -77,20 +77,26 @@ try {
         Set-Content -LiteralPath $path -Value "# arashi-managed-alias:aw:v1" -NoNewline
         [PSCustomObject]@{ Path = $path; Hash = Get-ArashiFileHash -Path $path }
     }
-    Write-ArashiOwnershipLedger -Path (Join-Path $managed.Destination $OwnershipLedgerName) -InstallDirectory $managed.Destination -ReleaseVersion "1.30.0" -Aliases $managedAliases
+    $managedLedger = [ordered]@{
+        schemaVersion = 1
+        installDirectory = $managed.Destination
+        releaseVersion = "1.30.0"
+        aliases = @($managedAliases | ForEach-Object { [ordered]@{ path = $_.Path; sha256 = $_.Hash } })
+    }
+    $managedLedger | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $managed.Destination $OwnershipLedgerName) -Encoding UTF8
     Assert-ArashiAliasOwnership -InstallDirectory $managed.Destination -ResolveCommands { @() }
 
     Write-Host "manual marked alias collision"
     $manual = New-PayloadFixture "manual-alias"
     $fixtures += $manual
     Set-Content -LiteralPath (Join-Path $manual.Destination "aw") -Value "# arashi-managed-alias:aw:v1" -NoNewline
-    Assert-Throws { Assert-ArashiAliasOwnership -InstallDirectory $manual.Destination -ResolveCommands { @() } } "no installer ownership ledger" "manual alias collision"
+    Assert-Throws { Assert-ArashiAliasOwnership -InstallDirectory $manual.Destination -ResolveCommands { @() } } "Unmanifested install collision.*\\aw" "manual alias collision"
 
     Write-Host "unmarked alias collision"
     $unmarked = New-PayloadFixture "unmarked-alias"
     $fixtures += $unmarked
     Set-Content -LiteralPath (Join-Path $unmarked.Destination "aw") -Value "unrelated" -NoNewline
-    Assert-Throws { Assert-ArashiAliasOwnership -InstallDirectory $unmarked.Destination -ResolveCommands { @() } } "Unrelated alias collision" "unmarked alias collision"
+    Assert-Throws { Assert-ArashiAliasOwnership -InstallDirectory $unmarked.Destination -ResolveCommands { @() } } "Unmanifested install collision.*\\aw" "unmarked alias collision"
 
     Write-Host "malformed ledger collision"
     $malformed = New-PayloadFixture "malformed-ledger"
@@ -102,7 +108,7 @@ try {
     $directoryAlias = New-PayloadFixture "directory-alias"
     $fixtures += $directoryAlias
     New-Item -ItemType Directory -Path (Join-Path $directoryAlias.Destination "aw") | Out-Null
-    Assert-Throws { Assert-ArashiAliasOwnership -InstallDirectory $directoryAlias.Destination -ResolveCommands { @() } } "not a regular file" "directory alias collision"
+    Assert-Throws { Assert-ArashiAliasOwnership -InstallDirectory $directoryAlias.Destination -ResolveCommands { @() } } "Unmanifested install collision.*\\aw" "directory alias collision"
 
     Write-Host "reparse-point alias collision"
     $reparseAlias = New-PayloadFixture "reparse-alias"
@@ -115,7 +121,7 @@ try {
         Write-Host "reparse-point creation unavailable on this runner"
     }
     if (Test-Path -LiteralPath (Join-Path $reparseAlias.Destination "aw")) {
-        Assert-Throws { Assert-ArashiAliasOwnership -InstallDirectory $reparseAlias.Destination -ResolveCommands { @() } } "not a regular file" "reparse alias collision"
+        Assert-Throws { Assert-ArashiAliasOwnership -InstallDirectory $reparseAlias.Destination -ResolveCommands { @() } } "Unmanifested install collision.*\\aw" "reparse alias collision"
     }
 
     Write-Host "PATH-resolved PowerShell collision"
