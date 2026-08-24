@@ -1250,6 +1250,209 @@
       }
     },
     {
+      "path": "delete",
+      "aliasPaths": [],
+      "description": "Delete configured repository dependencies",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [
+        {
+          "candidateKind": "configured-repository",
+          "hidden": false,
+          "name": "repository",
+          "required": false,
+          "variadic": false,
+          "description": "Exact configured repository key"
+        }
+      ],
+      "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-f, --force",
+          "description": "Confirm deletion and override Git data-loss guards",
+          "hidden": false,
+          "long": "--force",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-f",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Output one machine-readable JSON document",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "Preview the complete deletion plan without mutation",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Deleting configured repository dependencies requires persisted configuration."
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Destructive repository deletion has no approved editor UI."
+        },
+        "deleteRepository": {
+          "batchOrder": "bytewise",
+          "confirmation": "one-combined-default-no",
+          "confirmationStates": ["not-required", "confirmed", "declined", "required"],
+          "dataFields": [
+            "workspace",
+            "repositoryKey",
+            "dryRun",
+            "force",
+            "confirmation",
+            "plan",
+            "result"
+          ],
+          "errorPrecedence": [
+            "configured-workspace-or-config",
+            "target-selection",
+            "structural-and-git-inspection",
+            "complete-plan-set",
+            "git-loss-refusal",
+            "dry-run-success",
+            "confirmation",
+            "post-lock-revalidation",
+            "execution-failure",
+            "partial-failure"
+          ],
+          "errorCodes": [
+            "CONFIGURED_WORKSPACE_REQUIRED",
+            "DELETE_SELECTION_REQUIRED",
+            "DELETE_REPOSITORY_NOT_FOUND",
+            "DELETE_CONFIG_INVALID",
+            "DELETE_TOPOLOGY_INVALID",
+            "DELETE_PATH_UNSAFE",
+            "DELETE_HOOK_AMBIGUOUS",
+            "DELETE_GIT_DATA_LOSS",
+            "DELETE_CONFIRMATION_REQUIRED",
+            "DELETE_CANCELLED",
+            "DELETE_CONCURRENT_CHANGE",
+            "DELETE_EXECUTION_FAILED",
+            "DELETE_PARTIAL_FAILURE",
+            "DELETE_RECEIPT_INVALID",
+            "DELETE_RECEIPT_STALE",
+            "DELETE_RECEIPT_UNSAFE"
+          ],
+          "exits": {
+            "failure": 1,
+            "selectionOrConfirmation": 2,
+            "selectionOrConfirmationErrors": [
+              "DELETE_SELECTION_REQUIRED",
+              "DELETE_CONFIRMATION_REQUIRED",
+              "DELETE_CANCELLED"
+            ],
+            "success": 0
+          },
+          "forceBoundaries": {
+            "overridable": ["confirmation", "git-data-loss"],
+            "structural": ["config", "topology", "path", "hook-ambiguity", "concurrent-change"]
+          },
+          "itemKinds": [
+            "resume-receipt",
+            "canonical-clone",
+            "linked-worktree",
+            "worktree-metadata",
+            "local-ref",
+            "config-entry",
+            "workspace-hook",
+            "preserved-global-hook"
+          ],
+          "itemFields": [
+            "id",
+            "kind",
+            "ownership",
+            "path",
+            "ref",
+            "oid",
+            "planned",
+            "completed",
+            "state",
+            "reasonCode",
+            "message"
+          ],
+          "itemStates": ["planned", "completed", "preserved", "blocked", "failed", "not-started"],
+          "lock": ".arashi-add.transaction.lock",
+          "phaseErrorFields": ["code", "message"],
+          "phaseFields": ["name", "state", "itemIds", "error", "startedOrder", "completedOrder"],
+          "phaseNames": [
+            "provenance",
+            "worktrees",
+            "metadata",
+            "canonical-clone",
+            "workspace-hooks",
+            "configuration",
+            "verification"
+          ],
+          "phaseStates": ["not-started", "started", "completed", "failed"],
+          "planFields": ["id", "items", "warnings"],
+          "resultFields": ["items", "phases", "retry", "warnings"],
+          "retry": {
+            "classification": "safe-only-with-current-durable-receipt",
+            "fields": ["safe", "argv", "guidance"],
+            "humanArgv": ["aw", "delete", "<repository>", "--force"],
+            "jsonArgv": ["aw", "delete", "<repository>", "--force", "--json"]
+          },
+          "selection": "explicit-exact-key-or-tty-checkbox",
+          "workspaceFields": ["mode", "repositoriesBase", "workspaceRoot", "worktreesBase"]
+        }
+      }
+    },
+    {
       "path": "doctor",
       "aliasPaths": [],
       "description": "Run non-mutating Arashi workspace diagnostics",

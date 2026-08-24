@@ -472,11 +472,11 @@ function dynamicCandidates(
   if (kind === "shell" || kind === "choice") return staticCandidates(contract, context);
   const workspace = findWorkspace(cwd, deadline);
   if (!workspace || performance.now() >= deadline) return [];
-  if (kind === "repository") {
+  if (kind === "repository" || kind === "configured-repository") {
     if (!workspace.configured) return [];
     const commandName = context.command?.path.split(" ")[0] ?? "";
     const repositories =
-      commandName === "status" || commandName === "sync"
+      kind === "configured-repository" || commandName === "status" || commandName === "sync"
         ? workspace.repositories.filter((repository) => !repository.syntheticParent)
         : workspace.repositories;
     return prefixCandidates(
@@ -532,6 +532,12 @@ export function queryCompletionCandidates(
   const deadline = performance.now() + COMPLETION_QUERY_BUDGET_MS;
   try {
     const context = parseContext(contract, argv, cursor);
+    if (
+      context.command?.path === "delete" &&
+      context.positionalIndex >= context.command.arguments.length &&
+      !context.current.startsWith("-")
+    )
+      return [];
     const completingOptionName =
       !context.endOfOptions && !context.option && context.current.startsWith("-");
     const owner = completingOptionName ? undefined : (context.option ?? activeArgument(context));

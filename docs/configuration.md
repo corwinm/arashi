@@ -46,6 +46,20 @@ To enable JSON validation and editor autocomplete, include a `$schema` property:
 }
 ```
 
+## Deleting a configured repository
+
+Use `aw delete <repository>` with an exact `repos` key, or run `aw delete` in a human TTY to
+select multiple configured dependencies. Preview with `--dry-run` before confirming or using
+`--force`; force accepts confirmation and disclosed Git data-loss risk, but structural and
+concurrent-change checks still apply.
+
+Deletion removes only the selected repository entry after its owned Git materialization and exact
+repository-targeted workspace hooks are removed. Other repository entries, workspace defaults,
+groups, shared hooks, and managed-ignore preferences/files remain unchanged, including when the
+last configured dependency is deleted.
+
+See [`aw delete`](./commands/delete.md) for the full safety and automation contract.
+
 ## Schema URLs
 
 - Stable schema URL: `https://unpkg.com/arashi/schema/config.schema.json`
