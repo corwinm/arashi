@@ -1,20 +1,8 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
+import { lstat, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 export const MANIFEST_NAME = ".arashi-managed-entrypoints.json";
-
-async function assertNoLinkedAncestors(path: string): Promise<void> {
-  let current = dirname(resolve(path));
-  const root = parse(current).root;
-  while (current !== root) {
-    const item = await lstat(current);
-    if (item.isSymbolicLink()) {
-      throw new Error(`Install directory ancestor is a symbolic link: ${current}`);
-    }
-    current = dirname(current);
-  }
-}
 
 const POSIX_FILES = [
   ["arashi.bin", "native-executable"],
@@ -194,12 +182,12 @@ async function optionalLstat(path: string) {
 
 export async function readDirectInstallManifest(installDirectory: string) {
   const normalizedDirectory = resolve(installDirectory);
-  await assertNoLinkedAncestors(normalizedDirectory);
   const directoryStat = await optionalLstat(normalizedDirectory);
   if (!directoryStat || directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
     throw new Error("The install directory is missing, not a directory, or is a symbolic link.");
   }
-  const manifestPath = join(normalizedDirectory, MANIFEST_NAME);
+  const canonicalDirectory = await realpath(normalizedDirectory);
+  const manifestPath = join(canonicalDirectory, MANIFEST_NAME);
   const stat = await optionalLstat(manifestPath);
   if (!stat)
     throw new Error(
@@ -216,7 +204,14 @@ export async function readDirectInstallManifest(installDirectory: string) {
       { cause: error },
     );
   }
-  return validateManifest(parsed, normalizedDirectory);
+  const declaredDirectory =
+    isRecord(parsed) && typeof parsed.installDirectory === "string"
+      ? resolve(parsed.installDirectory)
+      : normalizedDirectory;
+  const requestedDirectory =
+    declaredDirectory === canonicalDirectory ? canonicalDirectory : normalizedDirectory;
+  const manifest = validateManifest(parsed, requestedDirectory);
+  return { ...manifest, installDirectory: canonicalDirectory };
 }
 
 function countOccurrences(contents: Buffer, needle: Buffer): number {

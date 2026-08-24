@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALL_DIR="${ARASHI_INSTALL_DIR:-${HOME:?HOME is required}/.arashi/bin}"
+INSTALL_DIR="${ARASHI_INSTALL_DIR:-}"
 DRY_RUN=false
 YES=false
 PARENT_PID=""
@@ -23,6 +23,11 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+if [ -z "$INSTALL_DIR" ]; then
+  [ -n "${HOME:-}" ] || fail "HOME is required when --install-dir is omitted"
+  INSTALL_DIR="$HOME/.arashi/bin"
+fi
 
 cleanup_self() {
   if [ "$TEMPORARY_SELF" = true ]; then

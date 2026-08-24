@@ -41,6 +41,8 @@ describe("completion command and generated artifacts", () => {
         expect(result.stdout).toContain("Register-ArgumentCompleter -Native");
         expect(result.stdout).toContain("completion __query");
         expect(result.stdout).toContain("arashi, aw");
+        expect(result.stdout).toContain("$cursorPosition -gt $lastElementEnd");
+        expect(result.stdout).toContain("$words += $wordToComplete");
       }
     },
   );

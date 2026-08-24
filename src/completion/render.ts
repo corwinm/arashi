@@ -118,6 +118,8 @@ Register-ArgumentCompleter -Native -CommandName arashi, aw -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
   $words = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
   if ($words.Count -eq 0) { $words = @('arashi') }
+  $lastElementEnd = $commandAst.CommandElements[-1].Extent.EndOffset
+  if ($cursorPosition -gt $lastElementEnd) { $words += $wordToComplete }
   $cursor = $words.Count - 1
   $fields = ((& arashi completion __query $cursor -- @words) -join "\n") -split [char]0
   for ($index = 0; $index + 1 -lt $fields.Count; $index += 2) {

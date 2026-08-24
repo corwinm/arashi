@@ -159,7 +159,7 @@ describe("direct uninstall plan and apply", () => {
     installDirectory = realDirectory;
   });
 
-  test("refuses an install directory reached through a linked ancestor", async () => {
+  test("canonicalizes a stable linked ancestor before planning deletion", async () => {
     const fixtureRoot = installDirectory;
     const realParent = join(fixtureRoot, "real-parent");
     await mkdir(join(realParent, "bin"), { recursive: true });
@@ -167,7 +167,9 @@ describe("direct uninstall plan and apply", () => {
     installDirectory = join(fixtureRoot, "linked-parent", "bin");
     await writeInstallation();
 
-    await expect(planDirectUninstall(installDirectory)).rejects.toThrow(/ancestor.*symbolic link/i);
+    const plan = await planDirectUninstall(installDirectory);
+    expect(plan.installDirectory).toBe(join(realParent, "bin"));
+    expect(plan.files.find((file) => file.relativePath === "aw")?.status).toBe("removable");
     expect(await readFile(join(realParent, "bin", "aw"), "utf8")).toBe("alias");
     installDirectory = fixtureRoot;
   });
