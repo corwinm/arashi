@@ -38,7 +38,9 @@ describe("identity-anchored deletion", () => {
     const { owned, root } = await fixture();
     const captured = await captureDeletionIdentity(owned, "directory");
 
-    expect(captured.leaf.identity).toMatch(/^posix:/u);
+    expect(captured.leaf.identity).toMatch(
+      new RegExp(`^${process.platform === "win32" ? "windows" : "posix"}:`, "u"),
+    );
     expect(captured.ancestors.map(({ path }) => path)).toContain(dirname(owned));
 
     const alias = join(root, "alias");

@@ -527,9 +527,10 @@ export const removeDeleteResumeReceipt = async (
   path: string,
   expectedBytes: Uint8Array,
   expectedIdentity?: string,
+  safety: Partial<DeleteReceiptSafetyIO> = {},
 ): Promise<void> => {
-  await assertReceiptDirectory(path);
-  await assertOwnerOnly(path);
+  await assertReceiptDirectory(path, safety);
+  await assertOwnerOnly(path, safety);
   const parentBefore = await stat(dirname(path), { bigint: true });
   const parentIdentity = `${parentBefore.dev.toString()}:${parentBefore.ino.toString()}`;
   const quarantine = join(
@@ -554,7 +555,7 @@ export const removeDeleteResumeReceipt = async (
     await rm(quarantine);
   };
   try {
-    await assertOwnerOnly(quarantine);
+    await assertOwnerOnly(quarantine, safety);
     if (expectedIdentity) {
       const metadata = await stat(quarantine, { bigint: true });
       const movedIdentity = `${metadata.dev.toString()}:${metadata.ino.toString()}`;

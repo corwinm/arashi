@@ -43,6 +43,7 @@ import {
   type ValidatedDeleteReceipt,
 } from "../lib/delete-transaction.ts";
 import { ConfigError } from "../lib/config.ts";
+import resolveUnaliasedPhysicalPath from "../lib/physical-path.ts";
 import {
   ConfiguredWorkspaceRequiredError,
   resolveWorkspaceContext,
@@ -658,8 +659,10 @@ const assertPlainDirectory = async (path: string): Promise<string> => {
         reason: "unexpected-path-kind",
       },
     );
-  const physical = await realpath(path);
-  if (physical !== resolve(path))
+  let physical: string;
+  try {
+    physical = await resolveUnaliasedPhysicalPath(path);
+  } catch {
     throw deleteError(
       "DELETE_PATH_UNSAFE",
       "Configured repository path traverses a physical alias.",
@@ -668,6 +671,7 @@ const assertPlainDirectory = async (path: string): Promise<string> => {
         reason: "physical-alias",
       },
     );
+  }
   return physical;
 };
 

@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { exec as gitExec, execRaw as gitExecRaw } from "./git.ts";
+import resolveUnaliasedPhysicalPath from "./physical-path.ts";
 
 export interface GitWorktreeRecord {
   path: string;
@@ -203,7 +204,7 @@ const verifyRegisteredWorktreeIdentity = async (
     } catch {
       throw topologyError(`registered worktree root identity is unavailable: ${record.path}`);
     }
-    if (topLevel !== record.path)
+    if (topLevel !== (await realpath(record.path)))
       throw topologyError(`registered worktree root identity does not match: ${record.path}`);
   }
 };
@@ -241,8 +242,11 @@ export const inspectGitWorktreeTopology = async (
   const configuredMetadata = await lstat(configured);
   if (!configuredMetadata.isDirectory() || configuredMetadata.isSymbolicLink())
     throw topologyError("configured active path is not a plain directory");
-  if ((await realpath(configured)) !== configured)
+  try {
+    await resolveUnaliasedPhysicalPath(configured);
+  } catch {
     throw topologyError("configured active path traverses a physical alias");
+  }
   const commonRaw = (await gitExec(["rev-parse", "--git-common-dir"], configured)).stdout.trim();
   const commonDirectory = await realpath(resolve(configured, commonRaw));
   const output = (await gitExecRaw(["worktree", "list", "--porcelain", "-z"], configured)).stdout;

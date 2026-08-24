@@ -13,6 +13,7 @@ import {
   type DeleteResumeReceipt,
 } from "../../src/lib/delete-transaction.ts";
 const createTempDir = (prefix: string): Promise<string> => mkdtemp(join(tmpdir(), prefix));
+const provenReceiptSafety = { assertWindowsOwnerOnly: async (): Promise<boolean> => true };
 
 const receipt = (repositoryKey: string, receiptPath = "/receipt"): DeleteResumeReceipt => ({
   version: 1,
@@ -81,20 +82,28 @@ describe("delete resume receipts", () => {
   test("creates an owner-only receipt exclusively and refuses replacement", async () => {
     const root = await createTempDir("delete-receipt-");
     const path = receiptPathForRepositoryKey(root, "api");
-    const created = await createDeleteResumeReceipt(path, receipt("api", path));
+    const created = await createDeleteResumeReceipt(
+      path,
+      receipt("api", path),
+      provenReceiptSafety,
+    );
 
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(receipt("api", path));
     if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
-    await expect(createDeleteResumeReceipt(path, receipt("api", path))).rejects.toMatchObject({
-      code: "EEXIST",
-    });
+    await expect(
+      createDeleteResumeReceipt(path, receipt("api", path), provenReceiptSafety),
+    ).rejects.toMatchObject({ code: "EEXIST" });
     expect(Buffer.from(created).equals(await readFile(path))).toBe(true);
   });
 
   test("updates only the exact expected bytes and rejects unsafe permissions", async () => {
     const root = await createTempDir("delete-receipt-update-");
     const path = receiptPathForRepositoryKey(root, "api");
-    const initial = await createDeleteResumeReceipt(path, receipt("api", path));
+    const initial = await createDeleteResumeReceipt(
+      path,
+      receipt("api", path),
+      provenReceiptSafety,
+    );
     const next = {
       ...receipt("api", path),
       completedItemIds: ["receipt"],
@@ -109,52 +118,63 @@ describe("delete resume receipts", () => {
       ],
     } satisfies DeleteResumeReceipt;
 
-    const updated = await updateDeleteResumeReceipt(path, initial, next);
+    const updated = await updateDeleteResumeReceipt(path, initial, next, provenReceiptSafety);
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(next);
-    await expect(updateDeleteResumeReceipt(path, initial, receipt("api", path))).rejects.toThrow(
-      /changed concurrently/u,
-    );
+    await expect(
+      updateDeleteResumeReceipt(path, initial, receipt("api", path), provenReceiptSafety),
+    ).rejects.toThrow(/changed concurrently/u);
     if (process.platform !== "win32") {
       await chmod(path, 0o644);
-      await expect(updateDeleteResumeReceipt(path, updated, receipt("api", path))).rejects.toThrow(
-        /owner-only/u,
-      );
+      await expect(
+        updateDeleteResumeReceipt(path, updated, receipt("api", path), provenReceiptSafety),
+      ).rejects.toThrow(/owner-only/u);
     }
   });
 
   test("removes only the exact expected receipt bytes", async () => {
     const root = await createTempDir("delete-receipt-remove-");
     const path = receiptPathForRepositoryKey(root, "api");
-    const initial = await createDeleteResumeReceipt(path, receipt("api", path));
+    const initial = await createDeleteResumeReceipt(
+      path,
+      receipt("api", path),
+      provenReceiptSafety,
+    );
     const changed = Buffer.from(initial);
     changed[changed.length - 2] = 32;
 
-    await expect(removeDeleteResumeReceipt(path, changed)).rejects.toThrow(/changed concurrently/u);
+    await expect(
+      removeDeleteResumeReceipt(path, changed, undefined, provenReceiptSafety),
+    ).rejects.toThrow(/changed concurrently/u);
     expect(await readFile(path)).toEqual(Buffer.from(initial));
-    await removeDeleteResumeReceipt(path, initial);
+    await removeDeleteResumeReceipt(path, initial, undefined, provenReceiptSafety);
     await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   test("receipt cleanup also requires the captured file identity", async () => {
     const root = await createTempDir("delete-receipt-remove-identity-");
     const path = receiptPathForRepositoryKey(root, "api");
-    const initial = await createDeleteResumeReceipt(path, receipt("api", path));
-
-    await expect(removeDeleteResumeReceipt(path, initial, "wrong:identity")).rejects.toThrow(
-      /identity changed/u,
+    const initial = await createDeleteResumeReceipt(
+      path,
+      receipt("api", path),
+      provenReceiptSafety,
     );
+
+    await expect(
+      removeDeleteResumeReceipt(path, initial, "wrong:identity", provenReceiptSafety),
+    ).rejects.toThrow(/identity changed/u);
     expect(await readFile(path)).toEqual(Buffer.from(initial));
   });
 
   test("reads without following links and validates a closed receipt schema and provenance", async () => {
     const root = await createTempDir("delete-receipt-validate-");
     const path = receiptPathForRepositoryKey(root, "api");
-    await createDeleteResumeReceipt(path, receipt("api", path));
+    await createDeleteResumeReceipt(path, receipt("api", path), provenReceiptSafety);
 
-    const loaded = await readValidatedDeleteReceipt(path, {
-      parentIdentity: "d".repeat(64),
-      repositoryKey: "api",
-    });
+    const loaded = await readValidatedDeleteReceipt(
+      path,
+      { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+      provenReceiptSafety,
+    );
     expect(loaded.receipt).toEqual(receipt("api", path));
     expect(loaded.bytes).toEqual(await readFile(path));
 
@@ -162,7 +182,11 @@ describe("delete resume receipts", () => {
       mode: 0o600,
     });
     await expect(
-      readValidatedDeleteReceipt(path, { parentIdentity: "parent", repositoryKey: "api" }),
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "parent", repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
     ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
   });
 
@@ -176,13 +200,14 @@ describe("delete resume receipts", () => {
       else if (target === "runtime") Object.assign(malformed.runtime, { surprise: true });
       else if (target === "topology") Object.assign(malformed.runtime.topology, { surprise: true });
       else Object.assign(malformed.runtime.identities.clone.leaf!, { surprise: true });
-      await createDeleteResumeReceipt(path, malformed);
+      await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
 
       await expect(
-        readValidatedDeleteReceipt(path, {
-          parentIdentity: "d".repeat(64),
-          repositoryKey: "api",
-        }),
+        readValidatedDeleteReceipt(
+          path,
+          { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+          provenReceiptSafety,
+        ),
       ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
     },
   );
@@ -190,7 +215,7 @@ describe("delete resume receipts", () => {
   test("fails closed when the injected Windows owner-only ACL check cannot prove safety", async () => {
     const root = await createTempDir("delete-receipt-acl-");
     const path = receiptPathForRepositoryKey(root, "api");
-    await createDeleteResumeReceipt(path, receipt("api", path));
+    await createDeleteResumeReceipt(path, receipt("api", path), provenReceiptSafety);
 
     await expect(
       readValidatedDeleteReceipt(
@@ -204,13 +229,14 @@ describe("delete resume receipts", () => {
   test("rejects stale provenance before trusting completed work", async () => {
     const root = await createTempDir("delete-receipt-stale-");
     const path = receiptPathForRepositoryKey(root, "api");
-    await createDeleteResumeReceipt(path, receipt("api", path));
+    await createDeleteResumeReceipt(path, receipt("api", path), provenReceiptSafety);
 
     await expect(
-      readValidatedDeleteReceipt(path, {
-        parentIdentity: "different-parent",
-        repositoryKey: "api",
-      }),
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "different-parent", repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
     ).rejects.toMatchObject({ code: "DELETE_RECEIPT_STALE" });
   });
 
@@ -218,15 +244,16 @@ describe("delete resume receipts", () => {
     const root = await createTempDir("delete-receipt-link-");
     const target = join(root, "target.json");
     const path = receiptPathForRepositoryKey(root, "api");
-    await createDeleteResumeReceipt(target, receipt("api", target));
+    await createDeleteResumeReceipt(target, receipt("api", target), provenReceiptSafety);
     await mkdir(join(root, ".arashi-delete-receipts"), { mode: 0o700 });
     await symlink(target, path);
 
     await expect(
-      readValidatedDeleteReceipt(path, {
-        parentIdentity: "d".repeat(64),
-        repositoryKey: "api",
-      }),
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
     ).rejects.toMatchObject({ code: "DELETE_RECEIPT_UNSAFE" });
   });
 
@@ -235,13 +262,14 @@ describe("delete resume receipts", () => {
     const path = receiptPathForRepositoryKey(root, "api");
     const malformed = receipt("api", path);
     malformed.completedItemIds = ["item"];
-    await createDeleteResumeReceipt(path, malformed);
+    await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
 
     await expect(
-      readValidatedDeleteReceipt(path, {
-        parentIdentity: "d".repeat(64),
-        repositoryKey: "api",
-      }),
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
     ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
   });
 
@@ -256,13 +284,14 @@ describe("delete resume receipts", () => {
     malformed.completedPhases = ["provenance", "worktrees", "metadata", "canonical-clone"];
     malformed.remainingPhases = ["workspace-hooks", "configuration", "verification"];
     malformed.completedItemIds = ["receipt", "item", "hook-b"];
-    await createDeleteResumeReceipt(path, malformed);
+    await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
 
     await expect(
-      readValidatedDeleteReceipt(path, {
-        parentIdentity: "d".repeat(64),
-        repositoryKey: "api",
-      }),
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
     ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
   });
 
@@ -272,22 +301,29 @@ describe("delete resume receipts", () => {
     const malformed = receipt("api", path);
     malformed.runtime.identities.clone.path = "/replacement";
     malformed.runtime.identities.clone.leaf.path = "/replacement";
-    await createDeleteResumeReceipt(path, malformed);
+    await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
 
     await expect(
-      readValidatedDeleteReceipt(path, {
-        parentIdentity: "d".repeat(64),
-        repositoryKey: "api",
-      }),
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
     ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
   });
 
   test("reads expected receipt bytes through the no-follow owner-only path", async () => {
     const root = await createTempDir("delete-receipt-bytes-");
     const path = receiptPathForRepositoryKey(root, "api");
-    const initial = await createDeleteResumeReceipt(path, receipt("api", path));
+    const initial = await createDeleteResumeReceipt(
+      path,
+      receipt("api", path),
+      provenReceiptSafety,
+    );
 
-    expect(Buffer.from(await readValidatedDeleteReceiptBytes(path))).toEqual(Buffer.from(initial));
+    expect(Buffer.from(await readValidatedDeleteReceiptBytes(path, provenReceiptSafety))).toEqual(
+      Buffer.from(initial),
+    );
   });
 });
 

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { exec } from "../../src/lib/git.ts";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const roots: string[] = [];
 
@@ -54,7 +55,7 @@ describe("local Git fetch URL identity", () => {
     await symlink(repository, alias, "dir");
 
     expect(await canonicalizeGitFetchUrl(alias, cwd)).toBe(
-      await canonicalizeGitFetchUrl(`file://${repository}/`, cwd),
+      await canonicalizeGitFetchUrl(pathToFileURL(repository).href, cwd),
     );
   });
 

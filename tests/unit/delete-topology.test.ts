@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { join, parse, resolve } from "node:path";
 import {
   createWorktreeRemovalPlan,
   parseGitWorktreePorcelainZ,
@@ -6,6 +7,10 @@ import {
 } from "../../src/lib/delete-topology.ts";
 
 const oid = "a".repeat(40);
+const fixtureRoot = resolve(parse(process.cwd()).root, "repo");
+const linkedRoot = resolve(parse(process.cwd()).root, "parents", "topic");
+const primaryPath = fixtureRoot;
+const commonDirectory = join(primaryPath, ".git");
 const porcelain = (...records: string[][]): Buffer =>
   Buffer.from(`${records.map((record) => record.join("\0")).join("\0\0")}\0\0`);
 
@@ -26,10 +31,15 @@ describe("strict git worktree porcelain -z parsing", () => {
   test("retains primary, linked, detached, locked, and prunable records", () => {
     const parsed = parseGitWorktreePorcelainZ(
       porcelain(
-        ["worktree /repo", `HEAD ${oid}`, "branch refs/heads/main"],
-        ["worktree /repo/wt/topic", `HEAD ${oid}`, "detached", "locked held by test"],
+        [`worktree ${primaryPath}`, `HEAD ${oid}`, "branch refs/heads/main"],
         [
-          "worktree /repo/stale",
+          `worktree ${join(primaryPath, "wt", "topic")}`,
+          `HEAD ${oid}`,
+          "detached",
+          "locked held by test",
+        ],
+        [
+          `worktree ${join(primaryPath, "stale")}`,
           `HEAD ${oid}`,
           "branch refs/heads/stale",
           "prunable gitdir file points to non-existent location",
@@ -38,9 +48,13 @@ describe("strict git worktree porcelain -z parsing", () => {
     );
 
     expect(parsed).toEqual([
-      record("/repo"),
-      record("/repo/wt/topic", { branch: null, detached: true, locked: "held by test" }),
-      record("/repo/stale", {
+      record(primaryPath),
+      record(join(primaryPath, "wt", "topic"), {
+        branch: null,
+        detached: true,
+        locked: "held by test",
+      }),
+      record(join(primaryPath, "stale"), {
         branch: "refs/heads/stale",
         prunable: "gitdir file points to non-existent location",
       }),
@@ -75,58 +89,55 @@ describe("strict git worktree porcelain -z parsing", () => {
 
 describe("linked-worktree deletion planning", () => {
   test("distinguishes the configured active linked path from the canonical primary", () => {
-    const records = [
-      record("/repo"),
-      record("/parents/topic/repos/api", { branch: "refs/heads/topic" }),
-    ];
+    const activePath = join(linkedRoot, "repos", "api");
+    const records = [record(primaryPath), record(activePath, { branch: "refs/heads/topic" })];
 
     const plan = createWorktreeRemovalPlan({
-      commonDirectory: "/repo/.git",
-      configuredActivePath: "/parents/topic/repos/api",
+      commonDirectory,
+      configuredActivePath: activePath,
       records,
     });
 
-    expect(plan.configuredActivePath).toBe("/parents/topic/repos/api");
-    expect(plan.primaryPath).toBe("/repo");
-    expect(plan.canonicalClonePath).toBe("/repo");
-    expect(plan.linkedWorktrees.map((entry) => entry.path)).toEqual(["/parents/topic/repos/api"]);
+    expect(plan.configuredActivePath).toBe(activePath);
+    expect(plan.primaryPath).toBe(primaryPath);
+    expect(plan.canonicalClonePath).toBe(primaryPath);
+    expect(plan.linkedWorktrees.map((entry) => entry.path)).toEqual([activePath]);
   });
 
   test("orders linked worktrees deepest-first and stale metadata after Git removals", () => {
+    const activePath = join(linkedRoot, "repos", "api");
+    const nestedPath = join(linkedRoot, "nested", "repos", "api");
+    const stalePath = resolve(parse(process.cwd()).root, "gone", "api");
+    const staleMetadataPath = join(commonDirectory, "worktrees", "api-stale");
     const records = [
-      record("/repo"),
-      record("/parents/topic/repos/api"),
-      record("/parents/topic/nested/repos/api", {
-        metadataPath: "/repo/.git/worktrees/api-nested",
+      record(primaryPath),
+      record(activePath),
+      record(nestedPath, {
+        metadataPath: join(commonDirectory, "worktrees", "api-nested"),
       }),
-      record("/gone/api", {
-        metadataPath: "/repo/.git/worktrees/api-stale",
+      record(stalePath, {
+        metadataPath: staleMetadataPath,
         present: false,
         prunable: "gitdir file points to non-existent location",
       }),
     ];
 
     const plan = createWorktreeRemovalPlan({
-      commonDirectory: "/repo/.git",
-      configuredActivePath: "/parents/topic/repos/api",
+      commonDirectory,
+      configuredActivePath: activePath,
       records,
     });
 
-    expect(plan.linkedWorktrees.map((entry) => entry.path)).toEqual([
-      "/parents/topic/nested/repos/api",
-      "/parents/topic/repos/api",
-    ]);
-    expect(plan.staleMetadata).toEqual([
-      { path: "/repo/.git/worktrees/api-stale", worktreePath: "/gone/api" },
-    ]);
+    expect(plan.linkedWorktrees.map((entry) => entry.path)).toEqual([nestedPath, activePath]);
+    expect(plan.staleMetadata).toEqual([{ path: staleMetadataPath, worktreePath: stalePath }]);
   });
 
   test("fails closed when the configured active path is not a member of the inventory", () => {
     expect(() =>
       createWorktreeRemovalPlan({
-        commonDirectory: "/repo/.git",
-        configuredActivePath: "/other/repo",
-        records: [record("/repo")],
+        commonDirectory,
+        configuredActivePath: resolve(parse(process.cwd()).root, "other", "repo"),
+        records: [record(primaryPath)],
       }),
     ).toThrow(/configured|inventory|topology/i);
   });
