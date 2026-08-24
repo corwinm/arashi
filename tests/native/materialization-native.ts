@@ -189,6 +189,158 @@ const expectOutcomeStatuses = (
   );
 };
 
+type NativeNamingPolicy = {
+  branchSlashes: "flatten" | "preserve";
+  style: "branch" | "default" | "repo-branch";
+};
+
+const nativeNamingCases: { id: string; policy?: NativeNamingPolicy }[] = [
+  { id: "omitted" },
+  { id: "default-preserve", policy: { branchSlashes: "preserve", style: "default" } },
+  { id: "default-flatten", policy: { branchSlashes: "flatten", style: "default" } },
+  { id: "branch-preserve", policy: { branchSlashes: "preserve", style: "branch" } },
+  { id: "branch-flatten", policy: { branchSlashes: "flatten", style: "branch" } },
+  {
+    id: "repo-branch-preserve",
+    policy: { branchSlashes: "preserve", style: "repo-branch" },
+  },
+  {
+    id: "repo-branch-flatten",
+    policy: { branchSlashes: "flatten", style: "repo-branch" },
+  },
+];
+
+const expectedNamingRelativePath = (
+  bare: boolean,
+  repositoryComponent: string,
+  branch: string,
+  policy?: NativeNamingPolicy,
+): string => {
+  const style = policy?.style ?? "default";
+  const branchSlashes = policy?.branchSlashes ?? "preserve";
+  const branchComponents =
+    branchSlashes === "flatten" ? [branch.replaceAll("/", "-")] : branch.split("/");
+  if (style === "repo-branch") {
+    return join(`${repositoryComponent}-${branchComponents[0]}`, ...branchComponents.slice(1));
+  }
+  if (style === "default" && bare) {
+    return join(repositoryComponent, ...branchComponents);
+  }
+  return join(...branchComponents);
+};
+
+const writeNamingConfig = async (
+  path: string,
+  worktreesDir: string,
+  policy?: NativeNamingPolicy,
+) => {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(
+    path,
+    `${JSON.stringify(
+      {
+        repos: {
+          app: {
+            defaultBranch: "main",
+            isBare: false,
+            path: "./repos/app",
+          },
+        },
+        reposDir: "./repos",
+        version: "1.0.0",
+        ...(policy ? { worktreeNaming: policy } : {}),
+        worktreesDir,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+};
+
+const runNativeNamingMatrix = async (
+  binary: string,
+  root: string,
+  environment: NodeJS.ProcessEnv,
+) => {
+  for (const bare of [false, true]) {
+    for (const namingCase of nativeNamingCases) {
+      const caseRoot = join(root, "naming-matrix", bare ? "bare" : "non-bare", namingCase.id);
+      const repositoryComponent = bare ? "example" : "workspace";
+      let source: string;
+
+      if (bare) {
+        const seed = join(caseRoot, "seed");
+        source = join(caseRoot, `${repositoryComponent}.git`);
+        await initRepository(seed, `${namingCase.id} bare parent`);
+        await writeNamingConfig(join(seed, ".arashi", "config.json"), "..", namingCase.policy);
+        await git(seed, "add", ".arashi/config.json");
+        await git(seed, "commit", "-m", `Configure ${namingCase.id} naming`);
+        await git(caseRoot, "clone", "--bare", seed, source);
+        await initRepository(join(source, "repos", "app"), `${namingCase.id} bare child`);
+      } else {
+        source = join(caseRoot, repositoryComponent);
+        await initRepository(source, `${namingCase.id} non-bare parent`);
+        await initRepository(join(source, "repos", "app"), `${namingCase.id} non-bare child`);
+        await writeNamingConfig(
+          join(source, ".arashi", "config.json"),
+          "native-worktrees",
+          namingCase.policy,
+        );
+      }
+
+      const branch = `native/matrix/${namingCase.id}`;
+      const created = await run(
+        binary,
+        ["create", branch, "--no-hooks", "--no-progress", "--no-launch", "--no-switch", "--json"],
+        { cwd: source, env: environment },
+      );
+      assert(
+        created.code === 0,
+        `${bare ? "bare" : "non-bare"} ${namingCase.id} naming create failed:\n${created.stdout}\n${created.stderr}`,
+      );
+      const envelope = parseJson(created);
+      const data = envelope.data as { repositories: { name: string; worktreePath: string }[] };
+      const base = bare ? caseRoot : join(source, "native-worktrees");
+      const parentDestination = join(
+        base,
+        expectedNamingRelativePath(bare, repositoryComponent, branch, namingCase.policy),
+      );
+      const childDestination = bare
+        ? join(source, "repos", expectedNamingRelativePath(false, "app", branch, namingCase.policy))
+        : join(parentDestination, "repos", "app");
+      assert(
+        await exists(childDestination),
+        `${bare ? "bare" : "non-bare"} ${namingCase.id} coordinated child destination is missing at ${childDestination}: ${JSON.stringify(data.repositories)}`,
+      );
+      const canonicalParent = await realpath(parentDestination);
+      const canonicalChild = await realpath(childDestination);
+      assert(
+        data.repositories.some(({ worktreePath }) => resolve(worktreePath) === canonicalParent),
+        `${bare ? "bare" : "non-bare"} ${namingCase.id} JSON omitted parent ${canonicalParent}: ${JSON.stringify(data.repositories)}`,
+      );
+      assert(
+        data.repositories.some(({ worktreePath }) => resolve(worktreePath) === canonicalChild),
+        `${bare ? "bare" : "non-bare"} ${namingCase.id} JSON omitted coordinated child ${canonicalChild}: ${JSON.stringify(data.repositories)}`,
+      );
+      if (!bare) {
+        assert(
+          canonicalChild === (await realpath(join(canonicalParent, "repos", "app"))),
+          `non-bare ${namingCase.id} child escaped the authoritative parent`,
+        );
+      }
+      assert(
+        (await git(source, "show-ref", "--verify", `refs/heads/${branch}`)).length > 0,
+        `${bare ? "bare" : "non-bare"} ${namingCase.id} changed the parent Git branch identity`,
+      );
+      assert(
+        (await git(join(source, "repos", "app"), "show-ref", "--verify", `refs/heads/${branch}`))
+          .length > 0,
+        `${bare ? "bare" : "non-bare"} ${namingCase.id} changed the child Git branch identity`,
+      );
+    }
+  }
+};
+
 const main = async () => {
   const [, , binaryArgument] = process.argv;
   assert(
@@ -390,6 +542,8 @@ const main = async () => {
       !(await exists(join(workspace, ".arashi", "worktrees", "native-materialization-alias"))),
       "alias failure mutated Git/filesystem",
     );
+
+    await runNativeNamingMatrix(binary, root, environment);
 
     const bareSeed = join(root, "bare-seed");
     const bareSource = join(root, "example.git");

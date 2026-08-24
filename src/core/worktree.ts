@@ -1561,6 +1561,16 @@ export const isValidBranchName = (branchName: string): boolean => {
   return isValidGitBranchNameLiteral(branchName);
 };
 
+export const assertValidBranchName = (branchName: string): void => {
+  if (!isValidBranchName(branchName)) {
+    throw new InvalidBranchNameError(
+      `Invalid branch name: ${branchName}`,
+      branchName,
+      "Branch name contains invalid characters or format",
+    );
+  }
+};
+
 // ============================================================================
 // Main Orchestration Functions (T018-T024)
 // ============================================================================
@@ -1766,13 +1776,7 @@ export const createCoordinatedWorktrees = async (
 
   try {
     // 1. Validate branch name (T018)
-    if (!isValidBranchName(branchName)) {
-      throw new InvalidBranchNameError(
-        `Invalid branch name: ${branchName}`,
-        branchName,
-        "Branch name contains invalid characters or format",
-      );
-    }
+    assertValidBranchName(branchName);
 
     // 2. Validate we have repositories
     if (!repositories || repositories.length === ZERO) {

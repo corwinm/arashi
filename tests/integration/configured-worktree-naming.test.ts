@@ -132,6 +132,33 @@ describe("configured worktree naming matrix", () => {
     expect(result.path).toBe(join(repositoryPath, ".worktrees", "feature", "auth"));
   });
 
+  test("classifies an invalid traversal branch before configured destination planning", async () => {
+    const repositoryPath = join(root, "invalid-cli-branch");
+    await mkdir(join(repositoryPath, ".arashi"), { recursive: true });
+    await exec(["init", "-b", "main"], repositoryPath);
+    await runtime.write(
+      join(repositoryPath, ".arashi", "config.json"),
+      JSON.stringify({ repos: {}, reposDir: "./repos", version: "1.0.0" }),
+    );
+
+    const child = runtime.spawn(
+      [process.execPath, CLI_ENTRY, "create", "../escape", "--no-progress", "--no-hooks", "--json"],
+      { cwd: repositoryPath, stderr: "pipe", stdout: "pipe" },
+    );
+    const stdout = await new Response(child.stdout).text();
+    const stderr = await new Response(child.stderr).text();
+
+    expect(await child.exited, `${stdout}\n${stderr}`).toBe(1);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toMatchObject({
+      error: {
+        code: "INVALID_BRANCH_NAME",
+        details: { branchName: "../escape" },
+      },
+      ok: false,
+    });
+  });
+
   test("rejects a lexical destination escape from the configured worktree root", async () => {
     const repositoryPath = join(root, "lexical-containment");
     await mkdir(repositoryPath, { recursive: true });

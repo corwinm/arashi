@@ -20,6 +20,7 @@ import {
   UserAbortedError,
   WorktreePathContainmentError,
   applyRepositoryFilter,
+  assertValidBranchName,
   calculateWorktreePathPlan,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
@@ -1393,6 +1394,7 @@ export async function executeCreate(
       "Base branch must be a valid Git branch name.",
     );
   }
+  assertValidBranchName(branchName);
 
   const workspaceContext = await (deps.resolveWorkspaceContext ?? resolveWorkspaceContext)();
   if (workspaceContext.mode === "standalone") {
