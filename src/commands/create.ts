@@ -19,13 +19,12 @@ import {
   RepositoryValidationError,
   UserAbortedError,
   applyRepositoryFilter,
-  calculateWorktreePath,
   calculateWorktreePathPlan,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
 import { existsSync, lstatSync } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, realpath, rm, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   buildDirtyGuidance,
@@ -80,7 +79,10 @@ import {
   resolveCreateBasePlan,
   type CreateBaseResolutionPlan,
 } from "../lib/create-base.ts";
-import { planConfiguredRepositoryMaterialization } from "../lib/materialization-preflight.ts";
+import {
+  planConfiguredRepositoryMaterialization,
+  preserveCorrectReusableMaterialization,
+} from "../lib/materialization-preflight.ts";
 import type { RepositoryMaterializationPlan } from "../lib/materialization.ts";
 import { isValidRequestedBaseBranch, normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
 import {
@@ -89,6 +91,95 @@ import {
   resolveBaseBranchPolicy,
   type EffectiveBaseBranch,
 } from "../lib/base-branch-policy.ts";
+
+async function isCaseInsensitivePath(path: string): Promise<boolean> {
+  let candidate = path;
+  while (true) {
+    const name = basename(candidate);
+    const characterIndex = [...name].findIndex(
+      (character) => character.toLowerCase() !== character.toUpperCase(),
+    );
+    if (characterIndex >= ZERO) {
+      const characters = [...name];
+      const character = characters[characterIndex]!;
+      characters[characterIndex] =
+        character === character.toLowerCase() ? character.toUpperCase() : character.toLowerCase();
+      const caseAlias = join(dirname(candidate), characters.join(""));
+      try {
+        const [canonicalCandidate, canonicalAlias] = await Promise.all([
+          realpath(candidate),
+          realpath(caseAlias),
+        ]);
+        return canonicalCandidate === canonicalAlias;
+      } catch {
+        return false;
+      }
+    }
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      return process.platform === "win32";
+    }
+    candidate = parent;
+  }
+}
+
+const DARWIN_APFS_FILESYSTEM_TYPE = 26;
+const DARWIN_HFS_PLUS_FILESYSTEM_TYPE = 25;
+
+export function isNormalizingDarwinFilesystemType(
+  filesystemType: number,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return (
+    platform === "darwin" &&
+    (filesystemType === DARWIN_HFS_PLUS_FILESYSTEM_TYPE ||
+      filesystemType === DARWIN_APFS_FILESYSTEM_TYPE)
+  );
+}
+
+async function normalizesUnicodePath(path: string): Promise<boolean> {
+  if (process.platform !== "darwin") {
+    return false;
+  }
+  try {
+    return isNormalizingDarwinFilesystemType((await statfs(path)).type);
+  } catch {
+    // Fail closed on Darwin when the target filesystem cannot be inspected.
+    return true;
+  }
+}
+
+async function canonicalizePlannedDestination(path: string): Promise<string | null> {
+  let ancestor = resolve(path);
+  const unresolvedSegments: string[] = [];
+
+  while (true) {
+    try {
+      const canonicalAncestor = await realpath(ancestor);
+      const identity = resolve(canonicalAncestor, ...unresolvedSegments.toReversed());
+      const normalizedIdentity = (await normalizesUnicodePath(canonicalAncestor))
+        ? identity.normalize("NFC")
+        : identity;
+      return (await isCaseInsensitivePath(canonicalAncestor))
+        ? normalizedIdentity.toLowerCase()
+        : normalizedIdentity;
+    } catch {
+      try {
+        if ((await lstat(ancestor)).isSymbolicLink()) {
+          return null;
+        }
+      } catch {
+        // Continue to the next ancestor for ordinary absent path components.
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) {
+        return resolve(ancestor, ...unresolvedSegments.toReversed());
+      }
+      unresolvedSegments.push(basename(ancestor));
+      ancestor = parent;
+    }
+  }
+}
 
 type LoadedConfig = Awaited<ReturnType<typeof loadConfigWithFallback>>;
 type Config = LoadedConfig["config"];
@@ -554,8 +645,10 @@ const preflightConfiguredMaterialization = async (input: {
   createBasePlan: CreateBaseResolutionPlan | undefined;
   dryRun: boolean;
   repositories: Parameters<typeof createCoordinatedWorktrees>[1];
+  reusableWorktreePaths: ReadonlySet<string>;
   reuseExisting: boolean;
   workspaceRoot: string;
+  worktreePathPlan: Awaited<ReturnType<typeof calculateWorktreePathPlan>>;
 }): Promise<readonly RepositoryMaterializationPlan[]> => {
   const plans: RepositoryMaterializationPlan[] = [];
   for (const repository of input.repositories) {
@@ -571,30 +664,36 @@ const preflightConfiguredMaterialization = async (input: {
       reusedTargetOid ??
       input.createBasePlan?.byCanonicalPath.get(canonicalRepositoryPath)?.resolvedOid ??
       (await resolveDefaultMaterializationTarget(repository));
-    const destinationRoot = (
-      await calculateWorktreePath({
-        branchName: input.branchName,
-        config: input.config,
-        repo: repository,
-      })
-    ).path;
+    const plannedPath = input.worktreePathPlan.get(repository);
+    if (!plannedPath) {
+      throw new Error(`Repository '${repository.name}' is missing a planned path`);
+    }
+    const destinationRoot = plannedPath.path;
     const sourceRoot = await resolveGitPrimarySourceCheckout(
       canonicalRepositoryPath,
       repository.name,
     );
-    plans.push(
-      await planConfiguredRepositoryMaterialization({
+    let plan = await planConfiguredRepositoryMaterialization({
+      copy,
+      destinationRoot,
+      dryRun: input.dryRun,
+      platform: process.platform,
+      repositoryId: repository.name,
+      repositoryPath: canonicalRepositoryPath,
+      sourceRoot,
+      symlink,
+      targetOid,
+    });
+    if (input.reusableWorktreePaths.has(resolve(destinationRoot))) {
+      plan = await preserveCorrectReusableMaterialization({
         copy,
         destinationRoot,
-        dryRun: input.dryRun,
-        platform: process.platform,
-        repositoryId: repository.name,
-        repositoryPath: canonicalRepositoryPath,
+        plan,
         sourceRoot,
         symlink,
-        targetOid,
-      }),
-    );
+      });
+    }
+    plans.push(plan);
   }
   if (plans.some((plan) => plan.classification === "blocked")) {
     throw new MaterializationPlanBlockedError(plans);
@@ -622,8 +721,10 @@ export interface CreateCommandDependencies {
     createBasePlan: CreateBaseResolutionPlan | undefined;
     dryRun: boolean;
     repositories: Parameters<typeof createCoordinatedWorktrees>[1];
+    reusableWorktreePaths: ReadonlySet<string>;
     reuseExisting: boolean;
     workspaceRoot: string;
+    worktreePathPlan: Awaited<ReturnType<typeof calculateWorktreePathPlan>>;
   }) => Promise<readonly RepositoryMaterializationPlan[]>;
   calculateWorktreePathPlan?: typeof calculateWorktreePathPlan;
   listRegisteredWorktreePaths?: (
@@ -1175,7 +1276,10 @@ By default, launch opens a new OS window or managed independent-session equivale
           process.exit(ERROR_EXIT_CODE);
         }
 
-        if (createError instanceof MaterializationPlanBlockedError) {
+        if (createError instanceof WorktreeDestinationCollisionError) {
+          error(createError.message);
+          process.exit(ERROR_EXIT_CODE);
+        } else if (createError instanceof MaterializationPlanBlockedError) {
           error(createError.message);
           for (const plan of createError.details.dryRunOutcome.materializationPlans) {
             for (const outcome of plan.outcomes) {
@@ -1394,22 +1498,22 @@ export async function executeCreate(
     (async (
       repositoryPath: string,
     ): Promise<readonly { branch: string | null; path: string; prunable: boolean }[]> => {
-      const registrations = await exec(["worktree", "list", "--porcelain"], repositoryPath);
+      const registrations = await exec(["worktree", "list", "--porcelain", "-z"], repositoryPath);
       const worktrees: { branch: string | null; path: string; prunable: boolean }[] = [];
       let current: { branch: string | null; path: string; prunable: boolean } | null = null;
-      for (const line of registrations.stdout.split("\n")) {
-        if (line.startsWith("worktree ")) {
+      for (const field of registrations.stdout.split("\0")) {
+        if (field.startsWith("worktree ")) {
           if (current) {
             worktrees.push(current);
           }
           current = {
             branch: null,
-            path: resolve(line.slice("worktree ".length)),
+            path: resolve(field.slice("worktree ".length)),
             prunable: false,
           };
-        } else if (current && line.startsWith("branch ")) {
-          current.branch = line.slice("branch ".length);
-        } else if (current && line.startsWith("prunable")) {
+        } else if (current && field.startsWith("branch ")) {
+          current.branch = field.slice("branch ".length);
+        } else if (current && field.startsWith("prunable")) {
           current.prunable = true;
         }
       }
@@ -1669,15 +1773,35 @@ export async function executeCreate(
       }
     : undefined;
 
-  const worktreePathPlan = await resolveWorktreePathPlan(selectedRepos, branchName, arashiConfig);
+  const completeWorktreePathPlan = await resolveWorktreePathPlan(
+    allRepositories,
+    branchName,
+    arashiConfig,
+  );
+  const worktreePathPlan = new Map(
+    selectedRepos.map((repository) => {
+      const plannedPath = completeWorktreePathPlan.get(repository);
+      if (!plannedPath) {
+        throw new Error(`Repository '${repository.name}' is missing a planned path`);
+      }
+      return [repository, plannedPath] as const;
+    }),
+  );
   const reusableWorktreePaths = new Set<string>();
-  if (!options.dryRun) {
-    const plannedDestinations = new Set<string>();
+  const plannedDestinations = new Set<string>();
+  for (const [repository, plannedPath] of worktreePathPlan) {
+    const canonicalDestination = await canonicalizePlannedDestination(plannedPath.path);
+    if (canonicalDestination === null || plannedDestinations.has(canonicalDestination)) {
+      throw new WorktreeDestinationCollisionError(repository.name, plannedPath.path);
+    }
+    plannedDestinations.add(canonicalDestination);
+  }
+
+  const discoverReusableRegistrations = !options.dryRun || options.conflict === "REUSE_EXISTING";
+  if (discoverReusableRegistrations) {
     for (const [repository, plannedPath] of worktreePathPlan) {
       const normalizedDestination = resolve(plannedPath.path);
-      const duplicatePlan = plannedDestinations.has(normalizedDestination);
       const filesystemCollision = destinationPathExists(normalizedDestination);
-      plannedDestinations.add(normalizedDestination);
 
       let canonicalDestination = normalizedDestination;
       if (filesystemCollision) {
@@ -1717,7 +1841,6 @@ export async function executeCreate(
         reusableWorktreePaths.add(normalizedDestination);
       }
       if (
-        duplicatePlan ||
         targetBranchRegisteredElsewhere ||
         (filesystemCollision && !reusableRegistration) ||
         (registration !== undefined && !reusableRegistration)
@@ -1735,12 +1858,14 @@ export async function executeCreate(
     createBasePlan,
     dryRun: options.dryRun === true,
     repositories: selectedRepos,
+    reusableWorktreePaths,
     reuseExisting: shouldPreflightReusableMaterializationTarget({
       conflict: options.conflict,
       dryRun: options.dryRun === true,
       stdinIsTTY,
     }),
     workspaceRoot: context.workspaceRoot,
+    worktreePathPlan,
   });
 
   const actionLabel = options.dryRun ? "Planning" : "Creating";
@@ -1840,7 +1965,10 @@ export async function executeCreate(
   // 6. Execute coordinated worktree creation
   const summary = await runCreate(branchName, selectedRepos, worktreeOptions);
   const residualWorktrees = summary.repositoryResults.some(
-    (result) => Boolean(result.worktreePath) && pathExists(result.worktreePath as string),
+    (result) =>
+      result.targetAction !== "reused" &&
+      Boolean(result.worktreePath) &&
+      pathExists(result.worktreePath as string),
   );
   if (summary.rolledBack && !residualWorktrees && managedIgnore.changed) {
     await restoreIgnore(managedIgnore);

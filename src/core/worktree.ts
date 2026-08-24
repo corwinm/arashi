@@ -4,7 +4,10 @@ import type {
   ExecutedMaterializationOutcome,
   RepositoryMaterializationPlan,
 } from "../lib/materialization.ts";
-import { planConfiguredRepositoryMaterialization } from "../lib/materialization-preflight.ts";
+import {
+  planConfiguredRepositoryMaterialization,
+  preserveCorrectReusableMaterialization,
+} from "../lib/materialization-preflight.ts";
 import {
   materializeRepository,
   rollbackMaterializationOwnership,
@@ -249,6 +252,7 @@ export interface WorktreeOperationOptions {
 
 interface NormalizedWorktreeOptions {
   materializationPlans: readonly RepositoryMaterializationPlan[];
+  reusableWorktreePaths: ReadonlySet<string>;
   executeHooks: boolean;
   hookTimeout: number;
   hookInputMode: HookInputMode;
@@ -1267,7 +1271,10 @@ export const calculateWorktreePathPlan = async (
       repo,
     });
     plan.set(repo, calculated);
-    if (calculated.repositoryType === "meta-repo") {
+    if (
+      calculated.repositoryType === "meta-repo" &&
+      authoritativeParentWorktreePath === undefined
+    ) {
       authoritativeParentWorktreePath = calculated.path;
     }
   }
@@ -1494,7 +1501,11 @@ const buildDryRunOutcome = async ({
       if (!pathResult) throw new Error(`Repository '${repo.name}' is missing a planned path`);
       worktreePath = pathResult.path;
 
-      if (existsSync(worktreePath)) {
+      const repositoryPath = await realpath(repo.path);
+      const reusableExistingPath =
+        targetActionByRepositoryPath.get(repositoryPath) === "reused" &&
+        options.reusableWorktreePaths?.has(resolve(worktreePath)) === true;
+      if (existsSync(worktreePath) && !reusableExistingPath) {
         conflicts.push({
           blocking: true,
           conflictType: "path_exists",
@@ -1660,6 +1671,7 @@ export const createCoordinatedWorktrees = async (
     quietHooks: options.quietHooks ?? false,
     interactive: options.interactive ?? false,
     materializationPlans: options.materializationPlans ?? [],
+    reusableWorktreePaths: options.reusableWorktreePaths ?? new Set(),
     showProgress: options.showProgress ?? true,
   };
 
@@ -1887,7 +1899,12 @@ export const createCoordinatedWorktrees = async (
     // Automatic whole-worktree rollback on any error (T023)
     const rollbackResult = await operationLog.rollback();
     const residualWorktrees = results
-      .filter((result) => result.worktreePath && existsSync(result.worktreePath))
+      .filter(
+        (result) =>
+          result.targetAction !== "reused" &&
+          result.worktreePath &&
+          existsSync(result.worktreePath),
+      )
       .map((result) => `${result.repository.name}:${result.worktreePath}`);
 
     let rollbackNote = "";
@@ -2168,7 +2185,7 @@ const processRepository = async ({
     if (materializationCopy.length > ZERO || materializationSymlink.length > ZERO) {
       const canonicalRepositoryPath = await realpath(repo.path);
       const sourceRoot = await resolveGitPrimarySourceCheckout(canonicalRepositoryPath, repo.name);
-      const refreshedPlan = await planConfiguredRepositoryMaterialization({
+      let refreshedPlan = await planConfiguredRepositoryMaterialization({
         copy: materializationCopy,
         destinationRoot: worktreePath,
         dryRun: false,
@@ -2179,6 +2196,15 @@ const processRepository = async ({
         symlink: materializationSymlink,
         targetOid: `refs/heads/${branchName}`,
       });
+      if (reuseExistingWorktree) {
+        refreshedPlan = await preserveCorrectReusableMaterialization({
+          copy: materializationCopy,
+          destinationRoot: worktreePath,
+          plan: refreshedPlan,
+          sourceRoot,
+          symlink: materializationSymlink,
+        });
+      }
       if (refreshedPlan.classification === "blocked") {
         materializationOutcomes = refreshedPlan.outcomes
           .filter((outcome) => outcome.status === "blocked")
@@ -2194,6 +2220,7 @@ const processRepository = async ({
       const materialized = await materializeRepository({
         copy: materializationCopy,
         destinationRoot: worktreePath,
+        plan: refreshedPlan,
         repositoryId: repo.name,
         sourceRoot,
         symlink: materializationSymlink,

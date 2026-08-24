@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, rm, writeFile } from "fs/promises";
 import type { Config as ArashiConfig } from "../../src/lib/config.ts";
 import type { Repository } from "../../src/core/repository.ts";
-import { calculateWorktreePath } from "../../src/core/worktree.ts";
+import { calculateWorktreePath, calculateWorktreePathPlan } from "../../src/core/worktree.ts";
 import { join } from "path";
 import { spawn } from "child_process";
 
@@ -269,5 +269,55 @@ describe("calculateWorktreePath integration", () => {
 
     expect(result.parentWorktreePath).toBe(authoritativeParentWorktreePath);
     expect(result.path).toBe(join(authoritativeParentWorktreePath, "repos", "child-checkout"));
+  });
+
+  test("keeps the root workspace meta-repo authoritative when a configured child is also a meta-repo", async () => {
+    const rootPath = join(testDir, "workspace");
+    await createGitRepo(rootPath, false);
+    await mkdir(join(rootPath, ".arashi"), { recursive: true });
+    await writeFile(
+      join(rootPath, ".arashi", "config.json"),
+      JSON.stringify({ reposDir: "./repos", version: "1.0.0" }),
+    );
+    const nestedMetaPath = join(rootPath, "repos", "nested-meta");
+    await createGitRepo(nestedMetaPath, false);
+    await mkdir(join(nestedMetaPath, ".arashi"), { recursive: true });
+    await writeFile(
+      join(nestedMetaPath, ".arashi", "config.json"),
+      JSON.stringify({ reposDir: "./repos", version: "1.0.0" }),
+    );
+    const ordinaryChildPath = join(rootPath, "repos", "ordinary-child");
+    await createGitRepo(ordinaryChildPath, false);
+
+    const repositories: Repository[] = [
+      {
+        defaultBranch: "main",
+        hasSetupScript: false,
+        name: "workspace",
+        path: rootPath,
+      },
+      {
+        defaultBranch: "main",
+        hasSetupScript: false,
+        name: "nested-meta",
+        path: nestedMetaPath,
+      },
+      {
+        defaultBranch: "main",
+        hasSetupScript: false,
+        name: "ordinary-child",
+        path: ordinaryChildPath,
+      },
+    ];
+    const plan = await calculateWorktreePathPlan(repositories, "feature/nested-config", {
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+    });
+    const rootDestination = join(rootPath, ".arashi", "worktrees", "feature", "nested-config");
+
+    expect(plan.get(repositories[0]!)?.path).toBe(rootDestination);
+    expect(plan.get(repositories[1]!)?.repositoryType).toBe("meta-repo");
+    expect(plan.get(repositories[2]!)?.path).toBe(join(rootDestination, "repos", "ordinary-child"));
   });
 });

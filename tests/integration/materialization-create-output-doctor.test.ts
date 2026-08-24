@@ -242,6 +242,105 @@ printf 'post\\n' >> '${order}'`,
     );
   });
 
+  test("keeps the root destination authoritative when filters exclude the root and a nested meta-repo", async () => {
+    const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha", "beta"] });
+    workspaces.push(workspace);
+    await mkdir(join(workspace.childRepoPaths.alpha!, ".arashi"), { recursive: true });
+    await writeFile(
+      join(workspace.childRepoPaths.alpha!, ".arashi", "config.json"),
+      `${JSON.stringify({ repos: {}, reposDir: "./repos", version: "1.0.0" }, null, 2)}\n`,
+    );
+    const branch = "feature/filtered-root-authority";
+
+    const result = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "alpha,beta",
+      "--dry-run",
+      "--no-hooks",
+      "--json",
+    );
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const envelope = parseSingleDocument(result.stdout) as {
+      data: {
+        dryRunOutcome: {
+          plannedWorktrees: { repositoryName: string; worktreePath: string }[];
+        };
+      };
+      ok: boolean;
+    };
+    expect(envelope.ok).toBe(true);
+    expect(
+      envelope.data.dryRunOutcome.plannedWorktrees.find(
+        (worktree) => worktree.repositoryName === "beta",
+      )?.worktreePath,
+    ).toBe(
+      join(
+        await realpath(workspace.workspacePath),
+        ".arashi",
+        "worktrees",
+        branch,
+        "repos",
+        "beta",
+      ),
+    );
+  });
+
+  test("preserves correct copy and symlink entries in an exact reused worktree as no-ops", async () => {
+    const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
+    workspaces.push(workspace);
+    const source = await prepareSources(workspace);
+    await writeFile(join(source, ".fresh.local"), "NEW-CONTENT\n");
+    const branch = "feature/exact-reuse-materialization";
+    await configure(workspace, {
+      alpha: { copy: [".env.local", ".fresh.local"], symlink: [".shared-cache"] },
+    });
+    const destination = workspace.getChildWorktreePath("alpha", branch);
+    await mkdir(dirname(destination), { recursive: true });
+    await exec(["worktree", "add", "-b", branch, destination, "main"], source);
+    await writeFile(join(destination, ".env.local"), "TOP-SECRET-CONTENT\n");
+    await symlink(
+      await realpath(join(source, ".shared-cache")),
+      join(destination, ".shared-cache"),
+    );
+    const linkBefore = await readlink(join(destination, ".shared-cache"));
+
+    const result = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "alpha",
+      "--conflict",
+      "REUSE_EXISTING",
+      "--no-hooks",
+      "--json",
+    );
+
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(await readFile(join(destination, ".env.local"), "utf8")).toBe("TOP-SECRET-CONTENT\n");
+    expect(await readFile(join(destination, ".fresh.local"), "utf8")).toBe("NEW-CONTENT\n");
+    expect(await readlink(join(destination, ".shared-cache"))).toBe(linkBefore);
+    expect(parseSingleDocument(result.stdout)).toMatchObject({
+      data: {
+        repositoryResults: [
+          {
+            materializationOutcomes: [
+              expect.objectContaining({ action: "copy", status: "skipped" }),
+              expect.objectContaining({ action: "copy", path: ".fresh.local", status: "copied" }),
+              expect.objectContaining({ action: "symlink", status: "skipped" }),
+            ],
+            repositoryName: "alpha",
+          },
+        ],
+      },
+      ok: true,
+    });
+  });
+
   test("refreshes reuse plans through the local branch when a tag has the same name", async () => {
     const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha"] });
     workspaces.push(workspace);
@@ -557,6 +656,54 @@ printf 'post\\n' >> '${order}'`,
       ok: false,
     });
     await absent(workspace.getChildWorktreePath("alpha", "feature/materialization-blocked"));
+  });
+
+  test("preserves reused worktrees without reporting rollback residuals or retaining ignore changes", async () => {
+    const workspace = await createChildHookWorkspace({ childRepoNames: ["alpha", "beta"] });
+    workspaces.push(workspace);
+    const branch = "feature/reuse-rollback-ownership";
+    const alphaSource = workspace.childRepoPaths.alpha!;
+    const alphaDestination = workspace.getChildWorktreePath("alpha", branch);
+    const betaDestination = workspace.getChildWorktreePath("beta", branch);
+    await mkdir(dirname(alphaDestination), { recursive: true });
+    await exec(["worktree", "add", "-b", branch, alphaDestination, "main"], alphaSource);
+    const excludePath = join(workspace.workspacePath, ".git", "info", "exclude");
+    const excludeBefore = await readFile(excludePath, "utf8");
+    const hookPath = join(
+      workspace.workspacePath,
+      ".arashi",
+      "hooks",
+      process.platform === "win32" ? "post-create.ps1" : "post-create.sh",
+    );
+    await writeFile(hookPath, process.platform === "win32" ? "exit 29\n" : "#!/bin/sh\nexit 29\n", {
+      mode: 0o755,
+    });
+
+    const result = await runArashi(
+      workspace.workspacePath,
+      "create",
+      branch,
+      "--only",
+      "alpha,beta",
+      "--conflict",
+      "REUSE_EXISTING",
+      "--json",
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    const envelope = parseSingleDocument(result.stdout) as {
+      error: {
+        details: {
+          errorSummary: string;
+          managedIgnore: { changed: boolean; restored: boolean };
+        };
+      };
+    };
+    expect(envelope.error.details.errorSummary).not.toContain("Residual worktrees detected");
+    expect(envelope.error.details.managedIgnore).toMatchObject({ changed: false, restored: true });
+    await expect(access(alphaDestination)).resolves.toBeUndefined();
+    await absent(betaDestination);
+    expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
   });
 
   test.skipIf(process.platform === "win32")(

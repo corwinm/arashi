@@ -19,6 +19,7 @@ import {
   type ExecutedMaterializationOutcome,
   type MaterializationAction,
   type MaterializationReasonCode,
+  type RepositoryMaterializationPlan,
 } from "./materialization.ts";
 
 export interface MaterializationOwnershipEntry {
@@ -49,6 +50,7 @@ export interface MaterializationResult {
 export interface MaterializeRepositoryInput {
   copy: readonly string[];
   destinationRoot: string;
+  plan?: RepositoryMaterializationPlan;
   repositoryId: string;
   sourceRoot: string;
   symlink: readonly string[];
@@ -353,6 +355,19 @@ export async function materializeRepository(
   } | null = null;
   for (const entry of entries) {
     const normalizedPath = normalizeMaterializationPath(entry.path).path;
+    const plannedOutcome = input.plan?.outcomes.find(
+      (outcome) => outcome.action === entry.action && outcome.path === normalizedPath,
+    );
+    if (plannedOutcome?.status === "skipped") {
+      outcomes.push({
+        action: plannedOutcome.action,
+        message: plannedOutcome.message,
+        path: plannedOutcome.path,
+        reasonCode: plannedOutcome.reasonCode,
+        status: "skipped",
+      });
+      continue;
+    }
     const source = resolveMaterializationPath(input.sourceRoot, normalizedPath);
     const destination = resolveMaterializationPath(input.destinationRoot, normalizedPath);
     const directoryModeRestorations: DirectoryModeRestoration[] = [];
