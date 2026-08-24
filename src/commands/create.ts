@@ -18,7 +18,9 @@ import {
   InvalidBranchNameError,
   RepositoryValidationError,
   UserAbortedError,
+  WorktreePathContainmentError,
   applyRepositoryFilter,
+  assertValidBranchName,
   calculateWorktreePathPlan,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
@@ -294,7 +296,10 @@ class WorktreeDestinationCollisionError extends Error {
 }
 
 const createCommandErrorCode = (createError: unknown): string => {
-  if (createError instanceof WorktreeDestinationCollisionError) {
+  if (
+    createError instanceof WorktreeDestinationCollisionError ||
+    createError instanceof WorktreePathContainmentError
+  ) {
     return createError.code;
   }
   if (createError instanceof BaseBranchPolicyError) {
@@ -335,7 +340,10 @@ const createCommandErrorCode = (createError: unknown): string => {
 };
 
 const createCommandErrorDetails = (createError: unknown): Record<string, unknown> | undefined => {
-  if (createError instanceof WorktreeDestinationCollisionError) {
+  if (
+    createError instanceof WorktreeDestinationCollisionError ||
+    createError instanceof WorktreePathContainmentError
+  ) {
     return createError.details;
   }
   if (createError instanceof BaseBranchPolicyError) {
@@ -1276,7 +1284,10 @@ By default, launch opens a new OS window or managed independent-session equivale
           process.exit(ERROR_EXIT_CODE);
         }
 
-        if (createError instanceof WorktreeDestinationCollisionError) {
+        if (
+          createError instanceof WorktreeDestinationCollisionError ||
+          createError instanceof WorktreePathContainmentError
+        ) {
           error(createError.message);
           process.exit(ERROR_EXIT_CODE);
         } else if (createError instanceof MaterializationPlanBlockedError) {
@@ -1383,6 +1394,7 @@ export async function executeCreate(
       "Base branch must be a valid Git branch name.",
     );
   }
+  assertValidBranchName(branchName);
 
   const workspaceContext = await (deps.resolveWorkspaceContext ?? resolveWorkspaceContext)();
   if (workspaceContext.mode === "standalone") {
@@ -1777,6 +1789,7 @@ export async function executeCreate(
     allRepositories,
     branchName,
     arashiConfig,
+    parentRepository,
   );
   const worktreePathPlan = new Map(
     selectedRepos.map((repository) => {
@@ -1797,56 +1810,53 @@ export async function executeCreate(
     plannedDestinations.add(canonicalDestination);
   }
 
-  const discoverReusableRegistrations = !options.dryRun || options.conflict === "REUSE_EXISTING";
-  if (discoverReusableRegistrations) {
-    for (const [repository, plannedPath] of worktreePathPlan) {
-      const normalizedDestination = resolve(plannedPath.path);
-      const filesystemCollision = destinationPathExists(normalizedDestination);
+  for (const [repository, plannedPath] of worktreePathPlan) {
+    const normalizedDestination = resolve(plannedPath.path);
+    const filesystemCollision = destinationPathExists(normalizedDestination);
 
-      let canonicalDestination = normalizedDestination;
-      if (filesystemCollision) {
-        try {
-          canonicalDestination = await realpath(normalizedDestination);
-        } catch {
-          // Tests and injected filesystems may report a collision without a host path.
-        }
+    let canonicalDestination = normalizedDestination;
+    if (filesystemCollision) {
+      try {
+        canonicalDestination = await realpath(normalizedDestination);
+      } catch {
+        // Tests and injected filesystems may report a collision without a host path.
       }
-      const registeredWorktrees = (await listRegisteredWorktreePaths(repository.path)).map(
-        (registeredWorktree) =>
-          typeof registeredWorktree === "string"
-            ? { branch: null, path: registeredWorktree, prunable: false }
-            : registeredWorktree,
-      );
-      let registration: (typeof registeredWorktrees)[number] | undefined = undefined;
-      let targetBranchRegisteredElsewhere = false;
-      const targetBranchRef = `refs/heads/${branchName}`;
-      for (const registeredWorktree of registeredWorktrees) {
-        let canonicalRegisteredPath = resolve(registeredWorktree.path);
-        try {
-          canonicalRegisteredPath = await realpath(canonicalRegisteredPath);
-        } catch {
-          // Keep the normalized registration path for stale or injected registrations.
-        }
-        if (canonicalRegisteredPath === canonicalDestination) {
-          registration = registeredWorktree;
-        } else if (registeredWorktree.branch === targetBranchRef) {
-          targetBranchRegisteredElsewhere = true;
-        }
+    }
+    const registeredWorktrees = (await listRegisteredWorktreePaths(repository.path)).map(
+      (registeredWorktree) =>
+        typeof registeredWorktree === "string"
+          ? { branch: null, path: registeredWorktree, prunable: false }
+          : registeredWorktree,
+    );
+    let registration: (typeof registeredWorktrees)[number] | undefined = undefined;
+    let targetBranchRegisteredElsewhere = false;
+    const targetBranchRef = `refs/heads/${branchName}`;
+    for (const registeredWorktree of registeredWorktrees) {
+      let canonicalRegisteredPath = resolve(registeredWorktree.path);
+      try {
+        canonicalRegisteredPath = await realpath(canonicalRegisteredPath);
+      } catch {
+        // Keep the normalized registration path for stale or injected registrations.
       }
-      const reusableRegistration =
-        filesystemCollision &&
-        registration?.branch === targetBranchRef &&
-        registration.prunable !== true;
-      if (reusableRegistration) {
-        reusableWorktreePaths.add(normalizedDestination);
+      if (canonicalRegisteredPath === canonicalDestination) {
+        registration = registeredWorktree;
+      } else if (registeredWorktree.branch === targetBranchRef) {
+        targetBranchRegisteredElsewhere = true;
       }
-      if (
-        targetBranchRegisteredElsewhere ||
-        (filesystemCollision && !reusableRegistration) ||
-        (registration !== undefined && !reusableRegistration)
-      ) {
-        throw new WorktreeDestinationCollisionError(repository.name, plannedPath.path);
-      }
+    }
+    const reusableRegistration =
+      filesystemCollision &&
+      registration?.branch === targetBranchRef &&
+      registration.prunable !== true;
+    if (reusableRegistration) {
+      reusableWorktreePaths.add(normalizedDestination);
+    }
+    if (
+      targetBranchRegisteredElsewhere ||
+      (filesystemCollision && !reusableRegistration) ||
+      (registration !== undefined && !reusableRegistration)
+    ) {
+      throw new WorktreeDestinationCollisionError(repository.name, plannedPath.path);
     }
   }
 

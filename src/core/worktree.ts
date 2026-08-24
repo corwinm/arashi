@@ -50,14 +50,14 @@ import type {
   LifecycleHookOutcome,
   PreparedLifecycleHookEntry,
 } from "../lib/hooks.ts";
-import { basename, join, parse, resolve, sep } from "path";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "path";
 import { exec, isBareRepo } from "../lib/git.ts";
 import { multiSelect, select } from "../lib/prompts.ts";
 import { spinner, warn } from "../lib/logger.ts";
 import { OperationLog } from "./rollback.ts";
 import type { Repository } from "./repository.ts";
 import { existsSync } from "fs";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { resolveWorktreesBasePath } from "../lib/worktree-location.ts";
 import type { CreateBaseResolutionPlan } from "../lib/create-base.ts";
 import { isValidGitBranchNameLiteral } from "../lib/git-branch-name.ts";
@@ -509,6 +509,8 @@ interface CalculateWorktreePathOptions {
   config: ArashiConfig;
   knownType?: RepositoryTypeInfo;
   authoritativeParentWorktreePath?: string;
+  configuredChildPath?: string;
+  coordinatedParentRepositoryPath?: string;
 }
 
 type CalculateWorktreePathArgs =
@@ -869,6 +871,7 @@ const preflightConfiguredCreateHooks = async (
   repositories: Repository[],
   config: ArashiConfig,
   branchName: string,
+  worktreePathPlan: ReadonlyMap<Repository, CalculatedWorktreePath>,
 ): Promise<PreparedCreateHooks> => {
   const locations = [
     {
@@ -944,14 +947,18 @@ const preflightConfiguredCreateHooks = async (
     }
   }
 
-  const targets = await Promise.all(
-    repositories.map(async (repository) => ({
+  const targets = repositories.map((repository) => {
+    const plannedPath = worktreePathPlan.get(repository);
+    if (!plannedPath) {
+      throw new Error(`Repository '${repository.name}' is missing a planned path`);
+    }
+    return {
       branchName,
       repositoryName: repository.name,
       repositoryPath: repository.path,
-      worktreePath: (await calculateWorktreePath(repository, branchName, config)).path,
-    })),
-  );
+      worktreePath: plannedPath.path,
+    };
+  });
   const preparation = await prepareLifecycleHookSources({
     candidates,
     consumer: "create",
@@ -1151,6 +1158,85 @@ const fallbackBareWorktreeNamespace = (repositoryName: string): string => {
   return withoutGitSuffix || repositoryName;
 };
 
+const configuredWorktreeName = (
+  repositoryNamespace: string,
+  branchName: string,
+  isBare: boolean,
+  config: ArashiConfig,
+): string => {
+  const branchComponent =
+    (config.worktreeNaming?.branchSlashes ?? "preserve") === "flatten"
+      ? branchName.replaceAll("/", "-")
+      : branchName;
+  const style = config.worktreeNaming?.style ?? "default";
+  if (style === "repo-branch") return `${repositoryNamespace}-${branchComponent}`;
+  if (style === "default" && isBare) return join(repositoryNamespace, branchComponent);
+  return branchComponent;
+};
+
+const canonicalizeDestination = async (path: string): Promise<string> => {
+  let ancestor = resolve(path);
+  const unresolvedSegments: string[] = [];
+  while (true) {
+    try {
+      return resolve(await realpath(ancestor), ...unresolvedSegments.toReversed());
+    } catch {
+      try {
+        if ((await lstat(ancestor)).isSymbolicLink()) {
+          throw new Error(`Cannot resolve symbolic link in worktree destination: ${ancestor}`);
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("Cannot resolve symbolic link")) {
+          throw error;
+        }
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) return resolve(ancestor, ...unresolvedSegments.toReversed());
+      unresolvedSegments.push(basename(ancestor));
+      ancestor = parent;
+    }
+  }
+};
+
+const isPathWithin = (basePath: string, destinationPath: string): boolean => {
+  const relativePath = relative(basePath, destinationPath);
+  return relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath);
+};
+
+export class WorktreePathContainmentError extends Error {
+  readonly code = "WORKTREE_DESTINATION_COLLISION";
+  readonly details: { conflict: { repositoryName: string; worktreePath: string } };
+
+  constructor(repositoryName: string, worktreePath: string) {
+    super(`Resolved worktree destination is outside configured worktree root: ${worktreePath}`);
+    this.name = "WorktreePathContainmentError";
+    this.details = { conflict: { repositoryName, worktreePath } };
+  }
+}
+
+const assertConfiguredDestinationContained = async (
+  worktreeBasePath: string,
+  worktreePath: string,
+  repositoryName: string,
+): Promise<void> => {
+  if (!isPathWithin(worktreeBasePath, worktreePath)) {
+    throw new WorktreePathContainmentError(repositoryName, worktreePath);
+  }
+  let canonicalBase: string;
+  let canonicalDestination: string;
+  try {
+    [canonicalBase, canonicalDestination] = await Promise.all([
+      canonicalizeDestination(worktreeBasePath),
+      canonicalizeDestination(worktreePath),
+    ]);
+  } catch {
+    throw new WorktreePathContainmentError(repositoryName, worktreePath);
+  }
+  if (!isPathWithin(canonicalBase, canonicalDestination)) {
+    throw new WorktreePathContainmentError(repositoryName, worktreePath);
+  }
+};
+
 /**
  * Calculate destination path for a new worktree based on repository type
  * Feature: 001-nested-worktree-paths (T010)
@@ -1186,8 +1272,16 @@ const normalizeCalculateWorktreePathArgs = (
 export const calculateWorktreePath = async (
   ...args: CalculateWorktreePathArgs
 ): Promise<CalculatedWorktreePath> => {
-  const { authoritativeParentWorktreePath, branchName, config, knownType, repo } =
-    normalizeCalculateWorktreePathArgs(...args);
+  const {
+    authoritativeParentWorktreePath,
+    branchName,
+    config,
+    configuredChildPath,
+    coordinatedParentRepositoryPath,
+    knownType,
+    repo,
+  } = normalizeCalculateWorktreePathArgs(...args);
+  const isExplicitStandalone = knownType?.type === "standalone";
   // Detect repository type (or use provided type)
   let typeInfo = knownType;
   if (!typeInfo) {
@@ -1196,15 +1290,19 @@ export const calculateWorktreePath = async (
 
   let workspaceRoot = resolve(repo.path);
   if (typeInfo.type === "child") {
-    workspaceRoot = join(repo.path, "..", "..");
+    workspaceRoot = coordinatedParentRepositoryPath
+      ? resolve(coordinatedParentRepositoryPath)
+      : join(repo.path, "..", "..");
   }
-  const worktreeBasePath = resolveWorktreesBasePath(workspaceRoot, config.worktreesDir);
+  const worktreeBasePath = isExplicitStandalone
+    ? join(workspaceRoot, ".worktrees")
+    : resolveWorktreesBasePath(workspaceRoot, config.worktreesDir);
 
   // Apply appropriate path calculation strategy
   if (typeInfo.type === "child") {
     // Nested strategy for child repositories
-    if (!typeInfo.parentName || !typeInfo.reposDir) {
-      throw new Error(`Child repository type missing parentName or reposDir: ${repo.name}`);
+    if (!typeInfo.parentName || (!typeInfo.reposDir && !configuredChildPath)) {
+      throw new Error(`Child repository type missing parentName or child path: ${repo.name}`);
     }
 
     // Determine parent repository path (navigate up from child: ../../../)
@@ -1213,21 +1311,22 @@ export const calculateWorktreePath = async (
     // Check if parent is bare to determine worktree naming
     const parentIsBare = await isBareRepo(parentRepoPath);
 
-    // Bare parent: Namespace the branch beneath the canonical parent name
-    // Non-bare parent: Use the branch name only
-    let parentWorktreeName = branchName;
-    if (parentIsBare) {
-      const parentNamespace = fallbackBareWorktreeNamespace(typeInfo.parentName);
-      parentWorktreeName = join(parentNamespace, branchName);
-    }
+    // Resolve the configured parent destination once; children append their unchanged configured path.
+    const parentNamespace = fallbackBareWorktreeNamespace(typeInfo.parentName);
+    const parentWorktreeName = configuredWorktreeName(
+      parentNamespace,
+      branchName,
+      parentIsBare,
+      config,
+    );
 
     const parentWorktreePath =
       authoritativeParentWorktreePath ?? join(worktreeBasePath, parentWorktreeName);
-    const worktreePath = join(
-      parentWorktreePath,
-      typeInfo.reposDir,
-      repo.worktreeName ?? repo.name,
-    );
+    const childPath =
+      configuredChildPath ?? join(typeInfo.reposDir!, repo.worktreeName ?? repo.name);
+    const worktreePath = join(parentWorktreePath, childPath);
+    await assertConfiguredDestinationContained(parentWorktreePath, worktreePath, repo.name);
+    await assertConfiguredDestinationContained(worktreeBasePath, worktreePath, repo.name);
 
     return {
       parentWorktreePath,
@@ -1240,14 +1339,14 @@ export const calculateWorktreePath = async (
   // Check if repository is bare to determine naming convention
   const isBare = await isBareRepo(repo.path);
 
-  // Bare repos: Namespace the branch beneath the canonical worktree name
-  // Non-bare repos: Use the branch name only (e.g., 'feature-branch/')
-  let worktreeName = branchName;
-  if (isBare) {
-    const repositoryNamespace = repo.worktreeName ?? fallbackBareWorktreeNamespace(repo.name);
-    worktreeName = join(repositoryNamespace, branchName);
-  }
+  const repositoryNamespace = repo.worktreeName ?? fallbackBareWorktreeNamespace(repo.name);
+  const worktreeName = isExplicitStandalone
+    ? branchName
+    : configuredWorktreeName(repositoryNamespace, branchName, isBare, config);
   const worktreePath = join(worktreeBasePath, worktreeName);
+  if (!isExplicitStandalone) {
+    await assertConfiguredDestinationContained(worktreeBasePath, worktreePath, repo.name);
+  }
 
   return {
     path: worktreePath,
@@ -1260,14 +1359,41 @@ export const calculateWorktreePathPlan = async (
   repositories: Repository[],
   branchName: string,
   config: ArashiConfig,
+  parentRepository?: Repository | null,
 ): Promise<ReadonlyMap<Repository, CalculatedWorktreePath>> => {
   const plan = new Map<Repository, CalculatedWorktreePath>();
   let authoritativeParentWorktreePath: string | undefined;
+  if (parentRepository) {
+    const parentCalculation = await calculateWorktreePath({
+      branchName,
+      config,
+      knownType: { reason: "Configured create parent", type: "meta-repo" },
+      repo: parentRepository,
+    });
+    authoritativeParentWorktreePath = parentCalculation.path;
+    if (repositories.includes(parentRepository)) {
+      plan.set(parentRepository, parentCalculation);
+    }
+  }
   for (const repo of repositories) {
+    if (repo === parentRepository) continue;
+    const configuredChildPath = parentRepository
+      ? relative(resolve(parentRepository.path), resolve(repo.path))
+      : undefined;
+    const knownType: RepositoryTypeInfo | undefined = parentRepository
+      ? {
+          parentName: basename(parentRepository.path),
+          reason: "Configured child of authoritative create parent",
+          type: "child",
+        }
+      : undefined;
     const calculated = await calculateWorktreePath({
       authoritativeParentWorktreePath,
       branchName,
       config,
+      configuredChildPath,
+      coordinatedParentRepositoryPath: parentRepository?.path,
+      knownType,
       repo,
     });
     plan.set(repo, calculated);
@@ -1470,6 +1596,16 @@ export const buildWorktreeEntries = async (
  */
 export const isValidBranchName = (branchName: string): boolean => {
   return isValidGitBranchNameLiteral(branchName);
+};
+
+export const assertValidBranchName = (branchName: string): void => {
+  if (!isValidBranchName(branchName)) {
+    throw new InvalidBranchNameError(
+      `Invalid branch name: ${branchName}`,
+      branchName,
+      "Branch name contains invalid characters or format",
+    );
+  }
 };
 
 // ============================================================================
@@ -1677,13 +1813,7 @@ export const createCoordinatedWorktrees = async (
 
   try {
     // 1. Validate branch name (T018)
-    if (!isValidBranchName(branchName)) {
-      throw new InvalidBranchNameError(
-        `Invalid branch name: ${branchName}`,
-        branchName,
-        "Branch name contains invalid characters or format",
-      );
-    }
+    assertValidBranchName(branchName);
 
     // 2. Validate we have repositories
     if (!repositories || repositories.length === ZERO) {
@@ -1739,6 +1869,7 @@ export const createCoordinatedWorktrees = async (
         repositories,
         config,
         branchName,
+        worktreePathPlan,
       );
     }
 
