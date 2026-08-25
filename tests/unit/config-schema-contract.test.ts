@@ -88,6 +88,14 @@ describe("generated config schema contracts", () => {
       additionalProperties: false,
       properties: {
         branchSlashes: { $ref: "#/definitions/WorktreeNamingBranchSlashes" },
+        maxPathLength: {
+          description:
+            "Maximum UTF-16 code units for each absolute newly planned configured-worktree destination",
+          maximum: 2147483647,
+          minimum: 1,
+          multipleOf: 1,
+          type: "number",
+        },
         style: { $ref: "#/definitions/WorktreeNamingStyle" },
       },
       type: "object",

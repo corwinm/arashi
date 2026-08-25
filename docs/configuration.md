@@ -77,7 +77,8 @@ directly in `.arashi/config.json`; this setting is not available in interactive 
 {
   "worktreeNaming": {
     "style": "repo-branch",
-    "branchSlashes": "flatten"
+    "branchSlashes": "flatten",
+    "maxPathLength": 180
   }
 }
 ```
@@ -91,6 +92,22 @@ non-bare configured repository and `repo/feature/auth` for a bare configured rep
 worktrees are not renamed when this policy changes; recorded worktree metadata remains authoritative, and a
 chosen destination collision fails without appending an alternate suffix. Coordinated children retain their configured
 paths beneath the single resolved parent destination.
+
+`maxPathLength` is optional and must be a positive integer from 1 through 2147483647. It budgets the
+UTF-16 code units in every absolute newly planned configured worktree destination, not just one folder
+component. Omitting `maxPathLength` preserves current destination bytes and does not persist or infer a
+platform default. When every selected destination already fits, names remain exact. Otherwise Arashi
+shortens only the generated parent namespace to a readable prefix plus the first eight lowercase
+hexadecimal characters of SHA-256 over the portable `/`-separated ordinary generated parent namespace.
+The longest selected child path determines the shared fitted parent; configured child-relative paths
+remain exact, including when only children are selected.
+
+If the fixed workspace, worktrees directory, and selected child topology leave fewer than nine units
+for `-<eight-hex-hash>`, create fails before mutation with
+`WORKTREE_PATH_LENGTH_EXCEEDED` and reports the repository, ordinary planned path, configured limit,
+and minimum required length. The Git branch name stays exact. Existing registered worktrees are not
+renamed, and standalone `.worktrees/<branch>` remains unchanged. This setting reserves space at the
+worktree root; it does not guarantee that files inside a repository fit within a tool's path limit.
 
 ## Canonical Key Format
 

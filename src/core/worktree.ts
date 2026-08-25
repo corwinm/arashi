@@ -61,6 +61,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { resolveWorktreesBasePath } from "../lib/worktree-location.ts";
 import type { CreateBaseResolutionPlan } from "../lib/create-base.ts";
 import { isValidGitBranchNameLiteral } from "../lib/git-branch-name.ts";
+import { createHash } from "node:crypto";
 
 type ArashiConfig = Awaited<ReturnType<typeof loadConfig>>;
 
@@ -1214,6 +1215,109 @@ export class WorktreePathContainmentError extends Error {
   }
 }
 
+export interface WorktreePathLengthExceededDetails extends Record<string, unknown> {
+  repositoryName: string;
+  worktreePath: string;
+  maxPathLength: number;
+  minimumPathLength: number;
+}
+
+export class WorktreePathLengthExceededError extends Error {
+  readonly code = "WORKTREE_PATH_LENGTH_EXCEEDED";
+  readonly details: WorktreePathLengthExceededDetails;
+
+  constructor(details: WorktreePathLengthExceededDetails) {
+    super(
+      `Configured worktree path for '${details.repositoryName}' exceeds configured limit ${details.maxPathLength}: '${details.worktreePath}'. The minimum required value is ${details.minimumPathLength}. Use a shorter workspace, worktrees, or child path or a larger budget.`,
+    );
+    this.name = "WorktreePathLengthExceededError";
+    this.details = details;
+  }
+}
+
+interface ConfiguredPathBudgetDestination {
+  childPath?: string;
+  repositoryName: string;
+}
+
+interface ConfiguredPathBudgetPlan {
+  destinations: readonly ConfiguredPathBudgetDestination[];
+  maxPathLength: number | undefined;
+  ordinaryParentWorktreePath: string;
+  worktreeBasePath: string;
+}
+
+const portableGeneratedNamespace = (worktreeBasePath: string, worktreePath: string): string =>
+  relative(worktreeBasePath, worktreePath).split(sep).join("/");
+
+const truncatePortableNamespace = (namespace: string, maxLength: number): string => {
+  let length = ZERO;
+  let prefix = "";
+  for (const codePoint of namespace) {
+    if (length + codePoint.length > maxLength) break;
+    prefix += codePoint;
+    length += codePoint.length;
+  }
+  return prefix.replace(/[/-]+$/u, "");
+};
+
+const fitConfiguredParentWorktreePath = ({
+  destinations,
+  maxPathLength,
+  ordinaryParentWorktreePath,
+  worktreeBasePath,
+}: ConfiguredPathBudgetPlan): string => {
+  if (maxPathLength === undefined || destinations.length === ZERO) {
+    return ordinaryParentWorktreePath;
+  }
+  const ordinaryDestinations = destinations.map(({ childPath, repositoryName }) => ({
+    repositoryName,
+    worktreePath: childPath
+      ? join(ordinaryParentWorktreePath, childPath)
+      : ordinaryParentWorktreePath,
+  }));
+  if (ordinaryDestinations.every(({ worktreePath }) => worktreePath.length <= maxPathLength)) {
+    return ordinaryParentWorktreePath;
+  }
+
+  const minimumDestinations = destinations.map(({ childPath, repositoryName }, index) => ({
+    minimumPathLength: (childPath
+      ? join(worktreeBasePath, "-00000000", childPath)
+      : join(worktreeBasePath, "-00000000")
+    ).length,
+    repositoryName,
+    worktreePath: ordinaryDestinations[index]!.worktreePath,
+  }));
+  const impossible = minimumDestinations.find(
+    ({ minimumPathLength }) => minimumPathLength > maxPathLength,
+  );
+  if (impossible) {
+    throw new WorktreePathLengthExceededError({
+      repositoryName: impossible.repositoryName,
+      worktreePath: impossible.worktreePath,
+      maxPathLength,
+      minimumPathLength: impossible.minimumPathLength,
+    });
+  }
+
+  const availableNamespaceLength = Math.min(
+    ...minimumDestinations.map(
+      ({ minimumPathLength }) => maxPathLength - minimumPathLength + "-00000000".length,
+    ),
+  );
+  const portableNamespace = portableGeneratedNamespace(
+    worktreeBasePath,
+    ordinaryParentWorktreePath,
+  );
+  const hash = createHash("sha256").update(portableNamespace).digest("hex").slice(ZERO, 8);
+  const prefix = truncatePortableNamespace(
+    portableNamespace,
+    availableNamespaceLength - `-${hash}`.length,
+  );
+  const fittedPortableNamespace = `${prefix ? `${prefix}-` : "-"}${hash}`;
+  return join(worktreeBasePath, ...fittedPortableNamespace.split("/"));
+};
+
 const assertConfiguredDestinationContained = async (
   worktreeBasePath: string,
   worktreePath: string,
@@ -1269,7 +1373,7 @@ const normalizeCalculateWorktreePathArgs = (
   };
 };
 
-export const calculateWorktreePath = async (
+const calculateUnfittedWorktreePath = async (
   ...args: CalculateWorktreePathArgs
 ): Promise<CalculatedWorktreePath> => {
   const {
@@ -1355,6 +1459,48 @@ export const calculateWorktreePath = async (
   };
 };
 
+export const calculateWorktreePath = async (
+  ...args: CalculateWorktreePathArgs
+): Promise<CalculatedWorktreePath> => {
+  const options = normalizeCalculateWorktreePathArgs(...args);
+  const calculated = await calculateUnfittedWorktreePath(options);
+  if (
+    options.authoritativeParentWorktreePath ||
+    options.knownType?.type === "standalone" ||
+    calculated.repositoryType === "standalone"
+  ) {
+    return calculated;
+  }
+  const workspaceRoot =
+    calculated.repositoryType === "child"
+      ? options.coordinatedParentRepositoryPath
+        ? resolve(options.coordinatedParentRepositoryPath)
+        : join(options.repo.path, "..", "..")
+      : resolve(options.repo.path);
+  const worktreeBasePath = resolveWorktreesBasePath(workspaceRoot, options.config.worktreesDir);
+  if (calculated.repositoryType === "child" && calculated.parentWorktreePath) {
+    const childPath = relative(calculated.parentWorktreePath, calculated.path);
+    const fittedParentWorktreePath = fitConfiguredParentWorktreePath({
+      destinations: [{ childPath, repositoryName: options.repo.name }],
+      maxPathLength: options.config.worktreeNaming?.maxPathLength,
+      ordinaryParentWorktreePath: calculated.parentWorktreePath,
+      worktreeBasePath,
+    });
+    return {
+      ...calculated,
+      parentWorktreePath: fittedParentWorktreePath,
+      path: join(fittedParentWorktreePath, childPath),
+    };
+  }
+  const fittedPath = fitConfiguredParentWorktreePath({
+    destinations: [{ repositoryName: options.repo.name }],
+    maxPathLength: options.config.worktreeNaming?.maxPathLength,
+    ordinaryParentWorktreePath: calculated.path,
+    worktreeBasePath,
+  });
+  return { ...calculated, path: fittedPath };
+};
+
 export const calculateWorktreePathPlan = async (
   repositories: Repository[],
   branchName: string,
@@ -1364,15 +1510,32 @@ export const calculateWorktreePathPlan = async (
   const plan = new Map<Repository, CalculatedWorktreePath>();
   let authoritativeParentWorktreePath: string | undefined;
   if (parentRepository) {
-    const parentCalculation = await calculateWorktreePath({
+    const parentCalculation = await calculateUnfittedWorktreePath({
       branchName,
       config,
       knownType: { reason: "Configured create parent", type: "meta-repo" },
       repo: parentRepository,
     });
-    authoritativeParentWorktreePath = parentCalculation.path;
+    const worktreeBasePath = resolveWorktreesBasePath(
+      resolve(parentRepository.path),
+      config.worktreesDir,
+    );
+    const destinations = repositories.map((repository) => ({
+      ...(repository === parentRepository
+        ? {}
+        : {
+            childPath: relative(resolve(parentRepository.path), resolve(repository.path)),
+          }),
+      repositoryName: repository.name,
+    }));
+    authoritativeParentWorktreePath = fitConfiguredParentWorktreePath({
+      destinations,
+      maxPathLength: config.worktreeNaming?.maxPathLength,
+      ordinaryParentWorktreePath: parentCalculation.path,
+      worktreeBasePath,
+    });
     if (repositories.includes(parentRepository)) {
-      plan.set(parentRepository, parentCalculation);
+      plan.set(parentRepository, { ...parentCalculation, path: authoritativeParentWorktreePath });
     }
   }
   for (const repo of repositories) {
@@ -1387,7 +1550,8 @@ export const calculateWorktreePathPlan = async (
           type: "child",
         }
       : undefined;
-    const calculated = await calculateWorktreePath({
+    const calculatePath = parentRepository ? calculateUnfittedWorktreePath : calculateWorktreePath;
+    const calculated = await calculatePath({
       authoritativeParentWorktreePath,
       branchName,
       config,

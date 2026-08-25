@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { dirname, join, relative, resolve } from "path";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
+import { createHash } from "node:crypto";
 
 const CLI_ENTRY = join(import.meta.dirname, "../../src/index.ts");
 
@@ -25,7 +26,10 @@ async function runGit(args: string[], cwd: string): Promise<void> {
   throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
 }
 
-async function writeWorkspaceConfig(worktreesDir: string): Promise<void> {
+async function writeWorkspaceConfig(
+  worktreesDir: string,
+  worktreeNaming?: { maxPathLength: number },
+): Promise<void> {
   await mkdir(join(workspacePath, ".arashi"), { recursive: true });
   await runtime.write(
     join(workspacePath, ".arashi", "config.json"),
@@ -34,6 +38,7 @@ async function writeWorkspaceConfig(worktreesDir: string): Promise<void> {
         repos: {},
         reposDir: "./repos",
         version: "1.0.0",
+        ...(worktreeNaming ? { worktreeNaming } : {}),
         worktreesDir,
       },
       null,
@@ -537,5 +542,125 @@ describe("create command worktree location resolution", () => {
     const reportedSuffix = relative(reportedWorkspace, reportedPath);
     expect(resolve(await realpath(reportedWorkspace), reportedSuffix)).toBe(destination);
     expect(await runtime.file(destination).exists()).toBe(false);
+  });
+
+  test("reuses the exact fitted plan for human dry-run, JSON dry-run, and execution", async () => {
+    const worktreesDir = "custom-worktrees";
+    const base = resolve(await realpath(workspacePath), worktreesDir);
+    const branch = "feature/a-very-long-authoritative-configured-parent-name";
+    const maxPathLength = base.length + 1 + 22;
+    const hash = createHash("sha256").update(branch).digest("hex").slice(0, 8);
+    const expected = join(base, `feature/a-ver-${hash}`);
+    await writeWorkspaceConfig(worktreesDir, { maxPathLength });
+
+    const human = await runCreateResult(branch, ["--dry-run", "--no-hooks"]);
+    const json = await runCreateResult(branch, ["--dry-run", "--json", "--no-hooks"]);
+    const created = await runCreateResult(branch, ["--json", "--no-hooks"]);
+
+    expect(human.exitCode, `${human.stdout}\n${human.stderr}`).toBe(0);
+    expect(human.stdout).toContain(`-> ${expected} [OK]`);
+    expect(json.exitCode, `${json.stdout}\n${json.stderr}`).toBe(0);
+    expect(json.stderr).toBe("");
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      data: {
+        branchName: branch,
+        dryRunOutcome: { plannedWorktrees: [{ branchName: branch, worktreePath: expected }] },
+      },
+      ok: true,
+    });
+    expect(created.exitCode, `${created.stdout}\n${created.stderr}`).toBe(0);
+    expect(created.stderr).toBe("");
+    expect(JSON.parse(created.stdout)).toMatchObject({
+      data: { branchName: branch, repositories: [{ worktreePath: expected }] },
+      ok: true,
+    });
+    expect(await runtime.file(join(expected, "README.md")).exists()).toBe(true);
+  });
+
+  test("applies normal collision preflight to the final fitted destination", async () => {
+    const worktreesDir = "custom-worktrees";
+    const base = resolve(await realpath(workspacePath), worktreesDir);
+    const branch = "feature/a-long-fitted-destination-collision";
+    const maxPathLength = base.length + 1 + 18;
+    const hash = createHash("sha256").update(branch).digest("hex").slice(0, 8);
+    const fittedDestination = join(base, `feature/a-${hash}`);
+    await writeWorkspaceConfig(worktreesDir, { maxPathLength });
+    await mkdir(fittedDestination, { recursive: true });
+    const marker = join(workspacePath, "pre-create-ran");
+    await writePreCreateMarker(marker);
+
+    const result = await runCreateResult(branch, ["--dry-run", "--json"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      error: {
+        code: "WORKTREE_DESTINATION_COLLISION",
+        details: {
+          conflict: {
+            repositoryName: "workspace",
+            worktreePath: fittedDestination,
+          },
+        },
+      },
+      ok: false,
+    });
+    expect(await runtime.file(marker).exists()).toBe(false);
+  });
+
+  test("returns structured overflow before hooks, ignore writes, branch creation, or directories", async () => {
+    const worktreesDir = "custom-worktrees";
+    const base = resolve(await realpath(workspacePath), worktreesDir);
+    const branch = "feature/impossible-budget";
+    const maxPathLength = base.length + 1 + 8;
+    const ordinaryPath = join(base, branch);
+    const marker = join(workspacePath, "pre-create-ran");
+    await writeWorkspaceConfig(worktreesDir, { maxPathLength });
+    await writePreCreateMarker(marker);
+    const excludePath = join(workspacePath, ".git", "info", "exclude");
+    const excludeBefore = await readFile(excludePath, "utf8");
+
+    const human = await runCreateResult(branch);
+    const result = await runCreateResult(branch, ["--json"]);
+
+    expect(human.exitCode).toBe(1);
+    expect(human.stderr).toContain("workspace");
+    expect(human.stderr).toContain(ordinaryPath);
+    expect(human.stderr).toContain(`configured limit ${maxPathLength}`);
+    expect(human.stderr).toContain(`minimum required value is ${maxPathLength + 1}`);
+    expect(human.stderr).toMatch(/shorter workspace, worktrees, or child path|larger budget/);
+    expect(human.stderr).not.toContain("Unexpected error");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      command: "create",
+      error: {
+        code: "WORKTREE_PATH_LENGTH_EXCEEDED",
+        details: {
+          maxPathLength,
+          minimumPathLength: maxPathLength + 1,
+          repositoryName: "workspace",
+          worktreePath: ordinaryPath,
+        },
+      },
+      ok: false,
+      schemaVersion: 1,
+      warnings: [],
+    });
+    expect(Object.keys(JSON.parse(result.stdout).error.details)).toEqual([
+      "repositoryName",
+      "worktreePath",
+      "maxPathLength",
+      "minimumPathLength",
+    ]);
+    expect(await runtime.file(marker).exists()).toBe(false);
+    expect(await readFile(excludePath, "utf8")).toBe(excludeBefore);
+    expect(await runtime.file(resolve(workspacePath, worktreesDir)).exists()).toBe(false);
+    const branchProbe = runtime.spawn(["git", "show-ref", "--verify", `refs/heads/${branch}`], {
+      cwd: workspacePath,
+      stderr: "ignore",
+      stdout: "ignore",
+    });
+    expect(await branchProbe.exited).not.toBe(0);
   });
 });

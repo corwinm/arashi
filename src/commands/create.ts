@@ -19,6 +19,7 @@ import {
   RepositoryValidationError,
   UserAbortedError,
   WorktreePathContainmentError,
+  WorktreePathLengthExceededError,
   applyRepositoryFilter,
   assertValidBranchName,
   calculateWorktreePathPlan,
@@ -298,7 +299,8 @@ class WorktreeDestinationCollisionError extends Error {
 const createCommandErrorCode = (createError: unknown): string => {
   if (
     createError instanceof WorktreeDestinationCollisionError ||
-    createError instanceof WorktreePathContainmentError
+    createError instanceof WorktreePathContainmentError ||
+    createError instanceof WorktreePathLengthExceededError
   ) {
     return createError.code;
   }
@@ -342,7 +344,8 @@ const createCommandErrorCode = (createError: unknown): string => {
 const createCommandErrorDetails = (createError: unknown): Record<string, unknown> | undefined => {
   if (
     createError instanceof WorktreeDestinationCollisionError ||
-    createError instanceof WorktreePathContainmentError
+    createError instanceof WorktreePathContainmentError ||
+    createError instanceof WorktreePathLengthExceededError
   ) {
     return createError.details;
   }
@@ -1286,7 +1289,8 @@ By default, launch opens a new OS window or managed independent-session equivale
 
         if (
           createError instanceof WorktreeDestinationCollisionError ||
-          createError instanceof WorktreePathContainmentError
+          createError instanceof WorktreePathContainmentError ||
+          createError instanceof WorktreePathLengthExceededError
         ) {
           error(createError.message);
           process.exit(ERROR_EXIT_CODE);
@@ -1786,7 +1790,7 @@ export async function executeCreate(
     : undefined;
 
   const completeWorktreePathPlan = await resolveWorktreePathPlan(
-    allRepositories,
+    selectedRepos,
     branchName,
     arashiConfig,
     parentRepository,
