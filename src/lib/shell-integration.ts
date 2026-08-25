@@ -1,8 +1,10 @@
 import { runtime } from "./runtime.ts";
 import { basename, dirname, join } from "path";
 import { homedir } from "os";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { constants } from "node:fs";
+import type { PathLike, Stats } from "node:fs";
 
 const START_MARKER = "# >>> arashi shell integration >>>";
 const END_MARKER = "# <<< arashi shell integration <<<";
@@ -22,7 +24,8 @@ export interface ShellInstallResult {
 
 export interface ShellUninstallPlan {
   startupFilePath: string;
-  status: "absent" | "removable";
+  status: "absent" | "preserved-unsafe" | "removable";
+  diagnostic?: string;
   currentBytes?: Buffer;
   nextBytes?: Buffer;
   currentContents?: string;
@@ -202,21 +205,36 @@ export async function planSupportedShellUninstalls(
   );
   const plans: ShellUninstallPlan[] = [];
   for (const startupFilePath of new Set(candidates)) {
-    if (await runtime.file(startupFilePath).exists()) {
-      plans.push(await planShellUninstallPath(startupFilePath));
-    }
+    const plan = await planShellUninstallPath(startupFilePath, true);
+    if (plan.status !== "absent") plans.push(plan);
   }
   return plans;
 }
 
-async function planShellUninstallPath(startupFilePath: string): Promise<ShellUninstallPlan> {
+async function planShellUninstallPath(
+  startupFilePath: string,
+  preserveUnsafe = false,
+): Promise<ShellUninstallPlan> {
   const startupFile = runtime.file(startupFilePath);
-  if (!(await startupFile.exists())) return { startupFilePath, status: "absent" };
-  const startupStat = await lstat(startupFilePath);
+  let startupStat;
+  try {
+    startupStat = await lstat(startupFilePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { startupFilePath, status: "absent" };
+    }
+    throw error;
+  }
   if (startupStat.isSymbolicLink()) {
+    if (preserveUnsafe) {
+      return { diagnostic: "symbolic link", startupFilePath, status: "preserved-unsafe" };
+    }
     throw new Error(`Shell startup target is a symbolic link: ${startupFilePath}`);
   }
   if (!startupStat.isFile()) {
+    if (preserveUnsafe) {
+      return { diagnostic: "not a regular file", startupFilePath, status: "preserved-unsafe" };
+    }
     throw new Error(`Shell startup target is not a regular file: ${startupFilePath}`);
   }
 
@@ -252,16 +270,39 @@ async function planShellUninstallPath(startupFilePath: string): Promise<ShellUni
   };
 }
 
-export async function applyShellUninstall(plan: ShellUninstallPlan): Promise<void> {
-  if (plan.status === "absent") return;
+interface ShellUninstallApplyDependencies {
+  lstat(path: PathLike): Promise<Stats>;
+  open: typeof open;
+  rename: typeof rename;
+  rm: typeof rm;
+  temporaryName(path: string): string;
+}
+
+const shellUninstallApplyDefaults: ShellUninstallApplyDependencies = {
+  lstat,
+  open,
+  rename,
+  rm,
+  temporaryName: (path) => `.${basename(path)}.arashi-uninstall-${process.pid}-${randomUUID()}.tmp`,
+};
+
+export async function applyShellUninstall(
+  plan: ShellUninstallPlan,
+  overrides: Partial<ShellUninstallApplyDependencies> = {},
+): Promise<void> {
+  if (plan.status !== "removable") return;
   if (plan.currentBytes === undefined || plan.nextBytes === undefined) {
     throw new Error("Shell uninstall plan is incomplete.");
   }
-  const pathStat = await lstat(plan.startupFilePath);
+  const dependencies = { ...shellUninstallApplyDefaults, ...overrides };
+  const pathStat = await dependencies.lstat(plan.startupFilePath);
   if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
     throw new Error(`Shell startup file changed after preflight: ${plan.startupFilePath}`);
   }
-  const handle = await open(plan.startupFilePath, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+  const handle = await dependencies.open(
+    plan.startupFilePath,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
   try {
     const openedStat = await handle.stat();
     if (openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
@@ -271,7 +312,7 @@ export async function applyShellUninstall(plan: ShellUninstallPlan): Promise<voi
     if (!current.equals(plan.currentBytes)) {
       throw new Error(`Shell startup file changed after preflight: ${plan.startupFilePath}`);
     }
-    const latestPathStat = await lstat(plan.startupFilePath);
+    const latestPathStat = await dependencies.lstat(plan.startupFilePath);
     if (
       latestPathStat.isSymbolicLink() ||
       !latestPathStat.isFile() ||
@@ -280,10 +321,70 @@ export async function applyShellUninstall(plan: ShellUninstallPlan): Promise<voi
     ) {
       throw new Error(`Shell startup file changed after preflight: ${plan.startupFilePath}`);
     }
-    await handle.truncate(0);
-    await handle.write(plan.nextBytes, 0, plan.nextBytes.length, 0);
   } finally {
     await handle.close();
+  }
+
+  const temporaryPath = join(
+    dirname(plan.startupFilePath),
+    dependencies.temporaryName(plan.startupFilePath),
+  );
+  let temporaryExists = false;
+  try {
+    const temporaryHandle = await dependencies.open(
+      temporaryPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+      pathStat.mode & 0o777,
+    );
+    temporaryExists = true;
+    try {
+      await temporaryHandle.writeFile(plan.nextBytes);
+      const temporaryStat = await temporaryHandle.stat();
+      if (temporaryStat.uid !== pathStat.uid || temporaryStat.gid !== pathStat.gid) {
+        await temporaryHandle.chown(pathStat.uid, pathStat.gid);
+      }
+      await temporaryHandle.chmod(pathStat.mode & 0o777);
+      await temporaryHandle.sync();
+    } finally {
+      await temporaryHandle.close();
+    }
+
+    const replacementPathStat = await dependencies.lstat(plan.startupFilePath);
+    if (
+      replacementPathStat.isSymbolicLink() ||
+      !replacementPathStat.isFile() ||
+      replacementPathStat.dev !== pathStat.dev ||
+      replacementPathStat.ino !== pathStat.ino
+    ) {
+      throw new Error(`Shell startup file changed after preflight: ${plan.startupFilePath}`);
+    }
+    const replacementHandle = await dependencies.open(
+      plan.startupFilePath,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const replacementStat = await replacementHandle.stat();
+      const replacementBytes = await replacementHandle.readFile();
+      const finalPathStat = await dependencies.lstat(plan.startupFilePath);
+      if (
+        replacementStat.dev !== pathStat.dev ||
+        replacementStat.ino !== pathStat.ino ||
+        finalPathStat.isSymbolicLink() ||
+        !finalPathStat.isFile() ||
+        finalPathStat.dev !== replacementStat.dev ||
+        finalPathStat.ino !== replacementStat.ino ||
+        !replacementBytes.equals(plan.currentBytes)
+      ) {
+        throw new Error(`Shell startup file changed after preflight: ${plan.startupFilePath}`);
+      }
+    } finally {
+      await replacementHandle.close();
+    }
+
+    await dependencies.rename(temporaryPath, plan.startupFilePath);
+    temporaryExists = false;
+  } finally {
+    if (temporaryExists) await dependencies.rm(temporaryPath, { force: true });
   }
 }
 

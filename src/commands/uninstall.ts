@@ -54,7 +54,11 @@ export async function stageDirectUninstallHelper(
       command: string,
       args: string[],
       options: { detached: true; stdio: "inherit" },
-    ) => { unref(): void };
+    ) => {
+      off(event: string | symbol, listener: (...args: unknown[]) => void): unknown;
+      once(event: string | symbol, listener: (...args: unknown[]) => void): unknown;
+      unref(): void;
+    };
   } = {},
 ): Promise<void> {
   const helper = plan.files.find((file) => file.role === "uninstall-helper");
@@ -113,6 +117,18 @@ export async function stageDirectUninstallHelper(
             stdio: "inherit",
           },
         );
+  await new Promise<void>((resolve, reject) => {
+    const onError = (...args: unknown[]) => {
+      child.off("spawn", onSpawn);
+      reject(args[0]);
+    };
+    const onSpawn = () => {
+      child.off("error", onError);
+      resolve();
+    };
+    child.once("error", onError);
+    child.once("spawn", onSpawn);
+  });
   child.unref();
 }
 
@@ -144,11 +160,15 @@ export async function executeDirectUninstall(
     write("Shell integration: inspect deterministic supported startup files in the helper.");
   } else {
     for (const shellPlan of shellPlans) {
-      write(
-        shellPlan.status === "removable"
-          ? `Shell integration: remove exact managed block from ${shellPlan.startupFilePath}`
-          : `Shell integration: no managed block in ${shellPlan.startupFilePath}`,
-      );
+      if (shellPlan.status === "removable") {
+        write(`Shell integration: remove exact managed block from ${shellPlan.startupFilePath}`);
+      } else if (shellPlan.status === "preserved-unsafe") {
+        write(
+          `Shell integration: preserve unsafe startup target ${shellPlan.startupFilePath} (${shellPlan.diagnostic}).`,
+        );
+      } else {
+        write(`Shell integration: no managed block in ${shellPlan.startupFilePath}`);
+      }
     }
   }
   if (options.dryRun) return "dry-run";

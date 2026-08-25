@@ -115,6 +115,49 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     expect(refreshedLedger.pathMutation).toEqual(firstLedger.pathMutation);
   });
 
+  test("refreshes an exact pre-helper schema-v1 install to schema v2 without executing it", () => {
+    const state = fixture();
+    mkdirSync(state.install);
+    const sentinel = join(state.directory, "legacy-entrypoint-executed");
+    writeFileSync(join(state.install, "arashi.bin"), "legacy native\n");
+    writeFileSync(join(state.install, "arashi"), "legacy wrapper\n");
+    writeFileSync(
+      join(state.install, "aw"),
+      `#!/bin/sh\n# arashi-managed-alias:aw:v1\ntouch ${quote(sentinel)}\nexit 97\n`,
+    );
+    for (const name of ["arashi.bin", "arashi", "aw"]) {
+      chmodSync(join(state.install, name), 0o755);
+    }
+    const aliasPath = join(state.install, "aw");
+    const aliasHash = spawnSync("shasum", ["-a", "256", aliasPath], {
+      encoding: "utf8",
+    }).stdout.split(" ")[0];
+    writeFileSync(
+      join(state.install, ".arashi-managed-entrypoints.json"),
+      `{
+  "schemaVersion": 1,
+  "installDirectory": ${JSON.stringify(state.install)},
+  "releaseVersion": "1.31.0",
+  "aliases": [
+    { "path": ${JSON.stringify(aliasPath)}, "sha256": "${aliasHash}" }
+  ]
+}
+`,
+    );
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, PATH: `${state.install}:${state.env.PATH}` },
+    });
+
+    expect(refresh.status, refresh.stderr).toBe(0);
+    expect(existsSync(sentinel)).toBe(false);
+    expect(
+      JSON.parse(readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8")),
+    ).toMatchObject({ schemaVersion: 2 });
+    expect(existsSync(join(state.install, "uninstall.sh"))).toBe(true);
+  });
+
   test("rolls back a newly inserted PATH line when payload commit fails", () => {
     const state = fixture();
     mkdirSync(state.env.HOME, { recursive: true });
@@ -129,6 +172,29 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
       env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
     });
     expect(result.status).not.toBe(0);
+    expect(readFileSync(profile, "utf8")).toBe("before\n");
+  });
+
+  test("rolls back PATH when install-directory setup fails before payload traps arm", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(profile, "before\n");
+    const blockedParent = join(state.directory, "blocked-parent");
+    writeFileSync(blockedParent, "not a directory\n");
+
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: {
+        ...state.env,
+        ARASHI_INSTALL_DIR: join(blockedParent, "install"),
+        ARASHI_NO_MODIFY_PATH: "0",
+        SHELL: "/bin/zsh",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Unable to create install directory");
     expect(readFileSync(profile, "utf8")).toBe("before\n");
   });
 

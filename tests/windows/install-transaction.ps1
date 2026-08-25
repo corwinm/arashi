@@ -86,6 +86,13 @@ try {
     $managedLedger | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $managed.Destination $OwnershipLedgerName) -Encoding UTF8
     Assert-ArashiAliasOwnership -InstallDirectory $managed.Destination -ResolveCommands { @() }
 
+    Write-Host "recreated PATH provenance"
+    $priorExternalPath = [PSCustomObject]@{ entry = $managed.Destination; created = $false }
+    $recreatedPath = Resolve-ArashiPathMutation -Existing $priorExternalPath -Result ([PSCustomObject]@{ Entry = $managed.Destination; Created = $true })
+    Assert-Equal $true $recreatedPath.created "Refresh did not adopt the PATH entry it recreated"
+    $stillExternalPath = Resolve-ArashiPathMutation -Existing $priorExternalPath -Result ([PSCustomObject]@{ Entry = $managed.Destination; Created = $false })
+    Assert-Equal $false $stillExternalPath.created "Refresh adopted a PATH entry that still pre-existed"
+
     Write-Host "manual marked alias collision"
     $manual = New-PayloadFixture "manual-alias"
     $fixtures += $manual

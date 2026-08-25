@@ -549,7 +549,7 @@ preflight_alias_ownership() {
       return 1
     }
     ledger_contents="$(cat "$ledger_path")"
-    expected_ledger="$(render_ownership_ledger "$install_dir" "$alias_path" "$alias_hash" "$ledger_release_version")"
+    expected_ledger="$(render_legacy_ownership_ledger "$install_dir" "$alias_path" "$alias_hash" "$ledger_release_version")"
     [ "$ledger_contents" = "$expected_ledger" ] || {
       printf 'error: ownership ledger property or alias-set defect at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
       return 1
@@ -579,6 +579,23 @@ preflight_alias_ownership() {
       return 1
     fi
   fi
+}
+
+render_legacy_ownership_ledger() {
+  local install_dir="$1"
+  local alias_path="$2"
+  local alias_hash="$3"
+  local release_version="$4"
+  cat <<EOF
+{
+  "schemaVersion": 1,
+  "installDirectory": "$(json_escape "$install_dir")",
+  "releaseVersion": "$(json_escape "$release_version")",
+  "aliases": [
+    { "path": "$(json_escape "$alias_path")", "sha256": "$alias_hash" }
+  ]
+}
+EOF
 }
 
 render_ownership_ledger() {
@@ -1454,6 +1471,7 @@ main() {
       log "Skipping PATH modification as --no-modify-path is set"
     fi
   else
+    trap "finish_shell_path_transaction rollback; cleanup_progress_ui; rm -rf '$tmp_dir'" EXIT
     configure_shell_path "$install_dir"
   fi
 

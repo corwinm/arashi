@@ -41,6 +41,48 @@ describe("npm JavaScript entrypoint", () => {
     expect(isExplicitUninstallCommand(["shell", "uninstall"])).toBe(false);
   });
 
+  test.each(["--help", "-h"])(
+    "prints public uninstall help for %s without side effects",
+    async (flag) => {
+      const output: string[] = [];
+      let inferredOwnership = false;
+      let installed = false;
+      let spawned = false;
+      let confirmed = false;
+
+      const exitCode = await runEntrypoint(["uninstall", flag], {
+        confirm: async () => {
+          confirmed = true;
+          return true;
+        },
+        installBinaryImpl: async () => {
+          installed = true;
+        },
+        log: (line: string) => output.push(line),
+        realpathSyncImpl: (path: string) => {
+          inferredOwnership = true;
+          return path;
+        },
+        spawnImpl: () => {
+          spawned = true;
+          throw new Error("must not spawn");
+        },
+      });
+
+      expect(exitCode).toBe(0);
+      expect(output.join("\n")).toContain("Usage: arashi uninstall [options]");
+      expect(output.join("\n")).toContain("-n, --dry-run");
+      expect(output.join("\n")).toContain("-y, --yes");
+      expect(output.join("\n")).toContain("-h, --help");
+      expect({ confirmed, inferredOwnership, installed, spawned }).toEqual({
+        confirmed: false,
+        inferredOwnership: false,
+        installed: false,
+        spawned: false,
+      });
+    },
+  );
+
   test.each([
     ["npm", "npm", ["uninstall", "-g", "arashi"]],
     ["pnpm", "pnpm", ["remove", "-g", "arashi"]],

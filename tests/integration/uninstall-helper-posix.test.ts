@@ -186,6 +186,30 @@ describe("bundled POSIX uninstall helper", () => {
     expect(existsSync(join(install, "arashi.bin"))).toBe(true);
   });
 
+  test("preserves and reports linked and non-regular startup candidates while removing payload", () => {
+    prepare();
+    const outside = join(fixture, "outside-profile");
+    const linked = join(fixture, ".zshrc");
+    const nonRegular = join(fixture, ".bashrc");
+    const outsideContents = "outside must survive\n";
+    writeFileSync(outside, outsideContents);
+    symlinkSync(outside, linked);
+    mkdir(nonRegular);
+
+    const result = spawnSync("bash", [helperSource, "--install-dir", install, "--yes"], {
+      encoding: "utf8",
+      env: { ...process.env, HOME: fixture, SHELL: "/bin/zsh" },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(linked);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(nonRegular);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/preserv/i);
+    expect(readFileSync(outside, "utf8")).toBe(outsideContents);
+    expect(statSync(nonRegular).isDirectory()).toBe(true);
+    expect(existsSync(join(install, ".arashi-managed-entrypoints.json"))).toBe(false);
+  });
+
   test("runs with a PATH that contains no Python executable", () => {
     prepare();
     const commands = join(fixture, "commands");

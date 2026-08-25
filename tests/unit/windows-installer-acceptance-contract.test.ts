@@ -78,6 +78,7 @@ describe("Windows installer acceptance wiring", () => {
       "replacement failure",
       "smoke-test failure",
       "rollback failure",
+      "recreated PATH provenance",
     ]) {
       expect(transaction).toContain(scenario);
     }

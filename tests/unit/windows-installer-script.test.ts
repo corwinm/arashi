@@ -189,6 +189,14 @@ describe("Windows PowerShell installer", () => {
     expect(install).toContain("$pathMutation = $existingPathMutation");
   });
 
+  test("adopts a PATH entry recreated during refresh but preserves one that still pre-existed", () => {
+    const body = functionBody("Resolve-ArashiPathMutation");
+
+    expect(body).toContain("-not [bool]$Existing.created -and [bool]$Result.Created");
+    expect(body).toContain("created = [bool]$Result.Created");
+    expect(body).toContain("return $Existing");
+  });
+
   test("restores exact prior state and retains backups when rollback fails", () => {
     const body = functionBody("Install-ArashiPayloadTransaction");
 

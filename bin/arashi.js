@@ -174,6 +174,17 @@ function spawnRemoval(command, args, options) {
 }
 
 async function runPackageUninstall(argv, options) {
+  if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
+    (options.log ?? console.log)(`Usage: arashi uninstall [options]
+
+Conservatively remove a proven Arashi installation
+
+Options:
+  -n, --dry-run  Inspect the uninstall plan without changing anything
+  -y, --yes      Apply the completely preflighted uninstall plan
+  -h, --help     display help for command`);
+    return 0;
+  }
   const unsupportedOption = argv.find((arg) => !["-n", "--dry-run", "-y", "--yes"].includes(arg));
   if (unsupportedOption) {
     (options.error ?? console.error)(`Unknown uninstall option: ${unsupportedOption}`);

@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 
 import { executeShellUninstall } from "../../src/commands/shell.ts";
 import {
@@ -140,10 +141,35 @@ describe("uninstall command consent", () => {
     expect(apply).not.toHaveBeenCalled();
   });
 
+  test("direct uninstall reports an unsafe shell candidate without blocking payload handoff", async () => {
+    const apply = vi.fn(async () => {});
+    const output: string[] = [];
+    await expect(
+      executeDirectUninstall(
+        { yes: true },
+        {
+          apply,
+          installDirectory: "/owned",
+          plan: emptyDirectPlan,
+          shellPlan: async () => ({
+            diagnostic: "symbolic link",
+            startupFilePath: "/home/user/.zshrc",
+            status: "preserved-unsafe" as const,
+          }),
+          write: (line) => output.push(line),
+        },
+      ),
+    ).resolves.toBe("applied");
+    expect(output.join("\n")).toContain("/home/user/.zshrc");
+    expect(output.join("\n")).toMatch(/preserv.*symbolic link/i);
+    expect(apply).toHaveBeenCalledOnce();
+  });
+
   test("stages the manifest-owned helper and passes its declared directory and parent PID", async () => {
     const copies: string[][] = [];
     const spawns: { args: string[]; command: string; options: unknown }[] = [];
     const unref = vi.fn();
+    const child = Object.assign(new EventEmitter(), { unref });
     await stageDirectUninstallHelper(
       {
         files: [
@@ -169,7 +195,8 @@ describe("uninstall command consent", () => {
         readFile: async () => Buffer.from("helper"),
         spawn: (command, args, options) => {
           spawns.push({ args, command, options });
-          return { unref };
+          queueMicrotask(() => child.emit("spawn"));
+          return child;
         },
       },
     );
@@ -184,6 +211,40 @@ describe("uninstall command consent", () => {
       },
     ]);
     expect(unref).toHaveBeenCalledOnce();
+  });
+
+  test("rejects an asynchronous detached-helper spawn error without reporting success", async () => {
+    const unref = vi.fn();
+    const child = Object.assign(new EventEmitter(), { unref });
+    const result = stageDirectUninstallHelper(
+      {
+        files: [
+          {
+            absolutePath: "/owned/uninstall.sh",
+            digest: createHash("sha256").update("helper").digest("hex"),
+            relativePath: "uninstall.sh",
+            role: "uninstall-helper",
+            status: "removable",
+          },
+        ],
+        installDirectory: "/owned",
+        manifest: { installDirectory: "/owned", platform: "posix" } as never,
+        manifestPath: "/owned/manifest",
+      },
+      {
+        chmod: async () => {},
+        copyFile: async () => {},
+        mkdtemp: async () => "/tmp/arashi-uninstall-unique",
+        readFile: async () => Buffer.from("helper"),
+        spawn: () => {
+          queueMicrotask(() => child.emit("error", new Error("injected spawn error")));
+          return child;
+        },
+      },
+    );
+
+    await expect(result).rejects.toThrow(/injected spawn error/);
+    expect(unref).not.toHaveBeenCalled();
   });
 
   test("refuses to execute a staged helper whose bytes no longer match the manifest", async () => {

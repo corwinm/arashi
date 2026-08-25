@@ -555,6 +555,18 @@ public static class NativeMethods {
     return [PSCustomObject]@{ Created = $true; Entry = $Directory; Before = $currentUserPath; After = $updatedPath }
 }
 
+function Resolve-ArashiPathMutation {
+    param(
+        [AllowNull()]$Existing,
+        [Parameter(Mandatory = $true)]$Result
+    )
+
+    if ($null -eq $Existing -or (-not [bool]$Existing.created -and [bool]$Result.Created)) {
+        return [ordered]@{ entry = $Result.Entry; created = [bool]$Result.Created }
+    }
+    return $Existing
+}
+
 function Invoke-ArashiSmokeTest {
     param(
         [Parameter(Mandatory = $true)][string]$BinaryPath,
@@ -634,9 +646,7 @@ function Install-Arashi {
         $pathMutation = $existingPathMutation
         if (-not $skipPathModification) {
             $pathResult = Add-ArashiUserPath -Directory $targetInstallDir
-            if ($null -eq $existingPathMutation) {
-                $pathMutation = [ordered]@{ entry = $pathResult.Entry; created = [bool]$pathResult.Created }
-            }
+            $pathMutation = Resolve-ArashiPathMutation -Existing $existingPathMutation -Result $pathResult
         }
         Write-ArashiOwnershipLedger -Path $stagedLedger -InstallDirectory $targetInstallDir -Payload $payload -PathMutation $pathMutation
         $ledgerItem = [PSCustomObject]@{ SourcePath = $stagedLedger; DestinationPath = Join-Path $targetInstallDir $OwnershipLedgerName }

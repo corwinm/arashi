@@ -60,4 +60,13 @@ describe("bundled PowerShell uninstall helper contract", () => {
     expect(helper).not.toMatch(/WriteAllText\(\$shellTemporary/);
     expect(helper).toMatch(/canonical marker line/i);
   });
+
+  test("preserves and reports unsafe shell startup candidates instead of blocking payload removal", () => {
+    expect(helper).toContain(
+      'Write-Warning "Preserving unsafe shell startup target: $shellTarget"',
+    );
+    expect(helper).not.toContain(
+      'throw "Shell startup target is not a regular non-reparse file: $shellTarget"',
+    );
+  });
 });

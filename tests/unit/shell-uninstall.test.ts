@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -34,13 +44,78 @@ describe("shell uninstall", () => {
     expect(plans.every((plan) => plan.status === "removable")).toBe(true);
   });
 
+  test("all-shell planning reports linked and non-regular candidates without following them", async () => {
+    const outside = join(home, "outside");
+    const linked = join(home, ".zshrc");
+    const nonRegular = join(home, ".bashrc");
+    await writeFile(outside, `${start}\nowned\n${end}\n`);
+    await (await import("node:fs/promises")).symlink(outside, linked);
+    await mkdir(nonRegular);
+
+    const plans = await planSupportedShellUninstalls({ HOME: home });
+
+    expect(plans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ startupFilePath: linked, status: "preserved-unsafe" }),
+        expect.objectContaining({ startupFilePath: nonRegular, status: "preserved-unsafe" }),
+      ]),
+    );
+    expect(await readFile(outside, "utf8")).toBe(`${start}\nowned\n${end}\n`);
+  });
+
   test("removes one exact managed range and preserves every outside byte", async () => {
     const profile = join(home, ".zshrc");
     await writeFile(profile, `before\n${start}\nowned\n${end}\nafter\n`);
+    await chmod(profile, 0o640);
+    const before = await stat(profile);
     const plan = await planShellUninstall({ env: { HOME: home, SHELL: "/bin/zsh" } });
     expect(plan.status).toBe("removable");
     await applyShellUninstall(plan);
     expect(await readFile(profile, "utf8")).toBe("before\n\nafter\n");
+    const after = await stat(profile);
+    expect(after.mode & 0o777).toBe(0o640);
+    expect(after.ino).not.toBe(before.ino);
+  });
+
+  test("preserves the original and cleans the same-directory temporary file on rename failure", async () => {
+    const profile = join(home, ".zshrc");
+    const contents = `before\n${start}\nowned\n${end}\nafter\n`;
+    await writeFile(profile, contents);
+    await chmod(profile, 0o640);
+    const plan = await planShellUninstall({ env: { HOME: home, SHELL: "/bin/zsh" } });
+
+    await expect(
+      applyShellUninstall(plan, {
+        rename: async () => {
+          throw new Error("injected rename failure");
+        },
+      }),
+    ).rejects.toThrow(/injected rename failure/);
+
+    expect(await readFile(profile, "utf8")).toBe(contents);
+    expect((await stat(profile)).mode & 0o777).toBe(0o640);
+    expect((await readdir(home)).filter((name) => name.includes("arashi-uninstall"))).toEqual([]);
+  });
+
+  test("fails closed when the startup file races immediately before atomic replacement", async () => {
+    const profile = join(home, ".zshrc");
+    const contents = `before\n${start}\nowned\n${end}\nafter\n`;
+    await writeFile(profile, contents);
+    const plan = await planShellUninstall({ env: { HOME: home, SHELL: "/bin/zsh" } });
+    let lstatCalls = 0;
+
+    await expect(
+      applyShellUninstall(plan, {
+        lstat: async (path) => {
+          lstatCalls += 1;
+          if (lstatCalls === 3) await writeFile(path, "raced bytes\n");
+          return lstat(path);
+        },
+      }),
+    ).rejects.toThrow(/changed after preflight/);
+
+    expect(await readFile(profile, "utf8")).toBe("raced bytes\n");
+    expect((await readdir(home)).filter((name) => name.includes("arashi-uninstall"))).toEqual([]);
   });
 
   test("preserves non-UTF-8 bytes outside the exact managed range", async () => {

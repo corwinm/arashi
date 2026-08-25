@@ -137,7 +137,10 @@ try {
         foreach ($shellTarget in $shellCandidates) {
             $shellItem = Get-Item -LiteralPath $shellTarget -Force -ErrorAction SilentlyContinue
             if ($null -eq $shellItem) { continue }
-            if ($shellItem.PSIsContainer -or ($shellItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { throw "Shell startup target is not a regular non-reparse file: $shellTarget" }
+            if ($shellItem.PSIsContainer -or ($shellItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                Write-Warning "Preserving unsafe shell startup target: $shellTarget"
+                continue
+            }
             $shellBytes = [System.IO.File]::ReadAllBytes($shellTarget)
             try { $markerPlan = Get-CanonicalMarkerPlan $shellBytes } catch { throw "$($_.Exception.Message) Target: $shellTarget" }
             if ($null -ne $markerPlan) { $shellPlans += [PSCustomObject]@{ Path = $shellTarget; Before = $shellBytes; After = $markerPlan.After } }

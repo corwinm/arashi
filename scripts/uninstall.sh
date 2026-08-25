@@ -217,12 +217,14 @@ SHELL_PATHS=()
 SHELL_STARTS=()
 SHELL_ENDS=()
 SHELL_DIGESTS=()
+SHELL_PRESERVED=()
+SHELL_PRESERVED_COUNT=0
 PROFILE_ACTION=""
 PROFILE_OFFSET=-1
 
 preflight() {
   local blockers="" index name path actual state raw_begin raw_end exact_begin exact_end begin_offset end_offset count offset normalized_profile
-  FILE_ACTIONS=(); SHELL_PATHS=(); SHELL_STARTS=(); SHELL_ENDS=(); SHELL_DIGESTS=(); PROFILE_ACTION=""; PROFILE_OFFSET=-1
+  FILE_ACTIONS=(); SHELL_PATHS=(); SHELL_STARTS=(); SHELL_ENDS=(); SHELL_DIGESTS=(); SHELL_PRESERVED=(); SHELL_PRESERVED_COUNT=0; PROFILE_ACTION=""; PROFILE_OFFSET=-1
   [ ! -L "$MANIFEST_PATH" ] && [ -f "$MANIFEST_PATH" ] || fail "ownership manifest changed after preflight"
   parse_manifest > "$PARSED_MANIFEST.recheck" || fail "ownership manifest changed after preflight"
   cmp -s "$PARSED_MANIFEST" "$PARSED_MANIFEST.recheck" || fail "ownership manifest changed after preflight"
@@ -254,7 +256,7 @@ preflight() {
     if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then candidates+=("$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile"); else candidates+=("$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"); fi
     for path in "${candidates[@]}"; do
       [ -e "$path" ] || [ -L "$path" ] || continue
-      if [ -L "$path" ] || [ ! -f "$path" ] || [ ! -r "$path" ]; then blockers="${blockers}\n- shell startup target $path is not a regular non-link file"; continue; fi
+      if [ -L "$path" ] || [ ! -f "$path" ] || [ ! -r "$path" ]; then SHELL_PRESERVED[$SHELL_PRESERVED_COUNT]="$path"; SHELL_PRESERVED_COUNT=$((SHELL_PRESERVED_COUNT + 1)); continue; fi
       read -r raw_begin raw_end exact_begin exact_end begin_offset end_offset < <(marker_state "$path")
       if [ "$raw_begin" -eq 0 ] && [ "$raw_end" -eq 0 ]; then continue; fi
       if [ "$raw_begin" -ne 1 ] || [ "$raw_end" -ne 1 ] || [ "$exact_begin" -ne 1 ] || [ "$exact_end" -ne 1 ] || [ "$begin_offset" -ge "$end_offset" ]; then blockers="${blockers}\n- ambiguous shell integration markers in $path"; continue; fi
@@ -268,6 +270,9 @@ preflight
 printf 'Installation channel: official-direct\nInstall directory: %s\n' "$INSTALL_DIR"
 for index in 0 1 2 3; do printf -- '- %s: %s\n' "${FILE_ACTIONS[$index]}" "${EXPECTED_NAMES[$index]}"; done
 [ -z "$PROFILE_ACTION" ] || printf -- '- PATH state: %s\n' "$PROFILE_ACTION"
+if [ "$SHELL_PRESERVED_COUNT" -gt 0 ]; then
+  for path in "${SHELL_PRESERVED[@]}"; do printf -- '- preserved unsafe shell startup target: %s (not a readable regular non-link file)\n' "$path"; done
+fi
 printf '%s\n' 'Preserved: projects, Git data, configuration, unrelated profile bytes, install-directory neighbors, and the install directory.'
 [ "$DRY_RUN" = false ] || exit 0
 if [ "$YES" = false ]; then
