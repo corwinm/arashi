@@ -1163,7 +1163,7 @@ export const commandSemantics: CommandSemantics = {
   "shell uninstall": {
     json: unsupported("Shell uninstall has no JSON or force mode."),
     docs: excluded("This subcommand is documented on the parent shell command page."),
-    skills: represented("Shell removal is covered as part of the shell workflow."),
+    skills: excluded("Packaged-skill shell-uninstall guidance is outside the conservative MVP."),
     standalone: notApplicable("Shell uninstall does not consume workspace context."),
     vscode: excluded("Shell configuration removal is outside extension scope."),
     uninstall: uninstallPolicy("exact-managed-shell-block"),

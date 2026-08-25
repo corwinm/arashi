@@ -3282,8 +3282,8 @@
           "reason": "This subcommand is documented on the parent shell command page."
         },
         "skills": {
-          "expectation": "represented",
-          "reason": "Shell removal is covered as part of the shell workflow."
+          "expectation": "excluded",
+          "reason": "Packaged-skill shell-uninstall guidance is outside the conservative MVP."
         },
         "standalone": {
           "support": "not-applicable",
