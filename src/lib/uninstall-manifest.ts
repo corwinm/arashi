@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 
 export const MANIFEST_NAME = ".arashi-managed-entrypoints.json";
 
@@ -75,6 +75,19 @@ function hasExactKeys(value: Record<string, unknown>, required: string[], option
   return required.every((key) => key in value) && keys.every((key) => allowed.includes(key));
 }
 
+export function normalizeInstallDirectoryForPlatform(
+  directory: string,
+  platform: "posix" | "windows",
+): string {
+  const pathApi = platform === "windows" ? win32 : posix;
+  let normalized = pathApi.normalize(directory);
+  const root = pathApi.parse(normalized).root;
+  while (normalized.length > root.length && normalized.endsWith(pathApi.sep)) {
+    normalized = normalized.slice(0, -1);
+  }
+  return platform === "windows" ? normalized.toLowerCase() : normalized;
+}
+
 function validateManifest(value: unknown, requestedDirectory: string): DirectInstallManifest {
   if (
     !isRecord(value) ||
@@ -95,11 +108,15 @@ function validateManifest(value: unknown, requestedDirectory: string): DirectIns
   if (value.platform !== "posix" && value.platform !== "windows") {
     throw new Error("The ownership manifest platform is unsupported.");
   }
+  const manifestPathApi = value.platform === "windows" ? win32 : posix;
   if (
     typeof value.installDirectory !== "string" ||
-    !isAbsolute(value.installDirectory) ||
-    resolve(value.installDirectory) !== value.installDirectory ||
-    resolve(requestedDirectory) !== value.installDirectory
+    !manifestPathApi.isAbsolute(value.installDirectory) ||
+    (value.platform === "posix" &&
+      normalizeInstallDirectoryForPlatform(value.installDirectory, value.platform) !==
+        value.installDirectory) ||
+    normalizeInstallDirectoryForPlatform(requestedDirectory, value.platform) !==
+      normalizeInstallDirectoryForPlatform(value.installDirectory, value.platform)
   ) {
     throw new Error(
       "The ownership manifest installDirectory does not match the requested directory.",

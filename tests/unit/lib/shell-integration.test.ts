@@ -7,7 +7,7 @@ import {
   installShellIntegration,
   resolveStartupFilePath,
 } from "../../../src/lib/shell-integration.ts";
-import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -79,6 +79,20 @@ describe("shell integration", () => {
     expect(once).toContain("# >>> arashi shell integration >>>");
     expect(twice).toBe(once);
     expect(secondInstall.updated).toBe(false);
+  });
+
+  test("refuses a symlinked startup file without modifying its target", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-shell-symlink-"));
+    tempPaths.push(home);
+    const targetPath = join(home, "shared-bashrc");
+    const bashrcPath = join(home, ".bashrc");
+    await writeFile(targetPath, "# shared\n");
+    await symlink(targetPath, bashrcPath);
+
+    await expect(
+      installShellIntegration({ env: { HOME: home, SHELL: "/bin/bash" } }),
+    ).rejects.toThrow(/symbolic link/i);
+    expect(await readFile(targetPath, "utf8")).toBe("# shared\n");
   });
 
   test("upgrades a wrapper-only block without changing bytes outside its markers", async () => {

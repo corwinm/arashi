@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import {
   MANIFEST_NAME,
   applyDirectUninstall,
+  normalizeInstallDirectoryForPlatform,
   planDirectUninstall,
   readDirectInstallManifest,
   type DirectInstallManifest,
@@ -72,6 +73,12 @@ afterEach(async () => {
 });
 
 describe("schema-v2 direct ownership manifest", () => {
+  test("compares Windows install paths case-insensitively without trailing separators", () => {
+    expect(normalizeInstallDirectoryForPlatform("C:\\Tools\\Arashi\\", "windows")).toBe(
+      normalizeInstallDirectoryForPlatform("c:\\tools\\arashi", "windows"),
+    );
+  });
+
   test("accepts only the closed official POSIX payload", async () => {
     await writeInstallation();
     await expect(readDirectInstallManifest(installDirectory)).resolves.toEqual(manifest());

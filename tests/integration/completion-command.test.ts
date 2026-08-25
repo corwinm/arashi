@@ -43,6 +43,10 @@ describe("completion command and generated artifacts", () => {
         expect(result.stdout).toContain("arashi, aw");
         expect(result.stdout).toContain("$cursorPosition -gt $lastElementEnd");
         expect(result.stdout).toContain("$words += $wordToComplete");
+        expect(result.stdout).toContain(
+          '$completionText = "\'" + $value.Replace("\'", "\'\'") + "\'"',
+        );
+        expect(result.stdout).toContain("CompletionResult]::new($completionText, $value");
       }
     },
   );

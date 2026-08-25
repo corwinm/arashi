@@ -501,7 +501,6 @@ recorded_path_mutation_is_current() {
   LC_ALL=C awk -v marker="$marker" -v path_line="$path_line" '
     {
       current=$0
-      sub(/\r$/, "", current)
       if (NR > 2 && previous_previous == "" && previous == marker && current == path_line) count++
       previous_previous=previous
       previous=current

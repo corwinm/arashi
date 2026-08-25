@@ -126,7 +126,8 @@ Register-ArgumentCompleter -Native -CommandName arashi, aw -ScriptBlock {
     $value = $fields[$index]
     $description = $fields[$index + 1]
     if ($value -like "$wordToComplete*") {
-      [System.Management.Automation.CompletionResult]::new($value, $value, 'ParameterValue', $description)
+      $completionText = "'" + $value.Replace("'", "''") + "'"
+      [System.Management.Automation.CompletionResult]::new($completionText, $value, 'ParameterValue', $description)
     }
   }
 }
