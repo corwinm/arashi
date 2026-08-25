@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 
 import {
   applyShellUninstall,
+  planDetectedShellUninstalls,
   planShellUninstall,
   planSupportedShellUninstalls,
 } from "../../src/lib/shell-integration.ts";
@@ -31,6 +32,21 @@ afterEach(async () => {
 });
 
 describe("shell uninstall", () => {
+  test("finds a managed Bash block in every deterministic candidate", async () => {
+    const preferred = join(home, ".bash_profile");
+    const managed = join(home, ".bashrc");
+    await writeFile(preferred, "unrelated\n");
+    await writeFile(managed, `${start}\nowned\n${end}\n`);
+
+    const plans = await planDetectedShellUninstalls({
+      env: { HOME: home, SHELL: "/bin/bash" },
+    });
+
+    expect(plans).toEqual([
+      expect.objectContaining({ startupFilePath: managed, status: "removable" }),
+    ]);
+  });
+
   test("preflights every deterministic supported startup file", async () => {
     const zshProfile = join(home, ".zshrc");
     const fishProfile = join(home, ".config", "fish", "config.fish");

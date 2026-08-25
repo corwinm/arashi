@@ -195,6 +195,23 @@ export async function planShellUninstall(
   return planShellUninstallPath(startupFilePath);
 }
 
+export async function planDetectedShellUninstalls(
+  options: { env?: Record<string, string | undefined>; shell?: SupportedShell } = {},
+): Promise<ShellUninstallPlan[]> {
+  const env = options.env ?? process.env;
+  const shell = options.shell ?? detectSupportedShell(env);
+  if (!shell) throw new Error("Unable to detect a supported shell for `arashi shell uninstall`.");
+  const home = env.HOME?.trim();
+  if (!home) throw new Error("Unable to determine a home directory for `arashi shell uninstall`.");
+
+  const plans: ShellUninstallPlan[] = [];
+  for (const startupFilePath of new Set(getStartupFileCandidates(home, shell))) {
+    const plan = await planShellUninstallPath(startupFilePath, true);
+    if (plan.status !== "absent") plans.push(plan);
+  }
+  return plans;
+}
+
 export async function planSupportedShellUninstalls(
   env: Record<string, string | undefined> = process.env,
 ): Promise<ShellUninstallPlan[]> {

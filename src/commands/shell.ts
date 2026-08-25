@@ -3,7 +3,7 @@ import {
   buildShellInitScript,
   installShellIntegration,
   isSupportedShell,
-  planShellUninstall,
+  planDetectedShellUninstalls,
   applyShellUninstall,
   type ShellUninstallPlan,
 } from "../lib/shell-integration.ts";
@@ -101,19 +101,26 @@ export async function executeShellUninstall(
     apply?: (plan: ShellUninstallPlan) => Promise<void>;
     confirm?: (message: string, defaultValue: boolean) => Promise<PromptOutcome<boolean>>;
     interactive?: boolean;
-    plan?: () => Promise<ShellUninstallPlan>;
+    plan?: () => Promise<ShellUninstallPlan[]>;
     write?: (line: string) => void;
   } = {},
 ): Promise<"absent" | "applied" | "declined" | "dry-run"> {
-  const plan = await (dependencies.plan ?? planShellUninstall)();
+  const plans = await (dependencies.plan ?? planDetectedShellUninstalls)();
   const write = dependencies.write ?? console.log;
-  write(
-    plan.status === "absent"
-      ? `No managed Arashi shell block exists in ${plan.startupFilePath}.`
-      : `Remove the exact managed Arashi shell block from ${plan.startupFilePath}.`,
-  );
+  const removable = plans.filter((plan) => plan.status === "removable");
+  if (plans.length === 0) {
+    write("No managed Arashi shell block exists in the deterministic startup files.");
+  } else {
+    for (const plan of plans) {
+      write(
+        plan.status === "removable"
+          ? `Remove the exact managed Arashi shell block from ${plan.startupFilePath}.`
+          : `Preserve shell startup candidate ${plan.startupFilePath}: ${plan.diagnostic ?? "unsafe target"}.`,
+      );
+    }
+  }
   if (options.dryRun) return "dry-run";
-  if (plan.status === "absent") return "absent";
+  if (removable.length === 0) return "absent";
   if (!options.yes) {
     const interactive =
       dependencies.interactive ?? Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -124,7 +131,7 @@ export async function executeShellUninstall(
     );
     if (outcome.status !== "ok" || !outcome.value) return "declined";
   }
-  await (dependencies.apply ?? applyShellUninstall)(plan);
+  for (const plan of removable) await (dependencies.apply ?? applyShellUninstall)(plan);
   return "applied";
 }
 

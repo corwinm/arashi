@@ -15,12 +15,20 @@ const emptyDirectPlan = async () => ({
   manifestPath: "/owned/manifest",
 });
 const emptyShellPlan = async () => ({ startupFilePath: "/profile", status: "absent" as const });
-const removableShellPlan = async () => ({
-  currentContents: "x",
-  nextContents: "",
-  startupFilePath: "/profile",
-  status: "removable" as const,
-});
+const removableShellPlans = async () => [
+  {
+    currentContents: "x",
+    nextContents: "",
+    startupFilePath: "/profile",
+    status: "removable" as const,
+  },
+  {
+    currentContents: "y",
+    nextContents: "",
+    startupFilePath: "/other-profile",
+    status: "removable" as const,
+  },
+];
 
 describe("uninstall command consent", () => {
   test("dry-run prints a preflighted plan without mutation or prompting", async () => {
@@ -98,9 +106,9 @@ describe("uninstall command consent", () => {
   test("shell uninstall applies only after --yes", async () => {
     const apply = vi.fn();
     await expect(
-      executeShellUninstall({ yes: true }, { apply, plan: removableShellPlan, write: () => {} }),
+      executeShellUninstall({ yes: true }, { apply, plan: removableShellPlans, write: () => {} }),
     ).resolves.toBe("applied");
-    expect(apply).toHaveBeenCalledOnce();
+    expect(apply).toHaveBeenCalledTimes(2);
   });
 
   test("direct uninstall does not depend on ambient supported-shell detection", async () => {
