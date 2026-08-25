@@ -28,6 +28,15 @@ describe("Windows installer acceptance wiring", () => {
     expect(acceptance).not.toContain("ARASHI_NO_MODIFY_PATH");
   });
 
+  test("includes every installer-downloaded asset in the release fixture and checksum manifest", () => {
+    expect(acceptance).toContain(
+      'Copy-Item (Join-Path $Root "scripts\\uninstall.ps1") (Join-Path $FixtureDirectory "uninstall.ps1")',
+    );
+    expect(acceptance).toMatch(
+      /\$checksumLines = foreach \(\$asset in @\([^\r\n]*"uninstall\.ps1"/u,
+    );
+  });
+
   test("isolates USERPROFILE and unconditionally restores persistent PATH", () => {
     expect(acceptance).toContain(
       '$originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")',

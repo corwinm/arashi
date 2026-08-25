@@ -78,7 +78,8 @@ try {
     foreach ($asset in @("arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat")) {
         Copy-Item (Join-Path $Root "bin\$asset") (Join-Path $FixtureDirectory $asset)
     }
-    $checksumLines = foreach ($asset in @("arashi-windows-x64.exe", "arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat")) {
+    Copy-Item (Join-Path $Root "scripts\uninstall.ps1") (Join-Path $FixtureDirectory "uninstall.ps1")
+    $checksumLines = foreach ($asset in @("arashi-windows-x64.exe", "arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat", "uninstall.ps1")) {
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $FixtureDirectory $asset)).Hash.ToLowerInvariant()
         "$hash  $asset"
     }
