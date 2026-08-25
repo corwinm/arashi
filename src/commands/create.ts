@@ -776,7 +776,10 @@ export class CreateSetupError extends Error {
 export async function resolveCreateInvocationContext(
   invocationPath: string = resolve("."),
 ): Promise<CreateInvocationContext> {
-  const absoluteInvocationPath = resolve(invocationPath);
+  const resolvedInvocationPath = resolve(invocationPath);
+  const absoluteInvocationPath = await realpath(resolvedInvocationPath).catch(
+    () => resolvedInvocationPath,
+  );
   const bareProbe = await exec(["rev-parse", "--is-bare-repository"], absoluteInvocationPath);
   const isBare = bareProbe.stdout.trim() === "true";
 

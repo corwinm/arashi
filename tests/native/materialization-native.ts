@@ -362,7 +362,9 @@ const runNativePathBudgetAcceptance = async (
   const childSuffix = join("repos", "app");
   const maxPathLength = base.length + 1 + 24 + 1 + childSuffix.length;
   await writeConfig(workspace, "./repos/app", { copy: [], symlink: [] }, { maxPathLength });
-  const branch = `native/path-budget/${"long-segment-".repeat(8)}end`;
+  // Keep the exact Git branch itself below legacy Windows ref-path limits; the configured
+  // worktree destination is still long enough to require parent shortening.
+  const branch = `native/path-budget/${"long-segment-".repeat(3)}end`;
   const ordinaryParent = join(base, branch);
 
   const created = await run(
