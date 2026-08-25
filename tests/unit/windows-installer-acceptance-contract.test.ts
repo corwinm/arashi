@@ -21,9 +21,9 @@ describe("Windows installer acceptance wiring", () => {
 
   test("intercepts only Invoke-WebRequest while invoking canonical install.ps1 with defaults", () => {
     expect(acceptance).toContain("function global:Invoke-WebRequest");
-    expect(acceptance).toContain("& $InstallerPath");
-    expect(acceptance).not.toContain("-InstallDir");
-    expect(acceptance).not.toContain("-NoModifyPath");
+    expect(acceptance.match(/^\s*& \$InstallerPath\s*$/gm)).toHaveLength(2);
+    expect(acceptance).not.toContain("& $InstallerPath -InstallDir");
+    expect(acceptance).not.toContain("& $InstallerPath -NoModifyPath");
     expect(acceptance).not.toContain("ARASHI_INSTALL_DIR");
     expect(acceptance).not.toContain("ARASHI_NO_MODIFY_PATH");
   });

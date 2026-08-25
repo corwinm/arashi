@@ -1144,6 +1144,12 @@ configure_shell_path() {
     return
   }
 
+  if [ -L "$rc_file" ]; then
+    warn "Shell config file is a symbolic link; preserving it unchanged: $rc_file"
+    warn "Add this manually: $(build_posix_path_line "$install_dir")"
+    return
+  fi
+
   PATH_MUTATION_PROFILE_CREATED=false
   if [ ! -f "$rc_file" ]; then
     : > "$rc_file" 2>/dev/null || {

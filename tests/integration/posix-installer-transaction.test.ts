@@ -217,6 +217,28 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     expect(existsSync(join(state.install, "uninstall.sh"))).toBe(true);
   });
 
+  test("preserves a symlinked startup target instead of recording unremovable PATH bytes", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const target = join(state.env.HOME, "shared-zshrc");
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(target, "before\n");
+    symlinkSync(target, profile);
+
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(target, "utf8")).toBe("before\n");
+    expect(result.stderr).toContain("symbolic link");
+    const ledger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(ledger).not.toHaveProperty("pathMutation");
+  });
+
   test("rolls back a newly inserted PATH line when payload commit fails", () => {
     const state = fixture();
     mkdirSync(state.env.HOME, { recursive: true });
