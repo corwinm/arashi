@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, chmod, mkdtemp, readFile } from "node:fs/promises";
+import { copyFile, chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -50,6 +50,7 @@ export async function stageDirectUninstallHelper(
     mkdtemp?: (prefix: string) => Promise<string>;
     parentPid?: number;
     readFile?: (path: string) => Promise<Buffer>;
+    rm?: (path: string, options: { force: true; recursive: true }) => Promise<void>;
     spawn?: (
       command: string,
       args: string[],
@@ -72,64 +73,69 @@ export async function stageDirectUninstallHelper(
   );
   const suffix = plan.manifest.platform === "windows" ? ".ps1" : ".sh";
   const temporaryHelper = join(temporaryDirectory, `uninstall${suffix}`);
-  await (dependencies.copyFile ?? copyFile)(helper.absolutePath, temporaryHelper);
-  if (plan.manifest.platform === "posix")
-    await (dependencies.chmod ?? chmod)(temporaryHelper, 0o700);
-  const stagedDigest = createHash("sha256")
-    .update(await (dependencies.readFile ?? readFile)(temporaryHelper))
-    .digest("hex");
-  if (stagedDigest !== helper.digest) {
-    throw new Error("The staged uninstall helper does not match its manifest digest.");
-  }
-  const spawnHelper = dependencies.spawn ?? spawn;
-  const parentPid = String(dependencies.parentPid ?? process.pid);
-  const child =
-    plan.manifest.platform === "windows"
-      ? spawnHelper(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
+  try {
+    await (dependencies.copyFile ?? copyFile)(helper.absolutePath, temporaryHelper);
+    if (plan.manifest.platform === "posix")
+      await (dependencies.chmod ?? chmod)(temporaryHelper, 0o700);
+    const stagedDigest = createHash("sha256")
+      .update(await (dependencies.readFile ?? readFile)(temporaryHelper))
+      .digest("hex");
+    if (stagedDigest !== helper.digest) {
+      throw new Error("The staged uninstall helper does not match its manifest digest.");
+    }
+    const spawnHelper = dependencies.spawn ?? spawn;
+    const parentPid = String(dependencies.parentPid ?? process.pid);
+    const child =
+      plan.manifest.platform === "windows"
+        ? spawnHelper(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              temporaryHelper,
+              "-InstallDir",
+              plan.manifest.installDirectory,
+              "-ParentPid",
+              parentPid,
+              "-Yes",
+              "-TemporarySelf",
+            ],
+            { detached: true, stdio: "inherit" },
+          )
+        : spawnHelper(
             temporaryHelper,
-            "-InstallDir",
-            plan.manifest.installDirectory,
-            "-ParentPid",
-            parentPid,
-            "-Yes",
-            "-TemporarySelf",
-          ],
-          { detached: true, stdio: "inherit" },
-        )
-      : spawnHelper(
-          temporaryHelper,
-          [
-            "--install-dir",
-            plan.manifest.installDirectory,
-            "--parent-pid",
-            parentPid,
-            "--yes",
-            "--temporary-self",
-          ],
-          {
-            detached: true,
-            stdio: "inherit",
-          },
-        );
-  await new Promise<void>((resolve, reject) => {
-    const onError = (...args: unknown[]) => {
-      child.off("spawn", onSpawn);
-      reject(args[0]);
-    };
-    const onSpawn = () => {
-      child.off("error", onError);
-      resolve();
-    };
-    child.once("error", onError);
-    child.once("spawn", onSpawn);
-  });
-  child.unref();
+            [
+              "--install-dir",
+              plan.manifest.installDirectory,
+              "--parent-pid",
+              parentPid,
+              "--yes",
+              "--temporary-self",
+            ],
+            {
+              detached: true,
+              stdio: "inherit",
+            },
+          );
+    await new Promise<void>((resolve, reject) => {
+      const onError = (...args: unknown[]) => {
+        child.off("spawn", onSpawn);
+        reject(args[0]);
+      };
+      const onSpawn = () => {
+        child.off("error", onError);
+        resolve();
+      };
+      child.once("error", onError);
+      child.once("spawn", onSpawn);
+    });
+    child.unref();
+  } catch (error) {
+    await (dependencies.rm ?? rm)(temporaryDirectory, { force: true, recursive: true });
+    throw error;
+  }
 }
 
 export async function executeDirectUninstall(

@@ -83,12 +83,18 @@ describe("bundled POSIX uninstall helper", () => {
 
   test("dry-run revalidates the local manifest and mutates nothing", () => {
     prepare();
+    const profile = join(fixture, ".zshrc");
+    writeFileSync(
+      profile,
+      "before\n# >>> arashi shell integration >>>\nowned\n# <<< arashi shell integration <<<\nafter\n",
+    );
     const result = spawnSync("bash", [helperSource, "--install-dir", install, "--dry-run"], {
       encoding: "utf8",
       env: { ...process.env, HOME: fixture, SHELL: "/bin/zsh" },
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/official-direct|remove.*arashi\.bin/is);
+    expect(result.stdout).toContain(`remove exact managed shell block: ${profile}`);
     expect(existsSync(join(install, "arashi.bin"))).toBe(true);
     expect(existsSync(join(install, ".arashi-managed-entrypoints.json"))).toBe(true);
   });

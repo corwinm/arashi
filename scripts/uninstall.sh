@@ -270,6 +270,9 @@ preflight
 printf 'Installation channel: official-direct\nInstall directory: %s\n' "$INSTALL_DIR"
 for index in 0 1 2 3; do printf -- '- %s: %s\n' "${FILE_ACTIONS[$index]}" "${EXPECTED_NAMES[$index]}"; done
 [ -z "$PROFILE_ACTION" ] || printf -- '- PATH state: %s\n' "$PROFILE_ACTION"
+if [ "${#SHELL_PATHS[@]}" -gt 0 ]; then
+  for path in "${SHELL_PATHS[@]}"; do printf -- '- remove exact managed shell block: %s\n' "$path"; done
+fi
 if [ "$SHELL_PRESERVED_COUNT" -gt 0 ]; then
   for path in "${SHELL_PRESERVED[@]}"; do printf -- '- preserved unsafe shell startup target: %s (not a readable regular non-link file)\n' "$path"; done
 fi

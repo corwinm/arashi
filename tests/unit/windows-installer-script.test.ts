@@ -197,6 +197,16 @@ describe("Windows PowerShell installer", () => {
     expect(body).toContain("return $Existing");
   });
 
+  test("clears stale created PATH provenance when no-modify refresh observes no exact entry", () => {
+    const install = functionBody("Install-Arashi");
+
+    expect(install).toContain("Test-ArashiExactUserPathEntry -Entry $existingPathMutation.entry");
+    expect(install).toContain("$existingPathMutation = $null");
+    expect(install.indexOf("Test-ArashiExactUserPathEntry")).toBeLessThan(
+      install.indexOf("$pathMutation = $existingPathMutation"),
+    );
+  });
+
   test("restores exact prior state and retains backups when rollback fails", () => {
     const body = functionBody("Install-ArashiPayloadTransaction");
 

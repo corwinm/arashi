@@ -1466,7 +1466,9 @@ main() {
   local target_binary_path
   target_wrapper_path="$install_dir/$PROJECT_NAME"
   target_binary_path="$install_dir/$BINARY_NAME"
-  if [ "$NO_MODIFY_PATH" = "true" ]; then
+  if [ -n "$PATH_MUTATION_JSON" ]; then
+    log "Preserving the validated installer-owned PATH entry from the existing manifest"
+  elif [ "$NO_MODIFY_PATH" = "true" ]; then
     if [ "$DEBUG_LOG" = "true" ]; then
       log "Skipping PATH modification as --no-modify-path is set"
     fi

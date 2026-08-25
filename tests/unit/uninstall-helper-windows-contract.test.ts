@@ -61,6 +61,16 @@ describe("bundled PowerShell uninstall helper contract", () => {
     expect(helper).toMatch(/canonical marker line/i);
   });
 
+  test("reports every planned shell rewrite before dry-run exits", () => {
+    const planOutput = helper.indexOf(
+      'Write-Host "- remove exact managed shell block: $($shellPlan.Path)"',
+    );
+    const dryRunExit = helper.indexOf("if ($DryRun) { exit 0 }");
+
+    expect(planOutput).toBeGreaterThan(-1);
+    expect(planOutput).toBeLessThan(dryRunExit);
+  });
+
   test("preserves and reports unsafe shell startup candidates instead of blocking payload removal", () => {
     expect(helper).toContain(
       'Write-Warning "Preserving unsafe shell startup target: $shellTarget"',

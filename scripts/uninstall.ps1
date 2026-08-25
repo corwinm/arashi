@@ -148,6 +148,7 @@ try {
     }
     Write-Host "Installation channel: official-direct"
     foreach ($path in $removable) { Write-Host "- remove: $path" }
+    foreach ($shellPlan in $shellPlans) { Write-Host "- remove exact managed shell block: $($shellPlan.Path)" }
     Write-Host "Preserved: projects, Git data, unrelated user state, and install-directory neighbors."
     if ($DryRun) { exit 0 }
     if (-not $Yes) {

@@ -567,6 +567,14 @@ function Resolve-ArashiPathMutation {
     return $Existing
 }
 
+function Test-ArashiExactUserPathEntry {
+    param([Parameter(Mandatory = $true)][string]$Entry)
+
+    $currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ([string]::IsNullOrEmpty($currentUserPath)) { return $false }
+    return @($currentUserPath -split ';' | Where-Object { $_ -ceq $Entry }).Count -eq 1
+}
+
 function Invoke-ArashiSmokeTest {
     param(
         [Parameter(Mandatory = $true)][string]$BinaryPath,
@@ -599,6 +607,9 @@ function Install-Arashi {
     $targetInstallDir = Resolve-ArashiInstallDir -InputInstallDir $InstallDir
     $skipPathModification = Test-ArashiNoModifyPath -NoModifyPathFlag:$NoModifyPath
     $existingPathMutation = Assert-ArashiAliasOwnership -InstallDirectory $targetInstallDir
+    if ($null -ne $existingPathMutation -and [bool]$existingPathMutation.created -and -not (Test-ArashiExactUserPathEntry -Entry $existingPathMutation.entry)) {
+        $existingPathMutation = $null
+    }
 
     Write-Step "Installing Arashi for Windows x64"
     Write-Step "Release: $selectedVersion"

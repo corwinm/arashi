@@ -106,13 +106,16 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
 
     const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
       encoding: "utf8",
-      env: { ...state.env, SHELL: "/bin/bash" },
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/bash" },
     });
     expect(refresh.status, refresh.stderr).toBe(0);
     const refreshedLedger = JSON.parse(
       readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
     );
     expect(refreshedLedger.pathMutation).toEqual(firstLedger.pathMutation);
+    const bashProfile = join(state.env.HOME, ".bash_profile");
+    if (existsSync(bashProfile))
+      expect(readFileSync(bashProfile, "utf8")).not.toContain(state.install);
   });
 
   test("refreshes an exact pre-helper schema-v1 install to schema v2 without executing it", () => {

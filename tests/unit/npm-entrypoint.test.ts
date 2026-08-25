@@ -132,6 +132,27 @@ describe("npm JavaScript entrypoint", () => {
     }
   });
 
+  test("detects npm ownership from npm's configured global root in production", async () => {
+    const spawn = createSuccessfulSpawn();
+    const detectedRoots: string[] = [];
+
+    const exitCode = await runEntrypoint(["uninstall", "--yes"], {
+      detectNpmGlobalRoot: () => {
+        detectedRoots.push("called");
+        return "/home/a/.local/lib/node_modules";
+      },
+      env: { HOME: "/home/a" },
+      log: () => {},
+      realpathSyncImpl: (path: string) => path,
+      rootDir: "/home/a/.local/lib/node_modules/arashi",
+      spawnImpl: spawn.spawnImpl,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(detectedRoots).toEqual(["called"]);
+    expect(spawn.calls).toEqual([{ args: ["uninstall", "-g", "arashi"], command: "npm" }]);
+  });
+
   test("keeps POSIX package ownership paths case-sensitive", async () => {
     const spawn = createSuccessfulSpawn();
     const errors: string[] = [];

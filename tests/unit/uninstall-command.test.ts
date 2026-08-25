@@ -215,6 +215,7 @@ describe("uninstall command consent", () => {
 
   test("rejects an asynchronous detached-helper spawn error without reporting success", async () => {
     const unref = vi.fn();
+    const remove = vi.fn(async () => {});
     const child = Object.assign(new EventEmitter(), { unref });
     const result = stageDirectUninstallHelper(
       {
@@ -236,6 +237,7 @@ describe("uninstall command consent", () => {
         copyFile: async () => {},
         mkdtemp: async () => "/tmp/arashi-uninstall-unique",
         readFile: async () => Buffer.from("helper"),
+        rm: remove,
         spawn: () => {
           queueMicrotask(() => child.emit("error", new Error("injected spawn error")));
           return child;
@@ -245,10 +247,15 @@ describe("uninstall command consent", () => {
 
     await expect(result).rejects.toThrow(/injected spawn error/);
     expect(unref).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith("/tmp/arashi-uninstall-unique", {
+      force: true,
+      recursive: true,
+    });
   });
 
   test("refuses to execute a staged helper whose bytes no longer match the manifest", async () => {
     const spawn = vi.fn();
+    const remove = vi.fn(async () => {});
     await expect(
       stageDirectUninstallHelper(
         {
@@ -270,10 +277,15 @@ describe("uninstall command consent", () => {
           copyFile: async () => {},
           mkdtemp: async () => "/tmp/arashi-uninstall-unique",
           readFile: async () => Buffer.from("changed"),
+          rm: remove,
           spawn,
         },
       ),
     ).rejects.toThrow(/staged uninstall helper.*digest/i);
     expect(spawn).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith("/tmp/arashi-uninstall-unique", {
+      force: true,
+      recursive: true,
+    });
   });
 });

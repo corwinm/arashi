@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -173,6 +173,19 @@ function spawnRemoval(command, args, options) {
   });
 }
 
+export function detectNpmGlobalRoot(options = {}) {
+  try {
+    const output = (options.execFileSyncImpl ?? execFileSync)("npm", ["root", "-g"], {
+      encoding: "utf8",
+      env: options.env ?? process.env,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return String(output).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function runPackageUninstall(argv, options) {
   if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
     (options.log ?? console.log)(`Usage: arashi uninstall [options]
@@ -190,7 +203,7 @@ Options:
     (options.error ?? console.error)(`Unknown uninstall option: ${unsupportedOption}`);
     return 1;
   }
-  const evidence =
+  let evidence =
     options.ownerEvidence ??
     inferOwnerEvidence(
       options.rootDir ?? join(__dirname, ".."),
@@ -199,6 +212,20 @@ Options:
       options.npmGlobalRoot,
       options.platform ?? currentPlatform,
     );
+  if (options.ownerEvidence === undefined && evidence.length === 0 && options.npmGlobalRoot === undefined) {
+    const detectedNpmRoot = (options.detectNpmGlobalRoot ?? detectNpmGlobalRoot)({
+      env: options.env ?? process.env,
+    });
+    if (detectedNpmRoot) {
+      evidence = inferOwnerEvidence(
+        options.rootDir ?? join(__dirname, ".."),
+        options.env ?? process.env,
+        options.realpathSyncImpl ?? realpathSync,
+        detectedNpmRoot,
+        options.platform ?? currentPlatform,
+      );
+    }
+  }
   if (evidence.length > 1) {
     (options.error ?? console.error)(`Package-manager ownership is ambiguous: ${evidence.join(", ")}. No command was run.`);
     return 1;
