@@ -33,6 +33,12 @@ describe("bundled PowerShell uninstall helper contract", () => {
     expect(helper).toMatch(/IsNullOrEmpty\(\$manifest\.pathMutation\.entry\)/);
   });
 
+  test("decodes the ownership manifest as strict UTF-8", () => {
+    expect(helper).toContain("[System.IO.File]::ReadAllBytes($ManifestPath)");
+    expect(helper).toContain("New-Object System.Text.UTF8Encoding($false, $true)");
+    expect(helper).not.toContain("Get-Content -LiteralPath $ManifestPath -Raw");
+  });
+
   test("revalidates payload ownership after consent immediately before deletion", () => {
     const consentOffset = helper.indexOf(
       'Read-Host "Remove this proven Arashi installation? [y/N]"',

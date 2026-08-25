@@ -5,7 +5,8 @@ Set-StrictMode -Version Latest
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $InstallerPath = Join-Path $Root "scripts\install.ps1"
 $FixtureDirectory = Join-Path $env:RUNNER_TEMP "arashi-same-release-fixture"
-$temporaryUserProfile = Join-Path $env:RUNNER_TEMP "arashi-user-$([Guid]::NewGuid().ToString('N'))"
+$unicodeProfileSegment = ([char]0x7528).ToString() + ([char]0x6237).ToString()
+$temporaryUserProfile = Join-Path $env:RUNNER_TEMP "arashi-$unicodeProfileSegment-$([Guid]::NewGuid().ToString('N'))"
 $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $originalUserProfile = $env:USERPROFILE
 $originalProcessPath = $env:Path
@@ -142,6 +143,13 @@ echo !CANONICAL!
     foreach ($file in @("arashi.bin.exe", "arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat", ".arashi-managed-entrypoints.json")) {
         Assert-True (Test-Path -LiteralPath (Join-Path $installDirectory $file) -PathType Leaf) "Missing installed payload file: $file"
     }
+
+    & $InstallerPath
+
+    $uninstallOutput = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $installDirectory "uninstall.ps1") -InstallDir $installDirectory -DryRun 2>&1 | ForEach-Object { $_.ToString() })
+    $uninstallExitCode = $LASTEXITCODE
+    Assert-True ($uninstallExitCode -eq 0) "UTF-8 manifest uninstall dry-run failed with exit code $uninstallExitCode`: $($uninstallOutput -join [Environment]::NewLine)"
+    Assert-True (($uninstallOutput -join [Environment]::NewLine) -match "Installation channel: official-direct") "UTF-8 manifest uninstall dry-run did not report the installation channel"
 
     $persistedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $matches = @($persistedUserPath -split ";" | Where-Object { $_.TrimEnd("\") -ieq $installDirectory.TrimEnd("\") })

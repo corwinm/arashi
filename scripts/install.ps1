@@ -281,10 +281,14 @@ function Assert-ArashiAliasOwnership {
     if ($ledgerExists) {
         $ledgerReparse = ($ledgerItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
         if ($ledgerItem.PSIsContainer -or $ledgerReparse) { throw "Ownership ledger collision at $ledgerPath is not a regular file; move or remove it deliberately before retrying." }
-        try { $ledger = Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json } catch { throw "Malformed ownership ledger at $ledgerPath; move or remove it deliberately before retrying." }
+        try {
+            $ledgerBytes = [System.IO.File]::ReadAllBytes($ledgerPath)
+            $ledgerEncoding = New-Object System.Text.UTF8Encoding($false, $true)
+            $ledger = $ledgerEncoding.GetString($ledgerBytes) | ConvertFrom-Json
+        } catch { throw "Malformed ownership ledger at $ledgerPath; move or remove it deliberately before retrying." }
         if ($ledger.schemaVersion -eq 2) {
             $currentProperties = @($ledger.PSObject.Properties.Name | Sort-Object)
-            if (($currentProperties -join ',') -cnotin @('files,installDirectory,installationChannel,platform,schemaVersion', 'files,installDirectory,installationChannel,pathMutation,platform,schemaVersion')) { throw "Current ownership manifest property-set defect at $ledgerPath; refresh cannot safely replace it." }
+            if (($currentProperties -join ',') -cnotin @('files,installationChannel,installDirectory,platform,schemaVersion', 'files,installationChannel,installDirectory,pathMutation,platform,schemaVersion')) { throw "Current ownership manifest property-set defect at $ledgerPath; refresh cannot safely replace it." }
             if ($ledger.schemaVersion -isnot [int] -or $ledger.installationChannel -isnot [string] -or $ledger.installationChannel -cne "official-direct" -or $ledger.platform -isnot [string] -or $ledger.platform -cne "windows" -or $ledger.installDirectory -isnot [string] -or [System.IO.Path]::GetFullPath($ledger.installDirectory) -ine [System.IO.Path]::GetFullPath($InstallDirectory)) {
                 throw "Current ownership manifest identity mismatch at $ledgerPath; refresh cannot safely replace it."
             }

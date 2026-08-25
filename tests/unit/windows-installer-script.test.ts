@@ -171,6 +171,24 @@ describe("Windows PowerShell installer", () => {
     expect(body).toContain("is not a regular file");
   });
 
+  test("validates schema-v2 properties in their actual sorted order", () => {
+    const body = functionBody("Assert-ArashiAliasOwnership");
+
+    expect(body).toContain("files,installationChannel,installDirectory,platform,schemaVersion");
+    expect(body).toContain(
+      "files,installationChannel,installDirectory,pathMutation,platform,schemaVersion",
+    );
+    expect(body).not.toContain("files,installDirectory,installationChannel,platform,schemaVersion");
+  });
+
+  test("decodes the ownership ledger as strict UTF-8", () => {
+    const body = functionBody("Assert-ArashiAliasOwnership");
+
+    expect(body).toContain("[System.IO.File]::ReadAllBytes($ledgerPath)");
+    expect(body).toContain("New-Object System.Text.UTF8Encoding($false, $true)");
+    expect(body).not.toContain("Get-Content -LiteralPath $ledgerPath -Raw");
+  });
+
   test("validates a schema-v2 refresh without executing the installed uninstall helper", () => {
     const body = functionBody("Assert-ArashiAliasOwnership");
 

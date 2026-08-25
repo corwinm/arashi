@@ -86,7 +86,8 @@ try {
     $manifestItem = Get-Item -LiteralPath $ManifestPath -Force -ErrorAction Stop
     if ($manifestItem.PSIsContainer -or ($manifestItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { throw "Ownership manifest is not a regular non-reparse file." }
     $manifestBytes = [System.IO.File]::ReadAllBytes($ManifestPath)
-    $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    $manifestEncoding = New-Object System.Text.UTF8Encoding($false, $true)
+    $manifest = $manifestEncoding.GetString($manifestBytes) | ConvertFrom-Json
     $manifestProperties = @($manifest.PSObject.Properties.Name | Sort-Object)
     if (($manifestProperties -join ',') -cnotin @('files,installationChannel,installDirectory,platform,schemaVersion', 'files,installationChannel,installDirectory,pathMutation,platform,schemaVersion')) { throw "Manifest property set is not closed." }
     if ($manifest.schemaVersion -isnot [int] -or $manifest.schemaVersion -ne 2 -or $manifest.installationChannel -isnot [string] -or $manifest.installationChannel -cne "official-direct" -or $manifest.platform -isnot [string] -or $manifest.platform -cne "windows" -or $manifest.installDirectory -isnot [string]) { throw "Unsupported manifest; refresh this direct install first." }
