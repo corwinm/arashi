@@ -145,6 +145,35 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     expect(readFileSync(zshProfile, "utf8")).toBe("before\n");
   });
 
+  test("refreshes a recorded PATH block missing its leading newline", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const zshProfile = join(state.env.HOME, ".zshrc");
+    writeFileSync(zshProfile, "");
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const firstLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    writeFileSync(zshProfile, firstLedger.pathMutation.insertedBytes.slice(1));
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/bash" },
+    });
+
+    expect(refresh.status, refresh.stderr).toBe(0);
+    const bashProfile = join(state.env.HOME, ".bash_profile");
+    const refreshedLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(refreshedLedger.pathMutation.profilePath).toBe(realpathSync(bashProfile));
+    expect(readFileSync(bashProfile, "utf8")).toContain(state.install);
+  });
+
   test("refreshes an exact pre-helper schema-v1 install to schema v2 without executing it", () => {
     const state = fixture();
     mkdirSync(state.install);

@@ -502,7 +502,7 @@ recorded_path_mutation_is_current() {
     {
       current=$0
       sub(/\r$/, "", current)
-      if (previous_previous == "" && previous == marker && current == path_line) count++
+      if (NR > 2 && previous_previous == "" && previous == marker && current == path_line) count++
       previous_previous=previous
       previous=current
     }
