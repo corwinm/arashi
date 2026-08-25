@@ -450,11 +450,22 @@ validate_current_ownership_ledger() {
     [ "$(sed -n '11p' "$ledger_path")" = '  ]' ] || return 1
   else
     [ "$(sed -n '11p' "$ledger_path")" = '  ],' ] || return 1
-    sed -n '12p' "$ledger_path" | LC_ALL=C awk '
+    PATH_MUTATION_PROFILE="$(sed -n '12p' "$ledger_path" | LC_ALL=C awk '
       function valid(value, required, i,c,e) {
         if (required && value == "") return 0
         for (i=1;i<=length(value);i++) if (substr(value,i,1)=="\\") { i++; e=substr(value,i,1); if (e!="\\" && e!="\"" && e!="n") return 0 }
         return 1
+      }
+      function decode(value, output, i, c, escaped) {
+        output=""
+        for(i=1;i<=length(value);i++) {
+          c=substr(value,i,1)
+          if(c!="\\") { output=output c; continue }
+          i++; escaped=substr(value,i,1)
+          if(escaped=="n") output=output sprintf("%c",10)
+          else output=output escaped
+        }
+        return output
       }
       {
         prefix="  \"pathMutation\": { \"profilePath\": \""; separator="\", \"insertedBytes\": \""; suffix="\" }"
@@ -463,10 +474,40 @@ validate_current_ownership_ledger() {
         for(i=1;i<=length(body)-length(separator)+1;i++){c=substr(body,i,1);if(!escaped && substr(body,i,length(separator))==separator){split_at=i;break}if(c=="\\"&&!escaped)escaped=1;else escaped=0}
         if(!split_at)exit 1; profile=substr(body,1,split_at-1); inserted=substr(body,split_at+length(separator))
         if(substr(profile,1,1)!="/" || !valid(profile,1) || !valid(inserted,1))exit 1
-      }' || return 1
+        printf "%s", decode(profile)
+      }')" || return 1
     PATH_MUTATION_JSON="$(sed -n '12p' "$ledger_path")"
   fi
   [ "$(sed -n "${line_count}p" "$ledger_path")" = '}' ] || return 1
+}
+
+clear_recorded_path_mutation() {
+  PATH_MUTATION_PROFILE=""
+  PATH_MUTATION_BYTES=""
+  PATH_MUTATION_JSON=""
+}
+
+recorded_path_mutation_is_current() {
+  local install_dir="$1" path_line marker expected_json
+  [ -n "$PATH_MUTATION_JSON" ] && [ -n "$PATH_MUTATION_PROFILE" ] || return 1
+  [ ! -L "$PATH_MUTATION_PROFILE" ] && [ -f "$PATH_MUTATION_PROFILE" ] && [ -r "$PATH_MUTATION_PROFILE" ] || return 1
+
+  path_line="$(build_posix_path_line "$install_dir")"
+  marker="# Added by arashi installer"
+  PATH_MUTATION_BYTES="$(printf '\n%s\n%s\n' "$marker" "$path_line")"
+  expected_json="  \"pathMutation\": { \"profilePath\": \"$(json_escape "$PATH_MUTATION_PROFILE")\", \"insertedBytes\": \"$(json_escape "$PATH_MUTATION_BYTES")\" }"
+  [ "$PATH_MUTATION_JSON" = "$expected_json" ] || return 1
+
+  LC_ALL=C awk -v marker="$marker" -v path_line="$path_line" '
+    {
+      current=$0
+      sub(/\r$/, "", current)
+      if (previous_previous == "" && previous == marker && current == path_line) count++
+      previous_previous=previous
+      previous=current
+    }
+    END { exit(count == 1 ? 0 : 1) }
+  ' "$PATH_MUTATION_PROFILE"
 }
 
 preflight_alias_ownership() {
@@ -1410,6 +1451,10 @@ main() {
   local install_dir
   install_dir="$(normalize_absolute_path "$(choose_install_dir)")"
   preflight_alias_ownership "$install_dir" || exit 1
+  if [ -n "$PATH_MUTATION_JSON" ] && ! recorded_path_mutation_is_current "$install_dir"; then
+    log "Recorded PATH bytes changed since installation; refreshing PATH ownership"
+    clear_recorded_path_mutation
+  fi
 
   log "Preparing installation for arashi ($release_label)"
   log_debug "Installing $asset_name ($release_label)"

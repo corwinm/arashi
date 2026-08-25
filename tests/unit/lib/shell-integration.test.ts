@@ -98,6 +98,20 @@ describe("shell integration", () => {
     );
   });
 
+  test("refuses ambiguous managed markers without modifying the startup file", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-shell-ambiguous-"));
+    tempPaths.push(home);
+    const bashrcPath = join(home, ".bashrc");
+    const block = buildShellInstallBlock("bash");
+    const contents = `${block}\n\n${block}\n`;
+    await writeFile(bashrcPath, contents);
+
+    await expect(
+      installShellIntegration({ env: { HOME: home, SHELL: "/bin/bash" } }),
+    ).rejects.toThrow(/ambiguous.*marker/i);
+    expect(await readFile(bashrcPath, "utf8")).toBe(contents);
+  });
+
   test("returns actionable error when install cannot detect a supported shell", async () => {
     await expect(
       installShellIntegration({ env: { HOME: "/tmp", SHELL: "/bin/nu" } }),

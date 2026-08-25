@@ -452,6 +452,12 @@ function upsertManagedBlock(currentContents: string, block: string): string {
   const trimmedBlock = `${block.trim()}\n`;
   const starts = findCanonicalMarkerLines(currentContents, START_MARKER);
   const ends = findCanonicalMarkerLines(currentContents, END_MARKER);
+  if (
+    (starts.length !== 0 || ends.length !== 0) &&
+    (starts.length !== 1 || ends.length !== 1 || ends[0] <= starts[0])
+  ) {
+    throw new Error("Ambiguous Arashi shell integration marker state.");
+  }
   const startIndex = starts.length === 1 ? starts[0] : -1;
   const endIndex = ends.length === 1 ? ends[0] : -1;
 
