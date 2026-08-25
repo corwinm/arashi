@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdir, realpath } from "fs/promises";
+import { mkdir, realpath, symlink } from "fs/promises";
 import {
   resolveCreateInvocationContext,
   resolveManagedIgnoreWorkspaceRoot,
@@ -48,14 +48,35 @@ describe("create command bare context resolver", () => {
     });
   });
 
-  test("keeps non-bare invocation behavior", async () => {
+  test("canonicalizes the non-bare workspace root", async () => {
     workspace = await createBareCreateWorkspace();
 
     const context = await resolveCreateInvocationContext(workspace.worktreePath);
+    const canonicalWorktree = await realpath(workspace.worktreePath);
 
     expect(context.repositoryType).toBe("non-bare");
-    expect(context.workspaceRoot).toBe(workspace.worktreePath);
-    expect(context.executionPath).toBe(workspace.worktreePath);
+    expect(context.workspaceRoot).toBe(canonicalWorktree);
+    expect(context.executionPath).toBe(canonicalWorktree);
+  });
+
+  test("canonicalizes a non-bare invocation alias before planning absolute paths", async () => {
+    workspace = await createBareCreateWorkspace();
+    const invocationAlias = join(workspace.rootPath, "workspace-alias");
+    await symlink(
+      workspace.worktreePath,
+      invocationAlias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const context = await resolveCreateInvocationContext(invocationAlias);
+    const canonicalWorktree = await realpath(workspace.worktreePath);
+
+    expect(context).toMatchObject({
+      executionPath: canonicalWorktree,
+      invocationPath: canonicalWorktree,
+      repositoryType: "non-bare",
+      workspaceRoot: canonicalWorktree,
+    });
   });
 
   test("normalizes nested non-bare invocation to workspace root", async () => {
@@ -64,11 +85,13 @@ describe("create command bare context resolver", () => {
     await mkdir(nestedPath, { recursive: true });
 
     const context = await resolveCreateInvocationContext(nestedPath);
+    const canonicalNestedPath = await realpath(nestedPath);
+    const canonicalWorktree = await realpath(workspace.worktreePath);
 
     expect(context.repositoryType).toBe("non-bare");
-    expect(context.invocationPath).toBe(nestedPath);
-    expect(context.workspaceRoot).toBe(workspace.worktreePath);
-    expect(context.executionPath).toBe(workspace.worktreePath);
+    expect(context.invocationPath).toBe(canonicalNestedPath);
+    expect(context.workspaceRoot).toBe(canonicalWorktree);
+    expect(context.executionPath).toBe(canonicalWorktree);
   });
 
   test("prefers the invoking linked worktree for tracked ignore reconciliation", async () => {

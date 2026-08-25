@@ -302,6 +302,13 @@
           "$ref": "#/definitions/WorktreeNamingBranchSlashes",
           "description": "Preserve branch slash hierarchy or flatten slashes to hyphens"
         },
+        "maxPathLength": {
+          "description": "Maximum UTF-16 code units for each absolute newly planned configured-worktree destination",
+          "maximum": 2147483647,
+          "minimum": 1,
+          "multipleOf": 1,
+          "type": "number"
+        },
         "style": {
           "$ref": "#/definitions/WorktreeNamingStyle",
           "description": "Repository-shape-aware default, branch-only, or repository-prefixed naming"

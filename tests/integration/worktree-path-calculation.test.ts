@@ -9,6 +9,7 @@ import type { Config as ArashiConfig } from "../../src/lib/config.ts";
 import type { Repository } from "../../src/core/repository.ts";
 import { calculateWorktreePath, calculateWorktreePathPlan } from "../../src/core/worktree.ts";
 import { join } from "path";
+import { createHash } from "node:crypto";
 import { spawn } from "child_process";
 
 async function exec(command: string, cwd: string): Promise<void> {
@@ -319,5 +320,251 @@ describe("calculateWorktreePath integration", () => {
     expect(plan.get(repositories[0]!)?.path).toBe(rootDestination);
     expect(plan.get(repositories[1]!)?.repositoryType).toBe("meta-repo");
     expect(plan.get(repositories[2]!)?.path).toBe(join(rootDestination, "repos", "ordinary-child"));
+  });
+
+  test("keeps under-budget configured paths byte-for-byte unchanged", async () => {
+    const rootPath = join(testDir, "under-budget");
+    await createGitRepo(rootPath);
+    const repository: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "under-budget",
+      path: rootPath,
+    };
+    const baseConfig: ArashiConfig = { repos: {}, reposDir: "./repos", version: "1.0.0" };
+    const ordinary = await calculateWorktreePath(repository, "feature/short", baseConfig, {
+      reason: "configured parent",
+      type: "meta-repo",
+    });
+    const budgeted = await calculateWorktreePath(
+      repository,
+      "feature/short",
+      { ...baseConfig, worktreeNaming: { maxPathLength: ordinary.path.length } },
+      { reason: "configured parent", type: "meta-repo" },
+    );
+
+    expect(budgeted).toEqual(ordinary);
+  });
+
+  test("shortens deterministically with the portable ordinary namespace SHA-256 suffix", async () => {
+    const rootPath = join(testDir, "stable-hash");
+    await createGitRepo(rootPath);
+    const branch = "feature/this-is-an-extremely-long-generated-parent-namespace";
+    const portableNamespace = branch;
+    const suffix = createHash("sha256").update(portableNamespace).digest("hex").slice(0, 8);
+    const base = join(rootPath, ".arashi", "worktrees");
+    const maxPathLength = base.length + 1 + 24;
+    const config: ArashiConfig = {
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+      worktreeNaming: { maxPathLength },
+    };
+    const repository: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "stable-hash",
+      path: rootPath,
+    };
+
+    const first = await calculateWorktreePath(repository, branch, config, {
+      reason: "configured parent",
+      type: "meta-repo",
+    });
+    const second = await calculateWorktreePath(repository, branch, config, {
+      reason: "configured parent",
+      type: "meta-repo",
+    });
+
+    expect(first.path).toBe(join(base, `feature/this-is-${suffix}`));
+    expect(first.path.length).toBe(maxPathLength);
+    expect(second.path).toBe(first.path);
+  });
+
+  test("counts UTF-16 units without splitting a surrogate pair", async () => {
+    const rootPath = join(testDir, "unicode-safe");
+    await createGitRepo(rootPath);
+    const branch = "abc😀definitely-too-long";
+    const hash = createHash("sha256").update(branch).digest("hex").slice(0, 8);
+    const base = join(rootPath, ".arashi", "worktrees");
+    const repository: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "unicode-safe",
+      path: rootPath,
+    };
+    const result = await calculateWorktreePath(
+      repository,
+      branch,
+      {
+        repos: {},
+        reposDir: "./repos",
+        version: "1.0.0",
+        worktreeNaming: { maxPathLength: base.length + 1 + 13 },
+      },
+      { reason: "configured parent", type: "meta-repo" },
+    );
+
+    expect(result.path).toBe(join(base, `abc-${hash}`));
+    expect(result.path).not.toContain("\uFFFD");
+  });
+
+  test("hashes distinct ordinary namespaces while preserving deliberate ordinary aliases", async () => {
+    const firstPath = join(testDir, "hash-one.git");
+    const secondPath = join(testDir, "hash-two.git");
+    await createGitRepo(firstPath, true);
+    await createGitRepo(secondPath, true);
+    const branch = "feature/shared-readable-prefix-that-needs-shortening";
+    const sharedBase = "../shared-fitted";
+    const makeConfig = (style: "branch" | "default" | "repo-branch"): ArashiConfig => ({
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+      worktreeNaming: { maxPathLength: join(testDir, "shared-fitted").length + 22, style },
+      worktreesDir: sharedBase,
+    });
+    const first: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "hash-one.git",
+      path: firstPath,
+    };
+    const second: Repository = { ...first, name: "hash-two.git", path: secondPath };
+
+    const configuredParent = { reason: "configured parent", type: "meta-repo" as const };
+    const distinctFirst = await calculateWorktreePath(
+      first,
+      branch,
+      makeConfig("repo-branch"),
+      configuredParent,
+    );
+    const distinctSecond = await calculateWorktreePath(
+      second,
+      branch,
+      makeConfig("repo-branch"),
+      configuredParent,
+    );
+    const aliasFirst = await calculateWorktreePath(
+      first,
+      branch,
+      makeConfig("branch"),
+      configuredParent,
+    );
+    const aliasSecond = await calculateWorktreePath(
+      second,
+      branch,
+      makeConfig("branch"),
+      configuredParent,
+    );
+
+    expect(distinctFirst.path).not.toBe(distinctSecond.path);
+    expect(distinctFirst.path).toContain(
+      createHash("sha256").update(`hash-one-${branch}`).digest("hex").slice(0, 8),
+    );
+    expect(distinctSecond.path).toContain(
+      createHash("sha256").update(`hash-two-${branch}`).digest("hex").slice(0, 8),
+    );
+    expect(aliasFirst.path).toBe(aliasSecond.path);
+  });
+
+  test("sizes one parent against the longest selected child for parent and child-only plans", async () => {
+    const rootPath = join(testDir, "coordinated");
+    await createGitRepo(rootPath);
+    const shortPath = join(rootPath, "repos", "short");
+    const longPath = join(rootPath, "packages", "deep", "longest-child-name");
+    await createGitRepo(shortPath);
+    await createGitRepo(longPath);
+    const parent: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "coordinated",
+      path: rootPath,
+    };
+    const short: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "short",
+      path: shortPath,
+    };
+    const longest: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "longest",
+      path: longPath,
+    };
+    const base = join(rootPath, ".arashi", "worktrees");
+    const longestSuffix = join("packages", "deep", "longest-child-name");
+    const maxPathLength = base.length + 1 + 18 + 1 + longestSuffix.length;
+    const config: ArashiConfig = {
+      repos: {},
+      reposDir: "./repos",
+      version: "1.0.0",
+      worktreeNaming: { maxPathLength },
+    };
+
+    const parentSelected = await calculateWorktreePathPlan(
+      [parent, short, longest],
+      "feature/a-parent-name-that-is-much-too-long",
+      config,
+      parent,
+    );
+    const childOnly = await calculateWorktreePathPlan(
+      [short, longest],
+      "feature/a-parent-name-that-is-much-too-long",
+      config,
+      parent,
+    );
+    const parentPath = parentSelected.get(parent)!.path;
+
+    expect([...childOnly.keys()]).toEqual([short, longest]);
+    expect(parentSelected.get(short)!.path).toBe(join(parentPath, "repos", "short"));
+    expect(parentSelected.get(longest)!.path).toBe(join(parentPath, longestSuffix));
+    expect(childOnly.get(short)!.parentWorktreePath).toBe(parentPath);
+    expect(childOnly.get(longest)!.parentWorktreePath).toBe(parentPath);
+    expect(childOnly.get(longest)!.path.length).toBeLessThanOrEqual(maxPathLength);
+  });
+
+  test("reports the first impossible selected destination with exact overflow details", async () => {
+    const rootPath = join(testDir, "overflow");
+    await createGitRepo(rootPath);
+    const childPath = join(rootPath, "repos", "api");
+    await createGitRepo(childPath);
+    const parent: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "overflow",
+      path: rootPath,
+    };
+    const child: Repository = {
+      defaultBranch: "main",
+      hasSetupScript: false,
+      name: "api",
+      path: childPath,
+    };
+    const base = join(rootPath, ".arashi", "worktrees");
+    const maxPathLength = base.length + 1 + 8 + 1 + join("repos", "api").length;
+    const ordinaryPath = join(base, "feature", "far-too-long", "repos", "api");
+
+    await expect(
+      calculateWorktreePathPlan(
+        [child],
+        "feature/far-too-long",
+        {
+          repos: {},
+          reposDir: "./repos",
+          version: "1.0.0",
+          worktreeNaming: { maxPathLength },
+        },
+        parent,
+      ),
+    ).rejects.toMatchObject({
+      code: "WORKTREE_PATH_LENGTH_EXCEEDED",
+      details: {
+        maxPathLength,
+        minimumPathLength: maxPathLength + 1,
+        repositoryName: "api",
+        worktreePath: ordinaryPath,
+      },
+    });
   });
 });

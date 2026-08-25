@@ -90,7 +90,11 @@ const writeConfig = async (
   workspace: string,
   repoPath: string,
   policy: { copy: string[]; symlink: string[] },
-  worktreeNaming?: { branchSlashes: "flatten"; style: "repo-branch" },
+  worktreeNaming?: {
+    branchSlashes?: "flatten" | "preserve";
+    maxPathLength?: number;
+    style?: "branch" | "default" | "repo-branch";
+  },
 ) => {
   await mkdir(join(workspace, ".arashi", "hooks"), { recursive: true });
   await writeFile(
@@ -340,6 +344,71 @@ const runNativeNamingMatrix = async (
   }
 };
 
+const runNativePathBudgetAcceptance = async (
+  binary: string,
+  root: string,
+  environment: NodeJS.ProcessEnv,
+) => {
+  const workspace = join(
+    root,
+    "path-budget",
+    "long-workspace-root-component-for-native-acceptance",
+    "workspace",
+  );
+  const app = join(workspace, "repos", "app");
+  await initRepository(workspace, "native path budget parent");
+  await initRepository(app, "native path budget child");
+  const base = join(workspace, "native-worktrees");
+  const childSuffix = join("repos", "app");
+  const maxPathLength = base.length + 1 + 24 + 1 + childSuffix.length;
+  await writeConfig(workspace, "./repos/app", { copy: [], symlink: [] }, { maxPathLength });
+  // Keep the exact Git branch itself below legacy Windows ref-path limits; the configured
+  // worktree destination is still long enough to require parent shortening.
+  const branch = `native/path-budget/${"long-segment-".repeat(3)}end`;
+  const ordinaryParent = join(base, branch);
+
+  const created = await run(
+    binary,
+    ["create", branch, "--no-hooks", "--no-progress", "--no-launch", "--no-switch", "--json"],
+    { cwd: workspace, env: environment },
+  );
+  assert(
+    created.code === 0,
+    `native configured path-budget create failed:\n${created.stdout}\n${created.stderr}`,
+  );
+  const envelope = parseJson(created);
+  const data = envelope.data as {
+    repositories: { branchName: string; repositoryName: string; worktreePath: string }[];
+  };
+  assert(data.repositories.length === 2, "native path-budget plan omitted a repository");
+  assert(
+    data.repositories.every(
+      ({ branchName, worktreePath }) =>
+        branchName === branch && worktreePath.length <= maxPathLength,
+    ),
+    `native path-budget paths or branches violate the contract: ${JSON.stringify(data.repositories)}`,
+  );
+  const parent = data.repositories.find(
+    ({ repositoryName }) => repositoryName === "workspace",
+  )?.worktreePath;
+  const child = data.repositories.find(
+    ({ repositoryName }) => repositoryName === "app",
+  )?.worktreePath;
+  assert(parent && child, "native path-budget JSON omitted parent or child paths");
+  assert(parent !== ordinaryParent, "native path-budget parent was not shortened");
+  assert(child === join(parent, childSuffix), "native path-budget child did not share one parent");
+  assert(await exists(join(parent, "README.md")), "native path-budget parent was not created");
+  assert(await exists(join(child, "README.md")), "native path-budget child was not created");
+  assert(
+    (await git(workspace, "show-ref", "--verify", `refs/heads/${branch}`)).length > 0,
+    "native path-budget changed the parent Git branch identity",
+  );
+  assert(
+    (await git(app, "show-ref", "--verify", `refs/heads/${branch}`)).length > 0,
+    "native path-budget changed the child Git branch identity",
+  );
+};
+
 const main = async () => {
   const [, , binaryArgument] = process.argv;
   assert(
@@ -544,6 +613,7 @@ const main = async () => {
     );
 
     await runNativeNamingMatrix(binary, root, environment);
+    await runNativePathBudgetAcceptance(binary, root, environment);
 
     const bareSeed = join(root, "bare-seed");
     const bareSource = join(root, "example.git");

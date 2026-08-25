@@ -118,6 +118,13 @@ export interface WorktreeNamingConfig {
   style?: WorktreeNamingStyle;
   /** Preserve branch slash hierarchy or flatten slashes to hyphens */
   branchSlashes?: WorktreeNamingBranchSlashes;
+  /**
+   * Maximum UTF-16 code units for each absolute newly planned configured-worktree destination
+   * @minimum 1
+   * @maximum 2147483647
+   * @multipleOf 1
+   */
+  maxPathLength?: number;
 }
 
 /** Root configuration object for Arashi. */
@@ -547,7 +554,7 @@ const ROOT_ALLOWED_KEYS = new Set([
 
 const ROOT_HOOKS_ALLOWED_KEYS = new Set(["timeout", "scripts"]);
 const META_ALLOWED_KEYS = new Set(["baseBranch"]);
-const WORKTREE_NAMING_ALLOWED_KEYS = new Set(["style", "branchSlashes"]);
+const WORKTREE_NAMING_ALLOWED_KEYS = new Set(["style", "branchSlashes", "maxPathLength"]);
 const ROOT_SYNC_ALLOWED_KEYS = new Set(["timeoutSeconds", "timeout_seconds"]);
 const COMMAND_DEFAULTS_ALLOWED_KEYS = new Set(["create", "editors", "switch"]);
 const EDITOR_DEFAULTS_ALLOWED_KEYS = new Set(["vscode", "cursor", "kiro"]);
@@ -1352,6 +1359,18 @@ const normalizeWorktreeNamingConfig = (
       normalized.branchSlashes = value.branchSlashes;
     } else {
       errors.push('worktreeNaming.branchSlashes: must be one of "preserve" or "flatten"');
+    }
+  }
+  if (value.maxPathLength !== undefined) {
+    if (
+      typeof value.maxPathLength === "number" &&
+      Number.isInteger(value.maxPathLength) &&
+      value.maxPathLength >= 1 &&
+      value.maxPathLength <= 2_147_483_647
+    ) {
+      normalized.maxPathLength = value.maxPathLength;
+    } else {
+      errors.push("worktreeNaming.maxPathLength: must be an integer from 1 through 2147483647");
     }
   }
   return normalized;
