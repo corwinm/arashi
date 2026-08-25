@@ -73,7 +73,7 @@ describe("shell uninstall", () => {
     await applyShellUninstall(plan);
     expect(await readFile(profile, "utf8")).toBe("before\n\nafter\n");
     const after = await stat(profile);
-    expect(after.mode & 0o777).toBe(0o640);
+    expect(after.mode & 0o777).toBe(before.mode & 0o777);
     expect(after.ino).not.toBe(before.ino);
   });
 
@@ -82,6 +82,7 @@ describe("shell uninstall", () => {
     const contents = `before\n${start}\nowned\n${end}\nafter\n`;
     await writeFile(profile, contents);
     await chmod(profile, 0o640);
+    const before = await stat(profile);
     const plan = await planShellUninstall({ env: { HOME: home, SHELL: "/bin/zsh" } });
 
     await expect(
@@ -93,7 +94,7 @@ describe("shell uninstall", () => {
     ).rejects.toThrow(/injected rename failure/);
 
     expect(await readFile(profile, "utf8")).toBe(contents);
-    expect((await stat(profile)).mode & 0o777).toBe(0o640);
+    expect((await stat(profile)).mode & 0o777).toBe(before.mode & 0o777);
     expect((await readdir(home)).filter((name) => name.includes("arashi-uninstall"))).toEqual([]);
   });
 
