@@ -487,8 +487,24 @@ clear_recorded_path_mutation() {
   PATH_MUTATION_JSON=""
 }
 
+file_occurrences() {
+  local haystack="$1" needle="$2" haystack_size needle_size offset count=0 first=-1 candidate first_byte
+  haystack_size="$(wc -c < "$haystack" | tr -d '[:space:]')"
+  needle_size="$(wc -c < "$needle" | tr -d '[:space:]')"
+  [ "$needle_size" -gt 0 ] || { printf '0 -1\n'; return; }
+  candidate="$(mktemp "${TMPDIR:-/tmp}/arashi-match.XXXXXX")" || return 1
+  first_byte="$(od -An -N1 -t u1 "$needle" | tr -d '[:space:]')"
+  while read -r offset; do
+    [ "$offset" -le $((haystack_size - needle_size)) ] || continue
+    dd if="$haystack" of="$candidate" bs=1 skip="$offset" count="$needle_size" 2>/dev/null
+    if cmp -s "$candidate" "$needle"; then count=$((count + 1)); [ "$first" -ge 0 ] || first="$offset"; fi
+  done < <(od -An -v -t u1 "$haystack" | awk -v wanted="$first_byte" '{for(i=1;i<=NF;i++){if($i==wanted)print offset;offset++}}')
+  rm -f -- "$candidate"
+  printf '%s %s\n' "$count" "$first"
+}
+
 recorded_path_mutation_is_current() {
-  local install_dir="$1" path_line marker expected_json
+  local install_dir="$1" path_line marker expected_json needle count offset
   [ -n "$PATH_MUTATION_JSON" ] && [ -n "$PATH_MUTATION_PROFILE" ] || return 1
   [ ! -L "$PATH_MUTATION_PROFILE" ] && [ -f "$PATH_MUTATION_PROFILE" ] && [ -r "$PATH_MUTATION_PROFILE" ] || return 1
 
@@ -498,15 +514,14 @@ recorded_path_mutation_is_current() {
   expected_json="  \"pathMutation\": { \"profilePath\": \"$(json_escape "$PATH_MUTATION_PROFILE")\", \"insertedBytes\": \"$(json_escape "$PATH_MUTATION_BYTES")\" }"
   [ "$PATH_MUTATION_JSON" = "$expected_json" ] || return 1
 
-  LC_ALL=C awk -v marker="$marker" -v path_line="$path_line" '
-    {
-      current=$0
-      if (NR > 2 && previous_previous == "" && previous == marker && current == path_line) count++
-      previous_previous=previous
-      previous=current
-    }
-    END { exit(count == 1 ? 0 : 1) }
-  ' "$PATH_MUTATION_PROFILE"
+  needle="$(mktemp "${TMPDIR:-/tmp}/arashi-path-record.XXXXXX")" || return 1
+  printf '%s' "$PATH_MUTATION_BYTES" > "$needle" || { rm -f -- "$needle"; return 1; }
+  read -r count offset < <(file_occurrences "$PATH_MUTATION_PROFILE" "$needle") || {
+    rm -f -- "$needle"
+    return 1
+  }
+  rm -f -- "$needle"
+  [ "$count" -eq 1 ]
 }
 
 preflight_alias_ownership() {
@@ -1396,6 +1411,11 @@ configure_shell_integration() {
   fi
 
   rc_file="$(resolve_shell_rc_file "$shell_name")"
+  if [ -L "$rc_file" ]; then
+    warn "Skipping shell integration for symbolic link: $rc_file"
+    warn "Run 'arashi shell install' manually after choosing a regular startup file"
+    return
+  fi
   integration_block="$(build_shell_integration_block "$shell_name")" || {
     warn "Could not build shell integration line for $shell_name"
     return

@@ -198,6 +198,7 @@ describe("uninstall command consent", () => {
         copyFile: async (...paths) => {
           copies.push(paths);
         },
+        homeDirectory: () => "/home/fallback",
         mkdtemp: async () => "/tmp/arashi-uninstall-unique",
         parentPid: 42,
         readFile: async () => Buffer.from("helper"),
@@ -214,7 +215,16 @@ describe("uninstall command consent", () => {
     expect(spawns).toEqual([
       {
         command: "/tmp/arashi-uninstall-unique/uninstall.sh",
-        args: ["--install-dir", "/linked/owned", "--parent-pid", "42", "--yes", "--temporary-self"],
+        args: [
+          "--install-dir",
+          "/linked/owned",
+          "--home-dir",
+          "/home/fallback",
+          "--parent-pid",
+          "42",
+          "--yes",
+          "--temporary-self",
+        ],
         options: { detached: true, stdio: "inherit" },
       },
     ]);

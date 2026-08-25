@@ -2,6 +2,7 @@
 set -euo pipefail
 
 INSTALL_DIR="${ARASHI_INSTALL_DIR:-}"
+HOME_DIR="${HOME:-}"
 DRY_RUN=false
 YES=false
 PARENT_PID=""
@@ -9,11 +10,12 @@ TEMPORARY_SELF=false
 
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 usage() {
-  printf '%s\n' 'Usage: uninstall.sh [--install-dir <path>] [--dry-run|-n] [--yes|-y] [--parent-pid <pid>]'
+  printf '%s\n' 'Usage: uninstall.sh [--install-dir <path>] [--home-dir <path>] [--dry-run|-n] [--yes|-y] [--parent-pid <pid>]'
 }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --install-dir) shift; [ "$#" -gt 0 ] || fail "Missing --install-dir value"; INSTALL_DIR="$1" ;;
+    --home-dir) shift; [ "$#" -gt 0 ] || fail "Missing --home-dir value"; HOME_DIR="$1" ;;
     --dry-run|-n) DRY_RUN=true ;;
     --yes|-y) YES=true ;;
     --parent-pid) shift; [ "$#" -gt 0 ] || fail "Missing --parent-pid value"; PARENT_PID="$1" ;;
@@ -25,8 +27,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$INSTALL_DIR" ]; then
-  [ -n "${HOME:-}" ] || fail "HOME is required when --install-dir is omitted"
-  INSTALL_DIR="$HOME/.arashi/bin"
+  [ -n "$HOME_DIR" ] || fail "HOME is required when --install-dir is omitted"
+  INSTALL_DIR="$HOME_DIR/.arashi/bin"
+fi
+if [ -n "$HOME_DIR" ]; then
+  case "$HOME_DIR" in /*) ;; *) fail "--home-dir must be an absolute path" ;; esac
 fi
 
 cleanup_self() {
@@ -251,9 +256,9 @@ preflight() {
       fi
     fi
   fi
-  if [ -n "${HOME:-}" ]; then
-    local candidates=("$HOME/.zshrc" "$HOME/.config/fish/config.fish")
-    if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then candidates+=("$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile"); else candidates+=("$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"); fi
+  if [ -n "$HOME_DIR" ]; then
+    local candidates=("$HOME_DIR/.zshrc" "$HOME_DIR/.config/fish/config.fish")
+    if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then candidates+=("$HOME_DIR/.bash_profile" "$HOME_DIR/.bashrc" "$HOME_DIR/.profile"); else candidates+=("$HOME_DIR/.bashrc" "$HOME_DIR/.bash_profile" "$HOME_DIR/.profile"); fi
     for path in "${candidates[@]}"; do
       [ -e "$path" ] || [ -L "$path" ] || continue
       if [ -L "$path" ] || [ ! -f "$path" ] || [ ! -r "$path" ]; then SHELL_PRESERVED[$SHELL_PRESERVED_COUNT]="$path"; SHELL_PRESERVED_COUNT=$((SHELL_PRESERVED_COUNT + 1)); continue; fi

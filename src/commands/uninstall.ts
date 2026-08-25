@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { copyFile, chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Command } from "commander";
 
@@ -47,6 +47,7 @@ export async function stageDirectUninstallHelper(
   dependencies: {
     chmod?: (path: string, mode: number) => Promise<void>;
     copyFile?: (source: string, destination: string) => Promise<void>;
+    homeDirectory?: () => string;
     mkdtemp?: (prefix: string) => Promise<string>;
     parentPid?: number;
     readFile?: (path: string) => Promise<Buffer>;
@@ -85,6 +86,9 @@ export async function stageDirectUninstallHelper(
     }
     const spawnHelper = dependencies.spawn ?? spawn;
     const parentPid = String(dependencies.parentPid ?? process.pid);
+    const cleanupHome = (
+      dependencies.homeDirectory ?? (() => process.env.HOME?.trim() || homedir())
+    )().trim();
     const child =
       plan.manifest.platform === "windows"
         ? spawnHelper(
@@ -109,6 +113,8 @@ export async function stageDirectUninstallHelper(
             [
               "--install-dir",
               plan.manifest.installDirectory,
+              "--home-dir",
+              cleanupHome,
               "--parent-pid",
               parentPid,
               "--yes",

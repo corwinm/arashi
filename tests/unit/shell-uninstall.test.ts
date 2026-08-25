@@ -47,6 +47,31 @@ describe("shell uninstall", () => {
     ]);
   });
 
+  test("falls back to the OS home for detected-shell uninstall planning", async () => {
+    const profile = join(home, ".zshrc");
+    await writeFile(profile, `${start}\nowned\n${end}\n`);
+
+    const plans = await planDetectedShellUninstalls({
+      env: { HOME: undefined, SHELL: "/bin/zsh" },
+      homedir: () => home,
+    });
+
+    expect(plans).toEqual([
+      expect.objectContaining({ startupFilePath: profile, status: "removable" }),
+    ]);
+  });
+
+  test("falls back to the OS home for all-shell direct uninstall planning", async () => {
+    const profile = join(home, ".zshrc");
+    await writeFile(profile, `${start}\nowned\n${end}\n`);
+
+    const plans = await planSupportedShellUninstalls({ HOME: undefined }, () => home);
+
+    expect(plans).toEqual([
+      expect.objectContaining({ startupFilePath: profile, status: "removable" }),
+    ]);
+  });
+
   test("preflights every deterministic supported startup file", async () => {
     const zshProfile = join(home, ".zshrc");
     const fishProfile = join(home, ".config", "fish", "config.fish");

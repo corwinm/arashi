@@ -4,6 +4,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -88,6 +89,38 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     );
     expect(ledger.pathMutation.profilePath).toBe(realpathSync(profile));
     expect(readFileSync(profile, "utf8")).toBe(`before\n${ledger.pathMutation.insertedBytes}`);
+  });
+
+  test("preserves exact recorded PATH bytes after profile content without a trailing newline", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(profile, "before");
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const firstLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(readFileSync(profile, "utf8")).toBe(`before${firstLedger.pathMutation.insertedBytes}`);
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/bash" },
+    });
+
+    expect(refresh.status, refresh.stderr).toBe(0);
+    const refreshedLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(refreshedLedger.pathMutation).toEqual(firstLedger.pathMutation);
+    expect(readFileSync(profile, "utf8")).toBe(`before${firstLedger.pathMutation.insertedBytes}`);
+    const bashProfile = join(state.env.HOME, ".bash_profile");
+    if (existsSync(bashProfile)) {
+      expect(readFileSync(bashProfile, "utf8")).not.toContain(state.install);
+    }
   });
 
   test("preserves validated installer-owned PATH provenance across refresh", () => {
@@ -268,6 +301,29 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
       readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
     );
     expect(ledger).not.toHaveProperty("pathMutation");
+  });
+
+  test("preserves symlinked startup files when direct shell integration is enabled", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const target = join(state.env.HOME, "shared-zshrc");
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(target, "before\n");
+    symlinkSync(target, profile);
+
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: {
+        ...state.env,
+        ARASHI_SHELL_INTEGRATION: "yes",
+        SHELL: "/bin/zsh",
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(lstatSync(profile).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, "utf8")).toBe("before\n");
+    expect(result.stderr).toContain("symbolic link");
   });
 
   test("rolls back a newly inserted PATH line when payload commit fails", () => {

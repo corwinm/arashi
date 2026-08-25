@@ -99,15 +99,25 @@ describe("bundled POSIX uninstall helper", () => {
     expect(existsSync(join(install, ".arashi-managed-entrypoints.json"))).toBe(true);
   });
 
-  test("honors an explicit install directory when HOME is unset", () => {
+  test("honors explicit install and home directories when HOME is unset", () => {
     prepare();
+    const profile = join(fixture, ".zshrc");
+    writeFileSync(
+      profile,
+      "before\n# >>> arashi shell integration >>>\nowned\n# <<< arashi shell integration <<<\nafter\n",
+    );
     const { HOME: _home, ...environment } = process.env;
-    const result = spawnSync("bash", [helperSource, "--install-dir", install, "--dry-run"], {
-      encoding: "utf8",
-      env: { ...environment, SHELL: "/bin/zsh" },
-    });
+    const result = spawnSync(
+      "bash",
+      [helperSource, "--install-dir", install, "--home-dir", fixture, "--dry-run"],
+      {
+        encoding: "utf8",
+        env: { ...environment, SHELL: "/bin/zsh" },
+      },
+    );
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/official-direct|remove.*arashi\.bin/is);
+    expect(result.stdout).toContain(`remove exact managed shell block: ${profile}`);
   });
 
   test("temporary-self cannot remove the installed helper during dry-run", () => {

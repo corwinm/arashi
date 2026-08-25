@@ -179,8 +179,9 @@ export async function installShellIntegration(
 export async function resolveStartupFilePath(
   shell: SupportedShell,
   env: Record<string, string | undefined> = process.env,
+  homeDirectory: () => string = homedir,
 ): Promise<string | null> {
-  const home = env.HOME?.trim() || homedir();
+  const home = env.HOME?.trim() || homeDirectory().trim();
   if (!home) {
     return null;
   }
@@ -197,23 +198,31 @@ export async function resolveStartupFilePath(
 }
 
 export async function planShellUninstall(
-  options: { env?: Record<string, string | undefined>; shell?: SupportedShell } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    homedir?: () => string;
+    shell?: SupportedShell;
+  } = {},
 ): Promise<ShellUninstallPlan> {
   const env = options.env ?? process.env;
   const shell = options.shell ?? detectSupportedShell(env);
   if (!shell) throw new Error("Unable to detect a supported shell for `arashi shell uninstall`.");
-  const startupFilePath = await resolveStartupFilePath(shell, env);
+  const startupFilePath = await resolveStartupFilePath(shell, env, options.homedir ?? homedir);
   if (!startupFilePath) throw new Error(`Unable to determine a startup file for ${shell}.`);
   return planShellUninstallPath(startupFilePath);
 }
 
 export async function planDetectedShellUninstalls(
-  options: { env?: Record<string, string | undefined>; shell?: SupportedShell } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    homedir?: () => string;
+    shell?: SupportedShell;
+  } = {},
 ): Promise<ShellUninstallPlan[]> {
   const env = options.env ?? process.env;
   const shell = options.shell ?? detectSupportedShell(env);
   if (!shell) throw new Error("Unable to detect a supported shell for `arashi shell uninstall`.");
-  const home = env.HOME?.trim();
+  const home = env.HOME?.trim() || (options.homedir ?? homedir)().trim();
   if (!home) throw new Error("Unable to determine a home directory for `arashi shell uninstall`.");
 
   const plans: ShellUninstallPlan[] = [];
@@ -226,8 +235,9 @@ export async function planDetectedShellUninstalls(
 
 export async function planSupportedShellUninstalls(
   env: Record<string, string | undefined> = process.env,
+  homeDirectory: () => string = homedir,
 ): Promise<ShellUninstallPlan[]> {
-  const home = env.HOME?.trim();
+  const home = env.HOME?.trim() || homeDirectory().trim();
   if (!home) return [];
   const candidates = ["zsh", "fish", "bash"].flatMap((shell) =>
     getStartupFileCandidates(home, shell as SupportedShell),
