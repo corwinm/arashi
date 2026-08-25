@@ -186,6 +186,7 @@ describe("Windows PowerShell installer", () => {
 
     expect(body).toContain("[System.IO.File]::ReadAllBytes($ledgerPath)");
     expect(body).toContain("New-Object System.Text.UTF8Encoding($false, $true)");
+    expect(body).toContain("TrimStart([char]0xFEFF)");
     expect(body).not.toContain("Get-Content -LiteralPath $ledgerPath -Raw");
   });
 

@@ -284,7 +284,8 @@ function Assert-ArashiAliasOwnership {
         try {
             $ledgerBytes = [System.IO.File]::ReadAllBytes($ledgerPath)
             $ledgerEncoding = New-Object System.Text.UTF8Encoding($false, $true)
-            $ledger = $ledgerEncoding.GetString($ledgerBytes) | ConvertFrom-Json
+            $ledgerText = $ledgerEncoding.GetString($ledgerBytes).TrimStart([char]0xFEFF)
+            $ledger = $ledgerText | ConvertFrom-Json
         } catch { throw "Malformed ownership ledger at $ledgerPath; move or remove it deliberately before retrying." }
         if ($ledger.schemaVersion -eq 2) {
             $currentProperties = @($ledger.PSObject.Properties.Name | Sort-Object)

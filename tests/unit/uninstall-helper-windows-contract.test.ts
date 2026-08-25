@@ -36,6 +36,7 @@ describe("bundled PowerShell uninstall helper contract", () => {
   test("decodes the ownership manifest as strict UTF-8", () => {
     expect(helper).toContain("[System.IO.File]::ReadAllBytes($ManifestPath)");
     expect(helper).toContain("New-Object System.Text.UTF8Encoding($false, $true)");
+    expect(helper).toContain("TrimStart([char]0xFEFF)");
     expect(helper).not.toContain("Get-Content -LiteralPath $ManifestPath -Raw");
   });
 
