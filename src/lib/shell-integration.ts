@@ -140,15 +140,18 @@ export async function installShellIntegration(
   }
 
   const startupFile = runtime.file(startupFilePath);
-  const existed = await startupFile.exists();
-  if (existed) {
-    const startupStat = await lstat(startupFilePath);
-    if (startupStat.isSymbolicLink()) {
-      throw new Error(`Shell startup target is a symbolic link: ${startupFilePath}`);
-    }
-    if (!startupStat.isFile()) {
-      throw new Error(`Shell startup target is not a regular file: ${startupFilePath}`);
-    }
+  let startupStat: Stats | null = null;
+  try {
+    startupStat = await lstat(startupFilePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const existed = startupStat !== null;
+  if (startupStat?.isSymbolicLink()) {
+    throw new Error(`Shell startup target is a symbolic link: ${startupFilePath}`);
+  }
+  if (startupStat && !startupStat.isFile()) {
+    throw new Error(`Shell startup target is not a regular file: ${startupFilePath}`);
   }
   const currentContents = existed ? await startupFile.text() : "";
   const block = buildShellInstallBlock(shell);

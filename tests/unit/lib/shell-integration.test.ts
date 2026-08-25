@@ -95,6 +95,19 @@ describe("shell integration", () => {
     expect(await readFile(targetPath, "utf8")).toBe("# shared\n");
   });
 
+  test("refuses a dangling startup-file symlink without creating its target", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-shell-dangling-symlink-"));
+    tempPaths.push(home);
+    const targetPath = join(home, "missing-zshrc");
+    const startupPath = join(home, ".zshrc");
+    await symlink(targetPath, startupPath);
+
+    await expect(
+      installShellIntegration({ env: { HOME: home, SHELL: "/bin/zsh" } }),
+    ).rejects.toThrow(/symbolic link/i);
+    expect(await runtime.file(targetPath).exists()).toBe(false);
+  });
+
   test("upgrades a wrapper-only block without changing bytes outside its markers", async () => {
     const home = await mkdtemp(join(tmpdir(), "arashi-shell-upgrade-"));
     tempPaths.push(home);
