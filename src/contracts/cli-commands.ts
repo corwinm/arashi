@@ -49,6 +49,104 @@ export interface CommandSemanticMetadata {
   addOnboarding?: AddOnboardingPolicy;
   uninstall?: UninstallPolicy;
   configure?: ConfigurePolicy;
+  deleteRepository?: DeleteRepositoryPolicy;
+}
+export interface DeleteRepositoryPolicy {
+  selection: "explicit-exact-key-or-tty-checkbox";
+  batchOrder: "bytewise";
+  confirmation: "one-combined-default-no";
+  confirmationStates: ["not-required", "confirmed", "declined", "required"];
+  dataFields: ["workspace", "repositoryKey", "dryRun", "force", "confirmation", "plan", "result"];
+  lock: ".arashi-add.transaction.lock";
+  errorPrecedence: [
+    "configured-workspace-or-config",
+    "target-selection",
+    "structural-and-git-inspection",
+    "complete-plan-set",
+    "git-loss-refusal",
+    "dry-run-success",
+    "confirmation",
+    "post-lock-revalidation",
+    "execution-failure",
+    "partial-failure",
+  ];
+  errorCodes: [
+    "CONFIGURED_WORKSPACE_REQUIRED",
+    "DELETE_SELECTION_REQUIRED",
+    "DELETE_REPOSITORY_NOT_FOUND",
+    "DELETE_CONFIG_INVALID",
+    "DELETE_TOPOLOGY_INVALID",
+    "DELETE_PATH_UNSAFE",
+    "DELETE_HOOK_AMBIGUOUS",
+    "DELETE_GIT_DATA_LOSS",
+    "DELETE_CONFIRMATION_REQUIRED",
+    "DELETE_CANCELLED",
+    "DELETE_CONCURRENT_CHANGE",
+    "DELETE_EXECUTION_FAILED",
+    "DELETE_PARTIAL_FAILURE",
+    "DELETE_RECEIPT_INVALID",
+    "DELETE_RECEIPT_STALE",
+    "DELETE_RECEIPT_UNSAFE",
+  ];
+  exits: {
+    success: 0;
+    selectionOrConfirmation: 2;
+    failure: 1;
+    selectionOrConfirmationErrors: [
+      "DELETE_SELECTION_REQUIRED",
+      "DELETE_CONFIRMATION_REQUIRED",
+      "DELETE_CANCELLED",
+    ];
+  };
+  forceBoundaries: {
+    overridable: ["confirmation", "git-data-loss"];
+    structural: ["config", "topology", "path", "hook-ambiguity", "concurrent-change"];
+  };
+  itemKinds: [
+    "resume-receipt",
+    "canonical-clone",
+    "linked-worktree",
+    "worktree-metadata",
+    "local-ref",
+    "config-entry",
+    "workspace-hook",
+    "preserved-global-hook",
+  ];
+  itemFields: [
+    "id",
+    "kind",
+    "ownership",
+    "path",
+    "ref",
+    "oid",
+    "planned",
+    "completed",
+    "state",
+    "reasonCode",
+    "message",
+  ];
+  itemStates: ["planned", "completed", "preserved", "blocked", "failed", "not-started"];
+  phaseFields: ["name", "state", "itemIds", "error", "startedOrder", "completedOrder"];
+  phaseErrorFields: ["code", "message"];
+  phaseNames: [
+    "provenance",
+    "worktrees",
+    "metadata",
+    "canonical-clone",
+    "workspace-hooks",
+    "configuration",
+    "verification",
+  ];
+  phaseStates: ["not-started", "started", "completed", "failed"];
+  planFields: ["id", "items", "warnings"];
+  resultFields: ["items", "phases", "retry", "warnings"];
+  retry: {
+    classification: "safe-only-with-current-durable-receipt";
+    fields: ["safe", "argv", "guidance"];
+    humanArgv: ["aw", "delete", "<repository>", "--force"];
+    jsonArgv: ["aw", "delete", "<repository>", "--force", "--json"];
+  };
+  workspaceFields: ["mode", "repositoriesBase", "workspaceRoot", "worktreesBase"];
 }
 export interface UninstallPolicy {
   channelPolicy: "direct-manifest-only" | "exact-managed-shell-block" | "exactly-one-proven-owner";
@@ -785,6 +883,120 @@ export const commandSemantics: CommandSemantics = {
         lock: "shared-workspace-add-configure-lock",
         nativeFiles: "metadata-only-observe-keep-skip-never-overwrite",
       },
+    },
+  },
+  delete: {
+    ...standard(
+      { support: "full" },
+      configuredOnly(
+        "Deleting configured repository dependencies requires persisted configuration.",
+      ),
+    ),
+    vscode: excluded("Destructive repository deletion has no approved editor UI."),
+    deleteRepository: {
+      batchOrder: "bytewise",
+      confirmation: "one-combined-default-no",
+      confirmationStates: ["not-required", "confirmed", "declined", "required"],
+      dataFields: [
+        "workspace",
+        "repositoryKey",
+        "dryRun",
+        "force",
+        "confirmation",
+        "plan",
+        "result",
+      ],
+      errorPrecedence: [
+        "configured-workspace-or-config",
+        "target-selection",
+        "structural-and-git-inspection",
+        "complete-plan-set",
+        "git-loss-refusal",
+        "dry-run-success",
+        "confirmation",
+        "post-lock-revalidation",
+        "execution-failure",
+        "partial-failure",
+      ],
+      errorCodes: [
+        "CONFIGURED_WORKSPACE_REQUIRED",
+        "DELETE_SELECTION_REQUIRED",
+        "DELETE_REPOSITORY_NOT_FOUND",
+        "DELETE_CONFIG_INVALID",
+        "DELETE_TOPOLOGY_INVALID",
+        "DELETE_PATH_UNSAFE",
+        "DELETE_HOOK_AMBIGUOUS",
+        "DELETE_GIT_DATA_LOSS",
+        "DELETE_CONFIRMATION_REQUIRED",
+        "DELETE_CANCELLED",
+        "DELETE_CONCURRENT_CHANGE",
+        "DELETE_EXECUTION_FAILED",
+        "DELETE_PARTIAL_FAILURE",
+        "DELETE_RECEIPT_INVALID",
+        "DELETE_RECEIPT_STALE",
+        "DELETE_RECEIPT_UNSAFE",
+      ],
+      exits: {
+        failure: 1,
+        selectionOrConfirmation: 2,
+        selectionOrConfirmationErrors: [
+          "DELETE_SELECTION_REQUIRED",
+          "DELETE_CONFIRMATION_REQUIRED",
+          "DELETE_CANCELLED",
+        ],
+        success: 0,
+      },
+      forceBoundaries: {
+        overridable: ["confirmation", "git-data-loss"],
+        structural: ["config", "topology", "path", "hook-ambiguity", "concurrent-change"],
+      },
+      itemKinds: [
+        "resume-receipt",
+        "canonical-clone",
+        "linked-worktree",
+        "worktree-metadata",
+        "local-ref",
+        "config-entry",
+        "workspace-hook",
+        "preserved-global-hook",
+      ],
+      itemFields: [
+        "id",
+        "kind",
+        "ownership",
+        "path",
+        "ref",
+        "oid",
+        "planned",
+        "completed",
+        "state",
+        "reasonCode",
+        "message",
+      ],
+      itemStates: ["planned", "completed", "preserved", "blocked", "failed", "not-started"],
+      lock: ".arashi-add.transaction.lock",
+      phaseErrorFields: ["code", "message"],
+      phaseFields: ["name", "state", "itemIds", "error", "startedOrder", "completedOrder"],
+      phaseNames: [
+        "provenance",
+        "worktrees",
+        "metadata",
+        "canonical-clone",
+        "workspace-hooks",
+        "configuration",
+        "verification",
+      ],
+      phaseStates: ["not-started", "started", "completed", "failed"],
+      planFields: ["id", "items", "warnings"],
+      resultFields: ["items", "phases", "retry", "warnings"],
+      retry: {
+        classification: "safe-only-with-current-durable-receipt",
+        fields: ["safe", "argv", "guidance"],
+        humanArgv: ["aw", "delete", "<repository>", "--force"],
+        jsonArgv: ["aw", "delete", "<repository>", "--force", "--json"],
+      },
+      selection: "explicit-exact-key-or-tty-checkbox",
+      workspaceFields: ["mode", "repositoriesBase", "workspaceRoot", "worktreesBase"],
     },
   },
   create: {
@@ -1792,6 +2004,7 @@ export interface ContractCommand {
 
 const completionArgumentKinds: Record<string, CompletionCandidateKind> = {
   "completion:shell": "shell",
+  "delete:repository": "configured-repository",
   "remove:target": "worktree",
   "shell init:shell": "shell",
   "switch:filter": "worktree",

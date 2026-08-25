@@ -15,6 +15,13 @@ export interface CommandResult {
   exitCode: number;
 }
 
+/** Result of executing a Git command without decoding its output. */
+export interface RawCommandResult {
+  stdout: Buffer;
+  stderr: Buffer;
+  exitCode: number;
+}
+
 /**
  * Diagnostic context for git operation errors
  */

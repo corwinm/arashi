@@ -1,5 +1,6 @@
 export const COMPLETION_CANDIDATE_KINDS = [
   "choice",
+  "configured-repository",
   "group",
   "repository",
   "shell",
