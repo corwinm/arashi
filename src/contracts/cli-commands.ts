@@ -47,6 +47,7 @@ export interface CommandSemanticMetadata {
   zeroConfig?: ZeroConfigCommandPolicy;
   addMaterialization?: AddMaterializationPolicy;
   addOnboarding?: AddOnboardingPolicy;
+  uninstall?: UninstallPolicy;
   configure?: ConfigurePolicy;
   deleteRepository?: DeleteRepositoryPolicy;
 }
@@ -147,6 +148,23 @@ export interface DeleteRepositoryPolicy {
   };
   workspaceFields: ["mode", "repositoriesBase", "workspaceRoot", "worktreesBase"];
 }
+export interface UninstallPolicy {
+  channelPolicy: "direct-manifest-only" | "exact-managed-shell-block" | "exactly-one-proven-owner";
+  consent: { interactiveDefault: false; nonInteractiveRequiresYes: true };
+  force: false;
+  json: false;
+  options: ["--dry-run", "--yes"];
+  workspaceIndependent: true;
+}
+
+const uninstallPolicy = (channelPolicy: UninstallPolicy["channelPolicy"]): UninstallPolicy => ({
+  channelPolicy,
+  consent: { interactiveDefault: false, nonInteractiveRequiresYes: true },
+  force: false,
+  json: false,
+  options: ["--dry-run", "--yes"],
+  workspaceIndependent: true,
+});
 export interface ConfigurePolicy {
   descriptors: {
     workspace: string[];
@@ -1142,6 +1160,14 @@ export const commandSemantics: CommandSemantics = {
     standalone: notApplicable("Shell installation does not consume workspace context."),
     vscode: excluded("Shell configuration installation is outside extension scope."),
   },
+  "shell uninstall": {
+    json: unsupported("Shell uninstall has no JSON or force mode."),
+    docs: excluded("This subcommand is documented on the parent shell command page."),
+    skills: represented("Shell removal is covered as part of the shell workflow."),
+    standalone: notApplicable("Shell uninstall does not consume workspace context."),
+    vscode: excluded("Shell configuration removal is outside extension scope."),
+    uninstall: uninstallPolicy("exact-managed-shell-block"),
+  },
   status: standard({ support: "full" }, standalone()),
   switch: {
     ...standard(
@@ -1218,6 +1244,14 @@ export const commandSemantics: CommandSemantics = {
     { support: "full" },
     configuredOnly("Repository synchronization requires persisted repository metadata."),
   ),
+  uninstall: {
+    json: unsupported("Product uninstall has no JSON or force mode."),
+    docs: required(),
+    skills: excluded("Packaged-skill uninstall guidance is outside the conservative MVP."),
+    standalone: notApplicable("Product uninstall does not consume workspace context."),
+    vscode: excluded("Product removal is an explicit terminal lifecycle operation."),
+    uninstall: uninstallPolicy("exactly-one-proven-owner"),
+  },
   update: standard({
     support: "conditional",
     reason: "JSON cannot be combined with interactive confirmation options.",

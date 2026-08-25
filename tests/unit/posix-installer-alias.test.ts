@@ -175,7 +175,7 @@ describe("POSIX alias installer contract", () => {
     expect(disarmed).toBeGreaterThan(committed);
   });
 
-  test("commits a three-file payload and versioned path/hash ownership ledger", () => {
+  test("commits the four-file payload and closed schema-v2 ownership manifest", () => {
     const fixture = mkdtempSync(join(tmpdir(), "arashi-aw-transaction-"));
     fixtures.push(fixture);
     const staging = join(fixture, "staging");
@@ -187,11 +187,12 @@ describe("POSIX alias installer contract", () => {
       join(staging, "aw"),
       '#!/bin/sh\n# arashi-managed-alias:aw:v1\nexec "$(dirname "$0")/arashi.bin" "$@"\n',
     );
-    for (const name of ["arashi.bin", "arashi", "aw"]) {
+    writeFileSync(join(staging, "uninstall.sh"), "#!/bin/sh\n");
+    for (const name of ["arashi.bin", "arashi", "aw", "uninstall.sh"]) {
       chmodSync(join(staging, name), 0o755);
     }
     const result = source(
-      `install_posix_payload_transaction ${JSON.stringify(install)} ${JSON.stringify(join(staging, "arashi.bin"))} ${JSON.stringify(join(staging, "arashi"))} ${JSON.stringify(join(staging, "aw"))} 1.31.0`,
+      `install_posix_payload_transaction ${JSON.stringify(install)} ${JSON.stringify(join(staging, "arashi.bin"))} ${JSON.stringify(join(staging, "arashi"))} ${JSON.stringify(join(staging, "aw"))} ${JSON.stringify(join(staging, "uninstall.sh"))} 1.31.0`,
       { PATH: process.env.PATH },
     );
     expect(result.status, result.stderr).toBe(0);
@@ -199,12 +200,65 @@ describe("POSIX alias installer contract", () => {
       readFileSync(join(install, ".arashi-managed-entrypoints.json"), "utf8"),
     );
     expect(ledger).toMatchObject({
-      aliases: [{ path: join(install, "aw"), sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }],
       installDirectory: install,
-      releaseVersion: "1.31.0",
-      schemaVersion: 1,
+      installationChannel: "official-direct",
+      platform: "posix",
+      schemaVersion: 2,
     });
+    expect(ledger.files).toHaveLength(4);
     expect(statSync(join(install, ".arashi-managed-entrypoints.json")).mode & 0o111).toBe(0);
+  });
+
+  test("refreshes an exact pre-helper schema-v1 direct install to schema v2", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "arashi-aw-v1-refresh-"));
+    fixtures.push(fixture);
+    const staging = join(fixture, "staging");
+    const install = join(fixture, "install");
+    mkdirSync(staging);
+    mkdirSync(install);
+    const legacyAlias = "#!/bin/sh\n# arashi-managed-alias:aw:v1\nexit 97\n";
+    writeFileSync(join(install, "arashi.bin"), "legacy binary\n");
+    writeFileSync(join(install, "arashi"), "legacy wrapper\n");
+    writeFileSync(join(install, "aw"), legacyAlias);
+    for (const name of ["arashi.bin", "arashi", "aw"]) chmodSync(join(install, name), 0o755);
+    const aliasHash = spawnSync("shasum", ["-a", "256", join(install, "aw")], {
+      encoding: "utf8",
+    }).stdout.split(" ")[0];
+    writeFileSync(
+      join(install, ".arashi-managed-entrypoints.json"),
+      [
+        "{",
+        '  "schemaVersion": 1,',
+        `  "installDirectory": ${JSON.stringify(install)},`,
+        '  "releaseVersion": "1.31.0",',
+        '  "aliases": [',
+        `    { "path": ${JSON.stringify(join(install, "aw"))}, "sha256": "${aliasHash}" }`,
+        "  ]",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    writeFileSync(join(staging, "arashi.bin"), "#!/bin/sh\necho 1.34.0\n");
+    writeFileSync(join(staging, "arashi"), '#!/bin/sh\nexec "$(dirname "$0")/arashi.bin" "$@"\n');
+    writeFileSync(
+      join(staging, "aw"),
+      '#!/bin/sh\n# arashi-managed-alias:aw:v1\nexec "$(dirname "$0")/arashi.bin" "$@"\n',
+    );
+    writeFileSync(join(staging, "uninstall.sh"), "#!/bin/sh\nexit 98\n");
+    for (const name of ["arashi.bin", "arashi", "aw", "uninstall.sh"]) {
+      chmodSync(join(staging, name), 0o755);
+    }
+
+    const result = source(
+      `preflight_alias_ownership ${JSON.stringify(install)} && install_posix_payload_transaction ${JSON.stringify(install)} ${JSON.stringify(join(staging, "arashi.bin"))} ${JSON.stringify(join(staging, "arashi"))} ${JSON.stringify(join(staging, "aw"))} ${JSON.stringify(join(staging, "uninstall.sh"))} 1.34.0`,
+      { PATH: `${install}:${process.env.PATH ?? ""}` },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(
+      JSON.parse(readFileSync(join(install, ".arashi-managed-entrypoints.json"), "utf8")),
+    ).toMatchObject({ schemaVersion: 2 });
   });
 
   test("restores the complete previous payload and ledger after alias smoke failure", () => {
@@ -214,7 +268,7 @@ describe("POSIX alias installer contract", () => {
     const install = join(fixture, "install");
     mkdirSync(staging);
     mkdirSync(install);
-    for (const name of ["arashi.bin", "arashi", "aw"]) {
+    for (const name of ["arashi.bin", "arashi", "aw", "uninstall.sh"]) {
       writeFileSync(join(staging, name), `new-${name}\n`);
       writeFileSync(join(install, name), `old-${name}\n`);
     }
@@ -224,11 +278,11 @@ describe("POSIX alias installer contract", () => {
     writeFileSync(join(install, ".arashi-managed-entrypoints.json"), "old-ledger\n");
     chmodSync(join(install, ".arashi-managed-entrypoints.json"), 0o640);
     const result = source(
-      `verify_installed_entrypoints(){ return 1; }; install_posix_payload_transaction ${JSON.stringify(install)} ${JSON.stringify(join(staging, "arashi.bin"))} ${JSON.stringify(join(staging, "arashi"))} ${JSON.stringify(join(staging, "aw"))} 1.31.0`,
+      `verify_installed_entrypoints(){ return 1; }; install_posix_payload_transaction ${JSON.stringify(install)} ${JSON.stringify(join(staging, "arashi.bin"))} ${JSON.stringify(join(staging, "arashi"))} ${JSON.stringify(join(staging, "aw"))} ${JSON.stringify(join(staging, "uninstall.sh"))} 1.31.0`,
     );
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Rollback completed");
-    for (const name of ["arashi.bin", "arashi", "aw"]) {
+    for (const name of ["arashi.bin", "arashi", "aw", "uninstall.sh"]) {
       expect(readFileSync(join(install, name), "utf8")).toBe(`old-${name}\n`);
     }
     expect(statSync(join(install, "arashi.bin")).mode & 0o777).toBe(0o700);

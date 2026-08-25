@@ -15,7 +15,7 @@
   },
   "ledger": {
     "name": ".arashi-managed-entrypoints.json",
-    "schemaVersion": 1
+    "schemaVersion": 2
   },
   "nativeBinaries": {
     "posix": "arashi.bin",
@@ -29,7 +29,7 @@
     "collisionPolicy": "marker-and-ledger-hash",
     "ledger": {
       "name": ".arashi-managed-entrypoints.json",
-      "schemaVersion": 1
+      "schemaVersion": 2
     },
     "markers": {
       "cmd": "arashi-managed-alias:aw:v1",
@@ -38,13 +38,30 @@
     }
   },
   "posix": {
-    "installed": ["arashi.bin", "arashi", "aw"],
-    "releaseLaunchers": ["arashi", "aw"]
+    "installed": ["arashi.bin", "arashi", "aw", "uninstall.sh"],
+    "releaseLaunchers": ["arashi", "aw", "uninstall.sh"]
   },
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "shellWrapperNames": ["arashi", "aw"],
   "windows": {
-    "installed": ["arashi.bin.exe", "arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat"],
-    "releaseLaunchers": ["arashi", "arashi.ps1", "arashi.bat", "aw", "aw.ps1", "aw.bat"]
+    "installed": [
+      "arashi.bin.exe",
+      "arashi",
+      "arashi.ps1",
+      "arashi.bat",
+      "aw",
+      "aw.ps1",
+      "aw.bat",
+      "uninstall.ps1"
+    ],
+    "releaseLaunchers": [
+      "arashi",
+      "arashi.ps1",
+      "arashi.bat",
+      "aw",
+      "aw.ps1",
+      "aw.bat",
+      "uninstall.ps1"
+    ]
   }
 }

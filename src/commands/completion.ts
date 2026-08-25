@@ -1,6 +1,9 @@
 import { Argument, Command } from "commander";
 import { GENERATED_COMPLETIONS } from "../generated/completions.ts";
-import { SUPPORTED_SHELLS, isSupportedShell } from "../lib/shell-integration.ts";
+import {
+  SUPPORTED_COMPLETION_SHELLS,
+  isSupportedCompletionShell,
+} from "../lib/shell-integration.ts";
 import { buildProgram } from "../cli-program.ts";
 import {
   commandSemantics,
@@ -10,16 +13,18 @@ import {
 import { encodeCompletionRecords, queryCompletionCandidates } from "../completion/query.ts";
 import { error as logError } from "../lib/logger.ts";
 
-const supported = SUPPORTED_SHELLS.join(", ");
+const supported = SUPPORTED_COMPLETION_SHELLS.join(", ");
 
 export function createCommand(): Command {
   const command = new Command("completion")
     .description("Generate native shell completion code")
     .addArgument(
-      new Argument("[shell]", `Shell name (${supported})`).choices([...SUPPORTED_SHELLS]),
+      new Argument("[shell]", `Shell name (${supported})`).choices([
+        ...SUPPORTED_COMPLETION_SHELLS,
+      ]),
     )
     .action((shell: string | undefined) => {
-      if (!shell || !isSupportedShell(shell)) {
+      if (!shell || !isSupportedCompletionShell(shell)) {
         logError(
           `${shell ? `Unsupported shell \`${shell}\`` : "Missing required shell"}. Supported shells: ${supported}.`,
         );

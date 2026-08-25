@@ -16,6 +16,8 @@ ASSETS=(
   "arashi-macos-arm64"
   "arashi-linux-x64"
   "arashi-windows-x64.exe"
+  "../scripts/uninstall.sh"
+  "../scripts/uninstall.ps1"
 )
 
 sha256_file() {
@@ -47,7 +49,7 @@ for asset in "${ASSETS[@]}"; do
     exit 1
   fi
   checksum="$(sha256_file "$asset_path")"
-  printf '%s  %s\n' "$checksum" "$asset" >> "$TEMP_FILE"
+  printf '%s  %s\n' "$checksum" "$(basename "$asset")" >> "$TEMP_FILE"
 done
 
 mv "$TEMP_FILE" "$OUTPUT_FILE"

@@ -1,11 +1,14 @@
 import type { CliCommandContract } from "../contracts/cli-commands.ts";
-import type { SupportedShell } from "../lib/shell-integration.ts";
+import type { SupportedCompletionShell } from "../lib/shell-integration.ts";
 import { createHash } from "node:crypto";
 
 const fingerprint = (contract: CliCommandContract): string =>
   createHash("sha256").update(JSON.stringify(contract)).digest("hex");
 
-export function renderCompletion(shell: SupportedShell, contract: CliCommandContract): string {
+export function renderCompletion(
+  shell: SupportedCompletionShell,
+  contract: CliCommandContract,
+): string {
   const marker = `# arashi-completion-contract-v6:${fingerprint(contract)}`;
   if (shell === "bash")
     return `${marker}
@@ -109,6 +112,26 @@ if (( ! \${+aliases[aw]} )); then
   fi
 fi
 `;
+  if (shell === "powershell")
+    return `${marker}
+Register-ArgumentCompleter -Native -CommandName arashi, aw -ScriptBlock {
+  param($wordToComplete, $commandAst, $cursorPosition)
+  $words = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
+  if ($words.Count -eq 0) { $words = @('arashi') }
+  $lastElementEnd = $commandAst.CommandElements[-1].Extent.EndOffset
+  if ($cursorPosition -gt $lastElementEnd) { $words += $wordToComplete }
+  $cursor = $words.Count - 1
+  $fields = ((& arashi completion __query $cursor -- @words) -join "\n") -split [char]0
+  for ($index = 0; $index + 1 -lt $fields.Count; $index += 2) {
+    $value = $fields[$index]
+    $description = $fields[$index + 1]
+    if ($value -like "$wordToComplete*") {
+      $completionText = "'" + $value.Replace("'", "''") + "'"
+      [System.Management.Automation.CompletionResult]::new($completionText, $value, 'ParameterValue', $description)
+    }
+  }
+}
+`;
   return `${marker}
 function __arashi_complete
     set -l words (commandline -opc)
@@ -131,10 +154,13 @@ end
 `;
 }
 
-export function renderAllCompletions(contract: CliCommandContract): Record<SupportedShell, string> {
+export function renderAllCompletions(
+  contract: CliCommandContract,
+): Record<SupportedCompletionShell, string> {
   return {
     bash: renderCompletion("bash", contract),
     fish: renderCompletion("fish", contract),
+    powershell: renderCompletion("powershell", contract),
     zsh: renderCompletion("zsh", contract),
   };
 }

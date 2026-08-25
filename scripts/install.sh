@@ -6,9 +6,15 @@ PROJECT_NAME="arashi"
 BINARY_NAME="arashi.bin"
 WRAPPER_ASSET="arashi"
 ALIAS_ASSET="aw"
+UNINSTALL_HELPER_ASSET="uninstall.sh"
 ALIAS_MARKER="arashi-managed-alias:aw:v1"
 LEDGER_NAME=".arashi-managed-entrypoints.json"
-LEDGER_SCHEMA_VERSION=1
+LEDGER_SCHEMA_VERSION=2
+PATH_MUTATION_PROFILE=""
+PATH_MUTATION_BYTES=""
+PATH_MUTATION_JSON=""
+PATH_MUTATION_BACKUP=""
+PATH_MUTATION_PROFILE_CREATED=false
 REPOSITORY="corwinm/arashi"
 CHECKSUM_MANIFEST="arashi-checksums.txt"
 VERSION_INPUT="latest"
@@ -76,6 +82,9 @@ parse_args() {
   fi
   if [ -n "${ARASHI_SHELL_INTEGRATION:-}" ]; then
     SHELL_INTEGRATION_MODE="$ARASHI_SHELL_INTEGRATION"
+  fi
+  if [ "${ARASHI_NO_MODIFY_PATH:-}" = "1" ]; then
+    NO_MODIFY_PATH=true
   fi
 
   while [ "$#" -gt 0 ]; do
@@ -383,8 +392,24 @@ choose_install_dir() {
   printf '%s\n' "$default_install_dir"
 }
 
+normalize_absolute_path() {
+  local input="$1" part output="" index
+  local parts=() normalized=()
+  case "$input" in /*) ;; *) input="$(pwd)/$input" ;; esac
+  IFS='/' read -r -a parts <<< "$input"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      ''|.) ;;
+      ..) if [ "${#normalized[@]}" -gt 0 ]; then index=$((${#normalized[@]} - 1)); unset "normalized[$index]"; fi ;;
+      *) normalized+=("$part") ;;
+    esac
+  done
+  for index in "${!normalized[@]}"; do output="$output/${normalized[$index]}"; done
+  printf '%s\n' "${output:-/}"
+}
+
 json_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+  printf '%s' "$1" | awk 'BEGIN { ORS="" } { if (NR > 1) printf "\\n"; gsub(/\\/, "\\\\"); gsub(/\"/, "\\\""); printf "%s", $0 }'
 }
 
 physical_command_path() {
@@ -395,21 +420,146 @@ physical_command_path() {
   printf '%s/%s\n' "$physical_directory" "$name"
 }
 
+validate_current_ownership_ledger() {
+  local install_dir="$1" ledger_path="$install_dir/$LEDGER_NAME" line_count line actual expected name role digest line_number
+  line_count="$(wc -l < "$ledger_path" | tr -d '[:space:]')"
+  [ "$line_count" = 12 ] || [ "$line_count" = 13 ] || return 1
+  [ "$(sed -n '1p' "$ledger_path")" = '{' ] || return 1
+  [ "$(sed -n '2p' "$ledger_path")" = '  "schemaVersion": 2,' ] || return 1
+  [ "$(sed -n '3p' "$ledger_path")" = '  "installationChannel": "official-direct",' ] || return 1
+  [ "$(sed -n '4p' "$ledger_path")" = '  "platform": "posix",' ] || return 1
+  [ "$(sed -n '5p' "$ledger_path")" = "  \"installDirectory\": \"$(json_escape "$install_dir")\"," ] || return 1
+  [ "$(sed -n '6p' "$ledger_path")" = '  "files": [' ] || return 1
+  line_number=7
+  for name in "$BINARY_NAME" "$PROJECT_NAME" "$ALIAS_ASSET" "$UNINSTALL_HELPER_ASSET"; do
+    case "$name" in
+      "$BINARY_NAME") role="native-executable" ;;
+      "$PROJECT_NAME") role="canonical-wrapper" ;;
+      "$ALIAS_ASSET") role="alias-wrapper" ;;
+      *) role="uninstall-helper" ;;
+    esac
+    [ ! -L "$install_dir/$name" ] && [ -f "$install_dir/$name" ] && [ -r "$install_dir/$name" ] || return 1
+    digest="$(sha256_file "$install_dir/$name")" || return 1
+    line="$(sed -n "${line_number}p" "$ledger_path")"
+    expected="    { \"relativePath\": \"$name\", \"role\": \"$role\", \"digest\": \"$digest\" }"
+    [ "$line_number" -eq 10 ] || expected="$expected,"
+    [ "$line" = "$expected" ] || return 1
+    line_number=$((line_number + 1))
+  done
+  if [ "$line_count" = 12 ]; then
+    [ "$(sed -n '11p' "$ledger_path")" = '  ]' ] || return 1
+  else
+    [ "$(sed -n '11p' "$ledger_path")" = '  ],' ] || return 1
+    PATH_MUTATION_PROFILE="$(sed -n '12p' "$ledger_path" | LC_ALL=C awk '
+      function valid(value, required, i,c,e) {
+        if (required && value == "") return 0
+        for (i=1;i<=length(value);i++) if (substr(value,i,1)=="\\") { i++; e=substr(value,i,1); if (e!="\\" && e!="\"" && e!="n") return 0 }
+        return 1
+      }
+      function decode(value, output, i, c, escaped) {
+        output=""
+        for(i=1;i<=length(value);i++) {
+          c=substr(value,i,1)
+          if(c!="\\") { output=output c; continue }
+          i++; escaped=substr(value,i,1)
+          if(escaped=="n") output=output sprintf("%c",10)
+          else output=output escaped
+        }
+        return output
+      }
+      {
+        prefix="  \"pathMutation\": { \"profilePath\": \""; separator="\", \"insertedBytes\": \""; suffix="\" }"
+        if (substr($0,1,length(prefix)) != prefix || substr($0,length($0)-length(suffix)+1) != suffix) exit 1
+        body=substr($0,length(prefix)+1,length($0)-length(prefix)-length(suffix)); split_at=0; escaped=0
+        for(i=1;i<=length(body)-length(separator)+1;i++){c=substr(body,i,1);if(!escaped && substr(body,i,length(separator))==separator){split_at=i;break}if(c=="\\"&&!escaped)escaped=1;else escaped=0}
+        if(!split_at)exit 1; profile=substr(body,1,split_at-1); inserted=substr(body,split_at+length(separator))
+        if(substr(profile,1,1)!="/" || !valid(profile,1) || !valid(inserted,1))exit 1
+        printf "%s", decode(profile)
+      }')" || return 1
+    PATH_MUTATION_JSON="$(sed -n '12p' "$ledger_path")"
+  fi
+  [ "$(sed -n "${line_count}p" "$ledger_path")" = '}' ] || return 1
+}
+
+clear_recorded_path_mutation() {
+  PATH_MUTATION_PROFILE=""
+  PATH_MUTATION_BYTES=""
+  PATH_MUTATION_JSON=""
+}
+
+file_occurrences() {
+  local haystack="$1" needle="$2" haystack_size needle_size offset count=0 first=-1 candidate first_byte
+  haystack_size="$(wc -c < "$haystack" | tr -d '[:space:]')"
+  needle_size="$(wc -c < "$needle" | tr -d '[:space:]')"
+  [ "$needle_size" -gt 0 ] || { printf '0 -1\n'; return; }
+  candidate="$(mktemp "${TMPDIR:-/tmp}/arashi-match.XXXXXX")" || return 1
+  first_byte="$(od -An -N1 -t u1 "$needle" | tr -d '[:space:]')"
+  while read -r offset; do
+    [ "$offset" -le $((haystack_size - needle_size)) ] || continue
+    dd if="$haystack" of="$candidate" bs=1 skip="$offset" count="$needle_size" 2>/dev/null
+    if cmp -s "$candidate" "$needle"; then count=$((count + 1)); [ "$first" -ge 0 ] || first="$offset"; fi
+  done < <(od -An -v -t u1 "$haystack" | awk -v wanted="$first_byte" '{for(i=1;i<=NF;i++){if($i==wanted)print offset;offset++}}')
+  rm -f -- "$candidate"
+  printf '%s %s\n' "$count" "$first"
+}
+
+recorded_path_mutation_is_current() {
+  local install_dir="$1" path_line marker expected_json needle count offset
+  [ -n "$PATH_MUTATION_JSON" ] && [ -n "$PATH_MUTATION_PROFILE" ] || return 1
+  [ ! -L "$PATH_MUTATION_PROFILE" ] && [ -f "$PATH_MUTATION_PROFILE" ] && [ -r "$PATH_MUTATION_PROFILE" ] || return 1
+
+  path_line="$(build_posix_path_line "$install_dir")"
+  marker="# Added by arashi installer"
+  PATH_MUTATION_BYTES="$(printf '\n%s\n%s\n' "$marker" "$path_line")"
+  expected_json="  \"pathMutation\": { \"profilePath\": \"$(json_escape "$PATH_MUTATION_PROFILE")\", \"insertedBytes\": \"$(json_escape "$PATH_MUTATION_BYTES")\" }"
+  [ "$PATH_MUTATION_JSON" = "$expected_json" ] || return 1
+
+  needle="$(mktemp "${TMPDIR:-/tmp}/arashi-path-record.XXXXXX")" || return 1
+  printf '%s' "$PATH_MUTATION_BYTES" > "$needle" || { rm -f -- "$needle"; return 1; }
+  read -r count offset < <(file_occurrences "$PATH_MUTATION_PROFILE" "$needle") || {
+    rm -f -- "$needle"
+    return 1
+  }
+  rm -f -- "$needle"
+  [ "$count" -eq 1 ]
+}
+
 preflight_alias_ownership() {
   local install_dir="$1"
   local alias_path="$install_dir/$ALIAS_ASSET"
   local ledger_path="$install_dir/$LEDGER_NAME"
   local resolved=""
 
+  if [ ! -e "$ledger_path" ] && [ ! -L "$ledger_path" ]; then
+    local unmanaged_name
+    for unmanaged_name in "$BINARY_NAME" "$PROJECT_NAME" "$ALIAS_ASSET" "$UNINSTALL_HELPER_ASSET"; do
+      if [ -e "$install_dir/$unmanaged_name" ] || [ -L "$install_dir/$unmanaged_name" ]; then
+        printf 'error: unmanifested install collision at %s with no installer ownership ledger; move it aside or refresh deliberately from a proven official install\n' "$install_dir/$unmanaged_name" >&2
+        return 1
+      fi
+    done
+  fi
+
   if [ -e "$ledger_path" ] || [ -L "$ledger_path" ]; then
     if [ -L "$ledger_path" ] || [ ! -f "$ledger_path" ] || [ ! -r "$ledger_path" ]; then
       printf 'error: ownership ledger collision at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
       return 1
     fi
+    if grep -Eq '"schemaVersion"[[:space:]]*:[[:space:]]*2([,[:space:]}])' "$ledger_path"; then
+      validate_current_ownership_ledger "$install_dir" || {
+        printf 'error: current ownership manifest failed validation at %s; repair deliberately before retrying\n' "$ledger_path" >&2
+        return 1
+      }
+      return 0
+    fi
     grep -Eq '"schemaVersion"[[:space:]]*:[[:space:]]*1([,[:space:]}])' "$ledger_path" || {
       printf 'error: ownership ledger schema defect at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
       return 1
     }
+    if [ -e "$install_dir/$UNINSTALL_HELPER_ASSET" ] || [ -L "$install_dir/$UNINSTALL_HELPER_ASSET" ]; then
+      printf 'error: legacy ownership metadata does not own %s; move it aside before refreshing\n' "$install_dir/$UNINSTALL_HELPER_ASSET" >&2
+      return 1
+    fi
     grep -Fq "\"installDirectory\": \"$(json_escape "$install_dir")\"" "$ledger_path" || {
       printf 'error: ownership ledger install-directory mismatch at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
       return 1
@@ -454,7 +604,7 @@ preflight_alias_ownership() {
       return 1
     }
     ledger_contents="$(cat "$ledger_path")"
-    expected_ledger="$(render_ownership_ledger "$install_dir" "$alias_path" "$alias_hash" "$ledger_release_version")"
+    expected_ledger="$(render_legacy_ownership_ledger "$install_dir" "$alias_path" "$alias_hash" "$ledger_release_version")"
     [ "$ledger_contents" = "$expected_ledger" ] || {
       printf 'error: ownership ledger property or alias-set defect at %s; move or remove it deliberately before retrying\n' "$ledger_path" >&2
       return 1
@@ -486,19 +636,42 @@ preflight_alias_ownership() {
   fi
 }
 
-render_ownership_ledger() {
+render_legacy_ownership_ledger() {
   local install_dir="$1"
   local alias_path="$2"
   local alias_hash="$3"
   local release_version="$4"
   cat <<EOF
 {
-  "schemaVersion": $LEDGER_SCHEMA_VERSION,
+  "schemaVersion": 1,
   "installDirectory": "$(json_escape "$install_dir")",
   "releaseVersion": "$(json_escape "$release_version")",
   "aliases": [
     { "path": "$(json_escape "$alias_path")", "sha256": "$alias_hash" }
   ]
+}
+EOF
+}
+
+render_ownership_ledger() {
+  local install_dir="$1"
+  local binary_hash wrapper_hash alias_hash helper_hash
+  binary_hash="$(sha256_file "$install_dir/$BINARY_NAME")"
+  wrapper_hash="$(sha256_file "$install_dir/$PROJECT_NAME")"
+  alias_hash="$(sha256_file "$install_dir/$ALIAS_ASSET")"
+  helper_hash="$(sha256_file "$install_dir/$UNINSTALL_HELPER_ASSET")"
+  cat <<EOF
+{
+  "schemaVersion": $LEDGER_SCHEMA_VERSION,
+  "installationChannel": "official-direct",
+  "platform": "posix",
+  "installDirectory": "$(json_escape "$install_dir")",
+  "files": [
+    { "relativePath": "arashi.bin", "role": "native-executable", "digest": "$binary_hash" },
+    { "relativePath": "arashi", "role": "canonical-wrapper", "digest": "$wrapper_hash" },
+    { "relativePath": "aw", "role": "alias-wrapper", "digest": "$alias_hash" },
+    { "relativePath": "uninstall.sh", "role": "uninstall-helper", "digest": "$helper_hash" }
+  ]$(if [ -n "$PATH_MUTATION_PROFILE" ]; then printf ',\n  "pathMutation": { "profilePath": "%s", "insertedBytes": "%s" }' "$(json_escape "$PATH_MUTATION_PROFILE")" "$(json_escape "$PATH_MUTATION_BYTES")"; elif [ -n "$PATH_MUTATION_JSON" ]; then printf ',\n%s' "$PATH_MUTATION_JSON"; fi)
 }
 EOF
 }
@@ -580,15 +753,16 @@ verify_installed_entrypoints() {
 }
 
 install_posix_payload_transaction() {
-  local install_dir="$1" binary_source="$2" wrapper_source="$3" alias_source="$4" release_version="$5"
+  local install_dir="$1" binary_source="$2" wrapper_source="$3" alias_source="$4" helper_source="$5" release_version="$6"
   local canonical_path="$install_dir/$PROJECT_NAME" alias_path="$install_dir/$ALIAS_ASSET"
   local binary_path="$install_dir/$BINARY_NAME" ledger_path="$install_dir/$LEDGER_NAME"
   local backup_directory staged_ledger alias_hash ledger_release_version phase="backup"
-  local -a destinations=("$binary_path" "$canonical_path" "$alias_path" "$ledger_path")
-  local -a sources=("$binary_source" "$wrapper_source" "$alias_source" "")
+  local helper_path="$install_dir/$UNINSTALL_HELPER_ASSET"
+  local -a destinations=("$binary_path" "$canonical_path" "$alias_path" "$helper_path" "$ledger_path")
+  local -a sources=("$binary_source" "$wrapper_source" "$alias_source" "$helper_source" "")
   local -a existed=()
-  local -a backup_modes=(0 0 0 0)
-  local -a backup_fd_open=(0 0 0 0)
+  local -a backup_modes=(0 0 0 0 0)
+  local -a backup_fd_open=(0 0 0 0 0)
   local transaction_armed=0 transaction_committed=0 ACTIVE_TRANSACTION_CHILD=0
   local transaction_failure="Installation exited unexpectedly during $phase"
   local previous_exit_trap previous_err_trap
@@ -602,6 +776,7 @@ install_posix_payload_transaction() {
       1) exec 8<"$backup_directory/1" 12<"$backup_directory/1" ;;
       2) exec 9<"$backup_directory/2" 13<"$backup_directory/2" ;;
       3) exec 10<"$backup_directory/3" 14<"$backup_directory/3" ;;
+      4) exec 15<"$backup_directory/4" 16<"$backup_directory/4" ;;
       *) return 1 ;;
     esac
     backup_fd_open[$backup_index]=1
@@ -619,6 +794,8 @@ install_posix_payload_transaction() {
         retain:1) printf '/dev/fd/12\n' ;;
         retain:2) printf '/dev/fd/13\n' ;;
         retain:3) printf '/dev/fd/14\n' ;;
+        restore:4) printf '/dev/fd/15\n' ;;
+        retain:4) printf '/dev/fd/16\n' ;;
         *) return 1 ;;
       esac
     else
@@ -631,7 +808,8 @@ install_posix_payload_transaction() {
     [ "${backup_fd_open[1]}" -eq 0 ] || { exec 8<&-; exec 12<&-; }
     [ "${backup_fd_open[2]}" -eq 0 ] || { exec 9<&-; exec 13<&-; }
     [ "${backup_fd_open[3]}" -eq 0 ] || { exec 10<&-; exec 14<&-; }
-    backup_fd_open=(0 0 0 0)
+    [ "${backup_fd_open[4]}" -eq 0 ] || { exec 15<&-; exec 16<&-; }
+    backup_fd_open=(0 0 0 0 0)
   }
 
   backup_file_mode() {
@@ -664,7 +842,11 @@ install_posix_payload_transaction() {
     local observed_status=$?
     local status="${1:-$observed_status}"
     trap - EXIT ERR HUP INT TERM
-    if [ "$transaction_armed" -eq 0 ] || [ "$transaction_committed" -eq 1 ]; then
+    if [ "$transaction_committed" -eq 1 ]; then
+      return
+    fi
+    if [ "$transaction_armed" -eq 0 ]; then
+      finish_shell_path_transaction rollback
       return
     fi
 
@@ -696,6 +878,7 @@ install_posix_payload_transaction() {
       rm -rf "$backup_directory"
       printf 'error: %s. Rollback completed and restored the previous managed payload\n' "$transaction_failure" >&2
     fi
+    finish_shell_path_transaction rollback
     [ "$status" -ne 0 ] || status=1
     if [ -n "$previous_exit_trap" ]; then
       eval "$previous_exit_trap"
@@ -729,7 +912,6 @@ install_posix_payload_transaction() {
   [ -w "$install_dir" ] || fail "Install directory is not writable: $install_dir"
   backup_directory="$(mktemp -d "${TMPDIR:-/tmp}/arashi-payload-backup.XXXXXX")" || fail "Unable to create transaction backup"
   staged_ledger="$(mktemp "${TMPDIR:-/tmp}/arashi-ledger.XXXXXX")" || fail "Unable to stage ownership ledger"
-  sources[3]="$staged_ledger"
 
   local index
   for index in "${!destinations[@]}"; do
@@ -757,7 +939,7 @@ install_posix_payload_transaction() {
   local failed=0
   phase="replacement"
   transaction_failure="Installation failed during $phase"
-  for index in 0 1 2; do
+  for index in 0 1 2 3; do
     if ! replace_installed_asset "${sources[$index]}" "${destinations[$index]}"; then failed=1; break; fi
   done
   if [ "$failed" -eq 0 ]; then
@@ -778,7 +960,7 @@ install_posix_payload_transaction() {
       failed=1
     fi
     if [ "$failed" -eq 0 ]; then
-      write_ownership_ledger "$staged_ledger" "$install_dir" "$alias_path" "$alias_hash" "$ledger_release_version" || failed=1
+      write_ownership_ledger "$staged_ledger" "$install_dir" || failed=1
     fi
   fi
   if [ "$failed" -eq 0 ]; then
@@ -976,12 +1158,20 @@ configure_shell_path() {
     return
   }
 
+  if [ -L "$rc_file" ]; then
+    warn "Shell config file is a symbolic link; preserving it unchanged: $rc_file"
+    warn "Add this manually: $(build_posix_path_line "$install_dir")"
+    return
+  fi
+
+  PATH_MUTATION_PROFILE_CREATED=false
   if [ ! -f "$rc_file" ]; then
     : > "$rc_file" 2>/dev/null || {
       warn "Could not create shell config file: $rc_file"
       warn "Add this manually: $(build_posix_path_line "$install_dir")"
       return
     }
+    PATH_MUTATION_PROFILE_CREATED=true
   fi
 
   if rc_file_has_install_dir "$rc_file" "$install_dir"; then
@@ -989,10 +1179,33 @@ configure_shell_path() {
     return
   fi
 
+  PATH_MUTATION_PROFILE="$(cd -P "$(dirname "$rc_file")" && pwd -P)/$(basename "$rc_file")"
+  PATH_MUTATION_BYTES="$(printf '\n# Added by arashi installer\n%s\n' "$path_line")"
+  PATH_MUTATION_BACKUP="$(mktemp "${TMPDIR:-/tmp}/arashi-path-backup.XXXXXX")" || {
+    PATH_MUTATION_PROFILE=""
+    PATH_MUTATION_BYTES=""
+    PATH_MUTATION_PROFILE_CREATED=false
+    warn "Failed to stage a PATH rollback backup; leaving $rc_file unchanged"
+    return
+  }
+  cp -p "$rc_file" "$PATH_MUTATION_BACKUP" || {
+    rm -f "$PATH_MUTATION_BACKUP"
+    PATH_MUTATION_BACKUP=""
+    PATH_MUTATION_PROFILE=""
+    PATH_MUTATION_BYTES=""
+    PATH_MUTATION_PROFILE_CREATED=false
+    warn "Failed to stage a PATH rollback backup; leaving $rc_file unchanged"
+    return
+  }
   {
-    printf '\n# Added by arashi installer\n'
-    printf '%s\n' "$path_line"
+    printf '%s' "$PATH_MUTATION_BYTES"
   } >> "$rc_file" || {
+    cp -p "$PATH_MUTATION_BACKUP" "$rc_file" 2>/dev/null || true
+    rm -f "$PATH_MUTATION_BACKUP"
+    PATH_MUTATION_BACKUP=""
+    PATH_MUTATION_PROFILE=""
+    PATH_MUTATION_BYTES=""
+    PATH_MUTATION_PROFILE_CREATED=false
     warn "Failed to update PATH in $rc_file"
     warn "Add this manually: $(build_posix_path_line "$install_dir")"
     return
@@ -1001,6 +1214,29 @@ configure_shell_path() {
   log "Added $install_dir to PATH in $rc_file"
   echo ""
   warn "Open a new shell or run: export PATH=\"$install_dir:\$PATH\""
+}
+
+finish_shell_path_transaction() {
+  local outcome="$1" expected=""
+  [ -n "$PATH_MUTATION_BACKUP" ] || return 0
+  if [ "$outcome" = "commit" ]; then
+    rm -f "$PATH_MUTATION_BACKUP"
+  else
+    expected="$(mktemp "${TMPDIR:-/tmp}/arashi-path-expected.XXXXXX")" || return 1
+    cat "$PATH_MUTATION_BACKUP" > "$expected"
+    printf '%s' "$PATH_MUTATION_BYTES" >> "$expected"
+    if cmp -s "$PATH_MUTATION_PROFILE" "$expected"; then
+      if [ "$PATH_MUTATION_PROFILE_CREATED" = true ]; then
+        rm -f "$PATH_MUTATION_PROFILE"
+      else
+        cp -p "$PATH_MUTATION_BACKUP" "$PATH_MUTATION_PROFILE"
+      fi
+    else
+      warn "PATH profile changed during failed installation; preserving it for manual inspection: $PATH_MUTATION_PROFILE"
+    fi
+    rm -f "$expected" "$PATH_MUTATION_BACKUP"
+  fi
+  PATH_MUTATION_BACKUP=""
 }
 
 build_shell_integration_block() {
@@ -1175,6 +1411,11 @@ configure_shell_integration() {
   fi
 
   rc_file="$(resolve_shell_rc_file "$shell_name")"
+  if [ -L "$rc_file" ]; then
+    warn "Skipping shell integration for symbolic link: $rc_file"
+    warn "Run 'arashi shell install' manually after choosing a regular startup file"
+    return
+  fi
   integration_block="$(build_shell_integration_block "$shell_name")" || {
     warn "Could not build shell integration line for $shell_name"
     return
@@ -1233,15 +1474,12 @@ main() {
   asset_name="$(detect_platform_asset)"
 
   local install_dir
-  install_dir="$(choose_install_dir)"
-  case "$install_dir" in
-    /*) ;;
-    *) install_dir="$(pwd)/$install_dir" ;;
-  esac
-  while [ "$install_dir" != "/" ] && [ "${install_dir%/}" != "$install_dir" ]; do
-    install_dir="${install_dir%/}"
-  done
+  install_dir="$(normalize_absolute_path "$(choose_install_dir)")"
   preflight_alias_ownership "$install_dir" || exit 1
+  if [ -n "$PATH_MUTATION_JSON" ] && ! recorded_path_mutation_is_current "$install_dir"; then
+    log "Recorded PATH bytes changed since installation; refreshing PATH ownership"
+    clear_recorded_path_mutation
+  fi
 
   log "Preparing installation for arashi ($release_label)"
   log_debug "Installing $asset_name ($release_label)"
@@ -1250,12 +1488,14 @@ main() {
   local downloaded_binary_asset
   local downloaded_wrapper_asset
   local downloaded_alias_asset
+  local downloaded_helper_asset
   local downloaded_manifest
   tmp_dir="$(mktemp -d)"
   log_debug "Created temporary directory at $tmp_dir"
   downloaded_binary_asset="$tmp_dir/$asset_name"
   downloaded_wrapper_asset="$tmp_dir/$WRAPPER_ASSET"
   downloaded_alias_asset="$tmp_dir/$ALIAS_ASSET"
+  downloaded_helper_asset="$tmp_dir/$UNINSTALL_HELPER_ASSET"
   downloaded_manifest="$tmp_dir/$CHECKSUM_MANIFEST"
   trap "cleanup_progress_ui; rm -rf '$tmp_dir'" EXIT
 
@@ -1264,6 +1504,7 @@ main() {
   download_file "$release_base_url/$asset_name" "$downloaded_binary_asset" "$asset_name" false
   download_file "$release_base_url/$WRAPPER_ASSET" "$downloaded_wrapper_asset" "$WRAPPER_ASSET" false
   download_file "$release_base_url/$ALIAS_ASSET" "$downloaded_alias_asset" "$ALIAS_ASSET" false
+  download_file "$release_base_url/$UNINSTALL_HELPER_ASSET" "$downloaded_helper_asset" "$UNINSTALL_HELPER_ASSET" false
   download_file "$release_base_url/$CHECKSUM_MANIFEST" "$downloaded_manifest" "$CHECKSUM_MANIFEST" true
 
   local expected_binary_checksum
@@ -1272,6 +1513,8 @@ main() {
   local actual_wrapper_checksum
   local expected_alias_checksum
   local actual_alias_checksum
+  local expected_helper_checksum
+  local actual_helper_checksum
   expected_binary_checksum="$(expected_checksum_for_asset "$downloaded_manifest" "$asset_name")"
   actual_binary_checksum="$(sha256_file "$downloaded_binary_asset")"
 
@@ -1279,10 +1522,13 @@ main() {
   actual_wrapper_checksum="$(sha256_file "$downloaded_wrapper_asset")"
   expected_alias_checksum="$(expected_checksum_for_asset "$downloaded_manifest" "$ALIAS_ASSET")"
   actual_alias_checksum="$(sha256_file "$downloaded_alias_asset")"
+  expected_helper_checksum="$(expected_checksum_for_asset "$downloaded_manifest" "$UNINSTALL_HELPER_ASSET")"
+  actual_helper_checksum="$(sha256_file "$downloaded_helper_asset")"
 
   [ "$expected_binary_checksum" = "$actual_binary_checksum" ] || fail "Checksum validation failed for $asset_name"
   [ "$expected_wrapper_checksum" = "$actual_wrapper_checksum" ] || fail "Checksum validation failed for $WRAPPER_ASSET"
   [ "$expected_alias_checksum" = "$actual_alias_checksum" ] || fail "Checksum validation failed for $ALIAS_ASSET"
+  [ "$expected_helper_checksum" = "$actual_helper_checksum" ] || fail "Checksum validation failed for $UNINSTALL_HELPER_ASSET"
 
   log_debug "Checksum verified for $asset_name and $WRAPPER_ASSET"
 
@@ -1290,15 +1536,19 @@ main() {
   local target_binary_path
   target_wrapper_path="$install_dir/$PROJECT_NAME"
   target_binary_path="$install_dir/$BINARY_NAME"
-  install_posix_payload_transaction "$install_dir" "$downloaded_binary_asset" "$downloaded_wrapper_asset" "$downloaded_alias_asset" "$normalized_version"
-
-  if [ "$NO_MODIFY_PATH" = "true" ]; then
+  if [ -n "$PATH_MUTATION_JSON" ]; then
+    log "Preserving the validated installer-owned PATH entry from the existing manifest"
+  elif [ "$NO_MODIFY_PATH" = "true" ]; then
     if [ "$DEBUG_LOG" = "true" ]; then
       log "Skipping PATH modification as --no-modify-path is set"
     fi
   else
+    trap "finish_shell_path_transaction rollback; cleanup_progress_ui; rm -rf '$tmp_dir'" EXIT
     configure_shell_path "$install_dir"
   fi
+
+  install_posix_payload_transaction "$install_dir" "$downloaded_binary_asset" "$downloaded_wrapper_asset" "$downloaded_alias_asset" "$downloaded_helper_asset" "$normalized_version"
+  finish_shell_path_transaction commit
 
   configure_shell_integration
 

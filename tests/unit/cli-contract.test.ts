@@ -39,11 +39,47 @@ const expectedPaths = [
   "shell",
   "shell init",
   "shell install",
+  "shell uninstall",
   "status",
   "switch",
   "sync",
+  "uninstall",
   "update",
 ];
+
+test("uninstall commands expose only conservative consent options", () => {
+  const program = buildProgram({ includeHelpBanner: false });
+  const uninstall = program.commands.find((command) => command.name() === "uninstall")!;
+  const shellUninstall = program.commands
+    .find((command) => command.name() === "shell")!
+    .commands.find((command) => command.name() === "uninstall")!;
+  for (const command of [uninstall, shellUninstall]) {
+    expect(command.options.map((option) => option.flags)).toEqual(["-n, --dry-run", "-y, --yes"]);
+    expect(command.helpInformation()).not.toMatch(/--json|--force/);
+  }
+});
+
+test("publishes conservative uninstall consent and preservation semantics", () => {
+  const contract = generateCommandContract(
+    buildProgram({ includeHelpBanner: false }),
+    commandSemantics,
+    optionAuditPolicies,
+  );
+  for (const path of ["uninstall", "shell uninstall"]) {
+    expect(contract.commands.find((command) => command.path === path)?.semantics).toMatchObject({
+      uninstall: {
+        consent: { interactiveDefault: false, nonInteractiveRequiresYes: true },
+        options: ["--dry-run", "--yes"],
+        workspaceIndependent: true,
+      },
+    });
+  }
+  expect(commandSemantics.uninstall.uninstall).toMatchObject({
+    channelPolicy: "exactly-one-proven-owner",
+    force: false,
+    json: false,
+  });
+});
 
 const selectorFixturePolicy = (
   kind: "repository" | "group",
@@ -966,8 +1002,8 @@ describe("CLI command contract", () => {
     );
     const options = contract.commands.flatMap((command) => command.options);
 
-    expect(contract.commands).toHaveLength(26);
-    expect(options).toHaveLength(143);
+    expect(contract.commands).toHaveLength(28);
+    expect(options).toHaveLength(149);
     expect(new Set(options.map((option) => option.long))).toHaveLength(62);
     expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
     expect(

@@ -24,6 +24,8 @@ cp bin/arashi "$DIST_DIR/arashi-macos-arm64/arashi"
 chmod +x "$DIST_DIR/arashi-macos-arm64/arashi"
 cp bin/aw "$DIST_DIR/arashi-macos-arm64/aw"
 chmod +x "$DIST_DIR/arashi-macos-arm64/aw"
+cp scripts/uninstall.sh "$DIST_DIR/arashi-macos-arm64/uninstall.sh"
+chmod +x "$DIST_DIR/arashi-macos-arm64/uninstall.sh"
 cd "$DIST_DIR" && tar czf "arashi-${VERSION}-macos-arm64.tar.gz" arashi-macos-arm64 && cd ..
 
 # Linux
@@ -33,6 +35,8 @@ cp bin/arashi-linux-x64 "$DIST_DIR/arashi-linux-x64/arashi.bin"
 cp "$DIST_DIR/arashi-macos-arm64/arashi" "$DIST_DIR/arashi-linux-x64/arashi"
 cp bin/aw "$DIST_DIR/arashi-linux-x64/aw"
 chmod +x "$DIST_DIR/arashi-linux-x64/aw"
+cp scripts/uninstall.sh "$DIST_DIR/arashi-linux-x64/uninstall.sh"
+chmod +x "$DIST_DIR/arashi-linux-x64/uninstall.sh"
 cd "$DIST_DIR" && tar czf "arashi-${VERSION}-linux-x64.tar.gz" arashi-linux-x64 && cd ..
 
 # Windows
@@ -45,6 +49,7 @@ cp bin/arashi.ps1 "$DIST_DIR/arashi-windows-x64/arashi.ps1"
 cp bin/aw "$DIST_DIR/arashi-windows-x64/aw"
 cp bin/aw.bat "$DIST_DIR/arashi-windows-x64/aw.bat"
 cp bin/aw.ps1 "$DIST_DIR/arashi-windows-x64/aw.ps1"
+cp scripts/uninstall.ps1 "$DIST_DIR/arashi-windows-x64/uninstall.ps1"
 # Create README for Windows users
 cat > "$DIST_DIR/arashi-windows-x64/README.txt" << 'EOF'
 Arashi for Windows

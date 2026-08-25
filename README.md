@@ -92,6 +92,30 @@ aw shell install
 
 You can then use `aw switch --cd <filter>` to change the current shell's directory. See the [shell command guide](https://arashi.haphazard.dev/commands/shell/) for manual setup.
 
+Remove only the exact managed shell block with `aw shell uninstall --dry-run`, then
+`aw shell uninstall --yes`. This leaves executables, PATH, manifests, and project data untouched.
+
+## Uninstallation
+
+Inspect the conservative removal plan first, then consent explicitly:
+
+```bash
+aw uninstall --dry-run
+aw uninstall --yes
+```
+
+Package installations delegate to exactly one proven owner using `npm uninstall -g arashi`,
+`pnpm remove -g arashi`, `yarn global remove arashi`, `bun remove -g arashi`, or
+`vp uninstall -g arashi`. Current official direct installations are removed only when their
+schema-v2 manifest proves the exact payload and installer-created PATH state. Legacy,
+manual, modified, or ambiguous installations refuse automatic removal; refresh the same install
+with the current official installer and retry.
+
+If the CLI cannot run, use the installed `uninstall.sh` or `uninstall.ps1` helper with the exact
+install directory and dry-run first. Removal preserves workspaces, repositories, worktrees,
+`.arashi.yaml`, Git metadata, configuration, unrelated profile bytes, unrelated install-directory
+files, and the containing install directory.
+
 ## More documentation
 
 - [Getting started](https://arashi.haphazard.dev/getting-started/)

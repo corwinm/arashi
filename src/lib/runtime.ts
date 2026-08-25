@@ -120,6 +120,7 @@ export function file(path: string) {
         return false;
       }
     },
+    bytes: () => readFile(path),
     text: () => readFile(path, "utf8"),
   };
 }

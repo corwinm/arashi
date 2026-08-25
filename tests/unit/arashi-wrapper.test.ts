@@ -221,6 +221,14 @@ describe("retained POSIX release archive wrappers", () => {
       join(import.meta.dirname, "../../scripts/package-releases.sh"),
       join(fixture, "scripts/package-releases.sh"),
     );
+    copyFileSync(
+      join(import.meta.dirname, "../../scripts/uninstall.sh"),
+      join(fixture, "scripts/uninstall.sh"),
+    );
+    copyFileSync(
+      join(import.meta.dirname, "../../scripts/uninstall.ps1"),
+      join(fixture, "scripts/uninstall.ps1"),
+    );
     for (const wrapper of ["arashi", "aw"]) {
       copyFileSync(
         join(import.meta.dirname, `../../bin/${wrapper}`),

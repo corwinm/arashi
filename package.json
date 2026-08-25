@@ -40,6 +40,8 @@
     "bin/aw.bat",
     "bin/aw.ps1",
     "schema/config.schema.json",
+    "scripts/uninstall.sh",
+    "scripts/uninstall.ps1",
     "README.md",
     "LICENSE"
   ],

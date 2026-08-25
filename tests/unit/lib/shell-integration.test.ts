@@ -7,7 +7,7 @@ import {
   installShellIntegration,
   resolveStartupFilePath,
 } from "../../../src/lib/shell-integration.ts";
-import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -81,6 +81,33 @@ describe("shell integration", () => {
     expect(secondInstall.updated).toBe(false);
   });
 
+  test("refuses a symlinked startup file without modifying its target", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-shell-symlink-"));
+    tempPaths.push(home);
+    const targetPath = join(home, "shared-bashrc");
+    const bashrcPath = join(home, ".bashrc");
+    await writeFile(targetPath, "# shared\n");
+    await symlink(targetPath, bashrcPath);
+
+    await expect(
+      installShellIntegration({ env: { HOME: home, SHELL: "/bin/bash" } }),
+    ).rejects.toThrow(/symbolic link/i);
+    expect(await readFile(targetPath, "utf8")).toBe("# shared\n");
+  });
+
+  test("refuses a dangling startup-file symlink without creating its target", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-shell-dangling-symlink-"));
+    tempPaths.push(home);
+    const targetPath = join(home, "missing-zshrc");
+    const startupPath = join(home, ".zshrc");
+    await symlink(targetPath, startupPath);
+
+    await expect(
+      installShellIntegration({ env: { HOME: home, SHELL: "/bin/zsh" } }),
+    ).rejects.toThrow(/symbolic link/i);
+    expect(await runtime.file(targetPath).exists()).toBe(false);
+  });
+
   test("upgrades a wrapper-only block without changing bytes outside its markers", async () => {
     const home = await mkdtemp(join(tmpdir(), "arashi-shell-upgrade-"));
     tempPaths.push(home);
@@ -96,6 +123,20 @@ describe("shell integration", () => {
     expect(await readFile(bashrcPath, "utf8")).toBe(
       `${prefix}${buildShellInstallBlock("bash")}${suffix}`,
     );
+  });
+
+  test("refuses ambiguous managed markers without modifying the startup file", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-shell-ambiguous-"));
+    tempPaths.push(home);
+    const bashrcPath = join(home, ".bashrc");
+    const block = buildShellInstallBlock("bash");
+    const contents = `${block}\n\n${block}\n`;
+    await writeFile(bashrcPath, contents);
+
+    await expect(
+      installShellIntegration({ env: { HOME: home, SHELL: "/bin/bash" } }),
+    ).rejects.toThrow(/ambiguous.*marker/i);
+    expect(await readFile(bashrcPath, "utf8")).toBe(contents);
   });
 
   test("returns actionable error when install cannot detect a supported shell", async () => {

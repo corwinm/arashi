@@ -27,7 +27,7 @@ describe("completion canonical contract", () => {
       semantics: { vscode: { expectation: "excluded" } },
     });
     expect(completion?.arguments[0]).toMatchObject({
-      choices: ["bash", "fish", "zsh"],
+      choices: ["bash", "fish", "powershell", "zsh"],
       candidateKind: "shell",
     });
     expect(completion?.semantics.standalone).toEqual({ support: "full" });

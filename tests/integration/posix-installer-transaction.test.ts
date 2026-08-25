@@ -4,9 +4,11 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -28,7 +30,7 @@ afterEach(() => {
 });
 
 function writeChecksums(assets: string) {
-  const checksums = ["arashi-macos-arm64", "arashi", "aw"].map((name) => {
+  const checksums = ["arashi-macos-arm64", "arashi", "aw", "uninstall.sh"].map((name) => {
     const result = spawnSync("shasum", ["-a", "256", join(assets, name)], { encoding: "utf8" });
     return `${result.stdout.split(" ")[0]}  ${name}`;
   });
@@ -47,6 +49,7 @@ function fixture() {
   chmodSync(join(assets, "arashi-macos-arm64"), 0o755);
   copyFileSync(join(root, "bin/arashi"), join(assets, "arashi"));
   copyFileSync(join(root, "bin/aw"), join(assets, "aw"));
+  copyFileSync(join(root, "scripts/uninstall.sh"), join(assets, "uninstall.sh"));
   writeChecksums(assets);
   writeFileSync(
     join(commands, "curl"),
@@ -71,6 +74,316 @@ function fixture() {
 }
 
 describe.skipIf(process.platform === "win32")("POSIX installer transaction", () => {
+  test("records only the exact PATH bytes created by this install", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(profile, "before\n");
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const ledger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(ledger.pathMutation.profilePath).toBe(realpathSync(profile));
+    expect(readFileSync(profile, "utf8")).toBe(`before\n${ledger.pathMutation.insertedBytes}`);
+  });
+
+  test("preserves exact recorded PATH bytes after profile content without a trailing newline", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(profile, "before");
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const firstLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(readFileSync(profile, "utf8")).toBe(`before${firstLedger.pathMutation.insertedBytes}`);
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/bash" },
+    });
+
+    expect(refresh.status, refresh.stderr).toBe(0);
+    const refreshedLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(refreshedLedger.pathMutation).toEqual(firstLedger.pathMutation);
+    expect(readFileSync(profile, "utf8")).toBe(`before${firstLedger.pathMutation.insertedBytes}`);
+    const bashProfile = join(state.env.HOME, ".bash_profile");
+    if (existsSync(bashProfile)) {
+      expect(readFileSync(bashProfile, "utf8")).not.toContain(state.install);
+    }
+  });
+
+  test("preserves validated installer-owned PATH provenance across refresh", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(profile, "before\n");
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const firstLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/bash" },
+    });
+    expect(refresh.status, refresh.stderr).toBe(0);
+    const refreshedLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(refreshedLedger.pathMutation).toEqual(firstLedger.pathMutation);
+    const bashProfile = join(state.env.HOME, ".bash_profile");
+    if (existsSync(bashProfile))
+      expect(readFileSync(bashProfile, "utf8")).not.toContain(state.install);
+  });
+
+  test("refreshes missing recorded PATH bytes in the current shell profile", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const zshProfile = join(state.env.HOME, ".zshrc");
+    writeFileSync(zshProfile, "before\n");
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(first.status, first.stderr).toBe(0);
+    writeFileSync(zshProfile, "before\n");
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/bash" },
+    });
+
+    expect(refresh.status, refresh.stderr).toBe(0);
+    const bashProfile = join(state.env.HOME, ".bash_profile");
+    const refreshedLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(refreshedLedger.pathMutation.profilePath).toBe(realpathSync(bashProfile));
+    expect(readFileSync(bashProfile, "utf8")).toContain(state.install);
+    expect(readFileSync(zshProfile, "utf8")).toBe("before\n");
+  });
+
+  test("refreshes a recorded PATH block after its line endings change", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const zshProfile = join(state.env.HOME, ".zshrc");
+    writeFileSync(zshProfile, "before\n");
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const firstLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    const converted = readFileSync(zshProfile, "utf8").replaceAll("\n", "\r\n");
+    writeFileSync(zshProfile, converted);
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/bash" },
+    });
+
+    expect(refresh.status, refresh.stderr).toBe(0);
+    const bashProfile = join(state.env.HOME, ".bash_profile");
+    const refreshedLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(refreshedLedger.pathMutation.profilePath).toBe(realpathSync(bashProfile));
+    expect(refreshedLedger.pathMutation).not.toEqual(firstLedger.pathMutation);
+    expect(readFileSync(zshProfile, "utf8")).toBe(converted);
+  });
+
+  test("refreshes a recorded PATH block missing its leading newline", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const zshProfile = join(state.env.HOME, ".zshrc");
+    writeFileSync(zshProfile, "");
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const firstLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    writeFileSync(zshProfile, firstLedger.pathMutation.insertedBytes.slice(1));
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/bash" },
+    });
+
+    expect(refresh.status, refresh.stderr).toBe(0);
+    const bashProfile = join(state.env.HOME, ".bash_profile");
+    const refreshedLedger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(refreshedLedger.pathMutation.profilePath).toBe(realpathSync(bashProfile));
+    expect(readFileSync(bashProfile, "utf8")).toContain(state.install);
+  });
+
+  test("refreshes an exact pre-helper schema-v1 install to schema v2 without executing it", () => {
+    const state = fixture();
+    mkdirSync(state.install);
+    const sentinel = join(state.directory, "legacy-entrypoint-executed");
+    writeFileSync(join(state.install, "arashi.bin"), "legacy native\n");
+    writeFileSync(join(state.install, "arashi"), "legacy wrapper\n");
+    writeFileSync(
+      join(state.install, "aw"),
+      `#!/bin/sh\n# arashi-managed-alias:aw:v1\ntouch ${quote(sentinel)}\nexit 97\n`,
+    );
+    for (const name of ["arashi.bin", "arashi", "aw"]) {
+      chmodSync(join(state.install, name), 0o755);
+    }
+    const aliasPath = join(state.install, "aw");
+    const aliasHash = spawnSync("shasum", ["-a", "256", aliasPath], {
+      encoding: "utf8",
+    }).stdout.split(" ")[0];
+    writeFileSync(
+      join(state.install, ".arashi-managed-entrypoints.json"),
+      `{
+  "schemaVersion": 1,
+  "installDirectory": ${JSON.stringify(state.install)},
+  "releaseVersion": "1.31.0",
+  "aliases": [
+    { "path": ${JSON.stringify(aliasPath)}, "sha256": "${aliasHash}" }
+  ]
+}
+`,
+    );
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, PATH: `${state.install}:${state.env.PATH}` },
+    });
+
+    expect(refresh.status, refresh.stderr).toBe(0);
+    expect(existsSync(sentinel)).toBe(false);
+    expect(
+      JSON.parse(readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8")),
+    ).toMatchObject({ schemaVersion: 2 });
+    expect(existsSync(join(state.install, "uninstall.sh"))).toBe(true);
+  });
+
+  test("preserves a symlinked startup target instead of recording unremovable PATH bytes", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const target = join(state.env.HOME, "shared-zshrc");
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(target, "before\n");
+    symlinkSync(target, profile);
+
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(target, "utf8")).toBe("before\n");
+    expect(result.stderr).toContain("symbolic link");
+    const ledger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(ledger).not.toHaveProperty("pathMutation");
+  });
+
+  test("preserves symlinked startup files when direct shell integration is enabled", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const target = join(state.env.HOME, "shared-zshrc");
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(target, "before\n");
+    symlinkSync(target, profile);
+
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: {
+        ...state.env,
+        ARASHI_SHELL_INTEGRATION: "yes",
+        SHELL: "/bin/zsh",
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(lstatSync(profile).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, "utf8")).toBe("before\n");
+    expect(result.stderr).toContain("symbolic link");
+  });
+
+  test("rolls back a newly inserted PATH line when payload commit fails", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(profile, "before\n");
+    writeFileSync(join(state.assets, "arashi-macos-arm64"), "#!/bin/sh\nexit 1\n");
+    chmodSync(join(state.assets, "arashi-macos-arm64"), 0o755);
+    writeChecksums(state.assets);
+
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(result.status).not.toBe(0);
+    expect(readFileSync(profile, "utf8")).toBe("before\n");
+  });
+
+  test("rolls back PATH when install-directory setup fails before payload traps arm", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(profile, "before\n");
+    const blockedParent = join(state.directory, "blocked-parent");
+    writeFileSync(blockedParent, "not a directory\n");
+
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: {
+        ...state.env,
+        ARASHI_INSTALL_DIR: join(blockedParent, "install"),
+        ARASHI_NO_MODIFY_PATH: "0",
+        SHELL: "/bin/zsh",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Unable to create install directory");
+    expect(readFileSync(profile, "utf8")).toBe("before\n");
+  });
+
+  test("does not adopt a PATH entry that predates installation", () => {
+    const state = fixture();
+    mkdirSync(state.env.HOME, { recursive: true });
+    const profile = join(state.env.HOME, ".zshrc");
+    const before = `export PATH="${state.install}:$PATH"\n`;
+    writeFileSync(profile, before);
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const ledger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(ledger).not.toHaveProperty("pathMutation");
+    expect(readFileSync(profile, "utf8")).toBe(before);
+  });
+
   test("fresh install and managed upgrade commit one native binary, both wrappers, and owned ledger", () => {
     const state = fixture();
     const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
@@ -80,6 +393,9 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     expect(first.status, first.stderr).toBe(0);
     expect(readFileSync(join(state.install, "arashi"), "utf8")).toContain("Wrapper for arashi");
     expect(readFileSync(join(state.install, "aw"), "utf8")).toContain("arashi-managed-alias:aw:v1");
+    expect(readFileSync(join(state.install, "uninstall.sh"))).toEqual(
+      readFileSync(join(state.assets, "uninstall.sh")),
+    );
     expect(existsSync(join(state.install, "arashi.bin"))).toBe(true);
     expect(existsSync(join(state.install, "aw.bin"))).toBe(false);
     const ledger = JSON.parse(
@@ -87,11 +403,16 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     );
     expect(ledger).toMatchObject({
       installDirectory: state.install,
-      releaseVersion: "9.9.9",
-      schemaVersion: 1,
+      installationChannel: "official-direct",
+      platform: "posix",
+      schemaVersion: 2,
     });
-    expect(ledger.aliases).toHaveLength(1);
-    expect(ledger.aliases[0].path).toBe(join(state.install, "aw"));
+    expect(ledger.files.map((file: { relativePath: string }) => file.relativePath)).toEqual([
+      "arashi.bin",
+      "arashi",
+      "aw",
+      "uninstall.sh",
+    ]);
     const second = spawnSync("bash", [join(root, "scripts/install.sh")], {
       encoding: "utf8",
       env: state.env,
@@ -117,7 +438,7 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
       readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
     );
     expect(ledger.installDirectory).toBe(state.install);
-    expect(ledger.aliases[0].path).toBe(join(state.install, "aw"));
+    expect(ledger.installDirectory).toBe(state.install);
 
     const second = spawnSync("bash", [join(root, "scripts/install.sh")], {
       encoding: "utf8",
@@ -128,6 +449,49 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
       },
     });
     expect(second.status, second.stderr).toBe(0);
+  });
+
+  test("normalizes lexical parent traversal before creating targets and ownership metadata", () => {
+    const state = fixture();
+    mkdirSync(join(state.directory, "parent"));
+    const lexicalInstall = `${state.directory}/parent/../install`;
+    const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: { ...state.env, ARASHI_INSTALL_DIR: lexicalInstall },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const ledger = JSON.parse(
+      readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+    );
+    expect(ledger.installDirectory).toBe(state.install);
+    const helperCheck = spawnSync(
+      "bash",
+      [join(state.install, "uninstall.sh"), "--install-dir", state.install, "--dry-run"],
+      { encoding: "utf8", env: { ...state.env, HOME: state.env.HOME } },
+    );
+    expect(helperCheck.status, helperCheck.stderr).toBe(0);
+  });
+
+  test("never executes a tampered installed helper during schema-v2 refresh preflight", () => {
+    const state = fixture();
+    const first = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: state.env,
+    });
+    expect(first.status, first.stderr).toBe(0);
+    const sentinel = join(state.directory, "tampered-helper-executed");
+    writeFileSync(
+      join(state.install, "uninstall.sh"),
+      `#!/bin/sh\ntouch ${quote(sentinel)}\nexit 0\n`,
+    );
+    chmodSync(join(state.install, "uninstall.sh"), 0o755);
+
+    const refresh = spawnSync("bash", [join(root, "scripts/install.sh")], {
+      encoding: "utf8",
+      env: state.env,
+    });
+    expect(refresh.status).not.toBe(0);
+    expect(existsSync(sentinel)).toBe(false);
   });
 
   test("accepts a managed alias reached through a symlinked PATH directory", () => {
@@ -236,7 +600,13 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
     };
     expect(session.exitCode).not.toBe(0);
     expect(session.reused).toBe(true);
-    for (const name of ["arashi.bin", "arashi", "aw", ".arashi-managed-entrypoints.json"]) {
+    for (const name of [
+      "arashi.bin",
+      "arashi",
+      "aw",
+      "uninstall.sh",
+      ".arashi-managed-entrypoints.json",
+    ]) {
       expect(existsSync(join(state.install, name)), `${name} survived SIGINT rollback`).toBe(false);
     }
   }, 20_000);
@@ -248,7 +618,13 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
       env: state.env,
     });
     expect(first.status, first.stderr).toBe(0);
-    const managedNames = ["arashi.bin", "arashi", "aw", ".arashi-managed-entrypoints.json"];
+    const managedNames = [
+      "arashi.bin",
+      "arashi",
+      "aw",
+      "uninstall.sh",
+      ".arashi-managed-entrypoints.json",
+    ];
     const originals = new Map(
       managedNames.map((name) => {
         const path = join(state.install, name);
@@ -296,7 +672,13 @@ describe.skipIf(process.platform === "win32")("POSIX installer transaction", () 
       env: state.env,
     });
     expect(first.status, first.stderr).toBe(0);
-    const managedNames = ["arashi.bin", "arashi", "aw", ".arashi-managed-entrypoints.json"];
+    const managedNames = [
+      "arashi.bin",
+      "arashi",
+      "aw",
+      "uninstall.sh",
+      ".arashi-managed-entrypoints.json",
+    ];
     const originals = managedNames.map((name) => {
       const path = join(state.install, name);
       return { bytes: readFileSync(path), mode: statSync(path).mode & 0o777 };

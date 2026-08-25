@@ -21,6 +21,7 @@ const requiredWindowsAssets = [
   "aw.bat",
   "aw.ps1",
   "arashi-windows-x64.exe",
+  "uninstall.ps1",
 ] as const;
 const requiredInstallerAssets = [...requiredWindowsAssets, "arashi-checksums.txt"].toSorted();
 const temporaryDirectories: string[] = [];
@@ -69,7 +70,7 @@ describe("canonical Windows release payload", () => {
     expect(github).toBeDefined();
     const publishedWindowsAssets =
       github?.[1].assets
-        .map((asset) => asset.path.replace("bin/", ""))
+        .map((asset) => asset.path.replace(/^(?:bin|scripts)\//, ""))
         .filter(
           (asset) =>
             asset === "arashi" ||
@@ -79,19 +80,23 @@ describe("canonical Windows release payload", () => {
             asset === "aw.bat" ||
             asset === "aw.ps1" ||
             asset === "arashi-windows-x64.exe" ||
-            asset === "arashi-checksums.txt",
+            asset === "arashi-checksums.txt" ||
+            asset === "uninstall.ps1",
         )
         .toSorted() ?? [];
 
     expect(publishedWindowsAssets).toEqual(requiredInstallerAssets);
     expect(
-      quotedShellArray(read("scripts/generate-checksums.sh"), "ASSETS").filter((asset) =>
-        requiredWindowsAssets.includes(asset as (typeof requiredWindowsAssets)[number]),
-      ),
+      quotedShellArray(read("scripts/generate-checksums.sh"), "ASSETS")
+        .map((asset) => asset.split("/").at(-1)!)
+        .filter((asset) =>
+          requiredWindowsAssets.includes(asset as (typeof requiredWindowsAssets)[number]),
+        )
+        .toSorted(),
     ).toEqual([...requiredWindowsAssets].toSorted());
   });
 
-  test("ships the same supported seven-file payload in the Windows archive", () => {
+  test("ships the same supported eight-file payload in the Windows archive", () => {
     const packager = read("scripts/package-releases.sh");
 
     expect(packager).toContain('cp bin/arashi "$DIST_DIR/arashi-windows-x64/arashi"');
@@ -101,6 +106,7 @@ describe("canonical Windows release payload", () => {
     expect(packager).toContain('cp bin/aw "$DIST_DIR/arashi-windows-x64/aw"');
     expect(packager).toContain("aw.ps1");
     expect(packager).toContain("aw.bat");
+    expect(packager).toContain("uninstall.ps1");
     expect(packager).toContain("Git Bash");
     expect(packager).toContain("Open a new");
   });
@@ -117,6 +123,8 @@ describe("canonical Windows release payload", () => {
         join(root, "scripts/package-releases.sh"),
         join(fixtureRoot, "scripts/package-releases.sh"),
       );
+      copyFileSync(join(root, "scripts/uninstall.sh"), join(fixtureRoot, "scripts/uninstall.sh"));
+      copyFileSync(join(root, "scripts/uninstall.ps1"), join(fixtureRoot, "scripts/uninstall.ps1"));
 
       for (const asset of [
         "arashi",
@@ -157,6 +165,7 @@ describe("canonical Windows release payload", () => {
           "aw",
           "aw.bat",
           "aw.ps1",
+          "uninstall.ps1",
         ]
           .map((name) => `arashi-windows-x64/${name}`)
           .toSorted(),

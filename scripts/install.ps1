@@ -29,9 +29,10 @@ $CmdWrapperAsset = "arashi.bat"
 $AliasBashWrapperAsset = "aw"
 $AliasPowerShellWrapperAsset = "aw.ps1"
 $AliasCmdWrapperAsset = "aw.bat"
+$UninstallHelperAsset = "uninstall.ps1"
 $AliasMarker = "arashi-managed-alias:aw:v1"
 $OwnershipLedgerName = ".arashi-managed-entrypoints.json"
-$OwnershipLedgerSchemaVersion = 1
+$OwnershipLedgerSchemaVersion = 2
 $ChecksumManifestAsset = "arashi-checksums.txt"
 $InstalledBinaryName = "arashi.bin.exe"
 $ReleaseFallbackUrl = "https://github.com/$Repository/releases/latest"
@@ -262,13 +263,73 @@ function Assert-ArashiAliasOwnership {
     $ledgerItem = Get-Item -LiteralPath $ledgerPath -Force -ErrorAction SilentlyContinue
     $ledgerExists = $null -ne $ledgerItem
     $ledger = $null
+    if (-not $ledgerExists) {
+        $legacyPayloadNames = @($InstalledBinaryName, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset)
+        $legacyPayloadComplete = $true
+        foreach ($legacyName in $legacyPayloadNames) {
+            $legacyItem = Get-Item -LiteralPath (Join-Path $InstallDirectory $legacyName) -Force -ErrorAction SilentlyContinue
+            if ($null -eq $legacyItem -or $legacyItem.PSIsContainer -or ($legacyItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                $legacyPayloadComplete = $false
+                break
+            }
+        }
+        foreach ($unmanagedName in @($InstalledBinaryName, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset, $UninstallHelperAsset)) {
+            $unmanagedPath = Join-Path $InstallDirectory $unmanagedName
+            if ((Test-Path -LiteralPath $unmanagedPath) -and (-not $legacyPayloadComplete -or $unmanagedName -notin $legacyPayloadNames)) { throw "Unmanifested install collision at $unmanagedPath; move it aside before installing." }
+        }
+    }
     if ($ledgerExists) {
         $ledgerReparse = ($ledgerItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
         if ($ledgerItem.PSIsContainer -or $ledgerReparse) { throw "Ownership ledger collision at $ledgerPath is not a regular file; move or remove it deliberately before retrying." }
-        try { $ledger = Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json } catch { throw "Malformed ownership ledger at $ledgerPath; move or remove it deliberately before retrying." }
+        try {
+            $ledgerBytes = [System.IO.File]::ReadAllBytes($ledgerPath)
+            $ledgerEncoding = New-Object System.Text.UTF8Encoding($false, $true)
+            $ledgerText = $ledgerEncoding.GetString($ledgerBytes).TrimStart([char]0xFEFF)
+            $ledger = $ledgerText | ConvertFrom-Json
+        } catch { throw "Malformed ownership ledger at $ledgerPath; move or remove it deliberately before retrying." }
+        if ($ledger.schemaVersion -eq 2) {
+            $currentProperties = @($ledger.PSObject.Properties.Name | Sort-Object)
+            if (($currentProperties -join ',') -cnotin @('files,installationChannel,installDirectory,platform,schemaVersion', 'files,installationChannel,installDirectory,pathMutation,platform,schemaVersion')) { throw "Current ownership manifest property-set defect at $ledgerPath; refresh cannot safely replace it." }
+            if ($ledger.schemaVersion -isnot [int] -or $ledger.installationChannel -isnot [string] -or $ledger.installationChannel -cne "official-direct" -or $ledger.platform -isnot [string] -or $ledger.platform -cne "windows" -or $ledger.installDirectory -isnot [string] -or [System.IO.Path]::GetFullPath($ledger.installDirectory) -ine [System.IO.Path]::GetFullPath($InstallDirectory)) {
+                throw "Current ownership manifest identity mismatch at $ledgerPath; refresh cannot safely replace it."
+            }
+            if ($currentProperties -contains 'pathMutation') {
+                $pathProperties = @($ledger.pathMutation.PSObject.Properties.Name | Sort-Object)
+                if (($pathProperties -join ',') -cne 'created,entry' -or $ledger.pathMutation.created -isnot [bool] -or $ledger.pathMutation.entry -isnot [string] -or [string]::IsNullOrEmpty($ledger.pathMutation.entry)) {
+                    throw "Current ownership manifest PATH provenance defect at $ledgerPath; refresh cannot safely replace it."
+                }
+            }
+            $currentExpected = @(
+                @($InstalledBinaryName, "native-executable"),
+                @($BashWrapperAsset, "canonical-wrapper"),
+                @($PowerShellWrapperAsset, "canonical-powershell-wrapper"),
+                @($CmdWrapperAsset, "canonical-cmd-wrapper"),
+                @($AliasBashWrapperAsset, "alias-wrapper"),
+                @($AliasPowerShellWrapperAsset, "alias-powershell-wrapper"),
+                @($AliasCmdWrapperAsset, "alias-cmd-wrapper"),
+                @($UninstallHelperAsset, "uninstall-helper")
+            )
+            if (@($ledger.files).Count -ne $currentExpected.Count) { throw "Current ownership manifest payload mismatch at $ledgerPath; refresh cannot safely replace it." }
+            for ($currentIndex = 0; $currentIndex -lt $currentExpected.Count; $currentIndex++) {
+                $currentRecord = @($ledger.files)[$currentIndex]
+                $currentRecordProperties = @($currentRecord.PSObject.Properties.Name | Sort-Object)
+                if (($currentRecordProperties -join ',') -cne 'digest,relativePath,role' -or $currentRecord.relativePath -isnot [string] -or $currentRecord.role -isnot [string] -or $currentRecord.digest -isnot [string] -or $currentRecord.relativePath -cne $currentExpected[$currentIndex][0] -or $currentRecord.role -cne $currentExpected[$currentIndex][1] -or $currentRecord.digest -cnotmatch '^[a-f0-9]{64}$') {
+                    throw "Current ownership manifest payload mismatch at $ledgerPath; refresh cannot safely replace it."
+                }
+                $currentPath = [System.IO.Path]::GetFullPath((Join-Path $InstallDirectory $currentRecord.relativePath))
+                if ((Split-Path -Parent $currentPath) -ine [System.IO.Path]::GetFullPath($InstallDirectory)) { throw "Current ownership manifest payload mismatch at $ledgerPath; refresh cannot safely replace it." }
+                $currentItem = Get-Item -LiteralPath $currentPath -Force -ErrorAction SilentlyContinue
+                if ($null -eq $currentItem -or $currentItem.PSIsContainer -or ($currentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or (Get-ArashiFileHash -Path $currentPath) -cne $currentRecord.digest) {
+                    throw "Current ownership manifest payload mismatch at $ledgerPath; refresh cannot safely replace it."
+                }
+            }
+            if ($currentProperties -contains 'pathMutation') { return $ledger.pathMutation }
+            return $null
+        }
         $ledgerProperties = @($ledger.PSObject.Properties.Name | Sort-Object)
         if (($ledgerProperties -join ',') -cne 'aliases,installDirectory,releaseVersion,schemaVersion') { throw "Ownership ledger property-set defect at $ledgerPath; move or remove it deliberately before retrying." }
-        if ($ledger.schemaVersion -ne $OwnershipLedgerSchemaVersion) { throw "Unsupported ownership ledger schemaVersion at $ledgerPath; move or remove it deliberately before retrying." }
+        if ($ledger.schemaVersion -ne 1) { throw "Unsupported ownership ledger schemaVersion at $ledgerPath; move or remove it deliberately before retrying." }
+        if (Test-Path -LiteralPath (Join-Path $InstallDirectory $UninstallHelperAsset)) { throw "Legacy ownership metadata does not own $UninstallHelperAsset; move it aside before refreshing." }
         if ($ledger.releaseVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw "Ownership ledger releaseVersion defect at $ledgerPath; move or remove it deliberately before retrying." }
         if ([System.IO.Path]::GetFullPath($ledger.installDirectory) -ine [System.IO.Path]::GetFullPath($InstallDirectory)) { throw "Ownership ledger installDirectory mismatch at $ledgerPath; move or remove it deliberately before retrying." }
         if (@($ledger.aliases).Count -ne $AliasNames.Count) { throw "Ownership ledger alias set mismatch at $ledgerPath; move or remove it deliberately before retrying." }
@@ -342,15 +403,17 @@ function Write-ArashiOwnershipLedger {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$InstallDirectory,
-        [Parameter(Mandatory = $true)][string]$ReleaseVersion,
-        [Parameter(Mandatory = $true)][array]$Aliases
+        [Parameter(Mandatory = $true)][array]$Payload,
+        [AllowNull()]$PathMutation = $null
     )
     $ledger = [ordered]@{
         schemaVersion = $OwnershipLedgerSchemaVersion
+        installationChannel = "official-direct"
+        platform = "windows"
         installDirectory = [System.IO.Path]::GetFullPath($InstallDirectory)
-        releaseVersion = $ReleaseVersion
-        aliases = @($Aliases | ForEach-Object { [ordered]@{ path = [System.IO.Path]::GetFullPath($_.Path); sha256 = $_.Hash } })
+        files = @($Payload | ForEach-Object { [ordered]@{ relativePath = $_.RelativePath; role = $_.Role; digest = Get-ArashiFileHash -Path $_.SourcePath } })
     }
+    if ($null -ne $PathMutation) { $ledger.pathMutation = $PathMutation }
     $temporaryPath = "$Path.arashi-install-$([System.Guid]::NewGuid().ToString('N')).tmp"
     try {
         $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
@@ -470,10 +533,10 @@ function Add-ArashiUserPath {
     $alreadyPresent = $entries | Where-Object { $_.TrimEnd("\") -ieq $Directory.TrimEnd("\") } | Select-Object -First 1
     if ($alreadyPresent) {
         Write-Step "$Directory is already on the user PATH"
-        return
+        return [PSCustomObject]@{ Created = $false; Entry = $alreadyPresent.ToString(); Before = $currentUserPath; After = $currentUserPath }
     }
 
-    $updatedPath = (@($entries) + $Directory) -join ";"
+    $updatedPath = if ([string]::IsNullOrEmpty($currentUserPath)) { $Directory } else { "$currentUserPath;$Directory" }
     [Environment]::SetEnvironmentVariable("Path", $updatedPath, "User")
     Write-Step "Added $Directory to the user PATH"
 
@@ -494,6 +557,27 @@ public static class NativeMethods {
     }
 
     Write-Host "Open a new terminal, including a new Git Bash window, for the updated PATH to take effect."
+    return [PSCustomObject]@{ Created = $true; Entry = $Directory; Before = $currentUserPath; After = $updatedPath }
+}
+
+function Resolve-ArashiPathMutation {
+    param(
+        [AllowNull()]$Existing,
+        [Parameter(Mandatory = $true)]$Result
+    )
+
+    if ($null -eq $Existing -or (-not [bool]$Existing.created -and [bool]$Result.Created)) {
+        return [ordered]@{ entry = $Result.Entry; created = [bool]$Result.Created }
+    }
+    return $Existing
+}
+
+function Test-ArashiExactUserPathEntry {
+    param([Parameter(Mandatory = $true)][string]$Entry)
+
+    $currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ([string]::IsNullOrEmpty($currentUserPath)) { return $false }
+    return @($currentUserPath -split ';' | Where-Object { $_ -ceq $Entry }).Count -eq 1
 }
 
 function Invoke-ArashiSmokeTest {
@@ -527,7 +611,10 @@ function Install-Arashi {
     $releaseBaseUrl = Get-ArashiReleaseBaseUrl -InputVersion $selectedVersion
     $targetInstallDir = Resolve-ArashiInstallDir -InputInstallDir $InstallDir
     $skipPathModification = Test-ArashiNoModifyPath -NoModifyPathFlag:$NoModifyPath
-    Assert-ArashiAliasOwnership -InstallDirectory $targetInstallDir
+    $existingPathMutation = Assert-ArashiAliasOwnership -InstallDirectory $targetInstallDir
+    if ($null -ne $existingPathMutation -and [bool]$existingPathMutation.created -and -not (Test-ArashiExactUserPathEntry -Entry $existingPathMutation.entry)) {
+        $existingPathMutation = $null
+    }
 
     Write-Step "Installing Arashi for Windows x64"
     Write-Step "Release: $selectedVersion"
@@ -535,28 +622,31 @@ function Install-Arashi {
 
     $stagingDir = Join-Path ([System.IO.Path]::GetTempPath()) "arashi-install-$([System.Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+    $pathResult = $null
+    $payloadCommitted = $false
 
     try {
-        $assets = @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset, $ChecksumManifestAsset)
+        $assets = @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset, $UninstallHelperAsset, $ChecksumManifestAsset)
         foreach ($asset in $assets) {
             Invoke-ArashiDownload -Url "$releaseBaseUrl/$asset" -Destination (Join-Path $stagingDir $asset) -Label $asset
         }
 
         $manifestPath = Join-Path $stagingDir $ChecksumManifestAsset
-        foreach ($asset in @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset)) {
+        foreach ($asset in @($WindowsBinaryAsset, $BashWrapperAsset, $PowerShellWrapperAsset, $CmdWrapperAsset, $AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset, $UninstallHelperAsset)) {
             Assert-ArashiChecksum -ManifestPath $manifestPath -AssetPath (Join-Path $stagingDir $asset) -AssetName $asset
         }
         Write-Step "Verified SHA-256 checksums"
 
         New-Item -ItemType Directory -Path $targetInstallDir -Force | Out-Null
         $payload = @(
-            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $WindowsBinaryAsset; DestinationPath = Join-Path $targetInstallDir $InstalledBinaryName },
-            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $BashWrapperAsset; DestinationPath = Join-Path $targetInstallDir $BashWrapperAsset },
-            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $PowerShellWrapperAsset; DestinationPath = Join-Path $targetInstallDir $PowerShellWrapperAsset },
-            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $CmdWrapperAsset; DestinationPath = Join-Path $targetInstallDir $CmdWrapperAsset },
-            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasBashWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasBashWrapperAsset },
-            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasPowerShellWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasPowerShellWrapperAsset },
-            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasCmdWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasCmdWrapperAsset }
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $WindowsBinaryAsset; DestinationPath = Join-Path $targetInstallDir $InstalledBinaryName; RelativePath = $InstalledBinaryName; Role = "native-executable" },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $BashWrapperAsset; DestinationPath = Join-Path $targetInstallDir $BashWrapperAsset; RelativePath = $BashWrapperAsset; Role = "canonical-wrapper" },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $PowerShellWrapperAsset; DestinationPath = Join-Path $targetInstallDir $PowerShellWrapperAsset; RelativePath = $PowerShellWrapperAsset; Role = "canonical-powershell-wrapper" },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $CmdWrapperAsset; DestinationPath = Join-Path $targetInstallDir $CmdWrapperAsset; RelativePath = $CmdWrapperAsset; Role = "canonical-cmd-wrapper" },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasBashWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasBashWrapperAsset; RelativePath = $AliasBashWrapperAsset; Role = "alias-wrapper" },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasPowerShellWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasPowerShellWrapperAsset; RelativePath = $AliasPowerShellWrapperAsset; Role = "alias-powershell-wrapper" },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $AliasCmdWrapperAsset; DestinationPath = Join-Path $targetInstallDir $AliasCmdWrapperAsset; RelativePath = $AliasCmdWrapperAsset; Role = "alias-cmd-wrapper" },
+            [PSCustomObject]@{ SourcePath = Join-Path $stagingDir $UninstallHelperAsset; DestinationPath = Join-Path $targetInstallDir $UninstallHelperAsset; RelativePath = $UninstallHelperAsset; Role = "uninstall-helper" }
         )
         $installedBinary = Join-Path $targetInstallDir $InstalledBinaryName
         $installedCanonical = Join-Path $targetInstallDir $CmdWrapperAsset
@@ -569,18 +659,19 @@ function Install-Arashi {
         $releaseVersion = $versionMatch.Groups[1].Value
         if ($selectedVersion -ne "latest" -and $releaseVersion -cne $selectedVersion) { throw "Downloaded release version $releaseVersion does not match requested version $selectedVersion." }
         $stagedLedger = Join-Path $stagingDir $OwnershipLedgerName
-        $aliasOwnership = foreach ($asset in @($AliasBashWrapperAsset, $AliasPowerShellWrapperAsset, $AliasCmdWrapperAsset)) {
-            [PSCustomObject]@{ Path = Join-Path $targetInstallDir $asset; Hash = Get-ArashiFileHash -Path (Join-Path $stagingDir $asset) }
+        $pathMutation = $existingPathMutation
+        if (-not $skipPathModification) {
+            $pathResult = Add-ArashiUserPath -Directory $targetInstallDir
+            $pathMutation = Resolve-ArashiPathMutation -Existing $existingPathMutation -Result $pathResult
         }
-        Write-ArashiOwnershipLedger -Path $stagedLedger -InstallDirectory $targetInstallDir -ReleaseVersion $releaseVersion -Aliases $aliasOwnership
+        Write-ArashiOwnershipLedger -Path $stagedLedger -InstallDirectory $targetInstallDir -Payload $payload -PathMutation $pathMutation
         $ledgerItem = [PSCustomObject]@{ SourcePath = $stagedLedger; DestinationPath = Join-Path $targetInstallDir $OwnershipLedgerName }
         Install-ArashiPayloadTransaction -Payload $payload -BinaryPath $installedBinary -CanonicalPath $installedCanonical -AliasPath $installedAlias -OwnershipLedgerItem $ledgerItem
+        $payloadCommitted = $true
         Write-Step "Installed and verified Arashi files"
 
         if ($skipPathModification) {
             Write-WarningMessage "PATH modification disabled. Add this directory to your persistent user PATH, then open a new Git Bash window or other terminal: $targetInstallDir"
-        } else {
-            Add-ArashiUserPath -Directory $targetInstallDir
         }
 
         Write-Host ""
@@ -588,6 +679,14 @@ function Install-Arashi {
         Write-Host "Install directory: $targetInstallDir"
         Write-Host "Run 'aw --version' from a new terminal to verify PATH setup. The legacy-compatible 'arashi --version' command remains available."
     } catch {
+        if (-not $payloadCommitted -and $null -ne $pathResult -and $pathResult.Created) {
+            $currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+            if ($currentUserPath -ceq $pathResult.After) {
+                [Environment]::SetEnvironmentVariable("Path", $pathResult.Before, "User")
+            } else {
+                Write-WarningMessage "User PATH changed during failed installation; preserving it for manual inspection."
+            }
+        }
         Fail-Install $_.Exception.Message
     } finally {
         Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue

@@ -42,8 +42,8 @@ The POSIX curl installer (`scripts/install.sh`) is bound to GitHub Releases arti
 - Platform mapping:
   - `darwin-arm64` -> `arashi-macos-arm64`
   - `linux-x64` -> `arashi-linux-x64`
-- Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies `arashi`, marked alias `aw`, and the target platform binary before install.
-- Runtime verification: a recoverable transaction installs `arashi.bin`, `arashi`, and `aw`, requires identical non-empty version output through both names, and atomically commits `.arashi-managed-entrypoints.json` before updating PATH or shell startup state.
+- Integrity requirement: installer downloads `arashi-checksums.txt` from the same release and verifies `arashi`, marked alias `aw`, `uninstall.sh`, and the target platform binary before install.
+- Runtime verification: a recoverable transaction installs `arashi.bin`, `arashi`, `aw`, and `uninstall.sh`, requires identical non-empty version output through both command names, and atomically commits a closed schema-v2 `.arashi-managed-entrypoints.json` after the complete payload and exact installer-created PATH state are known.
 - Default install placement is `~/.arashi/bin` unless overridden with `ARASHI_INSTALL_DIR` or `--install-dir`.
 - Installer updates the active shell config (`.zshrc`, `.bashrc`/`.bash_profile`, `.profile`, or fish config) to include the install directory on `PATH`.
 - Interactive curl installs offer to enable shell integration for bash, zsh, and fish so `aw switch --cd` works without a second setup step.
@@ -66,6 +66,7 @@ The Windows PowerShell installer (`scripts/install.ps1`) is also bound to GitHub
   - `aw`
   - `aw.ps1`
   - `aw.bat`
+  - `uninstall.ps1`
 - Default install placement is `%USERPROFILE%\.arashi\bin` unless overridden with `ARASHI_INSTALL_DIR` or `-InstallDir`.
 - Install placement uses staged downloads and installs files together as:
   - `arashi.bin.exe`
@@ -75,11 +76,22 @@ The Windows PowerShell installer (`scripts/install.ps1`) is also bound to GitHub
   - `aw`
   - `aw.ps1`
   - `aw.bat`
+  - `uninstall.ps1`
 - The installer adds the install directory to the persistent user PATH by default, avoids duplicate PATH entries, and tells the user to open a new Git Bash window or other terminal. The extensionless `arashi` wrapper lets Git Bash execute the adjacent `arashi.bin.exe`.
 - The installer does not create or modify `.bashrc`, `.bash_profile`, `.profile`, or another shell profile.
 - Use `ARASHI_NO_MODIFY_PATH=1` or `-NoModifyPath` to skip PATH modification.
 - Before downloads or mutation, the installer rejects unowned/ambiguous alias destinations, malformed or mismatched ownership ledgers, and PowerShell/CMD/Git Bash `aw` resolutions outside the selected directory without executing the unrelated command.
-- Runtime verification compares identical output from the native binary and the policy-independent CMD entrypoints `arashi.bat` and `aw.bat` before atomically committing the alias ownership ledger. Fresh-shell acceptance separately verifies the PowerShell wrappers. Any replacement, smoke, or ledger failure restores the seven-file payload and prior ledger; recoverable backups are retained with manual instructions if rollback itself fails.
+- Runtime verification compares identical output from the native binary and the policy-independent CMD entrypoints `arashi.bat` and `aw.bat` before atomically committing the schema-v2 ownership manifest. Fresh-shell acceptance separately verifies the PowerShell wrappers. The manifest records exact payload digests and exact user-PATH spelling with `created: false` when that entry predates installation.
+
+## Conservative removal
+
+Run `aw uninstall --dry-run` before interactive removal or `aw uninstall --yes`. Proven package
+installs delegate to exactly one owning manager. Current direct installs use the local schema-v2
+manifest and bundled `uninstall.sh` or `uninstall.ps1`; legacy direct users must refresh the same
+location with the current official installer before retrying. Manual, modified, malformed, or
+ambiguous state is preserved and refused. Removal never recursively deletes an install directory
+or touches workspaces, repositories, worktrees, project files, Git metadata, or unrelated user
+state.
 
 Examples:
 

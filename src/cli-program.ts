@@ -22,6 +22,7 @@ import { createCommand as createStatusCommand } from "./commands/status.ts";
 import { createCommand as createSwitchCommand } from "./commands/switch.ts";
 import { createCommand as createSyncCommand } from "./commands/sync.ts";
 import { createCommand as createUpdateCommand } from "./commands/update.ts";
+import { createCommand as createUninstallCommand } from "./commands/uninstall.ts";
 import { detectTerminalContext } from "./lib/terminal-context.ts";
 import { renderHelpBanner } from "./lib/logo.ts";
 import pkg from "../package.json" with { type: "json" };
@@ -61,6 +62,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     createPullCommand(),
     createPushCommand(),
     createSyncCommand(),
+    createUninstallCommand(),
     createShellCommand(),
     createSetupCommand(),
     createSwitchCommand(),
