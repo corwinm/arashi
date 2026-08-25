@@ -1,3 +1,12 @@
+## [1.35.0](https://github.com/corwinm/arashi/compare/v1.34.0...v1.35.0) (2026-08-25)
+
+### Features
+
+- add configurable worktree path budget ([#165](https://github.com/corwinm/arashi/issues/165)) ([5e4db46](https://github.com/corwinm/arashi/commit/5e4db469ae70c8e2b15bc607197ebc92b0163d2c))
+- add safe uninstall lifecycle ([#164](https://github.com/corwinm/arashi/issues/164)) ([bfeb10d](https://github.com/corwinm/arashi/commit/bfeb10dfb95623771e016d087461355f6d5da1a4))
+- **create:** configure worktree directory naming ([#162](https://github.com/corwinm/arashi/issues/162)) ([77f28ec](https://github.com/corwinm/arashi/commit/77f28eca485a873726608e0f40b91d57c821efac))
+- delete configured repositories safely ([#163](https://github.com/corwinm/arashi/issues/163)) ([4e93687](https://github.com/corwinm/arashi/commit/4e93687194ab075efb053f8f4f61457180336b72))
+
 ## [1.34.0](https://github.com/corwinm/arashi/compare/v1.33.0...v1.34.0) (2026-08-24)
 
 ### Features
