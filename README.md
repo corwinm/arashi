@@ -122,7 +122,7 @@ files, and the containing install directory.
 - [Configuration](https://arashi.haphazard.dev/workflows/config/)
 - [Hooks](https://arashi.haphazard.dev/workflows/hooks/)
 - [Editor and terminal integrations](https://arashi.haphazard.dev/workflows/)
-- [JSON automation](https://arashi.haphazard.dev/workflows/json-automation/)
+- [Agents and automation](https://arashi.haphazard.dev/workflows/agents-and-specs/#automation-and-json)
 - [Local configuration reference](./docs/configuration.md)
 
 ## Contributing
