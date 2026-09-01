@@ -8,7 +8,7 @@ Please use the primary contribution workflow in the specs repository:
 
 - [`arashi-arashi/CONTRIBUTING.md`](https://github.com/corwinm/arashi-arashi/blob/main/CONTRIBUTING.md)
 
-That guide defines the Arashi CLI worktree flow, spec-kit process in OpenCode, and model preferences.
+That guide defines the Arashi CLI worktree flow, OpenSpec planning process, and model preferences.
 
 ## Implementation Quality Gates
 
