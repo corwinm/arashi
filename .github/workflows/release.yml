@@ -204,6 +204,28 @@ jobs:
         if: always()
         run: ./scripts/release/configure-gpg-signing.sh --cleanup
 
+  notify-related-work:
+    name: Comment on released PRs and issues
+    needs: release
+    if: needs.release.outputs.version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout notification script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Comment on related work
+        run: node scripts/release/notify-published-release.mjs "$RELEASE_VERSION"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.release.outputs.version }}
+
   verify-published:
     name: Verify published release
     needs: release

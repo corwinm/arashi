@@ -137,9 +137,13 @@ describe("versioned executable distribution contract", () => {
     expect(releaseWorkflow).toContain("ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}");
     expect(releaseWorkflow).toContain("uses: ./.github/workflows/verify-aw-release.yml");
     expect(releaseWorkflow).toContain("needs.release.outputs.version");
+    expect(releaseWorkflow).toContain("notify-related-work:");
+    expect(releaseWorkflow).toContain("continue-on-error: true");
+    expect(releaseWorkflow).toContain("issues: write");
+    expect(releaseWorkflow).toContain("pull-requests: write");
+    expect(releaseWorkflow).toContain("node scripts/release/notify-published-release.mjs");
     expect(releaseWorkflow).not.toMatch(/^\s*uses:\s+[^\s]+@v\d+/mu);
-    expect(releaseWorkflow).not.toContain("pull-requests: write");
-    expect(releaseWorkflow).not.toContain("issues: write");
+
     expect(releaseWorkflow).toContain("dry-run:");
     const dryRunJob = releaseWorkflow.slice(
       releaseWorkflow.indexOf("  dry-run:"),
