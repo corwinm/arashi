@@ -1,0 +1,17 @@
+name: Cross-repository command contracts
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    uses: corwinm/arashi-arashi/.github/workflows/cross-repo-command-contracts.yml@main
+    with:
+      changed_repository: arashi
+      changed_source_repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      changed_sha: ${{ github.event.pull_request.head.sha || github.sha }}
