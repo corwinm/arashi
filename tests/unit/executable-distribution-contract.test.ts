@@ -116,11 +116,30 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).toContain("workflow_dispatch");
     expect(workflow).toContain("release:verify-aw");
     const windowsJob = workflow.slice(workflow.indexOf("verify-aw-windows:"));
-    expect(windowsJob).toContain("actions/setup-node@v7");
+    expect(windowsJob).toContain("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020");
     expect(windowsJob).toContain("node-version: 24.18.0");
-    expect(windowsJob.indexOf("actions/setup-node@v7")).toBeLessThan(
-      windowsJob.indexOf("Verify public npm package"),
-    );
+    expect(
+      windowsJob.indexOf("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"),
+    ).toBeLessThan(windowsJob.indexOf("Verify public npm package"));
+  });
+
+  test("hardens release pushes and automatically verifies a newly published version", () => {
+    const releaseConfig = JSON.parse(read(".releaserc.json")) as {
+      repositoryUrl?: string;
+    };
+    const releaseWorkflow = read(".github/workflows/release.yml");
+    const verificationWorkflow = read(".github/workflows/verify-aw-release.yml");
+
+    expect(releaseConfig.repositoryUrl).toBe("git@github.com:corwinm/arashi.git");
+    expect(releaseWorkflow).toContain("concurrency:");
+    expect(releaseWorkflow).toContain("cancel-in-progress: false");
+    expect(releaseWorkflow).toContain("timeout-minutes:");
+    expect(releaseWorkflow).toContain("ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}");
+    expect(releaseWorkflow).toContain("uses: ./.github/workflows/verify-aw-release.yml");
+    expect(releaseWorkflow).toContain("needs.release.outputs.version");
+    expect(verificationWorkflow).toContain("workflow_call:");
+    expect(verificationWorkflow).toContain("wait-for-publication:");
+    expect(verificationWorkflow).toContain("needs: wait-for-publication");
   });
 
   test("runs exact-version public npm and POSIX verification on a provisioned native POSIX runner", () => {

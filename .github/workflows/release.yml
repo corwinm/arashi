@@ -1,27 +1,8 @@
 # Release Workflow v3.0.0
 # Contract: specs/019-release-workflow/contracts/workflow-interface.md
 #
-# This workflow automates the complete release process using semantic-release:
-# - Parses conventional commits to determine semantic version bump
-# - Updates package.json and CHANGELOG.md
-# - Commits changes and creates git tag
-# - Builds multi-platform binaries with correct version (via @semantic-release/exec)
-# - Publishes wrapper scripts used by npm and curl installer paths
-# - Generates SHA-256 checksum manifest for release artifacts
-# - Creates GitHub release with wrappers, binaries, and checksum manifest
-# - Publishes package to npm registry using npm Trusted Publishing
-#
-# Trigger: Manual workflow dispatch from GitHub Actions UI
-# Target: Complete release in under 10 minutes from trigger to publication
-#
-# Plugin order matters:
-#   1. commit-analyzer: Determine release type
-#   2. release-notes-generator: Generate changelog content
-#   3. changelog: Update CHANGELOG.md file
-#   4. npm: Update package.json version
-#   5. git: Commit changes and create tag
-#   6. exec: Build binaries with new version
-#   7. github: Create GitHub release with wrappers + binaries + checksums
+# Manual semantic-release publication. Git pushes use a repository-scoped
+# deploy key; GITHUB_TOKEN remains limited to GitHub release API operations.
 
 name: Release
 
@@ -36,40 +17,42 @@ on:
 
 env:
   # Bun 1.3.12 produced macOS compiled binaries that exit 137 immediately on launch.
-  # Pin release builds to a known-good compiler until a later Bun version is verified.
   BUN_VERSION: "1.3.10"
 
 permissions:
-  contents: write # Create tags, commits, releases
-  pull-requests: write # Comment on PRs (optional)
-  issues: write # Comment on closed issues (optional)
-  id-token: write # npm Trusted Publishing (OIDC)
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
-    # Repository secrets must never be exposed to workflow code from a non-default branch.
     if: github.ref == 'refs/heads/main'
     name: Release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.published.outputs.version }}
     steps:
       - name: Checkout repository (full history)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: true
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
 
       - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v2
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           version: 11.22.0
           runtime: node@24.18.0
           cache: true
           install: false
 
-      # pnpm's standalone Node runtime does not include npm. Trusted Publishing
-      # requires npm >=11.5.1, so install the full Node distribution before release.
       - name: Setup npm publishing runtime
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.18.0
 
@@ -80,14 +63,15 @@ jobs:
           node -e 'const [major, minor, patch] = process.argv[1].split(".").map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) { throw new Error("npm " + process.argv[1] + " does not support Trusted Publishing; npm >=11.5.1 is required") }' "$(npm --version)"
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Configure release GPG signing
+        if: github.event.inputs.dry_run != 'true'
         id: configure_gpg
         run: ./scripts/release/configure-gpg-signing.sh
         env:
@@ -97,6 +81,7 @@ jobs:
           RELEASE_GPG_KEY_EMAIL: corwinm@users.noreply.github.com
 
       - name: Verify GPG commit signing
+        if: github.event.inputs.dry_run != 'true'
         run: ./scripts/release/verify-gpg-signing.sh
         env:
           RELEASE_GPG_FINGERPRINT: ${{ steps.configure_gpg.outputs.fingerprint }}
@@ -107,18 +92,23 @@ jobs:
           GIT_COMMITTER_NAME: Corwin Marsh
           GIT_COMMITTER_EMAIL: corwinm@users.noreply.github.com
 
-      - name: Run semantic-release
+      - name: Snapshot existing release tags
+        if: github.event.inputs.dry_run != 'true'
+        run: git tag --list 'v*' --sort=refname > "$RUNNER_TEMP/release-tags-before"
+
+      - name: Run semantic-release dry run
+        if: github.event.inputs.dry_run == 'true'
         run: |
-          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
-            echo "🧪 Running in DRY-RUN mode - no release will be created"
-            echo "🔨 Validating binary + checksum build steps"
-            pnpm run build:all
-            ./scripts/generate-checksums.sh
-            pnpm exec semantic-release --dry-run
-          else
-            echo "🚀 Running semantic-release..."
-            pnpm exec semantic-release
-          fi
+          pnpm run build:all
+          ./scripts/generate-checksums.sh
+          pnpm exec semantic-release --dry-run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_ENV: production
+
+      - name: Run semantic-release publication
+        if: github.event.inputs.dry_run != 'true'
+        run: pnpm exec semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_ENV: production
@@ -127,22 +117,52 @@ jobs:
           GIT_COMMITTER_NAME: Corwin Marsh
           GIT_COMMITTER_EMAIL: corwinm@users.noreply.github.com
 
-      - name: Release Summary
-        if: always()
+      - name: Detect newly published version
+        id: published
+        if: github.event.inputs.dry_run != 'true'
+        shell: bash
         run: |
-          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Semantic release completed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Wrapper scripts published for installer parity with npm" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Multi-platform binaries built with correct version" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ SHA-256 checksum manifest generated for release artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ GitHub release created with wrappers, binaries, and checksum manifest" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
-            echo "- ✅ Package published to npm via Trusted Publishing" >> $GITHUB_STEP_SUMMARY
+          git tag --list 'v*' --sort=refname > "$RUNNER_TEMP/release-tags-after"
+          mapfile -t new_tags < <(comm -13 "$RUNNER_TEMP/release-tags-before" "$RUNNER_TEMP/release-tags-after")
+          if [ "${#new_tags[@]}" -eq 0 ]; then
+            echo "No release was published."
+            exit 0
+          fi
+          if [ "${#new_tags[@]}" -ne 1 ]; then
+            printf 'Expected one new release tag, found: %s\n' "${new_tags[*]}" >&2
+            exit 1
+          fi
+          version="${new_tags[0]#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Unexpected release tag: ${new_tags[0]}" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Release summary
+        if: success()
+        run: |
+          echo "## Release Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            echo "- Dry run completed; nothing was published." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "${{ steps.published.outputs.version }}" ]; then
+            echo "- Published version ${{ steps.published.outputs.version }} to npm and GitHub Releases." >> "$GITHUB_STEP_SUMMARY"
+            echo "- Exact-version public verification will run next." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "- ⚠️ npm publishing skipped (dry run)" >> $GITHUB_STEP_SUMMARY
+            echo "- No releasable changes were found." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Clean up release GPG material
         if: always()
         run: ./scripts/release/configure-gpg-signing.sh --cleanup
+
+  verify-published:
+    name: Verify published release
+    needs: release
+    if: needs.release.outputs.version != ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-aw-release.yml
+    with:
+      version: ${{ needs.release.outputs.version }}

@@ -1,6 +1,12 @@
 name: Verify published aw release
 
 on:
+  workflow_call:
+    inputs:
+      version:
+        description: Exact published version without v prefix
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -12,11 +18,36 @@ permissions:
   contents: read
 
 jobs:
-  verify-aw-posix:
+  wait-for-publication:
+    name: Wait for npm publication
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/setup@v2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.18.0
+      - name: Wait for exact public npm version
+        env:
+          VERIFY_VERSION: ${{ inputs.version }}
+        run: |
+          for attempt in $(seq 1 20); do
+            published="$(npm view "arashi@$VERIFY_VERSION" version --json 2>/dev/null || true)"
+            if [ "$published" = "\"$VERIFY_VERSION\"" ]; then
+              exit 0
+            fi
+            echo "Attempt $attempt: arashi@$VERIFY_VERSION is not public yet"
+            sleep 30
+          done
+          echo "arashi@$VERIFY_VERSION did not become public in time" >&2
+          exit 1
+
+  verify-aw-posix:
+    needs: wait-for-publication
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           version: 11.22.0
           runtime: node@24.18.0
@@ -31,16 +62,18 @@ jobs:
         run: pnpm release:verify-aw -- "$VERIFY_VERSION"
 
   verify-aw-windows:
+    needs: wait-for-publication
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/setup@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           version: 11.22.0
           runtime: node@24.18.0
           cache: true
           install: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.18.0
       - run: pnpm install --frozen-lockfile
