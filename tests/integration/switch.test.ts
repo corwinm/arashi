@@ -34,6 +34,8 @@ const candidate: SwitchCandidate = {
 
 const resolvedPath = (path: string): string => resolve(path);
 
+const successMessageBody = (value: unknown): string => String(value).replace(/^(?:✓|\[OK\]) /, "");
+
 describe("unified switch resolution", () => {
   test.each([
     { expected: "launch", managedActive: false, mode: undefined, shellActive: false },
@@ -1286,6 +1288,67 @@ describe("switch command integration", () => {
     );
 
     expect(launchOptions).toEqual([{ disposition: "window", sesh: true }]);
+  });
+
+  test("reports the selected target first after launching a context", async () => {
+    const output = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await executeSwitch(
+        undefined,
+        {},
+        {
+          discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+          env: {},
+          findWorkspaceRoot: async () => "/workspace",
+          launchSwitchTarget: async () => ({
+            command: ["terminal"],
+            disposition: "window",
+            mode: "fallback",
+          }),
+          loadWorkspaceRepositories: async () => ({ repositories: [] }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
+
+      expect(successMessageBody(output.mock.calls.at(-1)?.[0])).toBe(
+        "Opened fallback context for feature/switch-command in repository workspace at /workspace/feature-switch-command",
+      );
+    } finally {
+      output.mockRestore();
+    }
+  });
+
+  test("reports the selected target first after preparing a directory switch", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "arashi-switch-output-directive-"));
+    const directivePath = join(tempDir, "directive.sh");
+    const output = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await executeSwitch(
+        undefined,
+        { cd: true },
+        {
+          discoverSwitchCandidates: async () => ({ candidates: [candidate], skippedCount: 0 }),
+          env: {
+            ARASHI_DIRECTIVE_FILE: directivePath,
+            ARASHI_SHELL: "bash",
+          },
+          findWorkspaceRoot: async () => "/workspace",
+          loadWorkspaceRepositories: async () => ({ repositories: [] }),
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+        },
+      );
+
+      expect(successMessageBody(output.mock.calls.at(-1)?.[0])).toBe(
+        "Prepared shell directory switch to feature/switch-command in repository workspace at /workspace/feature-switch-command",
+      );
+    } finally {
+      output.mockRestore();
+      await rm(tempDir, { force: true, recursive: true });
+    }
   });
 
   test("writes a cd directive when --cd is requested through shell integration", async () => {
