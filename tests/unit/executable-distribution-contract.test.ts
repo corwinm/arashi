@@ -144,6 +144,14 @@ describe("versioned executable distribution contract", () => {
     expect(verificationWorkflow).toContain("wait-for-publication:");
     expect(verificationWorkflow).toContain("needs: wait-for-publication");
     expect(verificationWorkflow).not.toMatch(/^\s*-?\s*uses:\s+[^\s]+@v\d+/mu);
+    const publicationWait = verificationWorkflow.slice(
+      verificationWorkflow.indexOf("Wait for exact public npm version"),
+      verificationWorkflow.indexOf("verify-aw-posix:"),
+    );
+    expect(publicationWait).toContain("Exact version required");
+    expect(publicationWait.indexOf("Exact version required")).toBeLessThan(
+      publicationWait.indexOf("for attempt"),
+    );
   });
 
   test("runs exact-version public npm and POSIX verification on a provisioned native POSIX runner", () => {
