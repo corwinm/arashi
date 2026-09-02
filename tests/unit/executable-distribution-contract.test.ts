@@ -168,6 +168,8 @@ describe("versioned executable distribution contract", () => {
       verificationWorkflow.indexOf("verify-aw-posix:"),
     );
     expect(publicationWait).toContain("Exact version required");
+    expect(publicationWait).toContain("[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*");
+    expect(publicationWait).not.toContain("[0-9A-Za-z.-]+");
     expect(publicationWait.indexOf("Exact version required")).toBeLessThan(
       publicationWait.indexOf("for attempt"),
     );

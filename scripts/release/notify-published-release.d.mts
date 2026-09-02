@@ -4,6 +4,7 @@ export type GitHubRequest = (
 ) => Promise<unknown>;
 
 export function notificationMarker(version: string): string;
+export function isExactVersion(version: string): boolean;
 export function extractClosingReferences(
   text: string | undefined,
   owner: string,
@@ -17,6 +18,12 @@ export function notifyTarget(options: {
   request: GitHubRequest;
   version: string;
 }): Promise<"existing" | "missing" | "notified">;
+export function releaseCommits(options: {
+  currentTag: string;
+  owner: string;
+  repo: string;
+  request: GitHubRequest;
+}): Promise<{ commits: unknown[]; releaseUrl: string }>;
 export function notifyPublishedRelease(options: {
   owner: string;
   repo: string;

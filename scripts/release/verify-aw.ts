@@ -17,7 +17,7 @@ if (
   !version ||
   version === "latest" ||
   version === "stable" ||
-  !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)
+  !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)
 ) {
   console.error(
     "An exact published version is required (for example: pnpm release:verify-aw -- 1.31.0).",

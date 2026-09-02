@@ -1,6 +1,8 @@
 import { pathToFileURL } from "node:url";
 
-const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+export const isExactVersion = (version) => exactVersionPattern.test(version);
 
 class GitHubApiError extends Error {
   constructor(status, message) {
@@ -56,10 +58,19 @@ export async function notifyTarget({ number, owner, releaseUrl, repo, request, v
   try {
     const issue = await request(`/repos/${owner}/${repo}/issues/${number}`);
     const marker = notificationMarker(version);
-    const comments = await request(
-      `/repos/${owner}/${repo}/issues/${number}/comments?per_page=100`,
-    );
-    const commentExists = comments.some((comment) => comment.body?.includes(marker));
+    let commentExists = false;
+    for (let page = 1; !commentExists; page += 1) {
+      const comments = await request(
+        `/repos/${owner}/${repo}/issues/${number}/comments?per_page=100&page=${page}`,
+      );
+      commentExists = comments.some(
+        (comment) =>
+          comment.user?.login === "github-actions[bot]" && comment.body?.includes(marker),
+      );
+      if (comments.length < 100) {
+        break;
+      }
+    }
 
     const kind = issue.pull_request ? "pull request" : "issue";
     if (!commentExists) {
@@ -83,7 +94,7 @@ export async function notifyTarget({ number, owner, releaseUrl, repo, request, v
   }
 }
 
-async function releaseCommits({ currentTag, owner, repo, request }) {
+export async function releaseCommits({ currentTag, owner, repo, request }) {
   const releases = await request(`/repos/${owner}/${repo}/releases?per_page=100`);
   const currentIndex = releases.findIndex((release) => release.tag_name === currentTag);
   if (currentIndex === -1) {
@@ -103,10 +114,19 @@ async function releaseCommits({ currentTag, owner, repo, request }) {
       releaseUrl: releases[currentIndex].html_url,
     };
   }
-  const comparison = await request(
-    `/repos/${owner}/${repo}/compare/${encodeURIComponent(previous.tag_name)}...${encodeURIComponent(currentTag)}?per_page=250`,
-  );
-  return { commits: comparison.commits, releaseUrl: releases[currentIndex].html_url };
+  const commits = [];
+  let totalCommits = Number.POSITIVE_INFINITY;
+  for (let page = 1; commits.length < totalCommits; page += 1) {
+    const comparison = await request(
+      `/repos/${owner}/${repo}/compare/${encodeURIComponent(previous.tag_name)}...${encodeURIComponent(currentTag)}?per_page=100&page=${page}`,
+    );
+    totalCommits = comparison.total_commits;
+    commits.push(...comparison.commits);
+    if (comparison.commits.length === 0) {
+      break;
+    }
+  }
+  return { commits, releaseUrl: releases[currentIndex].html_url };
 }
 
 export async function notifyPublishedRelease({ owner, repo, request, version }) {
@@ -158,7 +178,7 @@ export async function notifyPublishedRelease({ owner, repo, request, version }) 
 
 async function main() {
   const version = process.argv[2]?.replace(/^v/, "");
-  if (!version || !exactVersionPattern.test(version)) {
+  if (!version || !isExactVersion(version)) {
     throw new Error("An exact release version is required");
   }
   const token = process.env.GITHUB_TOKEN;
