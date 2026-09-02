@@ -1,3 +1,9 @@
+## [1.35.1](https://github.com/corwinm/arashi/compare/v1.35.0...v1.35.1) (2026-09-02)
+
+### Bug Fixes
+
+- reconcile uninstall completion contracts ([#166](https://github.com/corwinm/arashi/issues/166)) ([eac4d5a](https://github.com/corwinm/arashi/commit/eac4d5aa7d4edecce250cacd1aecfad119b41f1c))
+
 ## [1.35.0](https://github.com/corwinm/arashi/compare/v1.34.0...v1.35.0) (2026-08-25)
 
 ### Features
