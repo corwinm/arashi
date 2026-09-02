@@ -168,6 +168,9 @@ export interface SwitchExecutionResult {
   skippedCandidates: number;
 }
 
+const formatSwitchTarget = (candidate: SwitchCandidate): string =>
+  `${candidate.branchName} in repository ${candidate.repoName} at ${candidate.worktreePath}`;
+
 export function createCommand(): Command {
   const deprecatedNoCd = new LegacyCompatibilityOption(
     "--no-cd",
@@ -390,9 +393,7 @@ export async function executeSwitch(
 
   if (resolvedBehavior.mode === CD_SWITCH_MODE && directiveContext) {
     await writeCdDirective(directiveContext, selected.worktreePath);
-    success(
-      `Prepared shell directory switch for ${selected.repoName} (${selected.branchName}) to ${selected.worktreePath}`,
-    );
+    success(`Prepared shell directory switch to ${formatSwitchTarget(selected)}`);
 
     return {
       launchMode: "cd",
@@ -430,9 +431,7 @@ export async function executeSwitch(
     runProcess: deps.runProcess,
   });
 
-  success(
-    `Opened ${launchResult.mode} context for ${selected.repoName} (${selected.branchName}) at ${selected.worktreePath}`,
-  );
+  success(`Opened ${launchResult.mode} context for ${formatSwitchTarget(selected)}`);
 
   return {
     launchMode: launchResult.mode,

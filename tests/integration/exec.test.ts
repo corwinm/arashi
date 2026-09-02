@@ -249,7 +249,28 @@ describe("exec command", () => {
 
   test("--jobs runs selected repositories concurrently", async () => {
     const workspaceRoot = await createWorkspace();
-    const startedAt = Date.now();
+    const markerDirectory = join(workspaceRoot, "concurrency-markers");
+    const probePath = join(workspaceRoot, "concurrency-probe.mjs");
+    await writeFile(
+      probePath,
+      `import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+
+const markerDirectory = process.argv[2];
+await mkdir(markerDirectory, { recursive: true });
+await writeFile(join(markerDirectory, basename(process.cwd()) + ".ready"), "");
+
+const deadline = Date.now() + 5_000;
+while ((await readdir(markerDirectory)).length < 2) {
+  if (Date.now() >= deadline) {
+    throw new Error("Timed out waiting for the other repository command");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
+console.log("done");
+`,
+    );
 
     const result = await runArashi(workspaceRoot, [
       "exec",
@@ -260,15 +281,13 @@ describe("exec command", () => {
       "--jobs",
       "2",
       "--",
-      "sh",
-      "-c",
-      "sleep 1.5; echo done",
+      process.execPath,
+      probePath,
+      markerDirectory,
     ]);
 
-    const elapsedMs = Date.now() - startedAt;
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Summary: 2 passed, 0 failed, 0 skipped, 2 total");
-    expect(elapsedMs).toBeLessThan(2900);
   });
 
   test("--fail-fast stops starting repositories after the first failure", async () => {
