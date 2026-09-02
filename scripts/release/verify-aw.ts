@@ -7,18 +7,14 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { releaseNpmCommand, spawnReleaseCommand } from "./release-command.ts";
+import { isExactVersion } from "./notify-published-release.mjs";
+import { tmpdir } from "node:os";
 
 const versionArgument = process.argv[2] === "--" ? process.argv[3] : process.argv[2];
 const version = versionArgument?.trim().replace(/^v/, "");
-if (
-  !version ||
-  version === "latest" ||
-  version === "stable" ||
-  !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)
-) {
+if (!version || version === "latest" || version === "stable" || !isExactVersion(version)) {
   console.error(
     "An exact published version is required (for example: pnpm release:verify-aw -- 1.31.0).",
   );

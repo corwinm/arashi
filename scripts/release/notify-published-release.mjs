@@ -1,6 +1,11 @@
 import { pathToFileURL } from "node:url";
 
-const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const numericIdentifier = String.raw`(?:0|[1-9]\d*)`;
+const nonNumericIdentifier = String.raw`[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*`;
+const prereleaseIdentifier = `(?:${numericIdentifier}|${nonNumericIdentifier})`;
+const exactVersionPattern = new RegExp(
+  `^${numericIdentifier}\\.${numericIdentifier}\\.${numericIdentifier}(?:-${prereleaseIdentifier}(?:\\.${prereleaseIdentifier})*)?$`,
+);
 
 export const isExactVersion = (version) => exactVersionPattern.test(version);
 

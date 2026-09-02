@@ -14,9 +14,20 @@ const missingRequest = async (): Promise<never> => {
 
 describe("published release notifications", () => {
   test("rejects empty prerelease identifiers", () => {
-    for (const version of ["1.2.3-.", "1.2.3-foo.", "1.2.3-.."]) {
+    for (const version of [
+      "01.2.3",
+      "1.02.3",
+      "1.2.03",
+      "1.2.3-01",
+      "1.2.3-rc.01",
+      "1.2.3-.",
+      "1.2.3-foo.",
+      "1.2.3-..",
+    ]) {
       expect(isExactVersion(version)).toBe(false);
     }
+    expect(isExactVersion("0.0.0")).toBe(true);
+    expect(isExactVersion("1.2.3-0")).toBe(true);
     expect(isExactVersion("1.2.3-rc.1")).toBe(true);
   });
 
