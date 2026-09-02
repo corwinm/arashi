@@ -116,10 +116,65 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).toContain("workflow_dispatch");
     expect(workflow).toContain("release:verify-aw");
     const windowsJob = workflow.slice(workflow.indexOf("verify-aw-windows:"));
-    expect(windowsJob).toContain("actions/setup-node@v7");
+    expect(windowsJob).toContain("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020");
     expect(windowsJob).toContain("node-version: 24.18.0");
-    expect(windowsJob.indexOf("actions/setup-node@v7")).toBeLessThan(
-      windowsJob.indexOf("Verify public npm package"),
+    expect(
+      windowsJob.indexOf("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"),
+    ).toBeLessThan(windowsJob.indexOf("Verify public npm package"));
+  });
+
+  test("hardens release pushes and automatically verifies a newly published version", () => {
+    const releaseConfig = JSON.parse(read(".releaserc.json")) as {
+      repositoryUrl?: string;
+    };
+    const releaseWorkflow = read(".github/workflows/release.yml");
+    const verificationWorkflow = read(".github/workflows/verify-aw-release.yml");
+
+    expect(releaseConfig.repositoryUrl).toBe("git@github.com:corwinm/arashi.git");
+    expect(releaseWorkflow).toContain("concurrency:");
+    expect(releaseWorkflow).toContain("cancel-in-progress: false");
+    expect(releaseWorkflow).toContain("timeout-minutes:");
+    expect(releaseWorkflow).toContain("ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}");
+    expect(releaseWorkflow).toContain("uses: ./.github/workflows/verify-aw-release.yml");
+    expect(releaseWorkflow).toContain("needs.release.outputs.version");
+    expect(releaseWorkflow).toContain("notify-related-work:");
+    expect(releaseWorkflow).toContain("continue-on-error: true");
+    expect(releaseWorkflow).toContain("issues: write");
+    expect(releaseWorkflow).toContain("pull-requests: write");
+    expect(releaseWorkflow).toContain("node scripts/release/notify-published-release.mjs");
+    expect(releaseWorkflow).not.toMatch(/^\s*uses:\s+[^\s]+@v\d+/mu);
+
+    expect(releaseWorkflow).toContain("dry-run:");
+    const dryRunJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("  dry-run:"),
+      releaseWorkflow.indexOf("  release:"),
+    );
+    expect(dryRunJob).toContain("contents: read");
+    expect(dryRunJob).toContain("file://$RUNNER_TEMP/release-plan.git");
+    expect(dryRunJob).toContain("node scripts/release/release-plan.mjs");
+    expect(dryRunJob).not.toContain("--plugins");
+    expect(dryRunJob).not.toContain("RELEASE_DEPLOY_KEY");
+    expect(dryRunJob).not.toContain("id-token: write");
+    expect(dryRunJob).not.toContain("GITHUB_TOKEN");
+    expect(dryRunJob).not.toContain("RELEASE_GPG_");
+    const publicationJob = releaseWorkflow.slice(releaseWorkflow.indexOf("  release:"));
+    expect(publicationJob).toContain("github.event.inputs.dry_run != 'true'");
+    expect(publicationJob).toContain("RELEASE_DEPLOY_KEY");
+    expect(publicationJob).toContain("id-token: write");
+    expect(verificationWorkflow).toContain("workflow_call:");
+    expect(verificationWorkflow).toContain("wait-for-publication:");
+    expect(verificationWorkflow).toContain("needs: wait-for-publication");
+    expect(verificationWorkflow).not.toMatch(/^\s*-?\s*uses:\s+[^\s]+@v\d+/mu);
+    const publicationWait = verificationWorkflow.slice(
+      verificationWorkflow.indexOf("Wait for exact public npm version"),
+      verificationWorkflow.indexOf("verify-aw-posix:"),
+    );
+    expect(publicationWait).toContain("Exact version required");
+    expect(publicationWait).toContain("0|[1-9][0-9]*");
+    expect(publicationWait).toContain("[A-Za-z-]");
+    expect(publicationWait).not.toContain("[0-9A-Za-z.-]+");
+    expect(publicationWait.indexOf("Exact version required")).toBeLessThan(
+      publicationWait.indexOf("for attempt"),
     );
   });
 
@@ -176,6 +231,14 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).toContain("& $bash --noprofile --norc $bashVerifier");
     expect(workflow).not.toContain("& $bash --noprofile --norc -c");
     expect(workflow).toContain("ARASHI_EXPECTED_VERSION");
+    expect(workflow).toContain("$canonicalVersion -cne $env:ARASHI_EXPECTED_VERSION");
+    expect(workflow).toContain(
+      'if not "%ARASHI_CANONICAL_VERSION%"=="%ARASHI_EXPECTED_VERSION%" exit /b 34',
+    );
+    expect(workflow).toContain('test "$canonical" = "$ARASHI_EXPECTED_VERSION" || exit 44');
+    expect(workflow).not.toContain("-notmatch [regex]::Escape");
+    expect(workflow).not.toContain('findstr /c:"%ARASHI_EXPECTED_VERSION%"');
+    expect(workflow).not.toContain('*"$ARASHI_EXPECTED_VERSION"*');
   });
 
   test("uses the real built CLI through aw for parent-shell switch acceptance", () => {

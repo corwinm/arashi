@@ -1,6 +1,12 @@
 name: Verify published aw release
 
 on:
+  workflow_call:
+    inputs:
+      version:
+        description: Exact published version without v prefix
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -12,11 +18,40 @@ permissions:
   contents: read
 
 jobs:
-  verify-aw-posix:
+  wait-for-publication:
+    name: Wait for npm publication
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/setup@v2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.18.0
+      - name: Wait for exact public npm version
+        env:
+          VERIFY_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERIFY_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?$ ]]; then
+            echo "Exact version required" >&2
+            exit 2
+          fi
+          for attempt in $(seq 1 20); do
+            published="$(npm view "arashi@$VERIFY_VERSION" version --json 2>/dev/null || true)"
+            if [ "$published" = "\"$VERIFY_VERSION\"" ]; then
+              exit 0
+            fi
+            echo "Attempt $attempt: arashi@$VERIFY_VERSION is not public yet"
+            sleep 30
+          done
+          echo "arashi@$VERIFY_VERSION did not become public in time" >&2
+          exit 1
+
+  verify-aw-posix:
+    needs: wait-for-publication
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           version: 11.22.0
           runtime: node@24.18.0
@@ -31,16 +66,18 @@ jobs:
         run: pnpm release:verify-aw -- "$VERIFY_VERSION"
 
   verify-aw-windows:
+    needs: wait-for-publication
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/setup@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
         with:
           version: 11.22.0
           runtime: node@24.18.0
           cache: true
           install: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.18.0
       - run: pnpm install --frozen-lockfile
@@ -78,7 +115,7 @@ jobs:
           $canonicalVersion = (arashi --version | Out-String).Trim()
           $aliasVersion = (aw --version | Out-String).Trim()
           if ($canonicalVersion -cne $aliasVersion) { throw "PowerShell entrypoint versions differ" }
-          if ($canonicalVersion -notmatch [regex]::Escape($env:ARASHI_EXPECTED_VERSION)) { throw "PowerShell did not dispatch exact version $env:ARASHI_EXPECTED_VERSION" }
+          if ($canonicalVersion -cne $env:ARASHI_EXPECTED_VERSION) { throw "PowerShell did not dispatch exact version $env:ARASHI_EXPECTED_VERSION" }
           '@ | Set-Content -LiteralPath $powerShellVerifier
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $powerShellVerifier
           if ($LASTEXITCODE -ne 0) { throw "Fresh PowerShell verification failed" }
@@ -94,7 +131,7 @@ jobs:
           for /f "delims=" %%V in ('arashi --version') do set "ARASHI_CANONICAL_VERSION=%%V"
           for /f "delims=" %%V in ('aw --version') do set "ARASHI_ALIAS_VERSION=%%V"
           if not "%ARASHI_CANONICAL_VERSION%"=="%ARASHI_ALIAS_VERSION%" exit /b 33
-          echo(%ARASHI_CANONICAL_VERSION%| findstr /c:"%ARASHI_EXPECTED_VERSION%" >nul || exit /b 34
+          if not "%ARASHI_CANONICAL_VERSION%"=="%ARASHI_EXPECTED_VERSION%" exit /b 34
           '@ | Set-Content -LiteralPath $cmdVerifier -Encoding ASCII
           & cmd.exe /d /s /c $cmdVerifier
           if ($LASTEXITCODE -ne 0) { throw "Fresh Command Prompt verification failed" }
@@ -110,10 +147,7 @@ jobs:
           canonical=$(arashi --version)
           alias=$(aw --version)
           test "$canonical" = "$alias" || exit 43
-          case "$canonical" in
-            *"$ARASHI_EXPECTED_VERSION"*) ;;
-            *) exit 44 ;;
-          esac
+          test "$canonical" = "$ARASHI_EXPECTED_VERSION" || exit 44
           '@
           [System.IO.File]::WriteAllText($bashVerifier, (($bashVerifierContent -replace "`r`n", "`n") + "`n"), [System.Text.Encoding]::ASCII)
           & $bash --noprofile --norc $bashVerifier
