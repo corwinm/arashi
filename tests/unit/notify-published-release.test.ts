@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, test } from "vitest";
 import {
   extractClosingReferences,
@@ -10,6 +12,15 @@ const missingRequest = async (): Promise<never> => {
 };
 
 describe("published release notifications", () => {
+  test("keeps semantic-release notification hooks out of the publish result", () => {
+    const releaseConfig = JSON.parse(
+      readFileSync(new URL("../../.releaserc.json", import.meta.url), "utf8"),
+    );
+
+    expect(releaseConfig.success).toBe(false);
+    expect(releaseConfig.fail).toBe(false);
+  });
+
   test("extracts only local closing references", () => {
     expect(
       extractClosingReferences(

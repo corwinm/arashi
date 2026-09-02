@@ -1,6 +1,8 @@
 {
   "branches": ["main"],
   "repositoryUrl": "git@github.com:corwinm/arashi.git",
+  "success": false,
+  "fail": false,
   "plugins": [
     [
       "@semantic-release/commit-analyzer",
@@ -69,9 +71,6 @@
     [
       "@semantic-release/github",
       {
-        "failComment": false,
-        "releasedLabels": false,
-        "successComment": false,
         "assets": [
           {
             "path": "bin/arashi",
