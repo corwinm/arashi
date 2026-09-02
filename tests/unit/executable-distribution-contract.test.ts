@@ -137,9 +137,13 @@ describe("versioned executable distribution contract", () => {
     expect(releaseWorkflow).toContain("ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}");
     expect(releaseWorkflow).toContain("uses: ./.github/workflows/verify-aw-release.yml");
     expect(releaseWorkflow).toContain("needs.release.outputs.version");
+    expect(releaseWorkflow).not.toMatch(/^\s*uses:\s+[^\s]+@v\d+/mu);
+    expect(releaseWorkflow).not.toContain("pull-requests: write");
+    expect(releaseWorkflow).not.toContain("issues: write");
     expect(verificationWorkflow).toContain("workflow_call:");
     expect(verificationWorkflow).toContain("wait-for-publication:");
     expect(verificationWorkflow).toContain("needs: wait-for-publication");
+    expect(verificationWorkflow).not.toMatch(/^\s*-?\s*uses:\s+[^\s]+@v\d+/mu);
   });
 
   test("runs exact-version public npm and POSIX verification on a provisioned native POSIX runner", () => {
