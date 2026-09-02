@@ -151,6 +151,8 @@ describe("versioned executable distribution contract", () => {
     );
     expect(dryRunJob).toContain("contents: read");
     expect(dryRunJob).toContain("file://$RUNNER_TEMP/release-plan.git");
+    expect(dryRunJob).toContain("node scripts/release/release-plan.mjs");
+    expect(dryRunJob).not.toContain("--plugins");
     expect(dryRunJob).not.toContain("RELEASE_DEPLOY_KEY");
     expect(dryRunJob).not.toContain("id-token: write");
     expect(dryRunJob).not.toContain("GITHUB_TOKEN");

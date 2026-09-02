@@ -65,12 +65,7 @@ jobs:
       - name: Run credential-free semantic-release plan
         run: |
           git clone --bare . "$RUNNER_TEMP/release-plan.git"
-          pnpm exec semantic-release \
-            --dry-run \
-            --no-ci \
-            --repository-url "file://$RUNNER_TEMP/release-plan.git" \
-            --plugins @semantic-release/commit-analyzer \
-            --plugins @semantic-release/release-notes-generator
+          node scripts/release/release-plan.mjs "file://$RUNNER_TEMP/release-plan.git"
         env:
           NODE_ENV: production
 
