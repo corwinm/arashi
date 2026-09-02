@@ -81,6 +81,7 @@
     "format": "oxfmt --config .oxfmtrc.json --write .",
     "format:check": "oxfmt --config .oxfmtrc.json --check .",
     "quality:changed": "node scripts/quality/changed-files-quality.ts",
+    "pr-title:check": "node scripts/validate-pr-title.mts",
     "prepublishOnly": "pnpm run completion:check && pnpm run executable-contract:check && pnpm run schema:publish",
     "release:verify-aw": "node scripts/release/verify-aw.ts",
     "prepare": "husky"
