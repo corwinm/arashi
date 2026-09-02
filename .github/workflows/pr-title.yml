@@ -1,0 +1,33 @@
+name: PR Title
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Conventional Commit Title
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout trusted base code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Setup Node.js
+        uses: pnpm/setup@v2
+        with:
+          version: 11.22.0
+          runtime: node@24.18.0
+          install: false
+
+      - name: Validate pull request title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node scripts/validate-pr-title.mts
