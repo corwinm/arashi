@@ -140,6 +140,21 @@ describe("versioned executable distribution contract", () => {
     expect(releaseWorkflow).not.toMatch(/^\s*uses:\s+[^\s]+@v\d+/mu);
     expect(releaseWorkflow).not.toContain("pull-requests: write");
     expect(releaseWorkflow).not.toContain("issues: write");
+    expect(releaseWorkflow).toContain("dry-run:");
+    const dryRunJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("  dry-run:"),
+      releaseWorkflow.indexOf("  release:"),
+    );
+    expect(dryRunJob).toContain("contents: read");
+    expect(dryRunJob).toContain("file://$RUNNER_TEMP/release-plan.git");
+    expect(dryRunJob).not.toContain("RELEASE_DEPLOY_KEY");
+    expect(dryRunJob).not.toContain("id-token: write");
+    expect(dryRunJob).not.toContain("GITHUB_TOKEN");
+    expect(dryRunJob).not.toContain("RELEASE_GPG_");
+    const publicationJob = releaseWorkflow.slice(releaseWorkflow.indexOf("  release:"));
+    expect(publicationJob).toContain("github.event.inputs.dry_run != 'true'");
+    expect(publicationJob).toContain("RELEASE_DEPLOY_KEY");
+    expect(publicationJob).toContain("id-token: write");
     expect(verificationWorkflow).toContain("workflow_call:");
     expect(verificationWorkflow).toContain("wait-for-publication:");
     expect(verificationWorkflow).toContain("needs: wait-for-publication");
@@ -207,6 +222,14 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).toContain("& $bash --noprofile --norc $bashVerifier");
     expect(workflow).not.toContain("& $bash --noprofile --norc -c");
     expect(workflow).toContain("ARASHI_EXPECTED_VERSION");
+    expect(workflow).toContain("$canonicalVersion -cne $env:ARASHI_EXPECTED_VERSION");
+    expect(workflow).toContain(
+      'if not "%ARASHI_CANONICAL_VERSION%"=="%ARASHI_EXPECTED_VERSION%" exit /b 34',
+    );
+    expect(workflow).toContain('test "$canonical" = "$ARASHI_EXPECTED_VERSION" || exit 44');
+    expect(workflow).not.toContain("-notmatch [regex]::Escape");
+    expect(workflow).not.toContain('findstr /c:"%ARASHI_EXPECTED_VERSION%"');
+    expect(workflow).not.toContain('*"$ARASHI_EXPECTED_VERSION"*');
   });
 
   test("uses the real built CLI through aw for parent-shell switch acceptance", () => {

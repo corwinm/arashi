@@ -115,7 +115,7 @@ jobs:
           $canonicalVersion = (arashi --version | Out-String).Trim()
           $aliasVersion = (aw --version | Out-String).Trim()
           if ($canonicalVersion -cne $aliasVersion) { throw "PowerShell entrypoint versions differ" }
-          if ($canonicalVersion -notmatch [regex]::Escape($env:ARASHI_EXPECTED_VERSION)) { throw "PowerShell did not dispatch exact version $env:ARASHI_EXPECTED_VERSION" }
+          if ($canonicalVersion -cne $env:ARASHI_EXPECTED_VERSION) { throw "PowerShell did not dispatch exact version $env:ARASHI_EXPECTED_VERSION" }
           '@ | Set-Content -LiteralPath $powerShellVerifier
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $powerShellVerifier
           if ($LASTEXITCODE -ne 0) { throw "Fresh PowerShell verification failed" }
@@ -131,7 +131,7 @@ jobs:
           for /f "delims=" %%V in ('arashi --version') do set "ARASHI_CANONICAL_VERSION=%%V"
           for /f "delims=" %%V in ('aw --version') do set "ARASHI_ALIAS_VERSION=%%V"
           if not "%ARASHI_CANONICAL_VERSION%"=="%ARASHI_ALIAS_VERSION%" exit /b 33
-          echo(%ARASHI_CANONICAL_VERSION%| findstr /c:"%ARASHI_EXPECTED_VERSION%" >nul || exit /b 34
+          if not "%ARASHI_CANONICAL_VERSION%"=="%ARASHI_EXPECTED_VERSION%" exit /b 34
           '@ | Set-Content -LiteralPath $cmdVerifier -Encoding ASCII
           & cmd.exe /d /s /c $cmdVerifier
           if ($LASTEXITCODE -ne 0) { throw "Fresh Command Prompt verification failed" }
@@ -147,10 +147,7 @@ jobs:
           canonical=$(arashi --version)
           alias=$(aw --version)
           test "$canonical" = "$alias" || exit 43
-          case "$canonical" in
-            *"$ARASHI_EXPECTED_VERSION"*) ;;
-            *) exit 44 ;;
-          esac
+          test "$canonical" = "$ARASHI_EXPECTED_VERSION" || exit 44
           '@
           [System.IO.File]::WriteAllText($bashVerifier, (($bashVerifierContent -replace "`r`n", "`n") + "`n"), [System.Text.Encoding]::ASCII)
           & $bash --noprofile --norc $bashVerifier
