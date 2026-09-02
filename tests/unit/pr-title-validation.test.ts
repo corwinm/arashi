@@ -12,7 +12,9 @@ const releaseTypes = releaseConfig.plugins[0][1].releaseRules.map(
 const workflow = readFileSync(
   new URL("../../.github/workflows/pr-title.yml", import.meta.url),
   "utf8",
-);
+)
+  .replaceAll("\r\n", "\n")
+  .replaceAll("\r", "\n");
 
 describe("pull request title validation", () => {
   it.each([
