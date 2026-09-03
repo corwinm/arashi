@@ -62,10 +62,27 @@ const ciContractErrors = (source: string): string[] => {
     errors.push("build matrix: expected exactly three supported platforms");
   if (!buildJob.includes("name: Build (${{ matrix.os }})"))
     errors.push("topology: independent native build checks are missing");
+  const build = step(buildJob, "Build binary");
+  if (!build || !build.includes("pnpm run ${{ matrix.script }}"))
+    errors.push("build artifacts: matrix build command is missing");
+  if (build.includes("if:") || build.includes("continue-on-error:"))
+    errors.push("build artifacts: matrix build must remain unconditional and fatal");
   const upload = step(buildJob, "Upload artifact");
   if (!upload) errors.push("build artifacts: build must upload each named binary");
   if (upload.includes("if:") || buildJob.includes("continue-on-error:"))
     errors.push("build artifacts: upload must remain fail-closed after a successful build");
+  for (const contract of [
+    "uses: actions/upload-artifact@v7",
+    "name: ${{ matrix.artifact }}",
+    "path: bin/${{ matrix.artifact }}",
+    "if-no-files-found: error",
+  ])
+    if (!upload.includes(contract)) errors.push(`build artifacts: upload must include ${contract}`);
+  const missingFilePolicies = [...upload.matchAll(/if-no-files-found:\s*([^\s]+)/g)].map(
+    (match) => match[1],
+  );
+  if (missingFilePolicies.length !== 1 || missingFilePolicies[0] !== "error")
+    errors.push("build artifacts: upload must have exactly one fail-closed missing-file policy");
   if (
     buildJob.includes("Run version and completion checks") ||
     buildJob.includes("materialization-native")
@@ -108,53 +125,90 @@ const ciContractErrors = (source: string): string[] => {
     errors.push("runtime: dependency-backed acceptance must use pinned pnpm");
   if (!acceptance.includes("pnpm install --frozen-lockfile"))
     errors.push("runtime: dependency-backed acceptance must use the frozen lockfile");
-  if (!acceptance.includes("path: bin"))
-    errors.push("artifact reachability: native artifacts must download into bin");
+  const download = step(acceptance, "Download native built binary");
+  for (const contract of [
+    "uses: actions/download-artifact@v8",
+    "name: ${{ matrix.artifact }}",
+    "path: bin",
+  ])
+    if (!download.includes(contract))
+      errors.push(`artifact reachability: download must include ${contract}`);
+  if (download.includes("if:") || download.includes("continue-on-error:"))
+    errors.push("artifact reachability: download must remain unconditional and fatal");
 
   const requiredSteps = [
     [
       "Run version and completion checks",
-      ["always()", "steps.artifact.outcome"],
+      ["always()", "steps.artifact.outcome", "steps.executable.outcome"],
       ["artifact", "executable"],
+      [
+        "./bin/${{ matrix.artifact }} --version",
+        "for shell in bash zsh fish",
+        "arashi-completion-contract-v6:",
+      ],
     ],
     [
       "Exercise built-CLI materialization safety contract",
-      ["always()", "steps.artifact.outcome", "steps.node.outcome", "steps.runtime.outcome"],
+      [
+        "always()",
+        "steps.artifact.outcome",
+        "steps.node.outcome",
+        "steps.runtime.outcome",
+        "steps.executable.outcome",
+      ],
       ["artifact", "node", "runtime", "executable"],
+      ['tests/native/materialization-native.ts "bin/${{ matrix.artifact }}"'],
     ],
     [
       "Prepare installed package entrypoint",
-      ["always()", "runner.os == 'Linux'", "steps.artifact.outcome"],
+      ["always()", "runner.os == 'Linux'", "steps.artifact.outcome", "steps.executable.outcome"],
       ["artifact", "executable"],
+      ["cp bin/arashi-linux-x64 bin/arashi.bin", "chmod +x bin/arashi.bin bin/arashi"],
     ],
     [
       "Verify installed package and built hook input acceptance",
-      ["always()", "runner.os == 'Linux'", "steps.runtime.outcome", "steps.dependencies.outcome"],
+      [
+        "always()",
+        "runner.os == 'Linux'",
+        "steps.runtime.outcome",
+        "steps.dependencies.outcome",
+        "steps.wrapper-entrypoint.outcome",
+      ],
       ["runtime", "dependencies", "wrapper-entrypoint"],
+      [
+        "tests/integration/hook-input-built-posix.test.ts",
+        "tests/integration/inline-hook-built-posix.test.ts",
+        "tests/integration/hook-input-wrapper.test.ts",
+        "tests/unit/arashi-wrapper.test.ts",
+      ],
     ],
     [
       "Exercise transactional replacement and rollback",
-      ["always()", "runner.os == 'Windows'", "steps.artifact.outcome"],
+      ["always()", "runner.os == 'Windows'", "steps.checkout.outcome", "steps.artifact.outcome"],
       ["checkout", "artifact"],
+      ["./tests/windows/install-transaction.ps1"],
     ],
     [
       "Install with canonical defaults and verify fresh shells",
-      ["always()", "runner.os == 'Windows'", "steps.artifact.outcome"],
+      ["always()", "runner.os == 'Windows'", "steps.checkout.outcome", "steps.artifact.outcome"],
       ["checkout", "artifact"],
+      ["./tests/windows/default-installer-acceptance.ps1"],
     ],
     [
       "Exercise terminal and immediate-EOF hook input",
       [
         "always()",
         "runner.os == 'Windows'",
+        "steps.checkout.outcome",
         "steps.artifact.outcome",
         "steps.runtime.outcome",
         "steps.dependencies.outcome",
       ],
       ["checkout", "artifact", "runtime", "dependencies"],
+      ["./tests/windows/hook-input-native.ps1"],
     ],
   ] as const;
-  for (const [name, guardParts, allowedDependencies] of requiredSteps) {
+  for (const [name, guardParts, allowedDependencies, expectedCommands] of requiredSteps) {
     const section = step(acceptance, name);
     if (!section) {
       errors.push(`acceptance command: missing ${name}`);
@@ -171,23 +225,10 @@ const ciContractErrors = (source: string): string[] => {
     for (const dependency of dependencies)
       if (!allowed.includes(dependency))
         errors.push(`failure continuation: ${name} must not depend on sibling ${dependency}`);
+    for (const command of expectedCommands)
+      if (!section.includes(command))
+        errors.push(`acceptance ownership: ${name} must contain ${command}`);
   }
-
-  const commands = [
-    "./bin/${{ matrix.artifact }} --version",
-    "for shell in bash zsh fish",
-    'tests/native/materialization-native.ts "bin/${{ matrix.artifact }}"',
-    "cp bin/arashi-linux-x64 bin/arashi.bin",
-    "tests/integration/hook-input-built-posix.test.ts",
-    "tests/integration/inline-hook-built-posix.test.ts",
-    "tests/integration/hook-input-wrapper.test.ts",
-    "tests/unit/arashi-wrapper.test.ts",
-    "./tests/windows/install-transaction.ps1",
-    "./tests/windows/default-installer-acceptance.ps1",
-    "./tests/windows/hook-input-native.ps1",
-  ];
-  for (const command of commands)
-    if (!acceptance.includes(command)) errors.push(`acceptance command: missing ${command}`);
 
   const expandedChecks =
     1 +
@@ -266,7 +307,7 @@ describe("CI workflow", () => {
           'tests/native/materialization-native.ts "bin/${{ matrix.artifact }}"',
           "tests/native/removed.ts",
         ),
-      /acceptance command/,
+      /acceptance ownership/,
     ],
     [
       "later Windows installer short-circuited",
@@ -303,6 +344,91 @@ describe("CI workflow", () => {
           "      - name: Build binary\n        continue-on-error: true\n",
         ),
       /build artifacts/,
+    ],
+    [
+      "build command conditionally skipped",
+      (source: string) =>
+        source.replace(
+          "      - name: Build binary\n",
+          "      - name: Build binary\n        if: ${{ false }}\n",
+        ),
+      /build artifacts/,
+    ],
+    [
+      "missing build artifact ignored",
+      (source: string) => source.replace("if-no-files-found: error", "if-no-files-found: ignore"),
+      /build artifacts/,
+    ],
+    [
+      "upload artifact name mismapped",
+      (source: string) =>
+        source.replace(
+          /(      - name: Upload artifact[\s\S]*?name: )\$\{\{ matrix\.artifact \}\}/,
+          "$1arashi-linux-x64",
+        ),
+      /build artifacts/,
+    ],
+    [
+      "upload artifact path mismapped",
+      (source: string) =>
+        source.replace(
+          /(      - name: Upload artifact[\s\S]*?path: )bin\/\$\{\{ matrix\.artifact \}\}/,
+          "$1bin/arashi-linux-x64",
+        ),
+      /build artifacts/,
+    ],
+    [
+      "upload action replaced",
+      (source: string) =>
+        source.replace("uses: actions/upload-artifact@v7", "uses: actions/checkout@v7"),
+      /build artifacts/,
+    ],
+    [
+      "download artifact name mismapped",
+      (source: string) =>
+        source.replace(
+          /(      - name: Download native built binary[\s\S]*?name: )\$\{\{ matrix\.artifact \}\}/,
+          "$1arashi-linux-x64",
+        ),
+      /artifact reachability/,
+    ],
+    [
+      "smoke executable prerequisite removed",
+      (source: string) =>
+        source.replace(
+          " && (runner.os == 'Windows' || steps.executable.outcome == 'success') }}\n        shell: bash",
+          " }}\n        shell: bash",
+        ),
+      /failure continuation/,
+    ],
+    [
+      "wrapper entrypoint prerequisite removed",
+      (source: string) =>
+        source.replace(" && steps.wrapper-entrypoint.outcome == 'success' }}", " }}"),
+      /failure continuation/,
+    ],
+    [
+      "Windows checkout prerequisite removed",
+      (source: string) =>
+        source.replace(
+          "runner.os == 'Windows' && steps.checkout.outcome == 'success' && steps.artifact.outcome == 'success'",
+          "runner.os == 'Windows' && steps.artifact.outcome == 'success'",
+        ),
+      /failure continuation/,
+    ],
+    [
+      "materialization relocated while placeholder remains",
+      (source: string) =>
+        source
+          .replace(
+            'run: node --experimental-strip-types tests/native/materialization-native.ts "bin/${{ matrix.artifact }}"',
+            "run: true",
+          )
+          .replace(
+            "          done\n",
+            '          done\n          node --experimental-strip-types tests/native/materialization-native.ts "bin/${{ matrix.artifact }}"\n',
+          ),
+      /acceptance ownership/,
     ],
     [
       "materialization coupled to Linux wrapper preparation",
