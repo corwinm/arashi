@@ -11,12 +11,14 @@ const acceptance = readFileSync(
 const transaction = readFileSync(join(root, "tests/windows/install-transaction.ps1"), "utf8");
 
 describe("Windows installer acceptance wiring", () => {
-  test("runs transaction and canonical default-installer fixtures on windows-latest", () => {
-    expect(workflow).toContain("windows-installer-acceptance:");
-    expect(workflow).toContain("runs-on: windows-latest");
-    expect(workflow).toContain("tests/windows/install-transaction.ps1");
-    expect(workflow).toContain("tests/windows/default-installer-acceptance.ps1");
-    expect(workflow.match(/shell: powershell/g)?.length).toBeGreaterThanOrEqual(2);
+  test("runs transaction and canonical default-installer fixtures in Windows native acceptance", () => {
+    const nativeAcceptance = workflow.slice(workflow.indexOf("  native-acceptance:"));
+    expect(nativeAcceptance).toContain("- os: windows-latest");
+    expect(nativeAcceptance).toContain("artifact: arashi-windows-x64.exe");
+    expect(nativeAcceptance).toContain("needs: [build]");
+    expect(nativeAcceptance).toContain("tests/windows/install-transaction.ps1");
+    expect(nativeAcceptance).toContain("tests/windows/default-installer-acceptance.ps1");
+    expect(nativeAcceptance.match(/shell: powershell/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   test("intercepts only Invoke-WebRequest while invoking canonical install.ps1 with defaults", () => {
