@@ -123,46 +123,8 @@ jobs:
       - name: Run tests
         run: pnpm run test
 
-  hook-input-wrapper:
-    name: Installed Wrapper Hook Input Acceptance
-    runs-on: ubuntu-latest
-    timeout-minutes: 6
-    needs: [build]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v2
-        with:
-          version: 11.22.0
-          runtime: node@24.18.0
-          cache: true
-          install: false
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Download built Linux package binary
-        uses: actions/download-artifact@v8
-        with:
-          name: arashi-linux-x64
-          path: bin
-
-      - name: Prepare installed package entrypoint
-        run: |
-          cp bin/arashi-linux-x64 bin/arashi.bin
-          chmod +x bin/arashi.bin bin/arashi
-
-      - name: Verify built POSIX and installed package hook input acceptance
-        env:
-          ARASHI_BUILT_HOOK_ACCEPTANCE: "1"
-          ARASHI_WRAPPER_ACCEPTANCE: "1"
-        run: pnpm exec vitest run tests/integration/hook-input-built-posix.test.ts tests/integration/inline-hook-built-posix.test.ts tests/integration/hook-input-wrapper.test.ts tests/unit/arashi-wrapper.test.ts
-
   build:
-    name: Native Build and Acceptance (${{ matrix.os }})
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     needs: [quality]
@@ -208,11 +170,77 @@ jobs:
       - name: Build binary
         run: pnpm run ${{ matrix.script }}
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: bin/${{ matrix.artifact }}
+          retention-days: 30
+
+  native-acceptance:
+    name: Native Acceptance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    needs: [build]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: arashi-linux-x64
+            install-dependencies: true
+
+          - os: macos-latest
+            artifact: arashi-macos-arm64
+            install-dependencies: false
+
+          - os: windows-latest
+            artifact: arashi-windows-x64.exe
+            install-dependencies: true
+
+    steps:
+      - name: Checkout code
+        id: checkout
+        uses: actions/checkout@v7
+
+      - name: Download native built binary
+        id: artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: bin
+
       - name: Set executable permissions (Linux/macOS)
+        id: executable
         if: runner.os != 'Windows'
         run: chmod +x bin/${{ matrix.artifact }}
 
+      - name: Setup Node.js
+        id: node
+        if: ${{ !matrix.install-dependencies }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.0
+
+      - name: Setup pnpm and Node.js
+        id: runtime
+        if: ${{ matrix.install-dependencies }}
+        uses: pnpm/setup@v2
+        with:
+          version: 11.22.0
+          runtime: node@24.18.0
+          cache: true
+          install: false
+
+      - name: Install acceptance dependencies
+        id: dependencies
+        if: ${{ always() && matrix.install-dependencies && steps.checkout.outcome == 'success' && steps.runtime.outcome == 'success' }}
+        run: pnpm install --frozen-lockfile
+
       - name: Run version and completion checks
+        id: smoke
+        if: ${{ always() && steps.artifact.outcome == 'success' && (runner.os == 'Windows' || steps.executable.outcome == 'success') }}
         shell: bash
         run: |
           ./bin/${{ matrix.artifact }} --version
@@ -223,66 +251,39 @@ jobs:
           done
 
       - name: Exercise built-CLI materialization safety contract
+        id: materialization
+        if: ${{ always() && steps.artifact.outcome == 'success' && (steps.node.outcome == 'success' || steps.runtime.outcome == 'success') && (runner.os == 'Windows' || steps.executable.outcome == 'success') }}
         run: node --experimental-strip-types tests/native/materialization-native.ts "bin/${{ matrix.artifact }}"
 
-      - name: Upload accepted artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact }}
-          path: bin/${{ matrix.artifact }}
-          retention-days: 30
+      - name: Prepare installed package entrypoint
+        id: wrapper-entrypoint
+        if: ${{ always() && runner.os == 'Linux' && steps.artifact.outcome == 'success' && steps.executable.outcome == 'success' }}
+        run: |
+          cp bin/arashi-linux-x64 bin/arashi.bin
+          chmod +x bin/arashi.bin bin/arashi
 
-  windows-installer-acceptance:
-    name: Windows Installer Acceptance
-    runs-on: windows-latest
-    timeout-minutes: 10
-    needs: [build]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Download Windows binary
-        uses: actions/download-artifact@v8
-        with:
-          name: arashi-windows-x64.exe
-          path: bin
+      - name: Verify installed package and built hook input acceptance
+        id: wrapper-hooks
+        if: ${{ always() && runner.os == 'Linux' && steps.runtime.outcome == 'success' && steps.dependencies.outcome == 'success' && steps.wrapper-entrypoint.outcome == 'success' }}
+        env:
+          ARASHI_BUILT_HOOK_ACCEPTANCE: "1"
+          ARASHI_WRAPPER_ACCEPTANCE: "1"
+        run: pnpm exec vitest run tests/integration/hook-input-built-posix.test.ts tests/integration/inline-hook-built-posix.test.ts tests/integration/hook-input-wrapper.test.ts tests/unit/arashi-wrapper.test.ts
 
       - name: Exercise transactional replacement and rollback
+        id: windows-transaction
+        if: ${{ always() && runner.os == 'Windows' && steps.checkout.outcome == 'success' && steps.artifact.outcome == 'success' }}
         shell: powershell
         run: ./tests/windows/install-transaction.ps1
 
       - name: Install with canonical defaults and verify fresh shells
+        id: windows-installer
+        if: ${{ always() && runner.os == 'Windows' && steps.checkout.outcome == 'success' && steps.artifact.outcome == 'success' }}
         shell: powershell
         run: ./tests/windows/default-installer-acceptance.ps1
 
-  hook-input-native:
-    name: Native Windows Hook Input Acceptance
-    runs-on: windows-latest
-    timeout-minutes: 10
-    needs: [build]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup pnpm and Node.js
-        uses: pnpm/setup@v2
-        with:
-          version: 11.22.0
-          runtime: node@24.18.0
-          cache: true
-          install: false
-
-      - name: Install PTY acceptance dependency
-        run: pnpm install --frozen-lockfile
-
-      - name: Download Windows binary
-        uses: actions/download-artifact@v8
-        with:
-          name: arashi-windows-x64.exe
-          path: bin
-
       - name: Exercise terminal and immediate-EOF hook input
+        id: windows-hooks
+        if: ${{ always() && runner.os == 'Windows' && steps.checkout.outcome == 'success' && steps.artifact.outcome == 'success' && steps.runtime.outcome == 'success' && steps.dependencies.outcome == 'success' }}
         shell: powershell
         run: ./tests/windows/hook-input-native.ps1
