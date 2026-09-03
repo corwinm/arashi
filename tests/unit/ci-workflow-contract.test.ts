@@ -64,7 +64,7 @@ const ciContractErrors = (source: string): string[] => {
     errors.push("topology: independent native build checks are missing");
   const upload = step(buildJob, "Upload artifact");
   if (!upload) errors.push("build artifacts: build must upload each named binary");
-  if (upload.includes("if:") || upload.includes("continue-on-error:"))
+  if (upload.includes("if:") || buildJob.includes("continue-on-error:"))
     errors.push("build artifacts: upload must remain fail-closed after a successful build");
   if (
     buildJob.includes("Run version and completion checks") ||
@@ -292,6 +292,15 @@ describe("CI workflow", () => {
         source.replace(
           "      - name: Upload artifact\n",
           "      - name: Upload artifact\n        if: ${{ always() }}\n",
+        ),
+      /build artifacts/,
+    ],
+    [
+      "build failure made non-fatal before upload",
+      (source: string) =>
+        source.replace(
+          "      - name: Build binary\n",
+          "      - name: Build binary\n        continue-on-error: true\n",
         ),
       /build artifacts/,
     ],
