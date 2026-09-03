@@ -162,7 +162,7 @@ jobs:
         run: pnpm exec vitest run tests/integration/hook-input-built-posix.test.ts tests/integration/inline-hook-built-posix.test.ts tests/integration/hook-input-wrapper.test.ts tests/unit/arashi-wrapper.test.ts
 
   build:
-    name: Build (${{ matrix.os }})
+    name: Native Build and Acceptance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     needs: [quality]
@@ -208,89 +208,29 @@ jobs:
       - name: Build binary
         run: pnpm run ${{ matrix.script }}
 
-      - name: Upload artifact
+      - name: Set executable permissions (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: chmod +x bin/${{ matrix.artifact }}
+
+      - name: Run version and completion checks
+        shell: bash
+        run: |
+          ./bin/${{ matrix.artifact }} --version
+          for shell in bash zsh fish; do
+            ./bin/${{ matrix.artifact }} completion "$shell" > "completion-$shell"
+            test -s "completion-$shell"
+            grep -q 'arashi-completion-contract-v6:' "completion-$shell"
+          done
+
+      - name: Exercise built-CLI materialization safety contract
+        run: node --experimental-strip-types tests/native/materialization-native.ts "bin/${{ matrix.artifact }}"
+
+      - name: Upload accepted artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: bin/${{ matrix.artifact }}
           retention-days: 30
-
-  validate:
-    name: Validate (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    needs: [build]
-
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact: arashi-linux-x64
-
-          - os: macos-latest
-            artifact: arashi-macos-arm64
-
-          - os: windows-latest
-            artifact: arashi-windows-x64.exe
-
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ matrix.artifact }}
-
-      - name: Set executable permissions (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: chmod +x ${{ matrix.artifact }}
-
-      - name: Run version and completion checks
-        shell: bash
-        run: |
-          ./${{ matrix.artifact }} --version
-          for shell in bash zsh fish; do
-            ./${{ matrix.artifact }} completion "$shell" > "completion-$shell"
-            test -s "completion-$shell"
-            grep -q 'arashi-completion-contract-v6:' "completion-$shell"
-          done
-
-  materialization-native:
-    name: Native Materialization (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    needs: [build]
-
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact: arashi-linux-x64
-
-          - os: macos-latest
-            artifact: arashi-macos-arm64
-
-          - os: windows-latest
-            artifact: arashi-windows-x64.exe
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24.18.0
-
-      - name: Download native built binary
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ matrix.artifact }}
-
-      - name: Set executable permissions (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: chmod +x ${{ matrix.artifact }}
-
-      - name: Exercise built-CLI materialization safety contract
-        run: node --experimental-strip-types tests/native/materialization-native.ts "${{ matrix.artifact }}"
 
   windows-installer-acceptance:
     name: Windows Installer Acceptance
