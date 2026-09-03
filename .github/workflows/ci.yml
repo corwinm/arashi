@@ -244,10 +244,6 @@ jobs:
         if: ${{ always() && steps.artifact.outcome == 'success' && (runner.os == 'Windows' || steps.executable.outcome == 'success') }}
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            echo "Intentional failure-isolation fixture"
-            exit 1
-          fi
           ./bin/${{ matrix.artifact }} --version
           for shell in bash zsh fish; do
             ./bin/${{ matrix.artifact }} completion "$shell" > "completion-$shell"
