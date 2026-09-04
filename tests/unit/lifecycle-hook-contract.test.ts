@@ -409,8 +409,17 @@ describe("lifecycle hook contract", () => {
     const windows = getInitHookTemplates("win32");
     const powershell = windows.filter((template) => template.filename.endsWith(".ps1.example"));
     const cmd = windows.filter((template) => template.filename.endsWith(".cmd.example"));
-    expect(powershell).toHaveLength(6);
-    expect(cmd).toHaveLength(6);
+    expect(powershell).toHaveLength(8);
+    expect(cmd).toHaveLength(8);
+    for (const lifecycle of ["pre-remove", "post-remove"]) {
+      const template = powershell.find(
+        ({ filename }) => filename === `${lifecycle}.REPO.ps1.example`,
+      );
+      expect(template?.content).toContain("ARASHI_HOOK_TARGET_REPO_PATH");
+      expect(template?.content).toContain("$env:ARASHI_HOOK_TARGET_REPO_PATH");
+      expect(template?.content).not.toContain("ARASHI_PARENT_REPO_PATH");
+      expect(template?.content).not.toContain("ARASHI_HOOK_TARGET_WORKTREE_PATH");
+    }
     const powershellContent = powershell.map((template) => template.content).join("\n");
     const cmdContent = cmd.map((template) => template.content).join("\n");
     expect(powershellContent).toMatch(

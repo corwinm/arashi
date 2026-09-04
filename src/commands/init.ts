@@ -842,6 +842,31 @@ test "$PWD" = "$ARASHI_HOOK_TARGET_WORKTREE_PATH"
   },
   {
     content: `#!/usr/bin/env bash
+# Repository-specific Pre-Remove Example
+# Replace <repo> in the filename. This runs from that repository's active checkout.
+set -e
+: "\${ARASHI_HOOK_TARGET_REPOSITORY:?missing target repository}"
+: "\${ARASHI_HOOK_TARGET_REPO_PATH:?missing target repository path}"
+test "$PWD" = "$ARASHI_HOOK_TARGET_REPO_PATH"
+# Parse ARASHI_REMOVE_TARGETS_JSON for this repository's complete target set.
+exit 0
+`,
+    filename: "pre-remove.<repo>.sh.example",
+  },
+  {
+    content: `#!/usr/bin/env bash
+# Repository-specific Post-Remove Example
+# Replace <repo> in the filename. This runs from that repository's active checkout.
+set -e
+: "\${ARASHI_HOOK_TARGET_REPOSITORY:?missing target repository}"
+: "\${ARASHI_HOOK_TARGET_REPO_PATH:?missing target repository path}"
+test "$PWD" = "$ARASHI_HOOK_TARGET_REPO_PATH"
+exit 0
+`,
+    filename: "post-remove.<repo>.sh.example",
+  },
+  {
+    content: `#!/usr/bin/env bash
 # Setup Hook Example
 #
 # This setup script runs from the repository being set up. Setup discovery is
@@ -869,14 +894,20 @@ const WINDOWS_LIFECYCLE_NAMES = [
   "post-remove",
   "pre-create.<repo>",
   "post-create.<repo>",
+  "pre-remove.<repo>",
+  "post-remove.<repo>",
 ] as const;
 
 const windowsHookContent = (hookName: (typeof WINDOWS_LIFECYCLE_NAMES)[number]): string => {
   const repositorySpecific = hookName.includes(".<repo>");
   const lifecycle = hookName.split(".")[0];
-  const targetAssertions = repositorySpecific
-    ? `$required = @("ARASHI_HOOK_TARGET_REPOSITORY", "ARASHI_HOOK_TARGET_REPO_PATH", "ARASHI_HOOK_TARGET_WORKTREE_PATH", "ARASHI_PARENT_REPO_PATH")\nforeach ($name in $required) { if (-not (Test-Path "Env:$name")) { throw "Missing $name" } }\nif ((Get-Location).Path -ne $env:ARASHI_HOOK_TARGET_WORKTREE_PATH) { throw "Unexpected hook cwd" }`
-    : "# Workspace create hooks are untargeted; remove hooks receive one current target.";
+  let targetAssertions =
+    "# Workspace create hooks are untargeted; remove hooks receive one current target.";
+  if (repositorySpecific) {
+    targetAssertions = lifecycle.includes("create")
+      ? `$required = @("ARASHI_HOOK_TARGET_REPOSITORY", "ARASHI_HOOK_TARGET_REPO_PATH", "ARASHI_HOOK_TARGET_WORKTREE_PATH", "ARASHI_PARENT_REPO_PATH")\nforeach ($name in $required) { if (-not (Test-Path "Env:$name")) { throw "Missing $name" } }\nif ((Get-Location).Path -ne $env:ARASHI_HOOK_TARGET_WORKTREE_PATH) { throw "Unexpected hook cwd" }`
+      : `$required = @("ARASHI_HOOK_TARGET_REPOSITORY", "ARASHI_HOOK_TARGET_REPO_PATH")\nforeach ($name in $required) { if (-not (Test-Path "Env:$name")) { throw "Missing $name" } }\nif ((Get-Location).Path -ne $env:ARASHI_HOOK_TARGET_REPO_PATH) { throw "Unexpected hook cwd" }`;
+  }
   const packageExample =
     hookName === "post-create.<repo>"
       ? '# Follow the repository\'s committed packageManager and lockfile.\n# For a pinned pnpm child:\n# $env:CI = "true"\n# corepack pnpm --ignore-workspace install --frozen-lockfile'

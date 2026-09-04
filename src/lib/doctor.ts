@@ -743,17 +743,31 @@ const collectWorktreeFindings = async (
   });
 };
 
-const allowedHookFileNames = (repoNames: string[]): Set<string> => {
+const normalizeHookFileName = (name: string): string =>
+  process.platform === "win32" ? name.toLowerCase() : name;
+
+const allowedHookFileNames = (
+  repoNames: string[],
+  includeQualifiedRemove: boolean,
+): Set<string> => {
   const extensions = lifecycleHookExtensions();
   const names = new Set<string>(
     Object.values(GLOBAL_HOOKS).flatMap((hookName) =>
-      extensions.map((extension) => `${hookName}${extension}`.toLowerCase()),
+      extensions.map((extension) => normalizeHookFileName(`${hookName}${extension}`)),
     ),
   );
   for (const repoName of repoNames) {
     for (const extension of extensions) {
-      names.add(`${getRepoSpecificHookName("pre-create", repoName)}${extension}`.toLowerCase());
-      names.add(`${getRepoSpecificHookName("post-create", repoName)}${extension}`.toLowerCase());
+      names.add(
+        normalizeHookFileName(`${getRepoSpecificHookName("pre-create", repoName)}${extension}`),
+      );
+      names.add(
+        normalizeHookFileName(`${getRepoSpecificHookName("post-create", repoName)}${extension}`),
+      );
+      if (includeQualifiedRemove) {
+        names.add(normalizeHookFileName(`pre-remove.${repoName}${extension}`));
+        names.add(normalizeHookFileName(`post-remove.${repoName}${extension}`));
+      }
     }
   }
   return names;
@@ -766,14 +780,15 @@ const scanHookDirectoryForUnsupportedFiles = async (
 ): Promise<DoctorFinding[]> => {
   try {
     const entries = await readdir(hookDir, { withFileTypes: true });
-    const allowed = allowedHookFileNames(repoNames);
+    const allowed = allowedHookFileNames(repoNames, scope === "workspace");
     const findings: DoctorFinding[] = [];
     for (const entry of entries) {
       if (entry.isDirectory() || entry.name.endsWith(".example")) {
         continue;
       }
       const hookFile = join(hookDir, entry.name);
-      if (!allowed.has(entry.name.toLowerCase())) {
+      const entryName = normalizeHookFileName(entry.name);
+      if (!allowed.has(entryName)) {
         findings.push(
           createFinding({
             category: "hook",

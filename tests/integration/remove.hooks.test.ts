@@ -222,24 +222,52 @@ printf '%s:%s\\n' "$ARASHI_HOOK_INPUT" "$ARASHI_REPO_NAME" >> '${record}'`,
     );
   });
 
-  test("rejects qualified and compatible repository files before hooks or removal mutate", async () => {
-    if (process.platform === "win32") return;
+  test("rejects every qualified and compatible native candidate with ordered diagnostics", async () => {
     const branchName = "feature-qualified-repository-collision";
     const worktrees = await createWorktreesForBranch(workspace, branchName, false);
     const marker = join(workspace.rootPath, ".arashi", "collision-ran");
-    await createWorkspaceHook(workspace.rootPath, "pre-remove.repo-a", `touch '${marker}'`);
-    await createRepositoryHook(workspace.repos[0].path, "pre-remove", `touch '${marker}'`);
+    const extensions = process.platform === "win32" ? ["ps1", "cmd", "bat"] : ["sh"];
+    const canonical = extensions.map((extension) =>
+      join(workspace.rootPath, ".arashi", "hooks", `pre-remove.repo-a.${extension}`),
+    );
+    const compatible = extensions.map((extension) =>
+      join(workspace.repos[0].path, ".arashi", "hooks", `pre-remove.${extension}`),
+    );
+    for (const path of [...canonical, ...compatible]) {
+      await mkdir(join(path, ".."), { recursive: true });
+      await writeFile(
+        path,
+        process.platform === "win32" ? "exit 0\r\n" : `#!/bin/sh\ntouch '${marker}'\n`,
+      );
+      if (process.platform !== "win32") await chmod(path, 0o755);
+    }
 
-    const result = await runCli(workspace.rootPath, [
-      "remove",
-      worktrees["repo-a"],
-      "--path",
-      "--keep-branches",
-      "--force",
-      "--json",
-    ]);
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout).error.code).toBe("HOOK_CONFIGURATION_INVALID");
+    for (const dryRun of [false, true]) {
+      const result = await runCli(workspace.rootPath, [
+        "remove",
+        worktrees["repo-a"],
+        "--path",
+        "--keep-branches",
+        "--force",
+        "--json",
+        ...(dryRun ? ["--dry-run"] : []),
+      ]);
+      expect(result.exitCode).toBe(1);
+      const envelope = JSON.parse(result.stdout);
+      expect(envelope.error.code).toBe("HOOK_CONFIGURATION_INVALID");
+      const expectedPaths = await Promise.all(
+        [...canonical, ...compatible].map((path) => realpath(path)),
+      );
+      expect(envelope.error.details.hookOutcomes).toEqual([
+        expect.objectContaining({
+          hookName: "pre-remove",
+          message: expect.stringContaining(expectedPaths.join(", ")),
+          scope: "repository",
+          sourceScriptPath: null,
+          sourceScriptPaths: expectedPaths,
+        }),
+      ]);
+    }
     expect(existsSync(worktrees["repo-a"])).toBe(true);
     expect(existsSync(marker)).toBe(false);
   });

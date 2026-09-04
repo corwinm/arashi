@@ -597,7 +597,9 @@ export const formatRemovalSummaryHuman = (
     lines.push("Hook results:");
     for (const hook of summary.hookOutcomes) {
       const owner = `${hook.sourceOwnerKind}${hook.sourceOwnerName ? `:${hook.sourceOwnerName}` : ""}`;
-      const path = hook.sourceScriptPath ? ` (${hook.sourceScriptPath})` : "";
+      const sourcePaths =
+        hook.sourceScriptPaths ?? (hook.sourceScriptPath ? [hook.sourceScriptPath] : []);
+      const path = sourcePaths.length > ZERO ? ` (${sourcePaths.join(", ")})` : "";
       lines.push(
         `  • ${hook.sourceKind} ${owner} ${hook.hookName} - ${hook.hookStatus} (${hook.reasonCode})${path}`,
       );

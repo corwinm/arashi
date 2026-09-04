@@ -2329,6 +2329,7 @@ const preflightRemoveLifecycleHooks = async (options: {
       sourceOwnerKind: "global" | LifecycleHookOutcome["sourceOwnerKind"];
       sourceOwnerName: string | null;
       sourceScriptPath: string | null;
+      sourceScriptPaths?: readonly string[];
       targetRepositoryName?: string;
     },
     mapping: Pick<LifecycleHookOutcome, "hookStatus" | "message" | "reasonCode">,
@@ -2355,6 +2356,7 @@ const preflightRemoveLifecycleHooks = async (options: {
       sourceOwnerKind: source.sourceOwnerKind === "global" ? "user-global" : source.sourceOwnerKind,
       sourceOwnerName: source.sourceOwnerName,
       sourceScriptPath: source.sourceScriptPath,
+      ...(source.sourceScriptPaths ? { sourceScriptPaths: source.sourceScriptPaths } : {}),
       targetRepositoryName: repositoryName,
       targetRepositoryPath: repositoryPath,
       targetWorktreePath: targetData.WORKTREE_PATH ?? null,
@@ -2565,14 +2567,15 @@ const preflightRemoveLifecycleHooks = async (options: {
                   candidate.source.sourceOwnerName === failure.sourceOwnerName,
               )?.source.executionPath ?? options.workspaceRoot,
             scope: failure.scope,
-            sourceKind: "inline-config",
+            sourceKind: failure.sourceKinds.includes("inline-config") ? "inline-config" : "file",
             sourceOwnerKind: failure.sourceOwnerKind,
             sourceOwnerName: failure.sourceOwnerName,
             sourceScriptPath: failure.sourceScriptPath,
+            sourceScriptPaths: failure.sourceScriptPaths,
           },
           {
             hookStatus: "failure",
-            message: `Hook source is ambiguous for ${hookName}: ${failure.sourceKinds.join(" and ")} are both configured${failure.sourceScriptPath ? ` (${failure.sourceScriptPath})` : ""}`,
+            message: `Hook source is ambiguous for ${hookName}: ${failure.sourceKinds.join(" and ")} are both configured${failure.sourceScriptPaths.length > 0 ? ` (${failure.sourceScriptPaths.join(", ")})` : ""}`,
             reasonCode: "validation_failed",
           },
         ),

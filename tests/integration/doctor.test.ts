@@ -444,6 +444,13 @@ describe("arashi doctor", () => {
       "hooks",
       process.platform === "win32" ? "pre-remove.cmd" : "pre-remove.sh",
     );
+    const misplacedQualified = join(
+      repositoryPath,
+      ".arashi",
+      "hooks",
+      process.platform === "win32" ? "post-remove.repo-a.ps1" : "post-remove.repo-a.sh",
+    );
+    const misCasedCanonical = join(workspaceRoot, ".arashi", "hooks", "post-remove.REPO-A.sh");
     await mkdir(join(canonical, ".."), { recursive: true });
     await mkdir(join(compatible, ".."), { recursive: true });
     await writeFile(canonical, process.platform === "win32" ? "exit 0\n" : "#!/bin/sh\nexit 0\n");
@@ -451,6 +458,13 @@ describe("arashi doctor", () => {
       compatible,
       process.platform === "win32" ? "@exit /b 0\r\n" : "#!/bin/sh\nexit 0\n",
     );
+    await writeFile(
+      misplacedQualified,
+      process.platform === "win32" ? "exit 0\n" : "#!/bin/sh\nexit 0\n",
+    );
+    if (process.platform !== "win32") {
+      await writeFile(misCasedCanonical, "#!/bin/sh\nexit 0\n");
+    }
     if (process.platform !== "win32") {
       await chmod(canonical, 0o755);
       await chmod(compatible, 0o755);
@@ -472,6 +486,26 @@ describe("arashi doctor", () => {
       sourceScriptPath: null,
       sourceScriptPaths: [await realpath(canonical), await realpath(compatible)],
     });
+    expect(jsonFindings(parseSingleJsonDocument(result.stdout))).not.toContainEqual(
+      expect.objectContaining({
+        code: "HOOK_UNSUPPORTED_DEFINITION",
+        details: expect.objectContaining({ hookFile: await realpath(canonical) }),
+      }),
+    );
+    expect(jsonFindings(parseSingleJsonDocument(result.stdout))).toContainEqual(
+      expect.objectContaining({
+        code: "HOOK_UNSUPPORTED_DEFINITION",
+        details: expect.objectContaining({ hookFile: await realpath(misplacedQualified) }),
+      }),
+    );
+    if (process.platform !== "win32") {
+      expect(jsonFindings(parseSingleJsonDocument(result.stdout))).toContainEqual(
+        expect.objectContaining({
+          code: "HOOK_UNSUPPORTED_DEFINITION",
+          details: expect.objectContaining({ hookFile: await realpath(misCasedCanonical) }),
+        }),
+      );
+    }
   });
 
   test("diagnoses conflicting topology after a configured-ref refresh failure", async () => {

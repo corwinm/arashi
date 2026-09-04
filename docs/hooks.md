@@ -222,6 +222,7 @@ Activate one POSIX example at a time:
 install -m 755 .arashi/hooks/pre-create.sh.example .arashi/hooks/pre-create.sh
 install -m 755 '.arashi/hooks/post-create.<repo>.sh.example' .arashi/hooks/post-create.api.sh
 install -m 755 '.arashi/hooks/pre-remove.<repo>.sh.example' .arashi/hooks/pre-remove.api.sh
+install -m 755 '.arashi/hooks/post-remove.<repo>.sh.example' .arashi/hooks/post-remove.api.sh
 install -m 755 .arashi/setup.sh.example .arashi/setup.sh
 ```
 

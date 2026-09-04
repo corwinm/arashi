@@ -148,6 +148,7 @@ export interface LifecycleHookOutcome {
   sourceOwnerKind: "repository" | "user-global" | "workspace";
   sourceOwnerName: string | null;
   sourceScriptPath: string | null;
+  sourceScriptPaths?: readonly string[];
   executionPath: string | null;
   targetRepositoryName: string | null;
   targetRepositoryPath: string | null;
