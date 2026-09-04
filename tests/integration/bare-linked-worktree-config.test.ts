@@ -165,7 +165,7 @@ describe("configured bare workspace discovery from linked worktrees", () => {
       workspace = await configureBareWorkspace();
       const removalTargetPath = join(workspace.rootPath, "main-removal-target");
       await execGit(
-        ["worktree", "add", "-b", "feature/remove-main-target", removalTargetPath],
+        ["worktree", "add", "-b", "feature/remove-main-target", removalTargetPath, "main"],
         workspace.bareRepoPath,
       );
       const recordPath = join(workspace.rootPath, "main-repository-remove-cwd.log");
