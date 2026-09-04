@@ -1,6 +1,6 @@
 import { runtime, spawn } from "../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { spawnSync } from "node:child_process";
 import {
   createRemoveWorkspace,
@@ -191,6 +191,57 @@ printf '%s:%s\\n' "$ARASHI_HOOK_INPUT" "$ARASHI_REPO_NAME" >> '${record}'`,
     expect(scopeLog).toBe(
       "repository:repo-a\nworkspace:repo-a\nglobal-repository:repo-a\nglobal-shared:repo-a",
     );
+  });
+
+  test("runs a workspace-owned qualified repository remove hook from the target checkout", async () => {
+    if (process.platform === "win32") return;
+    const branchName = "feature-qualified-repository-hook";
+    const worktrees = await createWorktreesForBranch(workspace, branchName, false);
+    const record = join(workspace.rootPath, ".arashi", "qualified-remove.log");
+    await createWorkspaceHook(
+      workspace.rootPath,
+      "pre-remove.repo-a",
+      `printf '%s|%s|%s|%s\n' "$ARASHI_HOOK_NAME" "$ARASHI_HOOK_SCOPE" "$PWD" "$ARASHI_HOOK_SOURCE_PATH" > '${record}'`,
+    );
+
+    const originalCwd = process.cwd();
+    process.chdir(workspace.rootPath);
+    try {
+      expect(
+        await executeRemove(worktrees["repo-a"], {
+          force: true,
+          keepBranches: true,
+          path: true,
+        }),
+      ).toBe(0);
+    } finally {
+      process.chdir(originalCwd);
+    }
+    expect((await runtime.file(record).text()).trim()).toBe(
+      `pre-remove|repository|${await realpath(workspace.repos[0].path)}|${await realpath(join(workspace.rootPath, ".arashi", "hooks", "pre-remove.repo-a.sh"))}`,
+    );
+  });
+
+  test("rejects qualified and compatible repository files before hooks or removal mutate", async () => {
+    if (process.platform === "win32") return;
+    const branchName = "feature-qualified-repository-collision";
+    const worktrees = await createWorktreesForBranch(workspace, branchName, false);
+    const marker = join(workspace.rootPath, ".arashi", "collision-ran");
+    await createWorkspaceHook(workspace.rootPath, "pre-remove.repo-a", `touch '${marker}'`);
+    await createRepositoryHook(workspace.repos[0].path, "pre-remove", `touch '${marker}'`);
+
+    const result = await runCli(workspace.rootPath, [
+      "remove",
+      worktrees["repo-a"],
+      "--path",
+      "--keep-branches",
+      "--force",
+      "--json",
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error.code).toBe("HOOK_CONFIGURATION_INVALID");
+    expect(existsSync(worktrees["repo-a"])).toBe(true);
+    expect(existsSync(marker)).toBe(false);
   });
 
   test("runs repository-targeted global hook before shared global hook", async () => {

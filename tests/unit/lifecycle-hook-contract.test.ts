@@ -2,6 +2,7 @@ import {
   DEFAULT_LIFECYCLE_HOOK_TIMEOUT,
   buildHookEnvironment,
   buildRemoveHookOperationData,
+  discoverConfiguredRepositoryRemoveHookCandidates,
   discoverLifecycleHook,
   executeHook,
   getHookSpawnCommand,
@@ -26,6 +27,33 @@ afterEach(async () => {
 });
 
 describe("lifecycle hook contract", () => {
+  test("bounds configured repository remove aliases to six candidates in location and extension order", async () => {
+    const root = await tempRoot();
+    const repository = join(root, "repos", "app");
+    const canonicalDirectory = join(root, ".arashi", "hooks");
+    const compatibleDirectory = join(repository, ".arashi", "hooks");
+    await mkdir(canonicalDirectory, { recursive: true });
+    await mkdir(compatibleDirectory, { recursive: true });
+    const canonical = ["ps1", "cmd", "bat"].map((extension) =>
+      join(canonicalDirectory, `pre-remove.app.${extension}`),
+    );
+    const compatible = ["ps1", "cmd", "bat"].map((extension) =>
+      join(compatibleDirectory, `pre-remove.${extension}`),
+    );
+    await Promise.all([...canonical, ...compatible].map((path) => writeFile(path, "exit 0\n")));
+
+    const candidates = await discoverConfiguredRepositoryRemoveHookCandidates({
+      activeRepositoryPath: repository,
+      configurationRoot: root,
+      lifecycle: "pre-remove",
+      platform: "win32",
+      repositoryName: "app",
+    });
+
+    expect(candidates).toEqual([...canonical, ...compatible]);
+    expect(candidates).toHaveLength(6);
+    expect(Object.isFrozen(candidates)).toBe(true);
+  });
   test("resolves one fail-closed command-wide hook input mode", () => {
     expect(resolveHookInputMode({ stdinIsTTY: true })).toBe("tty");
     expect(resolveHookInputMode({ hookInput: false, stdinIsTTY: true })).toBe("disabled");

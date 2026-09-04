@@ -3,7 +3,7 @@ import { link, lstat, mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { repositoryNoOpScaffold } from "./repository-config-editor.ts";
 import type { RepositoryScriptPlan } from "./repository-config-editor.ts";
-import { resolveLifecycleHooksDirectory } from "./hooks.ts";
+import { discoverLifecycleHookCandidates, resolveLifecycleHooksDirectory } from "./hooks.ts";
 
 export interface OwnedRepositoryScript {
   path: string;
@@ -120,6 +120,27 @@ const validateParents = async (expected: readonly DirectoryIdentity[]): Promise<
   }
 };
 
+const validateCompatibleSource = async (
+  plan: RepositoryScriptPlan,
+  expectedRoot: DirectoryIdentity | null,
+): Promise<void> => {
+  if (!plan.compatibleSourceRoot) return;
+  const observedRoot = await inspectDirectory(resolve(plan.compatibleSourceRoot));
+  if (expectedRoot && !sameDirectory(expectedRoot, observedRoot)) {
+    throw new Error(
+      `Compatible repository hook root changed identity: ${plan.compatibleSourceRoot}`,
+    );
+  }
+  const candidates = await discoverLifecycleHookCandidates(
+    plan.lifecycle,
+    plan.compatibleSourceRoot,
+    plan.extension === ".ps1" ? "win32" : process.platform,
+  );
+  if (candidates.length > 0) {
+    throw new Error(`Compatible repository hook source already exists: ${candidates.join(", ")}`);
+  }
+};
+
 const validateOwnedDestination = async (entry: OwnedRepositoryScript): Promise<void> => {
   const observed = await lstat(entry.path, { bigint: true });
   if (
@@ -176,6 +197,10 @@ export const installRepositoryScripts = async (
     for (const plan of plans) {
       const destination = resolve(plan.path);
       const expectedParents = await prepareParent(destination, plan.ownerRoot);
+      const compatibleRoot = plan.compatibleSourceRoot
+        ? await inspectDirectory(resolve(plan.compatibleSourceRoot))
+        : null;
+      await validateCompatibleSource(plan, compatibleRoot);
       const bytes = repositoryNoOpScaffold(plan.extension);
       const temporaryPath = join(
         dirname(destination),
@@ -191,6 +216,7 @@ export const installRepositoryScripts = async (
         }
         await dependencies.beforePublication?.(plan);
         await validateParents(expectedParents);
+        await validateCompatibleSource(plan, compatibleRoot);
         await link(temporaryPath, destination);
 
         // Windows exposes a hard link's creation time per directory entry rather than preserving
@@ -215,6 +241,7 @@ export const installRepositoryScripts = async (
         };
         owned.push(entry);
         await dependencies.afterPublication?.(plan);
+        await validateCompatibleSource(plan, compatibleRoot);
         const validated = await lstat(destination, { bigint: true });
         if (
           !validated.isFile() ||

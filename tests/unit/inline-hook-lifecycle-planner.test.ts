@@ -287,6 +287,7 @@ describe("AC-03/04/07/11 shared lifecycle source planner RED", () => {
           sourceOwnerKind: "workspace",
           sourceOwnerName: null,
           sourceScriptPath: fileSource.sourceScriptPath,
+          sourceScriptPaths: [fileSource.sourceScriptPath],
         },
       });
     }
@@ -314,7 +315,8 @@ describe("AC-03/04/07/11 shared lifecycle source planner RED", () => {
         sourceKinds: ["file", "file"],
         sourceOwnerKind: "workspace",
         sourceOwnerName: null,
-        sourceScriptPath: firstFile.sourceScriptPath,
+        sourceScriptPath: null,
+        sourceScriptPaths: [firstFile.sourceScriptPath, secondFile.sourceScriptPath],
       },
     });
 

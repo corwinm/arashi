@@ -427,6 +427,53 @@ describe("arashi doctor", () => {
       }),
     );
   });
+  test("reports qualified and compatible repository remove aliases with bounded ordered paths", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const repositoryPath = join(workspaceRoot, "repos", "repo-a");
+    await initializeGitRepository(repositoryPath);
+    await writeWorkspaceConfig(workspaceRoot, { "repo-a": { path: "./repos/repo-a" } });
+    const canonical = join(
+      workspaceRoot,
+      ".arashi",
+      "hooks",
+      process.platform === "win32" ? "pre-remove.repo-a.ps1" : "pre-remove.repo-a.sh",
+    );
+    const compatible = join(
+      repositoryPath,
+      ".arashi",
+      "hooks",
+      process.platform === "win32" ? "pre-remove.cmd" : "pre-remove.sh",
+    );
+    await mkdir(join(canonical, ".."), { recursive: true });
+    await mkdir(join(compatible, ".."), { recursive: true });
+    await writeFile(canonical, process.platform === "win32" ? "exit 0\n" : "#!/bin/sh\nexit 0\n");
+    await writeFile(
+      compatible,
+      process.platform === "win32" ? "@exit /b 0\r\n" : "#!/bin/sh\nexit 0\n",
+    );
+    if (process.platform !== "win32") {
+      await chmod(canonical, 0o755);
+      await chmod(compatible, 0o755);
+    }
+
+    const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    const finding = jsonFindings(parseSingleJsonDocument(result.stdout)).find(
+      (candidate) =>
+        candidate.code === "HOOK_AMBIGUOUS" &&
+        candidate.scope === "hook:repository:repo-a:pre-remove",
+    );
+    expect(result.exitCode).toBe(1);
+    expect(finding?.details).toEqual({
+      hookName: "pre-remove",
+      scope: "repository",
+      sourceKinds: ["file", "file"],
+      sourceOwnerKind: "repository",
+      sourceOwnerName: "repo-a",
+      sourceScriptPath: null,
+      sourceScriptPaths: [await realpath(canonical), await realpath(compatible)],
+    });
+  });
+
   test("diagnoses conflicting topology after a configured-ref refresh failure", async () => {
     const workspaceRoot = await createBareBackedLinkedWorkspace();
     await runGit(workspaceRoot, [

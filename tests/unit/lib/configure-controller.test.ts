@@ -199,8 +199,8 @@ describe("configure controller", () => {
     expect(result.status).toBe("declined");
     // The final preview is declined, but both plans must survive until that preview.
     const preview = messages.at(-1);
-    expect(preview).toContain("repos/app/.arashi/hooks/pre-remove.sh");
-    expect(preview).toContain("repos/api/.arashi/hooks/post-remove.sh");
+    expect(preview).toContain(".arashi/hooks/pre-remove.app.sh");
+    expect(preview).toContain(".arashi/hooks/post-remove.api.sh");
   });
 
   test("preserves multiple plans across repeated edits to one repository", async () => {
@@ -226,8 +226,8 @@ describe("configure controller", () => {
       prompts,
     });
     expect(result.status).toBe("declined");
-    expect(messages.at(-1)).toContain("pre-remove.sh");
-    expect(messages.at(-1)).toContain("post-remove.sh");
+    expect(messages.at(-1)).toContain("pre-remove.app.sh");
+    expect(messages.at(-1)).toContain("post-remove.app.sh");
   });
 
   test("offers keep/skip for an observed existing native hook and creates no plan", async () => {
@@ -269,7 +269,7 @@ describe("configure controller", () => {
     expect(messages.some((message) => /keep existing|skip/i.test(message))).toBe(true);
   });
 
-  test("resolves repository remove hooks from the active linked execution tree", async () => {
+  test("resolves repository remove hooks from the linked configuration authority", async () => {
     const { messages, prompts } = scriptedPrompts([
       "repository",
       "app",
@@ -287,7 +287,7 @@ describe("configure controller", () => {
       prompts,
     });
     expect(result.status).toBe("declined");
-    expect(messages.at(-1)).toContain("/linked/feature/repos/app/.arashi/hooks/pre-remove.sh");
+    expect(messages.at(-1)).toContain("/bare/config-root/.arashi/hooks/pre-remove.app.sh");
   });
 
   test.each([

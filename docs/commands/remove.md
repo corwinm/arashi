@@ -64,19 +64,26 @@ aw remove feature-login --json
 Remove hooks can be defined at four scopes:
 
 - Repository scope: inline `repos.<name>.hooks.pre-remove|post-remove` or
-  `repos/<repo>/.arashi/hooks/pre-remove<ext>` and `post-remove<ext>` files
+  canonical workspace-owned `.arashi/hooks/pre-remove.<repo><ext>` and
+  `post-remove.<repo><ext>` files; existing
+  `repos/<repo>/.arashi/hooks/pre-remove<ext>` and `post-remove<ext>` files remain compatible aliases
 - Workspace-root scope: inline root `hooks.scripts.pre-remove|post-remove` or
   `.arashi/hooks/pre-remove<ext>` and `post-remove<ext>` files
 - Global scope (file-only):
   - repository-targeted: `~/.arashi/hooks/<repo>/pre-remove<ext>` and `post-remove<ext>`
   - shared: `~/.arashi/hooks/pre-remove<ext>` and `post-remove<ext>`
 
-Each repository/workspace location uses either its inline value or native file. If both claim the same
-logical location, remove fails preflight and runs neither. Different scopes retain repository →
-workspace-root → global targeted → global shared order.
+Each repository lifecycle is one logical slot. Its inline value, canonical qualified file, and
+compatible child-local file are alternative claims with no precedence. If any two claims exist,
+remove and dry-run fail preflight and run neither. The selected repository source keeps the plain
+`pre-remove` or `post-remove` hook name, repository owner/scope, and target checkout cwd regardless of
+where its file is stored. Different scopes retain repository → workspace-root → global targeted →
+global shared order.
 
 `<ext>` is `.sh` on POSIX or one case-insensitive `.ps1`, `.cmd`, or `.bat` on Windows. Multiple
-native candidates fail preflight before removal mutation.
+native candidates within or across the two repository locations fail preflight before removal
+mutation. Ambiguity diagnostics order canonical files before compatible files and use `.ps1`, `.cmd`,
+`.bat` order within each Windows location, for at most six paths.
 
 Behavior:
 
@@ -84,6 +91,8 @@ Behavior:
 - `pre-remove` runs after confirmation and before destructive operations; any failure gates all removal mutation.
 - `--dry-run` resolves the same source plan and previews inline/file kind, owner, lifecycle, scope,
   target, interpreter, and applicable file path, but never executes a hook or fabricates an outcome.
+- `aw doctor` resolves the same canonical and compatible candidates and reports collisions before a
+  destructive command is attempted.
 - Remove intentionally has no `--no-hooks`; use `--no-hook-input` only to disable hook input.
 - `post-remove` runs after remove operations are attempted, continues across partial failures, and
   participates in failure finalization rather than rollback.

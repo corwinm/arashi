@@ -147,6 +147,7 @@ export interface RepositoryScriptPlan {
   readonly ownerRoot: string;
   readonly path: string;
   readonly repositoryName?: string;
+  readonly compatibleSourceRoot?: string;
   readonly extension: ".sh" | ".ps1";
   readonly mode: number | null;
   readonly state: "safe-no-op";
@@ -305,13 +306,13 @@ export const planRepositoryHookFile = (
 ): RepositoryEditorState => {
   const platform = context.platform ?? process.platform;
   const extension: ".ps1" | ".sh" = platform === "win32" ? ".ps1" : ".sh";
-  const create = lifecycle === "pre-create" || lifecycle === "post-create";
-  if (create && !isSafeRepositoryHookNameSegment(state.repositoryName, platform)) {
+  const remove = lifecycle === "pre-remove" || lifecycle === "post-remove";
+  if (!isSafeRepositoryHookNameSegment(state.repositoryName, platform)) {
     throw new Error("Repository name cannot be used in an active hook filename.");
   }
-  const root = create ? context.activeConfigRoot : context.activeRepositoryPath;
+  const root = context.activeConfigRoot;
   const path = resolveLifecycleHookFilePath({
-    hookName: create ? `${lifecycle}.${state.repositoryName}` : lifecycle,
+    hookName: `${lifecycle}.${state.repositoryName}`,
     ownerRoot: root,
     platform,
   });
@@ -323,6 +324,7 @@ export const planRepositoryHookFile = (
     ...state.scripts.filter((script) => script.lifecycle !== lifecycle),
     {
       extension,
+      ...(remove ? { compatibleSourceRoot: context.activeRepositoryPath } : {}),
       lifecycle,
       mode: platform === "win32" ? null : 0o755,
       ownerRoot: root,

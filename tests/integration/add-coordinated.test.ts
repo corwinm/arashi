@@ -309,7 +309,6 @@ describe("add coordinated linked materialization", () => {
 
     expect(discoveryCalled).toBe(true);
     const activeRoot = topology.active;
-    const activeChild = result.worktreePath!;
     expect(
       JSON.parse(await readFile(join(topology.active, ".arashi", "config.json"), "utf8")),
     ).toMatchObject({
@@ -324,7 +323,7 @@ describe("add coordinated linked materialization", () => {
       {
         lifecycle: "pre-remove",
         mode: 0o755,
-        path: join(activeChild, ".arashi", "hooks", "pre-remove.sh"),
+        path: join(activeRoot, ".arashi", "hooks", "pre-remove.child.sh"),
       },
     ]);
     expect(result.activeScripts).toEqual([
@@ -337,7 +336,7 @@ describe("add coordinated linked materialization", () => {
       {
         executableReady: true,
         lifecycle: "pre-remove",
-        path: join(activeChild, ".arashi", "hooks", "pre-remove.sh"),
+        path: join(activeRoot, ".arashi", "hooks", "pre-remove.child.sh"),
         safeNoOp: true,
       },
     ]);

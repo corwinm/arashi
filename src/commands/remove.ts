@@ -7,6 +7,7 @@
 import {
   GLOBAL_HOOKS,
   buildRemoveHookOperationData,
+  discoverConfiguredRepositoryRemoveHookCandidates,
   discoverLifecycleHookCandidatesInDirectory,
   executeHook,
   executeInlineHook,
@@ -2456,18 +2457,41 @@ const preflightRemoveLifecycleHooks = async (options: {
     };
 
     for (const repository of options.targetRepositories) {
-      if (
-        normalizeLifecyclePath(repository.path) !== normalizeLifecyclePath(options.workspaceRoot)
-      ) {
-        await addFiles({
-          executionPath: repository.path,
-          hooksDirectory: join(repository.path, ".arashi", "hooks"),
-          scope: "repository",
-          sourceOwnerKind: "repository",
-          sourceOwnerName: repository.name,
+      const repositoryFilePaths = await discoverConfiguredRepositoryRemoveHookCandidates({
+        activeRepositoryPath: repository.path,
+        configurationRoot: options.workspaceRoot,
+        lifecycle: hookName,
+        repositoryName: repository.name,
+      });
+      for (const scriptPath of repositoryFilePaths) {
+        candidates.push({
+          kind: "file",
+          source: {
+            executionPath: repository.path,
+            lifecycle: hookName,
+            scope: "repository",
+            sourceKind: "file",
+            sourceOwnerKind: "repository",
+            sourceOwnerName: repository.name,
+            sourceScriptPath: scriptPath,
+          },
         });
       }
       const inline = options.config.repos[repository.name]?.hooks?.[hookName];
+      if (repositoryFilePaths.length === ZERO && !inline) {
+        candidates.push({
+          kind: "absent",
+          source: {
+            executionPath: repository.path,
+            lifecycle: hookName,
+            scope: "repository",
+            sourceKind: "file",
+            sourceOwnerKind: "repository",
+            sourceOwnerName: repository.name,
+            sourceScriptPath: null,
+          },
+        });
+      }
       if (inline) {
         candidates.push({
           interpreters: typeof inline === "string" ? { bash: inline } : inline,

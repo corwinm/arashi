@@ -44,6 +44,14 @@ their generated contents.
 Existing native hook files are observed through metadata only. Configure offers keep/skip and never
 deletes, clears, overwrites, or includes them in a creation plan. New hook files use the canonical
 active path, safe no-op scaffold, executable-ready mode on POSIX, and no-replace installation.
+For repository remove hooks, that canonical path is
+`.arashi/hooks/<lifecycle>.<repository><ext>` under the active configuration root, while an existing
+`<repository>/.arashi/hooks/<lifecycle><ext>` remains a compatible source. Inline, canonical, and
+compatible forms share one slot with no precedence. Configure refuses to publish a canonical file if
+either file location or inline configuration already claims the slot, and rechecks both locations
+during publication. The hook retains the plain lifecycle name and repository identity and executes
+from the target repository checkout. POSIX scaffolds use `.sh`; Windows scaffolds use `.ps1`, while
+runtime also recognizes `.cmd` and `.bat` candidates.
 
 Keeping or skipping every selection preserves the original configuration bytes and exits before
 final confirmation. Declining the final preview or pressing Ctrl+C also leaves configuration and

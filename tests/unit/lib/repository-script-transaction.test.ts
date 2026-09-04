@@ -327,6 +327,49 @@ describe("repository script transaction", () => {
     expect((await lstat(path)).isSymbolicLink()).toBe(true);
   });
 
+  test.skipIf(process.platform === "win32")(
+    "reports the canonical remove script as owned when a compatible claim races publication",
+    async () => {
+      const root = await fixture();
+      const repository = await fixture();
+      const path = join(root, ".arashi", "hooks", "pre-remove.app.sh");
+      const compatible = join(repository, ".arashi", "hooks", "pre-remove.sh");
+      let failure: unknown;
+
+      try {
+        await installRepositoryScripts(
+          [
+            {
+              compatibleSourceRoot: repository,
+              extension: ".sh",
+              lifecycle: "pre-remove",
+              mode: 0o755,
+              ownerRoot: root,
+              path,
+              state: "safe-no-op",
+            },
+          ],
+          {
+            afterPublication: async () => {
+              await mkdir(dirname(compatible), { recursive: true });
+              await writeFile(compatible, "#!/bin/sh\nexit 0\n");
+            },
+          },
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(RepositoryScriptTransactionError);
+      expect((failure as RepositoryScriptTransactionError).owned).toHaveLength(1);
+      expect((failure as RepositoryScriptTransactionError).owned[0].path).toBe(path);
+      await expect(
+        rollbackRepositoryScripts((failure as RepositoryScriptTransactionError).owned),
+      ).resolves.toEqual({ preserved: [], removed: [path] });
+      expect(await readFile(compatible, "utf8")).toContain("exit 0");
+    },
+  );
+
   test("rollback removes only identity-byte-mode-owned regular files", async () => {
     const root = await fixture();
     const paths = ["owned.sh", "edited.sh", "chmodded.sh", "replaced.sh", "linked.sh"].map((name) =>

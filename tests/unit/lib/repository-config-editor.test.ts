@@ -194,11 +194,11 @@ describe("repository configuration editor", () => {
       expect(result.state.scripts[0]).toMatchObject({
         lifecycle: "post-remove",
         mode: 0o755,
-        path: "/workspace/repos/app/.arashi/hooks/post-remove.sh",
+        path: "/workspace/.arashi/hooks/post-remove.app.sh",
       });
       const summary = JSON.stringify(summarizeRepositoryEditorState(result.state));
       expect(summary).toContain("pre-create");
-      expect(summary).toContain("post-remove.sh");
+      expect(summary).toContain("post-remove.app.sh");
       expect(summary).not.toContain(canary);
       expect(summary).not.toContain("Write-Output hidden");
       expect(summary).not.toContain("exit 0");
@@ -208,8 +208,8 @@ describe("repository configuration editor", () => {
   test.skipIf(process.platform === "win32").each([
     ["pre-create", "/workspace/.arashi/hooks/pre-create.app.sh"],
     ["post-create", "/workspace/.arashi/hooks/post-create.app.sh"],
-    ["pre-remove", "/workspace/repos/app/.arashi/hooks/pre-remove.sh"],
-    ["post-remove", "/workspace/repos/app/.arashi/hooks/post-remove.sh"],
+    ["pre-remove", "/workspace/.arashi/hooks/pre-remove.app.sh"],
+    ["post-remove", "/workspace/.arashi/hooks/post-remove.app.sh"],
   ] as const)("plans exact POSIX active path for %s", (lifecycle, expected) => {
     const state = planRepositoryHookFile(createRepositoryEditorState(config(), "app"), lifecycle, {
       activeConfigRoot: "/workspace",
@@ -222,11 +222,10 @@ describe("repository configuration editor", () => {
       mode: 0o755,
       path: expected,
     });
-    const create = lifecycle === "pre-create" || lifecycle === "post-create";
     expect(state.scripts[0].path).toBe(
       resolveLifecycleHookFilePath({
-        hookName: create ? `${lifecycle}.app` : lifecycle,
-        ownerRoot: create ? "/workspace" : "/workspace/repos/app",
+        hookName: `${lifecycle}.app`,
+        ownerRoot: "/workspace",
         platform: "linux",
       }),
     );
@@ -236,11 +235,11 @@ describe("repository configuration editor", () => {
     ["direct-main", "/main", "/main"],
     ["configured-bare", "/configuration", "/clone"],
     ["linked-parent", "/parent", "/parent/.arashi/worktrees/topic/repos/app"],
+    ["bare-backed-linked", "/parent.git", "/parent-linked/repos/app"],
   ] as const)(
     "planner equals runtime path resolver in %s topology",
     (_mode, configRoot, repositoryPath) => {
       for (const lifecycle of ["pre-create", "post-create", "pre-remove", "post-remove"] as const) {
-        const create = lifecycle === "pre-create" || lifecycle === "post-create";
         const planned = planRepositoryHookFile(
           createRepositoryEditorState(config(), "app"),
           lifecycle,
@@ -252,8 +251,8 @@ describe("repository configuration editor", () => {
         ).scripts[0].path;
         expect(planned).toBe(
           resolveLifecycleHookFilePath({
-            hookName: create ? `${lifecycle}.app` : lifecycle,
-            ownerRoot: create ? configRoot : repositoryPath,
+            hookName: `${lifecycle}.app`,
+            ownerRoot: configRoot,
             platform: "darwin",
           }),
         );
@@ -329,19 +328,20 @@ describe("repository configuration editor", () => {
   );
 
   test.skipIf(process.platform === "win32")(
-    "does not apply create-hook filename validation to repository-owned remove hooks",
+    "applies qualified filename validation to repository-owned remove hooks",
     () => {
       const repositoryName = "../../legacy-config-name";
-      const planned = planRepositoryHookFile(
-        createRepositoryEditorState(configForRepository(repositoryName), repositoryName),
-        "pre-remove",
-        {
-          activeConfigRoot: "/workspace",
-          activeRepositoryPath: "/workspace/repos/app",
-          platform: "linux",
-        },
-      );
-      expect(planned.scripts[0].path).toBe("/workspace/repos/app/.arashi/hooks/pre-remove.sh");
+      expect(() =>
+        planRepositoryHookFile(
+          createRepositoryEditorState(configForRepository(repositoryName), repositoryName),
+          "pre-remove",
+          {
+            activeConfigRoot: "/workspace",
+            activeRepositoryPath: "/workspace/repos/app",
+            platform: "linux",
+          },
+        ),
+      ).toThrow("Repository name cannot be used in an active hook filename.");
     },
   );
 

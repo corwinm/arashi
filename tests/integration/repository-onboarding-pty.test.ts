@@ -132,7 +132,7 @@ describe.skipIf(process.platform === "win32")("repository onboarding raw PTY jou
     expect(journey.result.status).toBe("confirmed");
     expect(journey.installed).toHaveLength(1);
     expect(journey.installed[0]).toMatchObject({ mode: 0o755 });
-    expect(journey.installed[0].path).toMatch(/repos\/app\/\.arashi\/hooks\/pre-remove\.sh$/);
+    expect(journey.installed[0].path).toMatch(/\.arashi\/hooks\/pre-remove\.app\.sh$/);
     expect(journey.installed[0].content).toBe(
       "#!/usr/bin/env bash\n# Safe active Arashi lifecycle hook scaffold.\nexit 0\n",
     );

@@ -200,6 +200,35 @@ describe("remove command - dry-run preview", () => {
     );
     expect(existsSync(markerPath)).toBe(false);
   });
+  test("previews the qualified repository file with repository identity and no execution", async () => {
+    if (process.platform === "win32") return;
+    const branchName = "feature-dry-run-qualified-hook";
+    const worktrees = await createWorktreesForBranch(workspace, branchName, false);
+    const markerPath = join(workspace.rootPath, ".arashi", "qualified-dry-run-ran");
+    const hookPath = join(workspace.rootPath, ".arashi", "hooks", "pre-remove.repo-a.sh");
+    await mkdir(join(workspace.rootPath, ".arashi", "hooks"), { recursive: true });
+    await writeFile(hookPath, `#!/bin/sh\ntouch '${markerPath}'\n`);
+    await chmod(hookPath, 0o755);
+
+    const result = await runRemoveInWorkspace(workspace.rootPath, worktrees["repo-a"], {
+      dryRun: true,
+      json: true,
+      path: true,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).data.hooks).toContainEqual(
+      expect.objectContaining({
+        hookName: "pre-remove",
+        repository: "repo-a",
+        scope: "repository",
+        sourceKind: "file",
+        sourceOwnerKind: "repository",
+        sourceOwnerName: "repo-a",
+        sourceScriptPath: realpathSync(hookPath),
+      }),
+    );
+    expect(existsSync(markerPath)).toBe(false);
+  });
 });
 
 async function runRemoveInWorkspace(

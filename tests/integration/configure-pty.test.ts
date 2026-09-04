@@ -304,7 +304,7 @@ describe.skipIf(process.platform === "win32")("configure raw PTY journeys", () =
         },
       },
     );
-    const activePath = join(result.workspace, "repos", "app", ".arashi", "hooks", "pre-remove.sh");
+    const activePath = join(result.workspace, ".arashi", "hooks", "pre-remove.app.sh");
     expect(await readFile(activePath, "utf8")).toContain(
       "Safe active Arashi lifecycle hook scaffold",
     );

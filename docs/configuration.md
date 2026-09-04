@@ -54,9 +54,10 @@ select multiple configured dependencies. Preview with `--dry-run` before confirm
 concurrent-change checks still apply.
 
 Deletion removes only the selected repository entry after its owned Git materialization and exact
-repository-targeted workspace hooks are removed. Other repository entries, workspace defaults,
-groups, shared hooks, and managed-ignore preferences/files remain unchanged, including when the
-last configured dependency is deleted.
+workspace-owned `pre-create.<repository>`, `post-create.<repository>`, `pre-remove.<repository>`, and
+`post-remove.<repository>` hooks and concrete templates are removed. Other repository entries,
+workspace defaults, groups, shared hooks, and managed-ignore preferences/files remain unchanged,
+including when the last configured dependency is deleted.
 
 See [`aw delete`](./commands/delete.md) for the full safety and automation contract.
 
@@ -180,6 +181,16 @@ compatible variant. Prefer a native file for substantial scripts, reusable logic
 normal review and testing. Do not put a secret in inline configuration: the config is shared and
 versioned even though Arashi never discloses snippet text in logs, outcomes, previews, or doctor
 findings.
+
+For configured repository remove, the canonical native alternative is
+`.arashi/hooks/<lifecycle>.<repo><ext>` under the active configuration root. Existing
+`<repo>/.arashi/hooks/<lifecycle><ext>` files remain compatible child-local aliases. The inline value
+and both file locations claim one repository lifecycle slot; there is no precedence, so any overlap
+fails runtime, dry-run, and doctor before mutation. A selected file keeps repository identity and runs
+from the target checkout. Interactive `aw add` and `aw configure` create new safe scaffolds only at the
+canonical qualified path, and refuse creation when either file form already claims the slot. Existing
+child-local files need no migration; to move one, remove the old claim before activating the canonical
+file. POSIX uses `.sh`; Windows accepts one case-insensitive `.ps1`, `.cmd`, or `.bat` candidate.
 
 ## Worktree file materialization
 

@@ -255,6 +255,7 @@ describe("same-location inline/file ambiguity RED", () => {
         "sourceOwnerKind",
         "sourceOwnerName",
         "sourceScriptPath",
+        "sourceScriptPaths",
       ]);
       expect(finding!.details).toEqual({
         hookName: "pre-remove",
@@ -263,6 +264,7 @@ describe("same-location inline/file ambiguity RED", () => {
         sourceOwnerKind: "workspace",
         sourceOwnerName: null,
         sourceScriptPath: await realpath(collisionPath),
+        sourceScriptPaths: [await realpath(collisionPath)],
       });
       expectNoDisclosure(result);
     },

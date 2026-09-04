@@ -702,12 +702,17 @@ const assertContainedLeaf = (root: string, path: string): void => {
 const discoverHookPaths = async (
   workspaceRoot: string,
   repositoryKey: string,
-  inlineHooks?: { "pre-create"?: unknown; "post-create"?: unknown },
+  inlineHooks?: {
+    "pre-create"?: unknown;
+    "post-create"?: unknown;
+    "pre-remove"?: unknown;
+    "post-remove"?: unknown;
+  },
 ): Promise<{ owned: string[]; preservedGlobal: string[] }> => {
   const hooksRoot = join(workspaceRoot, ".arashi", "hooks");
   const owned: string[] = [];
   const preservedGlobal: string[] = [];
-  for (const lifecycle of ["pre-create", "post-create"] as const) {
+  for (const lifecycle of ["pre-create", "post-create", "pre-remove", "post-remove"] as const) {
     const hookName = `${lifecycle}.${repositoryKey}`;
     const active = [...(await discoverLifecycleHookCandidates(hookName, workspaceRoot))];
     if (active.length > 1)

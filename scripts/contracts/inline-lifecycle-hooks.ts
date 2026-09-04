@@ -34,10 +34,27 @@ export interface InlineLifecycleHookContract {
     createJsonCode: "CREATE_FAILED";
     removeJsonCode: "HOOK_CONFIGURATION_INVALID";
     doctorCode: "HOOK_AMBIGUOUS";
+    sourceScriptPaths: {
+      deduplicated: true;
+      locationOrder: ["canonical-workspace", "compatible-repository-local"];
+      maxNativeCandidates: 6;
+      platformExtensionOrder: {
+        posix: [".sh"];
+        windows: [".ps1", ".cmd", ".bat"];
+      };
+      singularSourceScriptPathCompatible: true;
+    };
   };
   options: {
     create: { noHooks: true; noHookInput: true };
     remove: { noHooks: false; noHookInput: true };
+  };
+  repositoryRemoveSources: {
+    canonicalWorkspace: ".arashi/hooks/<lifecycle>.<repo><ext>";
+    compatibleRepositoryLocal: "<repo>/.arashi/hooks/<lifecycle><ext>";
+    executionCwd: "target-repository-checkout";
+    logicalSlot: "repository:<repo>:<lifecycle>";
+    nativePrecedence: "none";
   };
   dryRun: {
     create: { discoversHooks: false; hookPreviews: false; emptyHookLedger: true };
@@ -50,7 +67,13 @@ export interface InlineLifecycleHookContract {
     jsonStdoutDocuments: 1;
   };
   sourceMetadata: {
-    fields: ["sourceKind", "sourceOwnerKind", "sourceOwnerName", "sourceScriptPath"];
+    fields: [
+      "sourceKind",
+      "sourceOwnerKind",
+      "sourceOwnerName",
+      "sourceScriptPath",
+      "sourceScriptPaths",
+    ];
     sourceKinds: ["file", "inline-config"];
     ownerKinds: ["workspace", "repository", "user-global"];
     inlineSourceScriptPath: null;
@@ -69,6 +92,16 @@ export const buildInlineLifecycleHookContract = (): InlineLifecycleHookContract 
     doctorCode: "HOOK_AMBIGUOUS",
     outcomeReason: "validation_failed",
     removeJsonCode: "HOOK_CONFIGURATION_INVALID",
+    sourceScriptPaths: {
+      deduplicated: true,
+      locationOrder: ["canonical-workspace", "compatible-repository-local"],
+      maxNativeCandidates: 6,
+      platformExtensionOrder: {
+        posix: [".sh"],
+        windows: [".ps1", ".cmd", ".bat"],
+      },
+      singularSourceScriptPathCompatible: true,
+    },
     sourceKinds: ["inline-config", "file"],
   },
   automation: {
@@ -96,6 +129,13 @@ export const buildInlineLifecycleHookContract = (): InlineLifecycleHookContract 
     create: { noHookInput: true, noHooks: true },
     remove: { noHookInput: true, noHooks: false },
   },
+  repositoryRemoveSources: {
+    canonicalWorkspace: ".arashi/hooks/<lifecycle>.<repo><ext>",
+    compatibleRepositoryLocal: "<repo>/.arashi/hooks/<lifecycle><ext>",
+    executionCwd: "target-repository-checkout",
+    logicalSlot: "repository:<repo>:<lifecycle>",
+    nativePrecedence: "none",
+  },
   ownership: {
     repository: "repos.<name>.hooks.<lifecycle>",
     workspace: "hooks.scripts.<lifecycle>",
@@ -114,7 +154,13 @@ export const buildInlineLifecycleHookContract = (): InlineLifecycleHookContract 
     },
   },
   sourceMetadata: {
-    fields: ["sourceKind", "sourceOwnerKind", "sourceOwnerName", "sourceScriptPath"],
+    fields: [
+      "sourceKind",
+      "sourceOwnerKind",
+      "sourceOwnerName",
+      "sourceScriptPath",
+      "sourceScriptPaths",
+    ],
     inlineSourceScriptPath: null,
     ownerKinds: ["workspace", "repository", "user-global"],
     snippetDisclosure: "forbidden",

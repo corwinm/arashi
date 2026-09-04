@@ -1,5 +1,6 @@
 import {
   GLOBAL_HOOKS,
+  discoverConfiguredRepositoryRemoveHookCandidates,
   discoverLifecycleHookCandidates,
   discoverLifecycleHookCandidatesInDirectory,
   discoverLifecycleHook,
@@ -819,7 +820,7 @@ const collectInlineHookFindings = async (
   const inspect = async (options: {
     executionPath: string;
     filePaths: readonly string[];
-    interpreters: Partial<Record<"bash" | "cmd" | "powershell", string>>;
+    interpreters?: Partial<Record<"bash" | "cmd" | "powershell", string>>;
     lifecycle: "post-create" | "post-remove" | "pre-create" | "pre-remove";
     ownerKind: "repository" | "workspace";
     ownerName: string | null;
@@ -839,19 +840,23 @@ const collectInlineHookFindings = async (
           },
         }),
       ),
-      {
-        interpreters: options.interpreters,
-        kind: "inline-config",
-        source: {
-          executionPath: options.executionPath,
-          lifecycle: options.lifecycle,
-          scope: options.ownerKind,
-          sourceKind: "inline-config",
-          sourceOwnerKind: options.ownerKind,
-          sourceOwnerName: options.ownerName,
-          sourceScriptPath: null,
-        },
-      },
+      ...(options.interpreters
+        ? [
+            {
+              interpreters: options.interpreters,
+              kind: "inline-config" as const,
+              source: {
+                executionPath: options.executionPath,
+                lifecycle: options.lifecycle,
+                scope: options.ownerKind,
+                sourceKind: "inline-config" as const,
+                sourceOwnerKind: options.ownerKind,
+                sourceOwnerName: options.ownerName,
+                sourceScriptPath: null,
+              },
+            },
+          ]
+        : []),
     ];
     const repositoryName = options.ownerName ?? repoNames[ZERO] ?? basename(executionRoot);
     const repositoryPath = options.ownerName
@@ -879,6 +884,7 @@ const collectInlineHookFindings = async (
             sourceOwnerKind: failure.sourceOwnerKind,
             sourceOwnerName: failure.sourceOwnerName,
             sourceScriptPath: failure.sourceScriptPath,
+            sourceScriptPaths: failure.sourceScriptPaths,
           },
           message: `Hook source is ambiguous for ${failure.hookName}.`,
           scope: findingScope,
@@ -894,7 +900,7 @@ const collectInlineHookFindings = async (
           category: "hook",
           code: "HOOK_INTERPRETER_UNAVAILABLE",
           details: {
-            configuredInterpreterKeys: Object.keys(options.interpreters).toSorted(),
+            configuredInterpreterKeys: Object.keys(options.interpreters ?? {}).toSorted(),
             hookName: options.lifecycle,
             scope: options.ownerKind,
             sourceKind: "inline-config",
@@ -912,7 +918,7 @@ const collectInlineHookFindings = async (
       );
       return;
     }
-    if (preparation.classification === "ready") {
+    if (preparation.classification === "ready" && options.interpreters) {
       findings.push(
         createFinding({
           category: "hook",
@@ -981,18 +987,18 @@ const collectInlineHookFindings = async (
     }
     for (const [repository, repositoryConfig] of Object.entries(config.repos)) {
       const inline = repositoryConfig.hooks?.[lifecycle];
-      if (!inline) continue;
       const repositoryPath = resolve(executionRoot, repositoryConfig.path);
+      const filePaths = await discoverConfiguredRepositoryRemoveHookCandidates({
+        activeRepositoryPath: repositoryPath,
+        configurationRoot,
+        lifecycle,
+        repositoryName: repository,
+      });
+      if (!inline && filePaths.length < 2) continue;
       await inspect({
         executionPath: repositoryPath,
-        filePaths:
-          repositoryPath === executionRoot
-            ? []
-            : await discoverLifecycleHookCandidatesInDirectory(
-                lifecycle,
-                join(repositoryPath, ".arashi", "hooks"),
-              ),
-        interpreters: typeof inline === "string" ? { bash: inline } : inline,
+        filePaths,
+        ...(inline ? { interpreters: typeof inline === "string" ? { bash: inline } : inline } : {}),
         lifecycle,
         ownerKind: "repository",
         ownerName: repository,

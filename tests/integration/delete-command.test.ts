@@ -570,9 +570,13 @@ describe("spawned configured repository delete", () => {
     const hooks = join(workspace, ".arashi", "hooks");
     const inactive = join(hooks, "pre-create.api.bash");
     const example = join(hooks, "pre-create.api.sh.example");
+    const removeHook = join(hooks, "pre-remove.api.sh");
+    const removeExample = join(hooks, "post-remove.api.sh.example");
     const generic = join(hooks, "pre-create.<repo>.sh.example");
     writeFileSync(inactive, "inactive\n");
     writeFileSync(example, "example\n");
+    writeFileSync(removeHook, "remove\n");
+    writeFileSync(removeExample, "remove example\n");
     writeFileSync(generic, "generic\n");
 
     const result = run(workspace, ["delete", "api", "--force", "--json"]);
@@ -581,6 +585,8 @@ describe("spawned configured repository delete", () => {
     expect(existsSync(join(hooks, "pre-create.api.sh"))).toBe(false);
     expect(existsSync(inactive)).toBe(true);
     expect(existsSync(example)).toBe(false);
+    expect(existsSync(removeHook)).toBe(false);
+    expect(existsSync(removeExample)).toBe(false);
     expect(existsSync(generic)).toBe(true);
   });
 

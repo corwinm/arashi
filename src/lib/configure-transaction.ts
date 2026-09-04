@@ -235,6 +235,15 @@ export const revalidateRepositoryScriptPlans = async (
     const nativeCandidates = await discoverCandidates(hookName, plan.ownerRoot, platform);
     if (nativeCandidates.length > 0)
       throw new Error(`Native active hook already exists for ${plan.lifecycle}; preserved it.`);
+    if (plan.compatibleSourceRoot) {
+      const compatibleCandidates = await discoverCandidates(
+        plan.lifecycle,
+        plan.compatibleSourceRoot,
+        platform,
+      );
+      if (compatibleCandidates.length > 0)
+        throw new Error(`Native active hook already exists for ${plan.lifecycle}; preserved it.`);
+    }
   }
 };
 

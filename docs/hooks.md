@@ -10,6 +10,12 @@ short reviewable commands and native files for substantial, reusable, or indepen
 Only one source may claim a logical location. If an inline source and its native file alternative
 claim the same logical location, the location is ambiguous: runtime, remove dry-run, and doctor fail
 before mutation and execute neither source. Sources at different scopes still compose normally.
+Configured repository remove has one logical slot with three possible claims: inline
+`repos.<name>.hooks.<lifecycle>`, canonical workspace-owned
+`.arashi/hooks/<lifecycle>.<repo><ext>`, or the compatible child-local
+`<repo>/.arashi/hooks/<lifecycle><ext>` alias. There is no precedence between these forms. Any two
+claims, including two native extensions or both file locations, are one ambiguity and execute
+neither source.
 
 On POSIX, a native lifecycle location supports exactly `<name>.sh`. An inline map selects only its
 configured `bash` entry, scans non-empty `PATH` entries in order for a regular executable `bash`, and
@@ -68,26 +74,30 @@ Configured create does not activate repository-local or user-global hooks with s
 For each selected repository, inline and file alternatives retain the established repository →
 workspace → global repository-targeted → global shared order:
 
-1. repository: `repos.<name>.hooks.<lifecycle>` inline or `<repo>/.arashi/hooks/<name><ext>` file (cwd: child source checkout);
+1. repository: `repos.<name>.hooks.<lifecycle>` inline, canonical `<workspace>/.arashi/hooks/<lifecycle>.<repo><ext>` file, or compatible `<repo>/.arashi/hooks/<lifecycle><ext>` file (cwd: child source checkout);
 2. workspace: root `hooks.scripts.<lifecycle>` inline or `<workspace>/.arashi/hooks/<name><ext>` file (cwd: workspace root);
 3. global repository-targeted: `~/.arashi/hooks/<repo>/<name><ext>` file (cwd: child source checkout);
 4. global shared: `~/.arashi/hooks/<name><ext>` file (cwd: child source checkout).
 
-All configured remove sources are evaluated once per target repository; inline ownership does not
-change workspace/shared multiplicity to once per command. A `pre-remove` failure gates all destructive
+The canonical file is stored under the active configuration root, but its public identity remains the
+plain lifecycle name (`pre-remove` or `post-remove`), repository scope, and the named repository owner.
+It executes from that repository's active target checkout, not from the configuration root. All
+configured remove sources are evaluated once per target repository; inline ownership does not change
+workspace/shared multiplicity to once per command. A `pre-remove` failure gates all destructive
 removal mutation. After pre-remove succeeds, Arashi revalidates the authoritative plan. `post-remove`
 runs after all removal attempts, continues across failures, and participates in partial-failure
 finalization rather than create-style rollback.
 
 ## Configured repository deletion
 
-`aw delete <repository>` removes only exact workspace-owned `pre-create.<repository>` and
-`post-create.<repository>` native hook candidates plus each concrete `.example` template formed by
-appending `.example` to an exact native candidate path. Generic `<repo>`/`REPO` templates and shared
-workspace hooks are not selected. Repository-local hooks disappear only as part of their owned clone
-or worktree. Repository-specific user-global hooks are preserved and reported as guidance; all other
-user-global hooks are preserved as well. Plans and results expose hook identity/path/status, never
-file contents or inline command bodies.
+`aw delete <repository>` removes only exact workspace-owned `pre-create.<repository>`,
+`post-create.<repository>`, `pre-remove.<repository>`, and `post-remove.<repository>` native hook
+candidates plus each concrete `.example` template formed by appending `.example` to an exact native
+candidate path. Generic `<repo>`/`REPO` templates and shared workspace hooks are not selected. A
+compatible child-local remove hook disappears only as part of its owned clone or worktree; it is not
+treated as a separately owned workspace hook. Repository-specific user-global hooks are preserved and
+reported as guidance; all other user-global hooks are preserved as well. Plans and results expose hook
+identity/path/status, never file contents or inline command bodies.
 
 ## Standalone lifecycle
 
@@ -194,6 +204,12 @@ path only when applicable; it fabricates no execution outcome. Configured `aw cr
 does not discover or preflight hooks, returns an empty `hookOutcomes` ledger, and has no hook-preview
 surface.
 
+`aw doctor` inspects the same configured repository remove candidate set as runtime and dry-run. An
+ambiguity reports de-duplicated `sourceScriptPaths` in canonical-workspace then compatible-child order,
+and in `.ps1`, `.cmd`, `.bat` order within each Windows location. The array is bounded to two paths on
+POSIX and six on Windows. The compatible nullable `sourceScriptPath` remains populated only when one
+native path is sufficient to identify the file claim.
+
 Configured snippet text is never included or derived in human output, quiet output, JSON, logs,
 outcomes, previews, doctor findings, warnings, errors, debug data, or environment metadata. These
 surfaces report only the non-secret source and target metadata needed to diagnose the logical hook.
@@ -205,6 +221,7 @@ Activate one POSIX example at a time:
 ```sh
 install -m 755 .arashi/hooks/pre-create.sh.example .arashi/hooks/pre-create.sh
 install -m 755 '.arashi/hooks/post-create.<repo>.sh.example' .arashi/hooks/post-create.api.sh
+install -m 755 '.arashi/hooks/pre-remove.<repo>.sh.example' .arashi/hooks/pre-remove.api.sh
 install -m 755 .arashi/setup.sh.example .arashi/setup.sh
 ```
 

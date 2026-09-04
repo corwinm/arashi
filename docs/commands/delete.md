@@ -12,8 +12,10 @@ aw delete <repository> --force
 ```
 
 The preview lists the canonical clone, owned linked worktrees and metadata, local refs, the exact
-configuration entry, exact repository-targeted workspace hooks and concrete templates, warnings,
-and user-global hooks that will be preserved. `--force` bypasses confirmation and disclosed Git
+configuration entry, exact workspace-owned `pre-create.<repository>`, `post-create.<repository>`,
+`pre-remove.<repository>`, and `post-remove.<repository>` hooks and concrete templates, warnings, and
+user-global hooks that will be preserved. Compatible child-local remove hooks are removed only with
+their owned clone/worktree, not as separate workspace-hook items. `--force` bypasses confirmation and disclosed Git
 data-loss guards only. It does not override configuration, topology, containment, symlink,
 identity, hook-ambiguity, or concurrent-change checks. Remote repositories, remote branches,
 shared and user-global hooks, unrelated configuration, and managed-ignore state are preserved.
