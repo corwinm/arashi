@@ -603,6 +603,22 @@ describe("spawned configured repository delete", () => {
     expect(existsSync(join(workspace, "repos", "api"))).toBe(true);
   });
 
+  test("rejects repository inline and compatible child-local remove hook ambiguity", () => {
+    const { configPath, workspace } = fixture();
+    const parsed = JSON.parse(readFileSync(configPath, "utf8"));
+    parsed.repos.api.hooks = { "pre-remove": "echo inline" };
+    writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}\n`);
+    const childLocalHook = join(workspace, "repos", "api", ".arashi", "hooks", "pre-remove.sh");
+    mkdirSync(dirname(childLocalHook), { recursive: true });
+    writeFileSync(childLocalHook, "echo compatible\n");
+
+    const result = run(workspace, ["delete", "api", "--force", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error).toMatchObject({ code: "DELETE_HOOK_AMBIGUOUS" });
+    expect(existsSync(join(workspace, "repos", "api"))).toBe(true);
+  });
+
   test("plans global repository hooks as preserved-global-hook", () => {
     const { workspace } = fixture();
     const home = join(dirname(workspace), "home");

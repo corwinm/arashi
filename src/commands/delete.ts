@@ -9,6 +9,7 @@ import { inspectGitWorktreeTopology, type WorktreeRemovalPlan } from "../lib/del
 import { exec as gitExec } from "../lib/git.ts";
 import { GitFetchUrlIdentityError, gitFetchUrlsMatch } from "../lib/delete-git-url.ts";
 import {
+  discoverConfiguredRepositoryRemoveHookCandidates,
   discoverLifecycleHookCandidates,
   discoverLifecycleHookCandidatesInDirectory,
   lifecycleHookExtensions,
@@ -708,13 +709,25 @@ const discoverHookPaths = async (
     "pre-remove"?: unknown;
     "post-remove"?: unknown;
   },
+  activeRepositoryPath?: string,
 ): Promise<{ owned: string[]; preservedGlobal: string[] }> => {
   const hooksRoot = join(workspaceRoot, ".arashi", "hooks");
   const owned: string[] = [];
   const preservedGlobal: string[] = [];
   for (const lifecycle of ["pre-create", "post-create", "pre-remove", "post-remove"] as const) {
     const hookName = `${lifecycle}.${repositoryKey}`;
-    const active = [...(await discoverLifecycleHookCandidates(hookName, workspaceRoot))];
+    const ownedActive = [...(await discoverLifecycleHookCandidates(hookName, workspaceRoot))];
+    const active =
+      activeRepositoryPath && (lifecycle === "pre-remove" || lifecycle === "post-remove")
+        ? [
+            ...(await discoverConfiguredRepositoryRemoveHookCandidates({
+              activeRepositoryPath,
+              configurationRoot: workspaceRoot,
+              lifecycle,
+              repositoryName: repositoryKey,
+            })),
+          ]
+        : ownedActive;
     if (active.length > 1)
       throw deleteError("DELETE_HOOK_AMBIGUOUS", "Multiple active hook candidates exist.", {
         lifecycle,
@@ -725,7 +738,7 @@ const discoverHookPaths = async (
         lifecycle,
         reason: "inline-file-ambiguity",
       });
-    for (const candidate of active) {
+    for (const candidate of ownedActive) {
       const metadata = await lstat(candidate);
       if (!metadata.isFile() || metadata.isSymbolicLink())
         throw deleteError("DELETE_HOOK_AMBIGUOUS", "A targeted hook is not a plain file.", {
@@ -933,7 +946,12 @@ const planConfiguredRepository = async (
       });
     throw error;
   }
-  const hooks = await discoverHookPaths(snapshot.workspaceRoot, repositoryKey, repository.hooks);
+  const hooks = await discoverHookPaths(
+    snapshot.workspaceRoot,
+    repositoryKey,
+    repository.hooks,
+    configuredActivePath,
+  );
   const hookPaths = hooks.owned;
   const identities = await captureRuntimeDeletionIdentities(topology, hookPaths);
   const configPath = join(snapshot.workspaceRoot, ".arashi", "config.json");
