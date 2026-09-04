@@ -1364,6 +1364,7 @@ export const resolveScopedLifecycleHooks = async (options: {
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
   globalOnly?: boolean;
+  platform?: NodeJS.Platform;
 }): Promise<ResolvedLifecycleHook[]> => {
   const locations = await resolveScopedLifecycleHookLocations(options);
   return locations
@@ -1382,6 +1383,7 @@ export const resolveScopedLifecycleHookLocations = async (options: {
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
   globalOnly?: boolean;
+  platform?: NodeJS.Platform;
 }): Promise<LifecycleHookLocation[]> => {
   const resolved: LifecycleHookLocation[] = [];
   const userHome = process.env.HOME ?? homedir();
@@ -1394,7 +1396,11 @@ export const resolveScopedLifecycleHookLocations = async (options: {
       executionPath: string,
     ): Promise<string | null> => {
       try {
-        return await discoverLifecycleHookInDirectory(options.hookName, hooksDirectory);
+        return await discoverLifecycleHookInDirectory(
+          options.hookName,
+          hooksDirectory,
+          options.platform,
+        );
       } catch (cause) {
         throw new LifecycleHookDiscoveryError({
           cause,
@@ -1413,6 +1419,7 @@ export const resolveScopedLifecycleHookLocations = async (options: {
           activeRepositoryPath: target.path,
           configurationRoot: options.workspaceRoot,
           lifecycle: options.hookName as "post-remove" | "pre-remove",
+          platform: options.platform,
           repositoryName: target.name,
         });
         if (repositoryCandidates.length > ONE) {

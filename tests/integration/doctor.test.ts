@@ -6,6 +6,8 @@ import { basename, join } from "path";
 import {
   quoteDoctorShellArgument,
   repositoryStatusToDoctorFindings,
+  runDoctor,
+  type DoctorFinding,
 } from "../../src/lib/doctor.ts";
 import { tmpdir } from "os";
 
@@ -554,6 +556,59 @@ describe("arashi doctor", () => {
         }),
       );
     }
+  });
+
+  test("preserves distinct same-lifecycle ambiguities while collapsing duplicate reports", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const repositoryPath = join(workspaceRoot, "repos", "repo-a");
+    await initializeGitRepository(repositoryPath);
+    await writeWorkspaceConfig(workspaceRoot, {
+      "repo-a": {
+        hooks: { "pre-remove": { powershell: "exit 0" } },
+        path: "./repos/repo-a",
+      },
+    });
+    const mainName = basename(workspaceRoot);
+    const repositoryHook = join(workspaceRoot, ".arashi", "hooks", "pre-remove.repo-a.ps1");
+    const mainHooks = ["ps1", "cmd"].map((extension) =>
+      join(workspaceRoot, ".arashi", "hooks", `pre-remove.${mainName}.${extension}`),
+    );
+    await mkdir(join(repositoryHook, ".."), { recursive: true });
+    await Promise.all([repositoryHook, ...mainHooks].map((path) => writeFile(path, "exit 0\r\n")));
+
+    const originalCwd = process.cwd();
+    process.chdir(workspaceRoot);
+    let findings: DoctorFinding[];
+    try {
+      findings = (await runDoctor("win32")).findings;
+    } finally {
+      process.chdir(originalCwd);
+    }
+    const ambiguousFindings = findings.filter((finding) => finding.code === "HOOK_AMBIGUOUS");
+
+    expect(ambiguousFindings).toHaveLength(2);
+    expect(ambiguousFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          details: expect.objectContaining({
+            hookName: "pre-remove",
+            scope: "repository",
+            sourceOwnerName: "repo-a",
+            sourceScriptPaths: [await realpath(repositoryHook)],
+          }),
+          scope: "hook:repository:repo-a:pre-remove",
+        }),
+        expect.objectContaining({
+          details: expect.objectContaining({
+            hookName: "pre-remove",
+            scope: "repository",
+            sourceOwnerName: mainName,
+            sourceScriptPaths: await Promise.all(mainHooks.map((path) => realpath(path))),
+          }),
+          scope: `hook:repository:${mainName}:pre-remove`,
+        }),
+      ]),
+    );
   });
 
   test("represents inline configuration with every native path in three-way ambiguity", async () => {

@@ -711,7 +711,11 @@ export async function executeRemove(
     Object.entries(config.repos).map(([name, repository]) => [name, repository.path]),
   );
   const childRepoNames = new Set(configuredChildPaths.keys());
-  const repositories = buildRepositoryTargets(workspaceRoot, config.repos);
+  const repositories = buildRepositoryTargets(
+    workspaceRoot,
+    config.repos,
+    basename(configurationRoot),
+  );
 
   if (repositories.length === 0) {
     throw new RemoveCommandError(
@@ -1474,9 +1478,9 @@ const findUnplannedConfiguredDescendant = (
 const buildRepositoryTargets = (
   workspaceRoot: string,
   repos: Record<string, { path: string }>,
+  mainName: string = basename(workspaceRoot),
 ): RepositoryTarget[] => {
   const targets: RepositoryTarget[] = [];
-  const mainName = basename(workspaceRoot);
   targets.push({ name: mainName, path: workspaceRoot });
 
   for (const [name, repo] of Object.entries(repos)) {

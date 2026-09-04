@@ -5,6 +5,8 @@ import {
   discoverLifecycleHookCandidatesInDirectory,
   discoverLifecycleHook,
   getRepoSpecificHookName,
+  LifecycleHookAmbiguityError,
+  LifecycleHookDiscoveryError,
   lifecycleHookExtensions,
   prepareLifecycleHookSources,
   resolveScopedLifecycleHooks,
@@ -743,30 +745,37 @@ const collectWorktreeFindings = async (
   });
 };
 
-const normalizeHookFileName = (name: string): string =>
-  process.platform === "win32" ? name.toLowerCase() : name;
+const normalizeHookFileName = (name: string, platform: NodeJS.Platform): string =>
+  platform === "win32" ? name.toLowerCase() : name;
 
 const allowedHookFileNames = (
   repoNames: string[],
   includeQualifiedRemove: boolean,
+  platform: NodeJS.Platform,
 ): Set<string> => {
-  const extensions = lifecycleHookExtensions();
+  const extensions = lifecycleHookExtensions(platform);
   const names = new Set<string>(
     Object.values(GLOBAL_HOOKS).flatMap((hookName) =>
-      extensions.map((extension) => normalizeHookFileName(`${hookName}${extension}`)),
+      extensions.map((extension) => normalizeHookFileName(`${hookName}${extension}`, platform)),
     ),
   );
   for (const repoName of repoNames) {
     for (const extension of extensions) {
       names.add(
-        normalizeHookFileName(`${getRepoSpecificHookName("pre-create", repoName)}${extension}`),
+        normalizeHookFileName(
+          `${getRepoSpecificHookName("pre-create", repoName)}${extension}`,
+          platform,
+        ),
       );
       names.add(
-        normalizeHookFileName(`${getRepoSpecificHookName("post-create", repoName)}${extension}`),
+        normalizeHookFileName(
+          `${getRepoSpecificHookName("post-create", repoName)}${extension}`,
+          platform,
+        ),
       );
       if (includeQualifiedRemove) {
-        names.add(normalizeHookFileName(`pre-remove.${repoName}${extension}`));
-        names.add(normalizeHookFileName(`post-remove.${repoName}${extension}`));
+        names.add(normalizeHookFileName(`pre-remove.${repoName}${extension}`, platform));
+        names.add(normalizeHookFileName(`post-remove.${repoName}${extension}`, platform));
       }
     }
   }
@@ -777,17 +786,18 @@ const scanHookDirectoryForUnsupportedFiles = async (
   hookDir: string,
   scope: string,
   repoNames: string[],
+  platform: NodeJS.Platform,
 ): Promise<DoctorFinding[]> => {
   try {
     const entries = await readdir(hookDir, { withFileTypes: true });
-    const allowed = allowedHookFileNames(repoNames, scope === "workspace");
+    const allowed = allowedHookFileNames(repoNames, scope === "workspace", platform);
     const findings: DoctorFinding[] = [];
     for (const entry of entries) {
       if (entry.isDirectory() || entry.name.endsWith(".example")) {
         continue;
       }
       const hookFile = join(hookDir, entry.name);
-      const entryName = normalizeHookFileName(entry.name);
+      const entryName = normalizeHookFileName(entry.name, platform);
       if (!allowed.has(entryName)) {
         findings.push(
           createFinding({
@@ -829,6 +839,7 @@ const collectInlineHookFindings = async (
   configurationRoot: string,
   executionRoot: string,
   config: Config,
+  platform: NodeJS.Platform,
 ): Promise<DoctorFinding[]> => {
   const findings: DoctorFinding[] = [];
   const repoNames = Object.keys(config.repos);
@@ -881,7 +892,7 @@ const collectInlineHookFindings = async (
       candidates,
       consumer: "doctor",
       env: process.env,
-      platform: process.platform,
+      platform,
       targets: [{ branchName: "", repositoryName, repositoryPath, worktreePath: repositoryPath }],
       workspaceRoot: executionRoot,
     });
@@ -960,7 +971,7 @@ const collectInlineHookFindings = async (
     if (workspaceInline) {
       await inspect({
         executionPath: executionRoot,
-        filePaths: await discoverLifecycleHookCandidates(lifecycle, configurationRoot),
+        filePaths: await discoverLifecycleHookCandidates(lifecycle, configurationRoot, platform),
         interpreters:
           typeof workspaceInline === "string" ? { bash: workspaceInline } : workspaceInline,
         lifecycle,
@@ -976,6 +987,7 @@ const collectInlineHookFindings = async (
         filePaths: await discoverLifecycleHookCandidates(
           getRepoSpecificHookName(lifecycle, repository),
           configurationRoot,
+          platform,
         ),
         interpreters: typeof inline === "string" ? { bash: inline } : inline,
         lifecycle,
@@ -992,6 +1004,7 @@ const collectInlineHookFindings = async (
         filePaths: await discoverLifecycleHookCandidatesInDirectory(
           lifecycle,
           join(configurationRoot, ".arashi", "hooks"),
+          platform,
         ),
         interpreters:
           typeof workspaceInline === "string" ? { bash: workspaceInline } : workspaceInline,
@@ -1007,6 +1020,7 @@ const collectInlineHookFindings = async (
         activeRepositoryPath: repositoryPath,
         configurationRoot,
         lifecycle,
+        platform,
         repositoryName: repository,
       });
       if (!inline && filePaths.length < 2) continue;
@@ -1023,10 +1037,43 @@ const collectInlineHookFindings = async (
   return findings;
 };
 
+const hookAmbiguityIdentity = (finding: DoctorFinding): string | null => {
+  if (finding.code !== "HOOK_AMBIGUOUS") return null;
+  const details = finding.details;
+  const hookName = details?.hookName;
+  const scope = details?.scope;
+  const sourceScriptPaths = details?.sourceScriptPaths;
+  if (
+    typeof hookName !== "string" ||
+    typeof scope !== "string" ||
+    !Array.isArray(sourceScriptPaths) ||
+    !sourceScriptPaths.every((path) => typeof path === "string")
+  ) {
+    return null;
+  }
+  const sourceOwnerName =
+    typeof details?.sourceOwnerName === "string" ? details.sourceOwnerName : null;
+  const targetRepositoryName =
+    scope === "repository" || scope === "global-repository"
+      ? typeof details?.targetRepositoryName === "string"
+        ? details.targetRepositoryName
+        : sourceOwnerName
+      : null;
+  return JSON.stringify([
+    hookName,
+    scope,
+    details?.sourceOwnerKind ?? null,
+    sourceOwnerName,
+    targetRepositoryName,
+    sourceScriptPaths.toSorted(),
+  ]);
+};
+
 const collectHookFindings = async (
   configurationRoot: string,
   executionRoot: string,
   config: Config,
+  platform: NodeJS.Platform,
 ): Promise<DoctorFinding[]> => {
   const targetRepositories = createRepositoryTargets(executionRoot, config);
   const repoNames = [...new Set(targetRepositories.map((repository) => repository.name))];
@@ -1034,6 +1081,12 @@ const collectHookFindings = async (
     configurationRoot,
     executionRoot,
     config,
+    platform,
+  );
+  const reportedAmbiguities = new Set(
+    findings
+      .map((finding) => hookAmbiguityIdentity(finding))
+      .filter((identity): identity is string => identity !== null),
   );
   const hookNames = [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove];
 
@@ -1044,23 +1097,48 @@ const collectHookFindings = async (
         hookName,
         targetRepositories,
         workspaceRoot: configurationRoot,
+        platform,
       });
     } catch (error) {
-      const alreadyReported = findings.some(
-        (finding) => finding.code === "HOOK_AMBIGUOUS" && finding.details?.hookName === hookName,
-      );
-      if (alreadyReported) continue;
-      findings.push(
-        createFinding({
-          category: "hook",
-          code: "HOOK_AMBIGUOUS",
-          details: { error: error instanceof Error ? error.message : String(error), hookName },
-          message: error instanceof Error ? error.message : String(error),
-          scope: `hook:remove:${hookName}`,
-          severity: "error",
-          suggestedCommands: ["Remove all but one platform-native hook candidate"],
-        }),
-      );
+      const discoveryError = error instanceof LifecycleHookDiscoveryError ? error : null;
+      const ambiguityError =
+        discoveryError?.cause instanceof LifecycleHookAmbiguityError ? discoveryError.cause : null;
+      const sourceOwnerKind =
+        discoveryError?.scope === "repository"
+          ? "repository"
+          : discoveryError?.scope === "workspace"
+            ? "workspace"
+            : "user-global";
+      const sourceOwnerName =
+        discoveryError?.scope === "repository" ? discoveryError.targetRepositoryName : null;
+      const finding = createFinding({
+        category: "hook",
+        code: "HOOK_AMBIGUOUS",
+        details:
+          discoveryError && ambiguityError
+            ? {
+                error: discoveryError.message,
+                hookName,
+                scope: discoveryError.scope,
+                sourceKinds: ambiguityError.sourceKinds,
+                sourceOwnerKind,
+                sourceOwnerName,
+                sourceScriptPath: null,
+                sourceScriptPaths: ambiguityError.candidates,
+                targetRepositoryName: discoveryError.targetRepositoryName,
+              }
+            : { error: error instanceof Error ? error.message : String(error), hookName },
+        message: error instanceof Error ? error.message : String(error),
+        scope: discoveryError
+          ? `hook:${discoveryError.scope}:${discoveryError.targetRepositoryName}:${hookName}`
+          : `hook:remove:${hookName}`,
+        severity: "error",
+        suggestedCommands: ["Remove all but one platform-native hook candidate"],
+      });
+      const identity = hookAmbiguityIdentity(finding);
+      if (identity && reportedAmbiguities.has(identity)) continue;
+      if (identity) reportedAmbiguities.add(identity);
+      findings.push(finding);
       continue;
     }
     for (const hook of resolvedHooks) {
@@ -1115,7 +1193,7 @@ const collectHookFindings = async (
   for (const location of configuredCreateLocations) {
     let hookPath: string | null = null;
     try {
-      hookPath = await discoverLifecycleHook(location.hookName, configurationRoot);
+      hookPath = await discoverLifecycleHook(location.hookName, configurationRoot, platform);
     } catch (error) {
       findings.push(
         createFinding({
@@ -1168,6 +1246,7 @@ const collectHookFindings = async (
       join(configurationRoot, ".arashi", "hooks"),
       "workspace",
       repoNames,
+      platform,
     )),
   );
   for (const target of targetRepositories.filter((target) => target.path !== executionRoot)) {
@@ -1176,6 +1255,7 @@ const collectHookFindings = async (
         join(target.path, ".arashi", "hooks"),
         `repository:${target.name}`,
         repoNames,
+        platform,
       )),
     );
   }
@@ -1185,7 +1265,9 @@ const collectHookFindings = async (
 
 const collectShellAndInstallHints = (): DoctorFinding[] => [];
 
-export const runDoctor = async (): Promise<DoctorResult> => {
+export const runDoctor = async (
+  platform: NodeJS.Platform = process.platform,
+): Promise<DoctorResult> => {
   const findings: DoctorFinding[] = [];
   let workspaceRoot: string | null = null;
   let workspaceRoots: WorkspaceRepositoryRoots;
@@ -1253,7 +1335,7 @@ export const runDoctor = async (): Promise<DoctorResult> => {
     collectManagedIgnoreFindings(configurationRoot, config),
     collectRepositoryFindings(executionRoot, config),
     collectWorktreeFindings(executionRoot, config),
-    collectHookFindings(configurationRoot, executionRoot, config),
+    collectHookFindings(configurationRoot, executionRoot, config, platform),
     collectMaterializationDiagnostics(
       materializationRepositories,
       configurationRoot,

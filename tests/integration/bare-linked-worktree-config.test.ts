@@ -159,6 +159,44 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     },
   );
 
+  test.runIf(process.platform !== "win32")(
+    "runs the canonical main repository remove hook from a bare-backed linked worktree",
+    async () => {
+      workspace = await configureBareWorkspace();
+      const removalTargetPath = join(workspace.rootPath, "main-removal-target");
+      await execGit(
+        ["worktree", "add", "-b", "feature/remove-main-target", removalTargetPath],
+        workspace.bareRepoPath,
+      );
+      const recordPath = join(workspace.rootPath, "main-repository-remove-cwd.log");
+      const hookPath = join(
+        workspace.bareRepoPath,
+        ".arashi",
+        "hooks",
+        `pre-remove.${basename(workspace.bareRepoPath)}.sh`,
+      );
+      await mkdir(join(hookPath, ".."), { recursive: true });
+      await runtime.write(hookPath, `#!/bin/sh\nprintf '%s' "$PWD" > '${recordPath}'\n`);
+      await chmod(hookPath, 0o755);
+
+      const result = await runCli(workspace.worktreePath, [
+        "remove",
+        removalTargetPath,
+        "--path",
+        "--keep-branches",
+        "--force",
+        "--json",
+      ]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(existsSync(removalTargetPath)).toBe(false);
+      expect(existsSync(recordPath), result.stdout).toBe(true);
+      expect((await runtime.file(recordPath).text()).trim()).toBe(
+        await realpath(workspace.worktreePath),
+      );
+    },
+  );
+
   test("clone materializes a missing linked child from the configured bare-root clone", async () => {
     workspace = await configureBareWorkspace();
     const childSourcePath = join(workspace.rootPath, "child-source");
