@@ -700,7 +700,7 @@ const assertContainedLeaf = (root: string, path: string): void => {
     });
 };
 
-const discoverHookPaths = async (
+export const discoverDeleteHookPaths = async (
   workspaceRoot: string,
   repositoryKey: string,
   inlineHooks?: {
@@ -710,13 +710,16 @@ const discoverHookPaths = async (
     "post-remove"?: unknown;
   },
   activeRepositoryPath?: string,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<{ owned: string[]; preservedGlobal: string[] }> => {
   const hooksRoot = join(workspaceRoot, ".arashi", "hooks");
   const owned: string[] = [];
   const preservedGlobal: string[] = [];
   for (const lifecycle of ["pre-create", "post-create", "pre-remove", "post-remove"] as const) {
     const hookName = `${lifecycle}.${repositoryKey}`;
-    const ownedActive = [...(await discoverLifecycleHookCandidates(hookName, workspaceRoot))];
+    const ownedActive = [
+      ...(await discoverLifecycleHookCandidates(hookName, workspaceRoot, platform)),
+    ];
     const active =
       activeRepositoryPath && (lifecycle === "pre-remove" || lifecycle === "post-remove")
         ? [
@@ -724,6 +727,7 @@ const discoverHookPaths = async (
               activeRepositoryPath,
               configurationRoot: workspaceRoot,
               lifecycle,
+              platform,
               repositoryName: repositoryKey,
             })),
           ]
@@ -749,7 +753,7 @@ const discoverHookPaths = async (
       assertContainedLeaf(hooksRoot, candidate);
       owned.push(candidate);
     }
-    for (const extension of lifecycleHookExtensions()) {
+    for (const extension of lifecycleHookExtensions(platform)) {
       const template = join(hooksRoot, `${hookName}${extension}.example`);
       try {
         const metadata = await lstat(template);
@@ -773,6 +777,7 @@ const discoverHookPaths = async (
       ...(await discoverLifecycleHookCandidatesInDirectory(
         lifecycle,
         join(process.env.HOME?.trim() || homedir(), ".arashi", "hooks", repositoryKey),
+        platform,
       )),
     );
   }
@@ -946,7 +951,7 @@ const planConfiguredRepository = async (
       });
     throw error;
   }
-  const hooks = await discoverHookPaths(
+  const hooks = await discoverDeleteHookPaths(
     snapshot.workspaceRoot,
     repositoryKey,
     repository.hooks,
@@ -1662,6 +1667,14 @@ export const executeDelete = async (
             }
             for (const { plan, repositoryKey } of freshPlans) {
               const runtime = runtimePlans.get(repositoryKey)!;
+              const refreshedHooks = (
+                await discoverDeleteHookPaths(
+                  runtime.workspaceRoot,
+                  repositoryKey,
+                  snapshot.config.repos[repositoryKey]?.hooks,
+                  runtime.topology.configuredActivePath,
+                )
+              ).owned;
               await validateRuntimeDeletionIdentities(runtime.identities);
               const refreshedTopology = await inspectGitWorktreeTopology(runtime.clonePath);
 
@@ -1693,8 +1706,6 @@ export const executeDelete = async (
                     reason: "git-evidence-changed",
                   },
                 );
-              const refreshedHooks = (await discoverHookPaths(runtime.workspaceRoot, repositoryKey))
-                .owned;
               if (stableHash(refreshedHooks) !== stableHash(runtime.hookPaths))
                 throw deleteError(
                   "DELETE_CONCURRENT_CHANGE",
@@ -1708,6 +1719,12 @@ export const executeDelete = async (
           },
           revalidateTarget: async ({ plan, repositoryKey }) => {
             const runtime = runtimePlans.get(repositoryKey)!;
+            await discoverDeleteHookPaths(
+              runtime.workspaceRoot,
+              repositoryKey,
+              snapshot.config.repos[repositoryKey]?.hooks,
+              runtime.topology.configuredActivePath,
+            );
             const completed = new Set(runtime.resumeReceipt?.completedItemIds ?? []);
             const isCompleted = (kind: DeleteItemKind, path: string | null = null) => {
               const item = plan.items.find(
@@ -1796,8 +1813,14 @@ export const executeDelete = async (
               )
                 presentHooks.add(identity.path);
             }
-            const refreshedHooks = (await discoverHookPaths(runtime.workspaceRoot, repositoryKey))
-              .owned;
+            const refreshedHooks = (
+              await discoverDeleteHookPaths(
+                runtime.workspaceRoot,
+                repositoryKey,
+                snapshot.config.repos[repositoryKey]?.hooks,
+                runtime.topology.configuredActivePath,
+              )
+            ).owned;
             const expectedHooks = runtime.hookPaths.filter((path) => presentHooks.has(path));
             if (stableHash(refreshedHooks) !== stableHash(expectedHooks))
               throw deleteError(
@@ -1889,8 +1912,14 @@ export const executeDelete = async (
                       { repositoryKey, reason: "git-evidence-changed" },
                     );
                 } else if (phase === "workspace-hooks") {
-                  const refreshed = (await discoverHookPaths(runtime.workspaceRoot, repositoryKey))
-                    .owned;
+                  const refreshed = (
+                    await discoverDeleteHookPaths(
+                      runtime.workspaceRoot,
+                      repositoryKey,
+                      snapshot.config.repos[repositoryKey]?.hooks,
+                      runtime.topology.configuredActivePath,
+                    )
+                  ).owned;
                   const expected: string[] = [];
                   for (const item of remaining("workspace-hook")) {
                     const identity = runtime.identities.hooks.find(

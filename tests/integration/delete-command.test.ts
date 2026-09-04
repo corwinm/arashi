@@ -14,7 +14,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
-import { captureRuntimeDeletionIdentities } from "../../src/commands/delete.ts";
+import {
+  captureRuntimeDeletionIdentities,
+  discoverDeleteHookPaths,
+} from "../../src/commands/delete.ts";
 import { inspectGitWorktreeTopology } from "../../src/lib/delete-topology.ts";
 import {
   createDeleteResumeReceipt,
@@ -608,6 +611,7 @@ describe("spawned configured repository delete", () => {
     const parsed = JSON.parse(readFileSync(configPath, "utf8"));
     parsed.repos.api.hooks = { "pre-remove": "echo inline" };
     writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}\n`);
+    const configBefore = readFileSync(configPath);
     const childLocalHook = join(workspace, "repos", "api", ".arashi", "hooks", "pre-remove.sh");
     mkdirSync(dirname(childLocalHook), { recursive: true });
     writeFileSync(childLocalHook, "echo compatible\n");
@@ -616,7 +620,54 @@ describe("spawned configured repository delete", () => {
 
     expect(result.status).toBe(1);
     expect(JSON.parse(result.stdout).error).toMatchObject({ code: "DELETE_HOOK_AMBIGUOUS" });
+    expect(readFileSync(configPath)).toEqual(configBefore);
     expect(existsSync(join(workspace, "repos", "api"))).toBe(true);
+    expect(readFileSync(childLocalHook, "utf8")).toBe("echo compatible\n");
+  });
+
+  test("rejects canonical and compatible remove hooks before mutation", () => {
+    const { configPath, workspace } = fixture();
+    const configBefore = readFileSync(configPath);
+    const canonicalHook = join(workspace, ".arashi", "hooks", "post-remove.api.sh");
+    const compatibleHook = join(workspace, "repos", "api", ".arashi", "hooks", "post-remove.sh");
+    writeFileSync(canonicalHook, "echo canonical\n");
+    mkdirSync(dirname(compatibleHook), { recursive: true });
+    writeFileSync(compatibleHook, "echo compatible\n");
+
+    const result = run(workspace, ["delete", "api", "--force", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error).toMatchObject({ code: "DELETE_HOOK_AMBIGUOUS" });
+    expect(readFileSync(configPath)).toEqual(configBefore);
+    expect(existsSync(join(workspace, "repos", "api"))).toBe(true);
+    expect(readFileSync(canonicalHook, "utf8")).toBe("echo canonical\n");
+    expect(readFileSync(compatibleHook, "utf8")).toBe("echo compatible\n");
+  });
+
+  test("rejects all simulated-Windows canonical and compatible remove hook extensions", async () => {
+    const { configPath, workspace } = fixture();
+    const configBefore = readFileSync(configPath);
+    const clone = join(workspace, "repos", "api");
+    const canonicalDirectory = join(workspace, ".arashi", "hooks");
+    const compatibleDirectory = join(clone, ".arashi", "hooks");
+    mkdirSync(compatibleDirectory, { recursive: true });
+    const candidates = [
+      ...["ps1", "cmd", "bat"].map((extension) =>
+        join(canonicalDirectory, `pre-remove.api.${extension}`),
+      ),
+      ...["ps1", "cmd", "bat"].map((extension) =>
+        join(compatibleDirectory, `pre-remove.${extension}`),
+      ),
+    ];
+    for (const candidate of candidates) writeFileSync(candidate, `echo ${candidate}\n`);
+
+    await expect(
+      discoverDeleteHookPaths(workspace, "api", undefined, clone, "win32"),
+    ).rejects.toMatchObject({ code: "DELETE_HOOK_AMBIGUOUS" });
+
+    expect(readFileSync(configPath)).toEqual(configBefore);
+    expect(existsSync(clone)).toBe(true);
+    for (const candidate of candidates) expect(existsSync(candidate)).toBe(true);
   });
 
   test("plans global repository hooks as preserved-global-hook", () => {
@@ -645,6 +696,80 @@ describe("spawned configured repository delete", () => {
       }),
     );
     expect(existsSync(globalHook)).toBe(true);
+  });
+
+  test("revalidates compatible remove hook ambiguity from a resume receipt before mutation", async () => {
+    const { configPath, workspace } = fixture();
+    const parsed = JSON.parse(readFileSync(configPath, "utf8"));
+    parsed.repos.api.hooks = { "pre-remove": "echo inline" };
+    writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}\n`);
+    const before = readFileSync(configPath);
+    const dryRun = run(workspace, ["delete", "api", "--dry-run", "--json"]);
+    expect(dryRun.status, dryRun.stderr).toBe(0);
+    const dryData = JSON.parse(dryRun.stdout).data;
+    const plan = dryData.plan;
+    const workspaceRoot = dryData.workspace.workspaceRoot as string;
+    const canonicalConfigPath = join(workspaceRoot, ".arashi", "config.json");
+    const topology = await inspectGitWorktreeTopology(join(workspaceRoot, "repos", "api"));
+    const hookPaths = [join(workspaceRoot, ".arashi", "hooks", "pre-create.api.sh")];
+    const identities = await captureRuntimeDeletionIdentities(topology, hookPaths);
+    const nextConfig = JSON.parse(before.toString("utf8"));
+    const originalEntry = nextConfig.repos.api;
+    delete nextConfig.repos.api;
+    const expectedAfter = Buffer.from(`${JSON.stringify(nextConfig, null, 2)}\n`);
+    const receiptPath = plan.items.find(({ kind }: { kind: string }) => kind === "resume-receipt")
+      .path as string;
+    const hash = (value: unknown) =>
+      createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    await createDeleteResumeReceipt(receiptPath, {
+      version: 1,
+      planId: plan.id,
+      parentIdentity: hash({ commonDirectory: realpathSync(join(workspace, ".git")) }),
+      repositoryKey: "api",
+      configDigest: createHash("sha256").update(before).digest("hex"),
+      originalEntryDigest: hash(originalEntry),
+      identities: plan.items.map(({ id, kind, path, ref, oid }: Record<string, string | null>) => ({
+        id: id!,
+        kind: kind!,
+        path,
+        ref,
+        oid,
+      })),
+      completedItemIds: [],
+      completedPhases: [],
+      remainingPhases: [
+        "provenance",
+        "worktrees",
+        "metadata",
+        "canonical-clone",
+        "workspace-hooks",
+        "configuration",
+        "verification",
+      ],
+      retryArgv: ["aw", "delete", "api", "--force", "--json"],
+      warnings: plan.warnings,
+      runtime: {
+        workspaceRoot,
+        configPath: canonicalConfigPath,
+        clonePath: topology.canonicalClonePath,
+        hookPaths,
+        expectedConfigBase64: before.toString("base64"),
+        nextConfigBase64: expectedAfter.toString("base64"),
+        topology,
+        identities,
+      },
+    });
+    const compatibleHook = join(topology.configuredActivePath, ".arashi", "hooks", "pre-remove.sh");
+    mkdirSync(dirname(compatibleHook), { recursive: true });
+    writeFileSync(compatibleHook, "echo compatible\n");
+
+    const result = run(workspace, ["delete", "api", "--force", "--json"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error).toMatchObject({ code: "DELETE_HOOK_AMBIGUOUS" });
+    expect(readFileSync(configPath)).toEqual(before);
+    expect(existsSync(topology.canonicalClonePath)).toBe(true);
+    expect(readFileSync(compatibleHook, "utf8")).toBe("echo compatible\n");
   });
 
   test("reconciles an unledgered worktree removal and a terminal durable receipt", async () => {
