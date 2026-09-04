@@ -2,7 +2,7 @@ import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import type { RepoStatus } from "../../src/commands/status.ts";
-import { join } from "path";
+import { basename, join } from "path";
 import {
   quoteDoctorShellArgument,
   repositoryStatusToDoctorFindings,
@@ -445,6 +445,32 @@ describe("arashi doctor", () => {
           code: "HOOK_NOT_EXECUTABLE",
           details: expect.objectContaining({ path: await realpath(hookPath) }),
           scope: "hook:repository:root:pre-remove",
+        }),
+      );
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "allows a qualified remove hook for the main repository",
+    async () => {
+      const workspaceRoot = await createLocalWorkspace();
+      const hookPath = join(
+        workspaceRoot,
+        ".arashi",
+        "hooks",
+        `pre-remove.${basename(workspaceRoot)}.sh`,
+      );
+      await mkdir(join(hookPath, ".."), { recursive: true });
+      await writeFile(hookPath, "#!/bin/sh\nexit 0\n");
+      await chmod(hookPath, 0o755);
+
+      const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+      const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+      expect(findings).not.toContainEqual(
+        expect.objectContaining({
+          code: "HOOK_UNSUPPORTED_DEFINITION",
+          details: expect.objectContaining({ hookFile: await realpath(hookPath) }),
         }),
       );
     },

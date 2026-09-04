@@ -1029,7 +1029,7 @@ const collectHookFindings = async (
   config: Config,
 ): Promise<DoctorFinding[]> => {
   const targetRepositories = createRepositoryTargets(executionRoot, config);
-  const repoNames = Object.keys(config.repos);
+  const repoNames = [...new Set(targetRepositories.map((repository) => repository.name))];
   const findings: DoctorFinding[] = await collectInlineHookFindings(
     configurationRoot,
     executionRoot,
