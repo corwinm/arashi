@@ -1,5 +1,7 @@
 import {
   GLOBAL_HOOKS,
+  LifecycleHookAmbiguityError,
+  LifecycleHookDiscoveryError,
   buildHookOperationData,
   buildRemoveHookOperationData,
   findHook,
@@ -207,6 +209,40 @@ describe("resolveScopedLifecycleHooks", () => {
     });
 
     expect(resolved).toEqual([]);
+  });
+
+  test("fails closed at the first scoped ambiguity", async () => {
+    const targetRepo = join(workspaceRoot, "repos", "repo-a");
+    const repositoryHooks = ["ps1", "cmd"].map((extension) =>
+      join(workspaceRoot, ".arashi", "hooks", `pre-remove.repo-a.${extension}`),
+    );
+    const globalHooks = ["ps1", "cmd"].map((extension) =>
+      join(homeRoot, ".arashi", "hooks", `pre-remove.${extension}`),
+    );
+    for (const path of [...repositoryHooks, ...globalHooks]) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, "exit 0\r\n");
+    }
+
+    let thrown: unknown;
+    try {
+      await resolveScopedLifecycleHooks({
+        hookName: "pre-remove",
+        platform: "win32",
+        targetRepositories: [{ name: "repo-a", path: targetRepo }],
+        workspaceRoot,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(LifecycleHookDiscoveryError);
+    expect(thrown).toMatchObject({
+      scope: "repository",
+      targetRepositoryName: "repo-a",
+    });
+    expect((thrown as Error).cause).toBeInstanceOf(LifecycleHookAmbiguityError);
+    expect((thrown as Error).cause).toMatchObject({ candidates: repositoryHooks });
   });
 });
 

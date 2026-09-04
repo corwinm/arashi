@@ -1099,15 +1099,7 @@ const collectHookFindings = async (
   const hookNames = [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove];
 
   for (const hookName of hookNames) {
-    let resolvedHooks;
-    try {
-      resolvedHooks = await resolveScopedLifecycleHooks({
-        hookName,
-        targetRepositories,
-        workspaceRoot: configurationRoot,
-        platform,
-      });
-    } catch (error) {
+    const reportDiscoveryError = (error: unknown): void => {
       const discoveryError = error instanceof LifecycleHookDiscoveryError ? error : null;
       const ambiguityError =
         discoveryError?.cause instanceof LifecycleHookAmbiguityError ? discoveryError.cause : null;
@@ -1144,9 +1136,21 @@ const collectHookFindings = async (
         suggestedCommands: ["Remove all but one platform-native hook candidate"],
       });
       const identity = hookAmbiguityIdentity(finding);
-      if (identity && reportedAmbiguities.has(identity)) continue;
+      if (identity && reportedAmbiguities.has(identity)) return;
       if (identity) reportedAmbiguities.add(identity);
       findings.push(finding);
+    };
+    let resolvedHooks;
+    try {
+      resolvedHooks = await resolveScopedLifecycleHooks({
+        hookName,
+        onAmbiguity: reportDiscoveryError,
+        targetRepositories,
+        workspaceRoot: configurationRoot,
+        platform,
+      });
+    } catch (error) {
+      reportDiscoveryError(error);
       continue;
     }
     for (const hook of resolvedHooks) {

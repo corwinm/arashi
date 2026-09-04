@@ -611,6 +611,70 @@ describe("arashi doctor", () => {
     );
   });
 
+  test("continues past a duplicate repository ambiguity to report a global ambiguity", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const repositoryPath = join(workspaceRoot, "repos", "repo-a");
+    const homePath = join(workspaceRoot, "test-home");
+    await initializeGitRepository(repositoryPath);
+    await writeWorkspaceConfig(workspaceRoot, {
+      "repo-a": {
+        hooks: { "pre-remove": { powershell: "exit 0" } },
+        path: "./repos/repo-a",
+      },
+    });
+    const repositoryHooks = ["ps1", "cmd"].map((extension) =>
+      join(workspaceRoot, ".arashi", "hooks", `pre-remove.repo-a.${extension}`),
+    );
+    const globalHooks = ["ps1", "cmd"].map((extension) =>
+      join(homePath, ".arashi", "hooks", "repo-a", `pre-remove.${extension}`),
+    );
+    await Promise.all(
+      [...repositoryHooks, ...globalHooks].map(async (path) => {
+        await mkdir(join(path, ".."), { recursive: true });
+        await writeFile(path, "exit 0\r\n");
+      }),
+    );
+
+    const originalCwd = process.cwd();
+    const originalHome = process.env.HOME;
+    process.chdir(workspaceRoot);
+    process.env.HOME = homePath;
+    let findings: DoctorFinding[];
+    try {
+      findings = (await runDoctor("win32")).findings;
+    } finally {
+      process.chdir(originalCwd);
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+    }
+    const ambiguousFindings = findings.filter((finding) => finding.code === "HOOK_AMBIGUOUS");
+
+    expect(ambiguousFindings).toHaveLength(2);
+    expect(ambiguousFindings.map((finding) => finding.scope)).toEqual([
+      "hook:repository:repo-a:pre-remove",
+      "hook:global-repository:repo-a:pre-remove",
+    ]);
+    expect(ambiguousFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          details: expect.objectContaining({
+            scope: "repository",
+            sourceOwnerName: "repo-a",
+            sourceScriptPaths: await Promise.all(repositoryHooks.map((path) => realpath(path))),
+          }),
+        }),
+        expect.objectContaining({
+          details: expect.objectContaining({
+            scope: "global-repository",
+            sourceOwnerName: null,
+            sourceScriptPaths: globalHooks,
+            targetRepositoryName: "repo-a",
+          }),
+        }),
+      ]),
+    );
+  });
+
   test("represents inline configuration with every native path in three-way ambiguity", async () => {
     const workspaceRoot = await createLocalWorkspace();
     const repositoryPath = join(workspaceRoot, "repos", "repo-a");

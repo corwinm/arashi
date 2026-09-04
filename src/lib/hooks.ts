@@ -1364,6 +1364,7 @@ export const resolveScopedLifecycleHooks = async (options: {
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
   globalOnly?: boolean;
+  onAmbiguity?: (error: LifecycleHookDiscoveryError) => void;
   platform?: NodeJS.Platform;
 }): Promise<ResolvedLifecycleHook[]> => {
   const locations = await resolveScopedLifecycleHookLocations(options);
@@ -1383,6 +1384,7 @@ export const resolveScopedLifecycleHookLocations = async (options: {
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
   globalOnly?: boolean;
+  onAmbiguity?: (error: LifecycleHookDiscoveryError) => void;
   platform?: NodeJS.Platform;
 }): Promise<LifecycleHookLocation[]> => {
   const resolved: LifecycleHookLocation[] = [];
@@ -1390,6 +1392,25 @@ export const resolveScopedLifecycleHookLocations = async (options: {
   const globalHooksDir = join(userHome, ".arashi", "hooks");
 
   for (const target of options.targetRepositories) {
+    const handleDiscoveryError = (
+      cause: unknown,
+      scope: HookScope,
+      executionPath: string,
+    ): null => {
+      const error = new LifecycleHookDiscoveryError({
+        cause,
+        executionPath,
+        hookName: options.hookName,
+        scope,
+        targetRepositoryName: target.name,
+        targetRepositoryPath: target.path,
+      });
+      if (cause instanceof LifecycleHookAmbiguityError && options.onAmbiguity) {
+        options.onAmbiguity(error);
+        return null;
+      }
+      throw error;
+    };
     const discoverScoped = async (
       scope: HookScope,
       hooksDirectory: string,
@@ -1402,14 +1423,7 @@ export const resolveScopedLifecycleHookLocations = async (options: {
           options.platform,
         );
       } catch (cause) {
-        throw new LifecycleHookDiscoveryError({
-          cause,
-          executionPath,
-          hookName: options.hookName,
-          scope,
-          targetRepositoryName: target.name,
-          targetRepositoryPath: target.path,
-        });
+        return handleDiscoveryError(cause, scope, executionPath);
       }
     };
     let repositoryHookPath: string | null = null;
@@ -1427,14 +1441,7 @@ export const resolveScopedLifecycleHookLocations = async (options: {
         }
         repositoryHookPath = repositoryCandidates[ZERO] ?? null;
       } catch (cause) {
-        throw new LifecycleHookDiscoveryError({
-          cause,
-          executionPath: target.path,
-          hookName: options.hookName,
-          scope: "repository",
-          targetRepositoryName: target.name,
-          targetRepositoryPath: target.path,
-        });
+        repositoryHookPath = handleDiscoveryError(cause, "repository", target.path);
       }
     }
     const workspaceHookPath = options.globalOnly
