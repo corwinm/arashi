@@ -494,12 +494,11 @@ describe("arashi doctor", () => {
     }
 
     const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
-    const finding = jsonFindings(parseSingleJsonDocument(result.stdout)).find(
-      (candidate) =>
-        candidate.code === "HOOK_AMBIGUOUS" &&
-        candidate.scope === "hook:repository:repo-a:pre-remove",
-    );
+    const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+    const ambiguousFindings = findings.filter((candidate) => candidate.code === "HOOK_AMBIGUOUS");
+    const [finding] = ambiguousFindings;
     expect(result.exitCode).toBe(1);
+    expect(ambiguousFindings).toHaveLength(1);
     expect(finding?.details).toEqual({
       hookName: "pre-remove",
       scope: "repository",

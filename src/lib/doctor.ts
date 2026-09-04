@@ -1046,6 +1046,10 @@ const collectHookFindings = async (
         workspaceRoot: configurationRoot,
       });
     } catch (error) {
+      const alreadyReported = findings.some(
+        (finding) => finding.code === "HOOK_AMBIGUOUS" && finding.details?.hookName === hookName,
+      );
+      if (alreadyReported) continue;
       findings.push(
         createFinding({
           category: "hook",
