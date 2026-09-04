@@ -339,8 +339,12 @@ const countRepoChanges = (status: RepoStatus): Record<string, number> => ({
   untracked: status.files.filter((fileStatus) => fileStatus.workingStatus === "?").length,
 });
 
-const createRepositoryTargets = (workspaceRoot: string, config: Config): RepositoryTarget[] => {
-  const targets: RepositoryTarget[] = [{ name: basename(workspaceRoot), path: workspaceRoot }];
+const createRepositoryTargets = (
+  workspaceRoot: string,
+  config: Config,
+  mainRepositoryName = basename(workspaceRoot),
+): RepositoryTarget[] => {
+  const targets: RepositoryTarget[] = [{ name: mainRepositoryName, path: workspaceRoot }];
   for (const [name, repoConfig] of Object.entries(config.repos)) {
     targets.push({ name, path: resolve(workspaceRoot, repoConfig.path) });
   }
@@ -1075,7 +1079,11 @@ const collectHookFindings = async (
   config: Config,
   platform: NodeJS.Platform,
 ): Promise<DoctorFinding[]> => {
-  const targetRepositories = createRepositoryTargets(executionRoot, config);
+  const targetRepositories = createRepositoryTargets(
+    executionRoot,
+    config,
+    basename(configurationRoot),
+  );
   const repoNames = [...new Set(targetRepositories.map((repository) => repository.name))];
   const findings: DoctorFinding[] = await collectInlineHookFindings(
     configurationRoot,

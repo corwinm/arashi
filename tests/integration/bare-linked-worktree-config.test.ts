@@ -446,6 +446,31 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     ).toEqual([canonicalWorkspaceRoot, await realpath(childPath)]);
   });
 
+  test.runIf(process.platform !== "win32")(
+    "doctor recognizes the bare authority name for the main repository remove hook",
+    async () => {
+      workspace = await configureBareWorkspace();
+      const hookDirectory = join(workspace.bareRepoPath, ".arashi", "hooks");
+      await mkdir(hookDirectory, { recursive: true });
+      const hookPath = join(hookDirectory, `pre-remove.${basename(workspace.bareRepoPath)}.sh`);
+      await runtime.write(hookPath, "#!/bin/sh\nexit 0\n");
+      await chmod(hookPath, 0o755);
+
+      const result = await runCli(workspace.worktreePath, ["doctor", "--json"]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const envelope = JSON.parse(result.stdout) as {
+        data: { findings: { code: string; details?: { hookName?: string } }[] };
+      };
+      expect(envelope.data.findings).not.toContainEqual(
+        expect.objectContaining({
+          code: "HOOK_UNSUPPORTED_DEFINITION",
+          details: expect.objectContaining({ hookName: basename(hookPath) }),
+        }),
+      );
+    },
+  );
+
   test("handoff loads config from the bare root but reports the active linked parent and child", async () => {
     workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
     const childPath = join(workspace.worktreePath, "repos", "child");
