@@ -1,6 +1,6 @@
 {
   "name": "arashi",
-  "version": "1.35.1",
+  "version": "1.36.0",
   "description": "Git worktree manager for meta-repositories - The eye of the storm for your development workflow",
   "keywords": [
     "cli",

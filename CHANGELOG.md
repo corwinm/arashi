@@ -1,3 +1,9 @@
+## [1.36.0](https://github.com/corwinm/arashi/compare/v1.35.1...v1.36.0) (2026-09-04)
+
+### Features
+
+- **hooks:** support per-repository remove scripts ([#181](https://github.com/corwinm/arashi/issues/181)) ([85871dc](https://github.com/corwinm/arashi/commit/85871dcdd3799159abd0f3398043f55391d10dfc))
+
 ## [1.35.1](https://github.com/corwinm/arashi/compare/v1.35.0...v1.35.1) (2026-09-02)
 
 ### Bug Fixes
