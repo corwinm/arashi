@@ -320,6 +320,22 @@ describe("AC-03/04/07/11 shared lifecycle source planner RED", () => {
       },
     });
 
+    const threeWayAmbiguity = plan({
+      consumer: "doctor",
+      sources: [firstFile, secondFile, inline("pre-remove", "workspace", null)],
+      targets: [targets[0]],
+      workspaceRoot,
+    });
+    expect(threeWayAmbiguity).toMatchObject({
+      classification: "ambiguous",
+      entries: [],
+      failure: {
+        sourceKinds: ["file", "inline-config"],
+        sourceScriptPath: null,
+        sourceScriptPaths: [firstFile.sourceScriptPath, secondFile.sourceScriptPath],
+      },
+    });
+
     const fileSource = file("pre-remove", "workspace", {
       executionPath: workspaceRoot,
       ownerName: null,

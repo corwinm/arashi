@@ -1,6 +1,6 @@
 import { runtime, spawn } from "../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "fs/promises";
 import { spawnSync } from "node:child_process";
 import {
   createRemoveWorkspace,
@@ -263,6 +263,7 @@ printf '%s:%s\\n' "$ARASHI_HOOK_INPUT" "$ARASHI_REPO_NAME" >> '${record}'`,
           hookName: "pre-remove",
           message: expect.stringContaining(expectedPaths.join(", ")),
           scope: "repository",
+          sourceKind: "file",
           sourceScriptPath: null,
           sourceScriptPaths: expectedPaths,
         }),
@@ -270,6 +271,70 @@ printf '%s:%s\\n' "$ARASHI_HOOK_INPUT" "$ARASHI_REPO_NAME" >> '${record}'`,
     }
     expect(existsSync(worktrees["repo-a"])).toBe(true);
     expect(existsSync(marker)).toBe(false);
+  });
+
+  test("represents inline configuration in three-way repository ambiguity diagnostics", async () => {
+    const branchName = "feature-inline-qualified-repository-collision";
+    const worktrees = await createWorktreesForBranch(workspace, branchName, false);
+    const marker = join(workspace.rootPath, ".arashi", "three-way-collision-ran");
+    const configPath = join(workspace.rootPath, ".arashi", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.repos["repo-a"].hooks = {
+      "pre-remove":
+        process.platform === "win32" ? { powershell: `New-Item '${marker}'` } : `touch '${marker}'`,
+    };
+    await writeFile(configPath, JSON.stringify(config, null, 2));
+    const extensions = process.platform === "win32" ? ["ps1", "cmd", "bat"] : ["sh"];
+    const canonical = extensions.map((extension) =>
+      join(workspace.rootPath, ".arashi", "hooks", `pre-remove.repo-a.${extension}`),
+    );
+    const compatible = extensions.map((extension) =>
+      join(workspace.repos[0].path, ".arashi", "hooks", `pre-remove.${extension}`),
+    );
+    for (const path of [...canonical, ...compatible]) {
+      await mkdir(join(path, ".."), { recursive: true });
+      await writeFile(
+        path,
+        process.platform === "win32" ? "exit 0\r\n" : `#!/bin/sh\ntouch '${marker}'\n`,
+      );
+      if (process.platform !== "win32") await chmod(path, 0o755);
+    }
+
+    for (const dryRun of [false, true]) {
+      const result = await runCli(workspace.rootPath, [
+        "remove",
+        worktrees["repo-a"],
+        "--path",
+        "--keep-branches",
+        "--force",
+        "--json",
+        ...(dryRun ? ["--dry-run"] : []),
+      ]);
+      const expectedPaths = await Promise.all(
+        [...canonical, ...compatible].map((path) => realpath(path)),
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout).error).toMatchObject({
+        code: "HOOK_CONFIGURATION_INVALID",
+        details: {
+          hookOutcomes: [
+            {
+              hookName: "pre-remove",
+              hookStatus: "failure",
+              message: `Hook source is ambiguous for pre-remove: file and inline-config are both configured (${expectedPaths.join(", ")})`,
+              reasonCode: "validation_failed",
+              scope: "repository",
+              sourceKind: "inline-config",
+              sourceScriptPath: null,
+              sourceScriptPaths: expectedPaths,
+            },
+          ],
+        },
+      });
+      expect(existsSync(worktrees["repo-a"])).toBe(true);
+      expect(existsSync(marker)).toBe(false);
+    }
   });
 
   test("runs repository-targeted global hook before shared global hook", async () => {

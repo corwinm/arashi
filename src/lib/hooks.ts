@@ -769,9 +769,15 @@ export const planLifecycleHookSources = (options: {
       ),
     ];
     const [source] = candidates;
-    const [firstCandidate, secondCandidate] = candidates.toSorted((left, right) =>
+    const sortedCandidates = candidates.toSorted((left, right) =>
       left.sourceKind.localeCompare(right.sourceKind),
     );
+    const inlineCandidate = sortedCandidates.find(
+      (candidate) => candidate.sourceKind === "inline-config",
+    );
+    const fileCandidate = sortedCandidates.find((candidate) => candidate.sourceKind === "file");
+    const [firstCandidate, secondCandidate] =
+      inlineCandidate && fileCandidate ? [fileCandidate, inlineCandidate] : sortedCandidates;
     let code: LifecycleHookAmbiguity["code"] = "HOOK_CONFIGURATION_INVALID";
     if (options.consumer === "create") {
       code = "CREATE_FAILED";

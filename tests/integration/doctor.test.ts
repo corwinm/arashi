@@ -508,6 +508,54 @@ describe("arashi doctor", () => {
     }
   });
 
+  test("represents inline configuration with every native path in three-way ambiguity", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const repositoryPath = join(workspaceRoot, "repos", "repo-a");
+    await initializeGitRepository(repositoryPath);
+    await writeWorkspaceConfig(workspaceRoot, {
+      "repo-a": {
+        hooks: {
+          "pre-remove":
+            process.platform === "win32" ? { powershell: "exit 0" } : { bash: "exit 0" },
+        },
+        path: "./repos/repo-a",
+      },
+    });
+    const extensions = process.platform === "win32" ? ["ps1", "cmd", "bat"] : ["sh"];
+    const canonical = extensions.map((extension) =>
+      join(workspaceRoot, ".arashi", "hooks", `pre-remove.repo-a.${extension}`),
+    );
+    const compatible = extensions.map((extension) =>
+      join(repositoryPath, ".arashi", "hooks", `pre-remove.${extension}`),
+    );
+    for (const path of [...canonical, ...compatible]) {
+      await mkdir(join(path, ".."), { recursive: true });
+      await writeFile(path, process.platform === "win32" ? "exit 0\r\n" : "#!/bin/sh\nexit 0\n");
+      if (process.platform !== "win32") await chmod(path, 0o755);
+    }
+
+    const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    const finding = jsonFindings(parseSingleJsonDocument(result.stdout)).find(
+      (candidate) =>
+        candidate.code === "HOOK_AMBIGUOUS" &&
+        candidate.scope === "hook:repository:repo-a:pre-remove",
+    );
+    const expectedPaths = await Promise.all(
+      [...canonical, ...compatible].map((path) => realpath(path)),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(finding?.details).toEqual({
+      hookName: "pre-remove",
+      scope: "repository",
+      sourceKinds: ["file", "inline-config"],
+      sourceOwnerKind: "repository",
+      sourceOwnerName: "repo-a",
+      sourceScriptPath: null,
+      sourceScriptPaths: expectedPaths,
+    });
+  });
+
   test("diagnoses conflicting topology after a configured-ref refresh failure", async () => {
     const workspaceRoot = await createBareBackedLinkedWorkspace();
     await runGit(workspaceRoot, [
