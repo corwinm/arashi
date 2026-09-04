@@ -24,6 +24,10 @@ describe("native repository remove-hook acceptance contract", () => {
     ]) {
       expect(fixture).toContain(marker);
     }
+
+    const addTestWorktree = fixture.match(/function Add-TestWorktree[\s\S]*?\n}/)?.[0];
+    expect(addTestWorktree).toBeDefined();
+    expect(addTestWorktree?.match(/Invoke-Checked[^\n]+\| Out-Null/g)).toHaveLength(2);
     expect(workflow).toContain("./tests/windows/repository-remove-hooks-native.ps1");
   });
 });

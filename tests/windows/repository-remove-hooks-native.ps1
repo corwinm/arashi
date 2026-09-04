@@ -31,8 +31,8 @@ function Initialize-Repository([string]$Path) {
 function Add-TestWorktree([string]$Branch) {
   $path = Join-Path $workspace ("worktrees\repo-a-" + ($Branch -replace "/", "-"))
   New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null
-  Invoke-Checked -Command @("git", "-C", $repository, "branch", $Branch)
-  Invoke-Checked -Command @("git", "-C", $repository, "worktree", "add", $path, $Branch)
+  Invoke-Checked -Command @("git", "-C", $repository, "branch", $Branch) | Out-Null
+  Invoke-Checked -Command @("git", "-C", $repository, "worktree", "add", $path, $Branch) | Out-Null
   return $path
 }
 
