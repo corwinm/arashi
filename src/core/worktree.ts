@@ -867,6 +867,12 @@ const runHookIfPresent = async (options: {
   };
 };
 
+export const formatHookSourceAmbiguityMessage = (
+  hookName: string,
+  failure: { sourceKinds: string[]; sourceScriptPaths: string[] },
+): string =>
+  `Hook source is ambiguous for ${hookName}: ${failure.sourceKinds.join(" and ")} are both configured${failure.sourceScriptPaths.length > 0 ? ` (${failure.sourceScriptPaths.join(", ")})` : ""}`;
+
 const preflightConfiguredCreateHooks = async (
   mainRepoPath: string,
   repositories: Repository[],
@@ -1014,7 +1020,7 @@ const preflightConfiguredCreateHooks = async (
         : getRepoSpecificHookName(source.lifecycle, source.sourceOwnerName);
     throw preflightError(hookName, source, {
       hookStatus: "failure",
-      message: `Hook source is ambiguous for ${hookName}: ${failure.sourceKinds.join(" and ")} are both configured${failure.sourceScriptPath ? ` (${failure.sourceScriptPath})` : ""}`,
+      message: formatHookSourceAmbiguityMessage(hookName, failure),
       reasonCode: "validation_failed",
     });
   }

@@ -118,6 +118,85 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     expect(listedPaths).not.toContain(await realpath(childPath));
   });
 
+  test.runIf(process.platform !== "win32")(
+    "runs repository remove hooks from the active child checkout in a bare-backed linked workspace",
+    async () => {
+      workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+      const sourcePath = join(workspace.rootPath, "child-source");
+      const canonicalChildPath = join(workspace.bareRepoPath, "repos", "child");
+      const activeChildPath = join(workspace.worktreePath, "repos", "child");
+      const removalTargetPath = join(workspace.rootPath, "child-removal-target");
+      await mkdir(sourcePath, { recursive: true });
+      await execGit(["init", "-b", "main"], sourcePath);
+      await configureRepository(sourcePath);
+      await commitFile(sourcePath, "README.md", "child main\n");
+      await execGit(["clone", sourcePath, canonicalChildPath], workspace.bareRepoPath);
+      await execGit(
+        ["worktree", "add", "-b", "feature/active-child", activeChildPath],
+        canonicalChildPath,
+      );
+      await execGit(
+        ["worktree", "add", "-b", "feature/remove-target", removalTargetPath],
+        canonicalChildPath,
+      );
+      const recordPath = join(workspace.rootPath, "repository-remove-cwd.log");
+      const hookPath = join(workspace.bareRepoPath, ".arashi", "hooks", "pre-remove.child.sh");
+      await mkdir(join(hookPath, ".."), { recursive: true });
+      await runtime.write(hookPath, `#!/bin/sh\nprintf '%s' "$PWD" > '${recordPath}'\n`);
+      await chmod(hookPath, 0o755);
+
+      const result = await runCli(activeChildPath, [
+        "remove",
+        removalTargetPath,
+        "--path",
+        "--keep-branches",
+        "--force",
+        "--json",
+      ]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect((await runtime.file(recordPath).text()).trim()).toBe(await realpath(activeChildPath));
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "runs the canonical main repository remove hook from a bare-backed linked worktree",
+    async () => {
+      workspace = await configureBareWorkspace();
+      const removalTargetPath = join(workspace.rootPath, "main-removal-target");
+      await execGit(
+        ["worktree", "add", "-b", "feature/remove-main-target", removalTargetPath, "main"],
+        workspace.bareRepoPath,
+      );
+      const recordPath = join(workspace.rootPath, "main-repository-remove-cwd.log");
+      const hookPath = join(
+        workspace.bareRepoPath,
+        ".arashi",
+        "hooks",
+        `pre-remove.${basename(workspace.bareRepoPath)}.sh`,
+      );
+      await mkdir(join(hookPath, ".."), { recursive: true });
+      await runtime.write(hookPath, `#!/bin/sh\nprintf '%s' "$PWD" > '${recordPath}'\n`);
+      await chmod(hookPath, 0o755);
+
+      const result = await runCli(workspace.worktreePath, [
+        "remove",
+        removalTargetPath,
+        "--path",
+        "--keep-branches",
+        "--force",
+        "--json",
+      ]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(existsSync(removalTargetPath)).toBe(false);
+      expect(existsSync(recordPath), result.stdout).toBe(true);
+      expect((await runtime.file(recordPath).text()).trim()).toBe(
+        await realpath(workspace.worktreePath),
+      );
+    },
+  );
+
   test("clone materializes a missing linked child from the configured bare-root clone", async () => {
     workspace = await configureBareWorkspace();
     const childSourcePath = join(workspace.rootPath, "child-source");
@@ -366,6 +445,31 @@ describe("configured bare workspace discovery from linked worktrees", () => {
       ),
     ).toEqual([canonicalWorkspaceRoot, await realpath(childPath)]);
   });
+
+  test.runIf(process.platform !== "win32")(
+    "doctor recognizes the bare authority name for the main repository remove hook",
+    async () => {
+      workspace = await configureBareWorkspace();
+      const hookDirectory = join(workspace.bareRepoPath, ".arashi", "hooks");
+      await mkdir(hookDirectory, { recursive: true });
+      const hookPath = join(hookDirectory, `pre-remove.${basename(workspace.bareRepoPath)}.sh`);
+      await runtime.write(hookPath, "#!/bin/sh\nexit 0\n");
+      await chmod(hookPath, 0o755);
+
+      const result = await runCli(workspace.worktreePath, ["doctor", "--json"]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const envelope = JSON.parse(result.stdout) as {
+        data: { findings: { code: string; details?: { hookName?: string } }[] };
+      };
+      expect(envelope.data.findings).not.toContainEqual(
+        expect.objectContaining({
+          code: "HOOK_UNSUPPORTED_DEFINITION",
+          details: expect.objectContaining({ hookName: basename(hookPath) }),
+        }),
+      );
+    },
+  );
 
   test("handoff loads config from the bare root but reports the active linked parent and child", async () => {
     workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });

@@ -1,9 +1,12 @@
 import {
   GLOBAL_HOOKS,
+  discoverConfiguredRepositoryRemoveHookCandidates,
   discoverLifecycleHookCandidates,
   discoverLifecycleHookCandidatesInDirectory,
   discoverLifecycleHook,
   getRepoSpecificHookName,
+  LifecycleHookAmbiguityError,
+  LifecycleHookDiscoveryError,
   lifecycleHookExtensions,
   prepareLifecycleHookSources,
   resolveScopedLifecycleHooks,
@@ -336,8 +339,12 @@ const countRepoChanges = (status: RepoStatus): Record<string, number> => ({
   untracked: status.files.filter((fileStatus) => fileStatus.workingStatus === "?").length,
 });
 
-const createRepositoryTargets = (workspaceRoot: string, config: Config): RepositoryTarget[] => {
-  const targets: RepositoryTarget[] = [{ name: basename(workspaceRoot), path: workspaceRoot }];
+const createRepositoryTargets = (
+  workspaceRoot: string,
+  config: Config,
+  mainRepositoryName = basename(workspaceRoot),
+): RepositoryTarget[] => {
+  const targets: RepositoryTarget[] = [{ name: mainRepositoryName, path: workspaceRoot }];
   for (const [name, repoConfig] of Object.entries(config.repos)) {
     targets.push({ name, path: resolve(workspaceRoot, repoConfig.path) });
   }
@@ -742,17 +749,38 @@ const collectWorktreeFindings = async (
   });
 };
 
-const allowedHookFileNames = (repoNames: string[]): Set<string> => {
-  const extensions = lifecycleHookExtensions();
+const normalizeHookFileName = (name: string, platform: NodeJS.Platform): string =>
+  platform === "win32" ? name.toLowerCase() : name;
+
+const allowedHookFileNames = (
+  repoNames: string[],
+  includeQualifiedRemove: boolean,
+  platform: NodeJS.Platform,
+): Set<string> => {
+  const extensions = lifecycleHookExtensions(platform);
   const names = new Set<string>(
     Object.values(GLOBAL_HOOKS).flatMap((hookName) =>
-      extensions.map((extension) => `${hookName}${extension}`.toLowerCase()),
+      extensions.map((extension) => normalizeHookFileName(`${hookName}${extension}`, platform)),
     ),
   );
   for (const repoName of repoNames) {
     for (const extension of extensions) {
-      names.add(`${getRepoSpecificHookName("pre-create", repoName)}${extension}`.toLowerCase());
-      names.add(`${getRepoSpecificHookName("post-create", repoName)}${extension}`.toLowerCase());
+      names.add(
+        normalizeHookFileName(
+          `${getRepoSpecificHookName("pre-create", repoName)}${extension}`,
+          platform,
+        ),
+      );
+      names.add(
+        normalizeHookFileName(
+          `${getRepoSpecificHookName("post-create", repoName)}${extension}`,
+          platform,
+        ),
+      );
+      if (includeQualifiedRemove) {
+        names.add(normalizeHookFileName(`pre-remove.${repoName}${extension}`, platform));
+        names.add(normalizeHookFileName(`post-remove.${repoName}${extension}`, platform));
+      }
     }
   }
   return names;
@@ -762,17 +790,19 @@ const scanHookDirectoryForUnsupportedFiles = async (
   hookDir: string,
   scope: string,
   repoNames: string[],
+  platform: NodeJS.Platform,
 ): Promise<DoctorFinding[]> => {
   try {
     const entries = await readdir(hookDir, { withFileTypes: true });
-    const allowed = allowedHookFileNames(repoNames);
+    const allowed = allowedHookFileNames(repoNames, scope === "workspace", platform);
     const findings: DoctorFinding[] = [];
     for (const entry of entries) {
       if (entry.isDirectory() || entry.name.endsWith(".example")) {
         continue;
       }
       const hookFile = join(hookDir, entry.name);
-      if (!allowed.has(entry.name.toLowerCase())) {
+      const entryName = normalizeHookFileName(entry.name, platform);
+      if (!allowed.has(entryName)) {
         findings.push(
           createFinding({
             category: "hook",
@@ -813,13 +843,14 @@ const collectInlineHookFindings = async (
   configurationRoot: string,
   executionRoot: string,
   config: Config,
+  platform: NodeJS.Platform,
 ): Promise<DoctorFinding[]> => {
   const findings: DoctorFinding[] = [];
   const repoNames = Object.keys(config.repos);
   const inspect = async (options: {
     executionPath: string;
     filePaths: readonly string[];
-    interpreters: Partial<Record<"bash" | "cmd" | "powershell", string>>;
+    interpreters?: Partial<Record<"bash" | "cmd" | "powershell", string>>;
     lifecycle: "post-create" | "post-remove" | "pre-create" | "pre-remove";
     ownerKind: "repository" | "workspace";
     ownerName: string | null;
@@ -839,19 +870,23 @@ const collectInlineHookFindings = async (
           },
         }),
       ),
-      {
-        interpreters: options.interpreters,
-        kind: "inline-config",
-        source: {
-          executionPath: options.executionPath,
-          lifecycle: options.lifecycle,
-          scope: options.ownerKind,
-          sourceKind: "inline-config",
-          sourceOwnerKind: options.ownerKind,
-          sourceOwnerName: options.ownerName,
-          sourceScriptPath: null,
-        },
-      },
+      ...(options.interpreters
+        ? [
+            {
+              interpreters: options.interpreters,
+              kind: "inline-config" as const,
+              source: {
+                executionPath: options.executionPath,
+                lifecycle: options.lifecycle,
+                scope: options.ownerKind,
+                sourceKind: "inline-config" as const,
+                sourceOwnerKind: options.ownerKind,
+                sourceOwnerName: options.ownerName,
+                sourceScriptPath: null,
+              },
+            },
+          ]
+        : []),
     ];
     const repositoryName = options.ownerName ?? repoNames[ZERO] ?? basename(executionRoot);
     const repositoryPath = options.ownerName
@@ -861,7 +896,7 @@ const collectInlineHookFindings = async (
       candidates,
       consumer: "doctor",
       env: process.env,
-      platform: process.platform,
+      platform,
       targets: [{ branchName: "", repositoryName, repositoryPath, worktreePath: repositoryPath }],
       workspaceRoot: executionRoot,
     });
@@ -879,6 +914,7 @@ const collectInlineHookFindings = async (
             sourceOwnerKind: failure.sourceOwnerKind,
             sourceOwnerName: failure.sourceOwnerName,
             sourceScriptPath: failure.sourceScriptPath,
+            sourceScriptPaths: failure.sourceScriptPaths,
           },
           message: `Hook source is ambiguous for ${failure.hookName}.`,
           scope: findingScope,
@@ -894,7 +930,7 @@ const collectInlineHookFindings = async (
           category: "hook",
           code: "HOOK_INTERPRETER_UNAVAILABLE",
           details: {
-            configuredInterpreterKeys: Object.keys(options.interpreters).toSorted(),
+            configuredInterpreterKeys: Object.keys(options.interpreters ?? {}).toSorted(),
             hookName: options.lifecycle,
             scope: options.ownerKind,
             sourceKind: "inline-config",
@@ -912,7 +948,7 @@ const collectInlineHookFindings = async (
       );
       return;
     }
-    if (preparation.classification === "ready") {
+    if (preparation.classification === "ready" && options.interpreters) {
       findings.push(
         createFinding({
           category: "hook",
@@ -939,7 +975,7 @@ const collectInlineHookFindings = async (
     if (workspaceInline) {
       await inspect({
         executionPath: executionRoot,
-        filePaths: await discoverLifecycleHookCandidates(lifecycle, configurationRoot),
+        filePaths: await discoverLifecycleHookCandidates(lifecycle, configurationRoot, platform),
         interpreters:
           typeof workspaceInline === "string" ? { bash: workspaceInline } : workspaceInline,
         lifecycle,
@@ -955,6 +991,7 @@ const collectInlineHookFindings = async (
         filePaths: await discoverLifecycleHookCandidates(
           getRepoSpecificHookName(lifecycle, repository),
           configurationRoot,
+          platform,
         ),
         interpreters: typeof inline === "string" ? { bash: inline } : inline,
         lifecycle,
@@ -971,6 +1008,7 @@ const collectInlineHookFindings = async (
         filePaths: await discoverLifecycleHookCandidatesInDirectory(
           lifecycle,
           join(configurationRoot, ".arashi", "hooks"),
+          platform,
         ),
         interpreters:
           typeof workspaceInline === "string" ? { bash: workspaceInline } : workspaceInline,
@@ -981,18 +1019,19 @@ const collectInlineHookFindings = async (
     }
     for (const [repository, repositoryConfig] of Object.entries(config.repos)) {
       const inline = repositoryConfig.hooks?.[lifecycle];
-      if (!inline) continue;
       const repositoryPath = resolve(executionRoot, repositoryConfig.path);
+      const filePaths = await discoverConfiguredRepositoryRemoveHookCandidates({
+        activeRepositoryPath: repositoryPath,
+        configurationRoot,
+        lifecycle,
+        platform,
+        repositoryName: repository,
+      });
+      if (!inline && filePaths.length < 2) continue;
       await inspect({
         executionPath: repositoryPath,
-        filePaths:
-          repositoryPath === executionRoot
-            ? []
-            : await discoverLifecycleHookCandidatesInDirectory(
-                lifecycle,
-                join(repositoryPath, ".arashi", "hooks"),
-              ),
-        interpreters: typeof inline === "string" ? { bash: inline } : inline,
+        filePaths,
+        ...(inline ? { interpreters: typeof inline === "string" ? { bash: inline } : inline } : {}),
         lifecycle,
         ownerKind: "repository",
         ownerName: repository,
@@ -1002,40 +1041,116 @@ const collectInlineHookFindings = async (
   return findings;
 };
 
+const hookAmbiguityIdentity = (finding: DoctorFinding): string | null => {
+  if (finding.code !== "HOOK_AMBIGUOUS") return null;
+  const details = finding.details;
+  const hookName = details?.hookName;
+  const scope = details?.scope;
+  const sourceScriptPaths = details?.sourceScriptPaths;
+  if (
+    typeof hookName !== "string" ||
+    typeof scope !== "string" ||
+    !Array.isArray(sourceScriptPaths) ||
+    !sourceScriptPaths.every((path) => typeof path === "string")
+  ) {
+    return null;
+  }
+  const sourceOwnerName =
+    typeof details?.sourceOwnerName === "string" ? details.sourceOwnerName : null;
+  const targetRepositoryName =
+    scope === "repository" || scope === "global-repository"
+      ? typeof details?.targetRepositoryName === "string"
+        ? details.targetRepositoryName
+        : sourceOwnerName
+      : null;
+  return JSON.stringify([
+    hookName,
+    scope,
+    details?.sourceOwnerKind ?? null,
+    sourceOwnerName,
+    targetRepositoryName,
+    sourceScriptPaths.toSorted(),
+  ]);
+};
+
 const collectHookFindings = async (
   configurationRoot: string,
   executionRoot: string,
   config: Config,
+  platform: NodeJS.Platform,
 ): Promise<DoctorFinding[]> => {
-  const targetRepositories = createRepositoryTargets(executionRoot, config);
-  const repoNames = Object.keys(config.repos);
+  const targetRepositories = createRepositoryTargets(
+    executionRoot,
+    config,
+    basename(configurationRoot),
+  );
+  const repoNames = [...new Set(targetRepositories.map((repository) => repository.name))];
   const findings: DoctorFinding[] = await collectInlineHookFindings(
     configurationRoot,
     executionRoot,
     config,
+    platform,
+  );
+  const reportedAmbiguities = new Set(
+    findings
+      .map((finding) => hookAmbiguityIdentity(finding))
+      .filter((identity): identity is string => identity !== null),
   );
   const hookNames = [GLOBAL_HOOKS.preRemove, GLOBAL_HOOKS.postRemove];
 
   for (const hookName of hookNames) {
+    const reportDiscoveryError = (error: unknown): void => {
+      const discoveryError = error instanceof LifecycleHookDiscoveryError ? error : null;
+      const ambiguityError =
+        discoveryError?.cause instanceof LifecycleHookAmbiguityError ? discoveryError.cause : null;
+      const sourceOwnerKind =
+        discoveryError?.scope === "repository"
+          ? "repository"
+          : discoveryError?.scope === "workspace"
+            ? "workspace"
+            : "user-global";
+      const sourceOwnerName =
+        discoveryError?.scope === "repository" ? discoveryError.targetRepositoryName : null;
+      const finding = createFinding({
+        category: "hook",
+        code: "HOOK_AMBIGUOUS",
+        details:
+          discoveryError && ambiguityError
+            ? {
+                error: discoveryError.message,
+                hookName,
+                scope: discoveryError.scope,
+                sourceKinds: ambiguityError.sourceKinds,
+                sourceOwnerKind,
+                sourceOwnerName,
+                sourceScriptPath: null,
+                sourceScriptPaths: ambiguityError.candidates,
+                targetRepositoryName: discoveryError.targetRepositoryName,
+              }
+            : { error: error instanceof Error ? error.message : String(error), hookName },
+        message: error instanceof Error ? error.message : String(error),
+        scope: discoveryError
+          ? `hook:${discoveryError.scope}:${discoveryError.targetRepositoryName}:${hookName}`
+          : `hook:remove:${hookName}`,
+        severity: "error",
+        suggestedCommands: ["Remove all but one platform-native hook candidate"],
+      });
+      const identity = hookAmbiguityIdentity(finding);
+      if (identity && reportedAmbiguities.has(identity)) return;
+      if (identity) reportedAmbiguities.add(identity);
+      findings.push(finding);
+    };
     let resolvedHooks;
     try {
       resolvedHooks = await resolveScopedLifecycleHooks({
         hookName,
+        onAmbiguity: reportDiscoveryError,
         targetRepositories,
         workspaceRoot: configurationRoot,
+        platform,
       });
     } catch (error) {
-      findings.push(
-        createFinding({
-          category: "hook",
-          code: "HOOK_AMBIGUOUS",
-          details: { error: error instanceof Error ? error.message : String(error), hookName },
-          message: error instanceof Error ? error.message : String(error),
-          scope: `hook:remove:${hookName}`,
-          severity: "error",
-          suggestedCommands: ["Remove all but one platform-native hook candidate"],
-        }),
-      );
+      reportDiscoveryError(error);
       continue;
     }
     for (const hook of resolvedHooks) {
@@ -1090,7 +1205,7 @@ const collectHookFindings = async (
   for (const location of configuredCreateLocations) {
     let hookPath: string | null = null;
     try {
-      hookPath = await discoverLifecycleHook(location.hookName, configurationRoot);
+      hookPath = await discoverLifecycleHook(location.hookName, configurationRoot, platform);
     } catch (error) {
       findings.push(
         createFinding({
@@ -1143,6 +1258,7 @@ const collectHookFindings = async (
       join(configurationRoot, ".arashi", "hooks"),
       "workspace",
       repoNames,
+      platform,
     )),
   );
   for (const target of targetRepositories.filter((target) => target.path !== executionRoot)) {
@@ -1151,6 +1267,7 @@ const collectHookFindings = async (
         join(target.path, ".arashi", "hooks"),
         `repository:${target.name}`,
         repoNames,
+        platform,
       )),
     );
   }
@@ -1160,7 +1277,9 @@ const collectHookFindings = async (
 
 const collectShellAndInstallHints = (): DoctorFinding[] => [];
 
-export const runDoctor = async (): Promise<DoctorResult> => {
+export const runDoctor = async (
+  platform: NodeJS.Platform = process.platform,
+): Promise<DoctorResult> => {
   const findings: DoctorFinding[] = [];
   let workspaceRoot: string | null = null;
   let workspaceRoots: WorkspaceRepositoryRoots;
@@ -1228,7 +1347,7 @@ export const runDoctor = async (): Promise<DoctorResult> => {
     collectManagedIgnoreFindings(configurationRoot, config),
     collectRepositoryFindings(executionRoot, config),
     collectWorktreeFindings(executionRoot, config),
-    collectHookFindings(configurationRoot, executionRoot, config),
+    collectHookFindings(configurationRoot, executionRoot, config, platform),
     collectMaterializationDiagnostics(
       materializationRepositories,
       configurationRoot,

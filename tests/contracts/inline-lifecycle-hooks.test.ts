@@ -24,6 +24,16 @@ describe("inline lifecycle hook dedicated contract freshness RED", () => {
         doctorCode: "HOOK_AMBIGUOUS",
         outcomeReason: "validation_failed",
         removeJsonCode: "HOOK_CONFIGURATION_INVALID",
+        sourceScriptPaths: {
+          deduplicated: true,
+          locationOrder: ["canonical-workspace", "compatible-repository-local"],
+          maxNativeCandidates: 6,
+          platformExtensionOrder: {
+            posix: [".sh"],
+            windows: [".ps1", ".cmd", ".bat"],
+          },
+          singularSourceScriptPathCompatible: true,
+        },
         sourceKinds: ["inline-config", "file"],
       },
       automation: {
@@ -51,6 +61,13 @@ describe("inline lifecycle hook dedicated contract freshness RED", () => {
         create: { noHookInput: true, noHooks: true },
         remove: { noHookInput: true, noHooks: false },
       },
+      repositoryRemoveSources: {
+        canonicalWorkspace: ".arashi/hooks/<lifecycle>.<repo><ext>",
+        compatibleRepositoryLocal: "<repo>/.arashi/hooks/<lifecycle><ext>",
+        executionCwd: "target-repository-checkout",
+        logicalSlot: "repository:<repo>:<lifecycle>",
+        nativePrecedence: "none",
+      },
       ownership: {
         repository: "repos.<name>.hooks.<lifecycle>",
         workspace: "hooks.scripts.<lifecycle>",
@@ -70,7 +87,13 @@ describe("inline lifecycle hook dedicated contract freshness RED", () => {
         },
       },
       sourceMetadata: {
-        fields: ["sourceKind", "sourceOwnerKind", "sourceOwnerName", "sourceScriptPath"],
+        fields: [
+          "sourceKind",
+          "sourceOwnerKind",
+          "sourceOwnerName",
+          "sourceScriptPath",
+          "sourceScriptPaths",
+        ],
         inlineSourceScriptPath: null,
         ownerKinds: ["workspace", "repository", "user-global"],
         snippetDisclosure: "forbidden",

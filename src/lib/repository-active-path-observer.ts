@@ -1,6 +1,10 @@
 import { lstat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { discoverLifecycleHookCandidates, resolveLifecycleHookFilePath } from "./hooks.ts";
+import {
+  discoverConfiguredRepositoryRemoveHookCandidates,
+  discoverLifecycleHookCandidates,
+  resolveLifecycleHookFilePath,
+} from "./hooks.ts";
 import type { RepositoryActivePathObserver } from "./repository-config-editor.ts";
 
 const pathMetadata = async (path: string): Promise<Awaited<ReturnType<typeof lstat>> | null> => {
@@ -23,12 +27,12 @@ export const observeRepositoryActivePaths = (options: {
   return async (request) =>
     Promise.all(
       request.lifecycles.map(async ({ lifecycle, plannedPath }) => {
-        const create = lifecycle === "pre-create" || lifecycle === "post-create";
-        const ownerRoot = create ? options.activeConfigRoot : options.activeRepositoryPath;
+        const remove = lifecycle === "pre-remove" || lifecycle === "post-remove";
+        const ownerRoot = options.activeConfigRoot;
         const hookName =
-          create && options.repositoryScopedCreate !== false
-            ? `${lifecycle}.${request.repositoryName}`
-            : lifecycle;
+          options.repositoryScopedCreate === false
+            ? lifecycle
+            : `${lifecycle}.${request.repositoryName}`;
         const destination =
           plannedPath ?? resolveLifecycleHookFilePath({ hookName, ownerRoot, platform });
         const destinationMetadata = await pathMetadata(destination);
@@ -47,11 +51,16 @@ export const observeRepositoryActivePaths = (options: {
           if (cursor === ownerRoot || dirname(cursor) === cursor) break;
           cursor = dirname(cursor);
         }
-        const nativeCandidates = await discoverLifecycleHookCandidates(
-          hookName,
-          ownerRoot,
-          platform,
-        );
+        const nativeCandidates =
+          remove && options.repositoryScopedCreate !== false
+            ? await discoverConfiguredRepositoryRemoveHookCandidates({
+                activeRepositoryPath: options.activeRepositoryPath,
+                configurationRoot: options.activeConfigRoot,
+                lifecycle,
+                platform,
+                repositoryName: request.repositoryName,
+              })
+            : await discoverLifecycleHookCandidates(hookName, ownerRoot, platform);
         return {
           destinationExists: destinationMetadata !== null,
           lifecycle,

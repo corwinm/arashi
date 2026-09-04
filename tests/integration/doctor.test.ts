@@ -2,10 +2,12 @@ import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import type { RepoStatus } from "../../src/commands/status.ts";
-import { join } from "path";
+import { basename, join } from "path";
 import {
   quoteDoctorShellArgument,
   repositoryStatusToDoctorFindings,
+  runDoctor,
+  type DoctorFinding,
 } from "../../src/lib/doctor.ts";
 import { tmpdir } from "os";
 
@@ -427,6 +429,300 @@ describe("arashi doctor", () => {
       }),
     );
   });
+  test.runIf(process.platform !== "win32")(
+    "validates a sole qualified repository hook when the repository path is the workspace root",
+    async () => {
+      const workspaceRoot = await createLocalWorkspace();
+      await writeWorkspaceConfig(workspaceRoot, { root: { path: "." } });
+      const hookPath = join(workspaceRoot, ".arashi", "hooks", "pre-remove.root.sh");
+      await mkdir(join(hookPath, ".."), { recursive: true });
+      await writeFile(hookPath, "#!/bin/sh\nexit 0\n");
+
+      const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+      const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+      expect(result.exitCode).toBe(0);
+      expect(findings).toContainEqual(
+        expect.objectContaining({
+          code: "HOOK_NOT_EXECUTABLE",
+          details: expect.objectContaining({ path: await realpath(hookPath) }),
+          scope: "hook:repository:root:pre-remove",
+        }),
+      );
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "allows a qualified remove hook for the main repository",
+    async () => {
+      const workspaceRoot = await createLocalWorkspace();
+      const hookPath = join(
+        workspaceRoot,
+        ".arashi",
+        "hooks",
+        `pre-remove.${basename(workspaceRoot)}.sh`,
+      );
+      await mkdir(join(hookPath, ".."), { recursive: true });
+      await writeFile(hookPath, "#!/bin/sh\nexit 0\n");
+      await chmod(hookPath, 0o755);
+
+      const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+      const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+      expect(findings).not.toContainEqual(
+        expect.objectContaining({
+          code: "HOOK_UNSUPPORTED_DEFINITION",
+          details: expect.objectContaining({ hookFile: await realpath(hookPath) }),
+        }),
+      );
+    },
+  );
+
+  test("reports qualified and compatible repository remove aliases with bounded ordered paths", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const repositoryPath = join(workspaceRoot, "repos", "repo-a");
+    await initializeGitRepository(repositoryPath);
+    await writeWorkspaceConfig(workspaceRoot, { "repo-a": { path: "./repos/repo-a" } });
+    const canonical = join(
+      workspaceRoot,
+      ".arashi",
+      "hooks",
+      process.platform === "win32" ? "pre-remove.repo-a.ps1" : "pre-remove.repo-a.sh",
+    );
+    const compatible = join(
+      repositoryPath,
+      ".arashi",
+      "hooks",
+      process.platform === "win32" ? "pre-remove.cmd" : "pre-remove.sh",
+    );
+    const misplacedQualified = join(
+      repositoryPath,
+      ".arashi",
+      "hooks",
+      process.platform === "win32" ? "post-remove.repo-a.ps1" : "post-remove.repo-a.sh",
+    );
+    const misCasedCanonical = join(workspaceRoot, ".arashi", "hooks", "post-remove.REPO-A.sh");
+    await mkdir(join(canonical, ".."), { recursive: true });
+    await mkdir(join(compatible, ".."), { recursive: true });
+    await writeFile(canonical, process.platform === "win32" ? "exit 0\n" : "#!/bin/sh\nexit 0\n");
+    await writeFile(
+      compatible,
+      process.platform === "win32" ? "@exit /b 0\r\n" : "#!/bin/sh\nexit 0\n",
+    );
+    await writeFile(
+      misplacedQualified,
+      process.platform === "win32" ? "exit 0\n" : "#!/bin/sh\nexit 0\n",
+    );
+    if (process.platform !== "win32") {
+      await writeFile(misCasedCanonical, "#!/bin/sh\nexit 0\n");
+    }
+    if (process.platform !== "win32") {
+      await chmod(canonical, 0o755);
+      await chmod(compatible, 0o755);
+    }
+
+    const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+    const ambiguousFindings = findings.filter((candidate) => candidate.code === "HOOK_AMBIGUOUS");
+    const [finding] = ambiguousFindings;
+    expect(result.exitCode).toBe(1);
+    expect(ambiguousFindings).toHaveLength(1);
+    expect(finding?.details).toEqual({
+      hookName: "pre-remove",
+      scope: "repository",
+      sourceKinds: ["file", "file"],
+      sourceOwnerKind: "repository",
+      sourceOwnerName: "repo-a",
+      sourceScriptPath: null,
+      sourceScriptPaths: [await realpath(canonical), await realpath(compatible)],
+    });
+    expect(jsonFindings(parseSingleJsonDocument(result.stdout))).not.toContainEqual(
+      expect.objectContaining({
+        code: "HOOK_UNSUPPORTED_DEFINITION",
+        details: expect.objectContaining({ hookFile: await realpath(canonical) }),
+      }),
+    );
+    expect(jsonFindings(parseSingleJsonDocument(result.stdout))).toContainEqual(
+      expect.objectContaining({
+        code: "HOOK_UNSUPPORTED_DEFINITION",
+        details: expect.objectContaining({ hookFile: await realpath(misplacedQualified) }),
+      }),
+    );
+    if (process.platform !== "win32") {
+      expect(jsonFindings(parseSingleJsonDocument(result.stdout))).toContainEqual(
+        expect.objectContaining({
+          code: "HOOK_UNSUPPORTED_DEFINITION",
+          details: expect.objectContaining({ hookFile: await realpath(misCasedCanonical) }),
+        }),
+      );
+    }
+  });
+
+  test("preserves distinct same-lifecycle ambiguities while collapsing duplicate reports", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const repositoryPath = join(workspaceRoot, "repos", "repo-a");
+    await initializeGitRepository(repositoryPath);
+    await writeWorkspaceConfig(workspaceRoot, {
+      "repo-a": {
+        hooks: { "pre-remove": { powershell: "exit 0" } },
+        path: "./repos/repo-a",
+      },
+    });
+    const mainName = basename(workspaceRoot);
+    const repositoryHook = join(workspaceRoot, ".arashi", "hooks", "pre-remove.repo-a.ps1");
+    const mainHooks = ["ps1", "cmd"].map((extension) =>
+      join(workspaceRoot, ".arashi", "hooks", `pre-remove.${mainName}.${extension}`),
+    );
+    await mkdir(join(repositoryHook, ".."), { recursive: true });
+    await Promise.all([repositoryHook, ...mainHooks].map((path) => writeFile(path, "exit 0\r\n")));
+
+    const originalCwd = process.cwd();
+    process.chdir(workspaceRoot);
+    let findings: DoctorFinding[];
+    try {
+      findings = (await runDoctor("win32")).findings;
+    } finally {
+      process.chdir(originalCwd);
+    }
+    const ambiguousFindings = findings.filter((finding) => finding.code === "HOOK_AMBIGUOUS");
+
+    expect(ambiguousFindings).toHaveLength(2);
+    expect(ambiguousFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          details: expect.objectContaining({
+            hookName: "pre-remove",
+            scope: "repository",
+            sourceOwnerName: "repo-a",
+            sourceScriptPaths: [await realpath(repositoryHook)],
+          }),
+          scope: "hook:repository:repo-a:pre-remove",
+        }),
+        expect.objectContaining({
+          details: expect.objectContaining({
+            hookName: "pre-remove",
+            scope: "repository",
+            sourceOwnerName: mainName,
+            sourceScriptPaths: await Promise.all(mainHooks.map((path) => realpath(path))),
+          }),
+          scope: `hook:repository:${mainName}:pre-remove`,
+        }),
+      ]),
+    );
+  });
+
+  test("continues past a duplicate repository ambiguity to report a global ambiguity", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const repositoryPath = join(workspaceRoot, "repos", "repo-a");
+    const homePath = join(workspaceRoot, "test-home");
+    await initializeGitRepository(repositoryPath);
+    await writeWorkspaceConfig(workspaceRoot, {
+      "repo-a": {
+        hooks: { "pre-remove": { powershell: "exit 0" } },
+        path: "./repos/repo-a",
+      },
+    });
+    const repositoryHooks = ["ps1", "cmd"].map((extension) =>
+      join(workspaceRoot, ".arashi", "hooks", `pre-remove.repo-a.${extension}`),
+    );
+    const globalHooks = ["ps1", "cmd"].map((extension) =>
+      join(homePath, ".arashi", "hooks", "repo-a", `pre-remove.${extension}`),
+    );
+    await Promise.all(
+      [...repositoryHooks, ...globalHooks].map(async (path) => {
+        await mkdir(join(path, ".."), { recursive: true });
+        await writeFile(path, "exit 0\r\n");
+      }),
+    );
+
+    const originalCwd = process.cwd();
+    const originalHome = process.env.HOME;
+    process.chdir(workspaceRoot);
+    process.env.HOME = homePath;
+    let findings: DoctorFinding[];
+    try {
+      findings = (await runDoctor("win32")).findings;
+    } finally {
+      process.chdir(originalCwd);
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+    }
+    const ambiguousFindings = findings.filter((finding) => finding.code === "HOOK_AMBIGUOUS");
+
+    expect(ambiguousFindings).toHaveLength(2);
+    expect(ambiguousFindings.map((finding) => finding.scope)).toEqual([
+      "hook:repository:repo-a:pre-remove",
+      "hook:global-repository:repo-a:pre-remove",
+    ]);
+    expect(ambiguousFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          details: expect.objectContaining({
+            scope: "repository",
+            sourceOwnerName: "repo-a",
+            sourceScriptPaths: await Promise.all(repositoryHooks.map((path) => realpath(path))),
+          }),
+        }),
+        expect.objectContaining({
+          details: expect.objectContaining({
+            scope: "global-repository",
+            sourceOwnerName: null,
+            sourceScriptPaths: globalHooks,
+            targetRepositoryName: "repo-a",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  test("represents inline configuration with every native path in three-way ambiguity", async () => {
+    const workspaceRoot = await createLocalWorkspace();
+    const repositoryPath = join(workspaceRoot, "repos", "repo-a");
+    await initializeGitRepository(repositoryPath);
+    await writeWorkspaceConfig(workspaceRoot, {
+      "repo-a": {
+        hooks: {
+          "pre-remove":
+            process.platform === "win32" ? { powershell: "exit 0" } : { bash: "exit 0" },
+        },
+        path: "./repos/repo-a",
+      },
+    });
+    const extensions = process.platform === "win32" ? ["ps1", "cmd", "bat"] : ["sh"];
+    const canonical = extensions.map((extension) =>
+      join(workspaceRoot, ".arashi", "hooks", `pre-remove.repo-a.${extension}`),
+    );
+    const compatible = extensions.map((extension) =>
+      join(repositoryPath, ".arashi", "hooks", `pre-remove.${extension}`),
+    );
+    for (const path of [...canonical, ...compatible]) {
+      await mkdir(join(path, ".."), { recursive: true });
+      await writeFile(path, process.platform === "win32" ? "exit 0\r\n" : "#!/bin/sh\nexit 0\n");
+      if (process.platform !== "win32") await chmod(path, 0o755);
+    }
+
+    const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+    const finding = jsonFindings(parseSingleJsonDocument(result.stdout)).find(
+      (candidate) =>
+        candidate.code === "HOOK_AMBIGUOUS" &&
+        candidate.scope === "hook:repository:repo-a:pre-remove",
+    );
+    const expectedPaths = await Promise.all(
+      [...canonical, ...compatible].map((path) => realpath(path)),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(finding?.details).toEqual({
+      hookName: "pre-remove",
+      scope: "repository",
+      sourceKinds: ["file", "inline-config"],
+      sourceOwnerKind: "repository",
+      sourceOwnerName: "repo-a",
+      sourceScriptPath: null,
+      sourceScriptPaths: expectedPaths,
+    });
+  });
+
   test("diagnoses conflicting topology after a configured-ref refresh failure", async () => {
     const workspaceRoot = await createBareBackedLinkedWorkspace();
     await runGit(workspaceRoot, [

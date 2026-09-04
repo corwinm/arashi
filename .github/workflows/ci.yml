@@ -287,4 +287,6 @@ jobs:
         id: windows-hooks
         if: ${{ always() && runner.os == 'Windows' && steps.checkout.outcome == 'success' && steps.artifact.outcome == 'success' && steps.runtime.outcome == 'success' && steps.dependencies.outcome == 'success' }}
         shell: powershell
-        run: ./tests/windows/hook-input-native.ps1
+        run: |
+          ./tests/windows/hook-input-native.ps1
+          ./tests/windows/repository-remove-hooks-native.ps1

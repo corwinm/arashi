@@ -770,6 +770,34 @@ describe("configure transaction", () => {
     expect(discover).toHaveBeenNthCalledWith(2, "post-create.app", "C:\\workspace", "win32");
   });
 
+  test("the default revalidator rejects a compatible repository-local remove claim", async () => {
+    const discover = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(["/workspace/repos/app/.arashi/hooks/pre-remove.sh"]);
+    const plan = {
+      compatibleSourceRoot: "/workspace/repos/app",
+      extension: ".sh" as const,
+      lifecycle: "pre-remove" as const,
+      mode: 0o755,
+      ownerRoot: "/workspace",
+      path: "/workspace/.arashi/hooks/pre-remove.app.sh",
+      repositoryName: "app",
+      state: "safe-no-op" as const,
+    };
+
+    await expect(
+      revalidateRepositoryScriptPlans([plan], { discoverLifecycleHookCandidates: discover }),
+    ).rejects.toThrow(/native active hook.*pre-remove/i);
+    expect(discover).toHaveBeenNthCalledWith(1, "pre-remove.app", "/workspace", process.platform);
+    expect(discover).toHaveBeenNthCalledWith(
+      2,
+      "pre-remove",
+      "/workspace/repos/app",
+      process.platform,
+    );
+  });
+
   test("rolls back files reported by a partially failed no-replace installation", async () => {
     const owned = [{ path: "/first-owned.sh" }] as OwnedRepositoryScript[];
     const rollback = vi.fn(async () => ({ preserved: [], removed: ["/first-owned.sh"] }));

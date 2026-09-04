@@ -98,7 +98,7 @@ describe("hook execution integration", () => {
     await expect(
       discoverLifecycleHookInDirectory("pre-create", hooksDirectory, "win32"),
     ).rejects.toMatchObject({
-      candidates: [join(hooksDirectory, "pre-create.cmd"), join(hooksDirectory, "pre-create.ps1")],
+      candidates: [join(hooksDirectory, "pre-create.ps1"), join(hooksDirectory, "pre-create.cmd")],
       code: "HOOK_AMBIGUOUS",
       sourceKinds: ["file", "file"],
     });

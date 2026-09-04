@@ -148,6 +148,7 @@ export interface LifecycleHookOutcome {
   sourceOwnerKind: "repository" | "user-global" | "workspace";
   sourceOwnerName: string | null;
   sourceScriptPath: string | null;
+  sourceScriptPaths?: readonly string[];
   executionPath: string | null;
   targetRepositoryName: string | null;
   targetRepositoryPath: string | null;
@@ -259,6 +260,7 @@ export interface LifecycleHookAmbiguity {
   sourceOwnerKind: LifecycleHookSourceDescriptor["sourceOwnerKind"];
   sourceOwnerName: string | null;
   sourceScriptPath: string | null;
+  sourceScriptPaths: string[];
 }
 
 export type LifecycleHookPlan =
@@ -758,11 +760,24 @@ export const planLifecycleHookSources = (options: {
     if (candidates.length < 2) {
       continue;
     }
-    const fileSource = candidates.find((candidate) => candidate.sourceKind === "file");
+    const filePaths = [
+      ...new Set(
+        candidates
+          .filter((candidate) => candidate.sourceKind === "file")
+          .map((candidate) => candidate.sourceScriptPath)
+          .filter((path): path is string => path !== null),
+      ),
+    ];
     const [source] = candidates;
-    const [firstCandidate, secondCandidate] = candidates.toSorted((left, right) =>
+    const sortedCandidates = candidates.toSorted((left, right) =>
       left.sourceKind.localeCompare(right.sourceKind),
     );
+    const inlineCandidate = sortedCandidates.find(
+      (candidate) => candidate.sourceKind === "inline-config",
+    );
+    const fileCandidate = sortedCandidates.find((candidate) => candidate.sourceKind === "file");
+    const [firstCandidate, secondCandidate] =
+      inlineCandidate && fileCandidate ? [fileCandidate, inlineCandidate] : sortedCandidates;
     let code: LifecycleHookAmbiguity["code"] = "HOOK_CONFIGURATION_INVALID";
     if (options.consumer === "create") {
       code = "CREATE_FAILED";
@@ -779,7 +794,8 @@ export const planLifecycleHookSources = (options: {
         sourceKinds: [firstCandidate.sourceKind, secondCandidate.sourceKind],
         sourceOwnerKind: source.sourceOwnerKind,
         sourceOwnerName: source.sourceOwnerName,
-        sourceScriptPath: fileSource?.sourceScriptPath ?? null,
+        sourceScriptPath: filePaths.length === ONE ? filePaths[ZERO] : null,
+        sourceScriptPaths: filePaths,
       },
     };
   }
@@ -1272,15 +1288,39 @@ export const discoverLifecycleHookCandidatesInDirectory = async (
   }
   const expectedNames = extensions.map((extension) => `${hookName}${extension}`.toLowerCase());
   return Object.freeze(
-    entries
-      .filter((entry) =>
-        platform === "win32"
-          ? expectedNames.includes(entry.toLowerCase())
-          : entry === `${hookName}.sh`,
-      )
-      .map((entry) => resolve(hooksDirectory, entry))
-      .toSorted(compareUnicodeScalars),
+    expectedNames.flatMap((expectedName) =>
+      entries
+        .filter((entry) =>
+          platform === "win32" ? entry.toLowerCase() === expectedName : entry === `${hookName}.sh`,
+        )
+        .toSorted(compareUnicodeScalars)
+        .map((entry) => resolve(hooksDirectory, entry)),
+    ),
   );
+};
+
+export const discoverConfiguredRepositoryRemoveHookCandidates = async (options: {
+  activeRepositoryPath: string;
+  configurationRoot: string;
+  lifecycle: "post-remove" | "pre-remove";
+  platform?: NodeJS.Platform;
+  repositoryName: string;
+}): Promise<readonly string[]> => {
+  const platform = options.platform ?? process.platform;
+  const canonical = await discoverLifecycleHookCandidates(
+    `${options.lifecycle}.${options.repositoryName}`,
+    options.configurationRoot,
+    platform,
+  );
+  const compatible =
+    resolve(options.activeRepositoryPath) === resolve(options.configurationRoot)
+      ? []
+      : await discoverLifecycleHookCandidates(
+          options.lifecycle,
+          options.activeRepositoryPath,
+          platform,
+        );
+  return Object.freeze([...new Set([...canonical, ...compatible])]);
 };
 
 export const discoverLifecycleHookInDirectory = async (
@@ -1324,6 +1364,8 @@ export const resolveScopedLifecycleHooks = async (options: {
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
   globalOnly?: boolean;
+  onAmbiguity?: (error: LifecycleHookDiscoveryError) => void;
+  platform?: NodeJS.Platform;
 }): Promise<ResolvedLifecycleHook[]> => {
   const locations = await resolveScopedLifecycleHookLocations(options);
   return locations
@@ -1342,33 +1384,66 @@ export const resolveScopedLifecycleHookLocations = async (options: {
   workspaceRoot: string;
   targetRepositories: HookTargetRepository[];
   globalOnly?: boolean;
+  onAmbiguity?: (error: LifecycleHookDiscoveryError) => void;
+  platform?: NodeJS.Platform;
 }): Promise<LifecycleHookLocation[]> => {
   const resolved: LifecycleHookLocation[] = [];
   const userHome = process.env.HOME ?? homedir();
   const globalHooksDir = join(userHome, ".arashi", "hooks");
 
   for (const target of options.targetRepositories) {
+    const handleDiscoveryError = (
+      cause: unknown,
+      scope: HookScope,
+      executionPath: string,
+    ): null => {
+      const error = new LifecycleHookDiscoveryError({
+        cause,
+        executionPath,
+        hookName: options.hookName,
+        scope,
+        targetRepositoryName: target.name,
+        targetRepositoryPath: target.path,
+      });
+      if (cause instanceof LifecycleHookAmbiguityError && options.onAmbiguity) {
+        options.onAmbiguity(error);
+        return null;
+      }
+      throw error;
+    };
     const discoverScoped = async (
       scope: HookScope,
       hooksDirectory: string,
       executionPath: string,
     ): Promise<string | null> => {
       try {
-        return await discoverLifecycleHookInDirectory(options.hookName, hooksDirectory);
+        return await discoverLifecycleHookInDirectory(
+          options.hookName,
+          hooksDirectory,
+          options.platform,
+        );
       } catch (cause) {
-        throw new LifecycleHookDiscoveryError({
-          cause,
-          executionPath,
-          hookName: options.hookName,
-          scope,
-          targetRepositoryName: target.name,
-          targetRepositoryPath: target.path,
-        });
+        return handleDiscoveryError(cause, scope, executionPath);
       }
     };
-    const repositoryHookPath = options.globalOnly
-      ? null
-      : await discoverScoped("repository", join(target.path, ".arashi", "hooks"), target.path);
+    let repositoryHookPath: string | null = null;
+    if (!options.globalOnly) {
+      try {
+        const repositoryCandidates = await discoverConfiguredRepositoryRemoveHookCandidates({
+          activeRepositoryPath: target.path,
+          configurationRoot: options.workspaceRoot,
+          lifecycle: options.hookName as "post-remove" | "pre-remove",
+          platform: options.platform,
+          repositoryName: target.name,
+        });
+        if (repositoryCandidates.length > ONE) {
+          throw new LifecycleHookAmbiguityError(options.hookName, [...repositoryCandidates]);
+        }
+        repositoryHookPath = repositoryCandidates[ZERO] ?? null;
+      } catch (cause) {
+        repositoryHookPath = handleDiscoveryError(cause, "repository", target.path);
+      }
+    }
     const workspaceHookPath = options.globalOnly
       ? null
       : await discoverScoped(
@@ -1383,7 +1458,7 @@ export const resolveScopedLifecycleHookLocations = async (options: {
     );
     const globalSharedHookPath = await discoverScoped("global-shared", globalHooksDir, target.path);
 
-    if (!options.globalOnly && target.path !== options.workspaceRoot) {
+    if (!options.globalOnly) {
       resolved.push({
         executionPath: target.path,
         hookName: options.hookName,

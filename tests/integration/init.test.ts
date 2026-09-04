@@ -155,6 +155,12 @@ describe("init command - success cases", () => {
     expect(
       await fileExists(join(hooksDir, `post-create.${repositoryToken}.${extension}.example`)),
     ).toBe(true);
+    expect(
+      await fileExists(join(hooksDir, `pre-remove.${repositoryToken}.${extension}.example`)),
+    ).toBe(true);
+    expect(
+      await fileExists(join(hooksDir, `post-remove.${repositoryToken}.${extension}.example`)),
+    ).toBe(true);
     expect(await fileExists(join(testDir, ".arashi", "setup.sh.example"))).toBe(
       process.platform !== "win32",
     );
@@ -195,6 +201,8 @@ describe("init command - success cases", () => {
       "post-remove.ps1.example",
       "pre-create.REPO.ps1.example",
       "post-create.REPO.ps1.example",
+      "pre-remove.REPO.ps1.example",
+      "post-remove.REPO.ps1.example",
     ]) {
       expect(await fileExists(join(hooksDir, name))).toBe(true);
     }
@@ -1089,7 +1097,7 @@ describe("init command - verbose mode", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("[VERBOSE]");
     expect(result.stdout).toContain(
-      `Writing ${process.platform === "win32" ? 6 : 7} hook templates`,
+      `Writing ${process.platform === "win32" ? 16 : 9} hook templates`,
     );
     expect(result.stdout).toContain("✓ Hook templates written");
   });

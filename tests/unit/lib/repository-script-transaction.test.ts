@@ -327,6 +327,138 @@ describe("repository script transaction", () => {
     expect((await lstat(path)).isSymbolicLink()).toBe(true);
   });
 
+  test.skipIf(process.platform === "win32")(
+    "reports the canonical remove script as owned when a compatible claim races publication",
+    async () => {
+      const root = await fixture();
+      const repository = await fixture();
+      const path = join(root, ".arashi", "hooks", "pre-remove.app.sh");
+      const compatible = join(repository, ".arashi", "hooks", "pre-remove.sh");
+      let failure: unknown;
+
+      try {
+        await installRepositoryScripts(
+          [
+            {
+              compatibleSourceRoot: repository,
+              extension: ".sh",
+              lifecycle: "pre-remove",
+              mode: 0o755,
+              ownerRoot: root,
+              path,
+              state: "safe-no-op",
+            },
+          ],
+          {
+            afterPublication: async () => {
+              await mkdir(dirname(compatible), { recursive: true });
+              await writeFile(compatible, "#!/bin/sh\nexit 0\n");
+            },
+          },
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(RepositoryScriptTransactionError);
+      expect((failure as RepositoryScriptTransactionError).owned).toHaveLength(1);
+      expect((failure as RepositoryScriptTransactionError).owned[0].path).toBe(path);
+      await expect(
+        rollbackRepositoryScripts((failure as RepositoryScriptTransactionError).owned),
+      ).resolves.toEqual({ preserved: [], removed: [path] });
+      expect(await readFile(compatible, "utf8")).toContain("exit 0");
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "rejects symlinked compatible repository-local metadata ancestors before discovery",
+    async () => {
+      for (const ancestor of [".arashi", join(".arashi", "hooks")]) {
+        const root = await fixture();
+        const repository = await fixture();
+        const attacker = await fixture();
+        if (ancestor === join(".arashi", "hooks")) {
+          await mkdir(join(repository, ".arashi"));
+        }
+        await symlink(attacker, join(repository, ancestor), "dir");
+        const path = join(root, ".arashi", "hooks", "pre-remove.app.sh");
+
+        await expect(
+          installRepositoryScripts([
+            {
+              compatibleSourceRoot: repository,
+              extension: ".sh",
+              lifecycle: "pre-remove",
+              mode: 0o755,
+              ownerRoot: root,
+              path,
+              state: "safe-no-op",
+            },
+          ]),
+        ).rejects.toThrow(/compatible repository hook.*symbolic link/i);
+        await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    },
+  );
+
+  test("rejects a missing compatible repository root before publication", async () => {
+    const root = await fixture();
+    const repository = await fixture();
+    const path = join(root, ".arashi", "hooks", "pre-remove.app.sh");
+    await rm(repository, { recursive: true });
+
+    await expect(
+      installRepositoryScripts([
+        {
+          compatibleSourceRoot: repository,
+          extension: ".sh",
+          lifecycle: "pre-remove",
+          mode: 0o755,
+          ownerRoot: root,
+          path,
+          state: "safe-no-op",
+        },
+      ]),
+    ).rejects.toMatchObject({ cause: { code: "ENOENT" }, owned: [] });
+    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "revalidates compatible repository-local ancestor identity before publication",
+    async () => {
+      const root = await fixture();
+      const repository = await fixture();
+      const attacker = await fixture();
+      const compatibleHooks = join(repository, ".arashi", "hooks");
+      await mkdir(compatibleHooks, { recursive: true });
+      const path = join(root, ".arashi", "hooks", "pre-remove.app.sh");
+
+      await expect(
+        installRepositoryScripts(
+          [
+            {
+              compatibleSourceRoot: repository,
+              extension: ".sh",
+              lifecycle: "pre-remove",
+              mode: 0o755,
+              ownerRoot: root,
+              path,
+              state: "safe-no-op",
+            },
+          ],
+          {
+            beforePublication: async () => {
+              await rm(compatibleHooks, { recursive: true });
+              await symlink(attacker, compatibleHooks, "dir");
+            },
+          },
+        ),
+      ).rejects.toThrow(/compatible repository hook.*symbolic link|changed identity/i);
+      await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readdir(attacker)).toEqual([]);
+    },
+  );
+
   test("rollback removes only identity-byte-mode-owned regular files", async () => {
     const root = await fixture();
     const paths = ["owned.sh", "edited.sh", "chmodded.sh", "replaced.sh", "linked.sh"].map((name) =>
