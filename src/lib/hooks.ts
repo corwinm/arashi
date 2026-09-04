@@ -1444,7 +1444,7 @@ export const resolveScopedLifecycleHookLocations = async (options: {
     );
     const globalSharedHookPath = await discoverScoped("global-shared", globalHooksDir, target.path);
 
-    if (!options.globalOnly && target.path !== options.workspaceRoot) {
+    if (!options.globalOnly) {
       resolved.push({
         executionPath: target.path,
         hookName: options.hookName,

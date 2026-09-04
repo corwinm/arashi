@@ -68,7 +68,11 @@ import {
 } from "../lib/json-output.ts";
 import { ConfigValidationError, findWorkspaceRoot, loadConfig } from "../lib/config.ts";
 
-import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
+import {
+  findConfiguredWorkspaceRoots,
+  resolveWorkspaceContext,
+  workspaceJsonMetadata,
+} from "../lib/workspace-context.ts";
 import {
   preflightStandaloneGlobalHooks,
   runStandaloneGlobalHooks,
@@ -690,14 +694,18 @@ export async function executeRemove(
     return ZERO;
   }
 
-  const workspaceRoot =
+  const configurationRoot =
     workspaceContext.mode === "configured"
       ? workspaceContext.workspaceRoot
       : await getWorkspaceRoot();
+  const workspaceRoot =
+    workspaceContext.mode === "configured"
+      ? (await findConfiguredWorkspaceRoots("remove")).executionRoot
+      : configurationRoot;
   const config =
     workspaceContext.mode === "configured"
       ? workspaceContext.config
-      : await loadWorkspaceConfig(workspaceRoot);
+      : await loadWorkspaceConfig(configurationRoot);
   const reposDirName = basename(config.reposDir);
   const configuredChildPaths = new Map(
     Object.entries(config.repos).map(([name, repository]) => [name, repository.path]),
@@ -1027,6 +1035,7 @@ export async function executeRemove(
   let unavailableHookPreviews: RemoveHookPreview[] = [];
   try {
     const preflight = await preflightRemoveLifecycleHooks({
+      configurationRoot,
       config,
       dryRun: options.dryRun === true,
       removeTargets,
@@ -2293,6 +2302,7 @@ const plannedRemoveEntryIdentity = (entry: PlannedLifecycleHookSource): string =
   ]);
 
 const preflightRemoveLifecycleHooks = async (options: {
+  configurationRoot: string;
   config: Config;
   dryRun: boolean;
   removeTargets: RemoveHookTarget[];
@@ -2461,7 +2471,7 @@ const preflightRemoveLifecycleHooks = async (options: {
     for (const repository of options.targetRepositories) {
       const repositoryFilePaths = await discoverConfiguredRepositoryRemoveHookCandidates({
         activeRepositoryPath: repository.path,
-        configurationRoot: options.workspaceRoot,
+        configurationRoot: options.configurationRoot,
         lifecycle: hookName,
         repositoryName: repository.name,
       });
@@ -2530,7 +2540,7 @@ const preflightRemoveLifecycleHooks = async (options: {
 
     await addFiles({
       executionPath: options.workspaceRoot,
-      hooksDirectory: join(options.workspaceRoot, ".arashi", "hooks"),
+      hooksDirectory: join(options.configurationRoot, ".arashi", "hooks"),
       scope: "workspace",
       sourceOwnerKind: "workspace",
       sourceOwnerName: null,

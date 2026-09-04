@@ -427,6 +427,29 @@ describe("arashi doctor", () => {
       }),
     );
   });
+  test.runIf(process.platform !== "win32")(
+    "validates a sole qualified repository hook when the repository path is the workspace root",
+    async () => {
+      const workspaceRoot = await createLocalWorkspace();
+      await writeWorkspaceConfig(workspaceRoot, { root: { path: "." } });
+      const hookPath = join(workspaceRoot, ".arashi", "hooks", "pre-remove.root.sh");
+      await mkdir(join(hookPath, ".."), { recursive: true });
+      await writeFile(hookPath, "#!/bin/sh\nexit 0\n");
+
+      const result = await runArashi(workspaceRoot, ["doctor", "--json"]);
+      const findings = jsonFindings(parseSingleJsonDocument(result.stdout));
+
+      expect(result.exitCode).toBe(0);
+      expect(findings).toContainEqual(
+        expect.objectContaining({
+          code: "HOOK_NOT_EXECUTABLE",
+          details: expect.objectContaining({ path: await realpath(hookPath) }),
+          scope: "hook:repository:root:pre-remove",
+        }),
+      );
+    },
+  );
+
   test("reports qualified and compatible repository remove aliases with bounded ordered paths", async () => {
     const workspaceRoot = await createLocalWorkspace();
     const repositoryPath = join(workspaceRoot, "repos", "repo-a");

@@ -125,6 +125,7 @@ if (`$env:ARASHI_HOOK_TARGET_REPOSITORY -ne "repo-a") { exit 41 }
       if (-not $outcome.message.Contains($path)) { throw "Ambiguity message omitted native path: $path" }
     }
     if (-not (Test-Path $ambiguityWorktree)) { throw "Ambiguity mutated the target worktree" }
+    exit 0
   }
   finally {
     Pop-Location

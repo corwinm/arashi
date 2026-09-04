@@ -118,6 +118,47 @@ describe("configured bare workspace discovery from linked worktrees", () => {
     expect(listedPaths).not.toContain(await realpath(childPath));
   });
 
+  test.runIf(process.platform !== "win32")(
+    "runs repository remove hooks from the active child checkout in a bare-backed linked workspace",
+    async () => {
+      workspace = await configureBareWorkspace({ child: { path: "./repos/child" } });
+      const sourcePath = join(workspace.rootPath, "child-source");
+      const canonicalChildPath = join(workspace.bareRepoPath, "repos", "child");
+      const activeChildPath = join(workspace.worktreePath, "repos", "child");
+      const removalTargetPath = join(workspace.rootPath, "child-removal-target");
+      await mkdir(sourcePath, { recursive: true });
+      await execGit(["init", "-b", "main"], sourcePath);
+      await configureRepository(sourcePath);
+      await commitFile(sourcePath, "README.md", "child main\n");
+      await execGit(["clone", sourcePath, canonicalChildPath], workspace.bareRepoPath);
+      await execGit(
+        ["worktree", "add", "-b", "feature/active-child", activeChildPath],
+        canonicalChildPath,
+      );
+      await execGit(
+        ["worktree", "add", "-b", "feature/remove-target", removalTargetPath],
+        canonicalChildPath,
+      );
+      const recordPath = join(workspace.rootPath, "repository-remove-cwd.log");
+      const hookPath = join(workspace.bareRepoPath, ".arashi", "hooks", "pre-remove.child.sh");
+      await mkdir(join(hookPath, ".."), { recursive: true });
+      await runtime.write(hookPath, `#!/bin/sh\nprintf '%s' "$PWD" > '${recordPath}'\n`);
+      await chmod(hookPath, 0o755);
+
+      const result = await runCli(activeChildPath, [
+        "remove",
+        removalTargetPath,
+        "--path",
+        "--keep-branches",
+        "--force",
+        "--json",
+      ]);
+
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect((await runtime.file(recordPath).text()).trim()).toBe(await realpath(activeChildPath));
+    },
+  );
+
   test("clone materializes a missing linked child from the configured bare-root clone", async () => {
     workspace = await configureBareWorkspace();
     const childSourcePath = join(workspace.rootPath, "child-source");
