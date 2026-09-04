@@ -1,15 +1,8 @@
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { releaseNpmCommand, spawnReleaseCommand } from "./release-command.ts";
 import { isExactVersion } from "./notify-published-release.mjs";
+import { planDirectUninstall } from "../../src/lib/uninstall-manifest.ts";
 import { tmpdir } from "node:os";
 
 const versionArgument = process.argv[2] === "--" ? process.argv[3] : process.argv[2];
@@ -296,11 +289,12 @@ try {
         `direct entrypoint version does not exactly match requested release ${version}: arashi=${directCanonical}, aw=${directAlias}`,
       );
     }
-    const ledger = JSON.parse(
-      readFileSync(join(directDir, ".arashi-managed-entrypoints.json"), "utf8"),
-    );
-    if (ledger.releaseVersion !== version) {
-      throw new Error("direct ownership ledger is not tied to the exact version");
+    const directInstallPlan = await planDirectUninstall(directDir);
+    if (
+      directInstallPlan.manifest.platform !== "posix" ||
+      directInstallPlan.files.some((file) => file.status !== "removable")
+    ) {
+      throw new Error("direct ownership manifest does not describe the complete POSIX payload");
     }
     const directEntrypoints = {
       alias: join(directDir, "aw"),

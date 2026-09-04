@@ -81,8 +81,25 @@ mkdir -p "$ARASHI_INSTALL_DIR"
 cp "$ARASHI_TEST_NATIVE" "$ARASHI_INSTALL_DIR/arashi.bin"
 cp "$ARASHI_TEST_ROOT/bin/arashi" "$ARASHI_INSTALL_DIR/arashi"
 cp "$ARASHI_TEST_ROOT/bin/aw" "$ARASHI_INSTALL_DIR/aw"
-chmod +x "$ARASHI_INSTALL_DIR/arashi.bin" "$ARASHI_INSTALL_DIR/arashi" "$ARASHI_INSTALL_DIR/aw"
-printf '{"releaseVersion":"%s"}\\n' "$ARASHI_TEST_VERSION" > "$ARASHI_INSTALL_DIR/.arashi-managed-entrypoints.json"
+cp "$ARASHI_TEST_ROOT/scripts/uninstall.sh" "$ARASHI_INSTALL_DIR/uninstall.sh"
+chmod +x "$ARASHI_INSTALL_DIR/arashi.bin" "$ARASHI_INSTALL_DIR/arashi" "$ARASHI_INSTALL_DIR/aw" "$ARASHI_INSTALL_DIR/uninstall.sh"
+digest() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d ' ' -f 1
+  else
+    shasum -a 256 "$1" | cut -d ' ' -f 1
+  fi
+}
+printf '{"schemaVersion":2,"installationChannel":"official-direct","platform":"posix","installDirectory":"%s","files":[{"relativePath":"arashi.bin","role":"native-executable","digest":"%s"},{"relativePath":"arashi","role":"canonical-wrapper","digest":"%s"},{"relativePath":"aw","role":"alias-wrapper","digest":"%s"},{"relativePath":"uninstall.sh","role":"uninstall-helper","digest":"%s"}]}\\n' \
+  "$ARASHI_INSTALL_DIR" \
+  "$(digest "$ARASHI_INSTALL_DIR/arashi.bin")" \
+  "$(digest "$ARASHI_INSTALL_DIR/arashi")" \
+  "$(digest "$ARASHI_INSTALL_DIR/aw")" \
+  "$(digest "$ARASHI_INSTALL_DIR/uninstall.sh")" \
+  > "$ARASHI_INSTALL_DIR/.arashi-managed-entrypoints.json"
+if [ "$ARASHI_TEST_CORRUPT_DIRECT_MANIFEST" = 1 ]; then
+  printf '# changed after manifest generation\\n' >> "$ARASHI_INSTALL_DIR/uninstall.sh"
+fi
 `,
   );
   chmodSync(installer, 0o755);
@@ -136,7 +153,7 @@ describe.skipIf(process.platform === "win32")("exact-version published release v
     );
   }, 30_000);
 
-  test("sources installed integration and executes real switch --cd and completion in every POSIX shell", () => {
+  test("accepts the current versionless ownership ledger and verifies installed POSIX behavior", () => {
     const result = spawnSync(
       process.execPath,
       [join(root, "scripts/release/verify-aw.ts"), version],
@@ -152,6 +169,20 @@ describe.skipIf(process.platform === "win32")("exact-version published release v
       direct: ["bash", "zsh", "fish"],
       npm: ["bash", "zsh", "fish"],
     });
+  }, 30_000);
+
+  test("rejects a current ownership manifest whose payload digest is stale", () => {
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "scripts/release/verify-aw.ts"), version],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...environment, ARASHI_TEST_CORRUPT_DIRECT_MANIFEST: "1" },
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("uninstall.sh has a digest mismatch");
   }, 30_000);
 
   test("accepts pnpm's forwarded argument separator before the exact version", () => {
