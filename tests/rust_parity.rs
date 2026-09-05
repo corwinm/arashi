@@ -1028,20 +1028,471 @@ fn unknown_option_raw_output() {
     }
 }
 #[test]
-fn configured_linked_child_status_fails_closed_until_projection_is_ported() {
+fn configured_linked_child_status_uses_active_config_root() {
+    for child_only in [false, true] {
+        let mut f = Fixture::new();
+        f.configured();
+        let mut create = vec![
+            "create",
+            "feature",
+            "--no-hooks",
+            "--no-launch",
+            "--no-switch",
+            "--json",
+        ];
+        if child_only {
+            create.extend(["--only", "alpha"]);
+        }
+        assert!(f.run(false, &create).status.success());
+        let root = f.repo.join(".arashi/worktrees/feature");
+        let expected = if child_only {
+            f.repo.clone()
+        } else {
+            root.clone()
+        };
+        for path in [root.clone(), root.join("repos/alpha")] {
+            f.repo = path;
+            let args = ["status", "--json", "--only", "alpha"];
+            let native = f.run(false, &args);
+            assert!(
+                native.status.success(),
+                "{}",
+                String::from_utf8_lossy(&native.stdout)
+            );
+            let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+            assert_eq!(value["data"]["workspaceRoot"], serde_json::json!(expected));
+            for row in value["data"]["repositories"].as_array().unwrap() {
+                assert_eq!(
+                    row["branch"]["localBranch"],
+                    if child_only { "main" } else { "feature" }
+                );
+            }
+            if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+                compare(&f.run(true, &args), &native);
+            }
+        }
+    }
+}
+
+#[test]
+fn configured_status_base_comparisons() {
+    for remote_enabled in [false, true] {
+        let mut f = Fixture::new();
+        f.configured();
+        let config_path = f.repo.join(".arashi/config.json");
+        let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        config["worktreesDir"] = Value::from(".arashi/worktrees");
+        config["baseBranch"] = Value::from("origin/main");
+        config["meta"] = serde_json::json!({"baseBranch":"release"});
+        config["repos"]["alpha"]["baseBranch"] = Value::from("release");
+        fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        for repo in [".", "repos/zulu", "repos/alpha"] {
+            f.git(&["-C", repo, "branch", "release"]);
+            if remote_enabled {
+                let remote = f.base.join(format!("base-{}.git", repo.replace('/', "-")));
+                f.git(&[
+                    "clone",
+                    "--bare",
+                    f.repo.join(repo).to_str().unwrap(),
+                    remote.to_str().unwrap(),
+                ]);
+                f.git(&[
+                    "-C",
+                    repo,
+                    "remote",
+                    "add",
+                    "origin",
+                    remote.to_str().unwrap(),
+                ]);
+                f.git(&["-C", repo, "fetch", "origin"]);
+                f.git(&[
+                    "-C",
+                    repo,
+                    "branch",
+                    "--set-upstream-to=origin/main",
+                    "main",
+                ]);
+                f.git(&["-C", repo, "remote", "set-head", "origin", "main"]);
+                let commit = f.git(&[
+                    "-C",
+                    remote.to_str().unwrap(),
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit-tree",
+                    "release^{tree}",
+                    "-p",
+                    "release",
+                    "-m",
+                    "remote release advances",
+                ]);
+                f.git(&[
+                    "-C",
+                    remote.to_str().unwrap(),
+                    "update-ref",
+                    "refs/heads/release",
+                    commit.trim(),
+                ]);
+                f.git(&[
+                    "-C",
+                    repo,
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "local main advances",
+                ]);
+            }
+        }
+        for detached in [false, true] {
+            if detached {
+                f.git(&["checkout", "--detach"]);
+            }
+            let before = f.coordinated_effects();
+            let bytes = fs::read(&config_path).unwrap();
+            let native = f.run(false, &["status", "--json"]);
+            assert!(
+                native.status.success(),
+                "{}",
+                String::from_utf8_lossy(&native.stdout)
+            );
+            let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+            let rows = value["data"]["repositories"].as_array().unwrap();
+            for (i, row) in rows.iter().enumerate() {
+                assert_eq!(
+                    row["baseBranchSource"],
+                    if row["name"] == "zulu" {
+                        "workspace-config"
+                    } else {
+                        "repository-config"
+                    }
+                );
+                assert_eq!(
+                    row["baseBranch"]["branch"],
+                    if row["name"] == "zulu" {
+                        "main"
+                    } else {
+                        "release"
+                    }
+                );
+                assert_eq!(
+                    row["baseBranch"]["state"],
+                    if !remote_enabled {
+                        "unavailable"
+                    } else if detached && i == 0 {
+                        "skipped"
+                    } else {
+                        "available"
+                    }
+                );
+            }
+            if remote_enabled && !detached {
+                for row in rows {
+                    assert_eq!(row["baseBranch"]["ahead"], 1);
+                    assert_eq!(
+                        row["baseBranch"]["behind"],
+                        if row["name"] == "zulu" { 0 } else { 1 }
+                    );
+                }
+            }
+            if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+                compare(&f.run(true, &["status", "--json"]), &native);
+                for flags in [
+                    vec!["status"],
+                    vec!["status", "--short"],
+                    vec!["status", "--verbose"],
+                ] {
+                    let source = f.run(true, &flags);
+                    let native = f.run(false, &flags);
+                    assert_eq!(source.status.code(), native.status.code());
+                    assert_eq!(
+                        String::from_utf8_lossy(&source.stdout),
+                        String::from_utf8_lossy(&native.stdout)
+                    );
+                    assert_eq!(source.stderr, native.stderr);
+                }
+            }
+            assert_eq!(before, f.coordinated_effects());
+            assert_eq!(bytes, fs::read(&config_path).unwrap());
+        }
+    }
+}
+
+#[test]
+fn configured_status_missing_remote_refs_are_warnings() {
+    for missing in ["release", "main", "transport"] {
+        let f = Fixture::new();
+        fs::create_dir_all(f.repo.join(".arashi")).unwrap();
+        fs::write(f.repo.join(".arashi/config.json"), r#"{"version":"1.0.0","reposDir":"repos","worktreesDir":".arashi/worktrees","baseBranch":"main","meta":{"baseBranch":"release"},"repos":{}}"#).unwrap();
+        f.git(&["branch", "release"]);
+        let remote = f.base.join("remote.git");
+        f.git(&[
+            "clone",
+            "--bare",
+            f.repo.to_str().unwrap(),
+            remote.to_str().unwrap(),
+        ]);
+        f.git(&["remote", "add", "origin", remote.to_str().unwrap()]);
+        f.git(&["fetch", "origin"]);
+        f.git(&["branch", "--set-upstream-to=origin/main", "main"]);
+        f.git(&["remote", "set-head", "origin", "main"]);
+        if missing == "transport" {
+            f.git(&["config", "remote.origin.uploadpack", "false"]);
+        } else {
+            f.git(&[
+                "-C",
+                remote.to_str().unwrap(),
+                "update-ref",
+                "-d",
+                &format!("refs/heads/{missing}"),
+            ]);
+        }
+
+        let native = f.run(false, &["status", "--json"]);
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stdout)
+        );
+        let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+        assert!(!value["warnings"].as_array().unwrap().is_empty());
+        assert_eq!(
+            value["data"]["repositories"][0][if missing == "release" {
+                "baseBranch"
+            } else {
+                "defaultBranch"
+            }]["reason"],
+            "refresh-failed"
+        );
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            compare(&f.run(true, &["status", "--json"]), &native);
+            for args in [
+                vec!["status"],
+                vec!["status", "--short"],
+                vec!["status", "--verbose"],
+            ] {
+                let source = f.run(true, &args);
+                let native = f.run(false, &args);
+                assert_eq!(source.status.code(), native.status.code());
+                assert_eq!(
+                    String::from_utf8_lossy(&source.stdout),
+                    String::from_utf8_lossy(&native.stdout)
+                );
+                assert_eq!(source.stderr, native.stderr);
+            }
+        }
+    }
+}
+
+#[test]
+fn configured_status_preflights_all_remotes_before_fetch() {
     let mut f = Fixture::new();
     f.configured();
-    let create = [
-        "create",
-        "feature",
-        "--only",
-        "alpha",
-        "--no-hooks",
-        "--no-launch",
-        "--no-switch",
-        "--json",
-    ];
-    assert!(f.run(false, &create).status.success());
-    f.repo = f.repo.join(".arashi/worktrees/feature/repos/alpha");
-    assert!(!f.run(false, &["status", "--json"]).status.success());
+    let remote = f.base.join("remote.git");
+    f.git(&[
+        "clone",
+        "--bare",
+        f.repo.to_str().unwrap(),
+        remote.to_str().unwrap(),
+    ]);
+    f.git(&["remote", "add", "origin", remote.to_str().unwrap()]);
+    f.git(&[
+        "-C",
+        "repos/alpha",
+        "remote",
+        "add",
+        "origin",
+        "https://example.invalid/never-fetch",
+    ]);
+    let native = f.run(false, &["status", "--json"]);
+    assert!(!native.status.success());
+    assert!(
+        !f.repo.join(".git/FETCH_HEAD").exists(),
+        "unsupported child policy must fail before parent fetch"
+    );
+    assert!(f.git(&["for-each-ref", "refs/remotes"]).is_empty());
+}
+
+#[test]
+fn status_human_modes_and_verbose_json() {
+    for configured in [false, true] {
+        let mut f = Fixture::new();
+        if configured {
+            f.configured();
+        }
+        fs::write(f.repo.join("file.txt"), "changed\n").unwrap();
+        fs::write(f.repo.join("untracked"), "new\n").unwrap();
+        for flag in [None, Some("--short"), Some("--verbose")] {
+            let mut args = vec!["status"];
+            if let Some(flag) = flag {
+                args.push(flag);
+            }
+            let native = f.run(false, &args);
+            assert!(
+                native.status.success(),
+                "{}",
+                String::from_utf8_lossy(&native.stderr)
+            );
+            assert!(String::from_utf8_lossy(&native.stdout).contains("Summary:"));
+            if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+                let source = f.run(true, &args);
+                assert_eq!(source.status.code(), native.status.code());
+                assert_eq!(
+                    String::from_utf8_lossy(&source.stdout),
+                    String::from_utf8_lossy(&native.stdout),
+                    "{args:?}"
+                );
+                assert_eq!(source.stderr, native.stderr);
+            }
+        }
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            compare(
+                &f.run(true, &["status", "--verbose", "--json"]),
+                &f.run(false, &["status", "--verbose", "--json"]),
+            );
+            compare(
+                &f.run(true, &["status", "--verbose", "--short", "--json"]),
+                &f.run(false, &["status", "--verbose", "--short", "--json"]),
+            );
+        }
+    }
+}
+
+#[test]
+fn status_human_missing_child_and_base_warnings() {
+    let mut f = Fixture::new();
+    f.configured();
+    let p = f.repo.join(".arashi/config.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    config["baseBranch"] = Value::from("main");
+    config["worktreesDir"] = Value::from(".arashi/worktrees");
+    fs::write(p, serde_json::to_vec(&config).unwrap()).unwrap();
+    fs::remove_dir_all(f.repo.join("repos/alpha")).unwrap();
+    f.git(&["checkout", "--detach"]);
+    for flag in [None, Some("--short"), Some("--verbose")] {
+        let mut args = vec!["status"];
+        if let Some(flag) = flag {
+            args.push(flag);
+        }
+        let native = f.run(false, &args);
+        assert_eq!(
+            native.status.code(),
+            Some(if flag == Some("--verbose") { 1 } else { 0 })
+        );
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            let source = f.run(true, &args);
+            assert_eq!(native.status.code(), source.status.code());
+            assert_eq!(
+                String::from_utf8_lossy(&native.stdout),
+                String::from_utf8_lossy(&source.stdout)
+            );
+            assert_eq!(native.stderr, source.stderr);
+        }
+    }
+}
+
+#[test]
+fn configured_remove_branch_only_and_mixed_targets() {
+    for mixed in [false, true] {
+        let mut f = Fixture::new();
+        f.configured();
+        let branch = "old-feature";
+        let child = f.repo.join(".arashi/worktrees/old-feature/repos/alpha");
+        let prepare = || {
+            for repo in [".", "repos/zulu", "repos/alpha"] {
+                f.git(&["-C", repo, "branch", branch]);
+            }
+            if mixed {
+                f.git(&[
+                    "-C",
+                    "repos/alpha",
+                    "worktree",
+                    "add",
+                    child.to_str().unwrap(),
+                    branch,
+                ]);
+            }
+        };
+        prepare();
+        let before = f.coordinated_effects();
+        if !mixed {
+            let args = ["remove", branch, "--force", "--keep-branches", "--json"];
+            let native = f.run(false, &args);
+            assert!(native.status.success());
+            if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+                compare(&f.run(true, &args), &native);
+            }
+            assert_eq!(before, f.coordinated_effects());
+            let no_force = f.run(false, &["remove", branch, "--json"]);
+            assert!(!no_force.status.success());
+            assert_eq!(before, f.coordinated_effects());
+        }
+        let args = ["remove", branch, "--force", "--dry-run", "--json"];
+        let native = f.run(false, &args);
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stdout)
+        );
+        let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+        assert_eq!(value["data"]["summary"]["totalBranches"], 3);
+        assert_eq!(
+            value["data"]["summary"]["totalWorktrees"],
+            usize::from(mixed)
+        );
+        assert_eq!(before, f.coordinated_effects());
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            compare(&f.run(true, &args), &native);
+        }
+        let args = ["remove", branch, "--force", "--json"];
+        let source = if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            let source = f.run(true, &args);
+            assert!(
+                source.status.success(),
+                "{}",
+                String::from_utf8_lossy(&source.stdout)
+            );
+            prepare();
+            Some(source)
+        } else {
+            None
+        };
+        let native = f.run(false, &args);
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stdout)
+        );
+        if let Some(source) = source {
+            compare(&source, &native);
+        }
+        for repo in [".", "repos/zulu", "repos/alpha"] {
+            assert!(f.git(&["-C", repo, "branch", "--list", branch]).is_empty());
+        }
+        assert!(!child.exists());
+    }
+}
+
+#[test]
+fn status_rejects_unported_branch_remote_before_fetch() {
+    let f = Fixture::new();
+    let remote = f.base.join("remote.git");
+    f.git(&[
+        "clone",
+        "--bare",
+        f.repo.to_str().unwrap(),
+        remote.to_str().unwrap(),
+    ]);
+    f.git(&["remote", "add", "origin", remote.to_str().unwrap()]);
+    f.git(&["config", "branch.main.remote", "."]);
+    f.git(&["config", "branch.main.merge", "refs/heads/main"]);
+    let native = f.run(false, &["status", "--json"]);
+    assert!(!native.status.success());
+    let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(value["error"]["code"], "PORT_UNSUPPORTED");
+    assert!(!f.repo.join(".git/FETCH_HEAD").exists());
 }

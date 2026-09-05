@@ -86,7 +86,7 @@ fn remote_status_fails_before_fetch() {
     assert!(!r.0.join(".git/FETCH_HEAD").exists());
 }
 #[test]
-fn configured_shape_and_base_policy_guard() {
+fn configured_shape_and_unavailable_local_base() {
     let r = Repo::new();
     let mut w = r.workspace();
     w.config=Some(arashi::config::Config::parse(r#"{"version":"1.0.0","reposDir":"repos","worktreesDir":".arashi/worktrees","repos":{}}"#).unwrap());
@@ -101,8 +101,8 @@ fn configured_shape_and_base_policy_guard() {
     assert!(data.get("worktrees").is_none());
     w.config.as_mut().unwrap().raw["baseBranch"] = json!("main");
     assert_eq!(
-        arashi::status::status(&w, &r.0).unwrap_err().code,
-        "PORT_UNSUPPORTED"
+        arashi::status::status(&w, &r.0).unwrap()["repositories"][0]["baseBranch"]["reason"],
+        "unresolved-target"
     );
 }
 

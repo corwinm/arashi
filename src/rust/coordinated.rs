@@ -440,7 +440,18 @@ fn nested_safety(path: &Path, targets: &[Item]) -> Result<()> {
     }
     Ok(())
 }
-fn remove_plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
+#[derive(Clone, Debug, PartialEq)]
+struct BranchRemoval {
+    name: String,
+    root: PathBuf,
+    oid: String,
+}
+#[derive(Clone, Debug, PartialEq)]
+struct RemovePlan {
+    worktrees: Vec<Item>,
+    branches: Vec<BranchRemoval>,
+}
+fn remove_plan(w: &Workspace, args: &Args) -> Result<RemovePlan> {
     policy(w, args)?;
     let mut rows = repositories(w)?;
     let config = w.config.as_ref().unwrap();
@@ -459,8 +470,24 @@ fn remove_plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
     let branch = &args.positional[0];
     let caller = crate::paths::canonicalize(std::env::current_dir()?)?;
     let mut items = vec![];
+    let mut branches = vec![];
     for (name, root, _) in rows {
         let records = git::worktrees(&root)?;
+        if let Ok(oid) = git::run(
+            &root,
+            &[
+                "show-ref",
+                "--verify",
+                "--hash",
+                &format!("refs/heads/{branch}"),
+            ],
+        ) {
+            branches.push(BranchRemoval {
+                name: name.clone(),
+                root: root.clone(),
+                oid: oid.trim().into(),
+            });
+        }
         if let Some(t) = records.iter().find(|t| t.branch.as_deref() == Some(branch)) {
             if t.path == root
                 || t.locked
@@ -499,34 +526,24 @@ fn remove_plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
                 existing: true,
                 base: Value::Null,
             });
-        } else if git::run(
-            &root,
-            &[
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{branch}"),
-            ],
-        )
-        .is_ok()
-        {
-            return Err(unsupported(
-                "Configured branch-only removal is not yet ported; no changes made",
-            ));
         }
     }
-    if items.is_empty() {
+    if items.is_empty() && branches.is_empty() {
         return Err(unsupported("No matching configured worktrees"));
     }
     for i in &items {
         nested_safety(&i.target, &items)?;
     }
-    Ok(items)
+    Ok(RemovePlan {
+        worktrees: items,
+        branches,
+    })
 }
 pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
     args.only(&["force", "keep-branches", "dry-run"])?;
     let dry = args.has("dry-run");
-    let items = remove_plan(w, args)?;
+    let plan = remove_plan(w, args)?;
+    let items = &plan.worktrees;
     if !dry && !args.has("force") {
         return Err(unsupported(
             "Interactive configured removal requires --force in this port",
@@ -534,7 +551,7 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
     }
     let current = Workspace::discover(&w.root)?;
     if current.config.as_ref().unwrap().raw != w.config.as_ref().unwrap().raw
-        || remove_plan(&current, args)? != items
+        || remove_plan(&current, args)? != plan
     {
         return Err(Error::new(
             "PLAN_CHANGED",
@@ -549,7 +566,7 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
     let mut names = vec![w.root.file_name().unwrap().to_string_lossy().into_owned()];
     names.extend(w.config.as_ref().unwrap().repo_order.clone());
     for name in names {
-        if !items.iter().any(|i| i.name == name) {
+        if !plan.branches.iter().any(|i| i.name == name) {
             missing.push(name);
         }
     }
@@ -561,24 +578,36 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
             operations.push(json!({"branchName":branch,"repository":i.name,"status":"pending","type":"worktree_remove","worktreePath":i.target}));
         }
         if !keep {
-            for i in &items {
+            for i in &plan.branches {
                 operations.push(json!({"branchName":branch,"repository":i.name,"status":"pending","type":"branch_delete"}));
             }
         }
         let mut data = w.metadata();
-        let branches = if keep { 0 } else { items.len() };
+        let branches = if keep { 0 } else { plan.branches.len() };
         data.as_object_mut().unwrap().extend(json!({"dryRun":true,"errors":[],"hookOutcomes":[],"operations":operations,"success":true,"summary":{"duration":0,"successfulBranches":0,"successfulWorktrees":0,"totalBranches":branches,"totalWorktrees":items.len()},"effectiveOptions":{"checkDirty":true,"force":args.has("force"),"keepBranches":keep,"keepWorktrees":false},"hooks":[],"missingBranches":{branch:missing}}).as_object().unwrap().clone());
         return Ok(data);
     }
+    let mut hook_targets: Vec<_> = ordered
+        .iter()
+        .map(|i| (&i.name, &i.root, Some(&i.target)))
+        .collect();
+    for branch in &plan.branches {
+        if !hook_targets
+            .iter()
+            .any(|(name, _, _)| *name == &branch.name)
+        {
+            hook_targets.push((&branch.name, &branch.root, None));
+        }
+    }
     for lifecycle in ["pre-remove", "post-remove"] {
-        for i in &ordered {
+        for (name, root, target) in &hook_targets {
             for scope in [
                 "repository",
                 "workspace",
                 "global-repository",
                 "global-shared",
             ] {
-                hooks.push(json!({"executionPath":if scope=="workspace"{&w.root}else{&i.root},"hookName":lifecycle,"hookStatus":"skipped","message":"Hook script not found","reasonCode":"not_found","repositoryId":i.name,"scope":scope,"sourceKind":"file","sourceOwnerKind":if scope=="repository"{"repository"}else if scope=="workspace"{"workspace"}else{"user-global"},"sourceOwnerName":if scope=="repository"{json!(i.name)}else{Value::Null},"sourceScriptPath":null,"targetRepositoryName":i.name,"targetRepositoryPath":i.root,"targetWorktreePath":i.target,"workspaceMode":"configured"}));
+                hooks.push(json!({"executionPath":if scope=="workspace"{&w.root}else{root},"hookName":lifecycle,"hookStatus":"skipped","message":"Hook script not found","reasonCode":"not_found","repositoryId":name,"scope":scope,"sourceKind":"file","sourceOwnerKind":if scope=="repository"{"repository"}else if scope=="workspace"{"workspace"}else{"user-global"},"sourceOwnerName":if scope=="repository"{json!(name)}else{Value::Null},"sourceScriptPath":null,"targetRepositoryName":name,"targetRepositoryPath":root,"targetWorktreePath":target,"workspaceMode":"configured"}));
             }
         }
     }
@@ -613,7 +642,27 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
         operations.push(json!({"branchName":branch,"repository":item.name,"status":"success","type":"worktree_remove","worktreePath":item.target}));
     }
     if !keep {
-        for item in &items {
+        for item in &plan.branches {
+            let oid = git::run(
+                &item.root,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--hash",
+                    &format!("refs/heads/{branch}"),
+                ],
+            )?;
+            if oid.trim() != item.oid
+                || git::worktrees(&item.root)?
+                    .iter()
+                    .any(|w| w.branch.as_deref() == Some(branch))
+            {
+                return Err(Error::new(
+                    "COORDINATED_REMOVE_PARTIAL_FAILURE",
+                    "Branch changed during removal",
+                )
+                .with_details(json!({"operations":operations})));
+            }
             if let Err(e) = git::run(&item.root, &["branch", "-D", branch]) {
                 return Err(Error::new("COORDINATED_REMOVE_PARTIAL_FAILURE", e.message)
                     .with_details(json!({"operations":operations})));
@@ -622,7 +671,7 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
         }
     }
     let mut data = w.metadata();
-    let branches = if keep { 0 } else { items.len() };
+    let branches = if keep { 0 } else { plan.branches.len() };
     data.as_object_mut().unwrap().extend(json!({"dryRun":false,"errors":[],"hookOutcomes":hooks,"operations":operations,"success":true,"summary":{"duration":0,"successfulBranches":branches,"successfulWorktrees":items.len(),"totalBranches":branches,"totalWorktrees":items.len()},"missingBranches":{branch:missing}}).as_object().unwrap().clone());
     Ok(data)
 }

@@ -166,17 +166,31 @@ pub fn entry() -> i32 {
     let result = parse(&raw).and_then(|args| dispatch(&args));
     match result {
         Ok(data) => {
+            let verbose = raw.iter().any(|s| s == "--verbose" || s == "-v");
+            let short = raw.iter().any(|s| s == "--short" || s == "-s");
             let exit_code = if command == "status"
-                && data["repositories"]
-                    .as_array()
-                    .is_some_and(|rows| rows.iter().any(|r| !r["error"].is_null()))
-            {
+                && data["repositories"].as_array().is_some_and(|rows| {
+                    rows.iter().any(|r| {
+                        !r["error"].is_null()
+                            && (json_mode || crate::status_human::visible(r, verbose))
+                    })
+                }) {
                 1
             } else {
                 0
             };
             if json_mode {
-                println!("{}",serde_json::to_string_pretty(&json!({"command":command,"data":data,"ok":true,"schemaVersion":1,"warnings":[]})).unwrap());
+                let warnings = if command == "status" {
+                    crate::status::warnings(&data)
+                } else {
+                    vec![]
+                };
+                println!("{}",serde_json::to_string_pretty(&json!({"command":command,"data":data,"ok":true,"schemaVersion":1,"warnings":warnings})).unwrap());
+            } else if command == "status" {
+                if data["mode"] == "configured" {
+                    eprintln!("- Checking repository status...");
+                }
+                println!("{}", crate::status_human::render(&data, short, verbose));
             } else {
                 render_human(&command, &data);
             }
@@ -192,7 +206,16 @@ pub fn entry() -> i32 {
             if json_mode {
                 println!("{}",serde_json::to_string_pretty(&json!({"command":command,"error":error_value(&e),"ok":false,"schemaVersion":1,"warnings":[]})).unwrap());
             } else {
-                eprintln!("Error: {e}");
+                if command == "doctor" && e.code == "DOCTOR_BLOCKING_FINDINGS" {
+                    let data = e.details.as_ref().unwrap();
+                    if data["checkedCategories"] == json!(["configuration"]) {
+                        eprintln!("{}", data["findings"][0]["message"].as_str().unwrap());
+                    } else {
+                        println!("{}", crate::doctor::human(data));
+                    }
+                } else {
+                    eprintln!("Error: {e}");
+                }
             }
             e.exit_code
         }
@@ -201,6 +224,13 @@ pub fn entry() -> i32 {
 fn dispatch(args: &Args) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     match args.command.as_str() {
+        "doctor" => {
+            args.only(&[])?;
+            if !args.positional.is_empty() {
+                return Err(Error::new("USAGE", "doctor takes no arguments"));
+            }
+            crate::doctor::doctor(&cwd)
+        }
         "install" => {
             args.only(&[])?;
             if !args.positional.is_empty() {
@@ -312,7 +342,15 @@ fn dispatch(args: &Args) -> Result<Value> {
             )
         }
         "status" => {
-            args.only(&["only", "group"])?;
+            args.only(&["only", "group", "short", "verbose"])?;
+            if args.has("short") && args.has("verbose") {
+                return Err(Error::new(
+                    "CONFLICTING_OPTIONS",
+                    "Cannot use --verbose and --short together",
+                )
+                .with_exit_code(2)
+                .with_details(json!({"options":["--verbose","--short"]})));
+            }
             if !args.positional.is_empty() {
                 return Err(Error::new("USAGE", "status takes no arguments"));
             }
@@ -381,6 +419,10 @@ fn error_value(e: &Error) -> Value {
 }
 
 fn render_human(command: &str, data: &Value) {
+    if command == "doctor" {
+        println!("{}", crate::doctor::human(data));
+        return;
+    }
     match command {
         "list" => {
             if data["mode"] == "standalone" {
@@ -437,27 +479,6 @@ fn render_human(command: &str, data: &Value) {
                 &data["totalPruned"]
             }
         ),
-        "status" => {
-            let rows = data["worktrees"]
-                .as_array()
-                .or_else(|| data["repositories"].as_array());
-            if let Some(rows) = rows {
-                for row in rows {
-                    println!(
-                        "{}  {}  {}",
-                        row["name"].as_str().unwrap_or(""),
-                        row["branch"]["localBranch"]
-                            .as_str()
-                            .unwrap_or("(detached)"),
-                        if row["files"].as_array().is_some_and(Vec::is_empty) {
-                            "clean"
-                        } else {
-                            "modified"
-                        }
-                    );
-                }
-            }
-        }
         _ => unreachable!("implemented command requires human renderer"),
     }
 }

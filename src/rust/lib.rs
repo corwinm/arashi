@@ -65,3 +65,7 @@ pub mod managed;
 pub mod coordinated;
 
 pub mod paths;
+
+pub mod doctor;
+
+pub mod status_human;

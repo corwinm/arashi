@@ -59,7 +59,7 @@ jobs:
           GIT_ALLOW_PROTOCOL: file
       - run: cargo build --locked --release
       - name: External release binary versus retained TypeScript oracle
-        run: node tests/rust/parity.mjs target/release/arashi target/source-parity.json
+        run: node tests/rust/parity.mjs target/release/arashi target/source-parity.json --characterize
       - name: Test native-binary routing
         run: node node_modules/vitest/vitest.mjs run tests/unit/node-runtime.test.ts
       - name: Five retained integration tests against source and native

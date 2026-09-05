@@ -299,7 +299,7 @@ try {
       ["configured child", join(configured, "repos/zulu")],
       ["outside", outside],
     ]) {
-      query(`${label} doctor (remaining scope)`, ["doctor", "--json"], cwd);
+      query(`${label} doctor (supported local diagnostics)`, ["doctor", "--json"], cwd);
     }
   }
 } catch (error) {
