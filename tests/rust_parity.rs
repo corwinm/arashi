@@ -2159,3 +2159,5 @@ fn setup_metadata_and_human_skips_source_contract() {
         assert!(!f.repo.join("lifecycle-sentinel").exists());
     }
 }
+
+include!("rust/lifecycle.rs");

@@ -61,11 +61,9 @@ fn policy(w: &Workspace, args: &Args) -> Result<()> {
             "Configured path length fitting is not yet ported",
         ));
     }
-    if args.command == "create"
-        && (!args.has("no-hooks") || !args.has("no-launch") || !args.has("no-switch"))
-    {
+    if args.command == "create" && (!args.has("no-launch") || !args.has("no-switch")) {
         return Err(unsupported(
-            "Configured create currently requires explicit --no-hooks --no-launch --no-switch",
+            "Configured create currently requires explicit --no-launch --no-switch",
         ));
     }
     relative(&c.repos_dir)?;
@@ -151,6 +149,13 @@ fn repositories(w: &Workspace) -> Result<Vec<(String, PathBuf, PathBuf)>> {
                 break;
             }
         }
+        // A configured alias may resolve to this clone while its raw ../ path
+        // would project the destination outside the requested workspace.
+        child_path = relative(
+            child_path
+                .to_str()
+                .ok_or_else(|| unsupported("Non-UTF-8 child paths are unsupported"))?,
+        )?;
         if rows.iter().any(|(n, _, _)| *n == name) {
             return Err(unsupported("Duplicate discovered repository identities"));
         }
@@ -279,6 +284,17 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     let c = w.config.as_ref().unwrap();
     let ignore = IgnorePlan::build(&w.root, &c.repos_dir, &c.worktrees_dir, dry)?;
     let mut rows = vec![];
+    let targets = items
+        .iter()
+        .map(|i| crate::hooks::Target {
+            name: i.name.clone(),
+            root: i.root.clone(),
+            worktree: Some(i.target.clone()),
+        })
+        .collect::<Vec<_>>();
+    let hook_plan = crate::hooks::Plan::prepare(w, args, &targets, branch)?;
+    let _interrupt_guard = hook_plan.guard()?;
+    let mut hook_outcomes = vec![];
     if !dry {
         let current = Workspace::discover(&w.root)?;
         if current.config.as_ref().unwrap().raw != c.raw || plan(&current, args)? != items {
@@ -290,8 +306,30 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
         let mut tx = Transaction::default();
         let mut owned: Vec<&Item> = vec![];
         let operation = (|| -> Result<()> {
+            let pre = hook_plan.run("pre-create", Some("workspace"), true)?;
+            let failure = crate::hooks::failure(&pre);
+            hook_outcomes.extend(pre);
+            if let Some(message) = failure {
+                return Err(Error::new("CREATE_HOOK_FAILED", message));
+            }
+            let refreshed = Workspace::discover(&w.root)?;
+            if refreshed.config.as_ref().unwrap().raw != c.raw || plan(&refreshed, args)? != items {
+                return Err(Error::new(
+                    "PLAN_CHANGED",
+                    "Create preconditions changed after workspace hook",
+                ));
+            }
+            if crate::hooks::interrupted() {
+                return Err(Error::new("HOOK_INTERRUPTED", "Lifecycle interrupted"));
+            }
             ignore.apply(&mut tx)?;
             for item in &items {
+                if crate::hooks::interrupted() {
+                    return Err(Error::new("HOOK_INTERRUPTED", "Lifecycle interrupted"));
+                }
+                safe(&item.root)?;
+                safe(&item.target)?;
+                primary(&item.root)?;
                 // Recheck each repository immediately before creating its branch/worktree.
                 if item.target.exists()
                     || git::run(&item.root, &["rev-parse", &item.source])?.trim() != item.oid
@@ -317,13 +355,34 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                     &item.root,
                     &["worktree", "add", item.target.to_str().unwrap(), branch],
                 )?;
-                rows.push(json!({"branchName":branch,"duration":0,"error":null,"hookOutcomes":[],"materializationOutcomes":[],"repositoryName":item.name,"repositoryPath":item.root,"status":"success","warnings":if item.existing {vec![format!("Reused existing branch '{branch}'")]}else{vec![]},"worktreePath":item.target}));
+                let mut repo_hooks = vec![];
+                for phase in ["pre-create", "post-create"] {
+                    let outcomes =
+                        hook_plan.run(&format!("{phase}.{}", item.name), Some(&item.name), true)?;
+                    let failure = crate::hooks::failure(&outcomes);
+                    hook_outcomes.extend(outcomes.clone());
+                    repo_hooks.extend(outcomes);
+                    if let Some(message) = failure {
+                        return Err(Error::new("CREATE_HOOK_FAILED", message));
+                    }
+                }
+                rows.push(json!({"branchName":branch,"duration":0,"error":null,"hookOutcomes":repo_hooks,"materializationOutcomes":[],"repositoryName":item.name,"repositoryPath":item.root,"status":"success","warnings":if item.existing {vec![format!("Reused existing branch '{branch}'")]}else{vec![]},"worktreePath":item.target}));
+            }
+            let post = hook_plan.run("post-create", Some("workspace"), true)?;
+            let failure = crate::hooks::failure(&post);
+            hook_outcomes.extend(post);
+            if let Some(message) = failure {
+                return Err(Error::new("CREATE_HOOK_FAILED", message));
             }
             Ok(())
         })();
         if let Err(e) = operation {
             let mut rollback_errors = vec![];
             for item in owned.into_iter().rev() {
+                if let Err(e) = safe(&item.root).and_then(|()| safe(&item.target)) {
+                    rollback_errors.push(e.message);
+                    continue;
+                }
                 let records = match git::worktrees(&item.root) {
                     Ok(records) => records,
                     Err(e) => {
@@ -342,10 +401,18 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                         ));
                         continue;
                     }
-                    if let Err(e) = git::run(
-                        &item.root,
-                        &["worktree", "remove", item.target.to_str().unwrap()],
-                    ) {
+                    if let Err(e) = nested_safety(&item.target, &[]) {
+                        rollback_errors.push(e.message);
+                        continue;
+                    }
+                    // Hook writes inside newly owned worktrees are rolled back.
+                    // Without hooks retain the original conservative dirty cleanup.
+                    let mut remove = vec!["worktree", "remove"];
+                    if hook_outcomes.iter().any(|o| o["hookStatus"] != "skipped") {
+                        remove.push("--force");
+                    }
+                    remove.push(item.target.to_str().unwrap());
+                    if let Err(e) = git::run(&item.root, &remove) {
                         rollback_errors.push(e.message);
                         continue;
                     }
@@ -364,12 +431,12 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
             }
             rollback_errors.extend(tx.rollback());
             return Err(Error::new("COORDINATED_CREATE_FAILED", e.message)
-                .with_details(json!({"completed":rows,"rollbackErrors":rollback_errors})));
+                .with_details(json!({"completed":rows,"rollbackErrors":rollback_errors,"hookOutcomes":hook_outcomes})));
         }
     }
     let mut data = w.metadata();
     let count = items.len();
-    data.as_object_mut().unwrap().extend(json!({"branchName":branch,"dirtyWorkspaceGuidance":null,"dryRun":dry,"errorSummary":null,"failureCount":0,"hookOutcomes":[],"managedIgnore":ignore.data,"moveSummary":null,"nextSteps":[],"repositories":rows,"rolledBack":false,"skippedCount":if dry {count}else{0},"successCount":if dry {0}else{count},"totalDuration":0,"totalRepositories":count}).as_object().unwrap().clone());
+    data.as_object_mut().unwrap().extend(json!({"branchName":branch,"dirtyWorkspaceGuidance":null,"dryRun":dry,"errorSummary":null,"failureCount":0,"hookOutcomes":hook_outcomes,"managedIgnore":ignore.data,"moveSummary":null,"nextSteps":[],"repositories":rows,"rolledBack":false,"skippedCount":if dry {count}else{0},"successCount":if dry {0}else{count},"totalDuration":0,"totalRepositories":count}).as_object().unwrap().clone());
     if dry {
         data["dryRunOutcome"] = json!({"conflicts":[],"plannedWorktrees":items.iter().map(|i|json!({"branchName":branch,"planStatus":"actionable","repositoryName":i.name,"worktreePath":i.target})).collect::<Vec<_>>(),"summaryCounts":{"blockingTotal":0,"conflictTotal":0,"plannedTotal":count}});
     }
@@ -385,42 +452,6 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     Ok(data)
 }
 
-fn no_remove_hooks(w: &Workspace, roots: &[(String, PathBuf, PathBuf)]) -> Result<()> {
-    let c = w.config.as_ref().unwrap();
-    if c.raw["hooks"].get("scripts").is_some()
-        || c.repos.values().any(|r| r.raw.get("hooks").is_some())
-    {
-        return Err(unsupported(
-            "Configured remove hook policies are not yet ported",
-        ));
-    }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .ok_or_else(|| unsupported("Cannot resolve global hook directory"))?;
-    let mut dirs = vec![PathBuf::from(home).join(".arashi/hooks")];
-    dirs.extend(roots.iter().map(|(_, p, _)| p.join(".arashi/hooks")));
-    fn inspect(path: &Path) -> Result<()> {
-        safe(path)?;
-        if !path.exists() {
-            return Ok(());
-        }
-        for e in fs::read_dir(path)? {
-            let e = e?;
-            if e.file_type()?.is_dir() {
-                inspect(&e.path())?;
-            } else if !e.file_name().to_string_lossy().ends_with(".example") {
-                return Err(unsupported(
-                    "Remove hook files are not yet ported; no changes made",
-                ));
-            }
-        }
-        Ok(())
-    }
-    for dir in dirs {
-        inspect(&dir)?;
-    }
-    Ok(())
-}
 fn nested_safety(path: &Path, targets: &[Item]) -> Result<()> {
     for entry in fs::read_dir(path)? {
         let entry = entry?;
@@ -466,7 +497,6 @@ fn remove_plan(w: &Workspace, args: &Args) -> Result<RemovePlan> {
                 .map_or(usize::MAX, |i| i + 1)
         }
     });
-    no_remove_hooks(w, &rows)?;
     let branch = &args.positional[0];
     let caller = crate::paths::canonicalize(std::env::current_dir()?)?;
     let mut items = vec![];
@@ -571,6 +601,28 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
         }
     }
 
+    let mut hook_targets: Vec<_> = ordered
+        .iter()
+        .map(|i| (&i.name, &i.root, Some(&i.target)))
+        .collect();
+    for branch in &plan.branches {
+        if !hook_targets
+            .iter()
+            .any(|(name, _, _)| *name == &branch.name)
+        {
+            hook_targets.push((&branch.name, &branch.root, None));
+        }
+    }
+    let targets = hook_targets
+        .iter()
+        .map(|(name, root, target)| crate::hooks::Target {
+            name: (*name).clone(),
+            root: (*root).clone(),
+            worktree: target.cloned(),
+        })
+        .collect::<Vec<_>>();
+    let hook_plan = crate::hooks::Plan::prepare(w, args, &targets, branch)?;
+    let _interrupt_guard = hook_plan.guard()?;
     let mut hooks = vec![];
     let mut operations = vec![];
     if dry {
@@ -587,31 +639,29 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
         data.as_object_mut().unwrap().extend(json!({"dryRun":true,"errors":[],"hookOutcomes":[],"operations":operations,"success":true,"summary":{"duration":0,"successfulBranches":0,"successfulWorktrees":0,"totalBranches":branches,"totalWorktrees":items.len()},"effectiveOptions":{"checkDirty":true,"force":args.has("force"),"keepBranches":keep,"keepWorktrees":false},"hooks":[],"missingBranches":{branch:missing}}).as_object().unwrap().clone());
         return Ok(data);
     }
-    let mut hook_targets: Vec<_> = ordered
-        .iter()
-        .map(|i| (&i.name, &i.root, Some(&i.target)))
-        .collect();
-    for branch in &plan.branches {
-        if !hook_targets
-            .iter()
-            .any(|(name, _, _)| *name == &branch.name)
-        {
-            hook_targets.push((&branch.name, &branch.root, None));
-        }
+    hooks.extend(hook_plan.run("pre-remove", None, true)?);
+    if let Some(message) = crate::hooks::failure(&hooks) {
+        let message = format!("pre-remove hook failed: {message}");
+        let mut data = w.metadata();
+        let branches = if keep { 0 } else { plan.branches.len() };
+        data.as_object_mut().unwrap().extend(json!({"dryRun":false,"errors":[message],"hookOutcomes":hooks,"operations":[],"success":false,"summary":{"duration":0,"successfulBranches":0,"successfulWorktrees":0,"totalBranches":branches,"totalWorktrees":items.len()},"missingBranches":{branch:missing}}).as_object().unwrap().clone());
+        return Err(Error::new("REMOVE_HOOK_FAILED", message).with_details(data));
     }
-    for lifecycle in ["pre-remove", "post-remove"] {
-        for (name, root, target) in &hook_targets {
-            for scope in [
-                "repository",
-                "workspace",
-                "global-repository",
-                "global-shared",
-            ] {
-                hooks.push(json!({"executionPath":if scope=="workspace"{&w.root}else{root},"hookName":lifecycle,"hookStatus":"skipped","message":"Hook script not found","reasonCode":"not_found","repositoryId":name,"scope":scope,"sourceKind":"file","sourceOwnerKind":if scope=="repository"{"repository"}else if scope=="workspace"{"workspace"}else{"user-global"},"sourceOwnerName":if scope=="repository"{json!(name)}else{Value::Null},"sourceScriptPath":null,"targetRepositoryName":name,"targetRepositoryPath":root,"targetWorktreePath":target,"workspaceMode":"configured"}));
-            }
-        }
+    // Hooks may change refs, configuration or nested worktree topology.
+    let refreshed = Workspace::discover(&w.root)?;
+    if refreshed.config.as_ref().unwrap().raw != w.config.as_ref().unwrap().raw
+        || remove_plan(&refreshed, args)? != plan
+    {
+        return Err(
+            Error::new("PLAN_CHANGED", "Removal preconditions changed after hooks")
+                .with_details(json!({"hookOutcomes":hooks})),
+        );
     }
     for item in &ordered {
+        if crate::hooks::interrupted() {
+            return Err(Error::new("HOOK_INTERRUPTED", "Lifecycle interrupted")
+                .with_details(json!({"operations":operations,"hookOutcomes":hooks})));
+        }
         // Recheck nested ownership after prior child removals before invoking Git.
         nested_safety(&item.target, &[])?;
         let records = git::worktrees(&item.root)?;
@@ -643,6 +693,11 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
     }
     if !keep {
         for item in &plan.branches {
+            if crate::hooks::interrupted() {
+                return Err(Error::new("HOOK_INTERRUPTED", "Lifecycle interrupted")
+                    .with_details(json!({"operations":operations,"hookOutcomes":hooks})));
+            }
+            safe(&item.root)?;
             let oid = git::run(
                 &item.root,
                 &[
@@ -670,9 +725,18 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
             operations.push(json!({"branchName":branch,"repository":item.name,"status":"success","type":"branch_delete"}));
         }
     }
+    let post = hook_plan.run("post-remove", None, false)?;
+    let failure =
+        crate::hooks::failure(&post).map(|message| format!("post-remove hook failed: {message}"));
+    hooks.extend(post);
     let mut data = w.metadata();
     let branches = if keep { 0 } else { plan.branches.len() };
     data.as_object_mut().unwrap().extend(json!({"dryRun":false,"errors":[],"hookOutcomes":hooks,"operations":operations,"success":true,"summary":{"duration":0,"successfulBranches":branches,"successfulWorktrees":items.len(),"totalBranches":branches,"totalWorktrees":items.len()},"missingBranches":{branch:missing}}).as_object().unwrap().clone());
+    if let Some(message) = failure {
+        data["errors"] = json!([message]);
+        data["success"] = json!(false);
+        return Err(Error::new("REMOVE_FAILED", message).with_details(data));
+    }
     Ok(data)
 }
 fn resolve_bases(w: &Workspace, args: &Args, items: &mut [Item]) -> Result<()> {

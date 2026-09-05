@@ -1,5 +1,5 @@
-//! Captured argv execution shared by exec and setup. This is not the lifecycle
-//! hook runner: terminal input, provenance and process-tree recovery stay gated.
+//! Captured argv execution for exec/setup and a separate noninteractive lifecycle
+//! runner. Both preserve the same platform-specific direct launch foundation.
 use std::{
     io::{self, Read},
     path::Path,
@@ -15,6 +15,9 @@ pub struct Captured {
     pub elapsed_ms: u128,
     pub timed_out: bool,
     pub signaled: bool,
+    /// Actual child termination signal, independent of synthetic timeout/interrupt exits.
+    #[cfg(unix)]
+    pub termination_signal: Option<i32>,
     pub error: Option<String>,
 }
 
@@ -58,6 +61,8 @@ pub fn run(argv: &[String], cwd: &Path, timeout: Option<Duration>) -> io::Result
                 elapsed_ms: start.elapsed().as_millis(),
                 timed_out: false,
                 signaled: false,
+                #[cfg(unix)]
+                termination_signal: None,
                 // Node's asynchronous spawn error resolves exit=1 with empty pipes.
                 // The runtime's explicit missing-cwd check instead throws.
                 error: (!cwd.exists())
@@ -87,6 +92,8 @@ pub fn run(argv: &[String], cwd: &Path, timeout: Option<Duration>) -> io::Result
             elapsed_ms: start.elapsed().as_millis(),
             timed_out: timed_out && terminated_by_timeout(&status),
             signaled: status.code().is_none(),
+            #[cfg(unix)]
+            termination_signal: std::os::unix::process::ExitStatusExt::signal(&status),
             error: None,
         })
     })
@@ -236,4 +243,262 @@ fn terminated_by_timeout(status: &std::process::ExitStatus) -> bool {
 #[cfg(not(unix))]
 fn terminated_by_timeout(_status: &std::process::ExitStatus) -> bool {
     true
+}
+
+/// Noninteractive lifecycle execution. Kept separate from setup's direct-child
+/// timeout contract; both launch through spawn_direct (including Darwin ENOEXEC).
+#[cfg(unix)]
+pub(crate) mod lifecycle {
+    use super::*;
+    use std::{
+        collections::BTreeMap,
+        os::unix::process::CommandExt,
+        sync::atomic::{AtomicBool, Ordering},
+    };
+    static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+    unsafe extern "C" {
+        fn signal(sig: i32, handler: usize) -> usize;
+        fn kill(pid: i32, sig: i32) -> i32;
+        fn dup2(old: i32, new: i32) -> i32;
+        fn fcntl(fd: i32, command: i32, ...) -> i32;
+    }
+    extern "C" fn interrupt(_: i32) {
+        INTERRUPTED.store(true, Ordering::SeqCst);
+    }
+    pub struct InterruptGuard(usize);
+    impl InterruptGuard {
+        pub fn install() -> io::Result<Self> {
+            INTERRUPTED.store(false, Ordering::SeqCst);
+            // SAFETY: handler only stores to a lock-free atomic; restored on drop.
+            let old = unsafe { signal(2, interrupt as *const () as usize) };
+            if old == usize::MAX {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Self(old))
+        }
+    }
+    impl Drop for InterruptGuard {
+        fn drop(&mut self) {
+            unsafe {
+                signal(2, self.0);
+            }
+            INTERRUPTED.store(false, Ordering::SeqCst);
+        }
+    }
+    pub fn interrupted() -> bool {
+        INTERRUPTED.load(Ordering::SeqCst)
+    }
+    struct Lineage(std::path::PathBuf);
+    impl Drop for Lineage {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    impl Lineage {
+        fn create() -> io::Result<(Self, std::fs::File)> {
+            use std::os::unix::fs::OpenOptionsExt;
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "arashi-native-hook-lineage-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)?;
+            Ok((Self(crate::paths::canonicalize(&path)?), file))
+        }
+        fn holders(&self) -> Vec<i32> {
+            #[cfg(target_os = "linux")]
+            {
+                let mut holders = vec![];
+                if let Ok(entries) = std::fs::read_dir("/proc") {
+                    for entry in entries.flatten() {
+                        let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
+                            continue;
+                        };
+                        if let Ok(fds) = std::fs::read_dir(entry.path().join("fd"))
+                            && fds
+                                .flatten()
+                                .any(|fd| std::fs::read_link(fd.path()).is_ok_and(|p| p == self.0))
+                        {
+                            holders.push(pid);
+                        }
+                    }
+                }
+                holders
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Command::new("/usr/sbin/lsof")
+                    .args(["-t", "--"])
+                    .arg(&self.0)
+                    .stderr(Stdio::null())
+                    .output()
+                    .ok()
+                    .map(|o| {
+                        String::from_utf8_lossy(&o.stdout)
+                            .lines()
+                            .filter_map(|s| s.parse().ok())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+        }
+        fn signal_tree(&self, leader: u32, leader_alive: bool, observed: &mut Vec<i32>, sig: i32) {
+            // Retain discovered descendants through escalation, as the source does.
+            // Exclude the original leader after reaping unless fresh lineage proves ownership.
+            let mut pids: Vec<i32> = observed
+                .iter()
+                .copied()
+                .filter(|pid| leader_alive || *pid != leader as i32)
+                .collect();
+            for pid in self
+                .holders()
+                .into_iter()
+                .chain(leader_alive.then_some(leader as i32))
+            {
+                if !pids.contains(&pid) {
+                    pids.push(pid);
+                }
+            }
+            if let Ok(output) = Command::new("/bin/ps").args(["-eo", "pid=,ppid="]).output() {
+                let rows: Vec<(i32, i32)> = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter_map(|line| {
+                        let mut fields = line.split_whitespace();
+                        Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+                    })
+                    .collect();
+                loop {
+                    let old = pids.len();
+                    for (pid, parent) in &rows {
+                        if pids.contains(parent) && !pids.contains(pid) {
+                            pids.push(*pid);
+                        }
+                    }
+                    if old == pids.len() {
+                        break;
+                    }
+                }
+            }
+            // Only descendants/holders of this invocation's private inherited file.
+            *observed = pids.clone();
+            for pid in pids
+                .into_iter()
+                .rev()
+                .filter(|pid| *pid > 1 && *pid != std::process::id() as i32)
+            {
+                unsafe {
+                    kill(pid, sig);
+                }
+            }
+        }
+    }
+    pub fn run(
+        path: &Path,
+        cwd: &Path,
+        env: &BTreeMap<String, String>,
+        timeout: Duration,
+    ) -> io::Result<Captured> {
+        let start = Instant::now();
+        let mut command = Command::new(path);
+        command
+            .current_dir(cwd)
+            .envs(env)
+            .env_remove("ARASHI_DIRECTIVE_FILE")
+            .env_remove("ARASHI_SHELL")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        use std::os::fd::AsRawFd;
+        let (lineage, descriptor) = Lineage::create()?;
+        let fd = descriptor.as_raw_fd();
+        // SAFETY: dup2/fcntl are async-signal-safe; the descriptor remains live
+        // through spawn. FD 3 deliberately survives exec for descendant discovery.
+        unsafe {
+            command.pre_exec(move || {
+                if dup2(fd, 3) < 0 || fcntl(3, 2, 0_i32) < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = match spawn_direct(&mut command) {
+            Ok(child) => child,
+            Err(e) => {
+                return Ok(Captured {
+                    stdout: String::new(),
+                    stderr: format!(
+                        "Failed to execute hook: {}",
+                        if cfg!(target_os = "macos") && e.raw_os_error() == Some(8) {
+                            "spawn ENOEXEC".to_owned()
+                        } else {
+                            e.to_string()
+                        }
+                    ),
+                    exit_code: -1,
+                    elapsed_ms: start.elapsed().as_millis(),
+                    timed_out: false,
+                    signaled: false,
+                    termination_signal: None,
+                    error: None,
+                });
+            }
+        };
+        drop(descriptor);
+        thread::scope(|scope| {
+            let stdout = scope.spawn(read_pipe(child.stdout.take().unwrap()));
+            let stderr = scope.spawn(read_pipe(child.stderr.take().unwrap()));
+            let mut status = None;
+            let mut stopping = None;
+            let mut timed_out = false;
+            let mut interrupted_run = false;
+            let mut observed = Vec::new();
+            loop {
+                if status.is_none() {
+                    status = child.try_wait()?;
+                }
+                if stopping.is_none() && (interrupted() || start.elapsed() >= timeout) {
+                    interrupted_run = interrupted();
+                    timed_out = !interrupted_run;
+                    lineage.signal_tree(
+                        child.id(),
+                        status.is_none(),
+                        &mut observed,
+                        if interrupted_run { 2 } else { 15 },
+                    );
+                    stopping = Some(Instant::now());
+                }
+                if let Some(stop) = stopping
+                    && (stop.elapsed() >= Duration::from_millis(250) || status.is_some())
+                {
+                    lineage.signal_tree(child.id(), status.is_none(), &mut observed, 9);
+                }
+                if status.is_some() && stdout.is_finished() && stderr.is_finished() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            let status = status.unwrap();
+            Ok(Captured {
+                stdout: stdout.join().expect("hook stdout reader")?,
+                stderr: stderr.join().expect("hook stderr reader")?,
+                exit_code: if interrupted_run {
+                    130
+                } else if timed_out {
+                    -1
+                } else {
+                    status.code().unwrap_or(-1)
+                },
+                elapsed_ms: start.elapsed().as_millis(),
+                timed_out,
+                signaled: interrupted_run || status.code().is_none(),
+                termination_signal: std::os::unix::process::ExitStatusExt::signal(&status),
+                error: None,
+            })
+        })
+    }
 }
