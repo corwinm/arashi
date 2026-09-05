@@ -51,9 +51,12 @@ impl Fixture {
         c
     }
     fn git(&self, cwd: &Path, args: &[&str]) -> String {
+        // Setup commits can leave detached maintenance changing object files
+        // after Git exits. Disable it only for fixture operations; doctor must
+        // still prove read-only behavior without this protection.
         let o = self
             .command("git", cwd)
-            .args(["-c", "commit.gpgsign=false"])
+            .args(["-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"])
             .args(args)
             .output()
             .unwrap();
@@ -154,6 +157,45 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(self.root.parent().unwrap());
     }
+}
+#[test]
+fn fixture_commits_do_not_launch_automatic_maintenance() {
+    let f = Fixture::new(true);
+    // Force observable maintenance on every commit, synchronously so the
+    // regression does not depend on catching a short-lived maintenance.lock.
+    for (key, value) in [
+        ("maintenance.auto", "true"),
+        ("maintenance.autoDetach", "false"),
+        ("gc.autoDetach", "false"),
+        ("maintenance.gc.enabled", "false"),
+        ("maintenance.commit-graph.enabled", "true"),
+        ("maintenance.commit-graph.auto", "-1"),
+    ] {
+        f.git(&f.root, &["config", key, value]);
+    }
+    let graph = f.root.join(".git/objects/info/commit-graphs");
+    assert!(!graph.exists());
+    f.git(&f.root, &["commit", "--allow-empty", "-m", "fixture"]);
+    assert!(
+        !graph.exists(),
+        "fixture commit launched automatic maintenance before doctor ran"
+    );
+
+    // Positive control: ordinary Git really performs the configured work.
+    let output = f
+        .command("git", &f.root)
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "maintenance control",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(graph.exists(), "control must exercise real Git maintenance");
 }
 #[test]
 fn ordinary_and_outside() {
