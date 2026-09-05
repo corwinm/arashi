@@ -2164,3 +2164,4 @@ include!("rust/lifecycle.rs");
 include!("rust/materialization.rs");
 
 include!("rust/create_reuse.rs");
+include!("rust/create_remote.rs");

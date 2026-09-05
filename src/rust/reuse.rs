@@ -80,6 +80,21 @@ pub(super) fn inspect(_root: &Path, _target: &Path, _branch: &str) -> Result<Ide
 
 #[cfg(unix)]
 pub(super) fn inspect(root: &Path, target: &Path, branch: &str) -> Result<Identity> {
+    inspect_inner(root, target, branch, false)
+}
+
+#[cfg(unix)]
+pub(super) fn inspect_created(root: &Path, target: &Path, branch: &str) -> Result<Identity> {
+    inspect_inner(root, target, branch, true)
+}
+
+#[cfg(not(unix))]
+pub(super) fn inspect_created(root: &Path, target: &Path, branch: &str) -> Result<Identity> {
+    inspect(root, target, branch)
+}
+
+#[cfg(unix)]
+fn inspect_inner(root: &Path, target: &Path, branch: &str, created: bool) -> Result<Identity> {
     // Freeze both sides of Git's reciprocal link. Merely appearing in worktree list
     // does not prove that the destination still belongs to this repository.
     if [root, target]
@@ -145,7 +160,7 @@ pub(super) fn inspect(root: &Path, target: &Path, branch: &str) -> Result<Identi
             "Worktree Git identity does not match the planned destination",
         ));
     }
-    if !git::run(root, &["remote"])?.trim().is_empty() {
+    if !created && !git::run(root, &["remote"])?.trim().is_empty() {
         return Err(unsupported(
             "Remote-backed existing destination reuse is not yet ported",
         ));

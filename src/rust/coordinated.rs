@@ -6,6 +6,8 @@ use crate::{
     git,
     managed::{IgnorePlan, Transaction, relative, safe, unsupported},
 };
+#[path = "create_remote.rs"]
+mod create_remote;
 #[path = "reuse.rs"]
 mod reuse;
 use serde_json::{Value, json};
@@ -22,7 +24,9 @@ struct Item {
     source: String,
     existing: bool,
     reuse: Option<reuse::Identity>,
+    remote: Option<create_remote::Identity>,
     base: Value,
+    requested_base: Option<(String, String)>,
 }
 fn primary(root: &Path) -> Result<()> {
     safe(root)?;
@@ -42,7 +46,7 @@ fn policy(w: &Workspace, args: &Args) -> Result<()> {
     let c = w.config.as_ref().unwrap();
     if args
         .value("conflict")
-        .is_some_and(|v| v != "REUSE_EXISTING")
+        .is_some_and(|v| v != "REUSE_EXISTING" && v != "ABORT")
     {
         return Err(unsupported(
             "Only explicit REUSE_EXISTING conflict policy is currently ported",
@@ -191,12 +195,44 @@ fn plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
             Error::new("REPOSITORY_VALIDATION_ERROR", e.message)
         }
     })?;
+    // Discover conflict evidence for the entire selection without resolving any
+    // object. A later sibling may have lazy-fetch configuration even when the
+    // first repository's remote conflict is otherwise supported.
+    let selected_roots = selected
+        .iter()
+        .map(|name| {
+            rows.iter()
+                .find(|(n, _, _)| n == name)
+                .map(|(_, root, _)| root)
+                .ok_or_else(|| unsupported("Selected repository is not discovered"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut remote_scope = false;
+    for root in &selected_roots {
+        remote_scope |= create_remote::has_target_conflict(root, branch)?;
+    }
+    if remote_scope {
+        if !args.has("json")
+            || !args.has("no-hooks")
+            || !matches!(args.value("conflict"), Some("ABORT" | "REUSE_EXISTING"))
+        {
+            return Err(unsupported(
+                "Remote create requires JSON and explicit conflict/no-hooks",
+            ));
+        }
+        for root in &selected_roots {
+            create_remote::preflight(root)?;
+        }
+    }
     let mut items = vec![];
     for name in selected {
         let (_, root, child) = rows
             .iter()
             .find(|(n, _, _)| *n == name)
             .ok_or_else(|| unsupported("Selected repository is not discovered"))?;
+        if remote_scope {
+            create_remote::preflight(root)?;
+        }
         let destination = if child.as_os_str().is_empty() {
             target.clone()
         } else {
@@ -261,26 +297,35 @@ fn plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
             ],
         )
         .is_ok();
-        if existing
-            && (args.value("conflict") != Some("REUSE_EXISTING")
-                || (args.has("dry-run") && reuse.is_none()))
-        {
+        let remote = if create_remote::has_target_conflict(root, branch)? {
+            if !remote_scope {
+                return Err(Error::new(
+                    "PLAN_CHANGED",
+                    "Remote conflict appeared during planning",
+                ));
+            }
+            create_remote::inspect(root, branch)?
+        } else {
+            None
+        };
+        if remote.is_some() && existing {
             return Err(unsupported(
-                "Existing configured branches require --conflict REUSE_EXISTING; conflict dry-run is not yet ported",
+                "Remote create with an existing local target is not yet supported",
             ));
         }
         let source = if existing {
             format!("refs/heads/{branch}")
-        } else if git::run(
-            root,
-            &[
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/remotes/origin/{branch}"),
-            ],
-        )
-        .is_ok()
+        } else if remote.is_none()
+            && git::run(
+                root,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/remotes/origin/{branch}"),
+                ],
+            )
+            .is_ok()
         {
             return Err(unsupported(
                 "Configured remote-only target conflicts are not yet ported",
@@ -301,7 +346,11 @@ fn plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
             .find(|r| git::run(root, &["show-ref", "--verify", "--quiet", r]).is_ok())
             .ok_or_else(|| unsupported("Unresolved default start point"))?
         };
-        let oid = git::run(root, &["rev-parse", &source])?.trim().into();
+        let oid = if remote_scope {
+            create_remote::local_source(root, &source)?
+        } else {
+            git::run(root, &["rev-parse", &source])?.trim().into()
+        };
         items.push(Item {
             name,
             root: root.clone(),
@@ -310,7 +359,9 @@ fn plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
             source,
             existing,
             reuse,
+            remote,
             base: Value::Null,
+            requested_base: None,
         });
     }
     if items.iter().any(|i| i.reuse.is_some()) {
@@ -339,7 +390,61 @@ fn plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
             nested_safety(&item.target, &items)?;
         }
     }
+    if remote_scope {
+        for root in &selected_roots {
+            create_remote::preflight(root)?;
+        }
+    }
     resolve_bases(w, args, &mut items)?;
+    let remote_scope = items.iter().any(|i| i.remote.is_some());
+    if remote_scope {
+        if !args.has("json")
+            || !args.has("no-hooks")
+            || !matches!(args.value("conflict"), Some("ABORT" | "REUSE_EXISTING"))
+            || items.iter().any(|i| {
+                i.reuse.is_some()
+                    || !i.source.starts_with("refs/heads/")
+                    || w.config
+                        .as_ref()
+                        .unwrap()
+                        .repos
+                        .get(&i.name)
+                        .is_some_and(|r| {
+                            ["copy", "symlink"]
+                                .iter()
+                                .any(|k| r.raw[*k].as_array().is_some_and(|a| !a.is_empty()))
+                        })
+            })
+        {
+            return Err(unsupported(
+                "Remote create requires JSON, explicit conflict/no-hooks and local bases; reuse/materialization combinations are not yet supported",
+            ));
+        }
+        for item in &items {
+            reuse::repository_safety(&item.root)?;
+            if git::run(&item.root, &["symbolic-ref", "HEAD"])?.trim() != "refs/heads/main"
+                || create_remote::local_head(&item.root, "main")?.as_deref()
+                    != Some(item.oid.as_str())
+                || git::worktrees(&item.root)?.len() != 1
+            {
+                return Err(unsupported(
+                    "Remote create requires main-base primary repositories without other registered worktrees",
+                ));
+            }
+        }
+    }
+    if !remote_scope
+        && (args.value("conflict") == Some("ABORT")
+            || items.iter().any(|i| {
+                i.existing
+                    && (args.value("conflict") != Some("REUSE_EXISTING")
+                        || args.has("dry-run") && i.reuse.is_none())
+            }))
+    {
+        return Err(unsupported(
+            "Existing configured branches require --conflict REUSE_EXISTING; conflict dry-run is not yet ported",
+        ));
+    }
     // The parent must precede its children even when explicitly selected last.
     items.sort_by_key(|i| usize::from(i.root != w.root));
     Ok(items)
@@ -384,6 +489,15 @@ fn validate_reuse_safety(
 }
 pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     let items = plan(w, args)?;
+    let remote_scope = items.iter().any(|i| i.remote.is_some());
+    let remote_primaries = if remote_scope {
+        items
+            .iter()
+            .map(|i| Ok((i.root.clone(), create_remote::primary(&i.root)?)))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        vec![]
+    };
     let reuse_safety = reuse_safety(&items)?;
     let branch = &args.positional[0];
     let dry = args.has("dry-run");
@@ -391,6 +505,11 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     let materialization_plans = plan_materialization(w, &items)?;
     crate::materialization::require_actionable(&materialization_plans)?;
     let ignore = IgnorePlan::build(&w.root, &c.repos_dir, &c.worktrees_dir, dry)?;
+    if remote_scope && ignore.data["attempted"] == true {
+        return Err(unsupported(
+            "Remote conflicts require managed paths to be already ignored; ignore reconciliation is not yet supported in this subset",
+        ));
+    }
     let mut rows = vec![];
     let targets = items
         .iter()
@@ -404,7 +523,9 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     let _interrupt_guard = hook_plan.guard()?;
     let mut hook_outcomes = vec![];
     let mut dirty_workspace_guidance = Value::Null;
-    if !dry {
+    let remote_abort =
+        args.value("conflict") == Some("ABORT") && items.iter().any(|i| i.remote.is_some());
+    if !dry && !remote_abort {
         let current = Workspace::discover(&w.root)?;
         if current.config.as_ref().unwrap().raw != c.raw || plan(&current, args)? != items {
             return Err(Error::new(
@@ -415,6 +536,7 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
         validate_reuse_safety(&items, &reuse_safety)?;
         let mut tx = Transaction::default();
         let mut owned: Vec<&Item> = vec![];
+        let mut remote_created = vec![];
         let mut materialized = crate::materialization::Ownership::default();
         let operation = (|| -> Result<()> {
             let pre = hook_plan.run("pre-create", Some("workspace"), true)?;
@@ -446,18 +568,26 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                 // Recheck each repository immediately before creating its branch/worktree.
                 validate_reuse(&items, branch)?;
                 validate_reuse_safety(&items, &reuse_safety)?;
+                create_remote::validate(&items, branch, &owned)?;
+                create_remote::validate_primaries(&remote_primaries)?;
+                create_remote::validate_created(&remote_created, branch)?;
                 if (item.reuse.is_none() && item.target.exists())
-                    || git::run(&item.root, &["rev-parse", &item.source])?.trim() != item.oid
+                    || if remote_scope {
+                        create_remote::local_source(&item.root, &item.source)? != item.oid
+                    } else {
+                        git::run(&item.root, &["rev-parse", &item.source])?.trim() != item.oid
+                    }
                 {
                     return Err(Error::new(
                         "PLAN_CHANGED",
                         "Repository changed during coordinated create",
                     ));
                 }
+                create_remote::validate_pending(&items, branch, &owned)?;
                 if item.reuse.is_none() {
                     tx.mkdir(item.target.parent().unwrap())?;
                     if !item.existing {
-                        let source = if item.base["source"] != "legacy-omitted" {
+                        let source = if remote_scope || item.base["source"] != "legacy-omitted" {
                             &item.oid
                         } else {
                             &item.source
@@ -471,6 +601,12 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                         &item.root,
                         &["worktree", "add", item.target.to_str().unwrap(), branch],
                     )?;
+                    if remote_scope {
+                        remote_created.push((
+                            item,
+                            reuse::inspect_created(&item.root, &item.target, branch)?,
+                        ));
+                    }
                 }
                 let mut repo_hooks = vec![];
                 let mut materialization_outcomes = vec![];
@@ -501,6 +637,9 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                 rows.push(json!({"branchName":branch,"duration":0,"error":null,"hookOutcomes":repo_hooks,"materializationOutcomes":materialization_outcomes,"repositoryName":item.name,"repositoryPath":item.root,"status":"success","warnings":if item.existing {vec![format!("Reused existing branch '{branch}'")]}else{vec![]},"worktreePath":item.target}));
             }
             validate_reuse(&items, branch)?;
+            create_remote::validate(&items, branch, &owned)?;
+            create_remote::validate_primaries(&remote_primaries)?;
+            create_remote::validate_created(&remote_created, branch)?;
             let post = hook_plan.run("post-create", Some("workspace"), true)?;
             let failure = crate::hooks::failure(&post);
             hook_outcomes.extend(post);
@@ -511,12 +650,44 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
             validate_reuse_safety(&items, &reuse_safety)?;
             dirty_workspace_guidance = dirty_guidance(w, branch, &items)?;
             validate_reuse(&items, branch)?;
+            create_remote::validate(&items, branch, &owned)?;
+            create_remote::validate_primaries(&remote_primaries)?;
+            create_remote::validate_created(&remote_created, branch)?;
+            create_remote::validate_pending(&items, branch, &owned)?;
             Ok(())
         })();
         if let Err(e) = operation {
             // Git ownership must still hold before deleting even invocation-written files:
             // a hook may have committed them or changed/locked the registered worktree.
             let mut rollback_errors = vec![];
+            // Preserve changed objects and ancestors containing them, while allowing
+            // independent siblings with intact ownership proofs to roll back.
+            let changed_created: Vec<_> = remote_created
+                .iter()
+                .filter(|proof| {
+                    create_remote::validate_created(std::slice::from_ref(proof), branch).is_err()
+                })
+                .map(|(item, _)| &item.target)
+                .chain(
+                    owned
+                        .iter()
+                        .filter(|item| {
+                            remote_scope
+                                && !remote_created
+                                    .iter()
+                                    .any(|(done, _)| done.root == item.root)
+                                && item.target.symlink_metadata().is_ok()
+                        })
+                        .map(|item| &item.target),
+                )
+                .collect();
+            let changed_primaries: Vec<_> = remote_primaries
+                .iter()
+                .filter(|proof| {
+                    create_remote::validate_primaries(std::slice::from_ref(proof)).is_err()
+                })
+                .map(|(root, _)| root)
+                .collect();
             // A reused ancestor is caller-owned. If its filesystem/Git ownership
             // changed, even a newly added descendant may now name someone else's
             // files. Preserve the whole transaction rather than clean through it.
@@ -579,6 +750,26 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
             }
             let materialization_preserved = !rollback_errors.is_empty();
             for item in owned.into_iter().rev() {
+                if changed_created.iter().any(|target| {
+                    item.target.starts_with(target) || target.starts_with(&item.target)
+                }) || changed_primaries
+                    .iter()
+                    .any(|root| item.root.starts_with(root) || item.target.starts_with(root))
+                    || remote_created
+                        .iter()
+                        .filter(|(done, _)| done.root == item.root)
+                        .any(|proof| {
+                            create_remote::validate_created(std::slice::from_ref(proof), branch)
+                                .is_err()
+                        })
+                {
+                    rollback_errors.push(format!(
+                        "Worktree ownership changed; preserved for recovery: {}",
+                        item.target.display()
+                    ));
+                    continue;
+                }
+
                 if materialization_preserved {
                     rollback_errors.push(format!(
                         "Worktree preserved after materialization rollback failure: {}",
@@ -601,6 +792,7 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                     if record.head != item.oid
                         || record.branch.as_deref() != Some(branch)
                         || record.locked
+                        || record.prune_reason.is_some()
                     {
                         rollback_errors.push(format!(
                             "Worktree ownership changed: {}",
@@ -625,9 +817,13 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                     }
                 }
                 if !item.existing {
-                    if git::run(&item.root, &["rev-parse", &format!("refs/heads/{branch}")])
-                        .is_ok_and(|oid| oid.trim() == item.oid)
-                    {
+                    if if remote_scope {
+                        create_remote::local_head(&item.root, branch)
+                            .is_ok_and(|oid| oid.as_deref() == Some(item.oid.as_str()))
+                    } else {
+                        git::run(&item.root, &["rev-parse", &format!("refs/heads/{branch}")])
+                            .is_ok_and(|oid| oid.trim() == item.oid)
+                    } {
                         if let Err(e) = git::run(&item.root, &["branch", "-D", branch]) {
                             rollback_errors.push(e.message);
                         }
@@ -645,9 +841,12 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     let count = items.len();
     data.as_object_mut().unwrap().extend(json!({"branchName":branch,"dirtyWorkspaceGuidance":null,"dryRun":dry,"errorSummary":null,"failureCount":0,"hookOutcomes":hook_outcomes,"managedIgnore":ignore.data,"moveSummary":null,"nextSteps":[],"repositories":rows,"rolledBack":false,"skippedCount":if dry {count}else{0},"successCount":if dry {0}else{count},"totalDuration":0,"totalRepositories":count}).as_object().unwrap().clone());
     if dry {
-        let conflicts = items.iter().filter(|i| i.reuse.is_some()).map(|i| json!({"blocking":false,"conflictType":"branch_exists","message":format!("Branch '{branch}' already exists locally"),"repositoryName":i.name,"scope":format!("{}:{branch}",i.name)})).collect::<Vec<_>>();
+        let conflicts = items.iter().filter(|i| i.reuse.is_some() || i.remote.is_some() || i.existing).map(|i| json!({"blocking":remote_abort,"conflictType":"branch_exists","message":format!("Branch '{branch}' already exists {}", if i.remote.is_some() { "remotely" } else { "locally" }),"repositoryName":i.name,"scope":format!("{}:{branch}",i.name)})).collect::<Vec<_>>();
         let conflict_count = conflicts.len();
-        data["dryRunOutcome"] = json!({"conflicts":conflicts,"plannedWorktrees":items.iter().map(|i|json!({"branchName":branch,"planStatus":"actionable","repositoryName":i.name,"worktreePath":i.target})).collect::<Vec<_>>(),"summaryCounts":{"blockingTotal":0,"conflictTotal":conflict_count,"plannedTotal":count}});
+        data["dryRunOutcome"] = json!({"conflicts":conflicts,"plannedWorktrees":items.iter().map(|i|json!({"branchName":branch,"planStatus":if remote_abort && (i.remote.is_some() || i.existing) { "blocked" } else { "actionable" },"repositoryName":i.name,"worktreePath":i.target})).collect::<Vec<_>>(),"summaryCounts":{"blockingTotal":if remote_abort {conflict_count}else{0},"conflictTotal":conflict_count,"plannedTotal":count}});
+        if remote_abort {
+            data["errorSummary"] = json!("Blocking conflicts detected during dry-run");
+        }
     }
     if !materialization_plans.is_empty() {
         data["repositoryResults"] = data["repositories"].clone();
@@ -663,6 +862,21 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     }
     if !dry {
         data["dirtyWorkspaceGuidance"] = dirty_workspace_guidance;
+    }
+    if dry || remote_abort {
+        create_remote::validate(&items, branch, &[])?;
+        create_remote::validate_primaries(&remote_primaries)?;
+        create_remote::validate_pending(&items, branch, &[])?;
+    }
+    if remote_abort && !dry {
+        data["errorSummary"] = json!("Operation aborted due to branch conflicts");
+        data["failureCount"] = json!(1);
+        data["successCount"] = json!(0);
+        data["rolledBack"] = json!(true);
+        return Err(
+            Error::new("CREATE_FAILED", "Operation aborted due to branch conflicts")
+                .with_details(data),
+        );
     }
     Ok(data)
 }
@@ -794,7 +1008,9 @@ fn remove_plan(w: &Workspace, args: &Args) -> Result<RemovePlan> {
                 source: branch.clone(),
                 existing: true,
                 reuse: None,
+                remote: None,
                 base: Value::Null,
+                requested_base: None,
             });
         }
     }
@@ -980,6 +1196,7 @@ pub fn remove(w: &Workspace, args: &Args) -> Result<Value> {
     Ok(data)
 }
 fn resolve_bases(w: &Workspace, args: &Args, items: &mut [Item]) -> Result<()> {
+    let remote_scope = items.iter().any(|item| item.remote.is_some());
     let c = w.config.as_ref().unwrap();
     let mut overrides = std::collections::BTreeMap::new();
     let mut issues = vec![];
@@ -1071,7 +1288,7 @@ fn resolve_bases(w: &Workspace, args: &Args, items: &mut [Item]) -> Result<()> {
                     .as_str()
                     .map(|b| (b, "workspace-config"))
             });
-        let mut value = json!({"repositoryName":i.name,"repositoryIdentity":identity,"repositoryPath":i.root,"targetAction":if i.existing{"reused"}else{"created"}});
+        let mut value = json!({"repositoryName":i.name,"repositoryIdentity":identity,"repositoryPath":i.root,"targetAction":if i.existing && args.value("conflict") != Some("ABORT"){"reused"}else{"created"}});
         if let Some((branch, source)) = requested {
             let branch = branch.strip_prefix("origin/").unwrap_or(branch);
             git::run(&i.root, &["check-ref-format", "--branch", branch])?;
@@ -1084,16 +1301,22 @@ fn resolve_bases(w: &Workspace, args: &Args, items: &mut [Item]) -> Result<()> {
                 format!("refs/heads/{branch}"),
                 format!("refs/remotes/origin/{branch}"),
             ];
-            if let Some((reference, oid)) = refs.iter().find_map(|r| {
-                git::run(
-                    &i.root,
-                    &["rev-parse", "--verify", &format!("{r}^{{commit}}")],
-                )
-                .ok()
-                .map(|oid| (r, oid.trim().to_owned()))
-            }) {
+            let resolved = if remote_scope {
+                create_remote::local_head(&i.root, branch)?.map(|oid| (&refs[0], oid))
+            } else {
+                refs.iter().find_map(|r| {
+                    git::run(
+                        &i.root,
+                        &["rev-parse", "--verify", &format!("{r}^{{commit}}")],
+                    )
+                    .ok()
+                    .map(|oid| (r, oid.trim().to_owned()))
+                })
+            };
+            if let Some((reference, oid)) = resolved {
                 value["resolvedRef"] = json!(reference);
                 value["resolvedOid"] = json!(oid);
+                i.requested_base = Some((reference.clone(), oid.clone()));
                 if !i.existing {
                     i.source = reference.clone();
                     i.oid = oid;
@@ -1101,7 +1324,11 @@ fn resolve_bases(w: &Workspace, args: &Args, items: &mut [Item]) -> Result<()> {
             } else {
                 let mut failure = value.clone();
                 failure.as_object_mut().unwrap().remove("targetAction");
-                failure["attemptedRefs"] = json!(refs);
+                failure["attemptedRefs"] = if remote_scope {
+                    json!([refs[0]])
+                } else {
+                    json!(refs)
+                };
                 failures.push(failure);
             }
         } else {
