@@ -311,7 +311,7 @@ impl RemovePlan {
         standalone(w)?;
         no_global_hooks()?;
         let target_path = if path_mode {
-            Some(fs::canonicalize(target)?)
+            Some(crate::paths::canonicalize(target)?)
         } else {
             None
         };
@@ -344,7 +344,7 @@ impl RemovePlan {
             ));
         }
         safe_ancestors(&target.path)?;
-        let current = std::env::current_dir()?.canonicalize()?;
+        let current = crate::paths::canonicalize(std::env::current_dir()?)?;
         if current.starts_with(&target.path) {
             return Err(unsupported(
                 "Removing the caller worktree is not yet ported",

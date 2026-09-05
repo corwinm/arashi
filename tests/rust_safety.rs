@@ -18,7 +18,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::SeqCst)
         ));
         fs::create_dir(&root).unwrap();
-        let root = root.canonicalize().unwrap();
+        let root = arashi::paths::canonicalize(&root).unwrap();
         let home = root.join(".test-home");
         fs::create_dir(&home).unwrap();
         let f = Self { root, home };

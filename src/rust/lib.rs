@@ -63,3 +63,5 @@ pub mod selection;
 pub mod managed;
 
 pub mod coordinated;
+
+pub mod paths;

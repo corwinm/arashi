@@ -16,7 +16,7 @@ impl Repo {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&p).unwrap();
-        let r = Self(fs::canonicalize(p).unwrap());
+        let r = Self(arashi::paths::canonicalize(p).unwrap());
         r.git(&["init", "-b", "main"]);
         r.git(&["config", "user.email", "test@example.invalid"]);
         r.git(&["config", "user.name", "Test"]);
@@ -55,7 +55,7 @@ fn standalone_clean_shape() {
     let data = arashi::status::status(&r.workspace(), &r.0).unwrap();
     assert_eq!(
         data,
-        json!({"callerWorktree":r.0,"currentBranch":"main","mode":"standalone","repositoryPath":r.0,"summary":{"cleanCount":1,"dirtyCount":0,"total":1},"workspaceRoot":r.0,"worktreesBase":r.0.join(".worktrees"),"worktrees":[{"name":"main","path":r.0,"branch":{"ahead":0,"behind":0,"isDetached":false,"localBranch":"main","remoteBranch":null},"baseBranch":null,"defaultBranch":{"branch":"main","compareRef":"refs/heads/main","remote":null,"remoteRef":null,"reason":"on-default-branch","state":"skipped"},"error":null,"files":[],"refreshWarning":null}]})
+        json!({"callerWorktree":r.0,"currentBranch":"main","mode":"standalone","repositoryPath":r.0,"summary":{"cleanCount":1,"dirtyCount":0,"total":1},"workspaceRoot":r.0,"worktreesBase":r.0.join(".worktrees"),"worktrees":[{"name":"main","path":arashi::git::worktrees(&r.0).unwrap()[0].path,"branch":{"ahead":0,"behind":0,"isDetached":false,"localBranch":"main","remoteBranch":null},"baseBranch":null,"defaultBranch":{"branch":"main","compareRef":"refs/heads/main","remote":null,"remoteRef":null,"reason":"on-default-branch","state":"skipped"},"error":null,"files":[],"refreshWarning":null}]})
     );
 }
 #[test]
@@ -133,4 +133,16 @@ fn source_oracle() {
         actual["data"],
         arashi::status::status(&r.workspace(), &r.0).unwrap()
     );
+}
+
+#[test]
+fn linked_status_matches_native_caller_to_git_path() {
+    let r = Repo::new();
+    let linked = r.0.join("linked worktree");
+    r.git(&["worktree", "add", "-b", "feature", linked.to_str().unwrap()]);
+    let caller = fs::canonicalize(&linked).unwrap();
+    let data = arashi::status::status(&r.workspace(), &caller).unwrap();
+    assert_eq!(data["callerWorktree"], json!(linked));
+    assert_eq!(data["currentBranch"], "feature");
+    assert_eq!(data["summary"]["total"], 2);
 }

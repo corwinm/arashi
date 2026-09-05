@@ -21,7 +21,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&base).unwrap();
-        let base = base.canonicalize().unwrap();
+        let base = arashi::paths::canonicalize(&base).unwrap();
         let f = Self {
             repo: base.join("workspace"),
             home: base.join("home"),

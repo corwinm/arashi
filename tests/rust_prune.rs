@@ -19,7 +19,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&p).unwrap();
-        let p = p.canonicalize().unwrap();
+        let p = arashi::paths::canonicalize(&p).unwrap();
         init(&p);
         fs::create_dir(p.join(".worktrees")).unwrap();
         Self(p)

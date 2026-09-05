@@ -7,6 +7,10 @@ on:
       - "src/rust/**"
       - "tests/rust*"
       - "tests/rust/**"
+      - "tests/helpers/node-runtime.ts"
+      - "tests/unit/node-runtime.test.ts"
+      - "tests/integration/standalone-lifecycle.test.ts"
+      - "tests/integration/init.zero-config.test.ts"
       - "Cargo.toml"
       - "Cargo.lock"
       - "contracts/cli-commands.json"
@@ -56,4 +60,18 @@ jobs:
       - run: cargo build --locked --release
       - name: External release binary versus retained TypeScript oracle
         run: node tests/rust/parity.mjs target/release/arashi target/source-parity.json
+      - name: Test native-binary routing
+        run: node node_modules/vitest/vitest.mjs run tests/unit/node-runtime.test.ts
+      - name: Five retained integration tests against source and native
+        shell: bash
+        run: |
+          for implementation in source native; do
+            unset ARASHI_TEST_BINARY
+            if [[ "$implementation" == native ]]; then
+              export ARASHI_TEST_BINARY="$PWD/target/release/arashi"
+            fi
+            printf '\nTesting retained subset against %s\n' "$implementation"
+            node node_modules/vitest/vitest.mjs run tests/integration/standalone-lifecycle.test.ts -t 'bootstraps, creates slash path, lists/statuses from linked worktree, and removes'
+            node node_modules/vitest/vitest.mjs run tests/integration/init.zero-config.test.ts -t 'creates only the convention|preserves no-final-newline|honors an existing tracked|preserves CRLF'
+          done
       # Reports stay in the job workspace; this workflow does not publish artifacts.

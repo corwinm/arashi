@@ -139,7 +139,7 @@ fn repositories(w: &Workspace) -> Result<Vec<(String, PathBuf, PathBuf)>> {
             .to_owned();
         for (id, r) in &c.repos {
             let configured = w.root.join(&r.path);
-            if configured.canonicalize().ok() == Some(root.clone()) {
+            if crate::paths::canonicalize(&configured).ok() == Some(root.clone()) {
                 name = id.clone();
                 child_path = configured
                     .strip_prefix(&w.root)
@@ -454,7 +454,7 @@ fn remove_plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
     });
     no_remove_hooks(w, &rows)?;
     let branch = &args.positional[0];
-    let caller = std::env::current_dir()?.canonicalize()?;
+    let caller = crate::paths::canonicalize(std::env::current_dir()?)?;
     let mut items = vec![];
     for (name, root, _) in rows {
         let records = git::worktrees(&root)?;

@@ -13,7 +13,7 @@ impl Repo {
             NEXT.fetch_add(1, Ordering::SeqCst)
         ));
         std::fs::create_dir_all(&p).unwrap();
-        let r = Self(p.canonicalize().unwrap());
+        let r = Self(arashi::paths::canonicalize(&p).unwrap());
         r.git(&["init", "-b", "main"]);
         r.git(&[
             "-c",
@@ -190,7 +190,7 @@ fn list_plain_is_pipe_friendly_and_install_contract() {
     assert!(o.status.success());
     assert_eq!(
         String::from_utf8(o.stdout).unwrap(),
-        format!("{}\n", r.0.display())
+        format!("{}\n", r.git(&["rev-parse", "--show-toplevel"]).trim())
     );
     let o = r.cli(&["install", "--json"]);
     assert!(o.status.success());
@@ -335,4 +335,31 @@ fn prune_native_journey_preserves_branch_and_live_worktree() {
     );
     assert!(!r.git(&["branch", "--list", "stale"]).is_empty());
     assert!(r.0.join(".git").exists());
+}
+
+#[test]
+fn removal_protects_caller_inside_worktree_for_both_workspace_modes() {
+    for configured in [false, true] {
+        let r = Repo::new();
+        let init = if configured {
+            r.cli(&["init", "--no-discover", "--worktrees-dir", ".worktrees"])
+        } else {
+            r.cli(&["init", "--zero-config"])
+        };
+        assert!(init.status.success(), "{init:?}");
+        let linked = r.0.join(".worktrees").join("feature");
+        r.git(&["worktree", "add", "-b", "feature", linked.to_str().unwrap()]);
+        let nested = linked.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let output = run(&nested, &["remove", "feature", "--force", "--json"]);
+        assert!(!output.status.success(), "{output:?}");
+        assert!(
+            document(&output)["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("caller")
+        );
+        assert!(linked.join(".git").is_file());
+        assert!(!r.git(&["branch", "--list", "feature"]).is_empty());
+    }
 }

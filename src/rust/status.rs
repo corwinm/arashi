@@ -220,10 +220,14 @@ pub fn status_filtered(
             &w.path,
         )?);
     }
-    let caller = cwd.canonicalize()?;
+    let caller = crate::paths::canonicalize(cwd)?;
     let current = statuses
         .iter()
-        .find(|s| s["path"].as_str() == caller.to_str())
+        .find(|s| {
+            s["path"]
+                .as_str()
+                .is_some_and(|path| Path::new(path) == caller)
+        })
         .map(|s| s["branch"]["localBranch"].clone())
         .unwrap_or(Value::Null);
     let clean = statuses

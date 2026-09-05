@@ -18,18 +18,18 @@ fn preflight(name: String, path: PathBuf) -> Result<RepositoryPlan> {
             ));
         }
     }
-    let canonical = fs::canonicalize(&path)?;
+    let canonical = crate::paths::canonicalize(&path)?;
     let worktrees = git::worktrees(&path)?;
     let primary = worktrees
         .first()
         .ok_or_else(|| unsupported("Git returned no primary worktree"))?;
-    if primary.bare || fs::canonicalize(&primary.path)? != canonical {
+    if primary.bare || crate::paths::canonicalize(&primary.path)? != canonical {
         return Err(unsupported(
             "Prune requires primary non-bare repository checkouts; no metadata changed",
         ));
     }
     let top = git::run(&path, &["rev-parse", "--show-toplevel"])?;
-    if fs::canonicalize(top.trim())? != canonical {
+    if crate::paths::canonicalize(top.trim())? != canonical {
         return Err(unsupported(
             "Configured prune target is not a repository root; no metadata changed",
         ));
@@ -59,8 +59,8 @@ pub fn prune(w: &Workspace, dry_run: bool, expire: &str) -> Result<Value> {
     if let Some(config) = &w.config {
         for (name, repo) in &config.repos {
             let path = w.root.join(&repo.path);
-            let canonical = fs::canonicalize(&path)?;
-            if !canonical.starts_with(fs::canonicalize(&w.root)?) {
+            let canonical = crate::paths::canonicalize(&path)?;
+            if !canonical.starts_with(crate::paths::canonicalize(&w.root)?) {
                 return Err(unsupported(
                     "Prune of configured repositories outside the workspace is not yet supported; no metadata changed",
                 ));
@@ -71,7 +71,7 @@ pub fn prune(w: &Workspace, dry_run: bool, expire: &str) -> Result<Value> {
     let mut plans = Vec::new();
     let mut seen = BTreeSet::new();
     for (name, path) in targets {
-        let canonical = fs::canonicalize(&path)?;
+        let canonical = crate::paths::canonicalize(&path)?;
         if !seen.insert(canonical) {
             return Err(unsupported(
                 "Duplicate configured repository identity; no metadata changed",

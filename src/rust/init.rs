@@ -48,6 +48,7 @@ pub fn init(cwd: &Path, dry_run: bool, zero_config: bool) -> Result<Value> {
         })?
         .path
         .clone();
+    let root = crate::paths::canonicalize(root)?;
     if root.join(".arashi/config.json").exists() {
         return Err(failure(
             "A configured Arashi workspace already exists; zero-config standalone mode cannot replace it.",
@@ -163,7 +164,7 @@ pub fn init(cwd: &Path, dry_run: bool, zero_config: bool) -> Result<Value> {
 
 pub fn configured(cwd: &Path, args: &crate::cli::Args) -> Result<Value> {
     use crate::managed::{IgnorePlan, Transaction, relative, safe, unsupported};
-    let root = cwd.canonicalize()?;
+    let root = crate::paths::canonicalize(cwd)?;
     let trees = git::worktrees(&root)?;
     if !trees.first().is_some_and(|w| !w.bare && w.path == root) {
         return Err(unsupported(

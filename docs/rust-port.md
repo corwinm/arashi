@@ -52,16 +52,38 @@ The Rust oracle suite uses real temporary Git repositories and compares complete
 
 [Experimental Rust CI](../.github/workflows/rust.yml) runs Cargo and the configured native release journey on Linux/macOS/Windows. A separate dependency-equipped job runs every source oracle and external release-binary parity, without silently skipping them. No release upload, installer or publication step is added.
 
+## Retained process-test binary opt-in
+
+`tests/helpers/node-runtime.ts` substitutes an explicit absolute `ARASHI_TEST_BINARY` only for direct `[process.execPath | "node", <this checkout's src/index.ts>, ...args]` invocations. Relative entry paths resolve against the child cwd. With the variable unset, source execution is unchanged. Arguments and process options pass through to the existing runtime. Non-CLI Node commands, runtime-flag wrappers, Git commands, PTY outer wrappers, and direct `node:child_process` calls are not redirected. In-process TypeScript tests remain source tests; this is not whole-suite native coverage.
+
+Reproduce the selected retained tests against source, then native (use `.exe` on Windows):
+
+```sh
+unset ARASHI_TEST_BINARY
+node node_modules/vitest/vitest.mjs run tests/integration/standalone-lifecycle.test.ts -t 'bootstraps, creates slash path, lists/statuses from linked worktree, and removes'
+node node_modules/vitest/vitest.mjs run tests/integration/init.zero-config.test.ts -t 'creates only the convention|preserves no-final-newline|honors an existing tracked|preserves CRLF'
+export ARASHI_TEST_BINARY="$PWD/target/release/arashi"
+# Repeat the same two commands with this explicit opt-in.
+unset ARASHI_TEST_BINARY
+```
+
+These five tests cover standalone bootstrap/ignore bytes and idempotence, slash-path create, linked list/status and forced removal. The explicit filters deselect 69 lifecycle and 18 init tests; those are not native coverage. No source/native differences were observed in this slice. Hooks, materialization, PTY interaction and direct child_process suites remain outside this batch.
+
 ## Latest local verification
 
-Verified locally on macOS, 2026-09-04:
+Verified locally on macOS, 2026-09-04, with `CARGO_HOME="$PWD/target/cargo-home"` and Cargo `--offline`:
 
-- `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo build --locked --release`: exit 0. Local Cargo invocations used the worktree-local cache and `--offline`.
-- `ARASHI_TS_PARITY=1 cargo test --locked --all-targets -- --include-ignored --test-threads=4`: **82 passed, 0 failed, 0 ignored**. Full JSON and stderr comparisons remain enabled.
-- External release-binary source parity: **15/15 passed**, including configured discovery file bytes and parent/two-child mutation effects. Report: `target/source-parity.json`.
-- Native configured release journey: **12/12 passed**. Report: `target/native-smoke.json`. Existing Python standalone/alias/prune smoke also exited 0.
-- Parent-provided independent characterization script: **14/18 matched**. Its four remaining differences are doctor from ordinary, configured, configured-child and outside contexts; script exit 1 is retained. Report: `target/independent-parity.json`.
-- Full-output Node characterization: **15/19 matched**; only the four doctor cases differ. Unknown-option stderr now matches. Report: `target/characterization.json` (exit 1).
-- `pnpm run lint`: exit 0, 3288 warnings, zero errors. `pnpm run build`: exit 0. `git diff --check`: exit 0. pnpm used the invocation-only `pnpm_config_verify_deps_before_run=false` setting with existing child-worktree dependencies.
+- `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo build --locked --release`: exit 0.
+- `ARASHI_TS_PARITY=1 cargo test --locked --all-targets -- --include-ignored --test-threads=4`: **88 passed, 0 failed, 0 ignored**. Log: `target/rust-tests.log`.
+- `node tests/rust/parity.mjs target/release/arashi target/source-parity.json`: **15/15 passed**, full output and effects comparisons.
+- `node node_modules/vitest/vitest.mjs run tests/unit/node-runtime.test.ts`: runner tests were written first: **3 failed, 2 passed** before substitution (`target/node-runtime-red.log`); **6/6 passed** after implementation and added child-cwd coverage (`target/node-runtime-green.log`). Async/sync executable probes verify cwd, env, streams and exit codes.
+- The five retained tests above passed against source and native. Reports: `target/retained-{source,native}.log` and `target/retained-init-{source,native}.log`.
+- `pnpm run lint`: exit 0, 3279 warnings, zero errors. `pnpm run build`: exit 0. pnpm used invocation-only `pnpm_config_verify_deps_before_run=false` with existing dependencies.
+- `pnpm run test`: **2966 passed, 2 failed, 17 skipped**, exit 1 (`target/ts-tests.log`). The handoff Markdown warning assertion inherited `NO_COLOR` and received `[WARN]` instead of `⚠`; the installer SIGINT PTY test was denied `/dev/tty` by the sandbox. Both passed unchanged in focused reruns (1 test each):
+  - `env -u NO_COLOR -u ARASHI_TEST_BINARY node node_modules/vitest/vitest.mjs run tests/integration/handoff.test.ts -t 'keeps explicit --markdown equivalent'` (`target/ts-handoff-rerun.log`).
+  - `env -u ARASHI_TEST_BINARY node node_modules/vitest/vitest.mjs run tests/integration/posix-installer-transaction.test.ts -t 'rolls back a foreground transaction when Ctrl-C delivers SIGINT'`, with terminal access outside the sandbox (`target/ts-pty-rerun.log`).
+- `git diff --check`: exit 0. No failures were removed from the full test selection; the two focused reruns do not constitute another full-suite run.
 
-Native safety regressions also verify stale destination registration rejection, same-named branch/tag identity, and rollback after native Git checkout-hook failure in standalone and configured creation. The unchanged TypeScript baseline passed 2962 tests, with 17 skipped. npm/shell distribution contracts and the TS oracle are retained; no production installation or release is changed. Remote CI is recorded separately on the v2 branch.
+Windows CI run [33950410399](https://github.com/corwinm/arashi/actions/runs/33950410399) at `010a4ea` supplied RED evidence: six Git worktree-add fixture failures from verbatim paths and two path assertions. All seven Rust fixture constructors now convert canonical filesystem paths to native drive/UNC paths; JSON comparisons are not globally normalized. Git-provided list/status row paths retain Git spelling. Production canonical-path comparisons and standalone init root reporting use the same conversion; status matches caller paths using filesystem path components. Regressions cover canonical configured init, linked caller status, caller-containing removal protection in both workspace modes, and Windows drive/UNC/device-prefix conversion. Windows-specific tests require a Windows rerun; macOS results do not establish Windows GREEN.
+
+Downstream arashi-docs/arashi-skills were reviewed for scope: this batch changes test infrastructure and fixes existing native path behavior, without adding a published workflow. Those repositories remain outside the authorized worktree. No commits, signing changes, stable npm/shell release changes or cross-worktree edits were made.

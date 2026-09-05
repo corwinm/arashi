@@ -15,7 +15,7 @@ impl Temp {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&p).unwrap();
-        Self(p.canonicalize().unwrap())
+        Self(arashi::paths::canonicalize(&p).unwrap())
     }
 }
 impl Drop for Temp {

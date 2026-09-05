@@ -15,7 +15,7 @@ impl Repo {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&p).unwrap();
-        let r = Self(fs::canonicalize(p).unwrap());
+        let r = Self(arashi::paths::canonicalize(p).unwrap());
         r.git(&["init", "-b", "main"]);
         r
     }
@@ -230,4 +230,15 @@ fn source_zero_config_parity() {
             assert_eq!(r.0.join(".worktrees").exists(), source_dir);
         }
     }
+}
+
+#[test]
+fn configured_init_accepts_canonical_primary_and_reports_native_root() {
+    let r = Repo::new();
+    // On Windows this deliberately supplies a verbatim filesystem path.
+    let canonical = fs::canonicalize(&r.0).unwrap();
+    let args = arashi::cli::parse(&["init".into(), "--no-discover".into()]).unwrap();
+    let data = arashi::init::configured(&canonical, &args).unwrap();
+    assert_eq!(data["workspaceRoot"], json!(r.0));
+    assert!(r.0.join(".arashi/config.json").is_file());
 }
