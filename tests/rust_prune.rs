@@ -75,8 +75,10 @@ fn stale(root: &Path, branch: &str) -> PathBuf {
         root,
         &["worktree", "add", "-b", branch, p.to_str().unwrap()],
     );
+    // Prune exposes Git's path spelling, which uses forward slashes on Windows.
+    let recorded = PathBuf::from(git(&p, &["rev-parse", "--show-toplevel"]).trim());
     fs::remove_dir_all(&p).unwrap();
-    p
+    recorded
 }
 #[test]
 fn stale_dry_run_then_prune_preserves_branches_and_live_files() {
@@ -141,7 +143,10 @@ fn configured_prunes_parent_and_child() {
     assert_eq!(data["totalPruned"], 2);
     assert_eq!(data["totalRepositories"], 2);
     assert_eq!(data["mode"], "configured");
-    assert_eq!(data["worktreesBase"], json!(f.0.join(".arashi/worktrees")));
+    assert_eq!(
+        data["worktreesBase"],
+        json!(f.0.join(".arashi").join("worktrees"))
+    );
     assert!(data.get("repositoryPath").is_none());
     assert_eq!(arashi::git::worktrees(&child).unwrap().len(), 1);
 }
