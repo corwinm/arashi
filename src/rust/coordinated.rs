@@ -6,6 +6,8 @@ use crate::{
     git,
     managed::{IgnorePlan, Transaction, relative, safe, unsupported},
 };
+#[path = "reuse.rs"]
+mod reuse;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -19,6 +21,7 @@ struct Item {
     oid: String,
     source: String,
     existing: bool,
+    reuse: Option<reuse::Identity>,
     base: Value,
 }
 fn primary(root: &Path) -> Result<()> {
@@ -200,22 +203,54 @@ fn plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
             target.join(child)
         };
         safe(&destination)?;
-        if destination.exists() {
-            return Err(unsupported(
-                "Existing destination conflicts are not yet ported; no changes made",
-            ));
-        }
         let records = git::worktrees(root)?;
-        if records.iter().any(|record| record.path == destination) {
+        let registration = records.iter().find(|r| r.path == destination);
+        let reusable = destination.try_exists()?
+            && registration
+                .is_some_and(|r| r.branch.as_deref() == Some(branch) && r.prune_reason.is_none());
+        if (destination.try_exists()? || registration.is_some()) && !reusable {
+            return Err(Error::new(
+                "WORKTREE_DESTINATION_COLLISION",
+                format!(
+                    "Worktree path already exists: {} ({name})",
+                    destination.display()
+                ),
+            )
+            .with_details(json!({"conflict":{"repositoryName":name,"worktreePath":destination}})));
+        }
+        if records
+            .iter()
+            .any(|r| r.branch.as_deref() == Some(branch) && r.path != destination)
+        {
             return Err(unsupported(
-                "Worktree destination is already registered, including stale metadata; no changes made",
+                "Branch already checked out elsewhere; conflict resolution is not yet ported",
             ));
         }
-        if records.iter().any(|w| w.branch.as_deref() == Some(branch)) {
-            return Err(unsupported(
-                "Branch already checked out; conflict resolution is not yet ported",
-            ));
-        }
+        let reuse = if reusable {
+            if records
+                .iter()
+                .filter(|r| r.path == destination || r.branch.as_deref() == Some(branch))
+                .count()
+                != 1
+            {
+                return Err(unsupported(
+                    "Ambiguous existing worktree registrations are not supported; no changes made",
+                ));
+            }
+            if args.value("conflict") != Some("REUSE_EXISTING") || !args.has("no-hooks") {
+                return Err(unsupported(
+                    "Existing destination reuse requires explicit --conflict REUSE_EXISTING --no-hooks",
+                ));
+            }
+            if registration.is_some_and(|r| r.locked || r.bare) || destination == *root {
+                return Err(unsupported(
+                    "Protected existing destination reuse is not yet ported; no changes made",
+                ));
+            }
+            Some(reuse::inspect(root, &destination, branch)?)
+        } else {
+            None
+        };
         let existing = git::run(
             root,
             &[
@@ -226,7 +261,10 @@ fn plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
             ],
         )
         .is_ok();
-        if existing && (args.value("conflict") != Some("REUSE_EXISTING") || args.has("dry-run")) {
+        if existing
+            && (args.value("conflict") != Some("REUSE_EXISTING")
+                || (args.has("dry-run") && reuse.is_none()))
+        {
             return Err(unsupported(
                 "Existing configured branches require --conflict REUSE_EXISTING; conflict dry-run is not yet ported",
             ));
@@ -271,8 +309,35 @@ fn plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
             oid,
             source,
             existing,
+            reuse,
             base: Value::Null,
         });
+    }
+    if items.iter().any(|i| i.reuse.is_some()) {
+        // Existing-worktree materialization has a distinct preservation/rollback
+        // contract. Do not let a mixed plan enter the new-worktree-only ledger.
+        if items.iter().any(|i| {
+            w.config
+                .as_ref()
+                .unwrap()
+                .repos
+                .get(&i.name)
+                .is_some_and(|r| {
+                    ["copy", "symlink"].iter().any(|k| {
+                        r.raw
+                            .get(k)
+                            .and_then(Value::as_array)
+                            .is_some_and(|v| !v.is_empty())
+                    })
+                })
+        }) {
+            return Err(unsupported(
+                "Materialization combined with existing destination reuse is not yet ported; no changes made",
+            ));
+        }
+        for item in items.iter().filter(|i| i.reuse.is_some()) {
+            nested_safety(&item.target, &items)?;
+        }
     }
     resolve_bases(w, args, &mut items)?;
     // The parent must precede its children even when explicitly selected last.
@@ -296,8 +361,30 @@ fn plan_materialization(w: &Workspace, items: &[Item]) -> Result<Vec<Value>> {
     }
     Ok(plans)
 }
+fn reuse_safety(items: &[Item]) -> Result<Vec<(PathBuf, reuse::RepositorySafety)>> {
+    if !items.iter().any(|item| item.reuse.is_some()) {
+        return Ok(vec![]);
+    }
+    items
+        .iter()
+        .map(|item| Ok((item.root.clone(), reuse::repository_safety(&item.root)?)))
+        .collect()
+}
+fn validate_reuse_safety(
+    items: &[Item],
+    expected: &[(PathBuf, reuse::RepositorySafety)],
+) -> Result<()> {
+    if reuse_safety(items)? != expected {
+        return Err(Error::new(
+            "PLAN_CHANGED",
+            "Repository safety configuration changed during create",
+        ));
+    }
+    Ok(())
+}
 pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     let items = plan(w, args)?;
+    let reuse_safety = reuse_safety(&items)?;
     let branch = &args.positional[0];
     let dry = args.has("dry-run");
     let c = w.config.as_ref().unwrap();
@@ -316,6 +403,7 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     let hook_plan = crate::hooks::Plan::prepare(w, args, &targets, branch)?;
     let _interrupt_guard = hook_plan.guard()?;
     let mut hook_outcomes = vec![];
+    let mut dirty_workspace_guidance = Value::Null;
     if !dry {
         let current = Workspace::discover(&w.root)?;
         if current.config.as_ref().unwrap().raw != c.raw || plan(&current, args)? != items {
@@ -324,6 +412,7 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                 "Create preconditions changed; no changes made",
             ));
         }
+        validate_reuse_safety(&items, &reuse_safety)?;
         let mut tx = Transaction::default();
         let mut owned: Vec<&Item> = vec![];
         let mut materialized = crate::materialization::Ownership::default();
@@ -341,6 +430,7 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                     "Create preconditions changed after workspace hook",
                 ));
             }
+            validate_reuse_safety(&items, &reuse_safety)?;
             if crate::hooks::interrupted() {
                 return Err(Error::new("HOOK_INTERRUPTED", "Lifecycle interrupted"));
             }
@@ -354,7 +444,9 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                 safe(&item.target)?;
                 primary(&item.root)?;
                 // Recheck each repository immediately before creating its branch/worktree.
-                if item.target.exists()
+                validate_reuse(&items, branch)?;
+                validate_reuse_safety(&items, &reuse_safety)?;
+                if (item.reuse.is_none() && item.target.exists())
                     || git::run(&item.root, &["rev-parse", &item.source])?.trim() != item.oid
                 {
                     return Err(Error::new(
@@ -362,22 +454,24 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                         "Repository changed during coordinated create",
                     ));
                 }
-                tx.mkdir(item.target.parent().unwrap())?;
-                if !item.existing {
-                    let source = if item.base["source"] != "legacy-omitted" {
-                        &item.oid
-                    } else {
-                        &item.source
-                    };
-                    git::run(&item.root, &["branch", branch, source])?;
+                if item.reuse.is_none() {
+                    tx.mkdir(item.target.parent().unwrap())?;
+                    if !item.existing {
+                        let source = if item.base["source"] != "legacy-omitted" {
+                            &item.oid
+                        } else {
+                            &item.source
+                        };
+                        git::run(&item.root, &["branch", branch, source])?;
+                    }
+                    // Branch creation succeeded (or the branch predates this operation).
+                    // Record ownership before worktree add so partial Git failures can be cleaned up.
+                    owned.push(item);
+                    git::run(
+                        &item.root,
+                        &["worktree", "add", item.target.to_str().unwrap(), branch],
+                    )?;
                 }
-                // Branch creation succeeded (or the branch predates this operation).
-                // Record ownership before worktree add so partial Git failures can be cleaned up.
-                owned.push(item);
-                git::run(
-                    &item.root,
-                    &["worktree", "add", item.target.to_str().unwrap(), branch],
-                )?;
                 let mut repo_hooks = vec![];
                 let mut materialization_outcomes = vec![];
                 for phase in ["pre-create", "post-create"] {
@@ -406,18 +500,51 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                 }
                 rows.push(json!({"branchName":branch,"duration":0,"error":null,"hookOutcomes":repo_hooks,"materializationOutcomes":materialization_outcomes,"repositoryName":item.name,"repositoryPath":item.root,"status":"success","warnings":if item.existing {vec![format!("Reused existing branch '{branch}'")]}else{vec![]},"worktreePath":item.target}));
             }
+            validate_reuse(&items, branch)?;
             let post = hook_plan.run("post-create", Some("workspace"), true)?;
             let failure = crate::hooks::failure(&post);
             hook_outcomes.extend(post);
             if let Some(message) = failure {
                 return Err(Error::new("CREATE_HOOK_FAILED", message));
             }
+            validate_reuse(&items, branch)?;
+            validate_reuse_safety(&items, &reuse_safety)?;
+            dirty_workspace_guidance = dirty_guidance(w, branch, &items)?;
+            validate_reuse(&items, branch)?;
             Ok(())
         })();
         if let Err(e) = operation {
             // Git ownership must still hold before deleting even invocation-written files:
             // a hook may have committed them or changed/locked the registered worktree.
             let mut rollback_errors = vec![];
+            // A reused ancestor is caller-owned. If its filesystem/Git ownership
+            // changed, even a newly added descendant may now name someone else's
+            // files. Preserve the whole transaction rather than clean through it.
+            for reused in items.iter().filter(|i| i.reuse.is_some()) {
+                if owned.iter().any(|i| {
+                    i.target.starts_with(&reused.target) || i.root.starts_with(&reused.root)
+                }) && (reuse::inspect(&reused.root, &reused.target, branch)
+                    .ok()
+                    .as_ref()
+                    != reused.reuse.as_ref()
+                    || !git::worktrees(&reused.root).is_ok_and(|records| {
+                        records.iter().any(|r| {
+                            r.path == reused.target
+                                && r.head == reused.oid
+                                && r.branch.as_deref() == Some(branch)
+                                && !r.locked
+                                && r.prune_reason.is_none()
+                        })
+                    }))
+                {
+                    rollback_errors.push(format!(
+                        "Reused ancestor ownership changed; transaction preserved for recovery: {}",
+                        reused.target.display()
+                    ));
+                    return Err(Error::new("COORDINATED_CREATE_FAILED", e.message)
+                        .with_details(json!({"completed":rows,"rollbackErrors":rollback_errors,"hookOutcomes":hook_outcomes})));
+                }
+            }
             for item in owned.iter().filter(|_| !materialization_plans.is_empty()) {
                 let ownership = (|| -> Result<()> {
                     safe(&item.root)?;
@@ -518,7 +645,9 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     let count = items.len();
     data.as_object_mut().unwrap().extend(json!({"branchName":branch,"dirtyWorkspaceGuidance":null,"dryRun":dry,"errorSummary":null,"failureCount":0,"hookOutcomes":hook_outcomes,"managedIgnore":ignore.data,"moveSummary":null,"nextSteps":[],"repositories":rows,"rolledBack":false,"skippedCount":if dry {count}else{0},"successCount":if dry {0}else{count},"totalDuration":0,"totalRepositories":count}).as_object().unwrap().clone());
     if dry {
-        data["dryRunOutcome"] = json!({"conflicts":[],"plannedWorktrees":items.iter().map(|i|json!({"branchName":branch,"planStatus":"actionable","repositoryName":i.name,"worktreePath":i.target})).collect::<Vec<_>>(),"summaryCounts":{"blockingTotal":0,"conflictTotal":0,"plannedTotal":count}});
+        let conflicts = items.iter().filter(|i| i.reuse.is_some()).map(|i| json!({"blocking":false,"conflictType":"branch_exists","message":format!("Branch '{branch}' already exists locally"),"repositoryName":i.name,"scope":format!("{}:{branch}",i.name)})).collect::<Vec<_>>();
+        let conflict_count = conflicts.len();
+        data["dryRunOutcome"] = json!({"conflicts":conflicts,"plannedWorktrees":items.iter().map(|i|json!({"branchName":branch,"planStatus":"actionable","repositoryName":i.name,"worktreePath":i.target})).collect::<Vec<_>>(),"summaryCounts":{"blockingTotal":0,"conflictTotal":conflict_count,"plannedTotal":count}});
     }
     if !materialization_plans.is_empty() {
         data["repositoryResults"] = data["repositories"].clone();
@@ -533,9 +662,33 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
         data["base"] = json!({"requestedBranch":first.base["requestedBranch"],"source":first.base["source"],"repositories":items.iter().map(|i| i.base.clone()).collect::<Vec<_>>()});
     }
     if !dry {
-        data["dirtyWorkspaceGuidance"] = dirty_guidance(w, branch, &items)?;
+        data["dirtyWorkspaceGuidance"] = dirty_workspace_guidance;
     }
     Ok(data)
+}
+
+fn validate_reuse(items: &[Item], branch: &str) -> Result<()> {
+    for item in items.iter().filter(|i| i.reuse.is_some()) {
+        let records = git::worktrees(&item.root)?;
+        let valid = records
+            .iter()
+            .filter(|r| r.branch.as_deref() == Some(branch))
+            .collect::<Vec<_>>();
+        if valid.len() != 1
+            || valid[0].path != item.target
+            || valid[0].head != item.oid
+            || valid[0].locked
+            || valid[0].prune_reason.is_some()
+            || reuse::inspect(&item.root, &item.target, branch)? != *item.reuse.as_ref().unwrap()
+        {
+            return Err(Error::new(
+                "PLAN_CHANGED",
+                "Existing worktree ownership changed during create",
+            ));
+        }
+        nested_safety(&item.target, items)?;
+    }
+    Ok(())
 }
 
 fn nested_safety(path: &Path, targets: &[Item]) -> Result<()> {
@@ -640,6 +793,7 @@ fn remove_plan(w: &Workspace, args: &Args) -> Result<RemovePlan> {
                 oid: t.head.clone(),
                 source: branch.clone(),
                 existing: true,
+                reuse: None,
                 base: Value::Null,
             });
         }
@@ -982,7 +1136,17 @@ fn dirty_guidance(w: &Workspace, branch: &str, items: &[Item]) -> Result<Value> 
         }
     });
     for i in ordered {
-        let raw = git::run(&i.root, &["status", "--porcelain=v1", "-uall"])?;
+        let raw = git::run(
+            &i.root,
+            &[
+                "--no-optional-locks",
+                "-c",
+                "core.fsmonitor=false",
+                "status",
+                "--porcelain=v1",
+                "-uall",
+            ],
+        )?;
         let (mut staged, mut modified, mut deleted, mut untracked) = (0, 0, 0, 0);
         for line in raw.lines().filter(|l| l.len() >= 2) {
             let b = line.as_bytes();

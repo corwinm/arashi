@@ -2162,3 +2162,5 @@ fn setup_metadata_and_human_skips_source_contract() {
 
 include!("rust/lifecycle.rs");
 include!("rust/materialization.rs");
+
+include!("rust/create_reuse.rs");
