@@ -90,9 +90,10 @@ mod create_reuse {
         after: &[(PathBuf, Value)],
     ) {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/create-reuse");
-        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{label}.json"));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
-            dir.join(format!("{label}.json")),
+            path,
             serde_json::to_vec_pretty(&serde_json::json!({
                 "exit":output.status.code(), "stdout":String::from_utf8_lossy(&output.stdout),
                 "stderr":String::from_utf8_lossy(&output.stderr), "before":before, "after":after
