@@ -45,13 +45,15 @@ fn policy(w: &Workspace, args: &Args) -> Result<()> {
             "Only explicit REUSE_EXISTING conflict policy is currently ported",
         ));
     }
-    if c.repos.values().any(|r| {
-        ["copy", "symlink"].iter().any(|k| {
-            r.raw
-                .get(k)
-                .is_some_and(|v| v.as_array().is_some_and(|v| !v.is_empty()))
+    if args.command != "create"
+        && c.repos.values().any(|r| {
+            ["copy", "symlink"].iter().any(|k| {
+                r.raw
+                    .get(k)
+                    .is_some_and(|v| v.as_array().is_some_and(|v| !v.is_empty()))
+            })
         })
-    }) {
+    {
         return Err(unsupported(
             "Materialization policies are not yet ported; no changes made",
         ));
@@ -277,11 +279,30 @@ fn plan(w: &Workspace, args: &Args) -> Result<Vec<Item>> {
     items.sort_by_key(|i| usize::from(i.root != w.root));
     Ok(items)
 }
+fn plan_materialization(w: &Workspace, items: &[Item]) -> Result<Vec<Value>> {
+    let mut plans = vec![];
+    for item in items {
+        if let Some(policy) = w.config.as_ref().unwrap().repos.get(&item.name)
+            && let Some(plan) = crate::materialization::plan(
+                &item.root,
+                &item.target,
+                &item.name,
+                &item.oid,
+                &policy.raw,
+            )?
+        {
+            plans.push(plan);
+        }
+    }
+    Ok(plans)
+}
 pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     let items = plan(w, args)?;
     let branch = &args.positional[0];
     let dry = args.has("dry-run");
     let c = w.config.as_ref().unwrap();
+    let materialization_plans = plan_materialization(w, &items)?;
+    crate::materialization::require_actionable(&materialization_plans)?;
     let ignore = IgnorePlan::build(&w.root, &c.repos_dir, &c.worktrees_dir, dry)?;
     let mut rows = vec![];
     let targets = items
@@ -305,6 +326,7 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
         }
         let mut tx = Transaction::default();
         let mut owned: Vec<&Item> = vec![];
+        let mut materialized = crate::materialization::Ownership::default();
         let operation = (|| -> Result<()> {
             let pre = hook_plan.run("pre-create", Some("workspace"), true)?;
             let failure = crate::hooks::failure(&pre);
@@ -322,6 +344,7 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
             if crate::hooks::interrupted() {
                 return Err(Error::new("HOOK_INTERRUPTED", "Lifecycle interrupted"));
             }
+            crate::materialization::require_actionable(&plan_materialization(w, &items)?)?;
             ignore.apply(&mut tx)?;
             for item in &items {
                 if crate::hooks::interrupted() {
@@ -356,7 +379,22 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                     &["worktree", "add", item.target.to_str().unwrap(), branch],
                 )?;
                 let mut repo_hooks = vec![];
+                let mut materialization_outcomes = vec![];
                 for phase in ["pre-create", "post-create"] {
+                    if phase == "post-create"
+                        && let Some(policy) = c.repos.get(&item.name)
+                        && let Some(plan) = crate::materialization::plan(
+                            &item.root,
+                            &item.target,
+                            &item.name,
+                            &format!("refs/heads/{branch}"),
+                            &policy.raw,
+                        )?
+                    {
+                        crate::materialization::require_actionable(std::slice::from_ref(&plan))?;
+                        materialization_outcomes =
+                            materialized.execute(&item.root, &item.target, &plan)?;
+                    }
                     let outcomes =
                         hook_plan.run(&format!("{phase}.{}", item.name), Some(&item.name), true)?;
                     let failure = crate::hooks::failure(&outcomes);
@@ -366,7 +404,7 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
                         return Err(Error::new("CREATE_HOOK_FAILED", message));
                     }
                 }
-                rows.push(json!({"branchName":branch,"duration":0,"error":null,"hookOutcomes":repo_hooks,"materializationOutcomes":[],"repositoryName":item.name,"repositoryPath":item.root,"status":"success","warnings":if item.existing {vec![format!("Reused existing branch '{branch}'")]}else{vec![]},"worktreePath":item.target}));
+                rows.push(json!({"branchName":branch,"duration":0,"error":null,"hookOutcomes":repo_hooks,"materializationOutcomes":materialization_outcomes,"repositoryName":item.name,"repositoryPath":item.root,"status":"success","warnings":if item.existing {vec![format!("Reused existing branch '{branch}'")]}else{vec![]},"worktreePath":item.target}));
             }
             let post = hook_plan.run("post-create", Some("workspace"), true)?;
             let failure = crate::hooks::failure(&post);
@@ -377,8 +415,50 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
             Ok(())
         })();
         if let Err(e) = operation {
+            // Git ownership must still hold before deleting even invocation-written files:
+            // a hook may have committed them or changed/locked the registered worktree.
             let mut rollback_errors = vec![];
+            for item in owned.iter().filter(|_| !materialization_plans.is_empty()) {
+                let ownership = (|| -> Result<()> {
+                    safe(&item.root)?;
+                    safe(&item.target)?;
+                    if let Some(record) = git::worktrees(&item.root)?
+                        .iter()
+                        .find(|r| r.path == item.target)
+                    {
+                        if record.head != item.oid
+                            || record.branch.as_deref() != Some(branch)
+                            || record.locked
+                            || record.prune_reason.is_some()
+                        {
+                            return Err(unsupported(
+                                "Worktree ownership changed; materialization preserved",
+                            ));
+                        }
+                        nested_safety(&item.target, &items)?;
+                    } else if item.target.try_exists()? {
+                        return Err(unsupported(
+                            "Worktree registration disappeared; materialization preserved",
+                        ));
+                    }
+                    Ok(())
+                })();
+                if let Err(e) = ownership {
+                    rollback_errors.push(e.message);
+                }
+            }
+            if rollback_errors.is_empty() {
+                rollback_errors.extend(materialized.rollback());
+            }
+            let materialization_preserved = !rollback_errors.is_empty();
             for item in owned.into_iter().rev() {
+                if materialization_preserved {
+                    rollback_errors.push(format!(
+                        "Worktree preserved after materialization rollback failure: {}",
+                        item.target.display()
+                    ));
+                    continue;
+                }
                 if let Err(e) = safe(&item.root).and_then(|()| safe(&item.target)) {
                     rollback_errors.push(e.message);
                     continue;
@@ -439,6 +519,12 @@ pub fn create(w: &Workspace, args: &Args) -> Result<Value> {
     data.as_object_mut().unwrap().extend(json!({"branchName":branch,"dirtyWorkspaceGuidance":null,"dryRun":dry,"errorSummary":null,"failureCount":0,"hookOutcomes":hook_outcomes,"managedIgnore":ignore.data,"moveSummary":null,"nextSteps":[],"repositories":rows,"rolledBack":false,"skippedCount":if dry {count}else{0},"successCount":if dry {0}else{count},"totalDuration":0,"totalRepositories":count}).as_object().unwrap().clone());
     if dry {
         data["dryRunOutcome"] = json!({"conflicts":[],"plannedWorktrees":items.iter().map(|i|json!({"branchName":branch,"planStatus":"actionable","repositoryName":i.name,"worktreePath":i.target})).collect::<Vec<_>>(),"summaryCounts":{"blockingTotal":0,"conflictTotal":0,"plannedTotal":count}});
+    }
+    if !materialization_plans.is_empty() {
+        data["repositoryResults"] = data["repositories"].clone();
+        if dry {
+            data["dryRunOutcome"]["materializationPlans"] = json!(materialization_plans);
+        }
     }
     if let Some(first) = items
         .iter()

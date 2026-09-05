@@ -719,7 +719,7 @@ fn configured_mutations_reject_unsafe_policies_without_effects() {
         c["repos"]["alpha"][key] = if key == "hooks" {
             serde_json::json!({"pre-remove":"touch should-not-exist"})
         } else {
-            serde_json::json!(["secret"])
+            serde_json::json!(["unsupported-unicode-\u{e9}"])
         };
         fs::write(p, serde_json::to_vec(&c).unwrap()).unwrap();
         let before = f.coordinated_effects();
@@ -2161,3 +2161,4 @@ fn setup_metadata_and_human_skips_source_contract() {
 }
 
 include!("rust/lifecycle.rs");
+include!("rust/materialization.rs");
