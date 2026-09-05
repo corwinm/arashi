@@ -24,7 +24,10 @@ struct Item {
 fn primary(root: &Path) -> Result<()> {
     safe(root)?;
     let records = git::worktrees(root)?;
-    if !records.first().is_some_and(|w| !w.bare && w.path == root) {
+    if !records
+        .first()
+        .is_some_and(|w| !w.bare && crate::paths::same_existing(&w.path, root).unwrap_or(false))
+    {
         return Err(unsupported(
             "Configured mutations currently require primary non-bare repositories",
         ));
@@ -139,7 +142,7 @@ fn repositories(w: &Workspace) -> Result<Vec<(String, PathBuf, PathBuf)>> {
             .to_owned();
         for (id, r) in &c.repos {
             let configured = w.root.join(&r.path);
-            if crate::paths::canonicalize(&configured).ok() == Some(root.clone()) {
+            if crate::paths::same_existing(&configured, &root).unwrap_or(false) {
                 name = id.clone();
                 child_path = configured
                     .strip_prefix(&w.root)

@@ -155,10 +155,9 @@ pub fn status_filtered(
                 "Configured linked execution-root projection is not yet ported",
             ));
         }
-        if git::worktrees(&workspace.root)?
-            .first()
-            .is_some_and(|w| w.path != workspace.root)
-        {
+        if git::worktrees(&workspace.root)?.first().is_some_and(|w| {
+            !crate::paths::same_existing(&w.path, &workspace.root).unwrap_or(false)
+        }) {
             return Err(unsupported(
                 "Configured linked execution-root projection is not yet ported",
             ));

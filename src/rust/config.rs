@@ -456,6 +456,19 @@ fn absolute(path: &Path) -> Result<PathBuf> {
     }
     Ok(result)
 }
+fn workspace_root(root: &Path) -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        // Git expands Windows short names and case aliases. Retain one physical
+        // spelling for coordinated destination planning and rollback ownership.
+        crate::managed::safe(root)?;
+        Ok(crate::paths::canonicalize(root)?)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(root.to_path_buf())
+    }
+}
 impl Workspace {
     pub fn discover(cwd: &Path) -> Result<Self> {
         let cwd = absolute(cwd)?;
@@ -480,7 +493,7 @@ impl Workspace {
                     ));
                 }
                 return Ok(Self {
-                    root: root.to_path_buf(),
+                    root: workspace_root(root)?,
                     config: Some(config),
                 });
             }
@@ -506,7 +519,7 @@ impl Workspace {
             for root in main.ancestors() {
                 if root.join(".arashi/config.json").try_exists()? {
                     return Ok(Self {
-                        root: root.to_path_buf(),
+                        root: workspace_root(root)?,
                         config: Some(Config::load(root)?),
                     });
                 }

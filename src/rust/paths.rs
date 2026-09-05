@@ -5,6 +5,11 @@ pub fn canonicalize(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     std::fs::canonicalize(path).map(native_path)
 }
 
+/// Compare existing filesystem identities without changing their public path spelling.
+pub fn same_existing(left: impl AsRef<Path>, right: impl AsRef<Path>) -> std::io::Result<bool> {
+    Ok(canonicalize(left)? == canonicalize(right)?)
+}
+
 /// Convert only Windows drive and UNC verbatim prefixes, preserving the UNC authority.
 /// Other device namespaces and non-Windows paths are left untouched.
 pub fn native_path(path: PathBuf) -> PathBuf {
