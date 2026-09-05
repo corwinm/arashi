@@ -1044,7 +1044,7 @@ fn configured_linked_child_status_uses_active_config_root() {
             create.extend(["--only", "alpha"]);
         }
         assert!(f.run(false, &create).status.success());
-        let root = f.repo.join(".arashi/worktrees/feature");
+        let root = f.repo.join(".arashi").join("worktrees").join("feature");
         let expected = if child_only {
             f.repo.clone()
         } else {
