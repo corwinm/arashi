@@ -1,0 +1,45 @@
+[package]
+name = "arashi-rust"
+version = "2.0.0-alpha.1"
+edition = "2024"
+publish = false
+
+[lib]
+name = "arashi"
+path = "src/rust/lib.rs"
+
+[[bin]]
+name = "arashi"
+path = "src/rust/main.rs"
+
+[[bin]]
+name = "aw"
+path = "src/rust/aw.rs"
+
+[[test]]
+name = "rust_config"
+path = "tests/rust_config.rs"
+
+[[test]]
+name = "rust_cli"
+path = "tests/rust_cli.rs"
+
+[dependencies]
+serde = "1.0.228"
+serde_json = { version = "1.0.149", features = ["raw_value"] }
+
+[[test]]
+name = "rust_status"
+path = "tests/rust_status.rs"
+
+[[test]]
+name = "rust_init"
+path = "tests/rust_init.rs"
+
+[[test]]
+name = "rust_parity"
+path = "tests/rust_parity.rs"
+
+[[test]]
+name = "rust_prune"
+path = "tests/rust_prune.rs"

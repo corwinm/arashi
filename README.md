@@ -8,6 +8,17 @@ Arashi is a Git worktree manager for meta-repositories. It coordinates related r
 
 [Documentation](https://arashi.haphazard.dev) · [Command reference](https://arashi.haphazard.dev/commands/) · [Workflow guides](https://arashi.haphazard.dev/workflows/)
 
+## Rust v2 — in development
+
+This branch contains an incomplete Rust port, with native `arashi` and `aw` binaries. Build it without replacing your installed CLI:
+
+```bash
+cargo build --locked --release
+./target/release/aw --help
+```
+
+Use `.exe` on Windows. Read the [supported workflows and remaining parity work](./docs/rust-port.md) before testing it. The npm and shell installation instructions below still install stable v1, not this development build.
+
 ## Installation
 
 macOS and Linux:

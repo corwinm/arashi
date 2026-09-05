@@ -1,0 +1,59 @@
+name: Experimental Rust port
+on:
+  push:
+    branches: [v2]
+  pull_request:
+    paths:
+      - "src/rust/**"
+      - "tests/rust*"
+      - "tests/rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "contracts/cli-commands.json"
+      - ".github/workflows/rust.yml"
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust tooling
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - run: cargo +stable fmt --check
+      - run: cargo +stable clippy --locked --all-targets -- -D warnings
+      - run: cargo +stable test --locked --all-targets
+      - run: cargo +stable build --locked --release
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Native configured release journey
+        shell: bash
+        run: |
+          binary=target/release/arashi
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          node tests/rust/parity.mjs "$binary" target/native-smoke.json --native-only
+      # Intentionally no release upload, npm packaging, installation or publishing.
+
+  source-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v2
+        with:
+          version: 11.22.0
+          runtime: node@24.18.0
+          install: false
+      - uses: oven-sh/setup-bun@v2
+      - run: pnpm install --frozen-lockfile
+      - run: cargo test --locked --all-targets -- --include-ignored --test-threads=4
+        env:
+          ARASHI_TS_PARITY: "1"
+          GIT_ALLOW_PROTOCOL: file
+      - run: cargo build --locked --release
+      - name: External release binary versus retained TypeScript oracle
+        run: node tests/rust/parity.mjs target/release/arashi target/source-parity.json
+      # Reports stay in the job workspace; this workflow does not publish artifacts.

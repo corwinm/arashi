@@ -22,3 +22,6 @@ bin/index.js.map
 # Test workspace directories (dynamically created during tests)
 tests/temp-integration-workspace/
 tests/unit/temp-test-workspace/
+
+# Isolated experimental Rust build outputs
+/target/
