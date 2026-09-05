@@ -50,7 +50,9 @@ impl Fixture {
             .env("GIT_CONFIG_VALUE_0", "false")
             .env("NO_COLOR", "1")
             .env_remove("ARASHI_DIRECTIVE_FILE")
-            .env_remove("ARASHI_SHELL");
+            .env_remove("ARASHI_SHELL")
+            .env_remove("GIT_ALLOW_PROTOCOL")
+            .env_remove("GIT_PROTOCOL_FROM_USER");
     }
     fn git(&self, args: &[&str]) -> String {
         let mut c = Command::new("git");
