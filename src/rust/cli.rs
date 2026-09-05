@@ -140,7 +140,10 @@ pub fn entry() -> i32 {
         return 0;
     }
     if raw.is_empty()
-        || raw.iter().any(|a| a == "--help" || a == "-h")
+        || raw
+            .iter()
+            .take_while(|a| *a != "--")
+            .any(|a| a == "--help" || a == "-h")
         || raw.first().is_some_and(|a| a == "help")
     {
         let name = if raw.first().is_some_and(|a| a == "help") {
@@ -161,20 +164,28 @@ pub fn entry() -> i32 {
             }
         }
     }
-    let json_mode = raw.iter().any(|a| a == "--json" || a == "-j");
+    let json_mode = raw
+        .iter()
+        .take_while(|a| *a != "--")
+        .any(|a| a == "--json" || a == "-j");
     let command = raw.first().cloned().unwrap_or_default();
     let result = parse(&raw).and_then(|args| dispatch(&args));
     match result {
         Ok(data) => {
             let verbose = raw.iter().any(|s| s == "--verbose" || s == "-v");
             let short = raw.iter().any(|s| s == "--short" || s == "-s");
-            let exit_code = if command == "status"
+            let exit_code = if (command == "status"
                 && data["repositories"].as_array().is_some_and(|rows| {
                     rows.iter().any(|r| {
                         !r["error"].is_null()
                             && (json_mode || crate::status_human::visible(r, verbose))
                     })
-                }) {
+                }))
+                || (command == "setup"
+                    && (data["failedCount"].as_u64().unwrap_or(0)
+                        + data["timedOutCount"].as_u64().unwrap_or(0)
+                        > 0))
+            {
                 1
             } else {
                 0
@@ -191,7 +202,7 @@ pub fn entry() -> i32 {
                     eprintln!("- Checking repository status...");
                 }
                 println!("{}", crate::status_human::render(&data, short, verbose));
-            } else {
+            } else if command != "exec" && command != "setup" {
                 render_human(&command, &data);
             }
             exit_code
@@ -206,7 +217,13 @@ pub fn entry() -> i32 {
             if json_mode {
                 println!("{}",serde_json::to_string_pretty(&json!({"command":command,"error":error_value(&e),"ok":false,"schemaVersion":1,"warnings":[]})).unwrap());
             } else {
-                if command == "doctor" && e.code == "DOCTOR_BLOCKING_FINDINGS" {
+                if command == "exec" && e.code == "EXEC_COMMAND_FAILED" {
+                    // Results were already rendered by exec.
+                } else if command == "exec" {
+                    eprintln!("{e}");
+                } else if command == "setup" {
+                    eprintln!("[ERR] {e}");
+                } else if command == "doctor" && e.code == "DOCTOR_BLOCKING_FINDINGS" {
                     let data = e.details.as_ref().unwrap();
                     if data["checkedCategories"] == json!(["configuration"]) {
                         eprintln!("{}", data["findings"][0]["message"].as_str().unwrap());
@@ -224,6 +241,8 @@ pub fn entry() -> i32 {
 fn dispatch(args: &Args) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     match args.command.as_str() {
+        "exec" => crate::execution::exec(&cwd, args),
+        "setup" => crate::execution::setup(&cwd, args),
         "doctor" => {
             args.only(&[])?;
             if !args.positional.is_empty() {

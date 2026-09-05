@@ -1496,3 +1496,666 @@ fn status_rejects_unported_branch_remote_before_fetch() {
     assert_eq!(value["error"]["code"], "PORT_UNSUPPORTED");
     assert!(!f.repo.join(".git/FETCH_HEAD").exists());
 }
+
+// Exec/setup are process contracts, independent of create/remove lifecycle hooks.
+#[cfg(unix)]
+fn run_with_path(
+    f: &Fixture,
+    source: bool,
+    args: &[&str],
+    path: Option<&std::ffi::OsStr>,
+) -> Output {
+    let mut c = if source {
+        // Resolve the oracle runtime before replacing the child's search path.
+        let node = Command::new("node")
+            .args(["-p", "process.execPath"])
+            .output()
+            .unwrap();
+        assert!(node.status.success());
+        let mut c = Command::new(String::from_utf8(node.stdout).unwrap().trim());
+        c.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"));
+        c
+    } else {
+        Command::new(env!("CARGO_BIN_EXE_arashi"))
+    };
+    f.environment(&mut c);
+    c.args(args);
+    if let Some(path) = path {
+        c.env("PATH", path);
+    } else {
+        c.env_remove("PATH");
+    }
+    c.output().unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn exec_direct_launch_arguments_and_path_source_contract() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let mut f = Fixture::new();
+    f.configured();
+    let script = "printf '%s\\n' \"$1\"; printf '%s\\n' \"$2\"; printf '%s\\n' \"$3\"";
+    for dir in ["bin space", "denied"] {
+        fs::create_dir(f.repo.join(dir)).unwrap();
+    }
+    let probe = f.repo.join("bin space/probe");
+    fs::write(&probe, format!("#!/bin/sh\n{script}\n")).unwrap();
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(f.repo.join("denied/probe"), "must not run").unwrap();
+    fs::set_permissions(
+        f.repo.join("denied/probe"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    symlink(&probe, f.repo.join("probe-link")).unwrap();
+    fs::write(f.repo.join("plain"), script).unwrap();
+    let custom_path = std::ffi::OsStr::new("missing:file.txt:denied:bin space:/usr/bin:/bin");
+    for (command, path) in [
+        (vec!["./bin space/probe"], Some(custom_path)),
+        (vec![probe.to_str().unwrap()], Some(custom_path)),
+        (vec!["./probe-link"], Some(custom_path)),
+        (vec!["probe"], Some(custom_path)),
+        (
+            vec!["probe-link"],
+            Some(std::ffi::OsStr::new(":/usr/bin:/bin")),
+        ),
+        (
+            vec!["probe-link"],
+            Some(std::ffi::OsStr::new("/usr/bin:/bin:")),
+        ),
+        (vec!["sh", "./plain"], None),
+        (
+            vec!["/bin/sh", "-c", script, "argv-zero"],
+            Some(custom_path),
+        ),
+    ] {
+        let mut args = vec!["exec", "--json", "--only", "workspace", "--"];
+        args.extend(command);
+        args.extend(["literal;$() a b", "", "--help"]);
+        let native = run_with_path(&f, false, &args, path);
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stdout)
+        );
+        let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+        assert_eq!(
+            value["data"]["results"][0]["stdout"],
+            "literal;$() a b\n\n--help\n"
+        );
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            compare(&run_with_path(&f, true, &args, path), &native);
+        }
+    }
+    // A missing interpreter, non-executable file and directory are launch
+    // failures, not permission to invoke a shell or alter argv.
+    fs::write(&probe, "#!/arashi-no-such-interpreter\necho wrong\n").unwrap();
+    for program in ["probe", "./denied/probe", "./bin space"] {
+        let args = ["exec", "--json", "--only", "workspace", "--", program];
+        let native = run_with_path(&f, false, &args, Some(custom_path));
+        assert_eq!(native.status.code(), Some(1));
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            compare(&run_with_path(&f, true, &args, Some(custom_path)), &native);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn setup_path_interpreter_rejects_implicit_shell_source_contract() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    f.configured();
+    fs::create_dir(f.repo.join("fake-bin")).unwrap();
+    fs::write(
+        f.repo.join("fake-bin/sh"),
+        "echo executed > implicit-shell-sentinel\n",
+    )
+    .unwrap();
+    fs::set_permissions(
+        f.repo.join("fake-bin/sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    fs::write(f.repo.join("setup.sh"), "echo setup\n").unwrap();
+    let args = ["setup", "--json", "--only", "workspace"];
+    let path = Some(std::ffi::OsStr::new("fake-bin:/usr/bin:/bin"));
+    let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| {
+        let output = run_with_path(&f, true, &args, path);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(!f.repo.join("implicit-shell-sentinel").exists());
+        output
+    });
+    let native = run_with_path(&f, false, &args, path);
+    assert!(!f.repo.join("implicit-shell-sentinel").exists());
+    assert_eq!(native.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(value["data"]["executions"][0]["detail"], "spawn ENOEXEC");
+    if let Some(source) = source {
+        compare(&source, &native);
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn exec_no_shebang_rejects_implicit_shell_source_contract() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    f.configured();
+    let probe = f.repo.join("probe");
+    let sentinel = f.repo.join("implicit-shell-sentinel");
+    fs::write(
+        &probe,
+        "printf 'executed\\n' > implicit-shell-sentinel; printf '%s\\n' \"$1\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink(&probe, f.repo.join("probe-link")).unwrap();
+    fs::create_dir(f.repo.join("later")).unwrap();
+    fs::write(
+        f.repo.join("later/probe"),
+        "#!/bin/sh\nprintf 'wrong fallback\\n'\n",
+    )
+    .unwrap();
+    fs::set_permissions(
+        f.repo.join("later/probe"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let path = Some(std::ffi::OsStr::new(".:later:/usr/bin:/bin"));
+    for program in ["./probe", probe.to_str().unwrap(), "./probe-link", "probe"] {
+        let args = [
+            "exec",
+            "--json",
+            "--only",
+            "workspace",
+            "--",
+            program,
+            "literal;$() a b",
+        ];
+        let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| {
+            let source = run_with_path(&f, true, &args, path);
+            assert_eq!(source.status.code(), Some(1));
+            assert!(!sentinel.exists(), "source implicitly executed text");
+            let value: Value = serde_json::from_slice(&source.stdout).unwrap();
+            assert_eq!(value["error"]["code"], "EXEC_COMMAND_FAILED");
+            assert_eq!(
+                value["error"]["details"]["results"][0]["errorMessage"],
+                "spawn ENOEXEC"
+            );
+            eprintln!(
+                "source {program}: exit={:?}, sentinel={}, stdout={}",
+                source.status.code(),
+                sentinel.exists(),
+                String::from_utf8_lossy(&source.stdout)
+            );
+            source
+        });
+        let native = run_with_path(&f, false, &args, path);
+        eprintln!(
+            "native {program}: exit={:?}, sentinel={}, stdout={}",
+            native.status.code(),
+            sentinel.exists(),
+            String::from_utf8_lossy(&native.stdout)
+        );
+        assert!(!sentinel.exists(), "native implicitly executed text");
+        assert_eq!(native.status.code(), Some(1));
+        if let Some(source) = source {
+            compare(&source, &native);
+        }
+    }
+}
+
+#[test]
+fn exec_source_contract() {
+    let mut f = Fixture::new();
+    f.configured();
+    let script = "process.stdout.write(JSON.stringify({cwd:process.cwd(),args:process.argv.slice(1),directive:process.env.ARASHI_DIRECTIVE_FILE??null,shell:process.env.ARASHI_SHELL??null})+'\\n');process.stderr.write('diagnostic\\n')";
+    for flags in [
+        vec![],
+        vec!["--only", "alpha,zulu,alpha"],
+        vec!["--group", "backend"],
+        vec!["--jobs", "2"],
+        vec!["--dirty"],
+    ] {
+        let mut args = vec!["exec", "--json"];
+        args.extend(flags);
+        args.extend([
+            "--",
+            "node",
+            "-e",
+            script,
+            "--",
+            "a b",
+            "literal;$()",
+            "--help",
+            "--json",
+        ]);
+        let native = f.run(false, &args);
+        assert!(
+            native.status.success(),
+            "{}",
+            String::from_utf8_lossy(&native.stdout)
+        );
+        let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+        assert_eq!(value["data"]["failed"], 0);
+        if args.contains(&"--dirty") {
+            assert_eq!(value["data"]["total"], 0);
+        }
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            compare(&f.run(true, &args), &native);
+        }
+    }
+    // Child flags must not change the parent output mode or help dispatch.
+    let args = [
+        "exec", "--only", "alpha", "--", "node", "-e", script, "--", "--help", "--json",
+    ];
+    let native = f.run(false, &args);
+    assert!(String::from_utf8_lossy(&native.stdout).starts_with("Running "));
+    if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+        let source = f.run(true, &args);
+        assert_eq!(source.stdout, native.stdout);
+        assert_eq!(source.stderr, native.stderr);
+        assert_eq!(source.status.code(), native.status.code());
+    }
+}
+
+#[test]
+fn exec_failures_dirty_and_usage_source_contract() {
+    let mut f = Fixture::new();
+    f.configured();
+    fs::write(f.repo.join("repos/alpha/dirty"), "change").unwrap();
+    for args in [
+        vec![
+            "exec",
+            "--json",
+            "--",
+            "node",
+            "-e",
+            "process.stdout.write('out\\n');process.stderr.write('err\\n');process.exit(7)",
+        ],
+        vec![
+            "exec",
+            "--json",
+            "--fail-fast",
+            "--",
+            "node",
+            "-e",
+            "process.exit(7)",
+        ],
+        vec![
+            "exec",
+            "--json",
+            "--dirty",
+            "--",
+            "node",
+            "-e",
+            "console.log(process.cwd())",
+        ],
+        vec!["exec", "--json", "--", "arashi-no-such-executable-fixture"],
+        vec!["exec", "--json"],
+        vec!["exec", "--json", "--jobs", "01", "--", "node"],
+        vec!["exec", "--json", "--only", "missing", "--", "node"],
+        vec!["exec", "--json", "--group", "missing", "--", "node"],
+        vec![
+            "exec", "--json", "--only", "alpha", "--group", "Backend", "--", "node",
+        ],
+        vec!["exec", "--json", "--only", " , ", "--", "node"],
+    ] {
+        let before = f.coordinated_effects();
+        let native = f.run(false, &args);
+        let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+        assert_ne!(value["error"]["code"], "RUST_NOT_YET_PORTED");
+        if args.contains(&"--dirty") {
+            assert!(native.status.success());
+            assert_eq!(value["data"]["total"], 1);
+        } else {
+            assert!(!native.status.success());
+        }
+        assert_eq!(before, f.coordinated_effects());
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            compare(&f.run(true, &args), &native);
+        }
+    }
+}
+
+#[test]
+fn setup_discovery_filters_source_contract() {
+    let mut f = Fixture::new();
+    f.configured();
+    for flags in [
+        vec![],
+        vec!["--only", "alpha,zulu"],
+        vec!["--group", "backend"],
+        vec!["--only", "workspace"],
+        vec!["--only", "missing"],
+        vec!["--only", " , "],
+    ] {
+        let mut args = vec!["setup", "--json"];
+        args.extend(flags);
+        let before = f.coordinated_effects();
+        let native = f.run(false, &args);
+        let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+        assert_ne!(value["error"]["code"], "RUST_NOT_YET_PORTED");
+        if value["ok"] == true {
+            assert_eq!(value["data"]["skippedCount"], 3);
+        }
+        assert_eq!(before, f.coordinated_effects());
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            compare(&f.run(true, &args), &native);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_scripts_order_output_failure_and_timeout_source_contract() {
+    let mut f = Fixture::new();
+    f.configured();
+    fs::create_dir_all(f.repo.join("repos/alpha/.arashi")).unwrap();
+    fs::write(
+        f.repo.join("setup.sh"),
+        "printf ' main out \\n'; printf ' main err \\n' >&2; echo main >> order\n",
+    )
+    .unwrap();
+    fs::write(
+        f.repo.join("repos/zulu/setup.bash"),
+        "echo zulu >> ../../order; echo failing >&2; exit 7\n",
+    )
+    .unwrap();
+    fs::write(
+        f.repo.join("repos/alpha/.arashi/setup.sh"),
+        "echo alpha >> ../../order; echo done\n",
+    )
+    .unwrap();
+    // Detection order wins; setup.bash is still interpreted with sh.
+    fs::write(f.repo.join("setup.bash"), "echo wrong >> order\n").unwrap();
+    for flags in [
+        vec![],
+        vec!["--only", "alpha,zulu"],
+        vec!["--group", "Backend"],
+    ] {
+        let mut args = vec!["setup", "--json"];
+        args.extend(flags);
+        let native = f.run(false, &args);
+        assert_eq!(native.status.code(), Some(1));
+        let order = fs::read(f.repo.join("order")).unwrap();
+        if args.len() == 2 {
+            assert_eq!(order, b"main\nzulu\nalpha\n");
+        }
+        fs::remove_file(f.repo.join("order")).unwrap();
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            let source = f.run(true, &args);
+            compare(&source, &native);
+            assert_eq!(fs::read(f.repo.join("order")).unwrap(), order);
+            fs::remove_file(f.repo.join("order")).unwrap();
+        }
+    }
+    let p = f.repo.join(".arashi/config.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    config["hooks"] = serde_json::json!({"timeout":100});
+    fs::write(p, serde_json::to_vec(&config).unwrap()).unwrap();
+    // exec replaces the shell: timeout controls exactly the source's direct child.
+    fs::write(f.repo.join("setup.sh"), "exec sleep 2\n").unwrap();
+    let args = ["setup", "--json", "--only", "workspace"];
+    let native = f.run(false, &args);
+    assert_eq!(native.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(value["data"]["timedOutCount"], 1);
+    if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+        compare(&f.run(true, &args), &native);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_signal_and_directory_source_contract() {
+    let mut f = Fixture::new();
+    f.configured();
+    let p = f.repo.join(".arashi/config.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    config["hooks"] = serde_json::json!({"timeout":150});
+    fs::write(p, serde_json::to_vec(&config).unwrap()).unwrap();
+    let args = ["setup", "--json", "--only", "workspace"];
+    for script in [
+        "kill -TERM $$\n",
+        "trap 'exit 0' TERM\nwhile :; do :; done\n",
+    ] {
+        fs::write(f.repo.join("setup.sh"), script).unwrap();
+        let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| f.run(true, &args));
+        let native = f.run(false, &args);
+        if let Some(source) = source {
+            compare(&source, &native);
+        }
+    }
+    fs::remove_file(f.repo.join("setup.sh")).unwrap();
+    fs::create_dir(f.repo.join("setup.sh")).unwrap();
+    let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| f.run(true, &args));
+    let native = f.run(false, &args);
+    let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+    assert_eq!(value["data"]["targets"][0]["hasSetupTask"], true);
+    if let Some(source) = source {
+        compare(&source, &native);
+    }
+}
+
+#[test]
+fn execution_rejects_unsupported_projection_before_any_child_runs() {
+    let mut f = Fixture::new();
+    f.configured();
+    let config_path = f.repo.join(".arashi/config.json");
+    let original: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    for command in ["exec", "setup"] {
+        for policy in ["materialization", "external-parent"] {
+            let mut config = original.clone();
+            if policy == "materialization" {
+                config["repos"]["alpha"]["copy"] = serde_json::json!(["file"]);
+            } else {
+                config["repos"]["alpha"]["path"] = serde_json::json!(f.repo.join("../home"));
+            }
+            fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+            fs::write(f.repo.join("setup.sh"), "echo ran > sentinel\n").unwrap();
+            let args = if command == "exec" {
+                vec![
+                    "exec",
+                    "--json",
+                    "--",
+                    "node",
+                    "-e",
+                    "require('fs').writeFileSync('sentinel','ran')",
+                ]
+            } else {
+                vec!["setup", "--json"]
+            };
+            let native = f.run(false, &args);
+            assert!(
+                !native.status.success(),
+                "{policy}: {}",
+                String::from_utf8_lossy(&native.stdout)
+            );
+            let value: Value = serde_json::from_slice(&native.stdout).unwrap();
+            assert_eq!(value["error"]["code"], "RUST_NOT_YET_PORTED");
+            assert!(
+                !f.repo.join("sentinel").exists(),
+                "must preflight all repositories"
+            );
+            assert!(!f.repo.join("repos/zulu/sentinel").exists());
+            assert!(!f.home.join("sentinel").exists());
+        }
+    }
+}
+
+#[test]
+fn exec_parallel_barrier_and_environment_source_contract() {
+    let mut f = Fixture::new();
+    f.configured();
+    let script = r#"const fs=require('fs'),path=require('path');
+if(process.env.ARASHI_DIRECTIVE_FILE||process.env.ARASHI_SHELL)process.exit(10);
+const root=path.resolve('..','..');const name=path.basename(process.cwd());
+fs.writeFileSync(path.join(root,name+'.started'),'yes');
+const start=Date.now();const timer=setInterval(()=>{
+ if(['alpha','zulu'].every(n=>fs.existsSync(path.join(root,n+'.started')))){
+  clearInterval(timer);process.stdout.write('x'.repeat(200000));process.stderr.write('y'.repeat(200000));
+ } else if(Date.now()-start>3000){clearInterval(timer);process.exit(9);}
+},10);"#;
+    let args = [
+        "exec",
+        "--json",
+        "--jobs",
+        "2",
+        "--only",
+        "zulu,alpha",
+        "--",
+        "node",
+        "-e",
+        script,
+    ];
+    for source in [true, false] {
+        if source && std::env::var_os("ARASHI_TS_PARITY").is_none() {
+            continue;
+        }
+        let mut c = if source {
+            let mut c = Command::new("node");
+            c.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"));
+            c
+        } else {
+            Command::new(env!("CARGO_BIN_EXE_arashi"))
+        };
+        f.environment(&mut c);
+        c.args(args)
+            .env("ARASHI_DIRECTIVE_FILE", f.home.join("directives"))
+            .env("ARASHI_SHELL", "zsh");
+        let output = c.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["data"]["passed"], 2);
+        for result in value["data"]["results"].as_array().unwrap() {
+            assert_eq!(result["stdout"].as_str().unwrap().len(), 200000);
+            assert_eq!(result["stderr"].as_str().unwrap().len(), 200000);
+        }
+        for name in ["alpha", "zulu"] {
+            assert_eq!(
+                fs::read(f.repo.join(format!("{name}.started"))).unwrap(),
+                b"yes"
+            );
+            fs::remove_file(f.repo.join(format!("{name}.started"))).unwrap();
+        }
+        if source {
+            fs::write(f.base.join("source.stdout"), &output.stdout).unwrap();
+        } else if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            let mut source: Value =
+                serde_json::from_slice(&fs::read(f.base.join("source.stdout")).unwrap()).unwrap();
+            let mut native = value;
+            normalized(&mut source);
+            normalized(&mut native);
+            assert_eq!(source, native);
+            assert!(output.stderr.is_empty());
+        }
+        assert!(!f.home.join("directives").exists());
+    }
+}
+
+#[test]
+fn execution_context_and_missing_repository_source_contract() {
+    let mut f = Fixture::new();
+    for command in ["exec", "setup"] {
+        for json in [true, false] {
+            let mut args = vec![command];
+            if json {
+                args.push("--json");
+            }
+            if command == "exec" {
+                args.extend(["--", "git", "--version"]);
+            }
+            let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| f.run(true, &args));
+            let native = f.run(false, &args);
+            assert_eq!(native.status.code(), Some(if json { 2 } else { 1 }));
+            if let Some(source) = source {
+                if json {
+                    compare(&source, &native);
+                } else {
+                    assert_eq!(source.stdout, native.stdout);
+                    assert_eq!(source.stderr, native.stderr);
+                    assert_eq!(source.status.code(), native.status.code());
+                }
+            }
+        }
+    }
+    f.configured();
+    fs::remove_dir_all(f.repo.join("repos/alpha")).unwrap();
+    for args in [
+        vec![
+            "exec",
+            "--json",
+            "--only",
+            "alpha",
+            "--",
+            "git",
+            "--version",
+        ],
+        vec!["setup", "--json", "--only", "alpha"],
+        vec![
+            "exec",
+            "--json",
+            "--jobs=",
+            "--only",
+            "zulu",
+            "--",
+            "git",
+            "--version",
+        ],
+    ] {
+        let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| f.run(true, &args));
+        let native = f.run(false, &args);
+        if let Some(source) = source {
+            compare(&source, &native);
+        }
+    }
+}
+
+#[test]
+fn setup_metadata_and_human_skips_source_contract() {
+    let mut f = Fixture::new();
+    f.configured();
+    let config_path = f.repo.join(".arashi/config.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    config["baseBranch"] = serde_json::json!("origin/workspace-base");
+    config["meta"] = serde_json::json!({"baseBranch":"origin/meta-base"});
+    config["repos"]["alpha"]["baseBranch"] = serde_json::json!("origin/child-base");
+    config["repos"]["zulu"]["gitUrl"] = serde_json::json!("../local-remote");
+    config["hooks"] =
+        serde_json::json!({"scripts":{"pre-create":"echo forbidden > lifecycle-sentinel"}});
+    fs::write(config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+    fs::create_dir_all(f.repo.join(".arashi/hooks")).unwrap();
+    fs::write(
+        f.repo.join(".arashi/hooks/pre-create.sh"),
+        "echo forbidden > lifecycle-sentinel\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["setup", "--json"],
+        vec!["setup"],
+        vec!["setup", "--verbose", "--group", "backend"],
+        vec!["exec", "--json", "--only", "zulu", "--", "git", "--version"],
+    ] {
+        let before = f.coordinated_effects();
+        let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| f.run(true, &args));
+        let native = f.run(false, &args);
+        assert!(native.status.success());
+        assert_eq!(before, f.coordinated_effects());
+        if let Some(source) = source {
+            if args.contains(&"--json") {
+                compare(&source, &native);
+            } else {
+                assert_eq!(source.stdout, native.stdout);
+                assert_eq!(source.stderr, native.stderr);
+                assert_eq!(source.status.code(), native.status.code());
+            }
+        }
+        assert!(!f.repo.join("lifecycle-sentinel").exists());
+    }
+}

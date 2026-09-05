@@ -69,3 +69,6 @@ pub mod paths;
 pub mod doctor;
 
 pub mod status_human;
+
+pub mod execution;
+pub mod process;
