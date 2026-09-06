@@ -84,6 +84,8 @@ pub mod shell;
 
 pub mod add;
 
+pub mod pull_push;
+
 mod hooks;
 
 mod materialization;
