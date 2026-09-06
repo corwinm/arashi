@@ -52,6 +52,7 @@ const server = http.createServer((req, res) => {
       REQUEST_METHOD: req.method,
       CONTENT_TYPE: req.headers["content-type"] || "",
       CONTENT_LENGTH: req.headers["content-length"] || "",
+      HTTP_CONTENT_ENCODING: req.headers["content-encoding"] || "",
       REMOTE_ADDR: "127.0.0.1",
       SERVER_PROTOCOL: "HTTP/1.1",
       GATEWAY_INTERFACE: "CGI/1.1",

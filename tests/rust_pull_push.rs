@@ -38,6 +38,13 @@ fn daemon(f: &Fixture) -> (Daemon, String) {
     let ready = f.base.join("http-port");
     let log = fs::File::create(f.base.join("http-server.log")).unwrap();
     let child = Command::new("node")
+        .env_clear()
+        .envs(std::env::vars_os().filter(|(key, _)| {
+            matches!(
+                key.to_string_lossy().to_ascii_lowercase().as_str(),
+                "path" | "systemroot" | "windir" | "temp" | "tmp" | "pathext"
+            )
+        }))
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/rust/git-http-server.cjs"))
         .arg(&f.base)
         .arg(&ready)
@@ -53,10 +60,10 @@ fn daemon(f: &Fixture) -> (Daemon, String) {
             "HTTP fixture exited: {}",
             fs::read_to_string(f.base.join("http-server.log")).unwrap_or_default()
         );
-        if let Ok(port) = fs::read_to_string(&ready) {
-            if let Ok(port) = port.parse::<u16>() {
-                return (guard, format!("http://127.0.0.1:{port}/child.git"));
-            }
+        if let Ok(port) = fs::read_to_string(&ready)
+            && let Ok(port) = port.parse::<u16>()
+        {
+            return (guard, format!("http://127.0.0.1:{port}/child.git"));
         }
         assert!(
             std::time::Instant::now() < until,
@@ -1048,7 +1055,10 @@ fn push_dirty_divergence_continues_in_selection_order() {
                     .args(["-c", "maintenance.auto=false", "fetch", "origin"])
                     .current_dir(&f.child)
                     .env("GIT_TERMINAL_PROMPT", "0")
-                    .env("GIT_ALLOW_PROTOCOL", "git")
+                    .env(
+                        "GIT_ALLOW_PROTOCOL",
+                        if cfg!(windows) { "http" } else { "git" },
+                    )
                     .output()
                     .unwrap();
                 assert!(
