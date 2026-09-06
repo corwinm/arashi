@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Local, opt-in alpha bundle only. Never use the stable installer endpoint.
+# Local, opt-in alpha bundle only. No interpreter or stable installer fallback.
 set -euo pipefail
-if ! command -v python3 >/dev/null 2>&1; then
-  printf '%s\n' 'Alpha setup needs Python 3.9+. Install Python, or manually verify/extract the alpha archive into a NEW private directory; do not replace arashi/aw.' >&2
+script_dir="${BASH_SOURCE[0]%/*}"
+if [[ "$script_dir" == "${BASH_SOURCE[0]}" ]]; then script_dir=.; fi
+script_dir="$(cd -- "$script_dir" && pwd -P)"
+helper="$script_dir/arashi2-setup"
+if [[ ! -f "$helper" || ! -x "$helper" || -L "$helper" ]]; then
+  printf '%s\n' 'Missing or unsafe native arashi2-setup beside this launcher. Obtain the complete trusted alpha bundle for this platform.' >&2
   exit 1
 fi
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-exec python3 -B "$script_dir/alpha_setup.py" "$@"
+exec "$helper" "$@"

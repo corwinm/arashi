@@ -1,11 +1,12 @@
 #requires -Version 5.1
-# Run from a downloaded alpha CI artifact, not the stable installer endpoint.
+# Local, opt-in native alpha bundle only. No interpreter or PATH fallback.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$Python = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $Python) {
-    [Console]::Error.WriteLine('Alpha setup needs Python 3.9+. Install Python, or manually verify/extract the alpha archive into a NEW private directory; do not replace arashi/aw.')
+$Helper = Join-Path $PSScriptRoot 'arashi2-setup.exe'
+if (-not (Test-Path -LiteralPath $Helper -PathType Leaf) -or
+    ((Get-Item -LiteralPath $Helper -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    [Console]::Error.WriteLine('Missing or unsafe native arashi2-setup.exe beside this launcher. Obtain the complete trusted alpha bundle for this platform.')
     exit 1
 }
-& $Python.Source -B (Join-Path $PSScriptRoot 'alpha_setup.py') @args
+& $Helper @args
 exit $LASTEXITCODE

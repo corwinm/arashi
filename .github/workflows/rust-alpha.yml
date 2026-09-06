@@ -19,13 +19,14 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0 # Historical schema-1 installer oracle for migration tests.
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
       - name: Build separate native alpha executables
-        run: cargo +stable build --locked --release --bin arashi2 --bin aw2
+        run: cargo +stable build --locked --release --bin arashi2 --bin aw2 --bin arashi2-setup
       - name: Real archive and isolated-home lifecycle acceptance
         run: python -B tests/rust/alpha_distribution.py
       - uses: actions/setup-node@v7
@@ -42,7 +43,7 @@ jobs:
         run: python -B tests/rust/alpha_distribution.py
         env:
           ALPHA_POWERSHELL: pwsh.exe
-      - name: PowerShell 5.1 preflight with multiple Python candidates
+      - name: PowerShell 5.1 native-helper preflight without Python
         if: runner.os == 'Windows'
         run: python -B tests/windows/alpha-preflight.py
       - name: Validate PowerShell 5.1 script syntax
@@ -60,7 +61,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-alpha-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-          path: target/alpha-distribution/*
+          path: |
+            target/alpha-distribution/*-tester.tar.gz
+            target/alpha-distribution/*-tester.tar.gz.sha256
+            target/alpha-distribution/*-tester.zip
+            target/alpha-distribution/*-tester.zip.sha256
           if-no-files-found: error
           retention-days: 14
       # No npm, tags, release upload, stable endpoint or repository write permission.

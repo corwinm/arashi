@@ -33,7 +33,12 @@ name = "rust_cli"
 path = "tests/rust_cli.rs"
 
 [dependencies]
-serde = "1.0.228"
+serde = { version = "1.0.228", features = ["derive"] }
+sha2 = "0.10"
+zip = { version = "2.4", default-features = false, features = ["deflate-flate2", "flate2"] }
+tempfile = "3"
+# ZIP decoding only: omit the optional zopfli encoder.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 serde_json = { version = "1.0.149", features = ["raw_value"] }
 
 [[test]]
@@ -51,3 +56,10 @@ path = "tests/rust_parity.rs"
 [[test]]
 name = "rust_prune"
 path = "tests/rust_prune.rs"
+
+[[bin]]
+name = "arashi2-setup"
+path = "src/rust/alpha_setup.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

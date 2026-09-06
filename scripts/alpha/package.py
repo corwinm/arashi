@@ -7,7 +7,48 @@ import shutil
 import stat
 import subprocess
 import zipfile
-from alpha_setup import VERSION, digest, json_bytes, names, platform_id, regular
+import hashlib
+import json
+import os
+import platform
+import gzip
+import tarfile
+
+VERSION = re.compile(r'2\.[0-9]+\.[0-9]+-alpha\.[0-9]+\Z')
+
+
+def platform_id():
+    system = {'Darwin': 'macos', 'Linux': 'linux', 'Windows': 'windows'}.get(platform.system())
+    arch = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'x64', 'amd64': 'x64'}.get(platform.machine().lower())
+    if not system or not arch or (system == 'windows' and arch != 'x64'):
+        raise ValueError('Unsupported alpha platform; build the Rust alpha aliases manually.')
+    return system + '-' + arch
+
+
+def names():
+    suffix = '.exe' if os.name == 'nt' else ''
+    return ['arashi2' + suffix, 'aw2' + suffix]
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def regular(path, directory=False):
+    info = path.lstat()
+    if (stat.S_ISLNK(info.st_mode) or
+            getattr(info, 'st_file_attributes', 0) & 0x400 or
+            not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)) or
+            (not directory and info.st_nlink != 1)):
+        raise ValueError('Linked, reparse, special or hardlinked path refused: ' + str(path))
+    return info
+
+
+def json_bytes(value):
+    return (json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n').encode('utf-8')
+
+
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -43,8 +84,42 @@ def main():
             info.compress_type = zipfile.ZIP_DEFLATED
             output.writestr(info, data)
     archive.with_suffix('.zip.sha256').write_bytes((digest(archive.read_bytes()) + '  ' + archive.name + '\n').encode('ascii'))
-    for name in ['alpha_setup.py', 'install-alpha.sh', 'install-alpha.ps1']:
+    helper = 'arashi2-setup' + ('.exe' if os.name == 'nt' else '')
+    helper_path = args.binary_dir.resolve() / helper
+    regular(helper_path)
+    result = subprocess.run([str(helper_path), '--version'], capture_output=True, text=True, check=True)
+    if result.stdout != 'arashi2-setup ' + version + '\n' or result.stderr:
+        raise ValueError('Wrong native setup identity')
+    shutil.copy2(helper_path, args.output / helper)
+    for name in ['install-alpha.sh', 'install-alpha.ps1']:
         shutil.copyfile(Path(__file__).parent / name, args.output / name)
+    # GitHub artifact upload strips executable bits: publish a nested mode-preserving
+    # tester archive, not loose executables. Payload ZIP remains the lifecycle input.
+    members = [archive.name, archive.name + '.sha256', helper, 'install-alpha.sh', 'install-alpha.ps1']
+    bundle = args.output / (archive.stem + '-tester' + ('.zip' if os.name == 'nt' else '.tar.gz'))
+    candidate = bundle.with_name(bundle.name + '.tmp')
+    try:
+        if os.name == 'nt':
+            with zipfile.ZipFile(candidate, 'w', compression=zipfile.ZIP_DEFLATED) as output:
+                for name in sorted(members):
+                    info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+                    info.create_system = 3
+                    info.external_attr = (stat.S_IFREG | (0o755 if name in [helper, 'install-alpha.sh'] else 0o644)) << 16
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    output.writestr(info, (args.output / name).read_bytes())
+        else:
+            with candidate.open('wb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', filename='', mtime=0) as gz:
+                with tarfile.open(fileobj=gz, mode='w|') as output:
+                    for name in sorted(members):
+                        info = tarfile.TarInfo(name)
+                        info.size = (args.output / name).stat().st_size
+                        info.mode = 0o755 if name in [helper, 'install-alpha.sh'] else 0o644
+                        with (args.output / name).open('rb') as stream:
+                            output.addfile(info, stream)
+        candidate.replace(bundle)
+    finally:
+        candidate.unlink(missing_ok=True)
+    bundle.with_name(bundle.name + '.sha256').write_text(digest(bundle.read_bytes()) + '  ' + bundle.name + '\n', encoding='ascii')
     print(archive)
 
 

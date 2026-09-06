@@ -6,7 +6,9 @@ import subprocess
 import tempfile
 import winreg
 
-root = Path(__file__).resolve().parents[2] / 'scripts' / 'alpha'
+root = Path(__file__).resolve().parents[2] / 'target' / 'native-alpha-evidence' / 'extracted-tester'
+powershell = __import__('shutil').which('powershell.exe')
+assert powershell and (root / 'arashi2-setup.exe').is_file()
 results = []
 def user_path():
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment') as key:
@@ -22,14 +24,14 @@ with tempfile.TemporaryDirectory(prefix='arashi-alpha-native-') as temp:
     stable = home / '.arashi' / 'bin'
     stable.mkdir(parents=True)
     (stable / 'aw.bat').write_bytes(b'caller stable')
-    shadow = Path(temp) / 'later-python'
+    shadow = Path(temp) / 'no-python'
     shadow.mkdir()
     (shadow / 'python.exe').write_bytes(b'Invalid executable fixture; must never run')
     env = {**os.environ, 'HOME': str(home), 'USERPROFILE': str(home),
-           'PATH': os.environ['PATH'] + os.pathsep + str(shadow)}
+           'PATH': str(shadow)}
     installer = root / 'install-alpha.ps1'
     def run(label, args, expected):
-        result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-File', str(installer), *args],
+        result = subprocess.run([powershell, '-NoProfile', '-NonInteractive', '-File', str(installer), *args],
                                 env=env, capture_output=True, text=True)
         assert result.returncode == expected, (label, result.returncode, result.stdout, result.stderr)
         results.append({'case': label, 'exit': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr})
@@ -57,4 +59,4 @@ assert user_path() == before_path
 print(json.dumps({'platform': os.name, 'python': __import__('sys').version, 'cases': results,
                   'stable_bytes_preserved': True, 'user_path_preserved': True,
                   'hashes': {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-                             for name in ['alpha_setup.py', 'install-alpha.ps1']}}))
+                             for name in ['arashi2-setup.exe', 'install-alpha.ps1']}}))
