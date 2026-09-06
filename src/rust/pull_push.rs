@@ -1,4 +1,4 @@
-//! Bounded configured pull/push support for ordinary local filesystem remotes.
+//! Configured pull/push via native Git transports; unsupported policies fail closed.
 use crate::{Error, Result, cli::Args, config::Workspace, git};
 use serde_json::{Map, Value, json};
 use std::{
@@ -17,6 +17,8 @@ struct Repository {
 #[derive(Clone)]
 struct Remote {
     path: PathBuf,
+    network: bool,
+    url: String,
 }
 
 fn unsupported(message: impl Into<String>) -> Error {
@@ -247,11 +249,28 @@ fn remote(repository: &Repository) -> Result<Option<Remote>> {
             "Multiple origin URLs are not yet supported; no remote operation attempted",
         ));
     }
+    let url = urls[0];
+    let network = ["https://", "http://", "ssh://", "git://"]
+        .iter()
+        .any(|prefix| url.starts_with(prefix))
+        || (!url.contains("://")
+            && !url.contains("::")
+            && !url.starts_with('-')
+            && url.split_once(':').is_some_and(|(host, path)| {
+                !host.contains('/') && !host.is_empty() && !path.is_empty()
+            }));
+    if network {
+        return Ok(Some(Remote {
+            path: repository.path.clone(),
+            network: true,
+            url: url.to_owned(),
+        }));
+    }
     let path = urls[0].strip_prefix("file://").unwrap_or(urls[0]);
     let path = PathBuf::from(path);
     if !path.is_absolute() || !path.is_dir() {
         return Err(unsupported(
-            "Pull and push currently support local filesystem remotes only; no network operation attempted",
+            "Unsupported remote URL or local remote path; no remote operation attempted",
         ));
     }
     crate::managed::safe(&path)?;
@@ -263,6 +282,8 @@ fn remote(repository: &Repository) -> Result<Option<Remote>> {
     reject_bare_remote_policy(&path)?;
     Ok(Some(Remote {
         path: crate::paths::canonicalize(&path)?,
+        network: false,
+        url: url.to_owned(),
     }))
 }
 
@@ -309,7 +330,7 @@ fn reject_observation_drivers(path: &Path) -> Result<()> {
         &[
             "config",
             "--get-regexp",
-            r"^(filter\..*\.(clean|process)|core\.fsmonitor)$",
+            r"^(filter\..*\.(clean|smudge|process)|core\.fsmonitor)$",
         ],
     ) && !value.trim().is_empty()
     {
@@ -338,7 +359,12 @@ fn reject_observation_drivers(path: &Path) -> Result<()> {
     } else {
         path.join(hooks)
     };
-    for hook in ["post-merge", "pre-merge-commit", "pre-push"] {
+    for hook in [
+        "post-merge",
+        "pre-merge-commit",
+        "pre-push",
+        "reference-transaction",
+    ] {
         if hooks.join(hook).try_exists()? {
             return Err(unsupported(format!(
                 "Active Git hook '{hook}' is not supported by pull/push; no changes made"
@@ -350,7 +376,7 @@ fn reject_observation_drivers(path: &Path) -> Result<()> {
         &[
             "config",
             "--get-regexp",
-            r"^(remote\.origin\.(uploadpack|receivepack|proxy)|core\.gitProxy|branch\..*\.pushRemote|remote\.pushDefault)$",
+            r"^(remote\.origin\.(uploadpack|receivepack|proxy|vcs)|core\.gitProxy|branch\..*\.pushRemote|remote\.pushDefault)$",
         ],
     ) && !value.trim().is_empty()
     {
@@ -423,7 +449,67 @@ fn upstream(path: &Path) -> Option<String> {
     .map(|value| value.trim().to_owned())
 }
 
+fn remote_git(remote: &Remote, args: &[&str]) -> Result<String> {
+    if !remote.network {
+        return git::run(&remote.path, args);
+    }
+    let argv = std::iter::once("git".to_owned())
+        .chain(args.iter().map(|arg| (*arg).to_owned()))
+        .collect::<Vec<_>>();
+    let output = crate::process::run(&argv, &remote.path, Some(Duration::from_secs(30)))?;
+    if output.timed_out {
+        return Err(Error::new(
+            "GIT_ERROR",
+            "Remote operation timed out after 30000ms",
+        ));
+    }
+    if output.exit_code != 0 {
+        return Err(Error::new("GIT_ERROR", output.stderr.trim()));
+    }
+    Ok(output.stdout)
+}
+
+fn remote_ref(remote: &Remote, reference: &str) -> Option<String> {
+    if !remote.network {
+        return exact_ref(&remote.path, reference);
+    }
+    remote_git(remote, &["ls-remote", "--refs", "origin", reference])
+        .ok()?
+        .lines()
+        .filter_map(|line| line.split_once(char::from(9)))
+        .find(|(_, name)| *name == reference)
+        .map(|(oid, _)| oid.to_owned())
+}
+
+fn fetch_comparison(remote: &Remote, branch: &str) -> Result<()> {
+    if remote.network {
+        remote_git(
+            remote,
+            &[
+                "fetch",
+                "--no-tags",
+                "--no-write-fetch-head",
+                "--refmap=",
+                "origin",
+                &format!("refs/heads/{branch}"),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 fn default_remote_branch(remote: &Remote) -> Result<String> {
+    if remote.network {
+        let refs = remote_git(remote, &["ls-remote", "--symref", "origin", "HEAD"])?;
+        return refs
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("ref: refs/heads/")
+                    .and_then(|line| line.strip_suffix("\tHEAD"))
+            })
+            .map(str::to_owned)
+            .ok_or_else(|| unsupported("Origin must advertise a symbolic default branch"));
+    }
     let reference = git::run(&remote.path, &["symbolic-ref", "HEAD"])?;
     reference
         .trim()
@@ -507,6 +593,8 @@ fn plan_pull(repository: Repository, remote: Option<Remote>) -> Result<PullPlan>
             repository,
             remote: Remote {
                 path: PathBuf::new(),
+                network: false,
+                url: String::new(),
             },
             branch: String::new(),
             head: String::new(),
@@ -531,7 +619,7 @@ fn plan_pull(repository: Repository, remote: Option<Remote>) -> Result<PullPlan>
     let local = head(&repository.path)?;
     let branch = branch_target(&repository, &remote)?;
     let reference = format!("refs/heads/{branch}");
-    let Some(remote_oid) = exact_ref(&remote.path, &reference) else {
+    let Some(remote_oid) = remote_ref(&remote, &reference) else {
         return Ok(PullPlan {
             configured_base: None,
             repository,
@@ -545,6 +633,7 @@ fn plan_pull(repository: Repository, remote: Option<Remote>) -> Result<PullPlan>
             )),
         });
     };
+    fetch_comparison(&remote, &branch)?;
     let configured_base = configured_base(&repository, &remote.path, &branch, &remote_oid, &local);
     let (state, message) = if local == remote_oid {
         ("current", None)
@@ -616,9 +705,10 @@ fn execute_pull(plan: &PullPlan, timeout: Option<Duration>) -> Value {
         "failed" => pull_result(plan, "failed", start, plan.message.clone(), None),
         "diverged" => pull_result(plan, "manual-update", start, plan.message.clone(), None),
         "update" => {
-            let unchanged = head(&plan.repository.path).is_ok_and(|value| value == plan.head)
+            let unchanged = same_remote(&plan.repository, &plan.remote)
+                && head(&plan.repository.path).is_ok_and(|value| value == plan.head)
                 && clean(&plan.repository.path).unwrap_or(false)
-                && exact_ref(&plan.remote.path, &format!("refs/heads/{}", plan.branch))
+                && remote_ref(&plan.remote, &format!("refs/heads/{}", plan.branch))
                     .is_some_and(|value| value == plan.remote_oid);
             if !unchanged {
                 return pull_result(
@@ -678,14 +768,15 @@ fn execute_pull(plan: &PullPlan, timeout: Option<Duration>) -> Value {
                     Some(output),
                 );
             }
-            let still_safe = head(&plan.repository.path).is_ok_and(|value| value == plan.head)
+            let still_safe = same_remote(&plan.repository, &plan.remote)
+                && head(&plan.repository.path).is_ok_and(|value| value == plan.head)
                 && clean(&plan.repository.path).unwrap_or(false)
                 && exact_ref(
                     &plan.repository.path,
                     &format!("refs/remotes/origin/{}", plan.branch),
                 )
                 .is_some_and(|value| value == plan.remote_oid)
-                && exact_ref(&plan.remote.path, &format!("refs/heads/{}", plan.branch))
+                && remote_ref(&plan.remote, &format!("refs/heads/{}", plan.branch))
                     .is_some_and(|value| value == plan.remote_oid);
             if !still_safe {
                 return pull_result(
@@ -729,11 +820,6 @@ fn execute_pull(plan: &PullPlan, timeout: Option<Duration>) -> Value {
 }
 
 pub fn pull(workspace: &Workspace, args: &Args) -> Result<Value> {
-    if args.has("verbose") {
-        return Err(unsupported(
-            "Verbose pull output is not yet supported by this bounded slice; no changes made",
-        ));
-    }
     let repositories = repositories(workspace, args)?;
     let config = workspace.config.as_ref().unwrap();
     let ignore = crate::managed::IgnorePlan::build(
@@ -754,7 +840,25 @@ pub fn pull(workspace: &Workspace, args: &Args) -> Result<Value> {
     let plans = repositories
         .into_iter()
         .zip(remotes)
-        .map(|(repository, remote)| plan_pull(repository, remote))
+        .map(|(repository, remote)| {
+            let saved = repository.clone();
+            plan_pull(repository, remote).or_else(|error| {
+                Ok(PullPlan {
+                    repository: saved,
+                    remote: Remote {
+                        path: PathBuf::new(),
+                        network: false,
+                        url: String::new(),
+                    },
+                    branch: String::new(),
+                    head: String::new(),
+                    remote_oid: String::new(),
+                    configured_base: None,
+                    state: "failed",
+                    message: Some(error.to_string()),
+                })
+            })
+        })
         .collect::<Result<Vec<_>>>()?;
     if plans.iter().any(changes_control_files) {
         return Err(unsupported(
@@ -799,11 +903,12 @@ fn push_base(repository: &Repository, remote: &Remote) -> Result<(String, String
         default_remote_branch(remote)?
     };
     let reference = format!("refs/heads/{branch}");
-    let oid = exact_ref(&remote.path, &reference).ok_or_else(|| {
+    let oid = remote_ref(remote, &reference).ok_or_else(|| {
         unsupported(format!(
             "Configured/default base '{branch}' is unavailable on the local origin"
         ))
     })?;
+    fetch_comparison(remote, &branch)?;
     let local = head(&repository.path)?;
     let base = configured_base(repository, &repository.path, &branch, &oid, &local);
     Ok((branch, oid, base))
@@ -817,6 +922,8 @@ fn plan_push(repository: Repository, remote: Option<Remote>, args: &Args) -> Res
             repository,
             remote: Remote {
                 path: PathBuf::new(),
+                network: false,
+                url: String::new(),
             },
             branch: String::new(),
             head: String::new(),
@@ -875,9 +982,15 @@ fn plan_push(repository: Repository, remote: Option<Remote>, args: &Args) -> Res
         let target = upstream
             .strip_prefix("origin/")
             .ok_or_else(|| unsupported("Only origin upstreams are supported; no push attempted"))?;
-        let oid = exact_ref(&remote.path, &format!("refs/heads/{target}")).ok_or_else(|| {
+        if target != branch {
+            return Err(unsupported(
+                "Upstream branch name differs from the current branch; configure the push policy explicitly before publishing",
+            ));
+        }
+        let oid = remote_ref(&remote, &format!("refs/heads/{target}")).ok_or_else(|| {
             unsupported("An existing upstream must still exist on the local origin")
         })?;
+        fetch_comparison(&remote, target)?;
         (oid, None)
     } else {
         let (_, oid, configured) = push_base(&repository, &remote)?;
@@ -886,7 +999,7 @@ fn plan_push(repository: Repository, remote: Option<Remote>, args: &Args) -> Res
     let ahead = count(&repository.path, &format!("{baseline_oid}..{local}")).ok_or_else(|| {
         unsupported("The remote comparison commit is unavailable locally; fetch explicitly first")
     })?;
-    let target = exact_ref(&remote.path, &format!("refs/heads/{branch}"));
+    let target = remote_ref(&remote, &format!("refs/heads/{branch}"));
     let mut fields = vec![
         ("branch", json!(branch)),
         ("elapsedSeconds", json!(elapsed(start))),
@@ -972,13 +1085,20 @@ fn plan_push(repository: Repository, remote: Option<Remote>, args: &Args) -> Res
     })
 }
 
+fn same_remote(repository: &Repository, expected: &Remote) -> bool {
+    remote(repository).is_ok_and(|actual| {
+        actual.is_some_and(|actual| actual.url == expected.url && actual.path == expected.path)
+    })
+}
+
 fn execute_push(plan: &PushPlan) -> Value {
     if !plan.push {
         return plan.result.clone();
     }
     let start = Instant::now();
-    let current_target = exact_ref(&plan.remote.path, &format!("refs/heads/{}", plan.branch));
-    let safe = head(&plan.repository.path).is_ok_and(|value| value == plan.head)
+    let current_target = remote_ref(&plan.remote, &format!("refs/heads/{}", plan.branch));
+    let safe = same_remote(&plan.repository, &plan.remote)
+        && head(&plan.repository.path).is_ok_and(|value| value == plan.head)
         && clean(&plan.repository.path).unwrap_or(false)
         && current_target == plan.expected_target;
     if !safe {
@@ -989,18 +1109,17 @@ fn execute_push(plan: &PushPlan) -> Value {
         value["status"] = json!("failed");
         return value;
     }
-    let lease = format!(
-        "--force-with-lease=refs/heads/{}:{}",
-        plan.branch,
-        plan.expected_target.as_deref().unwrap_or("")
-    );
     let refspec = format!("{}:refs/heads/{}", plan.head, plan.branch);
     let mut argv = vec!["git".into(), "push".into()];
     if plan.result["upstreamSet"] == true {
         argv.push("--set-upstream".into());
     }
-    argv.extend([lease, "origin".into(), refspec]);
-    let outcome = match crate::process::run(&argv, &plan.repository.path, None) {
+    argv.extend(["origin".into(), refspec]);
+    let outcome = match crate::process::run(
+        &argv,
+        &plan.repository.path,
+        plan.remote.network.then_some(Duration::from_secs(30)),
+    ) {
         Ok(outcome) => outcome,
         Err(error) => {
             let mut value = plan.result.clone();
@@ -1015,7 +1134,7 @@ fn execute_push(plan: &PushPlan) -> Value {
     value["stdout"] = json!(outcome.stdout);
     value["stderr"] = json!(outcome.stderr);
     if outcome.exit_code == 0
-        && exact_ref(&plan.remote.path, &format!("refs/heads/{}", plan.branch))
+        && remote_ref(&plan.remote, &format!("refs/heads/{}", plan.branch))
             .is_some_and(|oid| oid == plan.head)
     {
         if plan.result["upstreamSet"] == true
@@ -1057,7 +1176,14 @@ pub fn push(workspace: &Workspace, args: &Args) -> Result<Value> {
     let plans = repositories
         .into_iter()
         .zip(remotes)
-        .map(|(repository, remote)| plan_push(repository, remote, args))
+        .map(|(repository, remote)| {
+            let saved = repository.clone();
+            plan_push(repository, remote, args).or_else(|error| Ok(PushPlan {
+                result: json!({"repositoryId": saved.name, "status": "failed", "elapsedSeconds": 0.0, "errorMessage": error.to_string()}),
+                repository: saved, remote: Remote { path: PathBuf::new(), network: false, url: String::new() },
+                branch: String::new(), head: String::new(), expected_target: None, push: false,
+            }))
+        })
         .collect::<Result<Vec<_>>>()?;
     let results: Vec<_> = plans
         .iter()
@@ -1108,7 +1234,7 @@ pub fn push_warnings(data: &Value) -> Vec<Value> {
         .collect()
 }
 
-pub fn human(command: &str, data: &Value) -> String {
+pub fn human(command: &str, data: &Value, verbose: bool) -> String {
     let mut lines = Vec::new();
     let results = data["results"].as_array().cloned().unwrap_or_default();
     for (index, result) in results.iter().enumerate() {
@@ -1118,6 +1244,13 @@ pub fn human(command: &str, data: &Value) -> String {
             results.len(),
             result["repositoryId"].as_str().unwrap_or("")
         ));
+        if command == "pull"
+            && verbose
+            && let Some(output) = result["output"].as_str()
+            && !output.is_empty()
+        {
+            lines.push(output.to_owned());
+        }
         let detail = result["errorMessage"]
             .as_str()
             .or_else(|| result["reason"].as_str())

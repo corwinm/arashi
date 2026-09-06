@@ -218,7 +218,7 @@ pub fn entry() -> i32 {
                 }
                 println!("{}", crate::status_human::render(&data, short, verbose));
             } else if command == "pull" || command == "push" {
-                println!("{}", crate::pull_push::human(&command, &data));
+                println!("{}", crate::pull_push::human(&command, &data, verbose));
             } else if command != "exec" && command != "setup" {
                 render_human(&command, &data);
             }

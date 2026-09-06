@@ -8,6 +8,171 @@ use std::{
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+struct Daemon(std::process::Child);
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+fn daemon(f: &Fixture) -> (Daemon, String) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let child = Command::new("git")
+        .args([
+            "daemon",
+            "--reuseaddr",
+            "--listen=127.0.0.1",
+            &format!("--port={port}"),
+            "--export-all",
+            "--enable=receive-pack",
+            &format!("--base-path={}", f.base.display()),
+            f.base.to_str().unwrap(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut guard = Daemon(child);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        assert!(guard.0.try_wait().unwrap().is_none(), "git daemon exited");
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "git daemon readiness timeout"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    (guard, format!("git://127.0.0.1:{port}/child.git"))
+}
+#[test]
+fn real_git_transport_pull_and_push() {
+    let f = Fixture::new(None);
+    let (_daemon, url) = daemon(&f);
+    git(&f.child, &["remote", "set-url", "origin", &url]);
+    let pulled = f.advance(&f.child_remote, "network-advance", "network.txt");
+    let output = f.run(&["pull", "--only", "child", "--json"]);
+    assert!(output.status.success(), "{}", json(&output));
+    assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), pulled);
+    let pushed = f.feature(&f.child, "network-feature", "publish.txt");
+    let preview = f.run(&[
+        "push",
+        "--only",
+        "child",
+        "--set-upstream",
+        "--dry-run",
+        "--json",
+    ]);
+    assert!(preview.status.success(), "{}", json(&preview));
+    assert_eq!(json(&preview)["data"]["results"][0]["status"], "planned");
+    let output = f.run(&["push", "--only", "child", "--set-upstream", "--json"]);
+    assert!(output.status.success(), "{}", json(&output));
+    assert_eq!(
+        git(
+            &f.child_remote,
+            &["rev-parse", "refs/heads/network-feature"]
+        ),
+        pushed
+    );
+    assert_eq!(
+        git(&f.child, &["rev-parse", "--abbrev-ref", "@{u}"]),
+        "origin/network-feature"
+    );
+}
+#[test]
+#[ignore = "requires Node and TypeScript dependencies"]
+fn source_parity_network_current_and_preview() {
+    if std::env::var("ARASHI_TS_PARITY").as_deref() != Ok("1") {
+        return;
+    }
+    let f = Fixture::new(None);
+    let (_daemon, url) = daemon(&f);
+    git(&f.child, &["remote", "set-url", "origin", &url]);
+    compare_json(
+        &f.run_impl(true, &["pull", "--only", "child", "--json"]),
+        &f.run(&["pull", "--only", "child", "--json"]),
+    );
+    f.feature(&f.child, "network-preview", "preview.txt");
+    let args = [
+        "push",
+        "--only",
+        "child",
+        "--set-upstream",
+        "--dry-run",
+        "--json",
+    ];
+    compare_json(&f.run_impl(true, &args), &f.run(&args));
+}
+
+#[test]
+fn network_failure_continues_to_later_repository() {
+    for operation in ["pull", "push"] {
+        let f = Fixture::new(None);
+        let (_daemon, url) = daemon(&f);
+        git(
+            &f.child,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                &url.replace("child.git", "missing.git"),
+            ],
+        );
+        let expected = if operation == "pull" {
+            f.advance(&f.main_remote, "continue-network", "continued.txt")
+        } else {
+            f.feature(&f.root, "continue-network", "continued.txt")
+        };
+        let mut args = vec![operation, "--only", "child,@meta", "--json"];
+        if operation == "push" {
+            args.push("--set-upstream");
+        }
+        let output = f.run(&args);
+        assert_eq!(output.status.code(), Some(1), "{}", json(&output));
+        let envelope = json(&output);
+        let results = if operation == "pull" {
+            &envelope["data"]["results"]
+        } else {
+            &envelope["error"]["details"]["results"]
+        };
+        assert_eq!(results[0]["status"], "failed");
+        assert_eq!(
+            results[1]["status"],
+            if operation == "pull" {
+                "updated"
+            } else {
+                "pushed"
+            }
+        );
+        let actual = if operation == "pull" {
+            git(&f.root, &["rev-parse", "HEAD"])
+        } else {
+            git(
+                &f.main_remote,
+                &["rev-parse", "refs/heads/continue-network"],
+            )
+        };
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn verbose_pull_reports_git_output() {
+    let f = Fixture::new(None);
+    f.advance(&f.child_remote, "verbose-advance", "verbose.txt");
+    let output = f.run(&["pull", "--only", "child", "--verbose"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("verbose.txt"));
+}
+
 struct Fixture {
     base: PathBuf,
     root: PathBuf,
@@ -104,7 +269,8 @@ impl Fixture {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", self.home.join(".gitconfig"))
             .env("GIT_TERMINAL_PROMPT", "0")
-            .env("NO_COLOR", "1");
+            .env("NO_COLOR", "1")
+            .env("GIT_ALLOW_PROTOCOL", "file:git");
         command.output().unwrap()
     }
 
@@ -217,6 +383,9 @@ fn compare_json(source: &Output, native: &Output) {
 #[test]
 #[ignore = "requires Node and TypeScript dependencies"]
 fn source_parity_for_current_pull_json() {
+    if std::env::var("ARASHI_TS_PARITY").as_deref() != Ok("1") {
+        return;
+    }
     let f = Fixture::new(None);
     compare_json(
         &f.run_impl(true, &["pull", "--json"]),
@@ -227,6 +396,9 @@ fn source_parity_for_current_pull_json() {
 #[test]
 #[ignore = "requires Node and TypeScript dependencies"]
 fn source_parity_for_push_dry_run_json() {
+    if std::env::var("ARASHI_TS_PARITY").as_deref() != Ok("1") {
+        return;
+    }
     let f = Fixture::new(None);
     f.feature(&f.child, "feature/parity", "parity.txt");
     let args = [
@@ -344,18 +516,13 @@ fn pull_timeout_is_failed_and_does_not_move_head() {
 }
 
 #[test]
-fn pull_rejects_network_remote_before_any_selected_repository_changes() {
+fn pull_rejects_helper_remote_before_any_selected_repository_changes() {
     let f = Fixture::new(None);
     let before = git(&f.root, &["rev-parse", "HEAD"]);
     f.advance(&f.main_remote, "blocked-main", "blocked.txt");
     git(
         &f.child,
-        &[
-            "remote",
-            "set-url",
-            "origin",
-            "https://example.invalid/repo.git",
-        ],
+        &["remote", "set-url", "origin", "ext::untrusted-helper"],
     );
     let output = f.run(&["pull", "--json"]);
     assert_eq!(output.status.code(), Some(1));
@@ -492,18 +659,13 @@ fn push_dirty_repository_fails_without_creating_remote_ref() {
 }
 
 #[test]
-fn push_rejects_network_remote_before_any_selected_repository_changes() {
+fn push_rejects_helper_remote_before_any_selected_repository_changes() {
     let f = Fixture::new(None);
     f.feature(&f.root, "feature/blocked", "blocked.txt");
     f.feature(&f.child, "feature/blocked", "blocked-child.txt");
     git(
         &f.child,
-        &[
-            "remote",
-            "set-url",
-            "origin",
-            "ssh://example.invalid/repo.git",
-        ],
+        &["remote", "set-url", "origin", "ext::untrusted-helper"],
     );
     let output = f.run(&["push", "--set-upstream", "--json"]);
     assert_eq!(output.status.code(), Some(1));
