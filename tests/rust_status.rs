@@ -80,7 +80,7 @@ fn dirty_files_and_local_default_divergence() {
 #[test]
 fn remote_status_fails_before_fetch() {
     let r = Repo::new();
-    r.git(&["remote", "add", "origin", "https://example.invalid/repo"]);
+    r.git(&["remote", "add", "origin", "custom-helper::repo"]);
     let e = arashi::status::status(&r.workspace(), &r.0).unwrap_err();
     assert_eq!(e.code, "PORT_UNSUPPORTED");
     assert!(!r.0.join(".git/FETCH_HEAD").exists());
@@ -116,7 +116,7 @@ fn missing_configured_repository_path_is_lexically_normalized() {
         )
         .unwrap(),
     );
-    let expected = r.0.join("repos/missing");
+    let expected = r.0.join("repos").join("missing");
 
     let data = arashi::status::status(&w, &r.0).unwrap();
     let row = &data["repositories"][1];
