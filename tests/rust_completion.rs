@@ -250,13 +250,13 @@ fn query_emits_lossless_configured_repository_group_and_worktree_records() {
     );
     let worktrees = records(&query(root, "2", &["arashi", "remove", ""]));
     assert!(worktrees.iter().any(|(value, _)| value == "feature,one"));
-    assert!(worktrees.iter().any(|(value, _)| {
-        value
-            == fs::canonicalize(&linked)
-                .unwrap()
-                .to_string_lossy()
-                .as_ref()
-    }));
+    let linked = fs::canonicalize(&linked)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    #[cfg(windows)]
+    let linked = linked.replace('\\', "/");
+    assert!(worktrees.iter().any(|(value, _)| value == &linked));
 }
 
 #[cfg(not(windows))]
