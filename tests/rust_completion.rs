@@ -82,9 +82,9 @@ fn records(output: &Output) -> Vec<(String, String)> {
         0,
         "records must alternate value and description"
     );
-    fields
-        .chunks_exact(2)
-        .map(|pair| (pair[0].clone(), pair[1].clone()))
+    (0..fields.len())
+        .step_by(2)
+        .map(|index| (fields[index].clone(), fields[index + 1].clone()))
         .collect()
 }
 

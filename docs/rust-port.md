@@ -166,7 +166,6 @@ TypeScript production/helpers, the macOS direct launcher, doctor fixture mainten
 
 Local lifecycle validation via `target/lifecycle/validate.sh` exited 0: **149 passed, 0 failed, 0 ignored** with source-enabled offline locked all-target/include-ignored tests; **18/18** release lifecycle tests including source characterization; fmt, included-fixture rustfmt, clippy `-D warnings`, release build and whitespace checks passed. Native smoke **12/12**, external source parity **15/15**, characterization **19/19**. Final logs/reports are `target/lifecycle/final-*`; file hashes and exact local scope are in `validation-summary.json`. The external harness retains its existing journeys; lifecycle acceptance is in the new Cargo oracle tests. Additional RED/GREEN cases cover missing/relative HOME, traversing child projection, inherited session launch and terminal-input rejection. These local macOS results do not close the outstanding policy ledger or replace parent-owned independent review and exact-head cross-platform CI.
 
-
 ## Create materialization verification
 
 Local macOS validation of the uncommitted continuation from `a9e562c582a8d8db78ffb82c15bc6937d683eeab`, 2026-09-05:
