@@ -73,6 +73,8 @@ pub mod status_human;
 pub mod execution;
 pub mod process;
 
+pub mod add;
+
 mod hooks;
 
 mod materialization;

@@ -241,6 +241,10 @@ pub fn entry() -> i32 {
 fn dispatch(args: &Args) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     match args.command.as_str() {
+        "add" => {
+            args.only(&["name", "create-setup", "force"])?;
+            crate::add::add(&cwd, args)
+        }
         "exec" => crate::execution::exec(&cwd, args),
         "setup" => crate::execution::setup(&cwd, args),
         "doctor" => {
@@ -498,6 +502,7 @@ fn render_human(command: &str, data: &Value) {
                 &data["totalPruned"]
             }
         ),
+        "add" => unreachable!("bounded native add requires JSON output"),
         _ => unreachable!("implemented command requires human renderer"),
     }
 }

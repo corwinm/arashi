@@ -1,0 +1,565 @@
+use serde_json::Value;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Output, Stdio},
+    sync::atomic::{AtomicUsize, Ordering},
+    thread,
+    time::{Duration, Instant},
+};
+
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+struct Fixture {
+    root: PathBuf,
+    remote: PathBuf,
+    workspace: PathBuf,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "arashi-add-rust-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let root = arashi::paths::canonicalize(&root).unwrap();
+        let remote = root.join("child.git");
+        fs::create_dir(&remote).unwrap();
+        git(&remote, &["init", "--bare"]);
+        let seed = root.join("seed");
+        git(
+            &root,
+            &["clone", remote.to_str().unwrap(), seed.to_str().unwrap()],
+        );
+        git(&seed, &["config", "user.name", "Test"]);
+        git(&seed, &["config", "user.email", "test@example.invalid"]);
+        fs::write(seed.join("README.md"), "child\n").unwrap();
+        fs::write(seed.join("setup.sh"), "#!/bin/sh\n").unwrap();
+        git(&seed, &["add", "."]);
+        git(&seed, &["commit", "-m", "initial"]);
+        git(&seed, &["branch", "-M", "main"]);
+        git(&seed, &["push", "origin", "main"]);
+        git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let workspace = root.join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        git(&workspace, &["init", "-b", "main"]);
+        git(&workspace, &["config", "user.name", "Test"]);
+        git(
+            &workspace,
+            &["config", "user.email", "test@example.invalid"],
+        );
+        fs::create_dir(workspace.join(".arashi")).unwrap();
+        fs::write(
+            workspace.join(".arashi/config.json"),
+            "{\n  \"repos\": {},\n  \"reposDir\": \"./repos\",\n  \"version\": \"1.0.0\"\n}",
+        )
+        .unwrap();
+        fs::write(workspace.join(".gitignore"), "repos/\n.arashi/worktrees/\n").unwrap();
+        git(&workspace, &["add", ".arashi/config.json", ".gitignore"]);
+        git(&workspace, &["commit", "-m", "configure"]);
+        Self {
+            root,
+            remote,
+            workspace,
+        }
+    }
+
+    fn cli(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_arashi"))
+            .args(args)
+            .current_dir(&self.workspace)
+            .env("HOME", self.root.join("home"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", self.root.join("missing-global-config"))
+            .output()
+            .unwrap()
+    }
+
+    fn add(&self, extra: &[&str]) -> Output {
+        let mut args = vec!["add", self.remote.to_str().unwrap(), "--json", "--force"];
+        args.extend_from_slice(extra);
+        self.cli(&args)
+    }
+
+    fn source_add(&self) -> Output {
+        Command::new("node")
+            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"))
+            .args(["add", self.remote.to_str().unwrap(), "--json", "--force"])
+            .current_dir(&self.workspace)
+            .env("HOME", self.root.join("home"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", self.root.join("missing-global-config"))
+            .output()
+            .unwrap()
+    }
+
+    fn state(&self) -> (Vec<u8>, Vec<u8>, bool, String) {
+        (
+            fs::read(self.workspace.join(".arashi/config.json")).unwrap(),
+            fs::read(self.workspace.join(".git/info/exclude")).unwrap(),
+            self.workspace.join("repos/child").exists(),
+            git(
+                &self.workspace,
+                &["status", "--porcelain=v1", "--untracked-files=all"],
+            ),
+        )
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn git(cwd: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(["-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"])
+        .args(args)
+        .current_dir(cwd)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn document(output: &Output) -> Value {
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "{error}: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+#[test]
+fn configured_local_add_clones_detects_setup_and_persists_minimal_entry() {
+    let fixture = Fixture::new();
+    let output = fixture.add(&[]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let value = document(&output);
+    assert_eq!(value["command"], "add");
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["schemaVersion"], 1);
+    assert_eq!(value["warnings"], serde_json::json!([]));
+    assert_eq!(value["data"]["repository"]["name"], "child");
+    assert_eq!(
+        value["data"]["repository"]["gitUrl"],
+        fixture.remote.to_str().unwrap()
+    );
+    assert_eq!(value["data"]["repository"]["path"], "repos/child");
+    assert_eq!(value["data"]["repository"]["defaultBranch"], "main");
+    assert_eq!(value["data"]["repository"]["materialization"], "clone");
+    assert_eq!(
+        value["data"]["repository"]["coordinatedBranch"],
+        Value::Null
+    );
+    assert_eq!(value["data"]["repository"]["worktreePath"], Value::Null);
+    assert_eq!(
+        value["data"]["repository"]["setupScript"],
+        "repos/child/setup.sh"
+    );
+    assert_eq!(value["data"]["repository"]["setupScriptCreated"], false);
+    let clone = fixture.workspace.join("repos/child");
+    assert!(clone.join(".git").is_dir());
+    assert_eq!(git(&clone, &["branch", "--show-current"]), "main");
+    assert_eq!(
+        fs::read_to_string(clone.join("README.md")).unwrap(),
+        "child\n"
+    );
+    let config: Value =
+        serde_json::from_slice(&fs::read(fixture.workspace.join(".arashi/config.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        config["repos"]["child"],
+        serde_json::json!({"gitUrl":fixture.remote,"path":"repos/child"})
+    );
+}
+
+#[test]
+fn file_url_and_custom_name_clone_to_the_configured_name() {
+    let fixture = Fixture::new();
+    let git_url = format!("file://{}", fixture.remote.display());
+    let output = fixture.cli(&[
+        "add",
+        &git_url,
+        "--json",
+        "--force",
+        "--name",
+        "custom-child",
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value = document(&output);
+    assert_eq!(value["data"]["repository"]["name"], "custom-child");
+    assert_eq!(value["data"]["repository"]["gitUrl"], git_url);
+    assert_eq!(value["data"]["repository"]["path"], "repos/custom-child");
+    assert!(fixture.workspace.join("repos/custom-child/.git").is_dir());
+}
+
+#[test]
+fn derived_name_removes_only_one_git_suffix_like_source() {
+    let fixture = Fixture::new();
+    let renamed_remote = fixture.root.join("child.git.git");
+    fs::rename(&fixture.remote, &renamed_remote).unwrap();
+    let output = fixture.cli(&["add", renamed_remote.to_str().unwrap(), "--json", "--force"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value = document(&output);
+    assert_eq!(value["data"]["repository"]["name"], "child.git");
+    assert_eq!(value["data"]["repository"]["path"], "repos/child.git");
+    assert!(fixture.workspace.join("repos/child.git/.git").is_dir());
+}
+
+#[test]
+fn duplicate_name_matches_source_error_and_does_not_mutate() {
+    let fixture = Fixture::new();
+    let config_path = fixture.workspace.join(".arashi/config.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    config["repos"]["child"] = serde_json::json!({"gitUrl":fixture.remote,"path":"repos/child"});
+    fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+    let before = fixture.state();
+    let output = fixture.add(&[]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(document(&output)["error"]["code"], "DUPLICATE_NAME");
+    assert_eq!(fixture.state(), before);
+}
+
+#[test]
+fn invalid_url_fails_before_any_mutation() {
+    let fixture = Fixture::new();
+    let before = fixture.state();
+    let output = fixture.cli(&["add", "invalid-url", "--json", "--force"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(document(&output)["error"]["code"], "INVALID_URL");
+    assert_eq!(fixture.state(), before);
+}
+
+#[test]
+fn unsupported_policies_fail_closed_before_mutation() {
+    for args in [
+        vec![
+            "add",
+            "https://example.invalid/child.git",
+            "--json",
+            "--force",
+        ],
+        vec!["add", "/tmp/child.git", "--json"],
+        vec!["add", "/tmp/child.git", "--force"],
+        vec![
+            "add",
+            "/tmp/child.git",
+            "--json",
+            "--force",
+            "--create-setup",
+        ],
+        vec![
+            "add",
+            "/tmp/child.git",
+            "--json",
+            "--force",
+            "--name",
+            "../escape",
+        ],
+    ] {
+        let fixture = Fixture::new();
+        let before = fixture.state();
+        let output = fixture.cli(&args);
+        assert!(!output.status.success(), "unexpected success for {args:?}");
+        if args.contains(&"--json") {
+            assert_eq!(document(&output)["error"]["code"], "RUST_NOT_YET_PORTED");
+        }
+        assert_eq!(fixture.state(), before, "mutation for {args:?}");
+    }
+}
+
+#[test]
+fn linked_parent_topology_fails_before_clone_or_config_mutation() {
+    let fixture = Fixture::new();
+    let linked = fixture.root.join("linked");
+    git(
+        &fixture.workspace,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/add",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let before = fixture.state();
+    let output = Command::new(env!("CARGO_BIN_EXE_arashi"))
+        .args(["add", fixture.remote.to_str().unwrap(), "--json", "--force"])
+        .current_dir(&linked)
+        .env("HOME", fixture.root.join("home"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            fixture.root.join("missing-global-config"),
+        )
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(document(&output)["error"]["code"], "RUST_NOT_YET_PORTED");
+    assert_eq!(fixture.state(), before);
+    assert!(!linked.join("repos/child").exists());
+}
+
+#[test]
+fn configured_filter_policy_is_rejected_before_clone() {
+    let fixture = Fixture::new();
+    git(
+        &fixture.workspace,
+        &["config", "filter.danger.smudge", "touch filter-ran"],
+    );
+    let before = fixture.state();
+    let output = fixture.add(&[]);
+    assert!(!output.status.success());
+    assert_eq!(document(&output)["error"]["code"], "RUST_NOT_YET_PORTED");
+    assert_eq!(fixture.state(), before);
+    assert!(!fixture.workspace.join("filter-ran").exists());
+}
+
+#[test]
+fn noncanonical_config_alias_is_rejected_before_mutation() {
+    let fixture = Fixture::new();
+    let config_path = fixture.workspace.join(".arashi/config.json");
+    let bytes = fs::read(&config_path).unwrap();
+    fs::write(
+        &config_path,
+        String::from_utf8(bytes)
+            .unwrap()
+            .replace("\"reposDir\"", "\"repos_dir\""),
+    )
+    .unwrap();
+    let before = fixture.state();
+    let output = fixture.add(&[]);
+    assert!(!output.status.success());
+    assert_eq!(document(&output)["error"]["code"], "RUST_NOT_YET_PORTED");
+    assert_eq!(fixture.state(), before);
+}
+
+#[test]
+fn inherited_git_repository_environment_is_rejected_before_mutation() {
+    let fixture = Fixture::new();
+    let external_index = fixture.root.join("external-index");
+    let before = fixture.state();
+    let output = Command::new(env!("CARGO_BIN_EXE_arashi"))
+        .args(["add", fixture.remote.to_str().unwrap(), "--json", "--force"])
+        .current_dir(&fixture.workspace)
+        .env("HOME", fixture.root.join("home"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            fixture.root.join("missing-global-config"),
+        )
+        .env("GIT_INDEX_FILE", &external_index)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(document(&output)["error"]["code"], "RUST_NOT_YET_PORTED");
+    assert_eq!(fixture.state(), before);
+    assert!(!external_index.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn config_edit_during_discovery_is_preserved_by_the_add_write() {
+    let fixture = Fixture::new();
+    let fifo = fixture.root.join("global-config.fifo");
+    let ready = fixture.root.join("global-config.ready");
+    let release = fixture.root.join("global-config.release");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let script = r#"
+exec 3>"$1"
+: >"$2"
+while [ ! -e "$3" ]; do sleep 0.01; done
+printf '\n' >&3
+exec 3>&-
+while :; do
+  printf '\n' >"$1" || exit
+  sleep 0.05
+done
+"#;
+    let mut feeder = Command::new("sh")
+        .args(["-c", script, "sh"])
+        .arg(&fifo)
+        .arg(&ready)
+        .arg(&release)
+        .spawn()
+        .unwrap();
+    let native = Command::new(env!("CARGO_BIN_EXE_arashi"))
+        .args(["add", fixture.remote.to_str().unwrap(), "--json", "--force"])
+        .current_dir(&fixture.workspace)
+        .env("HOME", fixture.root.join("home"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", &fifo)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.exists(), "native add did not reach Git discovery");
+    let config_path = fixture.workspace.join(".arashi/config.json");
+    fs::write(
+        &config_path,
+        format!(
+            "{{\n  \"repos\": {{\n    \"existing\": {{\n      \"path\": \"repos/existing\",\n      \"gitUrl\": {}\n    }}\n  }},\n  \"reposDir\": \"./repos\",\n  \"version\": \"1.0.0\"\n}}",
+            serde_json::to_string(fixture.remote.to_str().unwrap()).unwrap()
+        ),
+    )
+    .unwrap();
+    fs::write(&release, b"release\n").unwrap();
+
+    let output = native.wait_with_output().unwrap();
+    let _ = feeder.kill();
+    let _ = feeder.wait();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let persisted: Value = serde_json::from_slice(&fs::read(config_path).unwrap()).unwrap();
+    assert_eq!(
+        persisted["repos"]["existing"],
+        serde_json::json!({"path":"repos/existing","gitUrl":fixture.remote})
+    );
+    assert!(persisted["repos"]["child"].is_object());
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_symlink_topology_is_rejected_before_clone() {
+    let fixture = Fixture::new();
+    let seed = fixture.root.join("seed");
+    std::os::unix::fs::symlink("README.md", seed.join("linked-readme")).unwrap();
+    git(&seed, &["add", "linked-readme"]);
+    git(&seed, &["commit", "-m", "add symlink"]);
+    git(&seed, &["push", "origin", "main"]);
+    let before = fixture.state();
+    let output = fixture.add(&[]);
+    assert!(!output.status.success());
+    assert_eq!(document(&output)["error"]["code"], "RUST_NOT_YET_PORTED");
+    assert_eq!(fixture.state(), before);
+}
+
+#[test]
+#[ignore = "requires Node TypeScript source runtime"]
+fn source_oracle_success_matches_json_and_persisted_effects() {
+    if std::env::var_os("ARASHI_TS_PARITY").is_none() {
+        return;
+    }
+    let fixture = Fixture::new();
+    let config_path = fixture.workspace.join(".arashi/config.json");
+    let exclude_path = fixture.workspace.join(".git/info/exclude");
+    let config_before = fs::read(&config_path).unwrap();
+    let exclude_before = fs::read(&exclude_path).unwrap();
+    let source = fixture.source_add();
+    assert_eq!(
+        source.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&source.stderr)
+    );
+    let expected_document = document(&source);
+    let expected_config = fs::read(&config_path).unwrap();
+    let expected_exclude = fs::read(&exclude_path).unwrap();
+    fs::remove_dir_all(fixture.workspace.join("repos/child")).unwrap();
+    fs::write(&config_path, config_before).unwrap();
+    fs::write(&exclude_path, exclude_before).unwrap();
+
+    let native = fixture.add(&[]);
+    assert_eq!(native.status.code(), source.status.code());
+    assert_eq!(native.stderr, source.stderr);
+    assert_eq!(document(&native), expected_document);
+    assert_eq!(fs::read(&config_path).unwrap(), expected_config);
+    assert_eq!(fs::read(&exclude_path).unwrap(), expected_exclude);
+    assert_eq!(
+        fs::read(fixture.workspace.join("repos/child/README.md")).unwrap(),
+        b"child\n"
+    );
+}
+
+#[test]
+#[ignore = "requires Node TypeScript source runtime"]
+fn source_oracle_preflight_errors_match_without_effects() {
+    if std::env::var_os("ARASHI_TS_PARITY").is_none() {
+        return;
+    }
+    let fixture = Fixture::new();
+    for args in [
+        vec!["add", "invalid-url", "--json", "--force"],
+        vec![
+            "add",
+            fixture.remote.to_str().unwrap(),
+            "--json",
+            "--force",
+            "--name",
+            "existing",
+        ],
+    ] {
+        if args.contains(&"existing") {
+            let config_path = fixture.workspace.join(".arashi/config.json");
+            let mut value: Value =
+                serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+            value["repos"]["existing"] =
+                serde_json::json!({"path":"repos/existing","gitUrl":fixture.remote});
+            fs::write(config_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        }
+        let before = fixture.state();
+        let source = Command::new("node")
+            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"))
+            .args(&args)
+            .current_dir(&fixture.workspace)
+            .env("HOME", fixture.root.join("home"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                fixture.root.join("missing-global-config"),
+            )
+            .output()
+            .unwrap();
+        let native = fixture.cli(&args);
+        assert_eq!(native.status.code(), source.status.code());
+        assert_eq!(document(&native), document(&source));
+        assert_eq!(fixture.state(), before);
+    }
+}
