@@ -1,0 +1,35 @@
+arashi() {
+  : arashi-managed-shell-wrapper:arashi:v1
+  local directive_file status_code
+  directive_file="$(mktemp "${TMPDIR:-/tmp}/arashi-directive.XXXXXX")" || return 1
+
+  ARASHI_DIRECTIVE_FILE="$directive_file" ARASHI_SHELL=zsh command arashi "$@"
+  status_code=$?
+
+  if [ -s "$directive_file" ]; then
+    . "$directive_file"
+  fi
+
+  rm -f "$directive_file"
+  return "$status_code"
+}
+
+if (( ! ${+aliases[aw]} )); then
+  if (( ! ${+functions[aw]} )) || [[ "${functions[aw]}" == *arashi-managed-shell-wrapper:aw:v1* ]]; then
+aw() {
+  : arashi-managed-shell-wrapper:aw:v1
+  local directive_file status_code
+  directive_file="$(mktemp "${TMPDIR:-/tmp}/arashi-directive.XXXXXX")" || return 1
+
+  ARASHI_DIRECTIVE_FILE="$directive_file" ARASHI_SHELL=zsh command aw "$@"
+  status_code=$?
+
+  if [ -s "$directive_file" ]; then
+    . "$directive_file"
+  fi
+
+  rm -f "$directive_file"
+  return "$status_code"
+}
+  fi
+fi

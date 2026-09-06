@@ -72,6 +72,7 @@ pub mod status_human;
 
 pub mod execution;
 pub mod process;
+pub mod shell;
 
 mod hooks;
 

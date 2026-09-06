@@ -70,15 +70,23 @@ fn help(name: Option<&str>) -> Result<String> {
     Ok(s)
 }
 pub fn parse(raw: &[String]) -> Result<Args> {
-    let command = raw
+    let first = raw
         .first()
-        .ok_or_else(|| Error::new("USAGE", "Command required"))?
-        .clone();
+        .ok_or_else(|| Error::new("USAGE", "Command required"))?;
+    let (command, command_words) = if first == "shell"
+        && raw
+            .get(1)
+            .is_some_and(|value| ["init", "install", "uninstall"].contains(&value.as_str()))
+    {
+        (format!("shell {}", raw[1]), 2)
+    } else {
+        (first.clone(), 1)
+    };
     let d = definition(&command)
         .ok_or_else(|| Error::new("USAGE", format!("Unknown command: {command}")))?;
     let mut options: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut positional = vec![];
-    let mut i = 1;
+    let mut i = command_words;
     while i < raw.len() {
         let a = &raw[i];
         if a == "--" {
@@ -208,6 +216,10 @@ pub fn entry() -> i32 {
             exit_code
         }
         Err(e) => {
+            if e.code == "SHELL_HELP" {
+                eprint!("{e}");
+                return e.exit_code;
+            }
             if e.code == "USAGE"
                 && let Some(flag) = e.message.strip_prefix("Unknown option: ")
             {
@@ -217,11 +229,18 @@ pub fn entry() -> i32 {
             if json_mode {
                 println!("{}",serde_json::to_string_pretty(&json!({"command":command,"error":error_value(&e),"ok":false,"schemaVersion":1,"warnings":[]})).unwrap());
             } else {
+                if command == "shell"
+                    && e.details
+                        .as_ref()
+                        .is_some_and(|details| details["action"] == "uninstall")
+                {
+                    crate::shell::render_human(e.details.as_ref().unwrap());
+                }
                 if command == "exec" && e.code == "EXEC_COMMAND_FAILED" {
                     // Results were already rendered by exec.
                 } else if command == "exec" {
                     eprintln!("{e}");
-                } else if command == "setup" {
+                } else if command == "setup" || command == "shell" {
                     eprintln!("[ERR] {e}");
                 } else if command == "doctor" && e.code == "DOCTOR_BLOCKING_FINDINGS" {
                     let data = e.details.as_ref().unwrap();
@@ -241,6 +260,7 @@ pub fn entry() -> i32 {
 fn dispatch(args: &Args) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     match args.command.as_str() {
+        "shell" | "shell init" | "shell install" | "shell uninstall" => crate::shell::execute(args),
         "exec" => crate::execution::exec(&cwd, args),
         "setup" => crate::execution::setup(&cwd, args),
         "doctor" => {
@@ -443,6 +463,7 @@ fn render_human(command: &str, data: &Value) {
         return;
     }
     match command {
+        "shell" => crate::shell::render_human(data),
         "list" => {
             if data["mode"] == "standalone" {
                 eprintln!("Workspace mode: standalone");
