@@ -328,7 +328,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&base).unwrap();
-        let base = fs::canonicalize(base).unwrap();
+        let base = arashi::paths::canonicalize(base).unwrap();
         let home = base.join("home");
         fs::create_dir(&home).unwrap();
         let main_remote = base.join("main.git");
