@@ -77,6 +77,9 @@ class AlphaDistribution(unittest.TestCase):
             self.shell_probe.write_text('Get-Item -LiteralPath $PSCommandPath | Out-Null\n'
                                         'Start-Sleep -Milliseconds 100\nexit 0\n')
             self.run_shell_only()
+            # PS5's first launch creates the cache root; the next can write
+            # the profile. Both launches remain independent of the installer.
+            self.run_shell_only()
             for folder in ['Microsoft/Windows/PowerShell', 'Microsoft/PowerShell']:
                 candidate = self.home / 'AppData/Local' / folder / 'StartupProfileData-NonInteractive'
                 if candidate.is_file():
