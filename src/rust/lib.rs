@@ -47,6 +47,7 @@ pub mod git;
 
 pub mod cli;
 pub mod clone;
+pub mod parser;
 
 pub mod completion;
 
