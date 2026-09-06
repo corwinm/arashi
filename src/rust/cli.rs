@@ -513,7 +513,22 @@ fn render_human(command: &str, data: &Value) {
                 &data["totalPruned"]
             }
         ),
-        "add" => unreachable!("bounded native add requires JSON output"),
+        "clone" => {
+            for name in data["cloned"].as_array().into_iter().flatten() {
+                println!("Cloned {}", name.as_str().unwrap_or(""));
+            }
+            if data["cloned"]
+                .as_array()
+                .is_some_and(|items| items.is_empty())
+            {
+                println!("No repositories to clone.");
+            }
+        }
+        "add" => println!(
+            "Added {} at {}",
+            data["repository"]["name"].as_str().unwrap_or(""),
+            data["repository"]["path"].as_str().unwrap_or("")
+        ),
         _ => unreachable!("implemented command requires human renderer"),
     }
 }

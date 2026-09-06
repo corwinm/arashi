@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use serde_json::Value;
 use std::{
     fs,
@@ -262,21 +264,7 @@ fn invalid_url_fails_before_any_mutation() {
 #[test]
 fn unsupported_policies_fail_closed_before_mutation() {
     for args in [
-        vec![
-            "add",
-            "https://example.invalid/child.git",
-            "--json",
-            "--force",
-        ],
-        vec!["add", "/tmp/child.git", "--json"],
-        vec!["add", "/tmp/child.git", "--force"],
-        vec![
-            "add",
-            "/tmp/child.git",
-            "--json",
-            "--force",
-            "--create-setup",
-        ],
+        vec!["add", "ext::unsupported-child.git", "--json", "--force"],
         vec![
             "add",
             "/tmp/child.git",
@@ -562,4 +550,219 @@ fn source_oracle_preflight_errors_match_without_effects() {
         assert_eq!(document(&native), document(&source));
         assert_eq!(fixture.state(), before);
     }
+}
+
+#[path = "rust/network.rs"]
+mod network;
+
+#[test]
+#[cfg(unix)]
+#[ignore = "requires Node and retained TypeScript dependencies"]
+fn network_and_setup_match_source() {
+    use std::os::unix::fs::PermissionsExt;
+    for action in ["add", "clone", "setup"] {
+        for prefix in [
+            "direct",
+            "https://example.invalid/",
+            "ssh://git@example.invalid/",
+            "git@example.invalid:",
+        ] {
+            let fixture = Fixture::new();
+            if action == "setup" {
+                let seed = fixture.root.join("seed");
+                git(&seed, &["rm", "setup.sh"]);
+                git(&seed, &["commit", "-m", "no setup"]);
+                git(&seed, &["push", "origin", "main"]);
+            }
+            let daemon = network::GitDaemon::start(&fixture.root);
+            let url = format!(
+                "{}child.git",
+                if prefix == "direct" {
+                    &daemon.prefix
+                } else {
+                    prefix
+                }
+            );
+            let global = fixture.root.join("missing-global-config");
+            if prefix != "direct" {
+                fs::write(
+                    &global,
+                    format!(
+                        "[url \"{}\"]\n insteadOf = {prefix}\n[credential]\n helper =\n",
+                        daemon.prefix
+                    ),
+                )
+                .unwrap();
+            }
+            if action == "clone" {
+                fs::create_dir(fixture.workspace.join("repos")).unwrap();
+                fs::write(fixture.workspace.join(".arashi/config.json"), serde_json::json!({"version":"1.0.0","reposDir":"repos","repos":{"child":{"path":"repos/child","gitUrl":url}}}).to_string()).unwrap();
+            }
+            let before = fixture.state();
+            let args = if action == "clone" {
+                vec!["clone", "--all", "--json"]
+            } else if action == "setup" {
+                vec!["add", &url, "--json", "--force", "--create-setup"]
+            } else {
+                vec!["add", &url, "--json", "--force"]
+            };
+            let run = |source: bool| {
+                let mut cmd = if source {
+                    let mut c = Command::new("node");
+                    c.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"));
+                    c
+                } else {
+                    Command::new(env!("CARGO_BIN_EXE_arashi"))
+                };
+                cmd.args(&args)
+                    .current_dir(&fixture.workspace)
+                    .env("HOME", fixture.root.join("home"))
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
+                    .env("GIT_CONFIG_GLOBAL", &global)
+                    .env("GIT_ALLOW_PROTOCOL", "git")
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .output()
+                    .unwrap()
+            };
+            let source = run(true);
+            assert!(
+                source.status.success(),
+                "{}",
+                String::from_utf8_lossy(&source.stdout)
+            );
+            let effects = fixture.state();
+            let child = fixture.workspace.join("repos/child");
+            let oid = git(&child, &["rev-parse", "HEAD"]);
+            let bytes = fs::read(child.join("setup.sh")).unwrap();
+            let mode = fs::metadata(child.join("setup.sh"))
+                .unwrap()
+                .permissions()
+                .mode();
+            fs::remove_dir_all(&child).unwrap();
+            fs::write(fixture.workspace.join(".arashi/config.json"), &before.0).unwrap();
+            fs::write(fixture.workspace.join(".git/info/exclude"), &before.1).unwrap();
+            let native = run(false);
+            assert!(
+                native.status.success(),
+                "{action} {prefix}: {}",
+                String::from_utf8_lossy(&native.stdout)
+            );
+            assert_eq!(document(&native), document(&source));
+            assert_eq!(native.stderr, source.stderr);
+            assert_eq!(fixture.state(), effects);
+            assert_eq!(git(&child, &["rev-parse", "HEAD"]), oid);
+            assert_eq!(git(&child, &["config", "--get", "remote.origin.url"]), url);
+            assert_eq!(fs::read(child.join("setup.sh")).unwrap(), bytes);
+            assert_eq!(
+                fs::metadata(child.join("setup.sh"))
+                    .unwrap()
+                    .permissions()
+                    .mode(),
+                mode
+            );
+        }
+    }
+}
+
+#[test]
+fn clone_all_human_is_supported() {
+    let fixture = Fixture::new();
+    fs::create_dir(fixture.workspace.join("repos")).unwrap();
+    fs::write(fixture.workspace.join(".arashi/config.json"),serde_json::json!({"version":"1.0.0","reposDir":"repos","repos":{"child":{"path":"repos/child","gitUrl":fixture.remote}}}).to_string()).unwrap();
+    let output = fixture.cli(&["clone", "--all"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("child"));
+    assert!(fixture.workspace.join("repos/child/.git").is_dir());
+}
+
+#[test]
+#[cfg(unix)]
+fn native_network_add_and_clone_use_loopback_transport() {
+    for action in ["add", "clone"] {
+        let fixture = Fixture::new();
+        let daemon = network::GitDaemon::start(&fixture.root);
+        let url = format!("{}child.git", daemon.prefix);
+        if action == "clone" {
+            fs::create_dir(fixture.workspace.join("repos")).unwrap();
+            fs::write(fixture.workspace.join(".arashi/config.json"),serde_json::json!({"version":"1.0.0","reposDir":"repos","repos":{"child":{"path":"repos/child","gitUrl":url}}}).to_string()).unwrap();
+        }
+        let args = if action == "add" {
+            vec!["add", &url, "--json", "--force"]
+        } else {
+            vec!["clone", "--all", "--json"]
+        };
+        let output = Command::new(env!("CARGO_BIN_EXE_arashi"))
+            .args(args)
+            .current_dir(&fixture.workspace)
+            .env("HOME", fixture.root.join("home"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_ALLOW_PROTOCOL", "git")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let child = fixture.workspace.join("repos/child");
+        assert_eq!(
+            git(&child, &["rev-parse", "HEAD"]),
+            git(&fixture.remote, &["rev-parse", "HEAD"])
+        );
+        assert_eq!(fs::read(child.join("README.md")).unwrap(), b"child\n");
+    }
+}
+
+#[test]
+fn configured_add_json_or_force_is_noninteractive() {
+    for option in ["--json", "--force"] {
+        let fixture = Fixture::new();
+        let output = fixture.cli(&["add", fixture.remote.to_str().unwrap(), option]);
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(fixture.workspace.join("repos/child/.git").is_dir());
+    }
+}
+
+#[test]
+fn network_create_setup_never_follows_dangling_symlink() {
+    let fixture = Fixture::new();
+    let outside = fixture.root.join("outside-script");
+    let seed = fixture.root.join("seed");
+    git(&seed, &["rm", "setup.sh"]);
+    std::os::unix::fs::symlink(&outside, seed.join("setup.sh")).unwrap();
+    git(&seed, &["add", "setup.sh"]);
+    git(&seed, &["commit", "-m", "dangling symlink"]);
+    git(&seed, &["push", "origin", "main"]);
+    let before = fs::read(fixture.workspace.join(".arashi/config.json")).unwrap();
+    let daemon = network::GitDaemon::start(&fixture.root);
+    let output = Command::new(env!("CARGO_BIN_EXE_arashi"))
+        .args([
+            "add",
+            &format!("{}child.git", daemon.prefix),
+            "--json",
+            "--create-setup",
+        ])
+        .current_dir(&fixture.workspace)
+        .env("HOME", fixture.root.join("home"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_ALLOW_PROTOCOL", "git")
+        .output()
+        .unwrap();
+    assert!(!outside.exists(), "setup creation escaped clone");
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read(fixture.workspace.join(".arashi/config.json")).unwrap(),
+        before
+    );
 }

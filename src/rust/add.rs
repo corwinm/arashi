@@ -1,4 +1,4 @@
-//! Bounded configured add for ordinary local repositories.
+//! Bounded configured add using native Git local and network transports.
 use crate::{
     Error, Result,
     cli::Args,
@@ -8,25 +8,13 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{
-    env, fs,
+    fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 fn validate_git_environment() -> Result<()> {
-    if env::vars_os().any(|(key, _)| {
-        let key = key.to_string_lossy();
-        key.starts_with("GIT_")
-            && !matches!(
-                key.as_ref(),
-                "GIT_CONFIG_GLOBAL" | "GIT_CONFIG_NOSYSTEM" | "GIT_PAGER"
-            )
-    }) {
-        return Err(unsupported(
-            "Native add does not yet support inherited Git repository, object, index, transport, or execution environment overrides; no changes made",
-        ));
-    }
-    Ok(())
+    crate::clone::dangerous_environment()
 }
 
 fn add_error(code: &str, message: impl Into<String>, details: Value) -> Error {
@@ -61,17 +49,17 @@ fn valid_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
-fn parse_local_url(raw: &str) -> Result<(String, PathBuf, String)> {
+fn parse_url(raw: &str) -> Result<(String, Option<PathBuf>, String)> {
     let url = raw.trim().to_owned();
     let path = if let Some(path) = url.strip_prefix("file://") {
         PathBuf::from(path)
     } else {
         PathBuf::from(&url)
     };
-    if !path.is_absolute() {
+    if !path.is_absolute() && !crate::clone::network_url(&url) {
         if url.contains("://") || url.contains(':') {
             return Err(unsupported(
-                "Native add currently supports only absolute local paths and file:// URLs; no changes made",
+                "Native add currently requires an ordinary absolute local path or native Git network URL; no changes made",
             ));
         }
         return Err(add_error(
@@ -97,9 +85,9 @@ fn parse_local_url(raw: &str) -> Result<(String, PathBuf, String)> {
     let trimmed = without_trailing_slashes
         .strip_suffix(".git")
         .unwrap_or(without_trailing_slashes);
-    let name = Path::new(trimmed)
-        .file_name()
-        .and_then(|name| name.to_str())
+    let name = trimmed
+        .rsplit(['/', ':'])
+        .next()
         .filter(|name| valid_name(name))
         .ok_or_else(|| {
             add_error(
@@ -109,7 +97,8 @@ fn parse_local_url(raw: &str) -> Result<(String, PathBuf, String)> {
             )
         })?
         .to_owned();
-    Ok((url, path, name))
+    let local = (!crate::clone::network_url(&url)).then_some(path);
+    Ok((url, local, name))
 }
 
 fn direct_primary(workspace: &Workspace) -> Result<()> {
@@ -140,21 +129,20 @@ fn safe_effective_git_configuration(root: &Path) -> Result<String> {
         .filter(|entry| !entry.is_empty())
         .any(|entry| {
             let key = entry.split('\n').next().unwrap_or("");
-            (key.starts_with("filter.")
-                && (key.ends_with(".clean")
-                    || key.ends_with(".smudge")
-                    || key.ends_with(".process")))
+            key.starts_with("includeif.")
+                || (key.starts_with("filter.")
+                    && (key.ends_with(".clean")
+                        || key.ends_with(".smudge")
+                        || key.ends_with(".process")))
                 || matches!(
                     key,
                     "core.fsmonitor" | "core.worktree" | "core.hookspath" | "init.templatedir"
                 )
-                || key.starts_with("url.")
-                || key.starts_with("protocol.")
                 || key.starts_with("uploadpack.")
         })
     {
         return Err(unsupported(
-            "Native add with Git filters, hooks, fsmonitor, worktree projection, URL rewriting, protocol, template, or upload-pack policy is not yet supported; no changes made",
+            "Native add with conditional Git includes, filters, hooks, fsmonitor, worktree projection, template, or upload-pack policy is not yet supported; no changes made",
         ));
     }
     Ok(value)
@@ -185,7 +173,7 @@ fn validate_remote(remote: &Path) -> Result<RemoteIdentity> {
             "Native add requires an ordinary canonical bare local origin; no changes made",
         ));
     }
-    let config = git::run(&canonical, &["config", "--null", "--list"])?;
+    let config = git::run(&canonical, &["config", "--local", "--null", "--list"])?;
     if config
         .split('\0')
         .filter(|entry| !entry.is_empty())
@@ -287,24 +275,18 @@ fn validate_remote(remote: &Path) -> Result<RemoteIdentity> {
     })
 }
 
-fn run_inert_git(cwd: &Path, args: &[&str]) -> Result<()> {
+fn run_clone_git(cwd: &Path, args: &[&str]) -> Result<()> {
     let mut command = Command::new("git");
-    for (key, _) in env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            command.env_remove(key);
-        }
-    }
     let output = command
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+        ])
         .args(args)
         .current_dir(cwd)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_COUNT", "2")
-        .env("GIT_CONFIG_KEY_0", "core.hooksPath")
-        .env("GIT_CONFIG_VALUE_0", "/dev/null")
-        .env("GIT_CONFIG_KEY_1", "core.fsmonitor")
-        .env("GIT_CONFIG_VALUE_1", "false")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -432,9 +414,9 @@ pub fn add(cwd: &Path, args: &Args) -> Result<Value> {
     if args.positional.len() != 1 {
         return Err(Error::new("USAGE", "add requires exactly one git-url"));
     }
-    if !args.has("json") || !args.has("force") || args.has("create-setup") {
+    if !args.has("json") && !args.has("force") {
         return Err(unsupported(
-            "Native add currently requires --json --force and does not support --create-setup; no changes made",
+            "Native add currently requires --json or --force; no changes made",
         ));
     }
     validate_git_environment()?;
@@ -454,7 +436,7 @@ pub fn add(cwd: &Path, args: &Args) -> Result<Value> {
     })?)?;
     direct_primary(&workspace)?;
     validate_config_policy(&config, &source_config)?;
-    let (git_url, remote_input, derived_name) = parse_local_url(&args.positional[0])?;
+    let (git_url, remote_input, derived_name) = parse_url(&args.positional[0])?;
     let name = args.value("name").unwrap_or(&derived_name);
     if !valid_name(name) {
         return Err(unsupported(
@@ -493,7 +475,12 @@ pub fn add(cwd: &Path, args: &Args) -> Result<Value> {
             json!({"canonicalPath":destination,"phase":"preflight"}),
         ));
     }
-    let remote = validate_remote(&remote_input)?;
+    let remote = remote_input.as_deref().map(validate_remote).transpose()?;
+    let (remote_branch, remote_oid) = if let Some(remote) = &remote {
+        (remote.branch.clone(), remote.oid.clone())
+    } else {
+        crate::clone::network_head(&workspace.root, &git_url, None)?
+    };
     let ignore = IgnorePlan::build(
         &workspace.root,
         &config.repos_dir,
@@ -519,7 +506,7 @@ pub fn add(cwd: &Path, args: &Args) -> Result<Value> {
     // Revalidate every observation immediately before the first mutation.
     if safe_effective_git_configuration(&workspace.root)? != git_configuration
         || fs::read(&config_path)? != config_before
-        || validate_remote(&remote_input)? != remote
+        || remote_input.as_deref().map(validate_remote).transpose()? != remote
         || fs::symlink_metadata(&destination).is_ok()
     {
         return Err(unsupported(
@@ -537,7 +524,7 @@ pub fn add(cwd: &Path, args: &Args) -> Result<Value> {
             json!({"canonicalPath":destination,"phase":"clone"}),
         )
     })?;
-    let clone_result = run_inert_git(
+    let clone_result = run_clone_git(
         parent,
         &[
             "clone",
@@ -545,15 +532,15 @@ pub fn add(cwd: &Path, args: &Args) -> Result<Value> {
             "--no-hardlinks",
             "--no-checkout",
             "--",
-            remote.path.to_str().unwrap(),
+            &git_url,
             destination.to_str().unwrap(),
         ],
     );
     clone_result?;
-    run_inert_git(&destination, &["reset", "--hard", "HEAD"])?;
+    run_clone_git(&destination, &["reset", "--hard", "HEAD"])?;
     let default_branch = git::default_branch(&destination)?;
-    if default_branch != remote.branch
-        || git::run(&destination, &["rev-parse", "HEAD"])?.trim() != remote.oid
+    if default_branch != remote_branch
+        || git::run(&destination, &["rev-parse", "HEAD"])?.trim() != remote_oid
     {
         return Err(add_error(
             "BRANCH_DETECTION_FAILED",
@@ -561,7 +548,25 @@ pub fn add(cwd: &Path, args: &Args) -> Result<Value> {
             json!({"phase":"branch"}),
         ));
     }
-    let setup = setup_script(&destination)?;
+    let mut setup = setup_script(&destination)?;
+    let setup_created = setup.is_none() && args.has("create-setup");
+    if setup_created {
+        let path = destination.join("setup.sh");
+        use std::io::Write;
+        let mut script = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        script.write_all(
+            b"#!/usr/bin/env bash\nset -euo pipefail\n\n# Add repository setup commands here.\n",
+        )?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            script.set_permissions(fs::Permissions::from_mode(0o755))?;
+        }
+        setup = Some("setup.sh");
+    }
     if fs::read(&config_path)? != config_before {
         return Err(add_error(
             "CONFIG_UPDATE_FAILED",
@@ -587,7 +592,7 @@ pub fn add(cwd: &Path, args: &Args) -> Result<Value> {
             "name":name,
             "path":configured_path,
             "setupScript":setup.map(|script| format!("{configured_path}/{script}")),
-            "setupScriptCreated":false,
+            "setupScriptCreated":setup_created,
             "worktreePath":null
         }
     }))
