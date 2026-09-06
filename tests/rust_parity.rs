@@ -1,6 +1,8 @@
 //! Independent source-versus-native journeys; requires Node and installed source dependencies.
 //! Run: cargo test --test rust_parity -- --ignored
 include!("rust/parser_composition.rs");
+#[path = "rust/status_network.rs"]
+mod status_network;
 use serde_json::Value;
 use std::{
     fs,
@@ -1349,7 +1351,7 @@ fn configured_status_preflights_all_remotes_before_fetch() {
         "remote",
         "add",
         "origin",
-        "https://example.invalid/never-fetch",
+        "custom-helper::never-fetch",
     ]);
     let native = f.run(false, &["status", "--json"]);
     assert!(!native.status.success());

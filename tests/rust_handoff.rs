@@ -339,7 +339,7 @@ fn missing_configured_repository_paths_match_source_bytes_without_curdir() {
     let fixture = Fixture::configured();
     let child = fixture.child.as_ref().unwrap();
     fs::remove_dir_all(child).unwrap();
-    let expected_path = fixture.root.join("repos/child");
+    let expected_path = fixture.root.join("repos").join("child");
     let expected_error = format!(
         "Repository is missing at {}. Run `arashi clone` to clone missing repositories.",
         expected_path.display()

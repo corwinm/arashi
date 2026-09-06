@@ -1,4 +1,4 @@
-//! Status comparisons against local filesystem remotes and configured bases.
+//! Status comparisons against ordinary origin transports and configured bases.
 use crate::{Error, Result, config::Workspace, git};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -36,7 +36,7 @@ fn repository(name: &str, path: &Path, base: Option<(&str, &str)>, verbose: bool
             json!({"kind":"stale-remote-tracking","message":format!("Remote tracking may be stale: {}", failure["error"].as_str().unwrap())})
         }
     });
-    let output = git::run(path, &["status", "--porcelain=v1", "--branch"])?;
+    let output = git::run_readonly(path, &["status", "--porcelain=v1", "--branch"])?;
     let mut lines = output.lines();
     let heading = lines.next().unwrap_or("## HEAD (no branch)");
     let branch = heading.strip_prefix("## ").unwrap_or(heading);
@@ -118,7 +118,7 @@ fn repository(name: &str, path: &Path, base: Option<(&str, &str)>, verbose: bool
     }
     if verbose {
         value["fullStatus"] = json!(
-            git::run(path, &["status"])
+            git::run_readonly(path, &["status"])
                 .map(|s| s.trim().to_owned())
                 .unwrap_or_else(|e| format!("Git command failed: {}", e.message))
         );
@@ -317,29 +317,66 @@ fn supported_remote(path: &Path) -> Result<Option<&'static str>> {
                 "Multiple or non-origin status remotes are not yet ported",
             ));
         }
-        let url = git::run(path, &["remote", "get-url", "origin"])?;
-        let url = url.trim().strip_prefix("file://").unwrap_or(url.trim());
-        if !Path::new(url).is_absolute() || !Path::new(url).is_dir() {
+        // Inspect configured payloads as well as Git's effective URL (insteadOf).
+        // A remote.<name>.vcs override can select a helper even with a safe URL.
+        if git::run(path, &["config", "--get", "remote.origin.vcs"]).is_ok() {
             return Err(unsupported(
-                "Remote-refresh status currently supports local filesystem remotes only; no network operation attempted",
+                "Custom status transport helpers are not supported; no fetch attempted",
             ));
         }
+        let configured = git::run(path, &["config", "-z", "--get-all", "remote.origin.url"])?;
+        for url in configured
+            .strip_suffix('\0')
+            .unwrap_or(&configured)
+            .split('\0')
+        {
+            supported_url(url)?;
+        }
+        let url = git::run(path, &["remote", "get-url", "origin"])?;
+        supported_url(url.strip_suffix('\n').unwrap_or(&url))?;
         Some("origin")
     };
     Ok(remote)
 }
 
+fn supported_url(url: &str) -> Result<()> {
+    let local = url.strip_prefix("file://").unwrap_or(url);
+    if url.chars().any(char::is_control)
+        || !(crate::clone::network_url(url)
+            || (Path::new(local).is_absolute() && Path::new(local).is_dir()))
+    {
+        return Err(unsupported(
+            "Status requires an ordinary local or HTTP(S)/SSH/Git origin URL; no fetch attempted",
+        ));
+    }
+    Ok(())
+}
+
+// Use the existing tree-settling adapter rather than an unbounded Git process.
+// Keep the native credential/SSH environment; do not import mutation policies.
+fn fetch(path: &Path, branch: &str) -> Result<()> {
+    let argv = [
+        "git".to_owned(),
+        "fetch".into(),
+        "--prune".into(),
+        "origin".into(),
+        format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"),
+    ];
+    let output = crate::process::run_tree(&argv, path, std::time::Duration::from_secs(30))?;
+    if output.timed_out {
+        return Err(Error::new(
+            "GIT_ERROR",
+            "Remote operation timed out after 30000ms",
+        ));
+    }
+    if output.exit_code != 0 {
+        return Err(Error::new("GIT_ERROR", output.stderr.trim()));
+    }
+    Ok(())
+}
+
 fn refresh(path: &Path, branch: &str) -> Option<Value> {
-    let error = git::run(
-        path,
-        &[
-            "fetch",
-            "--prune",
-            "origin",
-            &format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"),
-        ],
-    )
-    .err()?;
+    let error = fetch(path, branch).err()?;
     let message = format!("Git command failed: {}", error.message);
     let missing = ["couldn't find remote ref ", "could not find remote ref "]
         .iter()

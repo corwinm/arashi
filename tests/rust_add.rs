@@ -772,6 +772,32 @@ fn configured_add_clone_and_shell_journey_preserves_command_policies() {
             git(&publisher, &["commit", "-m", "incoming"]);
             git(&publisher, &["push", "origin", "HEAD:main"]);
             let incoming = git(&publisher, &["rev-parse", "HEAD"]);
+            // Observe the actual add/clone origin before pull; no disconnect workaround.
+            for args in [
+                vec!["status", "--json"],
+                vec!["handoff", "--json"],
+                vec!["handoff"],
+            ] {
+                let observed = run(&args);
+                assert!(
+                    observed.status.success(),
+                    "{args:?} source={source}: {}",
+                    String::from_utf8_lossy(&observed.stdout)
+                );
+                if args[0] == "status" {
+                    assert_eq!(
+                        document(&observed)["data"]["repositories"][1]["branch"]["behind"],
+                        1
+                    );
+                }
+                assert_eq!(git(&child, &["rev-parse", "HEAD"]), oid);
+                assert_eq!(
+                    git(&fixture.remote, &["rev-parse", "refs/heads/main"]),
+                    incoming
+                );
+                assert_eq!(git(&child, &["config", "--get", "remote.origin.url"]), url);
+                assert_eq!(fs::read(&config_path).unwrap(), saved);
+            }
             let pulled = run(&["pull", "--only", "child", "--json"]);
             assert!(
                 pulled.status.success(),
