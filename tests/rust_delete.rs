@@ -86,7 +86,17 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
+        self.run_with(args, false)
+    }
+
+    fn run_with(&self, args: &[&str], source: bool) -> Output {
+        let mut command = if source {
+            let mut command = Command::new("node");
+            command.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"));
+            command
+        } else {
+            Command::new(env!("CARGO_BIN_EXE_arashi"))
+        };
         command
             .args(args)
             .current_dir(&self.workspace)
@@ -196,6 +206,178 @@ fn json(output: &Output) -> Value {
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+
+#[test]
+fn clean_unpublished_heads_have_source_loss_warnings_and_force_semantics() {
+    for detached in [true, false] {
+        for source in [true, false] {
+            if source && std::env::var_os("ARASHI_TS_PARITY").is_none() {
+                continue;
+            }
+            let fixture = Fixture::new();
+            let target = fixture.workspace.join("repos/api");
+            if detached {
+                git(&target, &["checkout", "--detach"]);
+            }
+            fs::write(target.join("README.md"), "unpublished commit\n").unwrap();
+            git(&target, &["commit", "-am", "unpublished"]);
+            let before = fixture.snapshot();
+            let dry = fixture.run_with(&["delete", "api", "--dry-run", "--json"], source);
+            assert!(
+                dry.status.success(),
+                "source={source} detached={detached}: {}",
+                String::from_utf8_lossy(&dry.stdout)
+            );
+            let document = json(&dry);
+            let warnings = document["data"]["plan"]["warnings"].as_array().unwrap();
+            assert!(
+                warnings
+                    .iter()
+                    .any(|v| v.as_str().unwrap().starts_with("DELETE_GIT_DATA_LOSS:")),
+                "source={source} detached={detached}: {document}"
+            );
+            if detached {
+                assert!(
+                    document["data"]["plan"]["items"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|v| v["ref"] == "HEAD(detached)")
+                );
+            }
+            let denied = fixture.run_with(&["delete", "api", "--json"], source);
+            assert_eq!(json(&denied)["error"]["code"], "DELETE_GIT_DATA_LOSS");
+            // The source's observations may refresh its index; native must not.
+            if !source {
+                assert_eq!(fixture.snapshot(), before);
+            }
+            #[cfg(unix)]
+            {
+                let keep = tree(&fixture.workspace.join("repos/keep"));
+                let forced = fixture.run_with(&["delete", "api", "--force", "--json"], source);
+                if detached {
+                    assert!(
+                        !forced.status.success(),
+                        "detached mutation remains source-blocked"
+                    );
+                    assert_eq!(
+                        json(&forced)["error"]["code"],
+                        if source {
+                            "DELETE_CONCURRENT_CHANGE"
+                        } else {
+                            "RUST_NOT_YET_PORTED"
+                        }
+                    );
+                    assert!(target.is_dir());
+                    continue;
+                }
+                assert!(
+                    forced.status.success(),
+                    "source={source}: {}",
+                    String::from_utf8_lossy(&forced.stdout)
+                );
+                assert!(!target.exists());
+                assert_eq!(tree(&fixture.workspace.join("repos/keep")), keep);
+                assert_eq!(tree(&fixture.home), before.home);
+                assert_eq!(git(&fixture.remote, &["show-ref"]), before.remote_refs);
+            }
+        }
+    }
+}
+
+#[test]
+fn existing_source_recovery_receipts_block_fresh_native_delete() {
+    let fixture = Fixture::new();
+    let receipts = fixture.workspace.join(".git/.arashi-delete-receipts");
+    fs::create_dir(&receipts).unwrap();
+    fs::write(
+        receipts.join("pending.json"),
+        "preserve pending recovery authority\n",
+    )
+    .unwrap();
+    let before = fixture.snapshot();
+    let output = fixture.run(&["delete", "api", "--force", "--json"]);
+    assert!(
+        !output.status.success(),
+        "fresh delete ignored recovery authority"
+    );
+    assert_eq!(fixture.snapshot(), before);
+}
+
+#[test]
+fn ordinary_config_without_git_url_uses_the_clone_origin() {
+    for source in [true, false] {
+        if source && std::env::var_os("ARASHI_TS_PARITY").is_none() {
+            continue;
+        }
+        let fixture = Fixture::new();
+        let path = fixture.workspace.join(".arashi/config.json");
+        let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        config["repos"]["api"]
+            .as_object_mut()
+            .unwrap()
+            .remove("gitUrl");
+        fs::write(path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        let before = fixture.snapshot();
+        let output = fixture.run_with(&["delete", "api", "--dry-run", "--json"], source);
+        assert!(
+            output.status.success(),
+            "source={source}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        if !source {
+            assert_eq!(fixture.snapshot(), before);
+        }
+    }
+}
+
+#[test]
+fn dry_run_local_ref_evidence_matches_retained_source() {
+    if std::env::var_os("ARASHI_TS_PARITY").is_none() {
+        return;
+    }
+    let fixture = Fixture::new();
+    let before = fixture.snapshot();
+    let native = fixture.run(&["delete", "api", "--dry-run", "--json"]);
+    assert!(native.status.success());
+    assert_eq!(fixture.snapshot(), before);
+    let source = fixture.run_with(&["delete", "api", "--dry-run", "--json"], true);
+    assert!(source.status.success());
+    let native = json(&native);
+    let source = json(&source);
+    assert_eq!(native["data"]["workspace"], source["data"]["workspace"]);
+    assert_eq!(
+        native["data"]["plan"]["warnings"],
+        source["data"]["plan"]["warnings"]
+    );
+    let refs = |document: &Value| {
+        document["data"]["plan"]["items"].as_array().unwrap().iter()
+            .filter(|item| item["kind"] == "local-ref")
+            .map(|item| serde_json::json!({"ref":item["ref"],"oid":item["oid"],"path":item["path"],"reasonCode":item["reasonCode"]}))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(refs(&native), refs(&source));
+}
+
+#[cfg(unix)]
+#[test]
+fn configured_parent_git_authority_inside_target_is_never_deleted() {
+    let fixture = Fixture::new();
+    fs::rename(
+        fixture.workspace.join(".git"),
+        fixture.root.join("parent-git"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        fixture.workspace.join("repos/api/.git"),
+        fixture.workspace.join(".git"),
+    )
+    .unwrap();
+    let before = fixture.snapshot();
+    let output = fixture.run(&["delete", "api", "--force", "--json"]);
+    assert!(!output.status.success(), "deleted parent Git authority");
+    assert_eq!(fixture.snapshot(), before);
 }
 
 #[test]
@@ -369,7 +551,10 @@ fn destructive_delete_requires_exact_target_and_force_without_a_tty() {
         );
         assert_eq!(fixture.snapshot(), before, "mutation for {args:?}");
         if args == ["delete", "api", "--json"] {
-            assert_eq!(json(&output)["error"]["details"]["confirmation"], "required");
+            assert_eq!(
+                json(&output)["error"]["details"]["confirmation"],
+                "required"
+            );
         }
     }
 }
@@ -380,7 +565,11 @@ fn path_shaped_repository_key_uses_a_contained_quarantine_name() {
     let fixture = Fixture::new();
     let config_path = fixture.workspace.join(".arashi/config.json");
     let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
-    let api = config["repos"].as_object_mut().unwrap().remove("api").unwrap();
+    let api = config["repos"]
+        .as_object_mut()
+        .unwrap()
+        .remove("api")
+        .unwrap();
     config["repos"]["api/../../outside"] = api;
     fs::write(
         &config_path,
@@ -388,12 +577,7 @@ fn path_shaped_repository_key_uses_a_contained_quarantine_name() {
     )
     .unwrap();
 
-    let output = fixture.run(&[
-        "delete",
-        "api/../../outside",
-        "--force",
-        "--json",
-    ]);
+    let output = fixture.run(&["delete", "api/../../outside", "--force", "--json"]);
 
     assert!(
         output.status.success(),

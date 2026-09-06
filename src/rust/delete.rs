@@ -8,10 +8,11 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
+    fs,
     path::{Path, PathBuf},
 };
+#[cfg(unix)]
+use std::{fs::OpenOptions, io::Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ObjectIdentity {
@@ -68,6 +69,10 @@ struct DeletePlan {
     repository_key: String,
     repository_path: PathBuf,
     repository_identity: ObjectIdentity,
+    git_identity: ObjectIdentity,
+    ancestors: Vec<(PathBuf, ObjectIdentity)>,
+    checkout_head: String,
+    checkout_branch: Option<String>,
     config_path: PathBuf,
     config_identity: ObjectIdentity,
     config_before: Vec<u8>,
@@ -75,12 +80,18 @@ struct DeletePlan {
     config_entry_ref: String,
     local_refs: Vec<LocalRef>,
     ref_inventory: Vec<LocalRef>,
+    head: Vec<u8>,
+    git_config: Vec<u8>,
+    detached: bool,
+    warnings: Vec<String>,
+    protected_refs: Vec<String>,
 }
 
 fn closed(code: &str, message: impl Into<String>, exit: i32) -> Error {
     Error::new(code, message).with_exit_code(exit)
 }
 
+#[cfg(any(unix, test))]
 fn quarantine_name(repository_key: &str) -> String {
     let encoded = repository_key
         .as_bytes()
@@ -88,6 +99,23 @@ fn quarantine_name(repository_key: &str) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     format!(".arashi-delete-{encoded}-{}", std::process::id())
+}
+
+fn ancestor_identities(path: &Path) -> Result<Vec<(PathBuf, ObjectIdentity)>> {
+    path.ancestors()
+        .skip(1)
+        .map(|ancestor| {
+            let metadata = fs::symlink_metadata(ancestor)?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(closed(
+                    "DELETE_PATH_UNSAFE",
+                    "Deletion ancestor is not a plain directory",
+                    1,
+                ));
+            }
+            Ok((ancestor.to_owned(), ObjectIdentity::metadata(&metadata)))
+        })
+        .collect()
 }
 
 fn no_symlink_below(root: &Path, path: &Path) -> Result<()> {
@@ -244,33 +272,79 @@ fn ref_inventory(target: &Path) -> Result<Vec<LocalRef>> {
     Ok(all)
 }
 
-fn deletable_local_refs(all: &[LocalRef]) -> Result<Vec<LocalRef>> {
-    let locals = all
+fn local_ref_loss(
+    target: &Path,
+    all: &[LocalRef],
+    detached: bool,
+) -> Result<(Vec<LocalRef>, Vec<String>, Vec<String>)> {
+    let mut locals = all
         .iter()
         .filter(|reference| reference.name.starts_with("refs/heads/"))
         .cloned()
         .collect::<Vec<_>>();
+    if detached {
+        locals.push(LocalRef {
+            name: "HEAD(detached)".to_owned(),
+            oid: git::run_readonly(target, &["rev-parse", "--verify", "HEAD^{commit}"])?
+                .trim()
+                .to_owned(),
+        });
+    }
+    let remotes = all
+        .iter()
+        .filter(|reference| reference.name.starts_with("refs/remotes/"))
+        .map(|reference| reference.oid.as_str())
+        .collect::<Vec<_>>();
+    if remotes.is_empty() {
+        return Err(closed(
+            "DELETE_GIT_DATA_LOSS",
+            "Remote-tracking commit evidence is unavailable",
+            1,
+        ));
+    }
+    let mut warnings = vec![
+        "DELETE_GIT_REFLOG_BOUNDARY: reflog-only unreachable objects are outside the local publication check".to_owned(),
+        "DELETE_GIT_REMOTE_EVIDENCE: reachability uses local remote-tracking refs only; no fetch was performed".to_owned(),
+    ];
+    let mut protected = Vec::new();
     for local in &locals {
-        let branch = local.name.strip_prefix("refs/heads/").unwrap();
-        let remote = format!("refs/remotes/origin/{branch}");
-        if !all
-            .iter()
-            .any(|candidate| candidate.name == remote && candidate.oid == local.oid)
-        {
-            return Err(unsupported(
-                "Delete of local-only Git history is not yet ported; no changes made",
+        let mut args = vec!["rev-list", "--count", local.oid.as_str(), "--not"];
+        args.extend(&remotes);
+        let count = git::run_readonly(target, &args)?;
+        let count: u64 = count.trim().parse().map_err(|_| {
+            closed(
+                "DELETE_GIT_DATA_LOSS",
+                "Git reachability evidence is unavailable",
+                1,
+            )
+        })?;
+        if count != 0 {
+            warnings.push(format!(
+                "DELETE_GIT_DATA_LOSS: {} {} is not reachable from local remote-tracking refs",
+                local.name, local.oid
             ));
+            protected.push(local.name.clone());
         }
     }
-    Ok(locals)
+    warnings.sort();
+    Ok((locals, warnings, protected))
 }
 
 fn matching_origin(target: &Path, repo: &RepoConfig) -> Result<()> {
+    let urls = git::run_readonly(target, &["remote", "get-url", "--all", "origin"])?;
     let configured = repo
         .raw
         .get("gitUrl")
         .and_then(Value::as_str)
-        .ok_or_else(|| unsupported("Delete requires an explicit configured gitUrl"))?;
+        .filter(|url| !url.trim().is_empty())
+        .or_else(|| urls.lines().next())
+        .ok_or_else(|| {
+            closed(
+                "DELETE_TOPOLOGY_INVALID",
+                "Clone fetch URL is unavailable",
+                1,
+            )
+        })?;
     let configured = Path::new(configured);
     if !configured.is_absolute() || !configured.exists() {
         return Err(unsupported(
@@ -283,7 +357,6 @@ fn matching_origin(target: &Path, repo: &RepoConfig) -> Result<()> {
             "Delete with non-origin or multiple remotes is not yet ported; no changes made",
         ));
     }
-    let urls = git::run_readonly(target, &["remote", "get-url", "--all", "origin"])?;
     let configured = fs::canonicalize(configured)?;
     let matches = urls.lines().any(|url| {
         let path = Path::new(url);
@@ -316,6 +389,18 @@ impl DeletePlan {
             )
         })?;
         unsupported_selected_policy(repo)?;
+        let parent_common = git::run_readonly(&workspace.root, &["rev-parse", "--git-common-dir"])?;
+        let parent_common = fs::canonicalize(workspace.root.join(parent_common.trim()))?;
+        let receipts = parent_common.join(".arashi-delete-receipts");
+        match fs::symlink_metadata(&receipts) {
+            Ok(_) => {
+                return Err(unsupported(
+                    "Existing delete recovery authority requires retained-source receipt validation; no changes made",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         let repos_base = workspace.root.join(relative(&config.repos_dir)?);
         let configured_relative = relative(&repo.path)?;
         let target = workspace.root.join(configured_relative);
@@ -340,6 +425,13 @@ impl DeletePlan {
             ));
         }
         let canonical_target = fs::canonicalize(&target)?;
+        if parent_common.starts_with(&canonical_target) {
+            return Err(closed(
+                "DELETE_TOPOLOGY_INVALID",
+                "Deletion target contains parent Git authority",
+                1,
+            ));
+        }
         if !canonical_target.starts_with(fs::canonicalize(&workspace.root)?) {
             return Err(closed(
                 "DELETE_PATH_UNSAFE",
@@ -393,7 +485,9 @@ impl DeletePlan {
         no_nested_git(&target, true)?;
         matching_origin(&target, repo)?;
         let ref_inventory = ref_inventory(&target)?;
-        let refs = deletable_local_refs(&ref_inventory)?;
+        let head = fs::read(target.join(".git/HEAD"))?;
+        let detached = records[0].branch.is_none();
+        let (refs, warnings, protected_refs) = local_ref_loss(&target, &ref_inventory, detached)?;
         let dirty = git::run_readonly(
             &target,
             &[
@@ -413,6 +507,17 @@ impl DeletePlan {
         let config_path = workspace.root.join(".arashi/config.json");
         no_symlink_below(&workspace.root, &config_path)?;
         let config_before = fs::read(&config_path)?;
+        let current_config = crate::config::Config::parse(
+            std::str::from_utf8(&config_before)
+                .map_err(|_| closed("DELETE_CONFIG_INVALID", "Configuration is not UTF-8", 1))?,
+        )?;
+        if current_config.raw != config.raw || current_config.repo_order != config.repo_order {
+            return Err(closed(
+                "DELETE_CONCURRENT_CHANGE",
+                "Configuration changed since discovery",
+                1,
+            ));
+        }
         let mut persisted: Value = serde_json::from_slice(&config_before).map_err(|_| {
             closed(
                 "DELETE_CONFIG_INVALID",
@@ -440,6 +545,19 @@ impl DeletePlan {
             workspace_root: workspace.root.clone(),
             repository_key: repository.to_owned(),
             repository_identity: ObjectIdentity::path(&target)?,
+            git_identity: ObjectIdentity::path(&target.join(".git"))?,
+            ancestors: {
+                let mut ancestors = ancestor_identities(&target)?;
+                ancestors.extend(ancestor_identities(&config_path)?);
+                ancestors.push((
+                    workspace.root.join(".git"),
+                    ObjectIdentity::path(&workspace.root.join(".git"))?,
+                ));
+                ancestors.push((parent_common.clone(), ObjectIdentity::path(&parent_common)?));
+                ancestors
+            },
+            checkout_head: records[0].head.clone(),
+            checkout_branch: records[0].branch.clone(),
             repository_path: target,
             config_identity: ObjectIdentity::path(&config_path)?,
             config_path,
@@ -448,6 +566,11 @@ impl DeletePlan {
             config_entry_ref: format!("{map_key}.{repository}"),
             local_refs: refs,
             ref_inventory,
+            head,
+            git_config: fs::read(canonical_target.join(".git/config"))?,
+            detached,
+            warnings,
+            protected_refs,
         })
     }
 
@@ -470,13 +593,13 @@ impl DeletePlan {
                 "id": format!("local-ref:{}:{}", reference.name, reference.oid),
                 "kind": "local-ref",
                 "ownership": "delete",
-                "path": self.repository_path,
+                "path": Value::Null,
                 "ref": reference.name,
                 "oid": reference.oid,
                 "planned": true,
                 "completed": false,
                 "state": "planned",
-                "reasonCode": Value::Null,
+                "reasonCode": if self.protected_refs.contains(&reference.name) { json!("DELETE_GIT_DATA_LOSS") } else { Value::Null },
                 "message": Value::Null
             })
         }));
@@ -493,10 +616,26 @@ impl DeletePlan {
             "reasonCode": Value::Null,
             "message": Value::Null
         }));
-        json!({"id":format!("delete:{}",self.repository_key),"items":items,"warnings":[]})
+        json!({"id":format!("delete:{}",self.repository_key),"items":items,"warnings":self.warnings})
+    }
+
+    fn validate_ancestors(&self) -> Result<()> {
+        if self
+            .ancestors
+            .iter()
+            .any(|(path, identity)| !identity.matches(path))
+        {
+            return Err(closed(
+                "DELETE_CONCURRENT_CHANGE",
+                "Deletion ancestor ownership changed",
+                1,
+            ));
+        }
+        Ok(())
     }
 
     fn validate(&self) -> Result<()> {
+        self.validate_ancestors()?;
         let current = Workspace::discover(&self.workspace_root)?;
         let rebuilt = Self::build(&current, &self.repository_key)?;
         if rebuilt != *self {
@@ -511,10 +650,29 @@ impl DeletePlan {
 
     #[cfg(unix)]
     fn validate_quarantine(&self, quarantine: &Path, expected_config: &[u8]) -> Result<()> {
+        self.validate_ancestors()?;
+        let records = git::worktrees_readonly(quarantine)?;
+        if records.len() != 1
+            || records[0].bare
+            || records[0].locked
+            || records[0].prune_reason.is_some()
+            || records[0].head != self.checkout_head
+            || records[0].branch != self.checkout_branch
+            || !crate::paths::same_existing(&records[0].path, quarantine)?
+        {
+            return Err(closed(
+                "DELETE_CONCURRENT_CHANGE",
+                "Quarantined Git topology changed",
+                1,
+            ));
+        }
         if !self.repository_identity.matches(quarantine)
+            || !self.git_identity.matches(&quarantine.join(".git"))
             || fs::symlink_metadata(&self.repository_path).is_ok()
             || fs::read(&self.config_path)? != expected_config
             || ref_inventory(quarantine)? != self.ref_inventory
+            || fs::read(quarantine.join(".git/HEAD"))? != self.head
+            || fs::read(quarantine.join(".git/config"))? != self.git_config
         {
             return Err(closed(
                 "DELETE_CONCURRENT_CHANGE",
@@ -547,6 +705,11 @@ impl DeletePlan {
 
     #[cfg(unix)]
     fn execute(&self) -> Result<Value> {
+        if self.detached {
+            return Err(unsupported(
+                "Detached delete mutation is not yet ported; no changes made",
+            ));
+        }
         self.validate()?;
         let quarantine = self
             .repository_path
@@ -562,7 +725,8 @@ impl DeletePlan {
         }
         fs::rename(&self.repository_path, &quarantine)?;
         let restore_quarantine = |quarantine: &Path| {
-            fs::symlink_metadata(&self.repository_path).is_err()
+            self.validate_ancestors().is_ok()
+                && matches!(fs::symlink_metadata(&self.repository_path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
                 && self.repository_identity.matches(quarantine)
                 && fs::rename(quarantine, &self.repository_path).is_ok()
         };
@@ -667,7 +831,7 @@ impl DeletePlan {
             "items": items,
             "phases": phases,
             "retry": {"safe":false,"argv":Value::Null,"guidance":"Deletion completed."},
-            "warnings": []
+            "warnings": self.warnings
         }))
     }
 
@@ -681,6 +845,7 @@ impl DeletePlan {
 
 #[cfg(unix)]
 fn publish_config(plan: &DeletePlan) -> Result<()> {
+    plan.validate_ancestors()?;
     if fs::read(&plan.config_path)? != plan.config_before
         || !plan.config_identity.matches(&plan.config_path)
     {
@@ -768,6 +933,15 @@ pub fn delete(workspace: &Workspace, args: &Args) -> Result<Value> {
         plan.validate()?;
         return Ok(data);
     }
+    if !args.has("force") && !plan.protected_refs.is_empty() {
+        data["confirmation"] = json!("not-required");
+        return Err(closed(
+            "DELETE_GIT_DATA_LOSS",
+            "Local Git history is not published; explicit --force is required",
+            1,
+        )
+        .with_details(data));
+    }
     if !args.has("force") {
         return Err(closed(
             "DELETE_CONFIRMATION_REQUIRED",
@@ -779,6 +953,10 @@ pub fn delete(workspace: &Workspace, args: &Args) -> Result<Value> {
     data["result"] = plan.execute()?;
     Ok(data)
 }
+
+#[cfg(test)]
+#[path = "../../tests/rust/delete_ownership.rs"]
+mod ownership_tests;
 
 #[cfg(test)]
 mod tests {
