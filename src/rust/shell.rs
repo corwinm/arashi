@@ -39,7 +39,7 @@ enum UninstallPlan {
         path: PathBuf,
         current: Vec<u8>,
         next: Vec<u8>,
-        metadata: Metadata,
+        metadata: Box<Metadata>,
     },
 }
 
@@ -437,7 +437,7 @@ fn plan_uninstall(path: PathBuf) -> Result<Option<UninstallPlan>> {
         path,
         current,
         next,
-        metadata,
+        metadata: Box::new(metadata),
     }))
 }
 

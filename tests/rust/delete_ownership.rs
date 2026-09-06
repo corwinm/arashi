@@ -5,6 +5,76 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 static ID: AtomicU64 = AtomicU64::new(0);
+const ISOLATED_TEST: &str = "ARASHI_DELETE_OWNERSHIP_TEST";
+
+// Reexec instead of mutating the environment of the multithreaded test process.
+// Both fixture Git commands and in-process production reads use this private home.
+fn run_isolated(name: &str) -> bool {
+    let name = format!("delete::ownership_tests::{name}");
+    if std::env::var(ISOLATED_TEST).as_deref() == Ok(name.as_str()) {
+        return false;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", &name, "--nocapture"])
+        .env(ISOLATED_TEST, &name)
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env("GIT_CONFIG_GLOBAL", home.path().join(".gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    // Git command-scope configuration also propagates through the test runner.
+    for (key, _) in std::env::vars_os() {
+        let text = key.to_string_lossy();
+        if matches!(text.as_ref(), "GIT_CONFIG_COUNT" | "GIT_CONFIG_PARAMETERS")
+            || text.starts_with("GIT_CONFIG_KEY_")
+            || text.starts_with("GIT_CONFIG_VALUE_")
+        {
+            command.env_remove(key);
+        }
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "isolated {name}:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    true
+}
+#[test]
+fn ownership_fixture_isolates_inherited_git_configuration() {
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join(".gitconfig");
+    fs::write(&config, "[filter \"ci\"]\nclean = cat\n").unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "delete::ownership_tests::replaced_git_directory_invalidates_the_plan",
+            "--nocapture",
+        ])
+        .env_remove(ISOLATED_TEST)
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env("GIT_CONFIG_GLOBAL", &config)
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "filter.ci.clean")
+        .env("GIT_CONFIG_VALUE_0", "cat")
+        .env("GIT_CONFIG_PARAMETERS", "'filter.ci.smudge=cat'")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
@@ -78,6 +148,9 @@ fn replace_directory_preserving_children(path: &Path) {
 }
 #[test]
 fn configuration_changed_since_discovery_cannot_authorize_an_old_target() {
+    if run_isolated("configuration_changed_since_discovery_cannot_authorize_an_old_target") {
+        return;
+    }
     let fixture = Fixture::new();
     let workspace = Workspace::discover(&fixture.0).unwrap();
     let path = fixture.0.join(".arashi/config.json");
@@ -96,6 +169,9 @@ fn configuration_changed_since_discovery_cannot_authorize_an_old_target() {
 #[cfg(unix)]
 #[test]
 fn quarantine_revalidation_rejects_changed_fetch_authority() {
+    if run_isolated("quarantine_revalidation_rejects_changed_fetch_authority") {
+        return;
+    }
     let fixture = Fixture::new();
     let plan = fixture.plan();
     let quarantine = fixture.0.join("repos/quarantine");
@@ -119,6 +195,9 @@ fn quarantine_revalidation_rejects_changed_fetch_authority() {
 
 #[test]
 fn replaced_repository_parent_invalidates_the_plan() {
+    if run_isolated("replaced_repository_parent_invalidates_the_plan") {
+        return;
+    }
     let fixture = Fixture::new();
     let plan = fixture.plan();
     replace_directory_preserving_children(&fixture.0.join("repos"));
@@ -127,6 +206,9 @@ fn replaced_repository_parent_invalidates_the_plan() {
 }
 #[test]
 fn replaced_git_directory_invalidates_the_plan() {
+    if run_isolated("replaced_git_directory_invalidates_the_plan") {
+        return;
+    }
     let fixture = Fixture::new();
     let plan = fixture.plan();
     replace_directory_preserving_children(&fixture.0.join("repos/api/.git"));
@@ -141,6 +223,9 @@ fn replaced_git_directory_invalidates_the_plan() {
 #[cfg(unix)]
 #[test]
 fn quarantine_revalidation_rejects_new_detached_linked_ownership() {
+    if run_isolated("quarantine_revalidation_rejects_new_detached_linked_ownership") {
+        return;
+    }
     let fixture = Fixture::new();
     let plan = fixture.plan();
     let quarantine = fixture.0.join("repos/quarantine");
