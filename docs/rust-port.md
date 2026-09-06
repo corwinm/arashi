@@ -118,6 +118,22 @@ The Rust oracle suite uses real temporary Git repositories and compares complete
 
 [Experimental Rust CI](../.github/workflows/rust.yml) runs Cargo and the configured native release journey on Linux/macOS/Windows. A separate dependency-equipped job runs every source oracle and external release-binary parity, without silently skipping them. No release upload, installer or publication step is added.
 
+## Sync Windows CI regression correction
+
+Baseline `34fbd6f4532b5e78dc5e75a6fd6d15bac4bb9b05` had seven ungated sync behavior tests expecting POSIX success/partial-failure output even though native sync rejects Windows before discovery. Those tests and Unix-only helpers now use `cfg(unix)`; all existing test bodies and assertions are unchanged. Existing cross-platform rejection tests remain enabled. A dedicated `cfg(windows)` test checks the explicit unsupported error for missing/existing/current target branches, JSON selection/group options and human/verbose output, with full fixture/HOME file-byte snapshots after every invocation. This adds no Windows sync support.
+
+The baseline Windows-target clippy run also failed on the sync tree runner's Unix-only mutable cleanup flag and add's unused non-Unix workspace argument. The cfg-only fixes preserve POSIX execution and non-Unix rejection behavior, without lint suppression or changes to lifecycle signaling.
+
+Sequential validation used `CARGO_HOME="$PWD/target/cargo-home"`, `CARGO_TARGET_DIR="$PWD/target"`, locked/offline Cargo dependencies and `ARASHI_TS_PARITY=1` for tests:
+
+- `cargo fmt --check` and host all-target clippy with `-D warnings`: exit 0.
+- Focused `rust_sync` with `--include-ignored --test-threads=4`: **31 passed, 0 failed, 0 ignored**.
+- All-target tests with the same flags: **364 passed, 0 failed, 0 ignored**, including the existing lifecycle and source-parity suites.
+- `cargo check` and all-target clippy with `-D warnings`, both targeting installed `x86_64-pc-windows-gnu`: exit 0. These are cross-target compile/type/lint checks, **not native Windows execution or linked Windows binaries**; no MinGW linker or Wine was available. The new Windows runtime regression still requires native Windows CI.
+- Locked/offline release build: exit 0. External release source parity: **15/15**, exit 0.
+
+Local evidence: `target/sync-windows-{red,fmt,clippy,posix-clippy,focused,integrated,windows-check,release-build,release-parity}.log`, `target/sync-windows-release-parity.json`, `target/sync-windows-gate-audit.json`, and sequential runner `target/validate-sync-windows.py`. Stable v1, TypeScript, installation/publication contracts and other repositories are unchanged. No downstream documentation change is needed for this test/cfg-only correction; exact-head native platform acceptance remains outstanding.
+
 ## Retained process-test binary opt-in
 
 `tests/helpers/node-runtime.ts` substitutes an explicit absolute `ARASHI_TEST_BINARY` only for direct `[process.execPath | "node", <this checkout's src/index.ts>, ...args]` invocations. Relative entry paths resolve against the child cwd. With the variable unset, source execution is unchanged. Arguments and process options pass through to the existing runtime. Non-CLI Node commands, runtime-flag wrappers, Git commands, PTY outer wrappers, and direct `node:child_process` calls are not redirected. In-process TypeScript tests remain source tests; this is not whole-suite native coverage.

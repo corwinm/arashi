@@ -210,7 +210,10 @@ pub(crate) fn run_tree(argv: &[String], cwd: &Path, timeout: Duration) -> io::Re
         let mut term_at = None;
         let mut settle_at = None;
         let mut settlement_complete = false;
+        #[cfg(unix)]
         let mut cleanup_unresolved = false;
+        #[cfg(not(unix))]
+        let cleanup_unresolved = false;
         #[cfg(unix)]
         let mut observed = lifecycle::ProcessIdentity::capture(pid as i32)
             .into_iter()

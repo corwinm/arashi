@@ -103,9 +103,12 @@ fn parse_url(raw: &str) -> Result<(String, Option<PathBuf>, String)> {
 
 fn direct_primary(workspace: &Workspace) -> Result<()> {
     #[cfg(not(unix))]
-    return Err(unsupported(
-        "Native add mutation currently requires POSIX filesystem identity; no changes made",
-    ));
+    {
+        let _ = workspace;
+        Err(unsupported(
+            "Native add mutation currently requires POSIX filesystem identity; no changes made",
+        ))
+    }
     #[cfg(unix)]
     {
         safe(&workspace.root)?;

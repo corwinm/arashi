@@ -70,6 +70,7 @@ impl Fixture {
         isolated(&mut command, &self.home);
         command.output().unwrap()
     }
+    #[cfg(unix)]
     fn run_with_path(&self, args: &[&str], path: &str) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
         command.args(args).current_dir(&self.root).env("PATH", path);
@@ -137,10 +138,12 @@ fn branch(root: &Path) -> String {
     git(root, &["symbolic-ref", "--short", "HEAD"])
 }
 
+#[cfg(unix)]
 fn head(root: &Path, reference: &str) -> String {
     git(root, &["rev-parse", reference])
 }
 
+#[cfg(unix)]
 fn process_alive(pid_file: &Path) -> bool {
     let Ok(pid) = fs::read_to_string(pid_file) else {
         return false;
@@ -318,6 +321,7 @@ aw sync --json > "$HOME/repeat.json"
     }
 }
 
+#[cfg(unix)]
 fn data(value: &Value) -> &Value {
     assert_eq!(value["command"], "sync");
     assert_eq!(value["ok"], true);
@@ -393,6 +397,7 @@ fn source_parity_for_local_sync_workflows() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn creates_missing_branches_at_frozen_head_without_upstream_in_config_order() {
     let f = Fixture::new(&["zeta", "alpha"]);
@@ -439,6 +444,7 @@ fn creates_missing_branches_at_frozen_head_without_upstream_in_config_order() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn existing_branch_checkout_and_current_branch_noop_preserve_refs() {
     let f = Fixture::new(&["zeta", "alpha"]);
@@ -458,6 +464,7 @@ fn existing_branch_checkout_and_current_branch_noop_preserve_refs() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn explicit_only_order_and_group_intersection_are_preserved() {
     let f = Fixture::new(&["zeta", "alpha"]);
@@ -476,6 +483,7 @@ fn explicit_only_order_and_group_intersection_are_preserved() {
     assert_eq!(branch(&f.repo("alpha")), "grouped");
 }
 
+#[cfg(unix)]
 #[test]
 fn contained_absolute_repository_path_is_supported() {
     let f = Fixture::new(&["alpha"]);
@@ -489,6 +497,7 @@ fn contained_absolute_repository_path_is_supported() {
     assert_eq!(branch(&f.repo("alpha")), "absolute");
 }
 
+#[cfg(unix)]
 #[test]
 fn timeout_and_repository_failure_continue_with_source_statuses() {
     let f = Fixture::new(&["zeta", "alpha"]);
@@ -517,6 +526,7 @@ fn timeout_and_repository_failure_continue_with_source_statuses() {
     assert_eq!(branch(&f.repo("alpha")), "main");
 }
 
+#[cfg(unix)]
 #[test]
 fn missing_repository_rollback_refreshes_plans_before_continuing() {
     let f = Fixture::new(&["zeta", "alpha"]);
@@ -542,6 +552,7 @@ fn missing_repository_rollback_refreshes_plans_before_continuing() {
     assert_eq!(branch(&f.repo("zeta")), "continue-after-rollback");
 }
 
+#[cfg(unix)]
 #[test]
 fn human_and_verbose_output_retains_source_summary_and_details() {
     let f = Fixture::new(&["alpha"]);
@@ -566,6 +577,57 @@ fn human_and_verbose_output_retains_source_summary_and_details() {
         stdout.contains("Sync complete: 1 succeeded, 0 failed"),
         "{stdout}"
     );
+}
+
+// Windows must exercise the explicit unsupported contract, not POSIX success
+// envelopes. Keep this outside the Unix gates, including the no-op case.
+#[cfg(windows)]
+#[test]
+fn windows_sync_rejects_local_workflows_without_mutating_workspace_or_home() {
+    let message = "Bounded local sync requires stable repository identity and is not supported on Windows; no changes made";
+    for state in ["missing", "existing", "current"] {
+        let f = Fixture::new(&["zeta", "alpha"]);
+        git(&f.root, &["checkout", "-b", "windows-sync"]);
+        for name in ["zeta", "alpha"] {
+            match state {
+                "existing" => {
+                    git(&f.repo(name), &["branch", "windows-sync"]);
+                }
+                "current" => {
+                    git(&f.repo(name), &["checkout", "-b", "windows-sync"]);
+                }
+                _ => {}
+            }
+        }
+        fs::write(f.home.join("sentinel"), b"preserve HOME bytes").unwrap();
+        let before = f.snapshot();
+        for args in [
+            vec!["sync", "--json"],
+            vec!["sync", "--json", "--only", "alpha"],
+            vec!["sync", "--json", "--group", "docs"],
+            vec!["sync"],
+            vec!["sync", "--verbose"],
+        ] {
+            let output = f.run(&args);
+            assert_eq!(output.status.code(), Some(1), "{state}: {output:?}");
+            if args.contains(&"--json") {
+                let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(value["command"], "sync");
+                assert_eq!(value["ok"], false);
+                assert_eq!(value["error"]["code"], "RUST_NOT_YET_PORTED");
+                assert_eq!(value["error"]["message"], message);
+                assert!(value.get("data").is_none());
+            } else {
+                assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+                assert!(!String::from_utf8_lossy(&output.stdout).contains("Sync complete"));
+            }
+            assert_eq!(
+                before,
+                f.snapshot(),
+                "{state}: {args:?} mutated fixture or HOME"
+            );
+        }
+    }
 }
 
 #[test]
