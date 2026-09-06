@@ -56,6 +56,7 @@ pub mod list;
 
 pub mod operations;
 
+pub mod delete;
 pub mod prune;
 
 pub mod selection;
