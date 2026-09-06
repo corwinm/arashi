@@ -44,6 +44,7 @@ class AlphaDistribution(unittest.TestCase):
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='arashi-alpha-')
+        self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name).resolve() / 'home café'
         self.home.mkdir()
         self.destination = self.home / '.arashi-alpha'
@@ -52,15 +53,60 @@ class AlphaDistribution(unittest.TestCase):
         for name in ['aw', 'arashi', '.arashi-managed-entrypoints.json']:
             (stable / name).write_text('caller-owned stable ' + name)
         (self.home / '.zshrc').write_text('caller profile\n')
+        self.shell_env = {**os.environ, 'HOME': str(self.home), 'USERPROFILE': str(self.home),
+                          'PATH': str(Path(self.temp.name) / 'no-python')}
+        if WINDOWS:
+            self.shell = shutil.which(os.environ.get('ALPHA_POWERSHELL', 'powershell.exe'))
+            self.assertTrue(self.shell)
+            self.registry_before = self.user_environment()
+            self.shell_env.update(APPDATA=str(self.home / 'AppData/Roaming'),
+                                  LOCALAPPDATA=str(self.home / 'AppData/Local'))
+            for folder in ['WindowsPowerShell', 'PowerShell']:
+                profile = self.home / 'Documents' / folder / 'Microsoft.PowerShell_profile.ps1'
+                profile.parent.mkdir(parents=True)
+                profile.write_bytes(b'# caller profile\r\n')
+            # Only the shell runs before the baseline: PS5 creates Roaming and
+            # PS7 writes StartupProfileData-NonInteractive even with -NoProfile.
+            # Track all resulting bytes/directories; do not ignore AppData.
+            self.run_shell_only()
         self.before = self.snapshot()
 
+    @staticmethod
+    def user_environment():
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment') as key:
+                return sorted(winreg.EnumValue(key, i) for i in range(winreg.QueryInfoKey(key)[1]))
+        except FileNotFoundError:
+            return None
+
+    def run_shell_only(self):
+        result = subprocess.run([self.shell, '-NoProfile', '-NonInteractive', '-Command', 'exit 0'],
+                                env=self.shell_env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def tearDown(self):
+        if WINDOWS:
+            self.assertEqual(self.registry_before, self.user_environment())
         self.assertEqual(self.before, self.snapshot())
-        self.temp.cleanup()
 
     def snapshot(self):
-        return {str(p.relative_to(self.home)): p.read_bytes() for p in self.home.rglob('*')
-                if p.is_file() and '.arashi-alpha' not in p.parts}
+        return {str(p.relative_to(self.home)): p.read_bytes() if p.is_file() else None
+                for p in self.home.rglob('*') if '.arashi-alpha' not in p.parts}
+
+    @unittest.skipUnless(WINDOWS, 'native shell startup baseline')
+    def test_shell_only_matches_baseline(self):
+        self.run_shell_only()
+        self.assertEqual(self.before, self.snapshot())
+
+    def test_snapshot_detects_unrelated_appdata_mutation(self):
+        caller = self.home / 'AppData' / 'unexpected-installer-file'
+        caller.parent.mkdir(exist_ok=True)
+        caller.write_bytes(b'must not be ignored')
+        self.assertNotEqual(self.before, self.snapshot())
+        caller.unlink()
+        if 'AppData' not in self.before:
+            caller.parent.rmdir()
 
     def run_setup(self, *args, ok=True, archive=None, checksum=None):
         if WINDOWS:
@@ -72,8 +118,7 @@ class AlphaDistribution(unittest.TestCase):
         if not arguments or arguments[0] != 'uninstall':
             arguments = ['install', '--archive', str(archive or self.archive),
                          '--checksum-file', str(checksum or self.checksum), *arguments]
-        env = {**os.environ, 'HOME': str(self.home), 'USERPROFILE': str(self.home),
-               'PATH': str(Path(self.temp.name) / 'no-python')}
+        env = self.shell_env.copy()
         # Only the launcher is selected before clearing PATH; setup has no runtime tools.
         if WINDOWS:
             command[0] = shutil.which(command[0]) or command[0]
@@ -174,7 +219,7 @@ class AlphaDistribution(unittest.TestCase):
             checksum.write_text(hashlib.sha256(bad.read_bytes()).hexdigest() + '  ' + bad.name + '\n')
             self.run_setup(archive=bad, checksum=checksum, ok=False)
             self.assertEqual(original, {p.name: p.read_bytes() for p in self.destination.iterdir()})
-        self.assertEqual(sorted(p.name for p in self.home.iterdir()), ['.arashi', '.arashi-alpha', '.zshrc'])
+        self.assertEqual(self.before, self.snapshot())
 
     @unittest.skipIf(WINDOWS, 'Windows junction coverage runs separately')
     def test_linked_destination_and_payload_preserved(self):

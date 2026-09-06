@@ -36,11 +36,13 @@ def digest(data):
 
 def regular(path, directory=False):
     info = path.lstat()
+    # Cargo links release executables to deps outputs on NTFS. These are
+    # read-only producer inputs, copied as bytes into regular archive members;
+    # this policy is NOT the installer's single-link ownership policy.
     if (stat.S_ISLNK(info.st_mode) or
             getattr(info, 'st_file_attributes', 0) & 0x400 or
-            not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)) or
-            (not directory and info.st_nlink != 1)):
-        raise ValueError('Linked, reparse, special or hardlinked path refused: ' + str(path))
+            not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))):
+        raise ValueError('Linked, reparse or special path refused: ' + str(path))
     return info
 
 

@@ -7,7 +7,7 @@ import tempfile
 import winreg
 
 root = Path(__file__).resolve().parents[2] / 'target' / 'native-alpha-evidence' / 'extracted-tester'
-powershell = __import__('shutil').which('powershell.exe')
+powershell = __import__('shutil').which(os.environ.get('ALPHA_POWERSHELL', 'powershell.exe'))
 assert powershell and (root / 'arashi2-setup.exe').is_file()
 results = []
 def user_path():
