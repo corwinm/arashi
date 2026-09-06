@@ -332,6 +332,10 @@ fn dispatch(args: &Args) -> Result<Value> {
             crate::switch::switch(&cwd, args)
         }
         "shell" | "shell init" | "shell install" | "shell uninstall" => crate::shell::execute(args),
+        "add" => {
+            args.only(&["name", "create-setup", "force"])?;
+            crate::add::add(&cwd, args)
+        }
         "exec" => crate::execution::exec(&cwd, args),
         "setup" => crate::execution::setup(&cwd, args),
         "sync" => crate::sync::sync(&cwd, args),
@@ -633,6 +637,22 @@ fn render_human(command: &str, data: &Value) {
             }
         ),
         "sync" => {}
+        "clone" => {
+            for name in data["cloned"].as_array().into_iter().flatten() {
+                println!("Cloned {}", name.as_str().unwrap_or(""));
+            }
+            if data["cloned"]
+                .as_array()
+                .is_some_and(|items| items.is_empty())
+            {
+                println!("No repositories to clone.");
+            }
+        }
+        "add" => println!(
+            "Added {} at {}",
+            data["repository"]["name"].as_str().unwrap_or(""),
+            data["repository"]["path"].as_str().unwrap_or("")
+        ),
         _ => unreachable!("implemented command requires human renderer"),
     }
 }

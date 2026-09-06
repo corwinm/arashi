@@ -58,3 +58,7 @@ path = "tests/rust_prune.rs"
 [[test]]
 name = "rust_sync"
 path = "tests/rust_sync.rs"
+
+[[test]]
+name = "rust_add"
+path = "tests/rust_add.rs"
