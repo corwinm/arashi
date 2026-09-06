@@ -79,7 +79,7 @@ fn daemon(f: &Fixture) -> (Daemon, String) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
-    let child = Command::new("git")
+    let child = git_command()
         .process_group(0)
         .args([
             "daemon",
@@ -284,7 +284,7 @@ fn ahead_only_commit_pull_push(network: bool) {
         assert_ne!(local, remote);
         // The bare origin deliberately does not have the unpublished local object.
         assert!(
-            !Command::new("git")
+            !git_command()
                 .args(["cat-file", "-e", &local])
                 .current_dir(&f.child_remote)
                 .output()
@@ -534,8 +534,18 @@ fn seed(base: &Path, remote: &Path, name: &str) {
     git(remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
 }
 
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+    // Match the CLI fixture's isolation: caller autocrlf must not change checkout bytes.
+    command.env("GIT_CONFIG_NOSYSTEM", "1").env(
+        "GIT_CONFIG_GLOBAL",
+        if cfg!(windows) { "NUL" } else { "/dev/null" },
+    );
+    command
+}
+
 fn git(cwd: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = git_command()
         .args(["-c", "maintenance.auto=false"])
         .args(args)
         .current_dir(cwd)
@@ -783,7 +793,7 @@ fn push_dry_run_and_missing_upstream_do_not_create_remote_refs() {
     assert_eq!(preview.status.code(), Some(0));
     assert_eq!(json(&preview)["data"]["results"][0]["status"], "planned");
     assert!(
-        Command::new("git")
+        git_command()
             .args(["rev-parse", "--verify", "refs/heads/feature/preview"])
             .current_dir(&f.main_remote)
             .output()
@@ -1051,7 +1061,7 @@ fn push_dirty_divergence_continues_in_selection_order() {
             // Source compares upstream tracking state; make divergence equally observable.
             if network {
                 // Allow only this disposable daemon fetch through CI's file-only guard.
-                let output = Command::new("git")
+                let output = git_command()
                     .args(["-c", "maintenance.auto=false", "fetch", "origin"])
                     .current_dir(&f.child)
                     .env("GIT_TERMINAL_PROMPT", "0")
@@ -1115,7 +1125,7 @@ fn push_rejects_helper_remote_before_any_selected_repository_changes() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(json(&output)["error"]["code"], "PORT_UNSUPPORTED");
     assert!(
-        Command::new("git")
+        git_command()
             .args(["rev-parse", "--verify", "refs/heads/feature/blocked"])
             .current_dir(&f.main_remote)
             .output()
@@ -1147,7 +1157,7 @@ fn push_rejects_remote_hooks_before_the_hook_or_ref_can_change() {
     assert_eq!(json(&output)["error"]["code"], "PORT_UNSUPPORTED");
     assert!(!marker.exists());
     assert!(
-        Command::new("git")
+        git_command()
             .args(["rev-parse", "--verify", "refs/heads/feature/remote-hook",])
             .current_dir(&f.child_remote)
             .output()
