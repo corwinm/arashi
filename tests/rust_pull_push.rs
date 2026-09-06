@@ -113,8 +113,13 @@ fn network_failure_continues_to_later_repository() {
     for operation in ["pull", "push"] {
         let f = Fixture::new(None);
         let (_daemon, url) = daemon(&f);
+        let failing = if operation == "pull" {
+            &f.root
+        } else {
+            &f.child
+        };
         git(
-            &f.child,
+            failing,
             &[
                 "remote",
                 "set-url",
@@ -123,7 +128,7 @@ fn network_failure_continues_to_later_repository() {
             ],
         );
         let expected = if operation == "pull" {
-            f.advance(&f.main_remote, "continue-network", "continued.txt")
+            f.advance(&f.child_remote, "continue-network", "continued.txt")
         } else {
             f.feature(&f.root, "continue-network", "continued.txt")
         };
@@ -149,7 +154,7 @@ fn network_failure_continues_to_later_repository() {
             }
         );
         let actual = if operation == "pull" {
-            git(&f.root, &["rev-parse", "HEAD"])
+            git(&f.child, &["rev-parse", "HEAD"])
         } else {
             git(
                 &f.main_remote,
@@ -157,6 +162,36 @@ fn network_failure_continues_to_later_repository() {
             )
         };
         assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+#[ignore = "requires Node and TypeScript dependencies"]
+fn source_parity_pull_is_parent_first_and_push_preserves_selection() {
+    if std::env::var("ARASHI_TS_PARITY").as_deref() != Ok("1") {
+        return;
+    }
+    for operation in ["pull", "push"] {
+        let f = Fixture::new(None);
+        let args = [operation, "--only", "child,workspace,workspace", "--json"];
+        let source = f.run_impl(true, &args);
+        let native = f.run(&args);
+        compare_json(&source, &native);
+        let value = json(&native);
+        let names: Vec<_> = value["data"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["repositoryId"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            if operation == "pull" {
+                vec!["workspace", "child"]
+            } else {
+                vec!["child", "workspace"]
+            }
+        );
     }
 }
 
@@ -457,22 +492,22 @@ fn pull_only_and_group_preserve_explicit_selection() {
 #[test]
 fn pull_dirty_failure_continues_without_touching_dirty_repository() {
     let f = Fixture::new(None);
-    let main = f.advance(&f.main_remote, "continuation-main", "continued.txt");
-    let child_before = git(&f.child, &["rev-parse", "HEAD"]);
-    fs::write(f.child.join("README.md"), "caller change\n").unwrap();
-    f.advance(&f.child_remote, "dirty-child", "remote.txt");
+    let main = f.advance(&f.child_remote, "continuation-main", "continued.txt");
+    let child_before = git(&f.root, &["rev-parse", "HEAD"]);
+    fs::write(f.root.join("README.md"), "caller change\n").unwrap();
+    f.advance(&f.main_remote, "dirty-child", "remote.txt");
     let output = f.run(&["pull", "--only", "child", "--only", "workspace", "--json"]);
     assert_eq!(output.status.code(), Some(1));
     let value = json(&output);
     assert_eq!(value["data"]["overallStatus"], "partial-failure");
     assert_eq!(value["data"]["results"][0]["status"], "failed");
     assert_eq!(value["data"]["results"][1]["status"], "updated");
-    assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), child_before);
+    assert_eq!(git(&f.root, &["rev-parse", "HEAD"]), child_before);
     assert_eq!(
-        fs::read_to_string(f.child.join("README.md")).unwrap(),
+        fs::read_to_string(f.root.join("README.md")).unwrap(),
         "caller change\n"
     );
-    assert_eq!(git(&f.root, &["rev-parse", "HEAD"]), main);
+    assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), main);
 }
 
 #[test]

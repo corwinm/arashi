@@ -686,6 +686,9 @@ fn configured_add_clone_and_shell_journey_preserves_command_policies() {
     for network in [false, true] {
         for source in [true, false] {
             let fixture = Fixture::new();
+            if network {
+                git(&fixture.remote, &["config", "daemon.receivepack", "true"]);
+            }
             let daemon = network.then(|| network::GitDaemon::start(&fixture.root));
             let url = daemon
                 .as_ref()
@@ -749,6 +752,69 @@ fn configured_add_clone_and_shell_journey_preserves_command_policies() {
             assert_eq!(git(&child, &["config", "--get", "remote.origin.url"]), url);
             assert_eq!(fs::read(&config_path).unwrap(), saved);
             assert!(run(&["clone", "--all", "--json"]).status.success());
+            // Use the actual add/clone origin, without disconnecting transport.
+            let publisher = fixture.root.join("publisher");
+            git(
+                &fixture.root,
+                &[
+                    "clone",
+                    fixture.remote.to_str().unwrap(),
+                    publisher.to_str().unwrap(),
+                ],
+            );
+            for repo in [&publisher, &child] {
+                git(repo, &["config", "user.name", "Arashi Test"]);
+                git(repo, &["config", "user.email", "arashi@example.invalid"]);
+                git(repo, &["config", "commit.gpgSign", "false"]);
+            }
+            fs::write(publisher.join("incoming.txt"), "remote update\n").unwrap();
+            git(&publisher, &["add", "incoming.txt"]);
+            git(&publisher, &["commit", "-m", "incoming"]);
+            git(&publisher, &["push", "origin", "HEAD:main"]);
+            let incoming = git(&publisher, &["rev-parse", "HEAD"]);
+            let pulled = run(&["pull", "--only", "child", "--json"]);
+            assert!(
+                pulled.status.success(),
+                "pull source={source} network={network}: {}",
+                String::from_utf8_lossy(&pulled.stdout)
+            );
+            assert_eq!(git(&child, &["rev-parse", "HEAD"]), incoming);
+            assert_eq!(
+                fs::read(child.join("incoming.txt")).unwrap(),
+                b"remote update\n"
+            );
+            fs::write(child.join("outgoing.txt"), "local update\n").unwrap();
+            git(&child, &["add", "outgoing.txt"]);
+            git(&child, &["commit", "-m", "outgoing"]);
+            let oid = git(&child, &["rev-parse", "HEAD"]);
+            let preview = run(&["push", "--only", "child", "--dry-run", "--json"]);
+            assert!(
+                preview.status.success(),
+                "{}",
+                String::from_utf8_lossy(&preview.stdout)
+            );
+            assert_eq!(
+                document(&preview)["data"]["results"][0]["status"],
+                "planned"
+            );
+            assert_eq!(
+                git(&fixture.remote, &["rev-parse", "refs/heads/main"]),
+                incoming
+            );
+            let pushed = run(&["push", "--only", "child", "--json"]);
+            assert!(
+                pushed.status.success(),
+                "push source={source} network={network}: {}",
+                String::from_utf8_lossy(&pushed.stdout)
+            );
+            assert_eq!(git(&fixture.remote, &["rev-parse", "refs/heads/main"]), oid);
+            assert_eq!(
+                git(&child, &["rev-parse", "--abbrev-ref", "@{u}"]),
+                "origin/main"
+            );
+            assert!(run(&["pull", "--only", "child", "--json"]).status.success());
+            assert_eq!(fs::read(&config_path).unwrap(), saved);
+            assert_eq!(git(&child, &["config", "--get", "remote.origin.url"]), url);
             // Network/local-origin sync remains unsupported, with no mutation.
             if !source {
                 let rejected = run(&["sync", "--json"]);

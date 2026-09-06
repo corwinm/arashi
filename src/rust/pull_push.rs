@@ -820,7 +820,10 @@ fn execute_pull(plan: &PullPlan, timeout: Option<Duration>) -> Value {
 }
 
 pub fn pull(workspace: &Workspace, args: &Args) -> Result<Value> {
-    let repositories = repositories(workspace, args)?;
+    let mut repositories = repositories(workspace, args)?;
+    // Source pulls the configuration-owning parent first, even when --only
+    // lists it last. Push retains the explicit selection order.
+    repositories.sort_by_key(|repository| repository.path != workspace.root);
     let config = workspace.config.as_ref().unwrap();
     let ignore = crate::managed::IgnorePlan::build(
         &workspace.root,
