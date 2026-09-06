@@ -195,6 +195,109 @@ fn source_parity_pull_is_parent_first_and_push_preserves_selection() {
     }
 }
 
+fn ahead_only_commit_pull_push(network: bool) {
+    // Separate fixtures prevent the source fetch from preparing native objects/refs.
+    let implementations = if std::env::var("ARASHI_TS_PARITY").as_deref() == Ok("1") {
+        vec![true, false]
+    } else {
+        vec![false]
+    };
+    for source in implementations {
+        let f = Fixture::new(None);
+        let _daemon = if network {
+            let (daemon, url) = daemon(&f);
+            git(&f.child, &["remote", "set-url", "origin", &url]);
+            Some(daemon)
+        } else {
+            let url = format!("file://{}", f.child_remote.display());
+            git(&f.child, &["remote", "set-url", "origin", &url]);
+            None
+        };
+        let config = fs::read(f.root.join(".arashi/config.json")).unwrap();
+        let remote = git(&f.child_remote, &["rev-parse", "refs/heads/main"]);
+        let url = git(&f.child, &["remote", "get-url", "origin"]);
+        fs::write(f.child.join("local.txt"), "unpublished commit\n").unwrap();
+        git(&f.child, &["add", "local.txt"]);
+        git(&f.child, &["commit", "-m", "ordinary local commit"]);
+        let local = git(&f.child, &["rev-parse", "HEAD"]);
+        assert_ne!(local, remote);
+        // The bare origin deliberately does not have the unpublished local object.
+        assert!(
+            !Command::new("git")
+                .args(["cat-file", "-e", &local])
+                .current_dir(&f.child_remote)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        let pull = f.run_impl(source, &["pull", "--only", "child,workspace", "--json"]);
+        eprintln!(
+            "ahead-only source={source} network={network}: {}",
+            json(&pull)
+        );
+        assert!(pull.status.success(), "{}", json(&pull));
+        let value = json(&pull);
+        assert_eq!(value["data"]["overallStatus"], "success");
+        let results = value["data"]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["repositoryId"], "workspace");
+        assert_eq!(results[1]["repositoryId"], "child");
+        assert!(results.iter().all(|row| row["status"] == "skipped"));
+        assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), local);
+        assert_eq!(
+            git(&f.child_remote, &["rev-parse", "refs/heads/main"]),
+            remote
+        );
+        assert_eq!(
+            git(&f.child, &["rev-parse", "refs/remotes/origin/main"]),
+            remote
+        );
+        let preview = f.run_impl(source, &["push", "--only", "child", "--dry-run", "--json"]);
+        assert!(preview.status.success(), "{}", json(&preview));
+        assert_eq!(json(&preview)["data"]["results"][0]["status"], "planned");
+        assert_eq!(
+            git(&f.child_remote, &["rev-parse", "refs/heads/main"]),
+            remote
+        );
+        let push = f.run_impl(source, &["push", "--only", "child", "--json"]);
+        assert!(push.status.success(), "{}", json(&push));
+        assert_eq!(json(&push)["data"]["results"][0]["status"], "pushed");
+        assert_eq!(
+            git(&f.child_remote, &["rev-parse", "refs/heads/main"]),
+            local
+        );
+        assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), local);
+        assert_eq!(
+            git(&f.child, &["rev-parse", "--abbrev-ref", "@{u}"]),
+            "origin/main"
+        );
+        assert_eq!(git(&f.child, &["remote", "get-url", "origin"]), url);
+        assert_eq!(
+            fs::read(f.root.join(".arashi/config.json")).unwrap(),
+            config
+        );
+        assert_eq!(
+            fs::read_to_string(f.child.join("local.txt")).unwrap(),
+            "unpublished commit\n"
+        );
+        assert!(git(&f.child, &["status", "--porcelain"]).is_empty());
+        let repeat = f.run_impl(source, &["pull", "--only", "child", "--json"]);
+        assert!(repeat.status.success(), "{}", json(&repeat));
+        assert_eq!(json(&repeat)["data"]["results"][0]["status"], "skipped");
+    }
+}
+
+#[test]
+fn ahead_only_local_file_commit_pull_push() {
+    ahead_only_commit_pull_push(false);
+}
+
+#[test]
+fn ahead_only_loopback_commit_pull_push() {
+    ahead_only_commit_pull_push(true);
+}
+
 #[test]
 fn verbose_pull_reports_git_output() {
     let f = Fixture::new(None);

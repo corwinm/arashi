@@ -642,6 +642,11 @@ fn plan_pull(repository: Repository, remote: Option<Remote>) -> Result<PullPlan>
             "failed",
             Some("Working tree is dirty; pull refused without mutation".into()),
         )
+    } else if is_ancestor(&repository.path, &remote_oid, &local) {
+        // An unpublished local tip is absent from a local bare origin's store.
+        // Compare there only for incoming fast-forwards; the checkout contains
+        // both commits when origin is an ancestor and there is nothing to pull.
+        ("current", None)
     } else if is_ancestor(&remote.path, &local, &remote_oid) {
         ("update", None)
     } else {
