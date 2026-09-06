@@ -61,8 +61,11 @@ class AlphaDistribution(unittest.TestCase):
             self.registry_before = self.user_environment()
             cache = Path(self.temp.name) / 'powershell-cache'
             cache.mkdir()
+            # PS5's CLR writes profiling data under LOCALAPPDATA; PS7's
+            # CoreCLR uses the profile home and supports disabling gathering.
+            # Isolate shell caches, not arbitrary paths from the HOME snapshot.
             self.shell_env.update(APPDATA=str(self.home / 'AppData/Roaming'),
-                                  LOCALAPPDATA=str(self.home / 'AppData/Local'),
+                                  LOCALAPPDATA=str(cache / 'Local'),
                                   PSModuleAnalysisCachePath=str(cache / 'ModuleAnalysisCache'),
                                   COMPlus_MultiCoreJitNoProfileGather='1')
             for folder in ['WindowsPowerShell', 'PowerShell']:
