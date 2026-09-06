@@ -1087,6 +1087,97 @@ fn push_rejects_remote_hooks_before_the_hook_or_ref_can_change() {
     );
 }
 
+fn snapshot_files(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(root: &Path, files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(&path, files);
+            } else {
+                files.insert(path.clone(), fs::read(path).unwrap());
+            }
+        }
+    }
+    let mut files = std::collections::BTreeMap::new();
+    visit(root, &mut files);
+    files
+}
+
+fn rejects_local_hooks_before_mutation(operation: &str) {
+    for hook_name in [
+        "post-merge",
+        "pre-merge-commit",
+        "pre-push",
+        "reference-transaction",
+    ] {
+        let f = Fixture::new(None);
+        if operation == "pull" {
+            f.advance(&f.main_remote, "parent-update", "parent-update.txt");
+            f.advance(&f.child_remote, "child-update", "child-update.txt");
+        } else {
+            f.feature(&f.root, "hook-preflight", "parent-feature.txt");
+            f.feature(&f.child, "hook-preflight", "child-feature.txt");
+        }
+        // Put the blocker last, so the earlier selected repository must not
+        // fetch or publish either. Use Git's real hook discovery as a control.
+        let hook = f.child.join(".git").join("hooks").join(hook_name);
+        let marker = f.child.join("hook-canary");
+        fs::write(&hook, "#!/bin/sh\nprintf ran > hook-canary\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        git(&f.child, &["hook", "run", hook_name]);
+        assert_eq!(fs::read(&marker).unwrap(), b"ran");
+        fs::remove_file(&marker).unwrap();
+        let before = snapshot_files(&f.base);
+        let previews: &[bool] = if operation == "push" {
+            &[false, true]
+        } else {
+            &[false]
+        };
+        for &preview in previews {
+            let mut args = vec![operation, "--only", "workspace,child", "--json"];
+            if operation == "push" {
+                args.push("--set-upstream");
+            }
+            if preview {
+                args.push("--dry-run");
+            }
+            let output = f.run(&args);
+            let value = json(&output);
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{operation} {hook_name}: {value}"
+            );
+            assert_eq!(value["error"]["code"], "PORT_UNSUPPORTED", "{value}");
+            assert!(
+                value["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&format!("Active Git hook '{hook_name}'")),
+                "{value}"
+            );
+            assert!(!marker.exists());
+            // Includes both checkouts, origins, HOME, indexes, refs, objects and
+            // FETCH_HEAD: rejection must precede even a fetch in the first repo.
+            assert_eq!(snapshot_files(&f.base), before);
+        }
+    }
+}
+
+#[test]
+fn pull_rejects_local_hooks_before_mutation() {
+    rejects_local_hooks_before_mutation("pull");
+}
+
+#[test]
+fn push_rejects_local_hooks_before_mutation() {
+    rejects_local_hooks_before_mutation("push");
+}
+
 #[test]
 fn human_pull_and_push_render_progress_results_and_summaries() {
     let f = Fixture::new(None);
