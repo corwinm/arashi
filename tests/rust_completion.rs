@@ -8,6 +8,10 @@ use std::{
     },
 };
 
+#[cfg(unix)]
+#[path = "rust/completion_fixture.rs"]
+mod completion_fixture;
+
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 static DYNAMIC: Mutex<()> = Mutex::new(());
 
@@ -553,32 +557,12 @@ fn query_preserves_worktree_paths_and_matches_command_scope_and_forms() {
 #[cfg(unix)]
 #[test]
 fn query_drains_large_git_worktree_output_within_the_budget() {
-    use std::os::unix::fs::PermissionsExt;
-
     let _guard = dynamic_guard();
     let temp = TempDir::new("large-git-output");
     let root = &temp.0;
-    fs::create_dir(root.join(".arashi")).unwrap();
-    fs::write(
-        root.join(".arashi/config.json"),
-        r#"{"repos":{},"version":"1.0.0"}"#,
-    )
-    .unwrap();
-    let mut porcelain = Vec::new();
-    for index in 0..800 {
-        porcelain.extend_from_slice(format!("worktree /tmp/completion-{index}\0").as_bytes());
-        porcelain.extend_from_slice(b"HEAD 0000000000000000000000000000000000000000\0");
-        porcelain.extend_from_slice(format!("branch refs/heads/topic-{index}\0\0").as_bytes());
-    }
-    let output_path = root.join("porcelain");
-    fs::write(&output_path, porcelain).unwrap();
-    let git_path = root.join("git");
-    fs::write(
-        &git_path,
-        "#!/bin/sh\n/bin/cat \"$ARASHI_TEST_PORCELAIN\"\n",
-    )
-    .unwrap();
-    fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
+    completion_fixture::large_worktree_fixture(root);
+    // Production acceptance: no debug budget override or freshly created
+    // shell producer. Deterministic full-byte draining is tested separately.
     let output = Command::new(env!("CARGO_BIN_EXE_arashi"))
         .args([
             "completion",
@@ -591,9 +575,7 @@ fn query_drains_large_git_worktree_output_within_the_budget() {
         ])
         .current_dir(root)
         .env("NO_COLOR", "1")
-        .env("ARASHI_COMPLETION_TEST_BUDGET_MS", "1000")
-        .env("PATH", format!("{}:/usr/bin:/bin", root.to_string_lossy()))
-        .env("ARASHI_TEST_PORCELAIN", output_path)
+        .env_remove("ARASHI_COMPLETION_TEST_BUDGET_MS")
         .output()
         .unwrap();
 
