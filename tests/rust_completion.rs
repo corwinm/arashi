@@ -212,7 +212,10 @@ fn query_emits_lossless_configured_repository_group_and_worktree_records() {
         r#"{"version":"1.0.0","reposDir":"repos","repos":{"main":{"path":"."},"repo one":{"path":"repos/repo one","groups":[" docs team "]},"quote'glob*\\tab\tline\nrepo":{"path":"repos/odd","groups":["DOCS TEAM"]}}}"#,
     )
     .unwrap();
+    #[cfg(not(windows))]
     let linked = temp.0.join("linked, line\nbreak");
+    #[cfg(windows)]
+    let linked = temp.0.join("linked, line break ");
     git(
         root,
         &[
