@@ -841,29 +841,18 @@ fn configured_add_clone_and_shell_journey_preserves_command_policies() {
             assert!(run(&["pull", "--only", "child", "--json"]).status.success());
             assert_eq!(fs::read(&config_path).unwrap(), saved);
             assert_eq!(git(&child, &["config", "--get", "remote.origin.url"]), url);
-            // Network/local-origin sync remains unsupported, with no mutation.
-            if !source {
-                let rejected = run(&["sync", "--json"]);
-                assert!(!rejected.status.success());
-                assert_eq!(document(&rejected)["error"]["code"], "RUST_NOT_YET_PORTED");
-                assert_eq!(fs::read(&config_path).unwrap(), saved);
-                assert_eq!(git(&child, &["rev-parse", "HEAD"]), oid);
-                assert_eq!(git(&child, &["branch", "--show-current"]), "main");
-            }
-            // Explicitly disconnect the disposable origin and its configured URL
-            // before exercising the supported local-only sync consumer.
-            git(&child, &["remote", "remove", "origin"]);
-            let mut local_config: Value = serde_json::from_slice(&saved).unwrap();
-            local_config["repos"]["child"]
-                .as_object_mut()
-                .unwrap()
-                .remove("gitUrl");
-            fs::write(
-                &config_path,
-                serde_json::to_vec_pretty(&local_config).unwrap(),
-            )
-            .unwrap();
-            let saved = fs::read(&config_path).unwrap();
+            // Sync aligns only local branches while keeping the add/clone origin.
+            let git_config = fs::read(child.join(".git/config")).unwrap();
+            let remote_refs = git(&fixture.remote, &["show-ref"]);
+            let tracking_refs = git(
+                &child,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/remotes/",
+                ],
+            );
+            let fetch_head = fs::read(child.join(".git/FETCH_HEAD")).unwrap();
             git(&fixture.workspace, &["checkout", "-b", "journey"]);
             let sync = run(&["sync", "--json"]);
             assert!(
@@ -874,6 +863,27 @@ fn configured_add_clone_and_shell_journey_preserves_command_policies() {
             assert_eq!(git(&child, &["branch", "--show-current"]), "journey");
             assert_eq!(git(&child, &["rev-parse", "HEAD"]), oid);
             assert!(run(&["sync", "--json"]).status.success());
+            assert_eq!(fs::read(child.join(".git/config")).unwrap(), git_config);
+            assert_eq!(fs::read(child.join(".git/FETCH_HEAD")).unwrap(), fetch_head);
+            assert_eq!(
+                git(
+                    &child,
+                    &[
+                        "for-each-ref",
+                        "--format=%(refname) %(objectname)",
+                        "refs/remotes/"
+                    ]
+                ),
+                tracking_refs
+            );
+            assert_eq!(git(&fixture.remote, &["show-ref"]), remote_refs);
+            assert!(
+                git(
+                    &child,
+                    &["for-each-ref", "--format=%(upstream)", "refs/heads/journey"]
+                )
+                .is_empty()
+            );
             assert!(run(&["status", "--json"]).status.success());
             assert!(run(&["handoff", "--json"]).status.success());
             let wrapper = run(&["shell", "init", "bash"]);
@@ -929,6 +939,10 @@ fn configured_add_clone_and_shell_journey_preserves_command_policies() {
                 String::from_utf8_lossy(&shell.stderr)
             );
             assert_eq!(fs::read(&config_path).unwrap(), saved);
+            assert_eq!(fs::read(child.join(".git/config")).unwrap(), git_config);
+            assert_eq!(git(&child, &["config", "--get", "remote.origin.url"]), url);
+            assert_eq!(git(&child, &["rev-parse", "HEAD"]), oid);
+            assert_eq!(git(&fixture.remote, &["show-ref"]), remote_refs);
         }
     }
 }
