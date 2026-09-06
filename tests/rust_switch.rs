@@ -564,7 +564,7 @@ fn configured_parent_repos_and_all_scopes_select_source_candidates() {
     assert!(
         fs::read_to_string(&directive)
             .unwrap()
-            .contains(fixture.root.join("repos/api").to_str().unwrap())
+            .contains(fixture.root.join("repos").join("api").to_str().unwrap())
     );
 
     let all = fixture.run(&["switch", "api", "--all"], Some(&directive));
@@ -572,7 +572,7 @@ fn configured_parent_repos_and_all_scopes_select_source_candidates() {
     assert!(
         fs::read_to_string(&directive)
             .unwrap()
-            .contains(fixture.root.join("repos/api").to_str().unwrap())
+            .contains(fixture.root.join("repos").join("api").to_str().unwrap())
     );
     assert_eq!(fixture.snapshot(), before);
 }

@@ -5,3 +5,6 @@ bin/aw text eol=lf
 
 # Keep the argv fixture diff-checkable while cmd.exe still accepts it.
 tests/fixtures/*.cmd text eol=lf
+
+# Shell init output is compared byte-for-byte with these retained-source oracles.
+tests/rust/fixtures/shell/*.init text eol=lf
