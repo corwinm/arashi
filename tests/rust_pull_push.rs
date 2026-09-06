@@ -981,7 +981,23 @@ fn push_dirty_divergence_continues_in_selection_order() {
             let expected = git(&f.root, &["rev-parse", "HEAD"]);
             let rejected = f.advance(&f.child_remote, "divergent", "remote.txt");
             // Source compares upstream tracking state; make divergence equally observable.
-            git(&f.child, &["fetch", "origin"]);
+            if network {
+                // Allow only this disposable daemon fetch through CI's file-only guard.
+                let output = Command::new("git")
+                    .args(["-c", "maintenance.auto=false", "fetch", "origin"])
+                    .current_dir(&f.child)
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .env("GIT_ALLOW_PROTOCOL", "git")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "git fetch origin: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            } else {
+                git(&f.child, &["fetch", "origin"]);
+            }
             let mut snapshot = dirty_checkout(&f.child);
             snapshot.extend(dirty_checkout(&f.root));
             let output = f.run_impl(
