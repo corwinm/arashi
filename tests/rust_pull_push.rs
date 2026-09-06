@@ -11,15 +11,69 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 struct Daemon(std::process::Child);
 impl Drop for Daemon {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        if matches!(self.0.try_wait(), Ok(None)) {
+            // Keep the owned server root alive until all-name descendant cleanup.
+            let _ = Command::new("taskkill.exe")
+                .args(["/PID", &self.0.id().to_string(), "/T", "/F"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        #[cfg(unix)]
+        {
+            // git's launcher can leave git-daemon alive; settle the private group.
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", &format!("-{}", self.0.id())])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
+#[cfg(windows)]
 fn daemon(f: &Fixture) -> (Daemon, String) {
+    let ready = f.base.join("http-port");
+    let log = fs::File::create(f.base.join("http-server.log")).unwrap();
+    let child = Command::new("node")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/rust/git-http-server.cjs"))
+        .arg(&f.base)
+        .arg(&ready)
+        .stdout(std::process::Stdio::null())
+        .stderr(log)
+        .spawn()
+        .expect("Windows network fixtures require Node 24 and native Git on PATH");
+    let mut guard = Daemon(child);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        assert!(
+            guard.0.try_wait().unwrap().is_none(),
+            "HTTP fixture exited: {}",
+            fs::read_to_string(f.base.join("http-server.log")).unwrap_or_default()
+        );
+        if let Ok(port) = fs::read_to_string(&ready) {
+            if let Ok(port) = port.parse::<u16>() {
+                return (guard, format!("http://127.0.0.1:{port}/child.git"));
+            }
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "HTTP fixture readiness timeout"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[cfg(not(windows))]
+fn daemon(f: &Fixture) -> (Daemon, String) {
+    use std::os::unix::process::CommandExt;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     let child = Command::new("git")
+        .process_group(0)
         .args([
             "daemon",
             "--reuseaddr",
@@ -408,7 +462,14 @@ impl Fixture {
             .env("GIT_CONFIG_GLOBAL", self.home.join(".gitconfig"))
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("NO_COLOR", "1")
-            .env("GIT_ALLOW_PROTOCOL", "file:git");
+            .env(
+                "GIT_ALLOW_PROTOCOL",
+                if cfg!(windows) && self.base.join("http-port").is_file() {
+                    "file:git:http"
+                } else {
+                    "file:git"
+                },
+            );
         command.output().unwrap()
     }
 
