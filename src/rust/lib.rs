@@ -46,6 +46,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub mod git;
 
 pub mod cli;
+pub mod clone;
 
 pub mod completion;
 
