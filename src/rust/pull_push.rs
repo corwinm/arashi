@@ -452,6 +452,19 @@ fn upstream(path: &Path) -> Option<String> {
     .map(|value| value.trim().to_owned())
 }
 
+// Bounded Git operations own their descendants and captured output. Keep the
+// unbounded/source-compatible runner (and generic exec/setup semantics) separate.
+fn run_git(
+    argv: &[String],
+    cwd: &Path,
+    timeout: Option<Duration>,
+) -> std::io::Result<crate::process::Captured> {
+    match timeout {
+        Some(timeout) => crate::process::run_tree(argv, cwd, timeout),
+        None => crate::process::run(argv, cwd, None),
+    }
+}
+
 fn remote_git(remote: &Remote, args: &[&str]) -> Result<String> {
     if !remote.network {
         return git::run(&remote.path, args);
@@ -459,7 +472,7 @@ fn remote_git(remote: &Remote, args: &[&str]) -> Result<String> {
     let argv = std::iter::once("git".to_owned())
         .chain(args.iter().map(|arg| (*arg).to_owned()))
         .collect::<Vec<_>>();
-    let output = crate::process::run(&argv, &remote.path, Some(Duration::from_secs(30)))?;
+    let output = run_git(&argv, &remote.path, Some(Duration::from_secs(30)))?;
     if output.timed_out {
         return Err(Error::new(
             "GIT_ERROR",
@@ -737,7 +750,7 @@ fn execute_pull(plan: &PullPlan, timeout: Option<Duration>) -> Value {
                 "origin".into(),
                 format!("+refs/heads/{0}:refs/remotes/origin/{0}", plan.branch),
             ];
-            let fetched = match crate::process::run(&argv, &plan.repository.path, timeout) {
+            let fetched = match run_git(&argv, &plan.repository.path, timeout) {
                 Ok(value) => value,
                 Err(error) => {
                     return pull_result(plan, "failed", start, Some(error.to_string()), None);
@@ -1103,7 +1116,7 @@ fn execute_push(plan: &PushPlan) -> Value {
         argv.push("--set-upstream".into());
     }
     argv.extend(["origin".into(), refspec]);
-    let outcome = match crate::process::run(
+    let outcome = match run_git(
         &argv,
         &plan.repository.path,
         plan.remote.network.then_some(Duration::from_secs(30)),
@@ -1277,4 +1290,176 @@ pub fn human(command: &str, data: &Value, verbose: bool) -> String {
         data["overallStatus"].as_str().unwrap_or("")
     ));
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+    use std::{
+        fs,
+        process::{Command, Stdio},
+        sync::mpsc,
+        thread,
+    };
+
+    const HOLDER: &str = "pull_push::timeout_tests::pipe_holder";
+    const LAUNCHER: &str = "pull_push::timeout_tests::pipe_launcher";
+
+    fn helper(name: &str, cwd: &Path) -> Command {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", name, "--ignored", "--nocapture"])
+            .current_dir(cwd);
+        command
+    }
+
+    // These helpers execute only in the regression's private working directories.
+    #[test]
+    #[ignore = "subprocess fixture"]
+    fn pipe_holder() {
+        if !Path::new("settlement-fixture").is_file() {
+            return;
+        }
+        println!("git-child-stdout-ready");
+        eprintln!("git-child-stderr-ready");
+        fs::write("holder.pid", std::process::id().to_string()).unwrap();
+        let start = Instant::now();
+        while !Path::new("release").exists() && start.elapsed() < Duration::from_secs(20) {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture"]
+    fn pipe_launcher() {
+        if !Path::new("settlement-fixture").is_file() {
+            return;
+        }
+        fs::write("launcher.pid", std::process::id().to_string()).unwrap();
+        let mut child = helper(HOLDER, Path::new(".")).spawn().unwrap();
+        child.wait().unwrap();
+    }
+
+    fn ready(path: &Path) {
+        let start = Instant::now();
+        while !path.is_file() {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "missing ready canary: {}",
+                path.display()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn live(pid: &str) -> bool {
+        #[cfg(unix)]
+        {
+            let output = Command::new("ps")
+                .args(["-p", pid, "-o", "stat="])
+                .output()
+                .unwrap();
+            let status = String::from_utf8_lossy(&output.stdout);
+            !status.trim().is_empty() && !status.trim().starts_with('Z')
+        }
+        #[cfg(windows)]
+        {
+            let output = Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
+        }
+    }
+
+    #[test]
+    fn bounded_git_settles_descendant_output_without_checkout_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("checkout");
+        let other = root.path().join("unrelated");
+        for dir in [&checkout, &other] {
+            fs::create_dir(dir).unwrap();
+            fs::write(dir.join("settlement-fixture"), b"private fixture").unwrap();
+        }
+        assert!(
+            Command::new("git")
+                .args(["init", "--quiet"])
+                .arg(&checkout)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(
+            checkout.join("caller.txt"),
+            b"caller-owned checkout bytes\n",
+        )
+        .unwrap();
+        let snapshot = || {
+            [".git/HEAD", ".git/config", "caller.txt"]
+                .map(|name| fs::read(checkout.join(name)).unwrap())
+        };
+        let before = snapshot();
+        let mut unrelated = helper(HOLDER, &other)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        ready(&other.join("holder.pid"));
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace('\'', "'\\''");
+        let argv = vec![
+            "git".into(),
+            "-c".into(),
+            format!(
+                "alias.settlement=!'{}' --exact {} --ignored --nocapture",
+                executable, LAUNCHER
+            ),
+            "settlement".into(),
+        ];
+        let (tx, rx) = mpsc::channel();
+        let cwd = checkout.clone();
+        let runner = thread::spawn(move || {
+            tx.send(super::run_git(&argv, &cwd, Some(Duration::from_secs(3))))
+                .unwrap();
+        });
+        ready(&checkout.join("holder.pid"));
+        let returned = rx.recv_timeout(Duration::from_secs(8));
+        let owned_live = ["holder.pid", "launcher.pid"]
+            .map(|name| live(fs::read_to_string(checkout.join(name)).unwrap().trim()));
+        let unrelated_live = unrelated.try_wait().unwrap().is_none();
+        // Release only fixture helpers, even on RED; never kill unrelated PIDs.
+        fs::write(checkout.join("release"), b"release").unwrap();
+        fs::write(other.join("release"), b"release").unwrap();
+        unrelated.wait().unwrap();
+        runner.join().unwrap();
+        let output = returned
+            .expect("bounded Git returned only after releasing descendant-held pipes")
+            .unwrap();
+        assert!(output.timed_out);
+        assert!(
+            output.elapsed_ms >= 3000 && output.elapsed_ms < 8000,
+            "elapsed={}ms",
+            output.elapsed_ms
+        );
+        assert!(
+            output.stdout.contains("git-child-stdout-ready"),
+            "{}",
+            output.stdout
+        );
+        assert!(
+            output.stderr.contains("git-child-stderr-ready"),
+            "{}",
+            output.stderr
+        );
+        assert_eq!(
+            owned_live,
+            [false, false],
+            "owned subprocess survived timeout"
+        );
+        assert!(unrelated_live, "unrelated process was terminated");
+        assert_eq!(snapshot(), before);
+    }
 }
