@@ -212,6 +212,42 @@ fn standalone_moves_index_worktree_and_untracked_changes() {
 }
 
 #[test]
+fn implicit_current_source_moves_changes() {
+    let fixture = Fixture::new();
+    let target = fixture.standalone();
+    fs::write(fixture.root.join("tracked"), "staged\n").unwrap();
+    fixture.git(&fixture.root, &["add", "tracked"]);
+    fs::write(fixture.root.join("tracked"), "worktree\n").unwrap();
+    fs::write(fixture.root.join("untracked"), "new\n").unwrap();
+
+    let output = fixture.run(&["move", "--to", "feature", "--json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let data = &document(&output)["data"];
+    assert_eq!(data["mode"], "standalone");
+    assert_eq!(data["movedCount"], 1);
+    assert_eq!(
+        data["results"][0]["message"],
+        "Moved 1 staged, 1 modified, 1 untracked"
+    );
+    assert!(fixture.status(&fixture.root).is_empty());
+    assert_eq!(
+        fs::read_to_string(target.join("tracked")).unwrap(),
+        "worktree\n"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("untracked")).unwrap(),
+        "new\n"
+    );
+    assert!(fixture.status(&target).contains("MM tracked"));
+    assert!(fixture.status(&target).contains("?? untracked"));
+    assert!(fixture.git(&fixture.root, &["stash", "list"]).is_empty());
+}
+
+#[test]
 fn configured_moves_all_matching_repositories_in_source_order() {
     let fixture = Fixture::new();
     let target = fixture.configured();
@@ -287,7 +323,7 @@ fn canonical_path_aliases_are_the_same_workspace_without_mutation() {
 }
 
 #[test]
-fn unsupported_configured_policies_fail_before_git_mutation() {
+fn configured_create_policies_do_not_block_move() {
     for extra in [
         r#", "copy":["tracked"]"#,
         r#", "hooks":{"pre-create":"touch should-not-run"}"#,
@@ -301,10 +337,14 @@ fn unsupported_configured_policies_fail_before_git_mutation() {
         fs::write(fixture.root.join("tracked"), "source\n").unwrap();
         let before = fixture.status(&fixture.root);
         let output = fixture.run(&["move", "--from", "main", "--to", "feature", "--json"]);
-        assert_eq!(output.status.code(), Some(1));
-        assert_eq!(document(&output)["error"]["code"], "RUST_NOT_YET_PORTED");
-        assert_eq!(fixture.status(&fixture.root), before);
-        assert!(fixture.status(&target).is_empty());
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(fixture.status(&fixture.root).is_empty());
+        assert_eq!(fixture.status(&target), before);
         assert!(fixture.git(&fixture.root, &["stash", "list"]).is_empty());
     }
 }
@@ -429,6 +469,130 @@ fn coordinated_stash_drop_failure_rolls_back_every_repository() {
 
 #[cfg(unix)]
 #[test]
+fn stash_push_error_after_creation_restores_every_source() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let target = fixture.configured();
+    fs::write(fixture.root.join("tracked"), "meta changed\n").unwrap();
+    fs::write(fixture.root.join("repos/alpha/tracked"), "alpha changed\n").unwrap();
+    let source_meta = fixture.status(&fixture.root);
+    let source_child = fixture.status(&fixture.root.join("repos/alpha"));
+    let bin = fixture.base.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real_git = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let wrapper = bin.join("git");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \"$PWD:$*\" in *'/repos/alpha:'*'stash push'*) {} \"$@\"; exit 42;; esac\nexec {} \"$@\"\n",
+            real_git.trim(), real_git.trim()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+
+    let output = fixture.run_with_path(
+        &["move", "--from", "main", "--to", "feature", "--json"],
+        Some(path.as_ref()),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(document(&output)["error"]["code"], "MOVE_FAILED");
+    assert_eq!(
+        document(&output)["error"]["details"]["rollbackErrors"],
+        serde_json::json!([])
+    );
+    assert_eq!(fixture.status(&fixture.root), source_meta);
+    assert_eq!(
+        fixture.status(&fixture.root.join("repos/alpha")),
+        source_child
+    );
+    assert!(fixture.status(&target).is_empty());
+    assert!(fixture.status(&target.join("repos/alpha")).is_empty());
+    assert!(fixture.git(&fixture.root, &["stash", "list"]).is_empty());
+    assert!(
+        fixture
+            .git(&fixture.root.join("repos/alpha"), &["stash", "list"])
+            .is_empty()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn caller_edits_after_apply_survive_failed_drop() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let target = fixture.configured();
+    fs::write(fixture.root.join("tracked"), "meta changed\n").unwrap();
+    fs::write(fixture.root.join("repos/alpha/tracked"), "alpha changed\n").unwrap();
+    let source_meta = fixture.status(&fixture.root);
+    let source_child = fixture.status(&fixture.root.join("repos/alpha"));
+    let bin = fixture.base.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let real_git = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let wrapper = bin.join("git");
+    let marker = fixture.base.join("drop-failed-once");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \"$PWD:$*\" in *'/repos/alpha:'*'stash drop'*) if test ! -e '{}'; then : > '{}'; printf caller > '{}'; printf caller-tracked > '{}'; exit 42; fi;; esac\nexec {} \"$@\"\n",
+            marker.display(), marker.display(), target.join("caller-owned").display(), target.join("tracked").display(), real_git.trim()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+
+    let output = fixture.run_with_path(
+        &["move", "--from", "main", "--to", "feature", "--json"],
+        Some(path.as_ref()),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(document(&output)["error"]["code"], "MOVE_FAILED");
+    assert!(
+        !document(&output)["error"]["details"]["rollbackErrors"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(fixture.status(&fixture.root), source_meta);
+    assert_eq!(
+        fixture.status(&fixture.root.join("repos/alpha")),
+        source_child
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("caller-owned")).unwrap(),
+        "caller"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("tracked")).unwrap(),
+        "caller-tracked"
+    );
+    assert!(fixture.status(&target.join("repos/alpha")).is_empty());
+    assert!(fixture.git(&fixture.root, &["stash", "list"]).is_empty());
+    assert!(
+        fixture
+            .git(&fixture.root.join("repos/alpha"), &["stash", "list"])
+            .is_empty()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn caller_target_change_detected_before_apply_is_preserved_during_rollback() {
     use std::os::unix::fs::PermissionsExt;
     let fixture = Fixture::new();
@@ -490,12 +654,20 @@ fn scrub_paths(value: &mut Value, base: &Path) {
 #[test]
 #[ignore = "requires Node and TypeScript dependencies"]
 fn source_and_native_json_envelopes_match_for_standalone_and_configured_moves() {
-    for configured in [false, true] {
+    for (configured, implicit) in [(false, false), (false, true), (true, false), (true, true)] {
         let source = Fixture::new();
         let native = Fixture::new();
         if configured {
             source.configured();
             native.configured();
+            for fixture in [&source, &native] {
+                let config_path = fixture.root.join(".arashi/config.json");
+                let mut config: Value =
+                    serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+                config["repos"]["alpha"]["copy"] = serde_json::json!(["tracked"]);
+                config["repos"]["alpha"]["hooks"] = serde_json::json!({"pre-create":"exit 42"});
+                fs::write(config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+            }
             fs::write(source.root.join("repos/alpha/tracked"), "alpha changed\n").unwrap();
             fs::write(native.root.join("repos/alpha/tracked"), "alpha changed\n").unwrap();
         } else {
@@ -504,7 +676,16 @@ fn source_and_native_json_envelopes_match_for_standalone_and_configured_moves() 
         }
         fs::write(source.root.join("tracked"), "meta changed\n").unwrap();
         fs::write(native.root.join("tracked"), "meta changed\n").unwrap();
-        let args = ["move", "--from", "main", "--to", "feature", "--json"];
+        for fixture in [&source, &native] {
+            fixture.git(&fixture.root, &["add", "tracked"]);
+            fs::write(fixture.root.join("tracked"), "unstaged bytes\n").unwrap();
+            fs::write(fixture.root.join("untracked"), "untracked bytes\n").unwrap();
+        }
+        let args = if implicit {
+            vec!["move", "--to", "feature", "--json"]
+        } else {
+            vec!["move", "--from", "main", "--to", "feature", "--json"]
+        };
         let source_output = source.run_source(&args);
         let native_output = native.run(&args);
         assert_eq!(source_output.status.code(), native_output.status.code());
@@ -514,17 +695,39 @@ fn source_and_native_json_envelopes_match_for_standalone_and_configured_moves() 
         scrub_paths(&mut source_json, &source.base);
         scrub_paths(&mut native_json, &native.base);
         assert_eq!(source_json, native_json);
+        let target = if configured {
+            ".arashi/worktrees/feature"
+        } else {
+            ".worktrees/feature"
+        };
+        for relative in ["", target] {
+            for git_args in [
+                vec!["status", "--porcelain=v1", "-uall"],
+                vec!["diff", "--binary"],
+                vec!["diff", "--cached", "--binary"],
+                vec!["stash", "list"],
+            ] {
+                assert_eq!(
+                    source.git(&source.root.join(relative), &git_args),
+                    native.git(&native.root.join(relative), &git_args)
+                );
+            }
+        }
+        assert_eq!(
+            fs::read(source.root.join(target).join("untracked")).unwrap(),
+            fs::read(native.root.join(target).join("untracked")).unwrap()
+        );
     }
 }
 
 #[test]
-fn explicit_references_are_required_before_observation() {
+fn interactive_target_selection_remains_explicitly_unsupported() {
     let fixture = Fixture::new();
     fixture.standalone();
     fs::write(fixture.root.join("tracked"), "source\n").unwrap();
     let before = fixture.status(&fixture.root);
     for args in [
-        vec!["move", "--to", "feature", "--json"],
+        vec!["move", "--json"],
         vec!["move", "--from", "main", "--json"],
     ] {
         let output = fixture.run(&args);
@@ -532,4 +735,100 @@ fn explicit_references_are_required_before_observation() {
         assert_eq!(document(&output)["error"]["code"], "RUST_NOT_YET_PORTED");
         assert_eq!(fixture.status(&fixture.root), before);
     }
+}
+
+#[test]
+fn existing_caller_stash_survives_success() {
+    let fixture = Fixture::new();
+    fixture.standalone();
+    fs::write(fixture.root.join("tracked"), "caller saved\n").unwrap();
+    fixture.git(&fixture.root, &["stash", "push", "-m", "caller-owned"]);
+    let stash = fixture.git(&fixture.root, &["rev-parse", "refs/stash"]);
+    fs::write(fixture.root.join("tracked"), "move me\n").unwrap();
+    let output = fixture.run(&["move", "--to", "feature", "--json"]);
+    assert!(output.status.success());
+    assert_eq!(
+        fixture.git(&fixture.root, &["rev-parse", "refs/stash"]),
+        stash
+    );
+}
+
+#[test]
+fn conflicting_apply_restores_source_index_and_untracked_bytes() {
+    let fixture = Fixture::new();
+    let target = fixture.standalone();
+    fs::write(target.join("tracked"), "target commit\n").unwrap();
+    fixture.git(&target, &["add", "tracked"]);
+    fixture.git(&target, &["commit", "-m", "target divergence"]);
+    fs::write(fixture.root.join("tracked"), "staged source\n").unwrap();
+    fixture.git(&fixture.root, &["add", "tracked"]);
+    fs::write(fixture.root.join("tracked"), "unstaged source\n").unwrap();
+    fs::write(fixture.root.join("untracked"), "source untracked\n").unwrap();
+    let index = fixture.git(&fixture.root, &["diff", "--cached", "--binary"]);
+    let worktree = fixture.git(&fixture.root, &["diff", "--binary"]);
+    let output = fixture.run(&["move", "--to", "feature", "--json"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        fixture.git(&fixture.root, &["diff", "--cached", "--binary"]),
+        index
+    );
+    assert_eq!(fixture.git(&fixture.root, &["diff", "--binary"]), worktree);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("untracked")).unwrap(),
+        "source untracked\n"
+    );
+    assert!(
+        !document(&output)["error"]["details"]["rollbackErrors"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn ignored_target_collision_preserves_caller_bytes() {
+    let fixture = Fixture::new();
+    let target = fixture.standalone();
+    fs::write(
+        fixture.root.join(".git/info/exclude"),
+        ".worktrees/\nprivate\n",
+    )
+    .unwrap();
+    fs::write(fixture.root.join("private"), "source staged\n").unwrap();
+    fixture.git(&fixture.root, &["add", "-f", "private"]);
+    fs::write(target.join("private"), "caller ignored\n").unwrap();
+    let output = fixture.run(&["move", "--to", "feature", "--json"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        fs::read_to_string(target.join("private")).unwrap(),
+        "caller ignored\n"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("private")).unwrap(),
+        "source staged\n"
+    );
+    assert!(fixture.status(&fixture.root).contains("A  private"));
+}
+
+#[test]
+fn ignored_target_collision_with_staged_then_deleted_file_preserves_caller_bytes() {
+    let fixture = Fixture::new();
+    let target = fixture.standalone();
+    fs::write(
+        fixture.root.join(".git/info/exclude"),
+        ".worktrees/\nprivate\n",
+    )
+    .unwrap();
+    fs::write(fixture.root.join("private"), "source staged\n").unwrap();
+    fixture.git(&fixture.root, &["add", "-f", "private"]);
+    fs::remove_file(fixture.root.join("private")).unwrap();
+    fs::write(target.join("private"), "caller ignored\n").unwrap();
+    let output = fixture.run(&["move", "--to", "feature", "--json"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        fs::read_to_string(target.join("private")).unwrap(),
+        "caller ignored\n"
+    );
+    assert!(!fixture.root.join("private").exists());
+    assert!(fixture.status(&fixture.root).contains("AD private"));
 }

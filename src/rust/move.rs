@@ -65,6 +65,7 @@ struct Item {
     name: String,
     source: Entry,
     target: Entry,
+    incoming: Vec<String>,
 }
 
 struct Stashed {
@@ -72,6 +73,7 @@ struct Stashed {
     oid: String,
     stash_ref: String,
     applied: bool,
+    target_state: Option<String>,
 }
 
 fn unsupported(message: impl Into<String>) -> Error {
@@ -82,40 +84,6 @@ fn read_git(path: &Path, args: &[&str]) -> Result<String> {
     let mut command = vec!["--no-optional-locks", "-c", "core.fsmonitor=false"];
     command.extend_from_slice(args);
     git::run(path, &command)
-}
-
-fn policy(workspace: &Workspace) -> Result<()> {
-    let Some(config) = &workspace.config else {
-        return Ok(());
-    };
-    let active = |value: Option<&Value>| {
-        value.is_some_and(|value| match value {
-            Value::Null => false,
-            Value::Array(values) => !values.is_empty(),
-            Value::Object(values) => !values.is_empty(),
-            _ => true,
-        })
-    };
-    if active(config.raw.get("hooks"))
-        || config
-            .repos
-            .values()
-            .any(|repo| active(repo.raw.get("hooks")))
-    {
-        return Err(unsupported(
-            "Configured move hooks are not yet ported; no changes made",
-        ));
-    }
-    if config.repos.values().any(|repo| {
-        ["copy", "symlink"]
-            .iter()
-            .any(|key| active(repo.raw.get(*key)))
-    }) {
-        return Err(unsupported(
-            "Move with materialization policies is not yet ported; no changes made",
-        ));
-    }
-    Ok(())
 }
 
 fn repositories(workspace: &Workspace) -> Result<Vec<Repository>> {
@@ -379,7 +347,26 @@ fn plan(source: &Selection, target: &Selection) -> Result<(Vec<Item>, Vec<Value>
                 "Cross-filesystem move worktrees are not supported; no changes made",
             ));
         }
+        let mut incoming = read_git(
+            &source_repository.path,
+            &["diff", "--name-only", "--no-renames", "-z", "HEAD"],
+        )?;
+        incoming.push_str(&read_git(
+            &source_repository.path,
+            &["diff", "--cached", "--name-only", "--no-renames", "-z"],
+        )?);
+        incoming.push_str(&read_git(
+            &source_repository.path,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+        )?);
+        let incoming: Vec<String> = incoming
+            .split('\0')
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect();
+        check_ignored_collisions(&target_repository.path, &incoming)?;
         items.push(Item {
+            incoming,
             name: source_repository.name.clone(),
             source: source_repository.clone(),
             target: (*target_repository).clone(),
@@ -395,7 +382,24 @@ fn plan(source: &Selection, target: &Selection) -> Result<(Vec<Item>, Vec<Value>
     Ok((items, skipped))
 }
 
+fn check_ignored_collisions(target: &Path, incoming: &[String]) -> Result<()> {
+    for name in incoming {
+        if fs::symlink_metadata(target.join(name)).is_ok()
+            && read_git(target, &["check-ignore", "--quiet", "--", name]).is_ok()
+        {
+            return Err(Error::new(
+                "DIRTY_TARGET_REPOSITORY",
+                format!(
+                    "Target ignored path would be overwritten: {name}; no further changes made"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_item(item: &Item, source_dirty: bool) -> Result<()> {
+    check_ignored_collisions(&item.target.path, &item.incoming)?;
     if key(&item.source.path)? == key(&item.target.path)?
         || read_git(&item.source.path, &["rev-parse", "HEAD"])?.trim() != item.source.head
         || read_git(&item.target.path, &["rev-parse", "HEAD"])?.trim() != item.target.head
@@ -417,16 +421,67 @@ fn validate_item(item: &Item, source_dirty: bool) -> Result<()> {
     Ok(())
 }
 
+// Compare actual index/worktree bytes, not just porcelain status letters.
+fn target_state(path: &Path) -> Result<String> {
+    let mut state = read_git(path, &["rev-parse", "HEAD"])?;
+    state.push_str(&read_git(
+        path,
+        &["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD"],
+    )?);
+    state.push_str(&read_git(
+        path,
+        &[
+            "diff",
+            "--cached",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+        ],
+    )?);
+    for name in read_git(path, &["ls-files", "--others", "--exclude-standard", "-z"])?
+        .split('\0')
+        .filter(|name| !name.is_empty())
+    {
+        state.push_str(&format!("{name:?}"));
+        let file = path.join(name);
+        if fs::symlink_metadata(&file)?.file_type().is_symlink() {
+            state.push_str(&format!("{:?}", fs::read_link(file)?));
+        } else {
+            state.push_str(&format!("{:?}", fs::read(file)?));
+        }
+    }
+    Ok(state)
+}
+
 fn restore(stashed: &mut [Stashed]) -> Vec<String> {
     let mut errors = Vec::new();
     for record in stashed.iter().rev().filter(|record| record.applied) {
-        for args in [
-            ["reset", "--hard", "HEAD"].as_slice(),
-            ["clean", "-fd"].as_slice(),
-        ] {
-            if let Err(error) = read_git(&record.item.target.path, args) {
-                errors.push(format!("{} target cleanup: {error}", record.item.name));
+        if record.target_state.as_ref().is_none_or(|expected| {
+            target_state(&record.item.target.path).as_ref().ok() != Some(expected)
+        }) {
+            errors.push(format!(
+                "{} target changed or apply was incomplete; preserved for recovery",
+                record.item.name
+            ));
+            continue;
+        }
+        // Never recursively clean: only remove the exact untracked entries observed.
+        let cleanup = (|| -> Result<()> {
+            let names = read_git(
+                &record.item.target.path,
+                &["ls-files", "--others", "--exclude-standard", "-z"],
+            )?;
+            read_git(
+                &record.item.target.path,
+                &["reset", "--hard", &record.item.target.head],
+            )?;
+            for name in names.split('\0').filter(|name| !name.is_empty()) {
+                fs::remove_file(record.item.target.path.join(name))?;
             }
+            Ok(())
+        })();
+        if let Err(error) = cleanup {
+            errors.push(format!("{} target cleanup: {error}", record.item.name));
         }
     }
     for record in stashed.iter().rev() {
@@ -468,42 +523,52 @@ fn execute(items: Vec<Item>) -> Result<Vec<Value>> {
     }
     let mut stashed = Vec::new();
     for item in items {
-        if let Err(error) = validate_item(&item, true).and_then(|_| {
-            let stamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis();
-            read_git(
-                &item.source.path,
-                &[
-                    "stash",
-                    "push",
-                    "--include-untracked",
-                    "-m",
-                    &format!("arashi-move:{}:{stamp}", item.name),
-                ],
-            )
-            .map(|_| ())
-        }) {
+        if let Err(error) = validate_item(&item, true) {
             let rollback = restore(&mut stashed);
             return Err(Error::new("MOVE_FAILED", error.to_string())
                 .with_details(json!({"rollbackErrors":rollback})));
         }
-        let oid = read_git(&item.source.path, &["rev-parse", "refs/stash"])?
-            .trim()
-            .to_owned();
-        let stash_ref = read_git(
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let message = format!("arashi-move:{}:{}:{stamp}", item.name, std::process::id());
+        let pushed = read_git(
             &item.source.path,
-            &["stash", "list", "--format=%gd", "-n", "1"],
-        )?
-        .trim()
-        .to_owned();
-        stashed.push(Stashed {
-            item,
-            oid,
-            stash_ref,
-            applied: false,
-        });
+            &["stash", "push", "--include-untracked", "-m", &message],
+        );
+        // A failed push can already have created a stash and cleaned the source.
+        // Record that owned object before handling the command error.
+        let owned = (|| -> Result<String> {
+            let oid = read_git(&item.source.path, &["rev-parse", "--verify", "refs/stash"])?;
+            let oid = oid.trim().to_owned();
+            let subject = read_git(&item.source.path, &["show", "-s", "--format=%s", &oid])?;
+            if !subject.trim().ends_with(&message) {
+                return Err(unsupported(
+                    "Move stash ownership could not be established; existing stash preserved",
+                ));
+            }
+            Ok(oid)
+        })();
+        match owned {
+            Ok(oid) => stashed.push(Stashed {
+                item,
+                oid,
+                stash_ref: "stash@{0}".into(),
+                applied: false,
+                target_state: None,
+            }),
+            Err(error) => {
+                let rollback = restore(&mut stashed);
+                return Err(Error::new("MOVE_FAILED", error.to_string())
+                    .with_details(json!({"rollbackErrors":rollback,"recovery":"Inspect refs/stash in the source repository; no unverified stash was dropped"})));
+            }
+        }
+        if let Err(error) = pushed {
+            let rollback = restore(&mut stashed);
+            return Err(Error::new("MOVE_FAILED", error.to_string())
+                .with_details(json!({"rollbackErrors":rollback})));
+        }
     }
     for index in 0..stashed.len() {
         if let Err(error) = validate_item(&stashed[index].item, false) {
@@ -511,8 +576,8 @@ fn execute(items: Vec<Item>) -> Result<Vec<Value>> {
             return Err(Error::new("MOVE_FAILED", error.to_string())
                 .with_details(json!({"rollbackErrors":rollback})));
         }
-        // From this point Git may have partially changed the clean target even
-        // when `stash apply` returns an error, so rollback owns target cleanup.
+        // A failed apply may have partially changed the target. Without a
+        // completed post-apply snapshot, preserve that target for recovery.
         stashed[index].applied = true;
         if let Err(error) = read_git(
             &stashed[index].item.target.path,
@@ -522,6 +587,7 @@ fn execute(items: Vec<Item>) -> Result<Vec<Value>> {
             return Err(Error::new("MOVE_FAILED", error.to_string())
                 .with_details(json!({"rollbackErrors":rollback})));
         }
+        stashed[index].target_state = target_state(&stashed[index].item.target.path).ok();
     }
     for index in 0..stashed.len() {
         let current = read_git(
@@ -564,16 +630,32 @@ pub fn move_changes(workspace: &Workspace, args: &Args) -> Result<Value> {
             "Native move mutation is not yet supported on Windows; no changes made",
         ));
     }
-    policy(workspace)?;
-    let source_ref = args.value("from").ok_or_else(|| {
-        unsupported("Native move requires explicit --from and --to; no changes made")
-    })?;
-    let target_ref = args.value("to").ok_or_else(|| {
-        unsupported("Native move requires explicit --from and --to; no changes made")
-    })?;
     let repositories = repositories(workspace)?;
     let selections = discover(&repositories)?;
-    let source = resolve_reference(&selections, source_ref)?;
+    let source = if let Some(reference) = args.value("from") {
+        resolve_reference(&selections, reference)?
+    } else {
+        let current = key(&std::env::current_dir()?)?;
+        selections
+            .iter()
+            .find(|selection| {
+                selection
+                    .repositories
+                    .iter()
+                    .any(|entry| key(&entry.path).is_ok_and(|path| path == current))
+                    && selection
+                        .repositories
+                        .iter()
+                        .any(|entry| entry.dirty.total > 0)
+            })
+            .cloned()
+            .ok_or_else(|| {
+                unsupported("Native move requires interactive source selection; no changes made")
+            })?
+    };
+    let target_ref = args.value("to").ok_or_else(|| {
+        unsupported("Native move requires interactive target selection; no changes made")
+    })?;
     let target = resolve_reference(&selections, target_ref)?;
     let (items, skipped) = plan(&source, &target)?;
     let mut results = execute(items)?;

@@ -323,10 +323,10 @@ fn dispatch(args: &Args) -> Result<Value> {
             if !args.positional.is_empty() {
                 return Err(Error::new("USAGE", "move takes no arguments"));
             }
-            if args.value("from").is_none() || args.value("to").is_none() {
+            if args.value("to").is_none() {
                 return Err(Error::new(
                     "RUST_NOT_YET_PORTED",
-                    "Native move requires explicit --from and --to; no changes made",
+                    "Native move requires interactive target selection; no changes made",
                 ));
             }
             let w = crate::config::Workspace::discover(&cwd)?;
