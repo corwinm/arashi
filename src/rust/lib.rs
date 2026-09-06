@@ -63,6 +63,19 @@ pub mod operations;
 
 pub mod r#move;
 
+#[cfg(unix)]
+pub mod delete;
+#[cfg(windows)]
+pub mod delete {
+    pub fn delete(
+        _workspace: &crate::config::Workspace,
+        _args: &crate::cli::Args,
+    ) -> crate::Result<serde_json::Value> {
+        Err(crate::managed::unsupported(
+            "Native configured delete requires filesystem ownership identity unavailable on Windows; no changes made",
+        ))
+    }
+}
 pub mod prune;
 
 pub mod selection;

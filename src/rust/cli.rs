@@ -417,6 +417,22 @@ fn dispatch(args: &Args) -> Result<Value> {
             crate::operations::CreatePlan::build(&w, &args.positional[0], args.has("no-hooks"))?
                 .execute(&w, args.has("dry-run"))
         }
+        "delete" => {
+            let w = crate::config::Workspace::discover(&cwd).map_err(|error| {
+                if [
+                    "CONFIG_NOT_FOUND",
+                    "CONFIG_PARSE_ERROR",
+                    "CONFIG_VALIDATION_ERROR",
+                ]
+                .contains(&error.code.as_str())
+                {
+                    Error::new("DELETE_CONFIG_INVALID", error.message)
+                } else {
+                    error
+                }
+            })?;
+            crate::delete::delete(&w, args)
+        }
         "remove" => {
             args.only(&["force", "keep-branches", "path", "dry-run"])?;
             if args.positional.len() != 1 {
