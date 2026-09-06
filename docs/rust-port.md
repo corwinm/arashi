@@ -50,6 +50,8 @@ Exec/setup preflight all configured paths before starting children. Nonempty mat
 
 - **Prune/install:** Existing standalone/configured metadata prune with dry-run and `--expire now`; informational direct-binary install contract. Other prune policies/topologies remain unsupported.
 
+- **Completion:** Native Bash, Zsh, Fish and PowerShell script generation is byte-identical to the retained generated source. The hidden shell-neutral query protocol completes commands, options, choices, configured repositories/groups and command-scoped worktrees. Queries preserve NUL-delimited paths and configured linked/common-directory discovery, use bounded descriptor reads, and discard all dynamic candidates when the 200 ms deadline expires.
+
 Create uses discovery order; status and removal retain configuration order. Status and create have different selection error contracts. No configured defaults are silently applied as successful launch behavior: explicit create launch/switch overrides are required for this subset. Unsupported active lifecycle policies fail before mutation. Configured child path aliases containing parent traversal are rejected before destination projection, including with `--no-hooks`.
 
 ## Mutation safety and remaining parity work
@@ -58,7 +60,7 @@ Plans check Git identity, branch/ref state, destinations, config and effective i
 
 This is not full failure parity. Coordinated mid-execution failures return nonzero alpha envelopes containing completed operations and rollback errors, rather than the complete source recovery contract. Concurrent external Git changes in the final validation-to-mutation window, partial filesystem writes, and complex mixed repository failures need more characterization. Complete hook recovery envelopes, broader materialization recovery parity, configuration migrations, Unicode collision rules, stale ignore reconciliation, external/symlinked paths and bare/linked mutation topology remain blocking work.
 
-Still unported: add/clone/delete, pull/push/sync, move/handoff, switch and terminal/editor integration, shell integration, completion/query, configure, update/uninstall and native distribution integration. Human init/create/remove text is not source-identical; status parity is bounded to the captured-process cases above. Full parser/help/error precedence is not claimed. Remaining hook and materialization policies require their real lifecycle, provenance, input, timeout and recovery contracts; empty success results are not substitutes.
+Still unported: add/clone/delete, pull/push/sync, move/handoff, switch and terminal/editor integration, shell integration, configure, update/uninstall and native distribution integration. Human init/create/remove text is not source-identical; status parity is bounded to the captured-process cases above. Full parser/help/error precedence is not claimed. Remaining hook and materialization policies require their real lifecycle, provenance, input, timeout and recovery contracts; empty success results are not substitutes.
 
 Relevant source contracts: [configuration](../src/lib/config.ts), [create](../src/commands/create.ts), [remove](../src/commands/remove.ts), [managed ignore](../src/lib/managed-ignore.ts), [hooks](../src/lib/hooks.ts), [JSON envelopes](../src/lib/json-output.ts), [executable distribution](../contracts/executable-distribution.json). Downstream arashi-docs/arashi-skills need updates before publishing these workflows; they are outside this authorized child worktree and were not modified.
 
@@ -165,7 +167,6 @@ Baseline `264fbbbd2777f937f5027f2e4226c2607239986c` was reported independently a
 TypeScript production/helpers, the macOS direct launcher, doctor fixture maintenance guard, stable npm/shell distribution, signing and installation remain unchanged. Companion hook/create/remove guidance was reviewed read-only and needs Rust scope notes before publication; no parent repositories or other worktrees were edited. Full port completion and parent-owned independent review/cross-platform CI remain open.
 
 Local lifecycle validation via `target/lifecycle/validate.sh` exited 0: **149 passed, 0 failed, 0 ignored** with source-enabled offline locked all-target/include-ignored tests; **18/18** release lifecycle tests including source characterization; fmt, included-fixture rustfmt, clippy `-D warnings`, release build and whitespace checks passed. Native smoke **12/12**, external source parity **15/15**, characterization **19/19**. Final logs/reports are `target/lifecycle/final-*`; file hashes and exact local scope are in `validation-summary.json`. The external harness retains its existing journeys; lifecycle acceptance is in the new Cargo oracle tests. Additional RED/GREEN cases cover missing/relative HOME, traversing child projection, inherited session launch and terminal-input rejection. These local macOS results do not close the outstanding policy ledger or replace parent-owned independent review and exact-head cross-platform CI.
-
 
 ## Create materialization verification
 
