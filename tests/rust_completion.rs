@@ -255,7 +255,10 @@ fn query_emits_lossless_configured_repository_group_and_worktree_records() {
         .to_string_lossy()
         .into_owned();
     #[cfg(windows)]
-    let linked = linked.replace('\\', "/");
+    let linked = linked
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&linked)
+        .replace('\\', "/");
     assert!(worktrees.iter().any(|(value, _)| value == &linked));
 }
 
