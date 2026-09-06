@@ -632,8 +632,17 @@ pub fn move_changes(workspace: &Workspace, args: &Args) -> Result<Value> {
     }
     let repositories = repositories(workspace)?;
     let selections = discover(&repositories)?;
-    let source = if let Some(reference) = args.value("from") {
-        resolve_reference(&selections, reference)?
+    // Resolve explicit references in source order before considering prompts.
+    let explicit_source = args
+        .value("from")
+        .map(|reference| resolve_reference(&selections, reference))
+        .transpose()?;
+    let explicit_target = args
+        .value("to")
+        .map(|reference| resolve_reference(&selections, reference))
+        .transpose()?;
+    let source = if let Some(source) = explicit_source {
+        source
     } else {
         let current = key(&std::env::current_dir()?)?;
         selections
@@ -653,10 +662,9 @@ pub fn move_changes(workspace: &Workspace, args: &Args) -> Result<Value> {
                 unsupported("Native move requires interactive source selection; no changes made")
             })?
     };
-    let target_ref = args.value("to").ok_or_else(|| {
+    let target = explicit_target.ok_or_else(|| {
         unsupported("Native move requires interactive target selection; no changes made")
     })?;
-    let target = resolve_reference(&selections, target_ref)?;
     let (items, skipped) = plan(&source, &target)?;
     let mut results = execute(items)?;
     results.extend(skipped);

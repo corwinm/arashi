@@ -8,6 +8,222 @@ use std::{
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(unix)]
+#[test]
+#[ignore = "requires Node and TypeScript dependencies"]
+fn reference_errors_precede_interactive_selection_like_source() {
+    for args in [
+        vec!["move", "--to", "missing", "--json"],
+        vec!["move", "--from", "missing", "--json"],
+        vec!["move", "--from", "main", "--to", "missing", "--json"],
+    ] {
+        let fixture = Fixture::new();
+        fixture.configured();
+        let source = fixture.run_source(&args);
+        let native = fixture.run(&args);
+        assert_eq!(source.status.code(), Some(1));
+        assert_eq!(document(&source)["error"]["code"], "WORKSPACE_NOT_FOUND");
+        assert_eq!(document(&source), document(&native), "{args:?}");
+        assert_eq!(source.stderr, native.stderr);
+        assert!(fixture.status(&fixture.root).is_empty());
+        assert!(fixture.git(&fixture.root, &["stash", "list"]).is_empty());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn move_composes_with_create_configure_shell_status_and_handoff() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    for source in [false, true] {
+        if source && std::env::var_os("ARASHI_TS_PARITY").is_none() {
+            continue;
+        }
+        let f = Fixture::new();
+        let target = f.configured();
+        let child = f.root.join("repos/alpha");
+        f.git(
+            &child,
+            &[
+                "worktree",
+                "remove",
+                target.join("repos/alpha").to_str().unwrap(),
+            ],
+        );
+        f.git(&f.root, &["worktree", "remove", target.to_str().unwrap()]);
+        for path in [&f.root, &child] {
+            f.git(path, &["branch", "-D", "feature"]);
+        }
+        let config_path = f.root.join(".arashi/config.json");
+        let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        config["defaults"] =
+            serde_json::json!({"switch":{"mode":"cd"},"create":{"launch":false,"switch":false}});
+        config["sync"] = serde_json::json!({"timeoutSeconds":10});
+        fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        f.git(&f.root, &["add", ".arashi/config.json"]);
+        f.git(&f.root, &["commit", "-m", "policies"]);
+        let config_bytes = fs::read(&config_path).unwrap();
+        let heads = [
+            f.git(&f.root, &["rev-parse", "HEAD"]),
+            f.git(&child, &["rev-parse", "HEAD"]),
+        ];
+        // A pre-existing stash must survive the full round trip.
+        fs::write(f.root.join("tracked"), "caller saved\n").unwrap();
+        f.git(&f.root, &["stash", "push", "-m", "caller-owned"]);
+        let stash = f.git(&f.root, &["rev-parse", "refs/stash"]);
+        fs::create_dir(f.home.join("bin")).unwrap();
+        fs::create_dir(f.home.join("tmp")).unwrap();
+        let executable = f.home.join("bin/arashi");
+        if source {
+            fs::write(
+                &executable,
+                "#!/bin/sh\nexec node \"$ARASHI_SOURCE_ENTRY\" \"$@\"\n",
+            )
+            .unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        } else {
+            symlink(env!("CARGO_BIN_EXE_arashi"), &executable).unwrap();
+        }
+        symlink("arashi", f.home.join("bin/aw")).unwrap();
+        let mut paths = vec![f.home.join("bin")];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        let mut command = Command::new("bash");
+        f.environment(&mut command);
+        let output = command
+            .args([
+                "--noprofile",
+                "--norc",
+                "-c",
+                r#"
+set -e
+arashi shell init bash > "$HOME/wrapper"
+. "$HOME/wrapper"
+arashi configure --json > "$HOME/configure.json"
+arashi create feature --json --no-hooks --no-launch --no-switch > "$HOME/create.json"
+printf 'staged\n' > tracked
+git add tracked
+printf 'unstaged\n' > tracked
+printf 'untracked\n' > untracked
+printf 'child changes\n' > repos/alpha/tracked
+arashi move --to feature --json > "$HOME/move.json"
+arashi status --json > "$HOME/status.json"
+arashi handoff --json --todo 'review moved changes' > "$HOME/handoff.json"
+arashi switch --cd --repos --path "$EXPECTED_CHILD"
+[ "$(pwd -P)" = "$EXPECTED_CHILD" ]
+[ "$(cat tracked)" = 'child changes' ]
+aw switch --cd --path "$EXPECTED_ROOT"
+[ "$(pwd -P)" = "$EXPECTED_ROOT" ]
+aw move --from feature --to main --json > "$HOME/return.json"
+[ -z "${ARASHI_DIRECTIVE_FILE+x}" ]
+"#,
+            ])
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("EXPECTED_ROOT", &f.root)
+            .env("EXPECTED_CHILD", target.join("repos/alpha"))
+            .env("TMPDIR", f.home.join("tmp"))
+            .env(
+                "ARASHI_SOURCE_ENTRY",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"),
+            )
+            .env_remove("ARASHI_DIRECTIVE_FILE")
+            .env_remove("ARASHI_SHELL")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "source={source}: {output:?}; reports={:?}",
+            fs::read_dir(&f.home)
+                .unwrap()
+                .map(|e| {
+                    let p = e.unwrap().path();
+                    (p.clone(), fs::read_to_string(p).ok())
+                })
+                .collect::<Vec<_>>()
+        );
+        for name in ["configure", "create", "move", "status", "handoff", "return"] {
+            let value: Value =
+                serde_json::from_slice(&fs::read(f.home.join(format!("{name}.json"))).unwrap())
+                    .unwrap();
+            assert_eq!(value["ok"], true, "{name}: {value}");
+            if name == "move" || name == "return" {
+                assert_eq!(value["data"]["movedCount"], 2);
+                assert_eq!(value["data"]["results"][0]["repositoryName"], "workspace");
+                assert_eq!(value["data"]["results"][1]["repositoryName"], "alpha");
+            }
+        }
+        assert_eq!(fs::read(&config_path).unwrap(), config_bytes);
+        assert_eq!(f.git(&f.root, &["rev-parse", "refs/stash"]), stash);
+        for (i, path) in [&f.root, &child].iter().enumerate() {
+            assert_eq!(f.git(path, &["rev-parse", "HEAD"]), heads[i]);
+        }
+        assert_eq!(f.git(&f.root, &["show", ":tracked"]), "staged\n");
+        assert_eq!(
+            fs::read_to_string(f.root.join("tracked")).unwrap(),
+            "unstaged\n"
+        );
+        assert_eq!(
+            fs::read_to_string(f.root.join("untracked")).unwrap(),
+            "untracked\n"
+        );
+        assert_eq!(
+            fs::read_to_string(child.join("tracked")).unwrap(),
+            "child changes\n"
+        );
+        assert!(f.status(&target).is_empty());
+        assert!(f.status(&target.join("repos/alpha")).is_empty());
+        assert!(f.git(&child, &["stash", "list"]).is_empty());
+        assert_eq!(fs::read_dir(f.home.join("tmp")).unwrap().count(), 0);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_move_rejects_without_changing_workspaces_or_owned_stashes() {
+    fn snapshot(path: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut out = Vec::new();
+        for entry in fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                out.extend(snapshot(&path));
+            } else {
+                out.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+        out.sort();
+        out
+    }
+    for configured in [false, true] {
+        let f = Fixture::new();
+        if configured {
+            f.configured();
+        } else {
+            f.standalone();
+        }
+        fs::write(f.root.join("tracked"), "caller stash\n").unwrap();
+        f.git(&f.root, &["stash", "push", "-m", "caller-owned"]);
+        fs::write(f.root.join("tracked"), "caller changes\n").unwrap();
+        let before = snapshot(&f.base);
+        for args in [
+            vec!["move", "--to", "feature", "--json"],
+            vec!["move", "--from", "main", "--to", "feature", "--json"],
+            vec!["move", "--to", "feature"],
+        ] {
+            let output = f.run(&args);
+            assert_eq!(output.status.code(), Some(1));
+            if args.contains(&"--json") {
+                assert_eq!(document(&output)["error"]["code"], "RUST_NOT_YET_PORTED");
+                assert!(
+                    document(&output)["error"]["message"]
+                        .as_str()
+                        .unwrap()
+                        .contains("Windows")
+                );
+            }
+            assert_eq!(snapshot(&f.base), before);
+        }
+        assert!(!f.status(&f.root).is_empty());
+    }
+}
+
 struct Fixture {
     base: PathBuf,
     root: PathBuf,
@@ -90,6 +306,7 @@ impl Fixture {
         self.run_with_path(args, None)
     }
 
+    #[cfg(unix)]
     fn run_source(&self, args: &[&str]) -> Output {
         let mut command = Command::new("node");
         command
@@ -175,6 +392,7 @@ fn document(output: &Output) -> Value {
     })
 }
 
+#[cfg(unix)]
 #[test]
 fn standalone_moves_index_worktree_and_untracked_changes() {
     let fixture = Fixture::new();
@@ -211,6 +429,7 @@ fn standalone_moves_index_worktree_and_untracked_changes() {
     assert!(fixture.git(&fixture.root, &["stash", "list"]).is_empty());
 }
 
+#[cfg(unix)]
 #[test]
 fn implicit_current_source_moves_changes() {
     let fixture = Fixture::new();
@@ -247,6 +466,7 @@ fn implicit_current_source_moves_changes() {
     assert!(fixture.git(&fixture.root, &["stash", "list"]).is_empty());
 }
 
+#[cfg(unix)]
 #[test]
 fn configured_moves_all_matching_repositories_in_source_order() {
     let fixture = Fixture::new();
@@ -277,6 +497,7 @@ fn configured_moves_all_matching_repositories_in_source_order() {
     assert!(fixture.status(&fixture.root.join("repos/alpha")).is_empty());
 }
 
+#[cfg(unix)]
 #[test]
 fn dirty_target_collision_is_nonmutating() {
     let fixture = Fixture::new();
@@ -297,6 +518,7 @@ fn dirty_target_collision_is_nonmutating() {
     assert!(fixture.git(&fixture.root, &["stash", "list"]).is_empty());
 }
 
+#[cfg(unix)]
 #[test]
 fn canonical_path_aliases_are_the_same_workspace_without_mutation() {
     let fixture = Fixture::new();
@@ -322,6 +544,7 @@ fn canonical_path_aliases_are_the_same_workspace_without_mutation() {
     assert_eq!(fixture.status(&fixture.root), before);
 }
 
+#[cfg(unix)]
 #[test]
 fn configured_create_policies_do_not_block_move() {
     for extra in [
@@ -349,6 +572,7 @@ fn configured_create_policies_do_not_block_move() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn configured_missing_target_repository_skips_it_like_source() {
     let fixture = Fixture::new();
@@ -640,6 +864,7 @@ fn caller_target_change_detected_before_apply_is_preserved_during_rollback() {
     assert!(fixture.status(&target.join("repos/alpha")).is_empty());
 }
 
+#[cfg(unix)]
 fn scrub_paths(value: &mut Value, base: &Path) {
     match value {
         Value::String(text) => *text = text.replace(&base.to_string_lossy().to_string(), "<BASE>"),
@@ -651,6 +876,7 @@ fn scrub_paths(value: &mut Value, base: &Path) {
     }
 }
 
+#[cfg(unix)]
 #[test]
 #[ignore = "requires Node and TypeScript dependencies"]
 fn source_and_native_json_envelopes_match_for_standalone_and_configured_moves() {
@@ -737,6 +963,7 @@ fn interactive_target_selection_remains_explicitly_unsupported() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn existing_caller_stash_survives_success() {
     let fixture = Fixture::new();
@@ -753,6 +980,7 @@ fn existing_caller_stash_survives_success() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn conflicting_apply_restores_source_index_and_untracked_bytes() {
     let fixture = Fixture::new();
@@ -785,6 +1013,7 @@ fn conflicting_apply_restores_source_index_and_untracked_bytes() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn ignored_target_collision_preserves_caller_bytes() {
     let fixture = Fixture::new();
@@ -810,6 +1039,7 @@ fn ignored_target_collision_preserves_caller_bytes() {
     assert!(fixture.status(&fixture.root).contains("A  private"));
 }
 
+#[cfg(unix)]
 #[test]
 fn ignored_target_collision_with_staged_then_deleted_file_preserves_caller_bytes() {
     let fixture = Fixture::new();
