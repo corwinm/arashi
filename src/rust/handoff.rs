@@ -1,4 +1,4 @@
-//! Non-mutating handoff reports built from the native status snapshot.
+//! Handoff reports built from native status; remote refresh may fetch Git refs.
 use crate::{Result, cli::Args, config::Workspace};
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::{Value, json};
@@ -433,7 +433,8 @@ fn append_comparison(
             parts.push(format!("{label} {branch} behind by {behind}"));
         }
     } else if comparison["state"] == "unavailable" {
-        parts.push(format!("configured {label} {branch} unavailable"));
+        let prefix = if use_remote_ref { "configured " } else { "" };
+        parts.push(format!("{prefix}{label} {branch} unavailable"));
     }
 }
 

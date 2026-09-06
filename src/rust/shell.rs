@@ -617,15 +617,16 @@ fn atomic_replace(
         std::process::id(),
         NEXT_TEMPORARY.fetch_add(1, Ordering::SeqCst)
     ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    if let Some(metadata) = expected {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(metadata.permissions().mode() & 0o777);
+    }
+    // A failed exclusive open owns nothing and must never unlink the occupant.
+    let mut file = options.open(&temporary)?;
     let result = (|| -> Result<()> {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        if let Some(metadata) = expected {
-            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-            options.mode(metadata.permissions().mode() & 0o777);
-        }
-        let mut file = options.open(&temporary)?;
         file.write_all(next)?;
         if let Some(metadata) = expected {
             file.set_permissions(metadata.permissions())?;
@@ -657,4 +658,38 @@ fn atomic_replace(
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_exclusive_temporary_creation_preserves_the_existing_entry() {
+        let home =
+            std::env::temp_dir().join(format!("arashi-shell-collision-{}", std::process::id()));
+        fs::create_dir(&home).unwrap();
+        let path = home.join(".zshrc");
+        fs::write(&path, b"original\n").unwrap();
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        let sequence = NEXT_TEMPORARY.load(Ordering::SeqCst);
+        let temporary = home.join(format!(
+            ".{}.arashi-shell-{}-{sequence}.tmp",
+            ".zshrc",
+            std::process::id()
+        ));
+        fs::write(&temporary, b"caller-owned\n").unwrap();
+        let result = atomic_replace(
+            &home,
+            &path,
+            Some(&metadata),
+            b"original\n",
+            b"replacement\n",
+        );
+        let preserved = fs::read(&temporary).ok();
+        assert_eq!(fs::read(&path).unwrap(), b"original\n");
+        fs::remove_dir_all(&home).unwrap();
+        assert!(result.is_err());
+        assert_eq!(preserved.as_deref(), Some(b"caller-owned\n".as_slice()));
+    }
 }

@@ -102,6 +102,14 @@ fn git(cwd: &Path, args: &[&str]) {
         .args(["-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"])
         .args(args)
         .current_dir(cwd)
+        .env("HOME", cwd)
+        .env("USERPROFILE", cwd)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env_remove("ARASHI_DIRECTIVE_FILE")
         .output()
         .unwrap();
     assert!(
@@ -116,6 +124,14 @@ fn git_output(cwd: &Path, args: &[&str]) -> String {
         .args(["-c", "maintenance.auto=false"])
         .args(args)
         .current_dir(cwd)
+        .env("HOME", cwd)
+        .env("USERPROFILE", cwd)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env_remove("ARASHI_DIRECTIVE_FILE")
         .output()
         .unwrap();
     assert!(output.status.success(), "git {args:?}: {output:?}");
@@ -127,6 +143,14 @@ fn native(cwd: &Path, args: &[&str]) -> Output {
         .args(args)
         .env_remove("NO_COLOR")
         .current_dir(cwd)
+        .env("HOME", cwd)
+        .env("USERPROFILE", cwd)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env_remove("ARASHI_DIRECTIVE_FILE")
         .output()
         .unwrap()
 }
@@ -139,6 +163,14 @@ fn source(cwd: &Path, args: &[&str]) -> Option<Output> {
             .args(args)
             .env_remove("NO_COLOR")
             .current_dir(cwd)
+            .env("HOME", cwd)
+            .env("USERPROFILE", cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .env_remove("ARASHI_DIRECTIVE_FILE")
             .output()
             .unwrap(),
     )
@@ -390,6 +422,12 @@ fn deleted_upstream_refresh_failure_preserves_source_json_key_order() {
     assert!(output.status.success(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
     assert_source_parity(&linked, &["handoff", "--json"], &output);
+
+    let markdown = native(&linked, &["handoff"]);
+    assert_source_parity(&linked, &["handoff"], &markdown);
+    let markdown_text = String::from_utf8(markdown.stdout).unwrap();
+    assert!(markdown_text.contains("default deleted-upstream unavailable"));
+    assert!(!markdown_text.contains("configured default deleted-upstream unavailable"));
 
     let text = String::from_utf8(output.stdout).unwrap();
     let start = text.find("\"defaultBranch\": {").unwrap();

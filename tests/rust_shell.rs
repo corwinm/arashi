@@ -303,6 +303,77 @@ fn shell_uninstall_preserves_symlink_targets() {
     assert_eq!(fs::read(victim).unwrap(), contents);
 }
 
+#[test]
+fn shell_live_source_parity_in_disposable_home() {
+    if std::env::var_os("ARASHI_TS_PARITY").is_none() {
+        return;
+    }
+    let home = Home::new();
+    let source = |args: &[&str]| {
+        Command::new("node")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"))
+            .args(args)
+            .current_dir(&home.0)
+            .env("HOME", &home.0)
+            .env("USERPROFILE", &home.0)
+            .env("SHELL", "/bin/zsh")
+            .env("NO_COLOR", "1")
+            .output()
+            .unwrap()
+    };
+    for shell in ["bash", "zsh", "fish"] {
+        let args = ["shell", "init", shell];
+        let actual = home.run("/bin/zsh", &args);
+        let expected = source(&args);
+        assert_success(&actual);
+        assert_eq!(actual.status.code(), expected.status.code());
+        assert_eq!(actual.stdout, expected.stdout);
+        assert_eq!(actual.stderr, expected.stderr);
+    }
+    let path = home.path(".zshrc");
+    for args in [
+        vec!["shell", "install"],
+        vec!["shell", "uninstall", "--dry-run"],
+        vec!["shell", "uninstall", "--yes"],
+    ] {
+        let before = fs::read(&path).unwrap_or_default();
+        let actual = home.run("/bin/zsh", &args);
+        let after = fs::read(&path).unwrap();
+        fs::write(&path, &before).unwrap();
+        let expected = source(&args);
+        assert_success(&actual);
+        assert_eq!(actual.status.code(), expected.status.code());
+        assert_eq!(actual.stdout, expected.stdout);
+        assert_eq!(actual.stderr, expected.stderr);
+        assert_eq!(fs::read(&path).unwrap(), after);
+    }
+    assert_home_files(&home.0, &[".zshrc"]);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn installed_zsh_wrapper_and_completion_work_together_without_leaking_directives() {
+    let home = Home::new();
+    fs::write(home.path(".zshrc"), b"").unwrap();
+    assert_success(&home.run("/bin/zsh", &["shell", "install"]));
+    let bin = Path::new(env!("CARGO_BIN_EXE_arashi")).parent().unwrap();
+    let mut paths = vec![bin.to_path_buf()];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let output = Command::new("/bin/zsh")
+        .args(["-f", "-c", "autoload -Uz compinit; compinit -D; source \"$HOME/.zshrc\"; (( $+functions[arashi] && $+functions[aw] )) && [[ $_comps[arashi] == _arashi ]] && arashi --version"])
+        .env("HOME", &home.0)
+        .env("USERPROFILE", &home.0)
+        .env("TMPDIR", &home.0)
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env_remove("ARASHI_DIRECTIVE_FILE")
+        .current_dir(&home.0)
+        .output().unwrap();
+    assert_success(&output);
+    assert!(output.stderr.is_empty(), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains(env!("CARGO_PKG_VERSION")));
+    assert_home_files(&home.0, &[".zshrc"]);
+}
+
 #[cfg(windows)]
 #[test]
 fn shell_mutation_fails_closed_on_windows() {
