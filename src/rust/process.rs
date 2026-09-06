@@ -557,6 +557,22 @@ pub(crate) mod lifecycle {
             .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
             .filter(|value| !value.is_empty())
     }
+    fn sync_signal_order(pids: Vec<i32>, rows: &[(i32, i32)], sig: i32) -> Vec<i32> {
+        // Sync runs Git mutations, not lifecycle hooks. TERM is only a graceful
+        // request: a waiting wrapper can ignore it. Do not terminate its child
+        // until KILL has stopped the wrapper, or wait() can resume the mutation.
+        // Retained run-with-timeout.ts likewise sends TERM to the spawned root.
+        let mut ordered = lifecycle_signal_order(pids.clone(), rows, 9);
+        if sig == 15 {
+            ordered.retain(|pid| {
+                !rows
+                    .iter()
+                    .any(|(child, parent)| child == pid && pids.contains(parent))
+            });
+        }
+        ordered
+    }
+
     // Use the existing process snapshot, not holder/PID enumeration order.
     fn lifecycle_signal_order(mut roots: Vec<i32>, rows: &[(i32, i32)], sig: i32) -> Vec<i32> {
         fn visit(
@@ -726,8 +742,9 @@ pub(crate) mod lifecycle {
                     observed.push(identity);
                 }
             }
+            let mut rows = Vec::new();
             if let Ok(output) = Command::new("/bin/ps").args(["-eo", "pid=,ppid="]).output() {
-                let rows: Vec<(i32, i32)> = String::from_utf8_lossy(&output.stdout)
+                rows = String::from_utf8_lossy(&output.stdout)
                     .lines()
                     .filter_map(|line| {
                         let mut fields = line.split_whitespace();
@@ -752,11 +769,15 @@ pub(crate) mod lifecycle {
             }
             // Recheck birth identity immediately before signaling so PID reuse cannot
             // redirect cleanup to an unrelated process incarnation.
-            for process in observed.iter().rev().filter(|process| {
-                process.pid > 1 && process.pid != std::process::id() as i32 && process.is_live()
-            }) {
-                unsafe {
-                    kill(process.pid, sig);
+            for pid in sync_signal_order(pids, &rows, sig) {
+                if let Some(process) = observed.iter().find(|process| process.pid == pid)
+                    && process.pid > 1
+                    && process.pid != std::process::id() as i32
+                    && process.is_live()
+                {
+                    unsafe {
+                        kill(process.pid, sig);
+                    }
                 }
             }
         }
@@ -880,7 +901,36 @@ pub(crate) mod lifecycle {
 
     #[cfg(test)]
     mod tests {
-        use super::lifecycle_signal_order;
+        use super::{lifecycle_signal_order, sync_signal_order};
+
+        #[test]
+        fn sync_timeout_stops_waiters_before_waking_their_children() {
+            // The recovery shim waits for a child, then execs the destructive Git
+            // operation. Each signal's birth check may yield to that waiter. TERM
+            // must leave children alone if their waiting parent ignores it.
+            let rows = [(70, 1), (20, 70), (90, 20), (5, 1)];
+            let reversed = rows.into_iter().rev().collect::<Vec<_>>();
+            for snapshot in [&rows[..], &reversed[..]] {
+                for observed in [
+                    vec![70, 20, 90],
+                    vec![90, 70, 20],
+                    vec![20, 90, 70],
+                    vec![20, 70, 90, 20],
+                ] {
+                    assert_eq!(sync_signal_order(observed.clone(), snapshot, 15), [70]);
+                    assert_eq!(sync_signal_order(observed, snapshot, 9), [70, 20, 90]);
+                }
+            }
+        }
+
+        #[test]
+        fn sync_timeout_keeps_observed_reparented_descendants() {
+            // A descendant can close the lineage fd and escape its original
+            // parent. Keep its captured identity even after reparenting.
+            let rows = [(70, 1), (20, 1), (90, 20), (5, 1)];
+            assert_eq!(sync_signal_order(vec![70, 20, 90], &rows, 15), [70, 20]);
+            assert_eq!(sync_signal_order(vec![70, 20, 90], &rows, 9), [70, 20, 90]);
+        }
 
         #[test]
         fn lifecycle_kill_orders_parents_before_children() {

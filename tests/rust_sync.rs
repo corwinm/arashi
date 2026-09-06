@@ -1333,6 +1333,77 @@ fn stalled_recovery_mutation(operation: &str) {
 
 #[cfg(unix)]
 #[test]
+fn recovery_kill_stops_waiting_git_wrapper_before_its_child() {
+    recovery_waiting_wrapper(true);
+}
+
+#[cfg(unix)]
+#[test]
+fn recovery_term_does_not_wake_a_wrapper_that_ignores_it() {
+    recovery_waiting_wrapper(false);
+}
+
+#[cfg(unix)]
+fn recovery_waiting_wrapper(child_ignores_term: bool) {
+    let f = Fixture::new(&["zeta"]);
+    git(&f.root, &["checkout", "-b", "recovery-kill"]);
+    let failed = f.temp.join("attachment-failed");
+    let pid_file = f.temp.join("recovery-child-pid");
+    let late = f.temp.join("recovery-wrapper-resumed");
+    let child_term = if child_ignores_term {
+        "IGNORE"
+    } else {
+        "DEFAULT"
+    };
+    // The existing recovery fixture covers ordinary TERM. This wrapper ignores
+    // TERM, requiring KILL; its child either ignores or accepts TERM. Stopping it first
+    // wakes waitpid and executes the pending deletion while the next birth probe
+    // yields. Use a real Git deletion, not only a late-marker assertion.
+    let body = format!(
+        "if [ \"$1\" = symbolic-ref ] && [ \"$2\" = HEAD ]; then : > '{}'; exit 73; fi\nif [ -e '{}' ] && [ \"$1\" = update-ref ] && [ \"$2\" = -d ]; then\n  exec perl -e '$SIG{{TERM}}=q(IGNORE); my $pid=fork(); defined($pid) or die q(fork); if ($pid == 0) {{ $SIG{{TERM}}=q({child_term}); open(my $f,q(>),q({})) or die $!; print $f $$; close $f; sleep 30; exit 0; }} waitpid($pid,0); open(my $f,q(>),q({})) or die $!; close $f; exec @ARGV; die $!;' \"$REAL_GIT\" \"$@\"\nfi",
+        failed.display(),
+        failed.display(),
+        pid_file.display(),
+        late.display()
+    );
+    let path = git_shim(&f, &body);
+    let started = std::time::Instant::now();
+    let output = f.run_with_path(&["sync", "--json"], &path);
+    assert!(pid_file.exists(), "KILL fixture never spawned its child");
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    assert!(!process_alive(&pid_file), "recovery child survived KILL");
+    assert_eq!(output.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let result = &data(&value)["results"][0];
+    assert_eq!(result["rollbackFailed"], true, "{value}");
+    assert!(
+        result["errorMessage"]
+            .as_str()
+            .unwrap()
+            .contains("Recovery operation timed out"),
+        "{value}"
+    );
+    let retained_ref = git(
+        &f.repo("zeta"),
+        &[
+            "for-each-ref",
+            "--format=%(objectname)",
+            "refs/heads/recovery-kill",
+        ],
+    );
+    assert!(
+        !late.exists(),
+        "child_ignores_term={child_ignores_term}: cancellation woke the wrapper; retained_ref={retained_ref:?}: {value}"
+    );
+    assert_eq!(
+        head(&f.repo("zeta"), "refs/heads/recovery-kill"),
+        head(&f.repo("zeta"), "refs/heads/main")
+    );
+    assert_eq!(branch(&f.repo("zeta")), "main");
+}
+
+#[cfg(unix)]
+#[test]
 fn successful_attachment_command_does_not_adopt_unrelated_same_oid_head() {
     let f = Fixture::new(&["zeta"]);
     git(&f.root, &["checkout", "-b", "race-success"]);
