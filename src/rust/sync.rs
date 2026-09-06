@@ -122,11 +122,6 @@ fn reject_configured_policy(config: &Config, selected: &[String]) -> Result<()> 
     }
     for name in selected {
         let raw = &config.repos[name].raw;
-        if raw.get("gitUrl").is_some() {
-            return Err(unsupported(
-                "Configured gitUrl repositories are not supported by bounded local sync; no changes made",
-            ));
-        }
         if raw.get("hooks").is_some() {
             return Err(unsupported(
                 "Configured lifecycle hooks are not supported by bounded local sync; no changes made",
@@ -241,9 +236,20 @@ fn reject_git_execution_policy(path: &Path) -> Result<()> {
             ));
         }
     }
-    if !git::run(path, &["remote"])?.trim().is_empty() {
+    // Ordinary remotes/upstreams are unused by exact local ref alignment. Keep
+    // partial clones excluded: object inspection/checkout can lazily fetch them.
+    if git::run(
+        path,
+        &[
+            "config",
+            "--get-regexp",
+            r"^(remote\..*\.promisor|extensions\.partialclone)$",
+        ],
+    )
+    .is_ok()
+    {
         return Err(unsupported(
-            "Repositories with configured remotes are not supported by bounded local sync; no changes made",
+            "Partial clone/promisor repositories are not supported by bounded local sync; no changes made",
         ));
     }
     for (args, message) in [

@@ -399,6 +399,198 @@ fn source_parity_for_local_sync_workflows() {
 
 #[cfg(unix)]
 #[test]
+fn configured_remotes_align_exact_local_branches_without_network_or_tracking_changes() {
+    let mut outcomes = vec![];
+    for native in [false, true] {
+        for dirty in [false, true] {
+            if !native && std::env::var_os("ARASHI_TS_PARITY").is_none() {
+                continue;
+            }
+            let f = Fixture::new(&["existing", "missing", "aligned"]);
+            git(&f.root, &["checkout", "-b", "target"]);
+            let mut config: Value =
+                serde_json::from_slice(&fs::read(f.root.join(".arashi/config.json")).unwrap())
+                    .unwrap();
+            let mut frozen = vec![];
+            for name in ["existing", "missing", "aligned"] {
+                let repo = f.repo(name);
+                let initial = head(&repo, "HEAD");
+                git(&repo, &["checkout", "-b", "target"]);
+                fs::write(repo.join("tracked"), "remote target\n").unwrap();
+                git(&repo, &["commit", "-am", "target"]);
+                let remote_oid = head(&repo, "HEAD");
+                let origin = f.temp.join(format!("{name}.git"));
+                git(
+                    &f.temp,
+                    &[
+                        "clone",
+                        "--bare",
+                        repo.to_str().unwrap(),
+                        origin.to_str().unwrap(),
+                    ],
+                );
+                git(
+                    &repo,
+                    &["remote", "add", "origin", origin.to_str().unwrap()],
+                );
+                git(&repo, &["fetch", "origin"]);
+                if name == "existing" {
+                    fs::write(repo.join("tracked"), "local target\n").unwrap();
+                    git(&repo, &["commit", "-am", "local target"]);
+                }
+                let local_target = head(&repo, "HEAD");
+                if name == "existing" {
+                    assert_ne!(local_target, remote_oid);
+                }
+                git(&repo, &["checkout", "main"]);
+                git(&repo, &["branch", "--set-upstream-to=origin/main", "main"]);
+                if name == "missing" {
+                    git(&repo, &["branch", "-D", "target"]);
+                } else {
+                    git(
+                        &repo,
+                        &["branch", "--set-upstream-to=origin/target", "target"],
+                    );
+                    if name == "aligned" {
+                        git(&repo, &["checkout", "target"]);
+                    }
+                }
+                if dirty && name == "existing" {
+                    fs::write(repo.join("tracked"), "caller dirty\n").unwrap();
+                }
+                config["repos"][name]["gitUrl"] = json!(origin);
+                config["repos"][name]["baseBranch"] = json!("main");
+                frozen.push((
+                    name,
+                    initial,
+                    local_target,
+                    origin.clone(),
+                    snapshot(&origin),
+                    fs::read(repo.join(".git/config")).unwrap(),
+                    fs::read(repo.join(".git/FETCH_HEAD")).unwrap(),
+                    git(
+                        &repo,
+                        &[
+                            "for-each-ref",
+                            "--format=%(refname) %(objectname)",
+                            "refs/remotes/",
+                        ],
+                    ),
+                ));
+            }
+            // The parent is target-only even when it too has an ordinary remote.
+            git(
+                &f.root,
+                &["remote", "add", "origin", frozen[0].3.to_str().unwrap()],
+            );
+            f.config(config);
+            let saved = fs::read(f.root.join(".arashi/config.json")).unwrap();
+            let parent = snapshot(&f.root.join(".git"));
+            let home = snapshot(&f.home);
+            for repeat in 0..2 {
+                let output = if native {
+                    f.run(&["sync", "--json"])
+                } else {
+                    let mut command = Command::new("node");
+                    command
+                        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"))
+                        .args(["sync", "--json"])
+                        .current_dir(&f.root);
+                    isolated(&mut command, &f.home);
+                    command.output().unwrap()
+                };
+                println!(
+                    "connected sync native={native} dirty={dirty} repeat={repeat}: {}",
+                    String::from_utf8_lossy(&output.stdout)
+                );
+                assert_eq!(output.status.code(), Some(if dirty { 1 } else { 0 }));
+                let mut value: Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(value["data"]["successCount"], if dirty { 2 } else { 3 });
+                assert_eq!(value["data"]["failureCount"], if dirty { 1 } else { 0 });
+                for result in value["data"]["results"].as_array_mut().unwrap() {
+                    result["durationMs"] = json!(0);
+                    if result["repositoryName"] == "existing" && dirty {
+                        assert_eq!(result["status"], "failure");
+                        assert!(
+                            result["errorMessage"]
+                                .as_str()
+                                .unwrap()
+                                .contains("overwritten")
+                        );
+                    } else {
+                        assert_eq!(result["status"], "success");
+                        assert_eq!(
+                            result["createdBranch"],
+                            result["repositoryName"] == "missing" && repeat == 0
+                        );
+                    }
+                }
+                if !dirty {
+                    outcomes.push(value);
+                }
+                for (name, initial, remote_oid, origin, origin_bytes, git_config, fetch, refs) in
+                    &frozen
+                {
+                    let repo = f.repo(name);
+                    assert_eq!(
+                        branch(&repo),
+                        if dirty && *name == "existing" {
+                            "main"
+                        } else {
+                            "target"
+                        }
+                    );
+                    assert_eq!(
+                        head(&repo, "HEAD"),
+                        if *name == "missing" || (dirty && *name == "existing") {
+                            initial
+                        } else {
+                            remote_oid
+                        }
+                        .to_owned()
+                    );
+                    assert_eq!(fs::read(repo.join(".git/config")).unwrap(), *git_config);
+                    assert_eq!(fs::read(repo.join(".git/FETCH_HEAD")).unwrap(), *fetch);
+                    assert_eq!(
+                        git(
+                            &repo,
+                            &[
+                                "for-each-ref",
+                                "--format=%(refname) %(objectname)",
+                                "refs/remotes/"
+                            ]
+                        ),
+                        *refs
+                    );
+                    assert_eq!(snapshot(origin), *origin_bytes);
+                    if *name == "missing" {
+                        assert_ne!(head(&repo, "HEAD"), *remote_oid);
+                        assert!(
+                            git(
+                                &repo,
+                                &["for-each-ref", "--format=%(upstream)", "refs/heads/target"]
+                            )
+                            .is_empty()
+                        );
+                    }
+                    if dirty && *name == "existing" {
+                        assert_eq!(fs::read(repo.join("tracked")).unwrap(), b"caller dirty\n");
+                    }
+                }
+                assert_eq!(fs::read(f.root.join(".arashi/config.json")).unwrap(), saved);
+                assert_eq!(snapshot(&f.root.join(".git")), parent);
+                assert_eq!(snapshot(&f.home), home);
+            }
+        }
+    }
+    if outcomes.len() == 4 {
+        assert_eq!(outcomes[0], outcomes[2]);
+        assert_eq!(outcomes[1], outcomes[3]);
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn creates_missing_branches_at_frozen_head_without_upstream_in_config_order() {
     let f = Fixture::new(&["zeta", "alpha"]);
     git(&f.root, &["checkout", "-b", "feature/sync"]);
@@ -631,9 +823,8 @@ fn windows_sync_rejects_local_workflows_without_mutating_workspace_or_home() {
 }
 
 #[test]
-fn configured_remote_hooks_materialization_and_git_url_reject_before_any_mutation() {
+fn configured_hooks_and_materialization_reject_before_any_mutation() {
     for (label, extra) in [
-        ("git-url", json!({"gitUrl":"https://example.invalid/repo"})),
         ("copy", json!({"copy":["file"]})),
         ("symlink", json!({"symlink":["file"]})),
         ("repo-hook", json!({"hooks":{"pre-create":"echo nope"}})),
@@ -661,18 +852,21 @@ fn configured_remote_hooks_materialization_and_git_url_reject_before_any_mutatio
         );
     }
 
-    let f = Fixture::new(&["zeta", "alpha"]);
-    git(&f.root, &["checkout", "-b", "blocked"]);
-    git(
-        &f.repo("alpha"),
-        &["remote", "add", "origin", "/tmp/never-used"],
-    );
-    let before = f.snapshot();
-    let (output, value) = f.json(&["sync", "--json"]);
-    assert!(!output.status.success());
-    assert_eq!(value["error"]["code"], "RUST_NOT_YET_PORTED");
-    assert!(!f.repo("alpha").join(".git/FETCH_HEAD").exists());
-    assert_eq!(before, f.snapshot());
+    for key in ["remote.origin.promisor", "extensions.partialClone"] {
+        let f = Fixture::new(&["zeta", "alpha"]);
+        git(&f.root, &["checkout", "-b", "blocked"]);
+        git(
+            &f.repo("alpha"),
+            &["remote", "add", "origin", "/tmp/never-used"],
+        );
+        git(&f.repo("alpha"), &["config", key, "true"]);
+        let before = f.snapshot();
+        let (output, value) = f.json(&["sync", "--json"]);
+        assert!(!output.status.success());
+        assert_eq!(value["error"]["code"], "RUST_NOT_YET_PORTED");
+        assert!(!f.repo("alpha").join(".git/FETCH_HEAD").exists());
+        assert_eq!(before, f.snapshot());
+    }
 }
 
 #[cfg(unix)]
