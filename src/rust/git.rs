@@ -12,12 +12,28 @@ pub struct Worktree {
     pub prune_reason: Option<String>,
 }
 pub fn run(cwd: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
+    run_with_optional_locks(cwd, args, None)
+}
+
+pub fn run_readonly(cwd: &Path, args: &[&str]) -> Result<String> {
+    run_with_optional_locks(cwd, args, Some(false))
+}
+
+fn run_with_optional_locks(
+    cwd: &Path,
+    args: &[&str],
+    optional_locks: Option<bool>,
+) -> Result<String> {
+    let mut command = Command::new("git");
+    command
         .args(args)
         .current_dir(cwd)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .output()?;
+        .stdin(Stdio::null());
+    if let Some(enabled) = optional_locks {
+        command.env("GIT_OPTIONAL_LOCKS", if enabled { "1" } else { "0" });
+    }
+    let output = command.output()?;
     if !output.status.success() {
         return Err(Error::new(
             "GIT_ERROR",
@@ -28,7 +44,17 @@ pub fn run(cwd: &Path, args: &[&str]) -> Result<String> {
         .map_err(|_| Error::new("UNSUPPORTED_ENCODING", "Git output is not UTF-8"))
 }
 pub fn worktrees(cwd: &Path) -> Result<Vec<Worktree>> {
-    let output = run(cwd, &["worktree", "list", "--porcelain", "-z"])?;
+    parse_worktrees(run(cwd, &["worktree", "list", "--porcelain", "-z"])?)
+}
+
+pub fn worktrees_readonly(cwd: &Path) -> Result<Vec<Worktree>> {
+    parse_worktrees(run_readonly(
+        cwd,
+        &["worktree", "list", "--porcelain", "-z"],
+    )?)
+}
+
+fn parse_worktrees(output: String) -> Result<Vec<Worktree>> {
     let mut records: Vec<Worktree> = vec![];
     for field in output.split('\0') {
         if let Some(path) = field.strip_prefix("worktree ") {

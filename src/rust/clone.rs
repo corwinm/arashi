@@ -1,4 +1,4 @@
-//! Bounded configured clone support for local filesystem remotes.
+//! Bounded configured clone using native Git local and network transports.
 use crate::{
     Error, Result,
     cli::Args,
@@ -22,7 +22,7 @@ struct Plan {
     name: String,
     destination: PathBuf,
     url: String,
-    remote: PathBuf,
+    remote: Option<PathBuf>,
     branch: Option<String>,
     base: Value,
     oid: String,
@@ -73,11 +73,8 @@ fn dangerous_configuration(root: &Path) -> Result<()> {
     let config = git::run(root, &["config", "--null", "--list"])?;
     if config.split('\0').filter(|row| !row.is_empty()).any(|row| {
         let key = row.split('\n').next().unwrap_or("").to_ascii_lowercase();
-        key.starts_with("filter.")
-            || key.starts_with("include.")
-            || key.starts_with("includeif.")
-            || key.starts_with("url.")
-            || key.starts_with("protocol.")
+        key.starts_with("includeif.")
+            || key.starts_with("filter.")
             || key.starts_with("uploadpack.")
             || key.starts_with("transfer.")
             || key == "core.hookspath"
@@ -95,7 +92,7 @@ fn dangerous_configuration(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn dangerous_environment() -> Result<()> {
+pub(crate) fn dangerous_environment() -> Result<()> {
     const UNSUPPORTED: &[&str] = &[
         "GIT_DIR",
         "GIT_WORK_TREE",
@@ -107,9 +104,6 @@ fn dangerous_environment() -> Result<()> {
         "GIT_NAMESPACE",
         "GIT_TEMPLATE_DIR",
         "GIT_EXEC_PATH",
-        "GIT_SSH",
-        "GIT_SSH_COMMAND",
-        "GIT_PROXY_COMMAND",
     ];
     if let Some(name) = UNSUPPORTED
         .iter()
@@ -262,6 +256,7 @@ fn clone_to(plan: &Plan, destination: &Path) -> Result<()> {
         command.args(["--branch", branch]);
     }
     let output = command
+        .arg("--")
         .arg(&plan.url)
         .arg(destination)
         .current_dir(destination.parent().unwrap())
@@ -288,9 +283,9 @@ fn remove_staging(path: &Path) -> Vec<String> {
 }
 
 pub fn clone(workspace: &Workspace, cwd: &Path, args: &Args) -> Result<Value> {
-    if !args.has("json") || !args.has("all") {
+    if !args.has("all") {
         return Err(unsupported_clone(
-            "Native clone currently requires explicit --all --json; interactive and human modes are not yet ported",
+            "Native clone currently requires explicit --all; interactive selection is not yet ported",
         ));
     }
     if !args.positional.is_empty() {
@@ -365,8 +360,16 @@ pub fn clone(workspace: &Workspace, cwd: &Path, args: &Args) -> Result<Value> {
         if let Some(branch) = &branch {
             branch_is_safe(&workspace.root, branch)?;
         }
-        let remote = exact_local_remote(&url)?;
-        let oid = remote_oid(&remote, branch.as_deref())?;
+        let remote = if network_url(&url) {
+            None
+        } else {
+            Some(exact_local_remote(&url)?)
+        };
+        let oid = if let Some(remote) = &remote {
+            remote_oid(remote, branch.as_deref())?
+        } else {
+            network_head(&workspace.root, &url, branch.as_deref())?.1
+        };
         let mut base = json!({
             "repositoryIdentity": name,
             "repositoryName": name,
@@ -480,7 +483,12 @@ pub fn clone(workspace: &Workspace, cwd: &Path, args: &Args) -> Result<Value> {
         for plan in &plans {
             safe(&plan.destination)?;
             if fs::symlink_metadata(&plan.destination).is_ok()
-                || remote_oid(&plan.remote, plan.branch.as_deref())? != plan.oid
+                || (if let Some(remote) = &plan.remote {
+                    remote_oid(remote, plan.branch.as_deref())?
+                } else {
+                    network_head(&workspace.root, &plan.url, plan.branch.as_deref())?.1
+                }) != plan.oid
+                || git::run(&staging.join(&plan.name), &["rev-parse", "HEAD"])?.trim() != plan.oid
             {
                 return Err(unsupported_clone(
                     "Clone destination or remote base changed during preflight",
@@ -523,4 +531,93 @@ pub fn clone(workspace: &Workspace, cwd: &Path, args: &Args) -> Result<Value> {
         );
     }
     Ok(data)
+}
+
+/// Only ordinary native Git transports; never remote-helper command syntax.
+pub(crate) fn network_url(url: &str) -> bool {
+    let bytes = url.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
+    {
+        return false;
+    }
+    if url.chars().any(char::is_whitespace) || url.contains('\0') {
+        return false;
+    }
+    for scheme in ["https://", "http://", "ssh://", "git://"] {
+        if let Some(rest) = url.strip_prefix(scheme) {
+            return rest.split_once('/').is_some_and(|(host, path)| {
+                !host.is_empty() && !path.is_empty() && !host.starts_with('-')
+            });
+        }
+    }
+    !url.contains("://")
+        && url.split_once(':').is_some_and(|(host, path)| {
+            !host.is_empty()
+                && !host.starts_with('-')
+                && !host.contains('/')
+                && !path.is_empty()
+                && !path.starts_with(':')
+        })
+}
+
+pub(crate) fn network_head(
+    root: &Path,
+    url: &str,
+    branch: Option<&str>,
+) -> Result<(String, String)> {
+    let reference = branch
+        .map(|b| format!("refs/heads/{b}"))
+        .unwrap_or_else(|| "HEAD".into());
+    let output = Command::new("git")
+        .args(["ls-remote", "--symref", "--", url, &reference])
+        .current_dir(root)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .output()?;
+    if !output.status.success() {
+        return Err(Error::new(
+            "GIT_ERROR",
+            format!(
+                "Git remote discovery failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    let text = String::from_utf8(output.stdout)
+        .map_err(|_| Error::new("UNSUPPORTED_ENCODING", "Git remote output is not UTF-8"))?;
+    let name = branch.map(str::to_owned).or_else(|| {
+        text.lines().find_map(|line| {
+            line.strip_prefix("ref: refs/heads/")
+                .and_then(|v| v.strip_suffix("\tHEAD"))
+                .map(str::to_owned)
+        })
+    });
+    let oid = text.lines().find_map(|line| {
+        line.split_once('\t')
+            .filter(|(oid, r)| {
+                *r == reference
+                    && matches!(oid.len(), 40 | 64)
+                    && oid.bytes().all(|b| b.is_ascii_hexdigit())
+            })
+            .map(|(oid, _)| oid.to_owned())
+    });
+    name.zip(oid).ok_or_else(|| {
+        Error::new(
+            "BRANCH_DETECTION_FAILED",
+            "Remote has no ordinary default or requested branch",
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn windows_drive_paths_are_not_scp_transports() {
+        assert!(!super::network_url(r"C:\repos\api"));
+        assert!(!super::network_url("C:/repos/api"));
+        assert!(super::network_url("git@example.invalid:api.git"));
+    }
 }

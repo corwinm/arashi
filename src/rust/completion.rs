@@ -1172,6 +1172,10 @@ const POWERSHELL: &str = r###"Register-ArgumentCompleter -Native -CommandName ar
 "###;
 
 #[cfg(all(test, unix))]
+#[path = "../../tests/rust/completion_drain.rs"]
+mod drain_tests;
+
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

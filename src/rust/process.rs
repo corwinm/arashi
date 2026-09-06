@@ -4,6 +4,10 @@ use std::{
     io::{self, Read},
     path::Path,
     process::{Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -97,6 +101,207 @@ pub fn run(argv: &[String], cwd: &Path, timeout: Option<Duration>) -> io::Result
             error: None,
         })
     })
+}
+
+/// Run a command whose complete subprocess tree must settle on timeout.
+#[cfg(unix)]
+fn tree_reader(
+    mut pipe: impl Read + std::os::fd::AsRawFd + Send,
+    stop: Arc<AtomicBool>,
+) -> impl FnOnce() -> io::Result<String> {
+    move || {
+        unsafe extern "C" {
+            fn fcntl(fd: i32, command: i32, ...) -> i32;
+        }
+        // F_GETFL=3 and F_SETFL=4 are stable POSIX values. O_NONBLOCK is
+        // platform-specific (Linux/Android differ from Darwin/BSD).
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        const O_NONBLOCK: i32 = 0x800;
+        #[cfg(any(target_os = "solaris", target_os = "illumos"))]
+        const O_NONBLOCK: i32 = 0x80;
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "solaris",
+            target_os = "illumos"
+        )))]
+        const O_NONBLOCK: i32 = 0x4;
+        let flags = unsafe { fcntl(pipe.as_raw_fd(), 3) };
+        if flags < 0 || unsafe { fcntl(pipe.as_raw_fd(), 4, flags | O_NONBLOCK) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            if stop.load(Ordering::SeqCst) {
+                break;
+            }
+            match pipe.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => bytes.extend_from_slice(&buffer[..count]),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+
+#[cfg(windows)]
+fn tree_reader(
+    pipe: impl Read + Send,
+    _stop: Arc<AtomicBool>,
+) -> impl FnOnce() -> io::Result<String> {
+    read_pipe(pipe)
+}
+
+pub(crate) fn run_tree(argv: &[String], cwd: &Path, timeout: Duration) -> io::Result<Captured> {
+    let start = Instant::now();
+    let mut command = Command::new(&argv[0]);
+    command
+        .args(&argv[1..])
+        .current_dir(cwd)
+        .env_remove("ARASHI_DIRECTIVE_FILE")
+        .env_remove("ARASHI_SHELL")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    let (lineage, descriptor) = lifecycle::Lineage::create()?;
+    #[cfg(unix)]
+    {
+        use std::os::{fd::AsRawFd, unix::process::CommandExt};
+        unsafe extern "C" {
+            fn setpgid(pid: i32, pgid: i32) -> i32;
+            fn dup2(old: i32, new: i32) -> i32;
+            fn fcntl(fd: i32, command: i32, ...) -> i32;
+        }
+        let fd = descriptor.as_raw_fd();
+        // SAFETY: these calls are async-signal-safe and use prepared descriptors.
+        unsafe {
+            command.pre_exec(move || {
+                if setpgid(0, 0) < 0 || dup2(fd, 3) < 0 || fcntl(3, 2, 0_i32) < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+    }
+    let mut child = spawn_direct(&mut command)?;
+    #[cfg(unix)]
+    drop(descriptor);
+    let pid = child.id();
+    let cancel_readers = Arc::new(AtomicBool::new(false));
+    thread::scope(|scope| {
+        let stdout = scope.spawn(tree_reader(
+            child.stdout.take().unwrap(),
+            Arc::clone(&cancel_readers),
+        ));
+        let stderr = scope.spawn(tree_reader(
+            child.stderr.take().unwrap(),
+            Arc::clone(&cancel_readers),
+        ));
+        let mut status = None;
+        let mut timed_out = false;
+        let mut term_at = None;
+        let mut settle_at = None;
+        let mut settlement_complete = false;
+        #[cfg(unix)]
+        let mut cleanup_unresolved = false;
+        #[cfg(not(unix))]
+        let cleanup_unresolved = false;
+        #[cfg(unix)]
+        let mut observed = lifecycle::ProcessIdentity::capture(pid as i32)
+            .into_iter()
+            .collect::<Vec<_>>();
+        #[cfg(unix)]
+        let mut next_lineage_probe = std::cmp::min(timeout / 2, Duration::from_millis(25));
+        loop {
+            if status.is_none() {
+                status = child.try_wait()?;
+            }
+            #[cfg(unix)]
+            if !settlement_complete && start.elapsed() >= next_lineage_probe {
+                // Continue ownership discovery through TERM/KILL settlement so a
+                // tracked child cannot fork an untracked survivor during escalation.
+                lineage.signal_owned_tree(
+                    pid,
+                    status.is_none(),
+                    &mut observed,
+                    if settle_at.is_some() { 9 } else { 0 },
+                );
+                next_lineage_probe = start.elapsed() + Duration::from_millis(25);
+            }
+            if !timed_out && start.elapsed() >= timeout {
+                timed_out = true;
+                #[cfg(unix)]
+                lineage.signal_owned_tree(pid, status.is_none(), &mut observed, 15);
+                #[cfg(windows)]
+                signal_tree(pid, false);
+                term_at = Some(Instant::now());
+            }
+            if timed_out && term_at.is_some_and(|sent| sent.elapsed() >= Duration::from_millis(100))
+            {
+                #[cfg(unix)]
+                lineage.signal_owned_tree(pid, status.is_none(), &mut observed, 9);
+                #[cfg(windows)]
+                signal_tree(pid, true);
+                term_at = None;
+                settle_at = Some(Instant::now());
+            }
+            if !settlement_complete
+                && settle_at.is_some_and(|sent| sent.elapsed() >= Duration::from_millis(500))
+            {
+                #[cfg(unix)]
+                {
+                    lineage.signal_owned_tree(pid, status.is_none(), &mut observed, 9);
+                    cleanup_unresolved = lineage.has_live(&mut observed);
+                }
+                cancel_readers.store(true, Ordering::SeqCst);
+                settlement_complete = true;
+            }
+            if status.is_some()
+                && stdout.is_finished()
+                && stderr.is_finished()
+                && (!timed_out || settlement_complete)
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        let status = status.unwrap();
+        Ok(Captured {
+            stdout: stdout.join().expect("tree stdout reader")?,
+            stderr: stderr.join().expect("tree stderr reader")?,
+            exit_code: status.code().unwrap_or(128),
+            elapsed_ms: start.elapsed().as_millis(),
+            timed_out,
+            signaled: status.code().is_none(),
+            #[cfg(unix)]
+            termination_signal: std::os::unix::process::ExitStatusExt::signal(&status),
+            error: cleanup_unresolved.then(|| {
+                "Timed-out subprocess tree did not settle; repository recovery is unsafe".to_owned()
+            }),
+        })
+    })
+}
+
+#[cfg(windows)]
+fn signal_tree(pid: u32, force: bool) {
+    let mut command = Command::new("taskkill");
+    command.args(["/PID", &pid.to_string(), "/T"]);
+    if force {
+        command.arg("/F");
+    }
+    let _ = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -288,14 +493,77 @@ pub(crate) mod lifecycle {
     pub fn interrupted() -> bool {
         INTERRUPTED.load(Ordering::SeqCst)
     }
-    struct Lineage(std::path::PathBuf);
+    pub(super) struct Lineage(std::path::PathBuf);
+    #[derive(Clone)]
+    pub(super) struct ProcessIdentity {
+        pid: i32,
+        birth: String,
+    }
+    impl ProcessIdentity {
+        pub(super) fn capture(pid: i32) -> Option<Self> {
+            process_birth(pid).map(|birth| Self { pid, birth })
+        }
+        pub(super) fn is_current(&self) -> bool {
+            process_birth(self.pid).as_deref() == Some(self.birth.as_str())
+        }
+        fn is_live(&self) -> bool {
+            self.is_current() && !process_is_zombie(self.pid)
+        }
+    }
+    #[cfg(target_os = "linux")]
+    fn process_is_zombie(pid: i32) -> bool {
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|stat| stat.rsplit_once(')').map(|(_, suffix)| suffix.to_owned()))
+            .and_then(|suffix| suffix.split_whitespace().next().map(str::to_owned))
+            .as_deref()
+            == Some("Z")
+    }
+    #[cfg(not(target_os = "linux"))]
+    fn process_is_zombie(pid: i32) -> bool {
+        Command::new("/bin/ps")
+            .args(["-p", &pid.to_string(), "-o", "stat="])
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .is_some_and(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim_start()
+                    .starts_with('Z')
+            })
+    }
+    #[cfg(target_os = "linux")]
+    fn process_birth(pid: i32) -> Option<String> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let fields = stat
+            .rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        // The suffix begins at field 3; field 22 is the kernel start-time tick.
+        fields.get(19).map(|value| (*value).to_owned())
+    }
+    #[cfg(not(target_os = "linux"))]
+    fn process_birth(pid: i32) -> Option<String> {
+        let output = Command::new("/bin/ps")
+            .args(["-p", &pid.to_string(), "-o", "lstart="])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .filter(|value| !value.is_empty())
+    }
     impl Drop for Lineage {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
     }
     impl Lineage {
-        fn create() -> io::Result<(Self, std::fs::File)> {
+        pub(super) fn create() -> io::Result<(Self, std::fs::File)> {
             use std::os::unix::fs::OpenOptionsExt;
             static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let path = std::env::temp_dir().join(format!(
@@ -395,6 +663,82 @@ pub(crate) mod lifecycle {
                     kill(pid, sig);
                 }
             }
+        }
+
+        // Sync uses birth-checked identities and settlement. Lifecycle retains
+        // its existing low-latency signal path and interruption semantics.
+        pub(super) fn signal_owned_tree(
+            &self,
+            leader: u32,
+            leader_alive: bool,
+            observed: &mut Vec<ProcessIdentity>,
+            sig: i32,
+        ) {
+            // Retain only process incarnations whose birth identity still matches.
+            observed.retain(|process| {
+                (leader_alive || process.pid != leader as i32) && process.is_live()
+            });
+            let mut pids = observed
+                .iter()
+                .map(|process| process.pid)
+                .collect::<Vec<_>>();
+            for pid in self
+                .holders()
+                .into_iter()
+                .chain(leader_alive.then_some(leader as i32))
+            {
+                if !pids.contains(&pid)
+                    && let Some(identity) = ProcessIdentity::capture(pid)
+                {
+                    pids.push(pid);
+                    observed.push(identity);
+                }
+            }
+            if let Ok(output) = Command::new("/bin/ps").args(["-eo", "pid=,ppid="]).output() {
+                let rows: Vec<(i32, i32)> = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter_map(|line| {
+                        let mut fields = line.split_whitespace();
+                        Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+                    })
+                    .collect();
+                loop {
+                    let old = pids.len();
+                    for (pid, parent) in &rows {
+                        if pids.contains(parent)
+                            && !pids.contains(pid)
+                            && let Some(identity) = ProcessIdentity::capture(*pid)
+                        {
+                            pids.push(*pid);
+                            observed.push(identity);
+                        }
+                    }
+                    if old == pids.len() {
+                        break;
+                    }
+                }
+            }
+            // Recheck birth identity immediately before signaling so PID reuse cannot
+            // redirect cleanup to an unrelated process incarnation.
+            for process in observed.iter().rev().filter(|process| {
+                process.pid > 1 && process.pid != std::process::id() as i32 && process.is_live()
+            }) {
+                unsafe {
+                    kill(process.pid, sig);
+                }
+            }
+        }
+        pub(super) fn has_live(&self, observed: &mut Vec<ProcessIdentity>) -> bool {
+            observed.retain(ProcessIdentity::is_live);
+            for pid in self.holders() {
+                if !observed.iter().any(|process| process.pid == pid)
+                    && let Some(identity) = ProcessIdentity::capture(pid)
+                    && identity.is_live()
+                {
+                    observed.push(identity);
+                }
+            }
+            !observed.is_empty()
         }
     }
     pub fn run(

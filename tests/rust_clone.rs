@@ -236,7 +236,7 @@ fn unsupported_transport_and_topology_fail_before_mutation() {
     let fixture = Fixture::new();
     let before = fs::read(fixture.workspace.join(".git/info/exclude")).unwrap();
     fixture.configure(
-        r#"{"version":"1.0.0","reposDir":"repos","worktreesDir":".arashi/worktrees","repos":{"api":{"path":"repos/api","gitUrl":"https://example.invalid/api.git"}}}"#,
+        r#"{"version":"1.0.0","reposDir":"repos","worktreesDir":".arashi/worktrees","repos":{"api":{"path":"repos/api","gitUrl":"ext::unsupported-api.git"}}}"#,
     );
     let output = fixture.command(false, &["clone", "--all", "--json"]);
     assert!(!output.status.success());
@@ -279,7 +279,7 @@ fn unsupported_transport_and_topology_fail_before_mutation() {
 }
 
 #[test]
-fn interactive_and_non_json_modes_fail_before_mutation() {
+fn interactive_selection_fails_before_mutation() {
     let fixture = Fixture::new();
     let remote = fixture.remote("api", None);
     fixture.configure(
@@ -292,7 +292,7 @@ fn interactive_and_non_json_modes_fail_before_mutation() {
         .to_string(),
     );
     let before = fs::read(fixture.workspace.join(".git/info/exclude")).unwrap();
-    for args in [&["clone", "--json"][..], &["clone", "--all"][..]] {
+    for args in [&["clone", "--json"][..], &["clone"][..]] {
         let output = fixture.command(false, args);
         assert!(!output.status.success());
         assert_eq!(

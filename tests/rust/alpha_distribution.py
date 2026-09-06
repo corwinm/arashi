@@ -334,6 +334,28 @@ class AlphaDistribution(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, command)
             self.assertIn('Use the separate alpha setup bundle', result.stderr)
 
+    def test_packaged_parser_keeps_identity_and_blocks_stable_dispatch(self):
+        self.run_setup()
+        for name in ['aw2', 'arashi2']:
+            binary = str(self.destination / (name + SUFFIX))
+            env = {**os.environ, 'HOME': str(self.home), 'USERPROFILE': str(self.home),
+                   'PATH': str(Path(self.temp.name) / 'no-runtime')}
+            for args in [['--', 'shell', 'init', 'bash'], ['--', 'completion', 'bash'],
+                         ['--', 'completion', '__query', '0', 'aw'], ['--', 'update'],
+                         ['--', 'uninstall']]:
+                result = subprocess.run([binary, *args], env=env, cwd=self.home,
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0, args)
+                self.assertEqual(result.stdout, '')
+                self.assertIn('Use the separate alpha setup bundle', result.stderr)
+            for args in [['--help'], ['help', 'create'], ['--help', '--version']]:
+                result = subprocess.run([binary, *args], env=env, cwd=self.home,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('arashi2', result.stdout)
+                self.assertNotIn('Usage: aw ', result.stdout)
+                self.assertNotIn('$ arashi ', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

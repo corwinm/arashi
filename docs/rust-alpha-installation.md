@@ -41,6 +41,8 @@ Default ownership is confined to `$HOME/.arashi-alpha` (Windows: `%USERPROFILE%\
 
 ## Shell and removal
 
+Alpha uses the integrated native parser and dispatcher, with alpha help/version identity. A guard on the canonical parsed command blocks stable installation and shell/completion dispatch even after an argument separator (`aw2 -- shell init bash`). Help remains an inventory, not a claim that all listed policies are implemented.
+
 Setup makes **no PATH, profile, registry or shell-block changes**. Invoke the absolute path, or manually add the alpha-only directory to PATH. Alpha-specific shell wrappers and completions are pending. `aw2 shell`, `completion`, `install`, `update` and `uninstall` deliberately fail rather than emit stable wrappers or invoke stable lifecycle code. Parent-shell switching integration is not provided by this bundle.
 
 Keep the setup bundle for removal:

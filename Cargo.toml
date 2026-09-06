@@ -41,9 +41,20 @@ tempfile = "3"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 serde_json = { version = "1.0.149", features = ["raw_value"] }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.2", features = ["fs"] }
+
+[[test]]
+name = "rust_configure"
+path = "tests/rust_configure.rs"
+
 [[test]]
 name = "rust_status"
 path = "tests/rust_status.rs"
+
+[[test]]
+name = "rust_handoff"
+path = "tests/rust_handoff.rs"
 
 [[test]]
 name = "rust_init"
@@ -63,3 +74,14 @@ path = "src/rust/alpha_setup.rs"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+[[test]]
+name = "rust_sync"
+path = "tests/rust_sync.rs"
+
+[[test]]
+name = "rust_add"
+path = "tests/rust_add.rs"
+
+[[test]]
+name = "rust_delete"
+path = "tests/rust_delete.rs"

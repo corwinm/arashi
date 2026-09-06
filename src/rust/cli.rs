@@ -33,153 +33,83 @@ impl Args {
         Ok(())
     }
 }
-fn contract() -> Value {
-    serde_json::from_str(include_str!("../../contracts/cli-commands.json"))
-        .expect("checked-in CLI contract")
+pub use crate::parser::parse;
+pub fn entry() -> i32 {
+    entry_with_identity(false)
 }
-fn definition(name: &str) -> Option<Value> {
-    contract()["commands"]
-        .as_array()?
-        .iter()
-        .find(|v| v["path"] == name)
-        .cloned()
+
+/// Alpha uses the same parser and dispatcher, but never canonical installation integration.
+pub fn alpha_entry() -> i32 {
+    entry_with_identity(true)
 }
-fn help(name: Option<&str>) -> Result<String> {
-    let c = contract();
-    let mut s = String::from("Arashi Rust 2.0.0-alpha.1 (experimental; see docs/rust-port.md)\n");
-    if let Some(name) = name {
-        let d = definition(name)
-            .ok_or_else(|| Error::new("USAGE", format!("Unknown command: {name}")))?;
-        s.push_str(&format!(
-            "Usage: arashi {name} [options]\n{}\n",
-            d["description"].as_str().unwrap_or("")
-        ));
-        for o in d["options"].as_array().unwrap() {
-            s.push_str(&format!(
-                "  {}  {}\n",
-                o["flags"].as_str().unwrap(),
-                o["description"].as_str().unwrap()
-            ));
-        }
-    } else {
-        s.push_str("Usage: arashi <command> [options]\n  -V, --version\n  -h, --help\nCommands (registration does not imply Rust support):\n");
-        for d in c["commands"].as_array().unwrap() {
-            if d["hidden"].as_bool() == Some(true) {
-                continue;
-            }
-            s.push_str(&format!("  {}\n", d["path"].as_str().unwrap()));
-        }
-    }
-    Ok(s)
-}
-pub fn parse(raw: &[String]) -> Result<Args> {
-    let command = raw
-        .first()
-        .ok_or_else(|| Error::new("USAGE", "Command required"))?
-        .clone();
-    let d = definition(&command)
-        .ok_or_else(|| Error::new("USAGE", format!("Unknown command: {command}")))?;
-    let mut options: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut positional = vec![];
-    let mut i = 1;
-    while i < raw.len() {
-        let a = &raw[i];
-        if a == "--" {
-            positional.extend_from_slice(&raw[i + 1..]);
-            break;
-        }
-        if a.starts_with('-') {
-            let (flag, inline) = a
-                .split_once('=')
-                .map_or((a.as_str(), None), |(a, b)| (a, Some(b)));
-            let o = d["options"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|o| o["long"].as_str() == Some(flag) || o["short"].as_str() == Some(flag))
-                .ok_or_else(|| Error::new("USAGE", format!("Unknown option: {flag}")))?;
-            let key = o["long"]
-                .as_str()
-                .unwrap()
-                .trim_start_matches('-')
-                .to_string();
-            let value = if o["required"] == true {
-                if let Some(v) = inline {
-                    v.to_string()
+
+fn entry_with_identity(alpha: bool) -> i32 {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let mut args = match crate::parser::invocation(&raw) {
+        Ok(crate::parser::Invocation::Command(args)) => args,
+        Ok(crate::parser::Invocation::Output { text, stderr, code }) => {
+            let text = if alpha {
+                if text == format!("{}\n", env!("CARGO_PKG_VERSION")) {
+                    format!(
+                        "arashi2 {} (experimental native alpha)\n",
+                        env!("CARGO_PKG_VERSION")
+                    )
                 } else {
-                    i += 1;
-                    raw.get(i)
-                        .filter(|v| !v.starts_with('-'))
-                        .ok_or_else(|| {
-                            Error::new("USAGE", format!("Option {flag} requires a value"))
-                        })?
-                        .clone()
+                    text.replace("aw|arashi", "aw2|arashi2")
+                        .replace("Usage: arashi ", "Usage: arashi2 ")
+                        .replace("Usage: aw ", "Usage: arashi2 ")
+                        .replace("$ arashi ", "$ arashi2 ")
+                        .replace("\narashi\n", "\narashi2\n")
                 }
             } else {
-                if inline.is_some() {
-                    return Err(Error::new(
-                        "USAGE",
-                        format!("Option {flag} does not take a value"),
-                    ));
-                }
-                String::new()
+                text
             };
-            options.entry(key).or_default().push(value);
-        } else {
-            positional.push(a.clone());
+            if stderr {
+                eprint!("{text}");
+            } else {
+                print!("{text}");
+            }
+            return code;
         }
-        i += 1;
-    }
-    Ok(Args {
-        command,
-        options,
-        positional,
-    })
-}
-pub fn entry() -> i32 {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    if raw.len() == 1 && ["--version", "-V"].contains(&raw[0].as_str()) {
-        println!("{}", env!("CARGO_PKG_VERSION"));
-        return 0;
-    }
-    if raw.is_empty()
-        || raw
-            .iter()
-            .take_while(|a| *a != "--")
-            .any(|a| a == "--help" || a == "-h")
-        || raw.first().is_some_and(|a| a == "help")
+        Err(error) => {
+            eprintln!("{error}");
+            return error.exit_code;
+        }
+    };
+    // Guard the canonical parsed command, including operands following `--`,
+    // before the raw completion protocol or any domain side effects can run.
+    if alpha
+        && matches!(
+            args.command.split(' ').next().unwrap(),
+            "install" | "uninstall" | "update" | "shell" | "shell-init" | "completion"
+        )
     {
-        let name = if raw.first().is_some_and(|a| a == "help") {
-            raw.get(1).map(String::as_str)
-        } else {
-            raw.first()
-                .filter(|a| !a.starts_with('-'))
-                .map(String::as_str)
-        };
-        match help(name) {
-            Ok(s) => {
-                print!("{s}");
-                return 0;
-            }
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        }
+        eprintln!(
+            "arashi2 alpha: installer and shell integration commands are disabled. Use the separate alpha setup bundle to refresh/uninstall; stable arashi/aw are never managed here."
+        );
+        return 1;
     }
-    if raw.first().is_some_and(|argument| argument == "completion") {
+    if args.command == "completion" || args.command == "completion __query" {
         return crate::completion::run(&raw);
     }
-    let json_mode = raw
-        .iter()
-        .take_while(|a| *a != "--")
-        .any(|a| a == "--json" || a == "-j");
-    let command = raw.first().cloned().unwrap_or_default();
-    let result = parse(&raw).and_then(|args| dispatch(&args));
+    // The retained create action gives explicit --launch precedence over
+    // --no-launch in either order, after Commander structural parsing.
+    if args.command == "create"
+        && raw.iter().any(|arg| arg == "--launch")
+        && raw.iter().any(|arg| arg == "--no-launch")
+    {
+        args.options.remove("no-launch");
+        args.options
+            .insert("launch".to_owned(), vec![String::new()]);
+    }
+    let json_mode = args.has("json");
+    // Dispatch uses canonical nested paths; output envelopes retain the command family.
+    let command = args.command.split(' ').next().unwrap().to_owned();
+    let result = dispatch(&args);
     match result {
         Ok(data) => {
-            let verbose = raw.iter().any(|s| s == "--verbose" || s == "-v");
-            let short = raw.iter().any(|s| s == "--short" || s == "-s");
+            let verbose = args.has("verbose");
+            let short = args.has("short");
             let exit_code = if (command == "status"
                 && data["repositories"].as_array().is_some_and(|rows| {
                     rows.iter().any(|r| {
@@ -187,33 +117,63 @@ pub fn entry() -> i32 {
                             && (json_mode || crate::status_human::visible(r, verbose))
                     })
                 }))
+                || (command == "handoff"
+                    && data["repositories"]
+                        .as_array()
+                        .is_some_and(|rows| rows.iter().any(|r| !r["error"].is_null())))
                 || (command == "setup"
                     && (data["failedCount"].as_u64().unwrap_or(0)
                         + data["timedOutCount"].as_u64().unwrap_or(0)
                         > 0))
+                || (command == "sync" && data["failureCount"].as_u64().unwrap_or(0) > 0)
+                || (command == "pull" && data["overallStatus"] != "success")
+                || (command == "push" && data["overallStatus"] == "failure")
             {
                 1
             } else {
                 0
             };
             if json_mode {
-                let warnings = if command == "status" {
+                let warnings = if command == "status" || command == "handoff" {
                     crate::status::warnings(&data)
+                } else if command == "push" {
+                    crate::pull_push::push_warnings(&data)
                 } else {
                     vec![]
                 };
-                println!("{}",serde_json::to_string_pretty(&json!({"command":command,"data":data,"ok":true,"schemaVersion":1,"warnings":warnings})).unwrap());
+                let envelope = if command == "push" && data["overallStatus"] == "failure" {
+                    json!({"command":command,"error":{"code":"PUSH_FAILED","details":{"results":data["results"],"totals":data["totals"]},"message":"One or more repositories failed to push"},"ok":false,"schemaVersion":1,"warnings":warnings})
+                } else {
+                    json!({"command":command,"data":data,"ok":true,"schemaVersion":1,"warnings":warnings})
+                };
+                if command == "handoff" {
+                    println!("{}", crate::handoff::render_json(&data, &warnings));
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
+                }
             } else if command == "status" {
                 if data["mode"] == "configured" {
                     eprintln!("- Checking repository status...");
                 }
                 println!("{}", crate::status_human::render(&data, short, verbose));
+            } else if command == "handoff" {
+                print!("{}", crate::handoff::render_markdown(&data));
+            } else if command == "pull" || command == "push" {
+                println!("{}", crate::pull_push::human(&command, &data, verbose));
             } else if command != "exec" && command != "setup" {
                 render_human(&command, &data);
             }
             exit_code
         }
         Err(e) => {
+            if e.code == "SHELL_HELP" {
+                eprint!("{e}");
+                return e.exit_code;
+            }
+            if e.code == "COMMANDER_USAGE" {
+                eprintln!("error: {}", e.message);
+                return e.exit_code;
+            }
             if e.code == "USAGE"
                 && let Some(flag) = e.message.strip_prefix("Unknown option: ")
             {
@@ -223,11 +183,28 @@ pub fn entry() -> i32 {
             if json_mode {
                 println!("{}",serde_json::to_string_pretty(&json!({"command":command,"error":error_value(&e),"ok":false,"schemaVersion":1,"warnings":[]})).unwrap());
             } else {
+                if command == "shell"
+                    && e.details
+                        .as_ref()
+                        .is_some_and(|details| details["action"] == "uninstall")
+                {
+                    crate::shell::render_human(e.details.as_ref().unwrap());
+                }
                 if command == "exec" && e.code == "EXEC_COMMAND_FAILED" {
                     // Results were already rendered by exec.
                 } else if command == "exec" {
                     eprintln!("{e}");
-                } else if command == "setup" {
+                } else if command == "handoff" && e.code == "NOT_IN_WORKSPACE" {
+                    let symbol = if std::env::var_os("NO_COLOR").is_some() {
+                        "[ERR]"
+                    } else {
+                        "✗"
+                    };
+                    eprintln!("{symbol} {}", e.message);
+                    println!(
+                        "Run 'arashi init' to initialize a workspace before creating a handoff report"
+                    );
+                } else if command == "setup" || command == "shell" {
                     eprintln!("[ERR] {e}");
                 } else if command == "doctor" && e.code == "DOCTOR_BLOCKING_FINDINGS" {
                     let data = e.details.as_ref().unwrap();
@@ -247,8 +224,54 @@ pub fn entry() -> i32 {
 fn dispatch(args: &Args) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     match args.command.as_str() {
+        "configure" => {
+            args.only(&[])?;
+            if !args.has("json") {
+                return Err(Error::new(
+                    "RUST_NOT_YET_PORTED",
+                    "Interactive configure is not yet ported to Rust; no changes made",
+                ));
+            }
+            if !args.positional.is_empty() {
+                return Err(Error::new("USAGE", "configure takes no arguments"));
+            }
+            crate::configure::inspect(&cwd)
+        }
+        "switch" => {
+            if args.has("json") {
+                return Err(Error::new(
+                    "JSON_UNSUPPORTED_FOR_MODE",
+                    "JSON output is not supported for launch.",
+                )
+                .with_exit_code(2)
+                .with_details(json!({"mode":"launch"})));
+            }
+            crate::switch::switch(&cwd, args)
+        }
+        "shell" | "shell init" | "shell install" | "shell uninstall" => crate::shell::execute(args),
+        "add" => {
+            args.only(&["name", "create-setup", "force"])?;
+            crate::add::add(&cwd, args)
+        }
         "exec" => crate::execution::exec(&cwd, args),
         "setup" => crate::execution::setup(&cwd, args),
+        "sync" => crate::sync::sync(&cwd, args),
+        "pull" => {
+            args.only(&["only", "group", "verbose"])?;
+            if !args.positional.is_empty() {
+                return Err(Error::new("USAGE", "pull takes no arguments").with_exit_code(2));
+            }
+            let workspace = crate::config::Workspace::discover(&cwd)?;
+            crate::pull_push::pull(&workspace, args)
+        }
+        "push" => {
+            args.only(&["only", "group", "set-upstream", "dry-run"])?;
+            if !args.positional.is_empty() {
+                return Err(Error::new("USAGE", "push takes no arguments").with_exit_code(2));
+            }
+            let workspace = crate::config::Workspace::discover(&cwd)?;
+            crate::pull_push::push(&workspace, args)
+        }
         "doctor" => {
             args.only(&[])?;
             if !args.positional.is_empty() {
@@ -271,6 +294,37 @@ fn dispatch(args: &Args) -> Result<Value> {
             crate::clone::clone(&workspace, &cwd, args)
         }
         "create" => {
+            let unsupported_json = || {
+                Error::new(
+                    "JSON_UNSUPPORTED_FOR_MODE",
+                    "JSON output is not supported for interactive-or-launch.",
+                )
+                .with_details(json!({"mode":"interactive-or-launch"}))
+            };
+            if args.has("json") && (args.has("tab") || args.has("tmux")) {
+                return Err(unsupported_json());
+            }
+            let launchers: Vec<_> = ["tmux", "sesh", "herdr"]
+                .into_iter()
+                .filter(|key| args.has(key))
+                .map(|key| format!("--{key}"))
+                .collect();
+            if launchers.len() > 1 {
+                return Err(Error::new(
+                    "CONFLICTING_LAUNCH_OPTIONS",
+                    format!(
+                        "Conflicting launch overrides provided ({}). Choose exactly one explicit create launcher.",
+                        launchers.join(", ")
+                    ),
+                ));
+            }
+            if args.has("json")
+                && ["interactive", "launch", "sesh", "herdr", "switch"]
+                    .iter()
+                    .any(|key| args.has(key))
+            {
+                return Err(unsupported_json());
+            }
             args.only(&[
                 "base",
                 "repo-base",
@@ -300,6 +354,22 @@ fn dispatch(args: &Args) -> Result<Value> {
             crate::operations::CreatePlan::build(&w, &args.positional[0], args.has("no-hooks"))?
                 .execute(&w, args.has("dry-run"))
         }
+        "delete" => {
+            let w = crate::config::Workspace::discover(&cwd).map_err(|error| {
+                if [
+                    "CONFIG_NOT_FOUND",
+                    "CONFIG_PARSE_ERROR",
+                    "CONFIG_VALIDATION_ERROR",
+                ]
+                .contains(&error.code.as_str())
+                {
+                    Error::new("DELETE_CONFIG_INVALID", error.message)
+                } else {
+                    error
+                }
+            })?;
+            crate::delete::delete(&w, args)
+        }
         "remove" => {
             args.only(&["force", "keep-branches", "path", "dry-run"])?;
             if args.positional.len() != 1 {
@@ -317,6 +387,14 @@ fn dispatch(args: &Args) -> Result<Value> {
                 args.has("force"),
             )?
             .execute(&w, args.has("dry-run"))
+        }
+        "move" => {
+            args.only(&["from", "to"])?;
+            if !args.positional.is_empty() {
+                return Err(Error::new("USAGE", "move takes no arguments"));
+            }
+            let w = crate::config::Workspace::discover(&cwd)?;
+            crate::r#move::move_changes(&w, args)
         }
         "list" => {
             args.only(&[])?;
@@ -407,6 +485,35 @@ fn dispatch(args: &Args) -> Result<Value> {
             })?;
             crate::status::status_filtered(&w, &cwd, args)
         }
+        "handoff" => {
+            args.only(&[
+                "link",
+                "markdown",
+                "next-command",
+                "risk",
+                "todo",
+                "validation",
+            ])?;
+
+            if args.has("markdown") && !args.has("json") {
+                let symbol = if std::env::var_os("NO_COLOR").is_some() {
+                    "[WARN]"
+                } else {
+                    "⚠"
+                };
+                eprintln!(
+                    "{symbol} --markdown is deprecated; omit --markdown and use the default Markdown output."
+                );
+            }
+            let w = crate::config::Workspace::discover(&cwd).map_err(|e| {
+                if e.code == "CONFIG_NOT_FOUND" {
+                    Error::new("NOT_IN_WORKSPACE", "Not in an arashi workspace").with_exit_code(2)
+                } else {
+                    e
+                }
+            })?;
+            crate::handoff::handoff(&w, &cwd, args)
+        }
         "init" => {
             args.only(&[
                 "zero-config",
@@ -454,6 +561,7 @@ fn render_human(command: &str, data: &Value) {
         return;
     }
     match command {
+        "shell" => crate::shell::render_human(data),
         "list" => {
             if data["mode"] == "standalone" {
                 eprintln!("Workspace mode: standalone");
@@ -477,6 +585,36 @@ fn render_human(command: &str, data: &Value) {
             "Removed {} worktree(s) and {} branch(es)",
             data["summary"]["successfulWorktrees"], data["summary"]["successfulBranches"]
         ),
+        "switch" if data["directiveWritten"] == true => println!(
+            "Prepared shell directory switch to {} in repository {} at {}",
+            data["selected"]["branchName"].as_str().unwrap_or(""),
+            data["selected"]["repoName"].as_str().unwrap_or(""),
+            data["selected"]["worktreePath"].as_str().unwrap_or("")
+        ),
+        "switch" => {}
+        "move" => {
+            if data["mode"] == "standalone" {
+                println!("Workspace mode: standalone");
+                println!(
+                    "Main repository: {}",
+                    data["repositoryPath"].as_str().unwrap_or("")
+                );
+            }
+            println!(
+                "Moved changes in {} repositories",
+                data["movedCount"].as_u64().unwrap_or(0)
+            );
+            println!(
+                "Source: {} ({})",
+                data["source"]["label"].as_str().unwrap_or(""),
+                data["source"]["primaryPath"].as_str().unwrap_or("")
+            );
+            println!(
+                "Target: {} ({})",
+                data["target"]["label"].as_str().unwrap_or(""),
+                data["target"]["primaryPath"].as_str().unwrap_or("")
+            );
+        }
         "init" => println!(
             "{} standalone workspace: {}",
             if data["dryRun"] == true {
@@ -508,6 +646,23 @@ fn render_human(command: &str, data: &Value) {
             } else {
                 &data["totalPruned"]
             }
+        ),
+        "sync" => {}
+        "clone" => {
+            for name in data["cloned"].as_array().into_iter().flatten() {
+                println!("Cloned {}", name.as_str().unwrap_or(""));
+            }
+            if data["cloned"]
+                .as_array()
+                .is_some_and(|items| items.is_empty())
+            {
+                println!("No repositories to clone.");
+            }
+        }
+        "add" => println!(
+            "Added {} at {}",
+            data["repository"]["name"].as_str().unwrap_or(""),
+            data["repository"]["path"].as_str().unwrap_or("")
         ),
         _ => unreachable!("implemented command requires human renderer"),
     }

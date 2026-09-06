@@ -20,5 +20,5 @@ pub fn entry() -> i32 {
         return 1;
     }
     eprintln!("arashi2 experimental native alpha: incomplete; see docs/rust-port.md");
-    arashi::cli::entry()
+    arashi::cli::alpha_entry()
 }
