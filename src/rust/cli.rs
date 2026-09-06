@@ -185,6 +185,8 @@ pub fn entry() -> i32 {
                     && (data["failedCount"].as_u64().unwrap_or(0)
                         + data["timedOutCount"].as_u64().unwrap_or(0)
                         > 0))
+                || (command == "pull" && data["overallStatus"] != "success")
+                || (command == "push" && data["overallStatus"] == "failure")
             {
                 1
             } else {
@@ -193,15 +195,24 @@ pub fn entry() -> i32 {
             if json_mode {
                 let warnings = if command == "status" {
                     crate::status::warnings(&data)
+                } else if command == "push" {
+                    crate::pull_push::push_warnings(&data)
                 } else {
                     vec![]
                 };
-                println!("{}",serde_json::to_string_pretty(&json!({"command":command,"data":data,"ok":true,"schemaVersion":1,"warnings":warnings})).unwrap());
+                let envelope = if command == "push" && data["overallStatus"] == "failure" {
+                    json!({"command":command,"error":{"code":"PUSH_FAILED","details":{"results":data["results"],"totals":data["totals"]},"message":"One or more repositories failed to push"},"ok":false,"schemaVersion":1,"warnings":warnings})
+                } else {
+                    json!({"command":command,"data":data,"ok":true,"schemaVersion":1,"warnings":warnings})
+                };
+                println!("{}", serde_json::to_string_pretty(&envelope).unwrap());
             } else if command == "status" {
                 if data["mode"] == "configured" {
                     eprintln!("- Checking repository status...");
                 }
                 println!("{}", crate::status_human::render(&data, short, verbose));
+            } else if command == "pull" || command == "push" {
+                println!("{}", crate::pull_push::human(&command, &data));
             } else if command != "exec" && command != "setup" {
                 render_human(&command, &data);
             }
@@ -243,6 +254,22 @@ fn dispatch(args: &Args) -> Result<Value> {
     match args.command.as_str() {
         "exec" => crate::execution::exec(&cwd, args),
         "setup" => crate::execution::setup(&cwd, args),
+        "pull" => {
+            args.only(&["only", "group", "verbose"])?;
+            if !args.positional.is_empty() {
+                return Err(Error::new("USAGE", "pull takes no arguments").with_exit_code(2));
+            }
+            let workspace = crate::config::Workspace::discover(&cwd)?;
+            crate::pull_push::pull(&workspace, args)
+        }
+        "push" => {
+            args.only(&["only", "group", "set-upstream", "dry-run"])?;
+            if !args.positional.is_empty() {
+                return Err(Error::new("USAGE", "push takes no arguments").with_exit_code(2));
+            }
+            let workspace = crate::config::Workspace::discover(&cwd)?;
+            crate::pull_push::push(&workspace, args)
+        }
         "doctor" => {
             args.only(&[])?;
             if !args.positional.is_empty() {
