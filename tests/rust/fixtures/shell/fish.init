@@ -1,0 +1,51 @@
+function arashi --wraps arashi --description "Run arashi with shell integration"
+    # arashi-managed-shell-wrapper:arashi:v1
+    set -l tmp_root /tmp
+    if test -n "$TMPDIR"
+        set tmp_root $TMPDIR
+    end
+
+    set -l directive_file (mktemp "$tmp_root/arashi-directive.XXXXXX")
+    if test -z "$directive_file"
+        return 1
+    end
+
+    set -lx ARASHI_DIRECTIVE_FILE "$directive_file"
+    set -lx ARASHI_SHELL fish
+    command arashi $argv
+    set -l status_code $status
+
+    if test -s "$directive_file"
+        source "$directive_file"
+    end
+
+    rm -f "$directive_file"
+    return $status_code
+end
+
+if not functions -q aw; or functions aw | string match -q '*arashi-managed-shell-wrapper:aw:v1*'
+function aw --wraps aw --description "Run arashi with shell integration"
+    # arashi-managed-shell-wrapper:aw:v1
+    set -l tmp_root /tmp
+    if test -n "$TMPDIR"
+        set tmp_root $TMPDIR
+    end
+
+    set -l directive_file (mktemp "$tmp_root/arashi-directive.XXXXXX")
+    if test -z "$directive_file"
+        return 1
+    end
+
+    set -lx ARASHI_DIRECTIVE_FILE "$directive_file"
+    set -lx ARASHI_SHELL fish
+    command aw $argv
+    set -l status_code $status
+
+    if test -s "$directive_file"
+        source "$directive_file"
+    end
+
+    rm -f "$directive_file"
+    return $status_code
+end
+end

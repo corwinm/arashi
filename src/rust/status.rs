@@ -148,7 +148,7 @@ pub fn status_filtered(
         // Validate every selected remote before the first fetch can update refs.
         supported_remote(&workspace.root)?;
         for name in &selected {
-            let path = workspace.root.join(&config.repos[name].path);
+            let path = crate::paths::lexical(workspace.root.join(&config.repos[name].path));
             if path.exists() {
                 supported_remote(&path)?;
             }
@@ -175,9 +175,10 @@ pub fn status_filtered(
         for name in selected {
             let repo = &config.repos[&name];
             let repo_base = base(&repo.raw);
+            let path = crate::paths::lexical(workspace.root.join(&repo.path));
             statuses.push(repository(
                 &name,
-                &workspace.root.join(&repo.path),
+                &path,
                 repo_base
                     .as_ref()
                     .map(|(branch, source)| (branch.as_str(), *source)),

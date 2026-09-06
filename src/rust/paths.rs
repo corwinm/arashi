@@ -1,8 +1,23 @@
 //! Filesystem paths shared with native tools must not use Rust's Windows verbatim prefix.
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub fn canonicalize(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     std::fs::canonicalize(path).map(native_path)
+}
+
+/// Normalize `.` and `..` components without requiring the path to exist.
+pub fn lexical(path: impl AsRef<Path>) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.as_ref().components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                result.pop();
+            }
+            _ => result.push(component.as_os_str()),
+        }
+    }
+    result
 }
 
 /// Compare existing filesystem identities without changing their public path spelling.

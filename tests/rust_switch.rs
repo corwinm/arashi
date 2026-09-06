@@ -168,6 +168,118 @@ impl Drop for Fixture {
     }
 }
 
+#[cfg(unix)]
+fn wrapper_switch_journey(shell: &str) {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let fixture = Fixture::configured("cd");
+    let target = fixture.add_worktree(
+        "wrapper-target",
+        ".arashi/worktrees/space ' dollar$ slash\\ target",
+    );
+    let before = fixture.snapshot();
+    let home = fixture.root.with_extension("wrapper-home");
+    fs::create_dir_all(home.join("bin")).unwrap();
+    fs::create_dir_all(home.join("tmp")).unwrap();
+    let mut paths = vec![home.join("bin")];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let path = std::env::join_paths(paths).unwrap();
+    for source in [false, true] {
+        if source && std::env::var_os("ARASHI_TS_PARITY").is_none() {
+            continue;
+        }
+        let executable = home.join("bin/arashi");
+        if source {
+            fs::remove_file(&executable).unwrap();
+            fs::write(
+                &executable,
+                "#!/bin/sh\nexec node \"$ARASHI_SOURCE_ENTRY\" \"$@\"\n",
+            )
+            .unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        } else {
+            symlink(env!("CARGO_BIN_EXE_arashi"), &executable).unwrap();
+            symlink("arashi", home.join("bin/aw")).unwrap();
+        }
+        let mut init = Command::new(&executable);
+        let output = init
+            .args(["shell", "init", shell])
+            .env("HOME", &home)
+            .env(
+                "ARASHI_SOURCE_ENTRY",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"),
+            )
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        fs::write(home.join("wrapper"), &output.stdout).unwrap();
+        let script = if shell == "fish" {
+            "source \"$HOME/wrapper\"; arashi switch wrapper-target; or exit 31; test (pwd -P) = \"$EXPECTED_TARGET\"; or exit 32; aw switch --cd --path \"$EXPECTED_ROOT\"; or exit 33; test (pwd -P) = \"$EXPECTED_ROOT\"; or exit 34; aw switch definitely-missing-target; and exit 35; test (pwd -P) = \"$EXPECTED_ROOT\"; or exit 36; set -q ARASHI_DIRECTIVE_FILE; and exit 37; exit 0"
+        } else {
+            ". \"$HOME/wrapper\"; arashi switch wrapper-target || exit 31; [ \"$(pwd -P)\" = \"$EXPECTED_TARGET\" ] || exit 32; aw switch --cd --path \"$EXPECTED_ROOT\" || exit 33; [ \"$(pwd -P)\" = \"$EXPECTED_ROOT\" ] || exit 34; aw switch definitely-missing-target && exit 35; [ \"$(pwd -P)\" = \"$EXPECTED_ROOT\" ] || exit 36; [ -z \"${ARASHI_DIRECTIVE_FILE+x}\" ] || exit 37; exit 0"
+        };
+        let mut command = Command::new(shell);
+        if shell == "bash" {
+            command.args(["--noprofile", "--norc"]);
+        }
+        if shell == "zsh" {
+            command.arg("-f");
+        }
+        if shell == "fish" {
+            command.arg("--no-config");
+        }
+        let output = command
+            .args(["-c", script])
+            .current_dir(&fixture.root)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("TMPDIR", home.join("tmp"))
+            .env("PATH", &path)
+            .env("EXPECTED_TARGET", &target)
+            .env("EXPECTED_ROOT", &fixture.root)
+            .env(
+                "ARASHI_SOURCE_ENTRY",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"),
+            )
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .env_remove("ARASHI_DIRECTIVE_FILE")
+            .env_remove("ARASHI_SHELL")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{shell} source={source}: {output:?}"
+        );
+        assert_eq!(fs::read_dir(home.join("tmp")).unwrap().count(), 0);
+        assert_eq!(fixture.snapshot(), before);
+    }
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn bash_wrapper_switches_real_parent_shell_and_cleans_directives() {
+    wrapper_switch_journey("bash");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn zsh_wrapper_switches_real_parent_shell_and_cleans_directives() {
+    wrapper_switch_journey("zsh");
+}
+
+#[cfg(unix)]
+#[test]
+fn fish_wrapper_switches_real_parent_shell_and_cleans_directives() {
+    if Command::new("fish").arg("--version").output().is_err() {
+        eprintln!("Fish journey not exercised: Fish is not installed on this host");
+        return;
+    }
+    wrapper_switch_journey("fish");
+}
+
 fn error_document(output: &Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
         panic!(

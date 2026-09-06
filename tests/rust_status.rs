@@ -106,6 +106,30 @@ fn configured_shape_and_unavailable_local_base() {
     );
 }
 
+#[test]
+fn missing_configured_repository_path_is_lexically_normalized() {
+    let r = Repo::new();
+    let mut w = r.workspace();
+    w.config = Some(
+        arashi::config::Config::parse(
+            r#"{"version":"1.0.0","reposDir":"./repos","worktreesDir":".arashi/worktrees","repos":{"missing":{"path":"./repos/missing"}}}"#,
+        )
+        .unwrap(),
+    );
+    let expected = r.0.join("repos/missing");
+
+    let data = arashi::status::status(&w, &r.0).unwrap();
+    let row = &data["repositories"][1];
+    assert_eq!(row["path"], json!(expected));
+    assert_eq!(
+        row["error"],
+        format!(
+            "Repository is missing at {}. Run `arashi clone` to clone missing repositories.",
+            expected.display()
+        )
+    );
+}
+
 /// Opt-in independent comparison with the retained TypeScript CLI.
 /// ARASHI_TS_PARITY=1 cargo test --test rust_status source_oracle
 #[test]

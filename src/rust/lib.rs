@@ -52,6 +52,7 @@ pub mod completion;
 
 pub mod config;
 pub mod configure;
+pub mod handoff;
 pub mod status;
 
 pub mod init;
@@ -78,6 +79,7 @@ pub mod switch;
 
 pub mod execution;
 pub mod process;
+pub mod shell;
 
 mod hooks;
 

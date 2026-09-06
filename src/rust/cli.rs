@@ -55,6 +55,9 @@ fn help(name: Option<&str>) -> Result<String> {
             d["description"].as_str().unwrap_or("")
         ));
         for o in d["options"].as_array().unwrap() {
+            if o["hidden"] == true {
+                continue;
+            }
             s.push_str(&format!(
                 "  {}  {}\n",
                 o["flags"].as_str().unwrap(),
@@ -73,19 +76,29 @@ fn help(name: Option<&str>) -> Result<String> {
     Ok(s)
 }
 pub fn parse(raw: &[String]) -> Result<Args> {
-    let command = raw
+    let first = raw
         .first()
-        .ok_or_else(|| Error::new("USAGE", "Command required"))?
-        .clone();
+        .ok_or_else(|| Error::new("USAGE", "Command required"))?;
+    let (command, command_words) = if first == "shell"
+        && raw
+            .get(1)
+            .is_some_and(|value| ["init", "install", "uninstall"].contains(&value.as_str()))
+    {
+        (format!("shell {}", raw[1]), 2)
+    } else {
+        (first.clone(), 1)
+    };
     let d = definition(&command)
         .ok_or_else(|| Error::new("USAGE", format!("Unknown command: {command}")))?;
     let mut options: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut positional = vec![];
-    let mut i = 1;
+    let mut i = command_words;
     while i < raw.len() {
         let a = &raw[i];
         if a == "--" {
-            positional.extend_from_slice(&raw[i + 1..]);
+            if command != "handoff" {
+                positional.extend_from_slice(&raw[i + 1..]);
+            }
             break;
         }
         if a.starts_with('-') {
@@ -109,9 +122,19 @@ pub fn parse(raw: &[String]) -> Result<Args> {
                 } else {
                     i += 1;
                     raw.get(i)
-                        .filter(|v| !v.starts_with('-'))
+                        .filter(|v| command == "handoff" || !v.starts_with('-'))
                         .ok_or_else(|| {
-                            Error::new("USAGE", format!("Option {flag} requires a value"))
+                            if command == "handoff" {
+                                Error::new(
+                                    "COMMANDER_USAGE",
+                                    format!(
+                                        "option '{}' argument missing",
+                                        o["flags"].as_str().unwrap()
+                                    ),
+                                )
+                            } else {
+                                Error::new("USAGE", format!("Option {flag} requires a value"))
+                            }
                         })?
                         .clone()
                 }
@@ -125,11 +148,12 @@ pub fn parse(raw: &[String]) -> Result<Args> {
                 String::new()
             };
             options.entry(key).or_default().push(value);
-        } else {
+        } else if command != "handoff" {
             positional.push(a.clone());
         }
         i += 1;
     }
+
     Ok(Args {
         command,
         options,
@@ -187,6 +211,10 @@ pub fn entry() -> i32 {
                             && (json_mode || crate::status_human::visible(r, verbose))
                     })
                 }))
+                || (command == "handoff"
+                    && data["repositories"]
+                        .as_array()
+                        .is_some_and(|rows| rows.iter().any(|r| !r["error"].is_null())))
                 || (command == "setup"
                     && (data["failedCount"].as_u64().unwrap_or(0)
                         + data["timedOutCount"].as_u64().unwrap_or(0)
@@ -197,23 +225,37 @@ pub fn entry() -> i32 {
                 0
             };
             if json_mode {
-                let warnings = if command == "status" {
+                let warnings = if command == "status" || command == "handoff" {
                     crate::status::warnings(&data)
                 } else {
                     vec![]
                 };
-                println!("{}",serde_json::to_string_pretty(&json!({"command":command,"data":data,"ok":true,"schemaVersion":1,"warnings":warnings})).unwrap());
+                if command == "handoff" {
+                    println!("{}", crate::handoff::render_json(&data, &warnings));
+                } else {
+                    println!("{}",serde_json::to_string_pretty(&json!({"command":command,"data":data,"ok":true,"schemaVersion":1,"warnings":warnings})).unwrap());
+                }
             } else if command == "status" {
                 if data["mode"] == "configured" {
                     eprintln!("- Checking repository status...");
                 }
                 println!("{}", crate::status_human::render(&data, short, verbose));
+            } else if command == "handoff" {
+                print!("{}", crate::handoff::render_markdown(&data));
             } else if command != "exec" && command != "setup" {
                 render_human(&command, &data);
             }
             exit_code
         }
         Err(e) => {
+            if e.code == "SHELL_HELP" {
+                eprint!("{e}");
+                return e.exit_code;
+            }
+            if e.code == "COMMANDER_USAGE" {
+                eprintln!("error: {}", e.message);
+                return e.exit_code;
+            }
             if e.code == "USAGE"
                 && let Some(flag) = e.message.strip_prefix("Unknown option: ")
             {
@@ -223,11 +265,28 @@ pub fn entry() -> i32 {
             if json_mode {
                 println!("{}",serde_json::to_string_pretty(&json!({"command":command,"error":error_value(&e),"ok":false,"schemaVersion":1,"warnings":[]})).unwrap());
             } else {
+                if command == "shell"
+                    && e.details
+                        .as_ref()
+                        .is_some_and(|details| details["action"] == "uninstall")
+                {
+                    crate::shell::render_human(e.details.as_ref().unwrap());
+                }
                 if command == "exec" && e.code == "EXEC_COMMAND_FAILED" {
                     // Results were already rendered by exec.
                 } else if command == "exec" {
                     eprintln!("{e}");
-                } else if command == "setup" {
+                } else if command == "handoff" && e.code == "NOT_IN_WORKSPACE" {
+                    let symbol = if std::env::var_os("NO_COLOR").is_some() {
+                        "[ERR]"
+                    } else {
+                        "✗"
+                    };
+                    eprintln!("{symbol} {}", e.message);
+                    println!(
+                        "Run 'arashi init' to initialize a workspace before creating a handoff report"
+                    );
+                } else if command == "setup" || command == "shell" {
                     eprintln!("[ERR] {e}");
                 } else if command == "doctor" && e.code == "DOCTOR_BLOCKING_FINDINGS" {
                     let data = e.details.as_ref().unwrap();
@@ -271,6 +330,7 @@ fn dispatch(args: &Args) -> Result<Value> {
             }
             crate::switch::switch(&cwd, args)
         }
+        "shell" | "shell init" | "shell install" | "shell uninstall" => crate::shell::execute(args),
         "exec" => crate::execution::exec(&cwd, args),
         "setup" => crate::execution::setup(&cwd, args),
         "doctor" => {
@@ -431,6 +491,35 @@ fn dispatch(args: &Args) -> Result<Value> {
             })?;
             crate::status::status_filtered(&w, &cwd, args)
         }
+        "handoff" => {
+            args.only(&[
+                "link",
+                "markdown",
+                "next-command",
+                "risk",
+                "todo",
+                "validation",
+            ])?;
+
+            if args.has("markdown") && !args.has("json") {
+                let symbol = if std::env::var_os("NO_COLOR").is_some() {
+                    "[WARN]"
+                } else {
+                    "⚠"
+                };
+                eprintln!(
+                    "{symbol} --markdown is deprecated; omit --markdown and use the default Markdown output."
+                );
+            }
+            let w = crate::config::Workspace::discover(&cwd).map_err(|e| {
+                if e.code == "CONFIG_NOT_FOUND" {
+                    Error::new("NOT_IN_WORKSPACE", "Not in an arashi workspace").with_exit_code(2)
+                } else {
+                    e
+                }
+            })?;
+            crate::handoff::handoff(&w, &cwd, args)
+        }
         "init" => {
             args.only(&[
                 "zero-config",
@@ -478,6 +567,7 @@ fn render_human(command: &str, data: &Value) {
         return;
     }
     match command {
+        "shell" => crate::shell::render_human(data),
         "list" => {
             if data["mode"] == "standalone" {
                 eprintln!("Workspace mode: standalone");
