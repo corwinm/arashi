@@ -48,6 +48,7 @@ impl Fixture {
             .env("GIT_CONFIG_COUNT", "1")
             .env("GIT_CONFIG_KEY_0", "commit.gpgsign")
             .env("GIT_CONFIG_VALUE_0", "false")
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .env("NO_COLOR", "1")
             .env_remove("ARASHI_DIRECTIVE_FILE")
             .env_remove("ARASHI_SHELL")
@@ -56,7 +57,7 @@ impl Fixture {
     }
     fn git(&self, args: &[&str]) -> String {
         let mut c = Command::new("git");
-        c.args(args);
+        c.args(["-c", "maintenance.auto=false"]).args(args);
         self.environment(&mut c);
         let o = c.output().unwrap();
         assert!(
@@ -76,6 +77,9 @@ impl Fixture {
         };
         c.args(args);
         self.environment(&mut c);
+        if !source {
+            c.env_remove("GIT_OPTIONAL_LOCKS");
+        }
         c.output().unwrap()
     }
     fn reset_target(&self) {
@@ -100,6 +104,42 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.base);
     }
+}
+#[test]
+fn fixture_commits_do_not_launch_automatic_maintenance() {
+    let f = Fixture::new();
+    // Force observable maintenance on every commit, synchronously so the
+    // regression does not depend on catching a short-lived maintenance.lock.
+    for (key, value) in [
+        ("maintenance.auto", "true"),
+        ("maintenance.autoDetach", "false"),
+        ("gc.autoDetach", "false"),
+        ("maintenance.gc.enabled", "false"),
+        ("maintenance.commit-graph.enabled", "true"),
+        ("maintenance.commit-graph.auto", "-1"),
+    ] {
+        f.git(&["config", key, value]);
+    }
+    let graph = f.repo.join(".git/objects/info/commit-graphs");
+    assert!(!graph.exists());
+    f.git(&["commit", "--allow-empty", "-m", "fixture"]);
+    assert!(
+        !graph.exists(),
+        "fixture commit launched automatic maintenance before parity ran"
+    );
+
+    // Positive control: ordinary Git really performs the configured work.
+    let mut command = Command::new("git");
+    command.args(["commit", "--allow-empty", "-m", "maintenance control"]);
+    f.environment(&mut command);
+    command.env_remove("GIT_OPTIONAL_LOCKS");
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(graph.exists(), "control must exercise real Git maintenance");
 }
 fn normalized(v: &mut Value) {
     match v {
