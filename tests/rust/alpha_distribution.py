@@ -59,8 +59,12 @@ class AlphaDistribution(unittest.TestCase):
             self.shell = shutil.which(os.environ.get('ALPHA_POWERSHELL', 'powershell.exe'))
             self.assertTrue(self.shell)
             self.registry_before = self.user_environment()
+            cache = Path(self.temp.name) / 'powershell-cache'
+            cache.mkdir()
             self.shell_env.update(APPDATA=str(self.home / 'AppData/Roaming'),
-                                  LOCALAPPDATA=str(self.home / 'AppData/Local'))
+                                  LOCALAPPDATA=str(self.home / 'AppData/Local'),
+                                  PSModuleAnalysisCachePath=str(cache / 'ModuleAnalysisCache'),
+                                  COMPlus_MultiCoreJitNoProfileGather='1')
             for folder in ['WindowsPowerShell', 'PowerShell']:
                 profile = self.home / 'Documents' / folder / 'Microsoft.PowerShell_profile.ps1'
                 profile.parent.mkdir(parents=True)
