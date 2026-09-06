@@ -31,7 +31,8 @@ Parent alone owns integration `v2`, the tracked plan and final review/CI/push. W
 - `v2-add`: recover add, integrate clone baseline, support ordinary noninteractive network add/clone.
 - `v2-pull-push`: recover pull/push, implement ordinary Git transports and preserve source failure/selection semantics.
 - `v2-alpha-distribution`: side-by-side `aw2` packaging/install lifecycle; never stable publication.
-- `v2-move`, `v2-delete`: preserved drafts, queued for independent review and source-completion work.
+- `v2-move`, `v2-delete`: recover/review inherited drafts against source change-transfer and repository-deletion behavior.
+- `v2-parser`: native parser/help compatibility in a separate module; integrate after command-family dispatch changes.
 - Read-only contract audit: `/tmp/arashi-v2-completion-matrix.md` (pending); promote relevant requirements here after source verification.
 
 ## Milestones (not interchangeable with full completion)
@@ -83,6 +84,16 @@ Generated initially from retained `contracts/cli-commands.json`; checkboxes requ
 5. Independent spec/behavior review, then code-quality review, scoped to an exact commit. Fix concrete blockers; defer optional redesign rather than restarting a broad review loop.
 6. Parent merges into `v2`, resolves shared behavior (not merely conflict markers), runs integrated checks, pushes normally and verifies exact remote SHA and CI before calling the milestone delivered.
 7. Update support ledger and acceptance evidence. Continue the next unmet real workflow. A draft, a local commit, a passing test subset and a delivered feature are different states.
+
+## First local recovery integration milestone
+
+- Integrated `v2-switch` at `253da82420f673e2f25a89232006d03f8940dac1` into `v2` with merge `05ab5af8faf59a1dd4ab992207e2ce209aad06de` (first parent `d5ebd026fe6cb8e271d550f1f6811f07395f53bc`). This is local integration, not independently approved or remote-CI-delivered behavior.
+- Scope: shared create/editor/switch legacy-default normalization, sanitized read-only `configure --json`, and bounded noninteractive switch selection/parent-shell directives. Interactive configure/selection and terminal/editor launch remain unsupported; no public-command acceptance checkbox is closed.
+- The sole textual conflict was the support ledger's remaining-work paragraph. Resolution retains delivered clone/completion scope and the new switch/configure subset. No new behavioral regression was observed in integration. Existing completion-plan edits (move/delete recovery and parser queue) were preserved; original bytes and diff are backed up under `target/integration-switch/inherited-plan.*`.
+- Local macOS checks use only this checkout's `CARGO_HOME="$PWD/target/cargo-home"` and `CARGO_TARGET_DIR="$PWD/target"`. Source-enabled locked/offline all-target tests with `--include-ignored --test-threads=4`: **277 passed, 0 failed, 0 ignored**. Config/configure/switch focused tests: **35/35** each in debug and release. Fmt, locked/offline all-target clippy `-D warnings`, locked/offline release build and diff whitespace checks passed. External release source parity: **15/15**.
+- Evidence: `target/integration-switch/{focused,all-tests,release-focused,fmt,clippy,build,source-parity}.log`, raw `source-parity.json`, and programmatically aggregated `test-counts.json`. The recovered switch lane's earlier timed-out all-target run remains a non-pass; the complete integration run above supersedes that gate locally.
+- Parent-owned next gates: independent spec/behavior review, then quality review of cumulative `d5ebd02..05ab5af`; exact-head Linux/macOS/Windows/source CI before delivery. No push, PR, publication, stable npm/installer changes or Python prerequisite was introduced.
+- Next integration slice: recovered `v2-shell` at `fba5733` (shell wrapper plus handoff), to compose the now-integrated directive producer with its native wrapper consumer. Reconcile shared CLI dispatch/rendering and test an actual wrapper-driven switch in a disposable shell/home. Defer `v2-parser` until command-family dispatch integration; alpha distribution retains pending native Windows acceptance.
 
 ## Model and continuity
 
