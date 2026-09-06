@@ -193,6 +193,17 @@ Generated initially from retained `contracts/cli-commands.json`; checkboxes requ
 
 The command matrix and full replacement gates remain open. These checkpoints do not establish full-command, full-Windows, authenticated-transport or release readiness. No release publication is authorized.
 
+## Integrated acceptance closure (2026-09-06)
+
+Verified integration checkpoint: `1042a8b865d3c0041a28da09c19f572c7a298820`, pushed normally to `v2` and read back at the exact SHA. This includes the reviewed original alpha/dirty-push slices, connected status/sync journey, bounded Git settlement and both native fixture repairs; no delivery-batch implementation remains worktree-only.
+
+- [Rust CI 34065436954](https://github.com/corwinm/arashi/actions/runs/34065436954): **PASS**, exact checkpoint SHA, Linux/macOS/Windows native jobs and source parity.
+- [Alpha CI 34065507224](https://github.com/corwinm/arashi/actions/runs/34065507224): **PASS**, manually dispatched against the same checkpoint because test-only changes do not trigger alpha packaging automatically. No release was published.
+- Local source-enabled all-target validation: **464 passed, zero failed/ignored**; fmt, locked Clippy, release build, native smoke, source parity, characterization and clean-tree/unchanged-HEAD checks passed. Raw gates: `target/delivery-1042a8b/results.json`.
+- Dedicated native Windows exact-checkpoint validation: fmt, Clippy, full all-target suite, release build and **12 native-smoke cases** passed. Raw per-command exits, preflight/final revision and logs: `target/delivery-1042a8b/windows/`. Platform-conditioned omissions remain omissions, not source-parity claims.
+
+This closes the outstanding integration/CI blockers, not the replacement contract. Ordinary connected-workspace diagnosis still rejects remote/tracking policy (`src/rust/doctor.rs`); pull still rejects incoming control-file changes (`src/rust/pull_push.rs`); the public-command inventory, broader mutation topology/policy, interactive integration, authenticated transport and supported Windows mutation contracts remain open. Preserve those requirements rather than treating passing bounded fixtures as whole-port completion. A documentation successor to this checkpoint must retain separate exact-head CI evidence; these links identify the tested implementation checkpoint, not that successor.
+
 ## Model and continuity
 
 User prefers Astra. Parent and first workers were verified as `gpt-6-astra` in live session metadata. Delegation inherits the parent (global model/provider overrides are empty). For this delivery, pause and notify Corwin on an actual model quota/reset event; otherwise continue without nudges. Never silently substitute a coding model. Keep ownership, heads, evidence and unresolved gates here so a resumed session does not repeat the earlier recovery loop.
