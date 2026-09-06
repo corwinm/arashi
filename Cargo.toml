@@ -16,6 +16,14 @@ path = "src/rust/main.rs"
 name = "aw"
 path = "src/rust/aw.rs"
 
+[[bin]]
+name = "arashi2"
+path = "src/rust/arashi2.rs"
+
+[[bin]]
+name = "aw2"
+path = "src/rust/aw2.rs"
+
 [[test]]
 name = "rust_config"
 path = "tests/rust_config.rs"

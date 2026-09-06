@@ -1,0 +1,66 @@
+name: Rust alpha distribution artifacts
+on:
+  workflow_dispatch:
+  push:
+    branches: [v2]
+    paths: ['src/rust/**', 'Cargo.toml', 'Cargo.lock', 'scripts/alpha/**', 'tests/rust/alpha_distribution.py', 'tests/windows/alpha-preflight.py', '.github/workflows/rust-alpha.yml']
+  pull_request:
+    paths: ['src/rust/**', 'Cargo.toml', 'Cargo.lock', 'scripts/alpha/**', 'tests/rust/alpha_distribution.py', 'tests/windows/alpha-preflight.py', '.github/workflows/rust-alpha.yml']
+permissions:
+  contents: read
+jobs:
+  alpha:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build separate native alpha executables
+        run: cargo +stable build --locked --release --bin arashi2 --bin aw2
+      - name: Real archive and isolated-home lifecycle acceptance
+        run: python -B tests/rust/alpha_distribution.py
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Native aw2 configured workspace journey
+        shell: bash
+        run: |
+          binary=target/release/aw2
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          node tests/rust/parity.mjs "$binary" target/alpha-native-smoke.json --native-only
+      - name: PowerShell 7 lifecycle acceptance
+        if: runner.os == 'Windows'
+        run: python -B tests/rust/alpha_distribution.py
+        env:
+          ALPHA_POWERSHELL: pwsh.exe
+      - name: PowerShell 5.1 preflight with multiple Python candidates
+        if: runner.os == 'Windows'
+        run: python -B tests/windows/alpha-preflight.py
+      - name: Validate PowerShell 5.1 script syntax
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/alpha/install-alpha.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+      - name: Validate Bash syntax
+        shell: bash
+        run: bash -n scripts/alpha/install-alpha.sh
+      - name: Retain opt-in tester bundle (not a GitHub Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-alpha-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: target/alpha-distribution/*
+          if-no-files-found: error
+          retention-days: 14
+      # No npm, tags, release upload, stable endpoint or repository write permission.
