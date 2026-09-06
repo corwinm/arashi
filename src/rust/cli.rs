@@ -219,6 +219,7 @@ pub fn entry() -> i32 {
                     && (data["failedCount"].as_u64().unwrap_or(0)
                         + data["timedOutCount"].as_u64().unwrap_or(0)
                         > 0))
+                || (command == "sync" && data["failureCount"].as_u64().unwrap_or(0) > 0)
             {
                 1
             } else {
@@ -333,6 +334,7 @@ fn dispatch(args: &Args) -> Result<Value> {
         "shell" | "shell init" | "shell install" | "shell uninstall" => crate::shell::execute(args),
         "exec" => crate::execution::exec(&cwd, args),
         "setup" => crate::execution::setup(&cwd, args),
+        "sync" => crate::sync::sync(&cwd, args),
         "doctor" => {
             args.only(&[])?;
             if !args.positional.is_empty() {
@@ -630,6 +632,7 @@ fn render_human(command: &str, data: &Value) {
                 &data["totalPruned"]
             }
         ),
+        "sync" => {}
         _ => unreachable!("implemented command requires human renderer"),
     }
 }
