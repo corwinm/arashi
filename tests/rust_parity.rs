@@ -1,5 +1,6 @@
 //! Independent source-versus-native journeys; requires Node and installed source dependencies.
 //! Run: cargo test --test rust_parity -- --ignored
+include!("rust/parser_composition.rs");
 use serde_json::Value;
 use std::{
     fs,

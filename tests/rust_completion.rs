@@ -144,11 +144,11 @@ fn completion_errors_are_plain_non_json_and_query_is_hidden() {
         Path::new(env!("CARGO_MANIFEST_DIR")),
         &["completion", "tcsh"],
     );
-    assert_eq!(unsupported.status.code(), Some(2));
+    assert_eq!(unsupported.status.code(), Some(1));
     assert!(unsupported.stdout.is_empty());
     assert_eq!(
         String::from_utf8(unsupported.stderr).unwrap(),
-        "[ERR] Unsupported shell `tcsh`. Supported shells: bash, zsh, fish, powershell.\n"
+        "error: command-argument value 'tcsh' is invalid for argument 'shell'. Allowed choices are bash, zsh, fish, powershell.\n"
     );
     let root_help = run(Path::new(env!("CARGO_MANIFEST_DIR")), &["--help"]);
     let completion_help = run(

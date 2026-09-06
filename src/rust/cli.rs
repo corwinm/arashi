@@ -33,177 +33,45 @@ impl Args {
         Ok(())
     }
 }
-fn contract() -> Value {
-    serde_json::from_str(include_str!("../../contracts/cli-commands.json"))
-        .expect("checked-in CLI contract")
-}
-fn definition(name: &str) -> Option<Value> {
-    contract()["commands"]
-        .as_array()?
-        .iter()
-        .find(|v| v["path"] == name)
-        .cloned()
-}
-fn help(name: Option<&str>) -> Result<String> {
-    let c = contract();
-    let mut s = String::from("Arashi Rust 2.0.0-alpha.1 (experimental; see docs/rust-port.md)\n");
-    if let Some(name) = name {
-        let d = definition(name)
-            .ok_or_else(|| Error::new("USAGE", format!("Unknown command: {name}")))?;
-        s.push_str(&format!(
-            "Usage: arashi {name} [options]\n{}\n",
-            d["description"].as_str().unwrap_or("")
-        ));
-        for o in d["options"].as_array().unwrap() {
-            if o["hidden"] == true {
-                continue;
-            }
-            s.push_str(&format!(
-                "  {}  {}\n",
-                o["flags"].as_str().unwrap(),
-                o["description"].as_str().unwrap()
-            ));
-        }
-    } else {
-        s.push_str("Usage: arashi <command> [options]\n  -V, --version\n  -h, --help\nCommands (registration does not imply Rust support):\n");
-        for d in c["commands"].as_array().unwrap() {
-            if d["hidden"].as_bool() == Some(true) {
-                continue;
-            }
-            s.push_str(&format!("  {}\n", d["path"].as_str().unwrap()));
-        }
-    }
-    Ok(s)
-}
-pub fn parse(raw: &[String]) -> Result<Args> {
-    let first = raw
-        .first()
-        .ok_or_else(|| Error::new("USAGE", "Command required"))?;
-    let (command, command_words) = if first == "shell"
-        && raw
-            .get(1)
-            .is_some_and(|value| ["init", "install", "uninstall"].contains(&value.as_str()))
-    {
-        (format!("shell {}", raw[1]), 2)
-    } else {
-        (first.clone(), 1)
-    };
-    let d = definition(&command)
-        .ok_or_else(|| Error::new("USAGE", format!("Unknown command: {command}")))?;
-    let mut options: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut positional = vec![];
-    let mut i = command_words;
-    while i < raw.len() {
-        let a = &raw[i];
-        if a == "--" {
-            if command != "handoff" {
-                positional.extend_from_slice(&raw[i + 1..]);
-            }
-            break;
-        }
-        if a.starts_with('-') {
-            let (flag, inline) = a
-                .split_once('=')
-                .map_or((a.as_str(), None), |(a, b)| (a, Some(b)));
-            let o = d["options"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|o| o["long"].as_str() == Some(flag) || o["short"].as_str() == Some(flag))
-                .ok_or_else(|| Error::new("USAGE", format!("Unknown option: {flag}")))?;
-            let key = o["long"]
-                .as_str()
-                .unwrap()
-                .trim_start_matches('-')
-                .to_string();
-            let value = if o["required"] == true {
-                if let Some(v) = inline {
-                    v.to_string()
-                } else {
-                    i += 1;
-                    raw.get(i)
-                        .filter(|v| command == "handoff" || !v.starts_with('-'))
-                        .ok_or_else(|| {
-                            if command == "handoff" {
-                                Error::new(
-                                    "COMMANDER_USAGE",
-                                    format!(
-                                        "option '{}' argument missing",
-                                        o["flags"].as_str().unwrap()
-                                    ),
-                                )
-                            } else {
-                                Error::new("USAGE", format!("Option {flag} requires a value"))
-                            }
-                        })?
-                        .clone()
-                }
-            } else {
-                if inline.is_some() {
-                    return Err(Error::new(
-                        "USAGE",
-                        format!("Option {flag} does not take a value"),
-                    ));
-                }
-                String::new()
-            };
-            options.entry(key).or_default().push(value);
-        } else if command != "handoff" {
-            positional.push(a.clone());
-        }
-        i += 1;
-    }
-
-    Ok(Args {
-        command,
-        options,
-        positional,
-    })
-}
+pub use crate::parser::parse;
 pub fn entry() -> i32 {
     let raw: Vec<String> = std::env::args().skip(1).collect();
-    if raw.len() == 1 && ["--version", "-V"].contains(&raw[0].as_str()) {
-        println!("{}", env!("CARGO_PKG_VERSION"));
-        return 0;
-    }
-    if raw.is_empty()
-        || raw
-            .iter()
-            .take_while(|a| *a != "--")
-            .any(|a| a == "--help" || a == "-h")
-        || raw.first().is_some_and(|a| a == "help")
-    {
-        let name = if raw.first().is_some_and(|a| a == "help") {
-            raw.get(1).map(String::as_str)
-        } else {
-            raw.first()
-                .filter(|a| !a.starts_with('-'))
-                .map(String::as_str)
-        };
-        match help(name) {
-            Ok(s) => {
-                print!("{s}");
-                return 0;
+    let mut args = match crate::parser::invocation(&raw) {
+        Ok(crate::parser::Invocation::Command(args)) => args,
+        Ok(crate::parser::Invocation::Output { text, stderr, code }) => {
+            if stderr {
+                eprint!("{text}");
+            } else {
+                print!("{text}");
             }
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
+            return code;
         }
-    }
-    if raw.first().is_some_and(|argument| argument == "completion") {
+        Err(error) => {
+            eprintln!("{error}");
+            return error.exit_code;
+        }
+    };
+    if args.command == "completion" || args.command == "completion __query" {
         return crate::completion::run(&raw);
     }
-    let json_mode = raw
-        .iter()
-        .take_while(|a| *a != "--")
-        .any(|a| a == "--json" || a == "-j");
-    let command = raw.first().cloned().unwrap_or_default();
-    let result = parse(&raw).and_then(|args| dispatch(&args));
+    // The retained create action gives explicit --launch precedence over
+    // --no-launch in either order, after Commander structural parsing.
+    if args.command == "create"
+        && raw.iter().any(|arg| arg == "--launch")
+        && raw.iter().any(|arg| arg == "--no-launch")
+    {
+        args.options.remove("no-launch");
+        args.options
+            .insert("launch".to_owned(), vec![String::new()]);
+    }
+    let json_mode = args.has("json");
+    // Dispatch uses canonical nested paths; output envelopes retain the command family.
+    let command = args.command.split(' ').next().unwrap().to_owned();
+    let result = dispatch(&args);
     match result {
         Ok(data) => {
-            let verbose = raw.iter().any(|s| s == "--verbose" || s == "-v");
-            let short = raw.iter().any(|s| s == "--short" || s == "-s");
+            let verbose = args.has("verbose");
+            let short = args.has("short");
             let exit_code = if (command == "status"
                 && data["repositories"].as_array().is_some_and(|rows| {
                     rows.iter().any(|r| {
@@ -388,6 +256,37 @@ fn dispatch(args: &Args) -> Result<Value> {
             crate::clone::clone(&workspace, &cwd, args)
         }
         "create" => {
+            let unsupported_json = || {
+                Error::new(
+                    "JSON_UNSUPPORTED_FOR_MODE",
+                    "JSON output is not supported for interactive-or-launch.",
+                )
+                .with_details(json!({"mode":"interactive-or-launch"}))
+            };
+            if args.has("json") && (args.has("tab") || args.has("tmux")) {
+                return Err(unsupported_json());
+            }
+            let launchers: Vec<_> = ["tmux", "sesh", "herdr"]
+                .into_iter()
+                .filter(|key| args.has(key))
+                .map(|key| format!("--{key}"))
+                .collect();
+            if launchers.len() > 1 {
+                return Err(Error::new(
+                    "CONFLICTING_LAUNCH_OPTIONS",
+                    format!(
+                        "Conflicting launch overrides provided ({}). Choose exactly one explicit create launcher.",
+                        launchers.join(", ")
+                    ),
+                ));
+            }
+            if args.has("json")
+                && ["interactive", "launch", "sesh", "herdr", "switch"]
+                    .iter()
+                    .any(|key| args.has(key))
+            {
+                return Err(unsupported_json());
+            }
             args.only(&[
                 "base",
                 "repo-base",

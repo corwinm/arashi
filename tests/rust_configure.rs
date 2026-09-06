@@ -830,17 +830,36 @@ fn configure_inspection_uses_one_fifo_snapshot_and_finishes_within_a_bound() {
 fn unsupported_modes_and_topologies_fail_closed_without_mutation() {
     let f = Fixture::new();
     f.configure(json!({"version":"1.0.0","reposDir":"repos","repos":{}}));
-    for args in [&["configure"][..], &["configure", "extra", "--json"]] {
-        let before = f.snapshot();
-        let output = f.run(&f.workspace, args);
-        assert!(!output.status.success(), "{args:?} unexpectedly succeeded");
-        assert_eq!(before, f.snapshot());
-    }
+    let before = f.snapshot();
+    let output = f.run(&f.workspace, &["configure"]);
+    assert!(!output.status.success());
+    assert_eq!(before, f.snapshot());
     let standalone = Fixture::new();
     let before = standalone.snapshot();
     let output = standalone.run(&standalone.workspace, &["configure", "--json"]);
     assert!(!output.status.success());
     assert_eq!(before, standalone.snapshot());
+}
+
+#[test]
+fn parser_excess_operands_keep_configure_inspection_read_only() {
+    let f = Fixture::new();
+    f.configure(json!({"version":"1.0.0","reposDir":"repos","repos":{}}));
+    let before = f.snapshot();
+    for args in [
+        vec!["configure", "extra", "-jj"],
+        vec!["configure", "--json", "--", "--help"],
+    ] {
+        let native = f.run(&f.workspace, &args);
+        assert!(native.status.success(), "{native:?}");
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            let source = f.run_source(&f.workspace, &args);
+            assert_eq!(source.status.code(), native.status.code());
+            assert_eq!(source.stderr, native.stderr);
+            assert_eq!(envelope(&source), envelope(&native));
+        }
+        assert_eq!(before, f.snapshot());
+    }
 }
 
 #[test]
