@@ -104,6 +104,9 @@ impl Fixture {
             .current_dir(&self.workspace)
             .env("HOME", &self.home)
             .env("USERPROFILE", &self.home)
+            .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", self.home.join(".gitconfig"))
             .env("GIT_AUTHOR_NAME", "Delete Test")
             .env("GIT_AUTHOR_EMAIL", "delete@example.test")
             .env("GIT_COMMITTER_NAME", "Delete Test")
@@ -181,6 +184,11 @@ fn git(cwd: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .args(args)
         .current_dir(cwd)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
         .env("GIT_AUTHOR_NAME", "Delete Test")
         .env("GIT_AUTHOR_EMAIL", "delete@example.test")
         .env("GIT_COMMITTER_NAME", "Delete Test")
@@ -208,6 +216,76 @@ fn json(output: &Output) -> Value {
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+
+#[cfg(unix)]
+#[test]
+fn fixture_subprocesses_ignore_inherited_git_configuration() {
+    const CHILD: &str = "ARASHI_DELETE_CONFIG_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let fixture = Fixture::new();
+        assert!(
+            !git(&fixture.workspace, &["config", "--list"]).contains("filter.ci."),
+            "fixture Git inherited hosted configuration"
+        );
+        for source in [false, true] {
+            if source && std::env::var_os("ARASHI_TS_PARITY").is_none() {
+                continue;
+            }
+            let before = fixture.snapshot();
+            let output = fixture.run_with(&["delete", "api", "--dry-run", "--json"], source);
+            assert!(
+                output.status.success(),
+                "source={source}: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if !source {
+                assert_eq!(fixture.snapshot(), before);
+            }
+        }
+        // Explicit fixture-owned global filters must still be observed and rejected.
+        effective_conversion_filter_fails_before_status_can_execute_it();
+        return;
+    }
+
+    let inherited = tempfile::tempdir().unwrap();
+    let config = inherited.path().join("gitconfig");
+    let xdg = inherited.path().join("xdg");
+    fs::create_dir_all(xdg.join("git")).unwrap();
+    let contents = "[filter \"ci\"]\n\tclean = cat\n";
+    fs::write(&config, contents).unwrap();
+    fs::write(xdg.join("git/config"), contents).unwrap();
+    // Change only the child test process environment, never the parallel test runner.
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "fixture_subprocesses_ignore_inherited_git_configuration",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("GIT_CONFIG_SYSTEM", &config)
+        .env("GIT_CONFIG_NOSYSTEM", "0")
+        .env("GIT_CONFIG_GLOBAL", &config)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "child regression did not run: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(fs::read_to_string(&config).unwrap(), contents);
+    assert_eq!(
+        fs::read_to_string(xdg.join("git/config")).unwrap(),
+        contents
+    );
 }
 
 #[cfg(unix)]
@@ -576,6 +654,9 @@ fn effective_conversion_filter_fails_before_status_can_execute_it() {
         ])
         .env("HOME", &fixture.home)
         .env("USERPROFILE", &fixture.home)
+        .env("XDG_CONFIG_HOME", fixture.home.join(".config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", fixture.home.join(".gitconfig"))
         .output()
         .unwrap();
     assert!(global.status.success());
@@ -588,6 +669,9 @@ fn effective_conversion_filter_fails_before_status_can_execute_it() {
         .current_dir(fixture.workspace.join("repos/api"))
         .env("HOME", &fixture.home)
         .env("USERPROFILE", &fixture.home)
+        .env("XDG_CONFIG_HOME", fixture.home.join(".config"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", fixture.home.join(".gitconfig"))
         .output()
         .unwrap();
     assert!(control.status.success());

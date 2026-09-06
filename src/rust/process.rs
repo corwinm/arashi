@@ -557,6 +557,45 @@ pub(crate) mod lifecycle {
             .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
             .filter(|value| !value.is_empty())
     }
+    // Use the existing process snapshot, not holder/PID enumeration order.
+    fn lifecycle_signal_order(mut roots: Vec<i32>, rows: &[(i32, i32)], sig: i32) -> Vec<i32> {
+        fn visit(
+            pid: i32,
+            children: &BTreeMap<i32, Vec<i32>>,
+            visited: &mut std::collections::BTreeSet<i32>,
+            ordered: &mut Vec<i32>,
+        ) {
+            if !visited.insert(pid) {
+                return;
+            }
+            if let Some(children_of_pid) = children.get(&pid) {
+                for child in children_of_pid {
+                    visit(*child, children, visited, ordered);
+                }
+            }
+            ordered.push(pid);
+        }
+        let mut children = BTreeMap::<i32, Vec<i32>>::new();
+        for (pid, parent) in rows {
+            children.entry(*parent).or_default().push(*pid);
+        }
+        for pids in children.values_mut() {
+            pids.sort_unstable();
+        }
+        roots.sort_unstable();
+        let mut visited = std::collections::BTreeSet::new();
+        let mut ordered = Vec::new();
+        for root in roots {
+            visit(root, &children, &mut visited, &mut ordered);
+        }
+        // Match hooks.ts: graceful signals are children-first, but KILL must
+        // stop waiting shells before their children can wake them to do work.
+        if sig == 9 {
+            ordered.reverse();
+        }
+        ordered
+    }
+
     impl Drop for Lineage {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
@@ -632,31 +671,24 @@ pub(crate) mod lifecycle {
                     pids.push(pid);
                 }
             }
-            if let Ok(output) = Command::new("/bin/ps").args(["-eo", "pid=,ppid="]).output() {
-                let rows: Vec<(i32, i32)> = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .filter_map(|line| {
-                        let mut fields = line.split_whitespace();
-                        Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
-                    })
-                    .collect();
-                loop {
-                    let old = pids.len();
-                    for (pid, parent) in &rows {
-                        if pids.contains(parent) && !pids.contains(pid) {
-                            pids.push(*pid);
-                        }
-                    }
-                    if old == pids.len() {
-                        break;
-                    }
-                }
-            }
+            let rows = Command::new("/bin/ps")
+                .args(["-eo", "pid=,ppid="])
+                .output()
+                .map(|output| {
+                    String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .filter_map(|line| {
+                            let mut fields = line.split_whitespace();
+                            Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+                        })
+                        .collect::<Vec<(i32, i32)>>()
+                })
+                .unwrap_or_default();
+            let pids = lifecycle_signal_order(pids, &rows, sig);
             // Only descendants/holders of this invocation's private inherited file.
             *observed = pids.clone();
             for pid in pids
                 .into_iter()
-                .rev()
                 .filter(|pid| *pid > 1 && *pid != std::process::id() as i32)
             {
                 unsafe {
@@ -844,5 +876,49 @@ pub(crate) mod lifecycle {
                 error: None,
             })
         })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::lifecycle_signal_order;
+
+        #[test]
+        fn lifecycle_kill_orders_parents_before_children() {
+            // PIDs deliberately do not encode ancestry. Every process already
+            // holds the lineage file, so discovery cannot establish tree order.
+            let rows = [(20, 70), (90, 20), (70, 1)];
+            for roots in [vec![70, 20, 90], vec![90, 70, 20], vec![20, 90, 70]] {
+                assert_eq!(lifecycle_signal_order(roots, &rows, 9), [70, 20, 90]);
+            }
+        }
+
+        #[test]
+        fn lifecycle_order_discovers_descendants_without_unrelated_processes() {
+            // A retained orphan holder (60), duplicated roots, new descendants,
+            // and an unrelated tree. Snapshot enumeration must not affect order.
+            let rows = [(90, 20), (80, 70), (20, 70), (30, 10), (70, 1)];
+            let mut reversed = rows;
+            reversed.reverse();
+            for snapshot in [&rows[..], &reversed[..]] {
+                assert_eq!(
+                    lifecycle_signal_order(vec![70, 60, 70], snapshot, 15),
+                    [60, 90, 20, 80, 70]
+                );
+                assert_eq!(
+                    lifecycle_signal_order(vec![60, 70], snapshot, 9),
+                    [70, 80, 20, 90, 60]
+                );
+            }
+        }
+
+        #[test]
+        fn lifecycle_graceful_orders_children_before_parents() {
+            let rows = [(20, 70), (90, 20), (70, 1)];
+            for sig in [2, 15] {
+                for roots in [vec![70, 20, 90], vec![90, 70, 20], vec![20, 90, 70]] {
+                    assert_eq!(lifecycle_signal_order(roots, &rows, sig), [90, 20, 70]);
+                }
+            }
+        }
     }
 }
