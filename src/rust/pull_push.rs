@@ -353,7 +353,10 @@ fn reject_observation_drivers(path: &Path) -> Result<()> {
             "Custom Git hook paths are not supported by pull/push; no changes made",
         ));
     }
-    let hooks = PathBuf::from(git::run(path, &["rev-parse", "--git-path", "hooks"])?);
+    let hooks = git::run(path, &["rev-parse", "--git-path", "hooks"])?;
+    // Git terminates this pathname record with LF, including on Windows.
+    // Remove only that delimiter, not whitespace belonging to the pathname.
+    let hooks = PathBuf::from(hooks.strip_suffix('\n').unwrap_or(&hooks));
     let hooks = if hooks.is_absolute() {
         hooks
     } else {
