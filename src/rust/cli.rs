@@ -259,6 +259,11 @@ fn dispatch(args: &Args) -> Result<Value> {
                 json!({"message":"No npm-managed binary installation is needed in this direct binary context.","npmEntrypointMessage":"The npm package entrypoint handles `arashi install` before the native binary starts.","reinstallMessage":"For direct binary or curl installs, reinstall Arashi or download a release asset if the binary is missing.","releasesUrl":"https://github.com/corwinm/arashi/releases"}),
             )
         }
+        "clone" => {
+            args.only(&["all", "base", "repo-base"])?;
+            let workspace = crate::config::Workspace::discover(&cwd)?;
+            crate::clone::clone(&workspace, &cwd, args)
+        }
         "create" => {
             args.only(&[
                 "base",
