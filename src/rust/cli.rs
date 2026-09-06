@@ -307,6 +307,20 @@ fn dispatch(args: &Args) -> Result<Value> {
             )?
             .execute(&w, args.has("dry-run"))
         }
+        "move" => {
+            args.only(&["from", "to"])?;
+            if !args.positional.is_empty() {
+                return Err(Error::new("USAGE", "move takes no arguments"));
+            }
+            if args.value("from").is_none() || args.value("to").is_none() {
+                return Err(Error::new(
+                    "RUST_NOT_YET_PORTED",
+                    "Native move requires explicit --from and --to; no changes made",
+                ));
+            }
+            let w = crate::config::Workspace::discover(&cwd)?;
+            crate::r#move::move_changes(&w, args)
+        }
         "list" => {
             args.only(&[])?;
             if !args.positional.is_empty() {
@@ -466,6 +480,29 @@ fn render_human(command: &str, data: &Value) {
             "Removed {} worktree(s) and {} branch(es)",
             data["summary"]["successfulWorktrees"], data["summary"]["successfulBranches"]
         ),
+        "move" => {
+            if data["mode"] == "standalone" {
+                println!("Workspace mode: standalone");
+                println!(
+                    "Main repository: {}",
+                    data["repositoryPath"].as_str().unwrap_or("")
+                );
+            }
+            println!(
+                "Moved changes in {} repositories",
+                data["movedCount"].as_u64().unwrap_or(0)
+            );
+            println!(
+                "Source: {} ({})",
+                data["source"]["label"].as_str().unwrap_or(""),
+                data["source"]["primaryPath"].as_str().unwrap_or("")
+            );
+            println!(
+                "Target: {} ({})",
+                data["target"]["label"].as_str().unwrap_or(""),
+                data["target"]["primaryPath"].as_str().unwrap_or("")
+            );
+        }
         "init" => println!(
             "{} standalone workspace: {}",
             if data["dryRun"] == true {
