@@ -118,6 +118,16 @@ impl Fixture {
     }
 
     fn run_with(&self, args: &[&str], directive: Option<&Path>, source: bool) -> Output {
+        self.run_with_env(args, directive, source, &[])
+    }
+
+    fn run_with_env(
+        &self,
+        args: &[&str],
+        directive: Option<&Path>,
+        source: bool,
+        env: &[(&str, &str)],
+    ) -> Output {
         let mut command = if source {
             let mut command = Command::new("node");
             command.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"));
@@ -133,6 +143,9 @@ impl Fixture {
         command.env_remove("KITTY_PID");
         command.env_remove("KITTY_WINDOW_ID");
         command.env_remove("TERM_PROGRAM");
+        command.env_remove("TERM_PROGRAM_VERSION");
+        command.env_remove("VSCODE_PID");
+        command.env_remove("VSCODE_GIT_IPC_HANDLE");
         command.env("TERM", "dumb");
         command.env_remove("VSCODE_GIT_ASKPASS_NODE");
         command.env_remove("VSCODE_GIT_ASKPASS_EXTRA_ARGS");
@@ -145,7 +158,7 @@ impl Fixture {
                 .env_remove("ARASHI_DIRECTIVE_FILE")
                 .env_remove("ARASHI_SHELL");
         }
-        command.output().unwrap()
+        command.envs(env.iter().copied()).output().unwrap()
     }
 
     fn snapshot(&self) -> (String, String, String) {
@@ -165,6 +178,138 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_file(self.directive());
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn retained_source_review_blocker_characterization() {
+    if std::env::var_os("ARASHI_TS_PARITY").is_none() {
+        return;
+    }
+    let output = Command::new("node")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/rust/review-blockers-source.mjs"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn configured_cd_overrides_ide_signals_with_source_directive_parity() {
+    let fixture = Fixture::configured("cd");
+    fixture.add_worktree("ide-target", ".arashi/worktrees/ide-target");
+    let directive = fixture.directive();
+    let before = fixture.snapshot();
+    let env = [("TERM_PROGRAM", "cursor"), ("VSCODE_PID", "")];
+    let native = fixture.run_with_env(&["switch", "ide-target"], Some(&directive), false, &env);
+    assert!(native.status.success(), "{native:?}");
+    let bytes = fs::read(&directive).unwrap();
+    if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+        let source = fixture.run_with_env(&["switch", "ide-target"], Some(&directive), true, &env);
+        assert!(source.status.success(), "{source:?}");
+        assert_eq!(fs::read(&directive).unwrap(), bytes);
+    }
+    assert_eq!(fixture.snapshot(), before);
+}
+
+#[test]
+fn review_blocker_auto_ide_signals_reject_before_directive_mutation() {
+    let fixture = Fixture::configured("auto");
+    let target = fixture.add_worktree("ide-target", ".arashi/worktrees/ide-target");
+    let directive = fixture.directive();
+    let before = fixture.snapshot();
+    let config_before = fs::read(fixture.root.join(".arashi/config.json")).unwrap();
+    for env in [
+        vec![("TERM_PROGRAM", "cursor")],
+        vec![("TERM_PROGRAM", "Kiro")],
+        vec![("TERM_PROGRAM_VERSION", "Cursor 1")],
+        vec![("VSCODE_GIT_ASKPASS_NODE", "/Applications/Kiro/node")],
+        vec![("VSCODE_GIT_ASKPASS_EXTRA_ARGS", "Cursor")],
+        vec![("VSCODE_GIT_IPC_HANDLE", "/tmp/kiro.sock")],
+        vec![("VSCODE_PID", "")],
+        vec![("VSCODE_PID", "123")],
+        vec![("VSCODE_GIT_IPC_HANDLE", "")],
+        vec![("VSCODE_GIT_IPC_HANDLE", " ")],
+        vec![("TERM_PROGRAM", "vscode")],
+        vec![
+            ("TERM_PROGRAM", "kiro"),
+            ("VSCODE_GIT_ASKPASS_EXTRA_ARGS", "CURSOR"),
+        ],
+    ] {
+        for existing in [false, true] {
+            if existing {
+                fs::write(&directive, "caller-owned sentinel\n").unwrap();
+            }
+            let output =
+                fixture.run_with_env(&["switch", "ide-target"], Some(&directive), false, &env);
+            assert!(!output.status.success(), "managed {env:?}: {output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("not yet ported"),
+                "{output:?}"
+            );
+            if existing {
+                assert_eq!(fs::read(&directive).unwrap(), b"caller-owned sentinel\n");
+                fs::remove_file(&directive).unwrap();
+            } else {
+                assert!(!directive.exists(), "managed {env:?} wrote directive");
+            }
+            assert_eq!(fixture.snapshot(), before);
+            assert_eq!(
+                fs::read(fixture.root.join(".arashi/config.json")).unwrap(),
+                config_before
+            );
+        }
+        // Explicit --cd overrides managed auto, including empty VS Code signals.
+        let native = fixture.run_with_env(
+            &["switch", "ide-target", "--cd"],
+            Some(&directive),
+            false,
+            &env,
+        );
+        assert!(native.status.success(), "{native:?}");
+        let bytes = fs::read(&directive).unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains(target.to_str().unwrap()));
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            let source = fixture.run_with_env(
+                &["switch", "ide-target", "--cd"],
+                Some(&directive),
+                true,
+                &env,
+            );
+            assert!(source.status.success(), "{source:?}");
+            assert_eq!(fs::read(&directive).unwrap(), bytes);
+        }
+        fs::remove_file(&directive).unwrap();
+        assert_eq!(fixture.snapshot(), before);
+    }
+}
+
+#[test]
+fn review_blocker_unmanaged_signals_keep_auto_parent_shell_parity() {
+    let fixture = Fixture::configured("auto");
+    fixture.add_worktree("ide-target", ".arashi/worktrees/ide-target");
+    let directive = fixture.directive();
+    let before = fixture.snapshot();
+    for env in [
+        vec![("TERM_PROGRAM", " VSCode ")],
+        vec![("TERM_PROGRAM", "VSCODE")],
+        vec![
+            ("TERM_PROGRAM_VERSION", " "),
+            ("VSCODE_GIT_ASKPASS_NODE", ""),
+        ],
+        vec![("TERM_PROGRAM", "ghostty")],
+        vec![],
+    ] {
+        let native = fixture.run_with_env(&["switch", "ide-target"], Some(&directive), false, &env);
+        assert!(native.status.success(), "unmanaged {env:?}: {native:?}");
+        let bytes = fs::read(&directive).unwrap();
+        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
+            let source =
+                fixture.run_with_env(&["switch", "ide-target"], Some(&directive), true, &env);
+            assert!(source.status.success(), "{source:?}");
+            assert_eq!(fs::read(&directive).unwrap(), bytes);
+        }
+        fs::remove_file(&directive).unwrap();
+        assert_eq!(fixture.snapshot(), before);
     }
 }
 

@@ -437,8 +437,9 @@ fn repository_settings(
             insert(&mut row, "descriptor", repository_descriptor_json(&entry));
             if entry.id == "baseBranch"
                 && value.is_none()
-                && let Some(base) = workspace_base
+                && let Some(base) = workspace_base.and_then(Value::as_str)
             {
+                let base = base.strip_prefix("origin/").unwrap_or(base);
                 insert(
                     &mut row,
                     "effective",

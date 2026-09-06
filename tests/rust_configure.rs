@@ -171,6 +171,60 @@ fn native_hook_extension() -> &'static str {
 }
 
 #[test]
+fn review_blocker_inherited_base_normalizes_once_without_rewriting_configuration() {
+    for (base, expected) in [
+        ("origin/develop", "develop"),
+        ("origin/origin/develop", "origin/develop"),
+        ("upstream/develop", "upstream/develop"),
+    ] {
+        let f = Fixture::new();
+        f.configure(
+            json!({"version":"1", "reposDir":"repos", "baseBranch":base, "repos":{
+                "inherited":{"path":"repos/inherited"},
+                "explicit":{"path":"repos/explicit", "baseBranch":"origin/release"}
+            }}),
+        );
+        let before = f.snapshot();
+        // Execute the retained CLI first, before evaluating the native result.
+        let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| {
+            let source = f.run_source(&f.workspace, &["configure", "--json"]);
+            assert!(source.status.success(), "{source:?}");
+            assert_eq!(f.snapshot(), before);
+            let source = envelope(&source);
+            let inherited = repository(&source["data"], "inherited");
+            assert_eq!(
+                setting(inherited["settings"].as_array().unwrap(), "baseBranch")["effective"],
+                json!({"source":"inherited", "value":expected})
+            );
+            source
+        });
+        let output = f.run(&f.workspace, &["configure", "--json"]);
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(f.snapshot(), before);
+        let native = envelope(&output);
+        let inherited = repository(&native["data"], "inherited");
+        let row = setting(inherited["settings"].as_array().unwrap(), "baseBranch");
+        assert_eq!(
+            row["effective"],
+            json!({"source":"inherited", "value":expected})
+        );
+        assert_eq!(row["configured"], false);
+        assert!(row.get("configuredValue").is_none());
+        assert_eq!(
+            setting(native["data"]["settings"].as_array().unwrap(), "baseBranch")["configuredValue"],
+            base
+        );
+        let explicit = repository(&native["data"], "explicit");
+        let row = setting(explicit["settings"].as_array().unwrap(), "baseBranch");
+        assert_eq!(row["configuredValue"], "origin/release");
+        assert!(row.get("effective").is_none());
+        if let Some(source) = source {
+            assert_eq!(native, source);
+        }
+    }
+}
+
+#[test]
 fn json_inspection_preserves_order_values_aliases_inheritance_and_sanitized_hooks() {
     let f = Fixture::new();
     for name in ["zulu", "alpha"] {

@@ -51,21 +51,30 @@ fn managed_context_active() -> bool {
         || nonempty_env("HERDR_ENV").as_deref() == Some("1")
         || nonempty_env("CMUX_WORKSPACE_ID").is_some()
         || nonempty_env("CMUX_SURFACE_ID").is_some()
+        || integrated_ide_active()
         || nonempty_env("KITTY_PID").is_some()
         || nonempty_env("KITTY_WINDOW_ID").is_some()
         || nonempty_env("TERM").is_some_and(|value| value.eq_ignore_ascii_case("xterm-kitty"))
-        || integrated_ide_active()
 }
 
 fn integrated_ide_active() -> bool {
-    let term = nonempty_env("TERM_PROGRAM");
-    if !term
-        .as_deref()
-        .is_some_and(|value| value.eq_ignore_ascii_case("vscode"))
-    {
-        return false;
-    }
-    true
+    // Cursor/Kiro signals precede the exact VS Code terminal/presence fallback.
+    // This only classifies launch intent; no IDE launcher is implemented here.
+    [
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+        "VSCODE_GIT_ASKPASS_NODE",
+        "VSCODE_GIT_ASKPASS_EXTRA_ARGS",
+        "VSCODE_GIT_IPC_HANDLE",
+    ]
+    .iter()
+    .filter_map(|name| nonempty_env(name))
+    .any(|value| {
+        let value = value.to_lowercase();
+        value.contains("cursor") || value.contains("kiro")
+    }) || std::env::var("TERM_PROGRAM").as_deref() == Ok("vscode")
+        || std::env::var_os("VSCODE_PID").is_some()
+        || std::env::var_os("VSCODE_GIT_IPC_HANDLE").is_some()
 }
 
 fn directive_context() -> Option<(PathBuf, String)> {
