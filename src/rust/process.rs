@@ -225,7 +225,7 @@ pub(crate) fn run_tree(argv: &[String], cwd: &Path, timeout: Duration) -> io::Re
             if !settlement_complete && start.elapsed() >= next_lineage_probe {
                 // Continue ownership discovery through TERM/KILL settlement so a
                 // tracked child cannot fork an untracked survivor during escalation.
-                lineage.signal_tree(
+                lineage.signal_owned_tree(
                     pid,
                     status.is_none(),
                     &mut observed,
@@ -236,7 +236,7 @@ pub(crate) fn run_tree(argv: &[String], cwd: &Path, timeout: Duration) -> io::Re
             if !timed_out && start.elapsed() >= timeout {
                 timed_out = true;
                 #[cfg(unix)]
-                lineage.signal_tree(pid, status.is_none(), &mut observed, 15);
+                lineage.signal_owned_tree(pid, status.is_none(), &mut observed, 15);
                 #[cfg(windows)]
                 signal_tree(pid, false);
                 term_at = Some(Instant::now());
@@ -244,7 +244,7 @@ pub(crate) fn run_tree(argv: &[String], cwd: &Path, timeout: Duration) -> io::Re
             if timed_out && term_at.is_some_and(|sent| sent.elapsed() >= Duration::from_millis(100))
             {
                 #[cfg(unix)]
-                lineage.signal_tree(pid, status.is_none(), &mut observed, 9);
+                lineage.signal_owned_tree(pid, status.is_none(), &mut observed, 9);
                 #[cfg(windows)]
                 signal_tree(pid, true);
                 term_at = None;
@@ -255,7 +255,7 @@ pub(crate) fn run_tree(argv: &[String], cwd: &Path, timeout: Duration) -> io::Re
             {
                 #[cfg(unix)]
                 {
-                    lineage.signal_tree(pid, status.is_none(), &mut observed, 9);
+                    lineage.signal_owned_tree(pid, status.is_none(), &mut observed, 9);
                     cleanup_unresolved = lineage.has_live(&mut observed);
                 }
                 cancel_readers.store(true, Ordering::SeqCst);
@@ -612,7 +612,59 @@ pub(crate) mod lifecycle {
                     .unwrap_or_default()
             }
         }
-        pub(super) fn signal_tree(
+        fn signal_tree(&self, leader: u32, leader_alive: bool, observed: &mut Vec<i32>, sig: i32) {
+            // Retain discovered descendants through escalation, as the source does.
+            // Exclude the original leader after reaping unless fresh lineage proves ownership.
+            let mut pids: Vec<i32> = observed
+                .iter()
+                .copied()
+                .filter(|pid| leader_alive || *pid != leader as i32)
+                .collect();
+            for pid in self
+                .holders()
+                .into_iter()
+                .chain(leader_alive.then_some(leader as i32))
+            {
+                if !pids.contains(&pid) {
+                    pids.push(pid);
+                }
+            }
+            if let Ok(output) = Command::new("/bin/ps").args(["-eo", "pid=,ppid="]).output() {
+                let rows: Vec<(i32, i32)> = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter_map(|line| {
+                        let mut fields = line.split_whitespace();
+                        Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+                    })
+                    .collect();
+                loop {
+                    let old = pids.len();
+                    for (pid, parent) in &rows {
+                        if pids.contains(parent) && !pids.contains(pid) {
+                            pids.push(*pid);
+                        }
+                    }
+                    if old == pids.len() {
+                        break;
+                    }
+                }
+            }
+            // Only descendants/holders of this invocation's private inherited file.
+            *observed = pids.clone();
+            for pid in pids
+                .into_iter()
+                .rev()
+                .filter(|pid| *pid > 1 && *pid != std::process::id() as i32)
+            {
+                unsafe {
+                    kill(pid, sig);
+                }
+            }
+        }
+
+        // Sync uses birth-checked identities and settlement. Lifecycle retains
+        // its existing low-latency signal path and interruption semantics.
+        pub(super) fn signal_owned_tree(
             &self,
             leader: u32,
             leader_alive: bool,
