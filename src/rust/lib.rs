@@ -61,6 +61,8 @@ pub mod list;
 
 pub mod operations;
 
+pub mod r#move;
+
 pub mod prune;
 
 pub mod selection;
