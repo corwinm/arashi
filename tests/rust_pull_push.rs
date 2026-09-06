@@ -774,26 +774,245 @@ fn push_diverged_failure_continues_and_preserves_rejected_remote_ref() {
 }
 
 #[test]
-fn push_dirty_repository_fails_without_creating_remote_ref() {
-    let f = Fixture::new(None);
-    f.feature(&f.child, "feature/dirty", "committed.txt");
-    fs::write(f.child.join("dirty.txt"), "dirty\n").unwrap();
-    let output = f.run(&["push", "--only", "child", "--set-upstream", "--json"]);
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        json(&output)["error"]["details"]["results"][0]["status"],
-        "failed"
-    );
-    assert!(
-        Command::new("git")
-            .args(["rev-parse", "--verify", "refs/heads/feature/dirty"])
-            .current_dir(&f.child_remote)
-            .output()
-            .unwrap()
-            .status
-            .code()
-            != Some(0)
-    );
+fn push_dirty_repository_publishes_committed_ref() {
+    dirty_push_matrix(false);
+}
+
+#[test]
+fn push_dirty_loopback_publishes_committed_ref() {
+    dirty_push_matrix(true);
+}
+
+fn dirty_checkout(repo: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fs::write(repo.join("README.md"), "caller stash\n").unwrap();
+    git(repo, &["stash", "push", "-m", "existing caller stash"]);
+    fs::write(repo.join("README.md"), "staged caller bytes\n").unwrap();
+    git(repo, &["add", "README.md"]);
+    fs::write(repo.join("README.md"), "unstaged caller bytes\n").unwrap();
+    fs::write(repo.join("untracked.bin"), [0, 255, 1, 10]).unwrap();
+    [
+        ".git/index",
+        ".git/HEAD",
+        ".git/refs/stash",
+        ".git/logs/refs/stash",
+        "README.md",
+        "untracked.bin",
+    ]
+    .iter()
+    .map(|name| {
+        let path = repo.join(name);
+        let bytes = fs::read(&path).unwrap();
+        (path, bytes)
+    })
+    .collect()
+}
+
+fn assert_preserved(snapshot: &[(PathBuf, Vec<u8>)]) {
+    for (path, bytes) in snapshot {
+        assert_eq!(&fs::read(path).unwrap(), bytes, "{}", path.display());
+    }
+}
+
+fn dirty_push_matrix(network: bool) {
+    let implementations = if std::env::var("ARASHI_DIRTY_SOURCE_ONLY").as_deref() == Ok("1") {
+        vec![true]
+    } else if std::env::var("ARASHI_TS_PARITY").as_deref() == Ok("1") {
+        vec![true, false]
+    } else {
+        vec![false]
+    };
+    for new_branch in [false, true] {
+        for committed in [false, true] {
+            let mut oracle = Vec::new();
+            for &source in &implementations {
+                let f = Fixture::new(None);
+                let _daemon = if network {
+                    let (guard, url) = daemon(&f);
+                    git(&f.child, &["remote", "set-url", "origin", &url]);
+                    Some(guard)
+                } else {
+                    None
+                };
+                let branch = if new_branch { "feature/dirty" } else { "main" };
+                if new_branch {
+                    git(&f.child, &["checkout", "-b", branch]);
+                }
+                if committed {
+                    fs::write(f.child.join("committed.txt"), "publish only this commit\n").unwrap();
+                    git(&f.child, &["add", "committed.txt"]);
+                    git(&f.child, &["commit", "-m", "publishable"]);
+                }
+                let oid = git(&f.child, &["rev-parse", "HEAD"]);
+                let before_refs = git(&f.child_remote, &["show-ref"]);
+                let mut snapshot = dirty_checkout(&f.child);
+                for path in [
+                    f.root.join(".arashi/config.json"),
+                    f.root.join(".git/config"),
+                    f.root.join(".git/index"),
+                    f.root.join(".git/HEAD"),
+                ] {
+                    snapshot.push((path.clone(), fs::read(path).unwrap()));
+                }
+                let child_config = fs::read(f.child.join(".git/config")).unwrap();
+                let home = f.home.join("caller.bin");
+                fs::write(&home, "caller home bytes").unwrap();
+                snapshot.push((home, b"caller home bytes".to_vec()));
+                let mut observations = Vec::new();
+                if new_branch {
+                    observations.push(f.run_impl(source, &["push", "--only", "child", "--json"]));
+                    assert_eq!(
+                        json(observations.last().unwrap())["data"]["results"][0]["status"],
+                        "skipped"
+                    );
+                    assert_preserved(&snapshot);
+                }
+                let preview = f.run_impl(
+                    source,
+                    &[
+                        "push",
+                        "--only",
+                        "child",
+                        "--set-upstream",
+                        "--dry-run",
+                        "--json",
+                    ],
+                );
+                assert!(preview.status.success(), "{}", json(&preview));
+                assert_eq!(
+                    json(&preview)["data"]["results"][0]["status"],
+                    if committed { "planned" } else { "skipped" }
+                );
+                observations.push(preview);
+                assert_eq!(git(&f.child_remote, &["show-ref"]), before_refs);
+                assert_eq!(fs::read(f.child.join(".git/config")).unwrap(), child_config);
+                assert_preserved(&snapshot);
+                let push = f.run_impl(
+                    source,
+                    &["push", "--only", "child", "--set-upstream", "--json"],
+                );
+                eprintln!(
+                    "dirty-push source={source} network={network} new_branch={new_branch} committed={committed} exit={:?} stdout={} stderr={}",
+                    push.status.code(),
+                    String::from_utf8_lossy(&push.stdout),
+                    String::from_utf8_lossy(&push.stderr)
+                );
+                assert!(push.status.success(), "{}", json(&push));
+                assert_eq!(
+                    json(&push)["data"]["results"][0]["status"],
+                    if committed { "pushed" } else { "skipped" }
+                );
+                if committed {
+                    assert_eq!(
+                        git(
+                            &f.child_remote,
+                            &["rev-parse", &format!("refs/heads/{branch}")]
+                        ),
+                        oid
+                    );
+                    assert_eq!(
+                        git(&f.child, &["rev-parse", "--abbrev-ref", "@{u}"]),
+                        format!("origin/{branch}")
+                    );
+                    // Keep raw refspec diagnostics: source names the branch, native names the frozen OID.
+                    let stderr = json(&push)["data"]["results"][0]["stderr"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned();
+                    assert!(stderr.contains(&format!(
+                        "{} -> {branch}",
+                        if source { branch } else { &oid }
+                    )));
+                } else {
+                    assert_eq!(git(&f.child_remote, &["show-ref"]), before_refs);
+                    observations.push(push);
+                }
+                assert_preserved(&snapshot);
+                assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), oid);
+                if !(new_branch && committed) {
+                    assert_eq!(fs::read(f.child.join(".git/config")).unwrap(), child_config);
+                }
+                let repeat = f.run_impl(source, &["push", "--only", "child", "--json"]);
+                assert_eq!(json(&repeat)["data"]["results"][0]["status"], "skipped");
+                observations.push(repeat);
+                assert_preserved(&snapshot);
+                assert_eq!(fs::read_dir(&f.home).unwrap().count(), 1);
+                if source {
+                    oracle = observations;
+                } else if !oracle.is_empty() {
+                    assert_eq!(oracle.len(), observations.len());
+                    for (source, native) in oracle.iter().zip(&observations) {
+                        compare_json(source, native);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn push_dirty_divergence_continues_in_selection_order() {
+    for network in [false, true] {
+        for source in [true, false] {
+            if source && std::env::var("ARASHI_TS_PARITY").as_deref() != Ok("1") {
+                continue;
+            }
+            let f = Fixture::new(None);
+            let _daemon = if network {
+                let (guard, url) = daemon(&f);
+                git(&f.child, &["remote", "set-url", "origin", &url]);
+                git(
+                    &f.root,
+                    &[
+                        "remote",
+                        "set-url",
+                        "origin",
+                        &url.replace("child.git", "main.git"),
+                    ],
+                );
+                Some(guard)
+            } else {
+                None
+            };
+            for repo in [&f.root, &f.child] {
+                fs::write(repo.join("committed.txt"), "local commit\n").unwrap();
+                git(repo, &["add", "committed.txt"]);
+                git(repo, &["commit", "-m", "local"]);
+            }
+            let expected = git(&f.root, &["rev-parse", "HEAD"]);
+            let rejected = f.advance(&f.child_remote, "divergent", "remote.txt");
+            // Source compares upstream tracking state; make divergence equally observable.
+            git(&f.child, &["fetch", "origin"]);
+            let mut snapshot = dirty_checkout(&f.child);
+            snapshot.extend(dirty_checkout(&f.root));
+            let output = f.run_impl(
+                source,
+                &["push", "--only", "child,workspace,workspace", "--json"],
+            );
+            eprintln!(
+                "dirty-divergence source={source} network={network} stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(output.status.code(), Some(1));
+            let value = json(&output);
+            assert_eq!(value["error"]["code"], "PUSH_FAILED");
+            let rows = value["error"]["details"]["results"].as_array().unwrap();
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0]["repositoryId"], "child");
+            assert_eq!(rows[0]["status"], "failed");
+            assert_eq!(rows[1]["repositoryId"], "workspace");
+            assert_eq!(rows[1]["status"], "pushed");
+            assert_eq!(
+                git(&f.child_remote, &["rev-parse", "refs/heads/main"]),
+                rejected
+            );
+            assert_eq!(
+                git(&f.main_remote, &["rev-parse", "refs/heads/main"]),
+                expected
+            );
+            assert_preserved(&snapshot);
+        }
+    }
 }
 
 #[test]

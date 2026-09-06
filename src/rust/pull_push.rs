@@ -963,28 +963,6 @@ fn plan_push(repository: Repository, remote: Option<Remote>, args: &Args) -> Res
         });
     };
     let local = head(&repository.path)?;
-    if !clean(&repository.path)? {
-        let name = repository.name.clone();
-        return Ok(PushPlan {
-            repository,
-            remote,
-            branch: branch.clone(),
-            head: local,
-            expected_target: None,
-            result: result([
-                ("branch", json!(branch)),
-                ("elapsedSeconds", json!(elapsed(start))),
-                (
-                    "errorMessage",
-                    json!("Working tree is dirty; push refused without mutation"),
-                ),
-                ("remote", json!("origin")),
-                ("repositoryId", json!(name)),
-                ("status", json!("failed")),
-            ]),
-            push: false,
-        });
-    }
     let tracking = upstream(&repository.path);
     let (baseline_oid, configured) = if let Some(upstream) = &tracking {
         let target = upstream
@@ -1107,7 +1085,6 @@ fn execute_push(plan: &PushPlan) -> Value {
     let current_target = remote_ref(&plan.remote, &format!("refs/heads/{}", plan.branch));
     let safe = same_remote(&plan.repository, &plan.remote)
         && head(&plan.repository.path).is_ok_and(|value| value == plan.head)
-        && clean(&plan.repository.path).unwrap_or(false)
         && current_target == plan.expected_target;
     if !safe {
         let mut value = plan.result.clone();
