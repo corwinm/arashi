@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -55,27 +56,31 @@ class AlphaDistribution(unittest.TestCase):
         (self.home / '.zshrc').write_text('caller profile\n')
         self.shell_env = {**os.environ, 'HOME': str(self.home), 'USERPROFILE': str(self.home),
                           'PATH': str(Path(self.temp.name) / 'no-python')}
+        self.shell_cache_paths = set()
         if WINDOWS:
             self.shell = shutil.which(os.environ.get('ALPHA_POWERSHELL', 'powershell.exe'))
             self.assertTrue(self.shell)
             self.registry_before = self.user_environment()
             cache = Path(self.temp.name) / 'powershell-cache'
             cache.mkdir()
-            # PS5's CLR writes profiling data under LOCALAPPDATA; PS7's
-            # CoreCLR uses the profile home and supports disabling gathering.
-            # Isolate shell caches, not arbitrary paths from the HOME snapshot.
             self.shell_env.update(APPDATA=str(self.home / 'AppData/Roaming'),
-                                  LOCALAPPDATA=str(cache / 'Local'),
-                                  PSModuleAnalysisCachePath=str(cache / 'ModuleAnalysisCache'),
-                                  COMPlus_MultiCoreJitNoProfileGather='1')
+                                  LOCALAPPDATA=str(self.home / 'AppData/Local'),
+                                  PSModuleAnalysisCachePath=str(cache / 'ModuleAnalysisCache'))
             for folder in ['WindowsPowerShell', 'PowerShell']:
                 profile = self.home / 'Documents' / folder / 'Microsoft.PowerShell_profile.ps1'
                 profile.parent.mkdir(parents=True)
                 profile.write_bytes(b'# caller profile\r\n')
-            # Only the shell runs before the baseline: PS5 creates Roaming and
-            # PS7 writes StartupProfileData-NonInteractive even with -NoProfile.
-            # Track all resulting bytes/directories; do not ignore AppData.
+            # A shell-only -File run proves which JIT cache this shell creates.
+            # Its timing-dependent bytes change on every launch. Normalize only
+            # these exact, observed cache files, never an AppData subtree.
+            self.shell_probe = Path(self.temp.name) / 'shell-only.ps1'
+            self.shell_probe.write_text('Get-Item -LiteralPath $PSCommandPath | Out-Null\n'
+                                        'Start-Sleep -Milliseconds 100\nexit 0\n')
             self.run_shell_only()
+            for folder in ['Microsoft/Windows/PowerShell', 'Microsoft/PowerShell']:
+                candidate = self.home / 'AppData/Local' / folder / 'StartupProfileData-NonInteractive'
+                if candidate.is_file():
+                    self.shell_cache_paths.add(candidate)
         self.before = self.snapshot()
 
     @staticmethod
@@ -88,7 +93,7 @@ class AlphaDistribution(unittest.TestCase):
             return None
 
     def run_shell_only(self):
-        result = subprocess.run([self.shell, '-NoProfile', '-NonInteractive', '-Command', 'exit 0'],
+        result = subprocess.run([self.shell, '-NoProfile', '-NonInteractive', '-File', str(self.shell_probe)],
                                 env=self.shell_env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -98,7 +103,12 @@ class AlphaDistribution(unittest.TestCase):
         self.assertEqual(self.before, self.snapshot())
 
     def snapshot(self):
-        return {str(p.relative_to(self.home)): p.read_bytes() if p.is_file() else None
+        def value(path):
+            if path in self.shell_cache_paths:
+                info = path.lstat()
+                return ('shell JIT cache', stat.S_IFMT(info.st_mode), info.st_nlink)
+            return path.read_bytes() if path.is_file() else None
+        return {str(p.relative_to(self.home)): value(p)
                 for p in self.home.rglob('*') if '.arashi-alpha' not in p.parts}
 
     @unittest.skipUnless(WINDOWS, 'native shell startup baseline')
