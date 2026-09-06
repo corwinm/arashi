@@ -28,6 +28,9 @@ path = "tests/rust_cli.rs"
 serde = "1.0.228"
 serde_json = { version = "1.0.149", features = ["raw_value"] }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.2", features = ["fs"] }
+
 [[test]]
 name = "rust_status"
 path = "tests/rust_status.rs"
@@ -43,3 +46,7 @@ path = "tests/rust_parity.rs"
 [[test]]
 name = "rust_prune"
 path = "tests/rust_prune.rs"
+
+[[test]]
+name = "rust_sync"
+path = "tests/rust_sync.rs"

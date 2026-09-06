@@ -70,6 +70,8 @@ pub mod doctor;
 
 pub mod status_human;
 
+pub mod sync;
+
 pub mod execution;
 pub mod process;
 
