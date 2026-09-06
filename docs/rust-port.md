@@ -1,6 +1,6 @@
 # Rust port support ledger
 
-The Rust binary is **2.0.0-alpha.1 and incomplete**. The retained TypeScript implementation is the behavioral oracle. npm remains 1.36.0; npm entrypoints, shell installers, stable release packaging, and TypeScript source remain unchanged. Rust binaries do not invoke TypeScript.
+The Rust binary is **2.0.0-alpha.1 and incomplete**. The retained TypeScript implementation is the behavioral oracle. npm remains 1.36.0; npm entrypoints, stable shell installers, stable release packaging, and TypeScript source remain unchanged. Rust binaries do not invoke TypeScript. The separate [opt-in alpha setup bundle](rust-alpha-installation.md) installs only `arashi2`/`aw2`, without shell integration or stable publication changes.
 
 The complete parser inventory is [contracts/cli-commands.json](../contracts/cli-commands.json). Help registration does not imply implementation. Unsupported commands and policies fail nonzero; some alpha rejection and partial-failure envelopes intentionally differ from the source.
 
