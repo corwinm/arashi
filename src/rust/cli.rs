@@ -64,6 +64,9 @@ fn help(name: Option<&str>) -> Result<String> {
     } else {
         s.push_str("Usage: arashi <command> [options]\n  -V, --version\n  -h, --help\nCommands (registration does not imply Rust support):\n");
         for d in c["commands"].as_array().unwrap() {
+            if d["hidden"].as_bool() == Some(true) {
+                continue;
+            }
             s.push_str(&format!("  {}\n", d["path"].as_str().unwrap()));
         }
     }
@@ -163,6 +166,9 @@ pub fn entry() -> i32 {
                 return 1;
             }
         }
+    }
+    if raw.first().is_some_and(|argument| argument == "completion") {
+        return crate::completion::run(&raw);
     }
     let json_mode = raw
         .iter()
