@@ -209,6 +209,73 @@ fn data(value: &Value) -> &Value {
     &value["data"]
 }
 
+#[cfg(unix)]
+#[test]
+#[ignore = "requires retained TypeScript dependencies and ARASHI_TS_PARITY=1"]
+fn source_parity_for_local_sync_workflows() {
+    assert!(std::env::var_os("ARASHI_TS_PARITY").is_some());
+    let source = std::env::var_os("ARASHI_TS_SOURCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"));
+    for args in [
+        vec!["sync", "--json"],
+        vec!["sync", "--json", "--only", "alpha,zeta"],
+        vec!["sync", "--json", "--group", "docs"],
+    ] {
+        let mut outcomes = vec![];
+        for native in [false, true] {
+            let f = Fixture::new(&["zeta", "alpha"]);
+            git(&f.root, &["checkout", "-b", "parity"]);
+            git(&f.repo("alpha"), &["branch", "parity"]);
+            let before = [
+                head(&f.repo("zeta"), "HEAD"),
+                head(&f.repo("alpha"), "HEAD"),
+            ];
+            // Repeat the invocation to exercise current-branch no-op as well.
+            for _ in 0..2 {
+                let output = if native {
+                    f.run(&args)
+                } else {
+                    let mut command = Command::new("node");
+                    command.arg(&source).args(&args).current_dir(&f.root);
+                    isolated(&mut command, &f.home);
+                    command.output().unwrap()
+                };
+                assert!(
+                    output.status.success(),
+                    "stdout={} stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let mut value: Value = serde_json::from_slice(&output.stdout).unwrap();
+                for result in value["data"]["results"].as_array_mut().unwrap() {
+                    result["durationMs"] = json!(0);
+                }
+                outcomes.push((output.status.code(), output.stderr, value));
+            }
+            for (index, name) in ["zeta", "alpha"].iter().enumerate() {
+                let selected = *name == "alpha" || !args.contains(&"docs");
+                assert_eq!(
+                    branch(&f.repo(name)),
+                    if selected { "parity" } else { "main" }
+                );
+                assert_eq!(head(&f.repo(name), "HEAD"), before[index]);
+                if selected {
+                    assert!(
+                        git(
+                            &f.repo(name),
+                            &["for-each-ref", "--format=%(upstream)", "refs/heads/parity"]
+                        )
+                        .is_empty()
+                    );
+                }
+            }
+        }
+        assert_eq!(outcomes[0], outcomes[2], "{args:?}: initial sync");
+        assert_eq!(outcomes[1], outcomes[3], "{args:?}: no-op sync");
+    }
+}
+
 #[test]
 fn creates_missing_branches_at_frozen_head_without_upstream_in_config_order() {
     let f = Fixture::new(&["zeta", "alpha"]);
@@ -938,6 +1005,17 @@ fn branch_created_then_timeout_is_inspected_rolled_back_and_settles_quickly() {
         "timeout did not settle boundedly: {:?}",
         started.elapsed()
     );
+    assert!(
+        marker.exists(),
+        "timeout fixture never reached the mutation"
+    );
+    assert!(
+        pid_file.exists(),
+        "timeout fixture never spawned its descendant"
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(data(&value)["results"][0]["status"], "timeout", "{value}");
+    assert_eq!(data(&value)["results"][0]["rolledBack"], true, "{value}");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         !process_alive(&pid_file),
@@ -978,6 +1056,17 @@ fn checkout_then_timeout_is_inspected_restored_and_settles_quickly() {
         "timeout did not settle boundedly: {:?}",
         started.elapsed()
     );
+    assert!(
+        marker.exists(),
+        "timeout fixture never reached the mutation"
+    );
+    assert!(
+        pid_file.exists(),
+        "timeout fixture never spawned its descendant"
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(data(&value)["results"][0]["status"], "timeout", "{value}");
+    assert_eq!(data(&value)["results"][0]["rolledBack"], true, "{value}");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         !process_alive(&pid_file),
@@ -988,6 +1077,79 @@ fn checkout_then_timeout_is_inspected_restored_and_settles_quickly() {
         head(&f.repo("zeta"), "refs/heads/slow-checkout"),
         head(&f.repo("zeta"), "refs/heads/main")
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn stalled_recovery_checkout_settles_and_preserves_owned_state() {
+    stalled_recovery_mutation("checkout");
+}
+
+#[cfg(unix)]
+#[test]
+fn stalled_recovery_delete_settles_and_preserves_owned_state() {
+    stalled_recovery_mutation("delete");
+}
+
+#[cfg(unix)]
+fn stalled_recovery_mutation(operation: &str) {
+    {
+        let f = Fixture::new(&["zeta"]);
+        git(&f.root, &["checkout", "-b", "recovery-timeout"]);
+        let failed = f.temp.join("attachment-failed");
+        let pid_file = f.temp.join("recovery-descendant-pid");
+        let condition = if operation == "checkout" {
+            "[ \"$1\" = checkout ]"
+        } else {
+            "[ \"$1\" = update-ref ] && [ \"$2\" = -d ]"
+        };
+        let body = format!(
+            "if [ \"$1\" = symbolic-ref ] && [ \"$2\" = HEAD ]; then : > '{}'; exit 73; fi\nif [ -e '{}' ] && {}; then\n  sleep 30 &\n  printf '%s' $! > '{}'\n  wait\nfi",
+            failed.display(),
+            failed.display(),
+            condition,
+            pid_file.display()
+        );
+        let path = git_shim(&f, &body);
+        let started = std::time::Instant::now();
+        let output = f.run_with_path(&["sync", "--json"], &path);
+        assert!(
+            pid_file.exists(),
+            "{operation}: recovery injection never ran"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "{operation}: recovery was unbounded: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            !process_alive(&pid_file),
+            "{operation}: recovery descendant survived"
+        );
+        assert_eq!(output.status.code(), Some(1));
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let result = &data(&value)["results"][0];
+        assert_eq!(result["rollbackFailed"], true, "{value}");
+        assert!(
+            result["errorMessage"]
+                .as_str()
+                .unwrap()
+                .contains("Recovery operation timed out"),
+            "{value}"
+        );
+        assert_eq!(
+            head(&f.repo("zeta"), "refs/heads/recovery-timeout"),
+            head(&f.repo("zeta"), "refs/heads/main")
+        );
+        if operation == "checkout" {
+            assert_eq!(
+                git(&f.repo("zeta"), &["rev-parse", "--abbrev-ref", "HEAD"]),
+                "HEAD"
+            );
+        } else {
+            assert_eq!(branch(&f.repo("zeta")), "main");
+        }
+    }
 }
 
 #[cfg(unix)]

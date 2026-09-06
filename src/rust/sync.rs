@@ -853,6 +853,28 @@ fn restore_symbolic_head(_plan: &Plan, _detached: &HeadIdentity, _reference: &st
     ))
 }
 
+// Recovery gets a fresh budget: the forward-operation budget may be exhausted.
+// A stalled rollback must preserve residual state and report failure, not hang.
+fn recovery_git(path: &Path, args: &[&str]) -> Result<()> {
+    let output = timed_git(path, args, Instant::now(), Duration::from_secs(5));
+    if let Some(error) = output.error {
+        return Err(Error::new("SYNC_RECOVERY_FAILED", error));
+    }
+    if output.timed_out {
+        return Err(Error::new(
+            "SYNC_RECOVERY_TIMEOUT",
+            "Recovery operation timed out; residual repository state was preserved",
+        ));
+    }
+    if output.exit_code != 0 {
+        return Err(Error::new(
+            "SYNC_RECOVERY_FAILED",
+            format!("git {} failed: {}", args.join(" "), output.stderr.trim()),
+        ));
+    }
+    Ok(())
+}
+
 fn rollback(
     plans: &[Plan],
     mutations: &[Mutation],
@@ -873,7 +895,7 @@ fn rollback(
                         expected.path.display()
                     )));
                 }
-                git::run(&expected.path, &["checkout", "--detach", &original.oid])?;
+                recovery_git(&expected.path, &["checkout", "--detach", &original.oid])?;
                 let detached = head_identity(&expected.path)?;
                 if detached.reference.is_some() || detached.oid != original.oid {
                     return Err(unsupported(&format!(
@@ -925,7 +947,7 @@ fn rollback(
                         expected.path.display()
                     )));
                 }
-                git::run(
+                recovery_git(
                     &expected.path,
                     &["update-ref", "-d", target_ref, &reference.oid],
                 )?;
