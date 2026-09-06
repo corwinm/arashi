@@ -51,6 +51,7 @@ pub mod clone;
 pub mod completion;
 
 pub mod config;
+pub mod handoff;
 pub mod status;
 
 pub mod init;

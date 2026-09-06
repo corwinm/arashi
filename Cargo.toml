@@ -33,6 +33,10 @@ name = "rust_status"
 path = "tests/rust_status.rs"
 
 [[test]]
+name = "rust_handoff"
+path = "tests/rust_handoff.rs"
+
+[[test]]
 name = "rust_init"
 path = "tests/rust_init.rs"
 
