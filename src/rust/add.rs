@@ -333,7 +333,15 @@ fn setup_script(root: &Path) -> Result<Option<&'static str>> {
 }
 
 fn validate_config_policy(config: &crate::config::Config, source: &Value) -> Result<()> {
-    let allowed_root = ["$schema", "repos", "reposDir", "version", "worktreesDir"];
+    let allowed_root = [
+        "$schema",
+        "repos",
+        "reposDir",
+        "version",
+        "worktreesDir",
+        "defaults",
+        "sync",
+    ];
     let source_is_canonical = source.as_object().is_some_and(|root| {
         root.keys().all(|key| allowed_root.contains(&key.as_str()))
             && root.get("version").and_then(Value::as_str) == Some("1.0.0")
@@ -354,6 +362,9 @@ fn validate_config_policy(config: &crate::config::Config, source: &Value) -> Res
                 })
     });
     if !source_is_canonical
+        || ["defaults", "sync"]
+            .iter()
+            .any(|key| source.get(key) != config.raw.get(key))
         || config
             .raw
             .as_object()
@@ -367,7 +378,7 @@ fn validate_config_policy(config: &crate::config::Config, source: &Value) -> Res
         })
     {
         return Err(unsupported(
-            "Native add currently supports only minimal canonical repository configuration without aliases, custom schemas, hooks, materialization, groups, bases, defaults, sync, or naming policies; no changes made",
+            "Native add currently supports only minimal canonical repository configuration without aliases, custom schemas, hooks, materialization, groups, bases, or naming policies; no changes made",
         ));
     }
     Ok(())
@@ -402,12 +413,26 @@ fn serialize_config(
         json_string(added_path),
         json_string(git_url)
     ));
-    format!(
+    let mut serialized = format!(
         "{{\n  \"$schema\": \"https://unpkg.com/arashi/schema/config.schema.json\",\n  \"repos\": {{\n{}\n  }},\n  \"reposDir\": {},\n  \"version\": \"1.0.0\",\n  \"worktreesDir\": {}\n}}",
         repositories.join(",\n"),
         json_string(&config.repos_dir),
         json_string(&config.worktrees_dir)
-    )
+    );
+    // These policies are parsed by the shared config contract but do not run
+    // during add. Preserve canonical values rather than dropping them.
+    for key in ["sync", "defaults"] {
+        if let Some(value) = config.raw.get(key) {
+            let pretty = serde_json::to_string_pretty(value).expect("config serializes");
+            serialized.truncate(serialized.len() - 2);
+            serialized.push_str(&format!(
+                ",\n  {}: {}\n}}",
+                json_string(key),
+                pretty.replace('\n', "\n  ")
+            ));
+        }
+    }
+    serialized
 }
 
 pub fn add(cwd: &Path, args: &Args) -> Result<Value> {

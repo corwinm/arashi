@@ -472,11 +472,27 @@ fn remote_symlink_topology_is_rejected_before_clone() {
 #[test]
 #[ignore = "requires Node TypeScript source runtime"]
 fn source_oracle_success_matches_json_and_persisted_effects() {
+    source_add_effects(false);
+}
+
+#[test]
+#[ignore = "requires Node TypeScript source runtime"]
+fn source_oracle_add_preserves_canonical_switch_and_sync_config_bytes() {
+    source_add_effects(true);
+}
+
+fn source_add_effects(policies: bool) {
     if std::env::var_os("ARASHI_TS_PARITY").is_none() {
         return;
     }
     let fixture = Fixture::new();
     let config_path = fixture.workspace.join(".arashi/config.json");
+    if policies {
+        let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        config["defaults"] = serde_json::json!({"switch":{"mode":"cd"}});
+        config["sync"] = serde_json::json!({"timeoutSeconds":10});
+        fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+    }
     let exclude_path = fixture.workspace.join(".git/info/exclude");
     let config_before = fs::read(&config_path).unwrap();
     let exclude_before = fs::read(&exclude_path).unwrap();
@@ -660,6 +676,167 @@ fn network_and_setup_match_source() {
                     .mode(),
                 mode
             );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires Node and retained TypeScript dependencies"]
+fn configured_add_clone_and_shell_journey_preserves_command_policies() {
+    for network in [false, true] {
+        for source in [true, false] {
+            let fixture = Fixture::new();
+            let daemon = network.then(|| network::GitDaemon::start(&fixture.root));
+            let url = daemon
+                .as_ref()
+                .map(|d| format!("{}child.git", d.prefix))
+                .unwrap_or_else(|| fixture.remote.to_string_lossy().into_owned());
+            let config_path = fixture.workspace.join(".arashi/config.json");
+            let mut config: Value =
+                serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+            config["defaults"] = serde_json::json!({"switch":{"mode":"cd"}});
+            config["sync"] = serde_json::json!({"timeoutSeconds":10});
+            fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+            let run = |args: &[&str]| {
+                let mut command = if source {
+                    let mut cmd = Command::new("node");
+                    cmd.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/index.ts"));
+                    cmd
+                } else {
+                    Command::new(env!("CARGO_BIN_EXE_arashi"))
+                };
+                command
+                    .args(args)
+                    .current_dir(&fixture.workspace)
+                    .env("HOME", fixture.root.join("home"))
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_ALLOW_PROTOCOL", if network { "git" } else { "file" })
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .stdin(Stdio::null())
+                    .output()
+                    .unwrap()
+            };
+            let add = run(&["add", &url, "--json"]);
+            assert!(
+                add.status.success(),
+                "add source={source} network={network}: {} {}",
+                String::from_utf8_lossy(&add.stdout),
+                String::from_utf8_lossy(&add.stderr)
+            );
+            let persisted: Value =
+                serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+            assert_eq!(persisted["defaults"], config["defaults"]);
+            assert_eq!(persisted["sync"], config["sync"]);
+            let saved = fs::read(&config_path).unwrap();
+            let inspect = run(&["configure", "--json"]);
+            assert!(
+                inspect.status.success(),
+                "{}",
+                String::from_utf8_lossy(&inspect.stdout)
+            );
+            assert_eq!(fs::read(&config_path).unwrap(), saved);
+            let child = fixture.workspace.join("repos/child");
+            let oid = git(&child, &["rev-parse", "HEAD"]);
+            fs::remove_dir_all(&child).unwrap();
+            let cloned = run(&["clone", "--all", "--json"]);
+            assert!(
+                cloned.status.success(),
+                "clone source={source}: {}",
+                String::from_utf8_lossy(&cloned.stdout)
+            );
+            assert_eq!(git(&child, &["rev-parse", "HEAD"]), oid);
+            assert_eq!(git(&child, &["config", "--get", "remote.origin.url"]), url);
+            assert_eq!(fs::read(&config_path).unwrap(), saved);
+            assert!(run(&["clone", "--all", "--json"]).status.success());
+            // Network/local-origin sync remains unsupported, with no mutation.
+            if !source {
+                let rejected = run(&["sync", "--json"]);
+                assert!(!rejected.status.success());
+                assert_eq!(document(&rejected)["error"]["code"], "RUST_NOT_YET_PORTED");
+                assert_eq!(fs::read(&config_path).unwrap(), saved);
+                assert_eq!(git(&child, &["rev-parse", "HEAD"]), oid);
+                assert_eq!(git(&child, &["branch", "--show-current"]), "main");
+            }
+            // Explicitly disconnect the disposable origin and its configured URL
+            // before exercising the supported local-only sync consumer.
+            git(&child, &["remote", "remove", "origin"]);
+            let mut local_config: Value = serde_json::from_slice(&saved).unwrap();
+            local_config["repos"]["child"]
+                .as_object_mut()
+                .unwrap()
+                .remove("gitUrl");
+            fs::write(
+                &config_path,
+                serde_json::to_vec_pretty(&local_config).unwrap(),
+            )
+            .unwrap();
+            let saved = fs::read(&config_path).unwrap();
+            git(&fixture.workspace, &["checkout", "-b", "journey"]);
+            let sync = run(&["sync", "--json"]);
+            assert!(
+                sync.status.success(),
+                "sync source={source}: {}",
+                String::from_utf8_lossy(&sync.stdout)
+            );
+            assert_eq!(git(&child, &["branch", "--show-current"]), "journey");
+            assert_eq!(git(&child, &["rev-parse", "HEAD"]), oid);
+            assert!(run(&["sync", "--json"]).status.success());
+            assert!(run(&["status", "--json"]).status.success());
+            assert!(run(&["handoff", "--json"]).status.success());
+            let wrapper = run(&["shell", "init", "bash"]);
+            assert!(wrapper.status.success());
+            let script = fixture.root.join("journey.sh");
+            let binary = if source {
+                format!(
+                    "node '{}'",
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("src/index.ts")
+                        .display()
+                )
+            } else {
+                format!("'{}'", env!("CARGO_BIN_EXE_arashi"))
+            };
+            let bin = fixture.root.join("bin");
+            fs::create_dir(&bin).unwrap();
+            fs::write(
+                bin.join("arashi"),
+                format!("#!/bin/sh\nexec {binary} \"$@\"\n"),
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(bin.join("arashi"), fs::Permissions::from_mode(0o755)).unwrap();
+            std::os::unix::fs::symlink("arashi", bin.join("aw")).unwrap();
+            let mut paths = vec![bin];
+            paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+            let script_text = format!(
+                "set -e\n{}\narashi switch --repos --path '{}'\ntest \"$PWD\" = '{}'\naw switch --cd --path '{}'\ntest \"$PWD\" = '{}'\n",
+                String::from_utf8(wrapper.stdout).unwrap(),
+                child.display(),
+                child.display(),
+                fixture.workspace.display(),
+                fixture.workspace.display()
+            );
+            fs::write(&script, script_text).unwrap();
+            let shell = Command::new("bash")
+                .arg(&script)
+                .current_dir(&fixture.workspace)
+                .env("PATH", std::env::join_paths(paths).unwrap())
+                .env("HOME", fixture.root.join("home"))
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env_remove("TERM_PROGRAM")
+                .env_remove("VSCODE_PID")
+                .env_remove("VSCODE_GIT_IPC_HANDLE")
+                .output()
+                .unwrap();
+            assert!(
+                shell.status.success(),
+                "shell source={source}: {} {}",
+                String::from_utf8_lossy(&shell.stdout),
+                String::from_utf8_lossy(&shell.stderr)
+            );
+            assert_eq!(fs::read(&config_path).unwrap(), saved);
         }
     }
 }
