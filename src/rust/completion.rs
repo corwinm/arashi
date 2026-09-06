@@ -886,7 +886,12 @@ fn dynamic_candidates(
             true,
         );
     }
-    worktree_candidates(&workspace, context, deadline)
+    let candidates = worktree_candidates(&workspace, context, deadline);
+    if Instant::now() >= deadline {
+        Vec::new()
+    } else {
+        candidates
+    }
 }
 
 fn query(argv: &[String], cursor: usize, cwd: &Path) -> Vec<u8> {

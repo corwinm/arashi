@@ -215,7 +215,7 @@ fn query_emits_lossless_configured_repository_group_and_worktree_records() {
     #[cfg(not(windows))]
     let linked = temp.0.join("linked, line\nbreak");
     #[cfg(windows)]
-    let linked = temp.0.join("linked, line break ");
+    let linked = temp.0.join("linked, line break");
     git(
         root,
         &[
@@ -599,6 +599,61 @@ fn query_drains_large_git_worktree_output_within_the_budget() {
             .iter()
             .any(|(value, _)| value == "topic-799")
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn query_discards_partial_worktree_candidates_after_deadline() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = dynamic_guard();
+    let temp = TempDir::new("partial-deadline");
+    let root = &temp.0;
+    fs::create_dir(root.join(".arashi")).unwrap();
+    let repositories = (0..9)
+        .map(|index| {
+            let name = format!("repo{index}");
+            fs::create_dir_all(root.join(&name).join(".git")).unwrap();
+            format!(r#""{name}":{{"path":"{name}"}}"#)
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    fs::write(
+        root.join(".arashi/config.json"),
+        format!(r#"{{"repos":{{{repositories}}},"version":"1.0.0"}}"#),
+    )
+    .unwrap();
+    let git_path = root.join("git");
+    fs::write(
+        &git_path,
+        "#!/bin/sh\nif [ \"$3\" = worktree ]; then\n  case \"$2\" in\n    */repo8) sleep 1; exit 0 ;;\n    *) printf 'worktree %s/wt\\0HEAD 0000000000000000000000000000000000000000\\0branch refs/heads/topic\\0\\0' \"$2\"; exit 0 ;;\n  esac\nfi\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_arashi"))
+        .args([
+            "completion",
+            "__query",
+            "3",
+            "--",
+            "arashi",
+            "switch",
+            "--all",
+            "",
+        ])
+        .current_dir(root)
+        .env("NO_COLOR", "1")
+        .env("ARASHI_COMPLETION_TEST_BUDGET_MS", "500")
+        .env("PATH", format!("{}:/usr/bin:/bin", root.to_string_lossy()))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "deadline must discard partial candidates"
+    );
+    assert!(output.stderr.is_empty());
 }
 
 #[cfg(unix)]

@@ -50,6 +50,8 @@ Exec/setup preflight all configured paths before starting children. Nonempty mat
 
 - **Prune/install:** Existing standalone/configured metadata prune with dry-run and `--expire now`; informational direct-binary install contract. Other prune policies/topologies remain unsupported.
 
+- **Completion:** Native Bash, Zsh, Fish and PowerShell script generation is byte-identical to the retained generated source. The hidden shell-neutral query protocol completes commands, options, choices, configured repositories/groups and command-scoped worktrees. Queries preserve NUL-delimited paths and configured linked/common-directory discovery, use bounded descriptor reads, and discard all dynamic candidates when the 200 ms deadline expires.
+
 Create uses discovery order; status and removal retain configuration order. Status and create have different selection error contracts. No configured defaults are silently applied as successful launch behavior: explicit create launch/switch overrides are required for this subset. Unsupported active lifecycle policies fail before mutation. Configured child path aliases containing parent traversal are rejected before destination projection, including with `--no-hooks`.
 
 ## Mutation safety and remaining parity work
@@ -58,7 +60,7 @@ Plans check Git identity, branch/ref state, destinations, config and effective i
 
 This is not full failure parity. Coordinated mid-execution failures return nonzero alpha envelopes containing completed operations and rollback errors, rather than the complete source recovery contract. Concurrent external Git changes in the final validation-to-mutation window, partial filesystem writes, and complex mixed repository failures need more characterization. Complete hook recovery envelopes, broader materialization recovery parity, configuration migrations, Unicode collision rules, stale ignore reconciliation, external/symlinked paths and bare/linked mutation topology remain blocking work.
 
-Still unported: add/clone/delete, pull/push/sync, move/handoff, switch and terminal/editor integration, shell integration, completion/query, configure, update/uninstall and native distribution integration. Human init/create/remove text is not source-identical; status parity is bounded to the captured-process cases above. Full parser/help/error precedence is not claimed. Remaining hook and materialization policies require their real lifecycle, provenance, input, timeout and recovery contracts; empty success results are not substitutes.
+Still unported: add/clone/delete, pull/push/sync, move/handoff, switch and terminal/editor integration, shell integration, configure, update/uninstall and native distribution integration. Human init/create/remove text is not source-identical; status parity is bounded to the captured-process cases above. Full parser/help/error precedence is not claimed. Remaining hook and materialization policies require their real lifecycle, provenance, input, timeout and recovery contracts; empty success results are not substitutes.
 
 Relevant source contracts: [configuration](../src/lib/config.ts), [create](../src/commands/create.ts), [remove](../src/commands/remove.ts), [managed ignore](../src/lib/managed-ignore.ts), [hooks](../src/lib/hooks.ts), [JSON envelopes](../src/lib/json-output.ts), [executable distribution](../contracts/executable-distribution.json). Downstream arashi-docs/arashi-skills need updates before publishing these workflows; they are outside this authorized child worktree and were not modified.
 
