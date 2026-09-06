@@ -48,6 +48,7 @@ pub mod git;
 pub mod cli;
 
 pub mod config;
+pub mod configure;
 pub mod status;
 
 pub mod init;
@@ -69,6 +70,8 @@ pub mod paths;
 pub mod doctor;
 
 pub mod status_human;
+
+pub mod switch;
 
 pub mod execution;
 pub mod process;

@@ -14,6 +14,7 @@ pub struct RepoConfig {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub raw: Value,
+    pub persisted: Value,
     pub repos_dir: String,
     pub worktrees_dir: String,
     pub repos: BTreeMap<String, RepoConfig>,
@@ -52,6 +53,117 @@ fn alias(v: &mut Value, new: &str, old: &[&str]) {
     for key in old {
         v.as_object_mut().unwrap().remove(*key);
     }
+}
+fn validate_create_aliases(v: &Value, scope: &str) -> Result<()> {
+    let camel = v.get("launchMode");
+    let snake = v.get("launch_mode");
+    if let (Some(camel), Some(snake)) = (camel, snake)
+        && camel != snake
+    {
+        return Err(invalid(format!(
+            "{scope}.launchMode: {} conflicts with {scope}.launch_mode: {}",
+            camel, snake
+        )));
+    }
+    for (field, value) in [("launchMode", camel), ("launch_mode", snake)] {
+        if let Some(value) = value {
+            choice(
+                value,
+                &["auto", "sesh", "herdr"],
+                &format!("{scope}.{field}"),
+            )?;
+        }
+    }
+    let Some(canonical) = v.get("launch").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let Some((field, legacy)) = camel
+        .and_then(Value::as_str)
+        .map(|value| ("launchMode", value))
+        .or_else(|| {
+            snake
+                .and_then(Value::as_str)
+                .map(|value| ("launch_mode", value))
+        })
+    else {
+        return Ok(());
+    };
+    let compatible = (canonical == "auto" && legacy == "auto")
+        || (["sesh", "herdr"].contains(&canonical) && (legacy == "auto" || legacy == canonical));
+    if !compatible {
+        return Err(invalid(format!(
+            "{scope}.launch: {canonical:?} conflicts with legacy {scope}.{field}: {legacy:?}"
+        )));
+    }
+    Ok(())
+}
+fn switch_defaults(v: &mut Value) -> Result<()> {
+    keys(v, &["mode", "launchMode", "launch_mode"], "defaults.switch")?;
+    let mode = match v.get("mode") {
+        Some(value) => {
+            choice(
+                value,
+                &["auto", "cd", "launch", "sesh", "herdr"],
+                "defaults.switch.mode",
+            )?;
+            value.as_str().map(str::to_owned)
+        }
+        None => None,
+    };
+    if let (Some(camel), Some(snake)) = (v.get("launchMode"), v.get("launch_mode"))
+        && camel != snake
+    {
+        return Err(invalid(format!(
+            "defaults.switch.launchMode: {camel} conflicts with defaults.switch.launch_mode: {snake}; remove both legacy fields and set defaults.switch.mode to one supported value"
+        )));
+    }
+    let legacy = if let Some((field, value)) = v
+        .get("launchMode")
+        .map(|value| ("launchMode", value))
+        .or_else(|| v.get("launch_mode").map(|value| ("launch_mode", value)))
+    {
+        if !value
+            .as_str()
+            .is_some_and(|value| ["auto", "sesh", "herdr"].contains(&value))
+        {
+            return Err(invalid(format!(
+                "defaults.switch.{field}: must be one of \"auto\", \"sesh\", or \"herdr\""
+            )));
+        }
+        value.as_str().map(str::to_owned)
+    } else {
+        None
+    };
+    let replacement = match (mode.as_deref(), legacy.as_deref()) {
+        (mode, None) => mode.map(str::to_owned),
+        (None, Some("auto")) => Some("launch".to_owned()),
+        (Some(mode), Some("auto")) => Some(mode.to_owned()),
+        (None | Some("auto") | Some("launch"), Some(launcher)) => Some(launcher.to_owned()),
+        (Some(mode), Some(launcher)) if mode == launcher => Some(mode.to_owned()),
+        (Some(mode), Some(launcher)) => {
+            let fields = if v.get("launchMode").is_some() && v.get("launch_mode").is_some() {
+                "defaults.switch.launchMode and defaults.switch.launch_mode"
+            } else if v.get("launchMode").is_some() {
+                "defaults.switch.launchMode"
+            } else {
+                "defaults.switch.launch_mode"
+            };
+            let noun = if fields.contains(" and ") {
+                "fields"
+            } else {
+                "field"
+            };
+            return Err(invalid(format!(
+                "defaults.switch.mode: \"{mode}\" cannot be combined with legacy {fields}: \"{launcher}\"; remove the legacy {noun} and choose defaults.switch.mode: \"{mode}\" or \"{launcher}\""
+            )));
+        }
+    };
+    v.as_object_mut().unwrap().remove("launchMode");
+    v.as_object_mut().unwrap().remove("launch_mode");
+    if let Some(mode) = replacement {
+        v["mode"] = json!(mode);
+    }
+    Ok(())
 }
 fn branch(v: &Value, scope: &str) -> Result<()> {
     let s = nonempty(v, scope)?;
@@ -115,46 +227,64 @@ fn integer(v: &Value, scope: &str) -> Result<()> {
 fn defaults(v: &mut Value) -> Result<()> {
     keys(v, &["create", "editors", "switch"], "defaults")?;
     if let Some(create) = v.get_mut("create") {
-        create_defaults(create)?;
+        create_defaults(create, "defaults.create")?;
     }
     if let Some(editors) = v.get_mut("editors") {
         keys(editors, &["vscode", "cursor", "kiro"], "defaults.editors")?;
-        for editor in editors.as_object_mut().unwrap().values_mut() {
-            keys(editor, &["create"], "defaults.editors.editor")?;
+        for (name, editor) in editors.as_object_mut().unwrap() {
+            let scope = format!("defaults.editors.{name}");
+            keys(editor, &["create"], &scope)?;
             if let Some(create) = editor.get_mut("create") {
-                create_defaults(create)?;
+                create_defaults(create, &format!("{scope}.create"))?;
             }
         }
     }
     if let Some(s) = v.get_mut("switch") {
-        keys(s, &["mode", "launchMode", "launch_mode"], "defaults.switch")?;
-        alias(s, "mode", &["launchMode", "launch_mode"]);
-        if let Some(mode) = s.get("mode") {
-            choice(
-                mode,
-                &["auto", "cd", "launch", "sesh", "herdr"],
-                "defaults.switch.mode",
-            )?;
-        }
+        switch_defaults(s)?;
     }
     Ok(())
 }
-fn create_defaults(v: &mut Value) -> Result<()> {
-    keys(
-        v,
-        &["switch", "launch", "launchMode", "launch_mode"],
-        "defaults.create",
-    )?;
-    alias(v, "launch", &["launchMode", "launch_mode"]);
+fn create_defaults(v: &mut Value, scope: &str) -> Result<()> {
+    keys(v, &["switch", "launch", "launchMode", "launch_mode"], scope)?;
+    validate_create_aliases(v, scope)?;
     if v.get("switch").is_some_and(|s| !s.is_boolean()) {
-        return Err(invalid("defaults.create.switch: must be a boolean"));
+        return Err(invalid(format!("{scope}.switch: must be a boolean")));
     }
-    if let Some(l) = v.get("launch") {
-        choice(
-            l,
-            &["none", "auto", "sesh", "herdr"],
-            "defaults.create.launch",
-        )?;
+    let raw_launch = v.get("launch").cloned();
+    let legacy = v
+        .get("launchMode")
+        .or_else(|| v.get("launch_mode"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let replacement = match raw_launch.as_ref() {
+        Some(Value::Bool(false)) if legacy.is_some() => {
+            let field = if v.get("launchMode").is_some() {
+                "launchMode"
+            } else {
+                "launch_mode"
+            };
+            return Err(invalid(format!(
+                "{scope}.launch: false cannot be combined with legacy {scope}.{field}: {:?}",
+                legacy.unwrap()
+            )));
+        }
+        Some(Value::Bool(false)) => Some("none".to_owned()),
+        Some(Value::Bool(true)) => Some(legacy.unwrap_or_else(|| "auto".to_owned())),
+        Some(value) => {
+            choice(
+                value,
+                &["none", "auto", "sesh", "herdr"],
+                &format!("{scope}.launch"),
+            )?;
+            value.as_str().map(str::to_owned)
+        }
+        None => legacy,
+    };
+    let object = v.as_object_mut().unwrap();
+    object.remove("launchMode");
+    object.remove("launch_mode");
+    if let Some(replacement) = replacement {
+        object.insert("launch".into(), json!(replacement));
     }
     Ok(())
 }
@@ -233,6 +363,7 @@ impl Config {
                 format!("Failed to parse configuration: {e}"),
             )
         })?;
+        let persisted = v.clone();
         keys(
             &v,
             &[
@@ -424,6 +555,7 @@ impl Config {
         Ok(Self {
             repo_order,
             raw: v,
+            persisted,
             repos_dir,
             worktrees_dir,
             repos,

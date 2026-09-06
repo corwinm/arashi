@@ -241,6 +241,30 @@ pub fn entry() -> i32 {
 fn dispatch(args: &Args) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     match args.command.as_str() {
+        "configure" => {
+            args.only(&[])?;
+            if !args.has("json") {
+                return Err(Error::new(
+                    "RUST_NOT_YET_PORTED",
+                    "Interactive configure is not yet ported to Rust; no changes made",
+                ));
+            }
+            if !args.positional.is_empty() {
+                return Err(Error::new("USAGE", "configure takes no arguments"));
+            }
+            crate::configure::inspect(&cwd)
+        }
+        "switch" => {
+            if args.has("json") {
+                return Err(Error::new(
+                    "JSON_UNSUPPORTED_FOR_MODE",
+                    "JSON output is not supported for launch.",
+                )
+                .with_exit_code(2)
+                .with_details(json!({"mode":"launch"})));
+            }
+            crate::switch::switch(&cwd, args)
+        }
         "exec" => crate::execution::exec(&cwd, args),
         "setup" => crate::execution::setup(&cwd, args),
         "doctor" => {
@@ -466,6 +490,13 @@ fn render_human(command: &str, data: &Value) {
             "Removed {} worktree(s) and {} branch(es)",
             data["summary"]["successfulWorktrees"], data["summary"]["successfulBranches"]
         ),
+        "switch" if data["directiveWritten"] == true => println!(
+            "Prepared shell directory switch to {} in repository {} at {}",
+            data["selected"]["branchName"].as_str().unwrap_or(""),
+            data["selected"]["repoName"].as_str().unwrap_or(""),
+            data["selected"]["worktreePath"].as_str().unwrap_or("")
+        ),
+        "switch" => {}
         "init" => println!(
             "{} standalone workspace: {}",
             if data["dryRun"] == true {

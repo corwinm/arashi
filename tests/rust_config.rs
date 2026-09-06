@@ -45,6 +45,44 @@ fn aliases_and_defaults() {
     assert!(c.repos["api"].raw.get("defaultBranch").is_none());
 }
 #[test]
+fn switch_legacy_launch_modes_match_retained_source_normalization() {
+    for (mode, launch_mode, expected) in [
+        (None, "auto", "launch"),
+        (None, "sesh", "sesh"),
+        (None, "herdr", "herdr"),
+        (Some("launch"), "sesh", "sesh"),
+        (Some("auto"), "herdr", "herdr"),
+        (Some("sesh"), "auto", "sesh"),
+    ] {
+        let mut switch = serde_json::json!({"launchMode": launch_mode});
+        if let Some(mode) = mode {
+            switch["mode"] = serde_json::json!(mode);
+        }
+        let text = serde_json::json!({
+            "version": "1.0.0",
+            "reposDir": "repos",
+            "repos": {},
+            "defaults": {"switch": switch},
+        })
+        .to_string();
+        let config = Config::parse(&text).unwrap();
+        assert_eq!(config.raw["defaults"]["switch"]["mode"], expected);
+        assert!(config.raw["defaults"]["switch"].get("launchMode").is_none());
+    }
+}
+
+#[test]
+fn switch_legacy_alias_conflicts_match_retained_source_rejection() {
+    for text in [
+        r#"{"version":"1.0.0","reposDir":"repos","repos":{},"defaults":{"switch":{"launchMode":"sesh","launch_mode":"herdr"}}}"#,
+        r#"{"version":"1.0.0","reposDir":"repos","repos":{},"defaults":{"switch":{"mode":"cd","launchMode":"sesh"}}}"#,
+        r#"{"version":"1.0.0","reposDir":"repos","repos":{},"defaults":{"switch":{"launchMode":"tmux"}}}"#,
+    ] {
+        assert!(Config::parse(text).is_err(), "{text}");
+    }
+}
+
+#[test]
 fn invalid_configuration_rejected() {
     for s in [
         r#"{"version":"2","reposDir":"repos","repos":{}}"#,
