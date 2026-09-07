@@ -310,10 +310,6 @@ fn spawn_direct(command: &mut Command) -> io::Result<std::process::Child> {
 }
 
 #[cfg(target_os = "macos")]
-#[path = "launch/direct_exec.rs"]
-mod direct_exec;
-
-#[cfg(target_os = "macos")]
 fn spawn_direct(command: &mut Command) -> io::Result<std::process::Child> {
     use std::collections::BTreeMap;
     let mut environment: BTreeMap<_, _> = std::env::vars_os().collect();
@@ -324,7 +320,7 @@ fn spawn_direct(command: &mut Command) -> io::Result<std::process::Child> {
             environment.remove(key);
         }
     }
-    direct_exec::prepare(command, environment)?;
+    crate::launch::direct_exec::prepare(command, environment)?;
     command.spawn()
 }
 fn read_pipe(pipe: impl Read + Send) -> impl FnOnce() -> io::Result<String> {

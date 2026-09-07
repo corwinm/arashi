@@ -1,5 +1,5 @@
 //! Shared Darwin direct-exec guard; callers own child lifecycle and environment.
-pub(super) fn prepare(
+pub(crate) fn prepare(
     command: &mut std::process::Command,
     environment: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString>,
 ) -> std::io::Result<()> {

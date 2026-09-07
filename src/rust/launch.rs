@@ -1,4 +1,7 @@
 //! Native launch foundation. Command-specific selection/JSON policy stays with callers.
+#[cfg(target_os = "macos")]
+#[path = "launch/direct_exec.rs"]
+pub(crate) mod direct_exec;
 #[path = "launch/platform.rs"]
 pub mod platform;
 #[path = "launch/process.rs"]

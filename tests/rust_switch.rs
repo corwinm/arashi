@@ -211,77 +211,7 @@ fn configured_cd_overrides_ide_signals_with_source_directive_parity() {
     assert_eq!(fixture.snapshot(), before);
 }
 
-#[test]
-fn review_blocker_auto_ide_signals_reject_before_directive_mutation() {
-    let fixture = Fixture::configured("auto");
-    let target = fixture.add_worktree("ide-target", ".arashi/worktrees/ide-target");
-    let directive = fixture.directive();
-    let before = fixture.snapshot();
-    let config_before = fs::read(fixture.root.join(".arashi/config.json")).unwrap();
-    for env in [
-        vec![("TERM_PROGRAM", "cursor")],
-        vec![("TERM_PROGRAM", "Kiro")],
-        vec![("TERM_PROGRAM_VERSION", "Cursor 1")],
-        vec![("VSCODE_GIT_ASKPASS_NODE", "/Applications/Kiro/node")],
-        vec![("VSCODE_GIT_ASKPASS_EXTRA_ARGS", "Cursor")],
-        vec![("VSCODE_GIT_IPC_HANDLE", "/tmp/kiro.sock")],
-        vec![("VSCODE_PID", "")],
-        vec![("VSCODE_PID", "123")],
-        vec![("VSCODE_GIT_IPC_HANDLE", "")],
-        vec![("VSCODE_GIT_IPC_HANDLE", " ")],
-        vec![("TERM_PROGRAM", "vscode")],
-        vec![
-            ("TERM_PROGRAM", "kiro"),
-            ("VSCODE_GIT_ASKPASS_EXTRA_ARGS", "CURSOR"),
-        ],
-    ] {
-        for existing in [false, true] {
-            if existing {
-                fs::write(&directive, "caller-owned sentinel\n").unwrap();
-            }
-            let output =
-                fixture.run_with_env(&["switch", "ide-target"], Some(&directive), false, &env);
-            assert!(!output.status.success(), "managed {env:?}: {output:?}");
-            assert!(
-                String::from_utf8_lossy(&output.stderr).contains("not yet ported"),
-                "{output:?}"
-            );
-            if existing {
-                assert_eq!(fs::read(&directive).unwrap(), b"caller-owned sentinel\n");
-                fs::remove_file(&directive).unwrap();
-            } else {
-                assert!(!directive.exists(), "managed {env:?} wrote directive");
-            }
-            assert_eq!(fixture.snapshot(), before);
-            assert_eq!(
-                fs::read(fixture.root.join(".arashi/config.json")).unwrap(),
-                config_before
-            );
-        }
-        // Explicit --cd overrides managed auto, including empty VS Code signals.
-        let native = fixture.run_with_env(
-            &["switch", "ide-target", "--cd"],
-            Some(&directive),
-            false,
-            &env,
-        );
-        assert!(native.status.success(), "{native:?}");
-        let bytes = fs::read(&directive).unwrap();
-        assert!(String::from_utf8_lossy(&bytes).contains(target.to_str().unwrap()));
-        if std::env::var_os("ARASHI_TS_PARITY").is_some() {
-            let source = fixture.run_with_env(
-                &["switch", "ide-target", "--cd"],
-                Some(&directive),
-                true,
-                &env,
-            );
-            assert!(source.status.success(), "{source:?}");
-            assert_eq!(fs::read(&directive).unwrap(), bytes);
-        }
-        fs::remove_file(&directive).unwrap();
-        assert_eq!(fixture.snapshot(), before);
-    }
-}
+// Launch-positive coverage now lives in isolated tests/rust_default_launch.rs fixtures.
 
 #[test]
 fn review_blocker_unmanaged_signals_keep_auto_parent_shell_parity() {
@@ -608,34 +538,7 @@ fn explicit_cd_overrides_configured_launcher_without_launching() {
     }
 }
 
-#[test]
-fn unsupported_explicit_and_configured_launchers_fail_before_effects() {
-    let explicit = [
-        "--launch", "--tab", "--tmux", "--sesh", "--herdr", "--vscode", "--cursor", "--kiro",
-        "--no-cd",
-    ];
-    for option in explicit {
-        let fixture = Fixture::standalone();
-        let directive = fixture.directive();
-        let before = fixture.snapshot();
-        let output = fixture.run(&["switch", "main", option], Some(&directive));
-        assert!(!output.status.success(), "option={option}: {output:?}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("not yet ported"));
-        assert!(!directive.exists());
-        assert_eq!(fixture.snapshot(), before);
-    }
-
-    for mode in ["launch", "sesh", "herdr"] {
-        let fixture = Fixture::configured(mode);
-        let directive = fixture.directive();
-        let before = fixture.snapshot();
-        let output = fixture.run(&["switch", "main"], Some(&directive));
-        assert!(!output.status.success(), "mode={mode}: {output:?}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("not yet ported"));
-        assert!(!directive.exists());
-        assert_eq!(fixture.snapshot(), before);
-    }
-}
+// Launch-positive coverage now lives in isolated tests/rust_default_launch.rs fixtures.
 
 #[test]
 fn configured_auto_rejects_managed_context_but_uses_plain_shell_integration() {

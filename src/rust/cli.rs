@@ -166,6 +166,10 @@ fn entry_with_identity(alpha: bool) -> i32 {
             exit_code
         }
         Err(e) => {
+            if e.code == "USER_CANCELLED" {
+                println!("{}", e.message);
+                return e.exit_code;
+            }
             if e.code == "SHELL_HELP" {
                 eprint!("{e}");
                 return e.exit_code;
@@ -293,67 +297,7 @@ fn dispatch(args: &Args) -> Result<Value> {
             let workspace = crate::config::Workspace::discover(&cwd)?;
             crate::clone::clone(&workspace, &cwd, args)
         }
-        "create" => {
-            let unsupported_json = || {
-                Error::new(
-                    "JSON_UNSUPPORTED_FOR_MODE",
-                    "JSON output is not supported for interactive-or-launch.",
-                )
-                .with_details(json!({"mode":"interactive-or-launch"}))
-            };
-            if args.has("json") && (args.has("tab") || args.has("tmux")) {
-                return Err(unsupported_json());
-            }
-            let launchers: Vec<_> = ["tmux", "sesh", "herdr"]
-                .into_iter()
-                .filter(|key| args.has(key))
-                .map(|key| format!("--{key}"))
-                .collect();
-            if launchers.len() > 1 {
-                return Err(Error::new(
-                    "CONFLICTING_LAUNCH_OPTIONS",
-                    format!(
-                        "Conflicting launch overrides provided ({}). Choose exactly one explicit create launcher.",
-                        launchers.join(", ")
-                    ),
-                ));
-            }
-            if args.has("json")
-                && ["interactive", "launch", "sesh", "herdr", "switch"]
-                    .iter()
-                    .any(|key| args.has(key))
-            {
-                return Err(unsupported_json());
-            }
-            args.only(&[
-                "base",
-                "repo-base",
-                "conflict",
-                "only",
-                "group",
-                "no-hooks",
-                "no-launch",
-                "no-switch",
-                "no-progress",
-                "dry-run",
-            ])?;
-            if args.positional.len() != 1 {
-                return Err(Error::new("USAGE", "create requires exactly one branch"));
-            }
-            let w = crate::config::Workspace::discover(&cwd)?;
-            if w.config.is_some() {
-                return crate::coordinated::create(&w, args);
-            }
-            args.only(&[
-                "no-hooks",
-                "no-launch",
-                "no-switch",
-                "no-progress",
-                "dry-run",
-            ])?;
-            crate::operations::CreatePlan::build(&w, &args.positional[0], args.has("no-hooks"))?
-                .execute(&w, args.has("dry-run"))
-        }
+        "create" => crate::create::create(&cwd, args),
         "delete" => {
             let w = crate::config::Workspace::discover(&cwd).map_err(|error| {
                 if [
@@ -587,6 +531,13 @@ fn render_human(command: &str, data: &Value) {
         ),
         "switch" if data["directiveWritten"] == true => println!(
             "Prepared shell directory switch to {} in repository {} at {}",
+            data["selected"]["branchName"].as_str().unwrap_or(""),
+            data["selected"]["repoName"].as_str().unwrap_or(""),
+            data["selected"]["worktreePath"].as_str().unwrap_or("")
+        ),
+        "switch" if data["launchMode"] != "cd" => println!(
+            "Opened {} context for {} in repository {} at {}",
+            data["launchMode"].as_str().unwrap_or(""),
             data["selected"]["branchName"].as_str().unwrap_or(""),
             data["selected"]["repoName"].as_str().unwrap_or(""),
             data["selected"]["worktreePath"].as_str().unwrap_or("")

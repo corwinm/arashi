@@ -1,8 +1,7 @@
 //! Launch-only child lifecycle: never uses the tree-killing operation runner.
-use super::{Environment, Platform};
 #[cfg(target_os = "macos")]
-#[path = "direct_exec.rs"]
-mod direct_exec;
+use super::direct_exec;
+use super::{Environment, Platform};
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
