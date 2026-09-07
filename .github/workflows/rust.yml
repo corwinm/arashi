@@ -31,13 +31,24 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      # Test-only transport servers and PTY fixtures; not a native CLI runtime.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      # Keep existing approved builds; ssh2's optional accelerators are unnecessary.
+      - name: Configure test dependency build policy
+        shell: bash
+        run: >-
+          pnpm config set --location=project --json allowBuilds
+          '{"esbuild":true,"node-pty":true,"ssh2":false,"cpu-features":false}'
+      - name: Install locked test dependencies
+        run: pnpm install --frozen-lockfile
       - name: Install Rust tooling
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       - run: cargo +stable fmt --check
       - run: cargo +stable clippy --locked --all-targets -- -D warnings
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
       - run: cargo +stable test --locked --all-targets
       - run: cargo +stable build --locked --release
       - name: Native configured release journey
@@ -59,6 +70,12 @@ jobs:
           runtime: node@24.18.0
           install: false
       - uses: oven-sh/setup-bun@v2
+      # Same test-only policy as native; do not compile optional SSH accelerators.
+      - name: Configure test dependency build policy
+        shell: bash
+        run: >-
+          pnpm config set --location=project --json allowBuilds
+          '{"esbuild":true,"node-pty":true,"ssh2":false,"cpu-features":false}'
       - run: pnpm install --frozen-lockfile
       - run: cargo test --locked --all-targets -- --include-ignored --test-threads=4
         env:
