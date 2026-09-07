@@ -1,10 +1,12 @@
 import semanticCases from './prompt-cases.json' with { type: 'json' };
 import { createRequire } from 'node:module';
+import { ensureDarwinSpawnHelperExecutable } from '../helpers/node-pty-permissions.mjs';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
 const require = createRequire(process.env.ARASHI_PROMPT_NODE_MODULES ? resolve(process.env.ARASHI_PROMPT_NODE_MODULES, '../package.json') : import.meta.url);
+ensureDarwinSpawnHelperExecutable(require);
 const pty = require('node-pty');
 const args = process.argv.slice(2);
 const option = name => args[args.indexOf(name) + 1];

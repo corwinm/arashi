@@ -3,6 +3,42 @@ pub use arashi::{Error, Result};
 mod prompts;
 use prompts::{CancelReason, Choice, PromptOutcome};
 
+#[cfg(target_os = "macos")]
+struct SpawnHelperPermissions {
+    path: std::path::PathBuf,
+    original: std::fs::Permissions,
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for SpawnHelperPermissions {
+    fn drop(&mut self) {
+        std::fs::set_permissions(&self.path, self.original.clone()).unwrap();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn make_spawn_helper_non_executable() -> SpawnHelperPermissions {
+    use std::os::unix::fs::PermissionsExt;
+
+    let output = std::process::Command::new("node")
+        .args([
+            "-e",
+            "const {createRequire}=require('node:module');const {dirname,join,resolve}=require('node:path');const base=process.env.ARASHI_PROMPT_NODE_MODULES?resolve(process.env.ARASHI_PROMPT_NODE_MODULES,'../package.json'):process.cwd()+'/prompt-pty-test.cjs';const moduleRequire=createRequire(base);process.stdout.write(join(dirname(moduleRequire.resolve('node-pty')),'..','prebuilds',`darwin-${process.arch}`,'spawn-helper'));",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "could not resolve node-pty spawn-helper"
+    );
+    let path = std::path::PathBuf::from(String::from_utf8(output.stdout).unwrap());
+    let original = std::fs::metadata(&path).unwrap().permissions();
+    let mut non_executable = original.clone();
+    non_executable.set_mode(original.mode() & !0o111);
+    std::fs::set_permissions(&path, non_executable).unwrap();
+    SpawnHelperPermissions { path, original }
+}
+
 #[test]
 fn prompt_fixture() {
     let Ok(case) = std::env::var("ARASHI_PROMPT_CASE") else {
@@ -138,6 +174,8 @@ fn native_pty_contract() {
     if std::env::var_os("ARASHI_PROMPT_CASE").is_some() {
         return;
     }
+    #[cfg(target_os = "macos")]
+    let _spawn_helper_permissions = make_spawn_helper_non_executable();
     let mut child = std::process::Command::new("node")
         .arg(
             std::path::Path::new(file!())
