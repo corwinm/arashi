@@ -89,6 +89,39 @@ test("cleanup-only failure still fails the fixture operation", async () => {
   );
 });
 
+test("holder termination and root removal cleanup failures are both surfaced", async () => {
+  const primary = new Error("fixture operation failure");
+  const termination = new Error("holder termination failure");
+  const removal = new Error("fixture root removal failure");
+
+  await assert.rejects(
+    fixture.withCleanup(
+      () => {
+        throw primary;
+      },
+      () =>
+        fixture.withCleanup(
+          () => {
+            throw termination;
+          },
+          () => {
+            throw removal;
+          },
+        ),
+    ),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.cause, primary);
+      const [reportedPrimary, cleanup] = error.errors;
+      assert.equal(reportedPrimary, primary);
+      assert.ok(cleanup instanceof AggregateError);
+      assert.equal(cleanup.cause, termination);
+      assert.deepEqual(cleanup.errors, [termination, removal]);
+      return true;
+    },
+  );
+});
+
 test(
   "fixture cleanup waits out a transient Windows ownership lock",
   { skip: process.platform !== "win32" },
@@ -122,13 +155,13 @@ test(
         await fixture.removeFixtureRoot(root);
         assert.equal(fs.existsSync(root), false);
       },
-      async () => {
-        try {
-          await terminateChild(holder, 2000);
-        } finally {
-          fs.rmSync(root, { force: true, maxRetries: 10, recursive: true, retryDelay: 100 });
-        }
-      },
+      () =>
+        fixture.withCleanup(
+          () => terminateChild(holder, 2000),
+          () => {
+            fs.rmSync(root, { force: true, maxRetries: 10, recursive: true, retryDelay: 100 });
+          },
+        ),
     );
   },
 );
