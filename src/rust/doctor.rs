@@ -1,4 +1,4 @@
-//! Bounded local doctor. Observations never fetch, execute hooks, reconcile ignores, or prune.
+//! Doctor diagnostics refresh tracking refs without changing caller checkouts or configuration.
 use crate::{Error, Result, config::Workspace, git};
 use serde_json::{Value, json};
 use std::{
@@ -132,30 +132,6 @@ fn policy_guard(w: &Workspace, cwd: &Path, targets: &[(String, PathBuf)]) -> Res
         {
             return Err(unsupported(
                 "Doctor Git conversion filters are not yet supported; no filter executed",
-            ));
-        }
-        if let Ok(remotes) = read_git(p, &["remote"])
-            && !remotes.trim().is_empty()
-        {
-            return Err(unsupported(
-                "Doctor remote-backed repositories are not yet supported; no fetch attempted",
-            ));
-        }
-        if read_git(p, &["for-each-ref", "--format=%(refname)", "refs/remotes"])
-            .is_ok_and(|s| !s.trim().is_empty())
-        {
-            return Err(unsupported(
-                "Doctor remote-tracking refs are not yet supported",
-            ));
-        }
-        if read_git(
-            p,
-            &["config", "--get-regexp", r"^branch\..*\.(remote|merge)$"],
-        )
-        .is_ok()
-        {
-            return Err(unsupported(
-                "Doctor upstream tracking policies are not yet supported",
             ));
         }
         if let Ok(trees) = git::worktrees(p)
@@ -325,7 +301,495 @@ fn ignore_findings(w: &Workspace) -> Result<Vec<Value>> {
     }
     Ok(f)
 }
-fn repository(name: &str, path: &Path, base: Option<(&str, &str)>) -> Vec<Value> {
+fn optional(path: &Path, args: &[&str]) -> Option<String> {
+    read_git(path, args)
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
+// Keep this retained-source resolution local to doctor: the shared helper
+// removes every origin/ prefix and does not implement the remote-only fallback.
+fn doctor_default_branch(path: &Path) -> Option<String> {
+    if let Some(value) = optional(
+        path,
+        &["symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
+    ) {
+        return Some(value.strip_prefix("origin/").unwrap_or(&value).to_owned());
+    }
+    for namespace in ["refs/remotes/origin", "refs/heads"] {
+        for branch in ["main", "master", "develop"] {
+            if read_git(
+                path,
+                &["show-ref", "--verify", &format!("{namespace}/{branch}")],
+            )
+            .is_ok()
+            {
+                return Some(branch.into());
+            }
+        }
+    }
+    if let Some(branches) = optional(
+        path,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    ) && let Some(first) = branches.lines().map(str::trim).find(|s| !s.is_empty())
+    {
+        return Some(first.into());
+    }
+    let branches = optional(path, &["branch", "-r", "--list"])?;
+    branches
+        .lines()
+        .map(str::trim)
+        .find(|s| !s.is_empty() && !s.contains("HEAD"))
+        .map(|s| s.strip_prefix("origin/").unwrap_or(s).to_owned())
+}
+fn default_remote(path: &Path) -> Option<String> {
+    let remotes = optional(path, &["remote"])?;
+    let remotes: Vec<_> = remotes
+        .lines()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .collect();
+    if remotes.contains(&"origin") {
+        Some("origin".into())
+    } else if remotes.len() == 1 {
+        Some(remotes[0].into())
+    } else {
+        None
+    }
+}
+fn remote_for_branch(path: &Path, branch: &str) -> Option<String> {
+    if read_git(
+        path,
+        &[
+            "show-ref",
+            "--verify",
+            &format!("refs/remotes/origin/{branch}"),
+        ],
+    )
+    .is_ok()
+    {
+        return Some("origin".into());
+    }
+    let refs = optional(
+        path,
+        &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+    )?;
+    let remotes: Vec<_> = refs
+        .lines()
+        .filter_map(|r| r.split_once('/'))
+        .filter(|(_, b)| *b == branch && *b != "HEAD")
+        .map(|(r, _)| r)
+        .collect();
+    if remotes.contains(&"origin") {
+        return Some("origin".into());
+    }
+    if let Some(default) = default_remote(path)
+        && remotes.contains(&default.as_str())
+    {
+        return Some(default);
+    }
+    remotes.first().map(|r| (*r).to_owned())
+}
+#[derive(Clone)]
+struct TrackingTarget {
+    remote: String,
+    branch: String,
+    upstream: bool,
+}
+impl TrackingTarget {
+    fn reference(&self) -> String {
+        format!("refs/remotes/{}/{}", self.remote, self.branch)
+    }
+}
+fn tracking_target(path: &Path) -> Option<TrackingTarget> {
+    let upstream = optional(
+        path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    );
+    if let Some(u) = &upstream
+        && !u.starts_with("refs/heads/")
+        && let Some((remote, branch)) = u.strip_prefix("refs/remotes/").unwrap_or(u).split_once('/')
+    {
+        return Some(TrackingTarget {
+            remote: remote.into(),
+            branch: branch.into(),
+            upstream: true,
+        });
+    }
+    let current = optional(path, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|b| b != "HEAD")?;
+    let remote = optional(
+        path,
+        &["config", "--get", &format!("branch.{current}.remote")],
+    )
+    .filter(|r| r != ".")
+    .or_else(|| default_remote(path))?;
+    let branch = optional(
+        path,
+        &["config", "--get", &format!("branch.{current}.merge")],
+    )
+    .and_then(|b| b.strip_prefix("refs/heads/").map(str::to_owned))
+    .unwrap_or(current);
+    Some(TrackingTarget {
+        remote,
+        branch,
+        upstream: upstream.is_some(),
+    })
+}
+fn refresh(path: &Path, target: &TrackingTarget) -> Option<Value> {
+    let argv = vec![
+        "git".into(),
+        "fetch".into(),
+        "--prune".into(),
+        target.remote.clone(),
+        format!("+refs/heads/{}:{}", target.branch, target.reference()),
+    ];
+    let error = match crate::process::run_tree(&argv, path, std::time::Duration::from_secs(30)) {
+        Ok(o) if o.timed_out => "Remote operation timed out after 30000ms".to_owned(),
+        Ok(o) if o.exit_code == 0 => return None,
+        Ok(o) => o.stderr.trim().to_owned(),
+        Err(e) => e.to_string(),
+    };
+    let error = format!("Git command failed: {error}");
+    let lower = error.to_ascii_lowercase();
+    let missing = ["couldn't find remote ref ", "could not find remote ref "]
+        .into_iter()
+        .find_map(|prefix| {
+            lower.find(prefix).map(|i| {
+                error[i + prefix.len()..]
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+            })
+        });
+    Some(if let Some(reference) = missing {
+        json!({"error":error,"kind":"missing-remote-ref","message":format!("couldn't find remote ref {reference}")})
+    } else {
+        json!({"error":error,"kind":"generic","message":error})
+    })
+}
+fn compare(
+    path: &Path,
+    mut value: Value,
+    failure: Option<Value>,
+    counts: Option<(u64, u64)>,
+) -> Value {
+    if let Some(failure) = failure {
+        value["state"] = json!("unavailable");
+        value["reason"] = json!("refresh-failed");
+        value["message"] = failure["message"].clone();
+        value["details"] = json!({"error":failure["error"],"kind":failure["kind"]});
+        return value;
+    }
+    let result = counts.map(Ok).unwrap_or_else(|| {
+        read_git(
+            path,
+            &[
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("HEAD...{}", value["compareRef"].as_str().unwrap()),
+            ],
+        )
+        .map(|s| {
+            let mut counts = s.split_whitespace().map(|s| s.parse::<u64>().unwrap_or(0));
+            (counts.next().unwrap_or(0), counts.next().unwrap_or(0))
+        })
+    });
+    match result {
+        Ok((ahead, behind)) => {
+            value["state"] = json!("available");
+            value["ahead"] = json!(ahead);
+            value["behind"] = json!(behind);
+        }
+        Err(e) => {
+            let message = format!("Git command failed: {e}");
+            value["state"] = json!("unavailable");
+            value["reason"] = json!("comparison-failed");
+            value["message"] = json!(message);
+            value["details"] = json!({"error":message});
+        }
+    }
+    value
+}
+fn branch_comparison(
+    path: &Path,
+    branch: &str,
+    remote: Option<String>,
+    tracking: Option<&TrackingTarget>,
+    failure: &Option<Value>,
+    counts: (u64, u64),
+) -> Value {
+    let reference = remote
+        .as_ref()
+        .map(|r| format!("refs/remotes/{r}/{branch}"))
+        .unwrap_or_else(|| format!("refs/heads/{branch}"));
+    let value = json!({"branch":branch,"compareRef":reference,"remote":remote,"remoteRef":remote.as_ref().map(|r| format!("{r}/{branch}"))});
+    if tracking.is_some_and(|t| t.upstream && t.reference() == reference) {
+        return compare(path, value, failure.clone(), Some(counts));
+    }
+    let refresh_failure = remote.and_then(|remote| {
+        refresh(
+            path,
+            &TrackingTarget {
+                remote,
+                branch: branch.into(),
+                upstream: true,
+            },
+        )
+    });
+    compare(path, value, refresh_failure, None)
+}
+fn wildcard<'a>(pattern: &str, value: &'a str) -> Option<&'a str> {
+    if let Some((prefix, suffix)) = pattern.split_once('*') {
+        if suffix.contains('*') || value.len() < prefix.len() + suffix.len() {
+            return None;
+        }
+        value.strip_prefix(prefix)?.strip_suffix(suffix)
+    } else if pattern == value {
+        Some("")
+    } else {
+        None
+    }
+}
+fn namespaces_conflict(left: &str, right: &str) -> bool {
+    left == right
+        || left.starts_with(&format!("{right}/"))
+        || right.starts_with(&format!("{left}/"))
+}
+fn destination_conflict(pattern: &str, destination: &str) -> bool {
+    if let Some((prefix, suffix)) = pattern.split_once('*') {
+        if suffix.contains('*') {
+            return false;
+        }
+        if wildcard(pattern, destination).is_some()
+            || prefix.starts_with(&format!("{destination}/"))
+            || format!("{destination}/").starts_with(prefix)
+        {
+            return true;
+        }
+        let mut ancestor = destination;
+        while let Some((p, _)) = ancestor.rsplit_once('/') {
+            if wildcard(pattern, p).is_some() {
+                return true;
+            }
+            ancestor = p;
+        }
+        false
+    } else {
+        namespaces_conflict(pattern, destination)
+    }
+}
+fn destination_patterns_conflict(left: &str, right: &str) -> bool {
+    match (left.split_once('*'), right.split_once('*')) {
+        (None, None) => namespaces_conflict(left, right),
+        (None, Some(_)) => destination_conflict(right, left),
+        (Some(_), None) => destination_conflict(left, right),
+        (Some((l, _)), Some((r, _))) => l.starts_with(r) || r.starts_with(l),
+    }
+}
+fn refspec_parts(refspec: &str) -> Option<(&str, &str)> {
+    let normalized = refspec.trim().strip_prefix('+').unwrap_or(refspec.trim());
+    if normalized.starts_with('^') {
+        None
+    } else {
+        normalized.split_once(':')
+    }
+}
+fn refspec_covers(refspec: &str, source: &str, destination: &str) -> bool {
+    let Some((s, d)) = refspec_parts(refspec) else {
+        return false;
+    };
+    if !s.contains('*') || !d.contains('*') {
+        return s == source && d == destination;
+    }
+    wildcard(s, source).is_some_and(|v| {
+        !d.split_once('*').unwrap().1.contains('*') && d.replacen('*', v, 1) == destination
+    })
+}
+fn manual_refspec(path: &Path, refspec: &str, merge: &str) -> bool {
+    if refspec.trim() != refspec || refspec.is_empty() || refspec.starts_with('!') {
+        return true;
+    }
+    let normalized = refspec.strip_prefix('+').unwrap_or(refspec);
+    let valid = |s: &str| {
+        read_git(
+            path,
+            &["check-ref-format", &s.replacen('*', "arashi-wildcard", 1)],
+        )
+        .is_ok()
+    };
+    if let Some(source) = normalized.strip_prefix('^') {
+        return refspec.starts_with('+')
+            || source.is_empty()
+            || source.contains(':')
+            || source.matches('*').count() > 1
+            || !valid(source)
+            || wildcard(source, merge).is_some();
+    }
+    let Some((source, destination)) = normalized.split_once(':') else {
+        return normalized.contains('*')
+            || !valid(normalized)
+            || wildcard(normalized, merge).is_some();
+    };
+    if destination.is_empty() {
+        return source.contains('*') || !valid(source) || wildcard(source, merge).is_some();
+    }
+    source.is_empty()
+        || destination.contains(':')
+        || source.matches('*').count() > 1
+        || destination.matches('*').count() > 1
+        || source.matches('*').count() != destination.matches('*').count()
+        || !valid(source)
+        || !valid(destination)
+}
+fn quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+fn upstream_finding(name: &str, path: &Path) -> Option<Value> {
+    let branch = optional(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
+    if optional(
+        path,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
+    )
+    .is_some()
+    {
+        return None;
+    }
+    let remote = optional(
+        path,
+        &["config", "--get", &format!("branch.{branch}.remote")],
+    )
+    .filter(|r| r != ".")?;
+    let merges = read_git(
+        path,
+        &["config", "--get-all", &format!("branch.{branch}.merge")],
+    )
+    .unwrap_or_default();
+    let merges: Vec<_> = merges.lines().collect();
+    let merge = merges.first().copied().unwrap_or("");
+    let scope = format!("repository:{name}");
+    let p = quote(&path.to_string_lossy());
+    if merges.len() > 1 && !merge.starts_with("refs/heads/") {
+        return Some(finding(
+            "repository",
+            "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
+            "warning",
+            &scope,
+            format!(
+                "Repository '{name}' branch '{branch}' has ambiguous multi-valued upstream merge configuration; review the configured merge refs manually."
+            ),
+            Some(
+                json!({"branch":branch,"mergeRefs":merges,"path":path,"reason":"ambiguous-merge-configuration","remote":remote,"repository":name}),
+            ),
+            if cfg!(windows) {
+                vec![]
+            } else {
+                vec![format!(
+                    "git -C {p} config --get-all {}",
+                    quote(&format!("branch.{branch}.merge"))
+                )]
+            },
+        ));
+    }
+    let remote_branch = merge
+        .strip_prefix("refs/heads/")
+        .filter(|s| !s.is_empty())?;
+    let expected = format!("refs/remotes/{remote}/{remote_branch}");
+    read_git(path, &["show-ref", "--verify", &expected]).ok()?;
+    let refspecs = read_git(
+        path,
+        &["config", "--get-all", &format!("remote.{remote}.fetch")],
+    )
+    .unwrap_or_default();
+    let refspecs: Vec<_> = refspecs.lines().collect();
+    let manual: Vec<_> = refspecs
+        .iter()
+        .map(|r| manual_refspec(path, r, merge))
+        .collect();
+    let pair_conflict: Vec<_> = refspecs
+        .iter()
+        .enumerate()
+        .map(|(i, left)| {
+            refspecs.iter().enumerate().any(|(j, right)| {
+                i != j
+                    && match (refspec_parts(left), refspec_parts(right)) {
+                        (Some((_, l)), Some((_, r))) if !l.is_empty() && !r.is_empty() => {
+                            destination_patterns_conflict(l, r)
+                        }
+                        _ => false,
+                    }
+            })
+        })
+        .collect();
+    if !manual.iter().any(|m| *m)
+        && !pair_conflict.iter().any(|m| *m)
+        && refspecs.iter().any(|r| refspec_covers(r, merge, &expected))
+    {
+        return None;
+    }
+    let conflicts: Vec<_> = refspecs
+        .iter()
+        .enumerate()
+        .filter(|(i, r)| {
+            manual[*i]
+                || pair_conflict[*i]
+                || (!refspec_covers(r, merge, &expected)
+                    && refspec_parts(r).is_some_and(|(s, d)| {
+                        wildcard(s, merge).is_some() || destination_conflict(d, &expected)
+                    }))
+        })
+        .map(|(_, r)| *r)
+        .collect();
+    let mut message = if conflicts.is_empty() {
+        format!(
+            "Repository '{name}' branch '{branch}' has upstream configuration, but Git cannot use {remote}/{remote_branch} because remote '{remote}' has no covering fetch mapping."
+        )
+    } else {
+        format!(
+            "Repository '{name}' branch '{branch}' has upstream configuration, but Git cannot use {remote}/{remote_branch} because remote '{remote}' has fetch mappings that conflict at the expected tracking namespace; review the conflicting fetch mappings manually."
+        )
+    };
+    let key = quote(&format!("remote.{remote}.fetch"));
+    let suggested = if cfg!(windows) {
+        message.push_str(" Review the structured details and run equivalent Git commands in your active Windows shell; doctor does not emit shell-ambiguous copy-paste commands on Windows.");
+        vec![]
+    } else if !conflicts.is_empty() {
+        vec![format!("git -C {p} config --get-all {key}")]
+    } else {
+        let mut commands = vec![
+            format!(
+                "git -C {p} config --add {key} {}",
+                quote(&format!("+{merge}:{expected}"))
+            ),
+            format!("git -C {p} fetch -- {}", quote(&remote)),
+        ];
+        if merges.len() <= 1 {
+            commands.push(format!(
+                "git -C {p} branch {} -- {}",
+                quote(&format!("--set-upstream-to={remote}/{remote_branch}")),
+                quote(&branch)
+            ));
+        }
+        commands
+    };
+    Some(finding(
+        "repository",
+        "REPOSITORY_UPSTREAM_TRACKING_UNAVAILABLE",
+        "warning",
+        &scope,
+        message,
+        Some(
+            json!({"branch":branch,"conflictingFetchRefspecs":conflicts,"expectedRemoteTrackingRef":expected,"mergeRef":merge,"path":path,"reason":"missing-fetch-mapping","remote":remote,"repository":name}),
+        ),
+        suggested,
+    ))
+}
+fn repository(name: &str, path: &Path, base: Option<(&str, &str)>, configured: bool) -> Vec<Value> {
     let scope = format!("repository:{name}");
     let p = path.display();
     let mut f = vec![];
@@ -340,6 +804,8 @@ fn repository(name: &str, path: &Path, base: Option<(&str, &str)>) -> Vec<Value>
             vec!["arashi clone".into(), format!("git clone <url> {p}")],
         )];
     }
+    let tracking = tracking_target(path);
+    let tracking_failure = tracking.as_ref().and_then(|t| refresh(path, t));
     let status = read_git(path, &["status", "--porcelain=v1", "--branch"]);
     let output = match status {
         Ok(s) => s,
@@ -373,20 +839,83 @@ fn repository(name: &str, path: &Path, base: Option<(&str, &str)>) -> Vec<Value>
         .and_then(|line| line.strip_prefix("## "))
         .filter(|line| !line.contains("no branch") && !line.starts_with("HEAD (detached"))
         .and_then(|line| line.split("...").next());
-    if let Some(branch) = branch {
-        let branch = branch.trim();
-        f.push(finding(
-            "repository",
-            "REPOSITORY_NO_UPSTREAM",
-            "warning",
-            &scope,
-            format!("Repository '{name}' branch '{branch}' has no upstream."),
-            Some(json!({"branch":branch,"path":path,"repository":name})),
-            vec![
-                "arashi status".into(),
-                format!("git -C {p} branch --set-upstream-to <upstream>"),
-            ],
-        ));
+    let heading = output.lines().next().unwrap_or("");
+    let remote_branch = heading
+        .split_once("...")
+        .map(|(_, r)| r.split(" [").next().unwrap_or(r).trim());
+    let count = |key: &str| {
+        heading
+            .split_once(key)
+            .and_then(|(_, s)| s.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0)
+    };
+    let (ahead, behind) = (count("ahead "), count("behind "));
+    if let Some(branch) = branch.map(str::trim) {
+        let inspection = if configured
+            && tracking_failure
+                .as_ref()
+                .is_none_or(|f| f["kind"] != "missing-remote-ref")
+            && (remote_branch.is_none() || tracking_failure.is_some())
+        {
+            upstream_finding(name, path)
+        } else {
+            None
+        };
+        if let Some(inspection) = inspection {
+            f.push(inspection);
+        } else if let Some(remote) = remote_branch {
+            let (code, message, details, suggested) = if ahead > 0 && behind > 0 {
+                (
+                    "REPOSITORY_DIVERGED",
+                    format!("Repository '{name}' has diverged from {remote}."),
+                    json!({"ahead":ahead,"behind":behind,"remoteBranch":remote,"repository":name}),
+                    vec![
+                        "arashi status".into(),
+                        format!("git -C {p} pull --rebase"),
+                        format!("git -C {p} push"),
+                    ],
+                )
+            } else if ahead > 0 {
+                (
+                    "REPOSITORY_AHEAD",
+                    format!("Repository '{name}' is ahead of {remote} by {ahead} commit(s)."),
+                    json!({"ahead":ahead,"remoteBranch":remote,"repository":name}),
+                    vec!["arashi status".into(), format!("git -C {p} push")],
+                )
+            } else {
+                (
+                    "REPOSITORY_BEHIND",
+                    format!("Repository '{name}' is behind {remote} by {behind} commit(s)."),
+                    json!({"behind":behind,"remoteBranch":remote,"repository":name}),
+                    vec!["arashi pull".into(), format!("git -C {p} pull --ff-only")],
+                )
+            };
+            if ahead > 0 || behind > 0 {
+                f.push(finding(
+                    "repository",
+                    code,
+                    "warning",
+                    &scope,
+                    message,
+                    Some(details),
+                    suggested,
+                ));
+            }
+        } else {
+            f.push(finding(
+                "repository",
+                "REPOSITORY_NO_UPSTREAM",
+                "warning",
+                &scope,
+                format!("Repository '{name}' branch '{branch}' has no upstream."),
+                Some(json!({"branch":branch,"path":path,"repository":name})),
+                vec![
+                    "arashi status".into(),
+                    format!("git -C {p} branch --set-upstream-to <upstream>"),
+                ],
+            ));
+        }
     } else {
         f.push(finding(
             "repository",
@@ -398,33 +927,161 @@ fn repository(name: &str, path: &Path, base: Option<(&str, &str)>) -> Vec<Value>
             vec![format!("git -C {p} switch <branch>")],
         ));
     }
-    // The source resolves configured bases through a remote, even when a local
-    // branch exists. policy_guard has established that no target has a remote.
-    if let Some((base, source)) = base {
-        // Source checkRepoStatus and configured comparison each normalize once;
-        // remote resolution normalizes again when constructing its failure.
-        let base = base.strip_prefix("origin/").unwrap_or(base);
-        let base = base.strip_prefix("origin/").unwrap_or(base);
-        let remote_base = base.strip_prefix("origin/").unwrap_or(base);
-        let message = format!("No remote is available for configured base branch '{remote_base}'");
+    if let Some(failure) = &tracking_failure {
+        let (code, message, detail, command) = if failure["kind"] == "missing-remote-ref" {
+            let m = failure["message"].as_str().unwrap();
+            (
+                "REPOSITORY_MISSING_REMOTE_REF",
+                format!("Repository '{name}' tracks a missing remote ref: {m}"),
+                m.to_owned(),
+                format!("git -C {p} branch -vv"),
+            )
+        } else {
+            let m = format!(
+                "Remote tracking may be stale: {}",
+                failure["error"].as_str().unwrap()
+            );
+            (
+                "REPOSITORY_REMOTE_REFRESH_FAILED",
+                format!("Repository '{name}' remote tracking status may be stale: {m}"),
+                m,
+                format!("git -C {p} fetch"),
+            )
+        };
         f.push(finding(
             "repository",
-            "REPOSITORY_CONFIGURED_BASE_UNAVAILABLE",
+            code,
             "warning",
             &scope,
-            format!("Could not compare '{name}' with configured base {base}: {message}"),
-            Some(json!({"alsoDefault":false,"baseBranch":base,"compareRef":null,"failure":{"error":message},"message":message,"reason":"unresolved-target","remote":null,"remoteRef":null,"repository":name,"source":source})),
-            commands(&["arashi status --verbose", "arashi pull"]),
+            message,
+            Some(json!({"message":detail,"repository":name})),
+            vec!["arashi status".into(), command],
         ));
     }
-    if let Some(branch) = branch.map(str::trim)
-        && let Ok(default) = git::default_branch(path)
-        && default != branch
-    {
-        match read_git(path,&["rev-list","--left-right","--count",&format!("HEAD...refs/heads/{default}")]) {
-                Ok(counts)=>{if let Some(behind)=counts.split_whitespace().nth(1).and_then(|s|s.parse::<u64>().ok()) && behind>0 {f.push(finding("repository","REPOSITORY_DEFAULT_BRANCH_BEHIND","warning",&scope,format!("Repository '{name}' is behind default branch {default} by {behind} commit(s)."),Some(json!({"behind":behind,"defaultBranch":default,"repository":name})),vec!["arashi status".into(),format!("git -C {p} merge {default}")]));}},
-                Err(e)=>f.push(finding("repository","REPOSITORY_DEFAULT_BRANCH_UNAVAILABLE","info",&scope,format!("Could not compare '{name}' with its default branch."),Some(json!({"defaultBranch":default,"message":format!("Git command failed: {e}"),"repository":name})),vec!["arashi status".into(),format!("git -C {p} fetch")])),
+    let base_comparison = base.map(|(base, _)| {
+        let base = base.strip_prefix("origin/").unwrap_or(base);
+        let base = base.strip_prefix("origin/").unwrap_or(base);
+        let target = base.strip_prefix("origin/").unwrap_or(base);
+        let remote = remote_for_branch(path, target).or_else(|| default_remote(path));
+        if remote.is_none() {
+            let message = format!("No remote is available for configured base branch '{target}'");
+            json!({"branch":base,"compareRef":null,"remote":null,"remoteRef":null,"state":"unavailable","reason":"unresolved-target","message":message,"details":{"error":message}})
+        } else if branch.is_none() { json!({"state":"skipped"}) }
+        else {
+            let mut comparison = branch_comparison(path, target, remote, tracking.as_ref(), &tracking_failure, (ahead, behind));
+            // Source duplicate-target results retain the requested logical name,
+            // while a separately refreshed comparison uses the resolved target.
+            if tracking.as_ref().is_some_and(|t| t.upstream && comparison["compareRef"] == t.reference()) {
+                comparison["branch"] = json!(base);
             }
+            comparison
+        }
+    }).unwrap_or(Value::Null);
+    let default_comparison = branch
+        .and_then(|current| {
+            let default = doctor_default_branch(path)?;
+            let remote = remote_for_branch(path, &default);
+            if remote.is_none()
+                && (current == default
+                    || optional(
+                        path,
+                        &["show-ref", "--verify", &format!("refs/heads/{default}")],
+                    )
+                    .is_none())
+            {
+                return None;
+            }
+            let reference = remote
+                .as_ref()
+                .map(|r| format!("refs/remotes/{r}/{default}"))
+                .unwrap_or_else(|| format!("refs/heads/{default}"));
+            Some(if base_comparison["compareRef"] == reference {
+                base_comparison.clone()
+            } else {
+                branch_comparison(
+                    path,
+                    &default,
+                    remote,
+                    tracking.as_ref(),
+                    &tracking_failure,
+                    (ahead, behind),
+                )
+            })
+        })
+        .unwrap_or(Value::Null);
+    let same = !base_comparison["compareRef"].is_null()
+        && base_comparison["compareRef"] == default_comparison["compareRef"];
+    if let Some((_, source)) = base {
+        let b = &base_comparison;
+        let base_ref = b["remoteRef"]
+            .as_str()
+            .or_else(|| b["branch"].as_str())
+            .unwrap_or("");
+        let mut details = json!({"alsoDefault":same,"baseBranch":b["branch"],"compareRef":b["compareRef"],"remote":b["remote"],"remoteRef":b["remoteRef"],"repository":name,"source":source});
+        if b["state"] == "unavailable" {
+            details["failure"] = b["details"].clone();
+            details["message"] = b["message"].clone();
+            details["reason"] = b["reason"].clone();
+            f.push(finding(
+                "repository",
+                "REPOSITORY_CONFIGURED_BASE_UNAVAILABLE",
+                "warning",
+                &scope,
+                format!(
+                    "Could not compare '{name}' with configured base {base_ref}: {}",
+                    b["message"].as_str().unwrap()
+                ),
+                Some(details),
+                commands(&["arashi status --verbose", "arashi pull"]),
+            ));
+        } else if b["state"] == "available" && b["behind"].as_u64().unwrap_or(0) > 0 {
+            details["ahead"] = b["ahead"].clone();
+            details["behind"] = b["behind"].clone();
+            details["currentBranch"] = json!(branch);
+            f.push(finding(
+                "repository",
+                "REPOSITORY_CONFIGURED_BASE_BEHIND",
+                "warning",
+                &scope,
+                format!(
+                    "Repository '{name}' is behind configured base {base_ref} by {} commit(s).",
+                    b["behind"]
+                ),
+                Some(details),
+                commands(&["arashi status --verbose", "arashi pull"]),
+            ));
+        }
+    }
+    if !same {
+        let d = &default_comparison;
+        let default = d["branch"].as_str().unwrap_or("");
+        if d["state"] == "unavailable" {
+            f.push(finding(
+                "repository",
+                "REPOSITORY_DEFAULT_BRANCH_UNAVAILABLE",
+                "info",
+                &scope,
+                format!("Could not compare '{name}' with its default branch."),
+                Some(json!({"defaultBranch":default,"message":d["message"],"repository":name})),
+                vec!["arashi status".into(), format!("git -C {p} fetch")],
+            ));
+        } else if d["state"] == "available" && d["behind"].as_u64().unwrap_or(0) > 0 {
+            f.push(finding(
+                "repository",
+                "REPOSITORY_DEFAULT_BRANCH_BEHIND",
+                "warning",
+                &scope,
+                format!(
+                    "Repository '{name}' is behind default branch {default} by {} commit(s).",
+                    d["behind"]
+                ),
+                Some(json!({"behind":d["behind"],"defaultBranch":default,"repository":name})),
+                vec![
+                    "arashi status".into(),
+                    format!("git -C {p} merge {default}"),
+                ],
+            ));
+        }
     }
     f
 }
@@ -567,6 +1224,7 @@ pub fn doctor(cwd: &Path) -> Result<Value> {
             },
             path,
             base,
+            !standalone,
         ));
     }
     for (name, path) in &targets {
