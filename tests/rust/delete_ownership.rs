@@ -152,6 +152,31 @@ fn delete_identity_keeps_removed_object_allocated() {
 
 #[cfg(unix)]
 #[test]
+fn prompt_prepare_is_lock_free() {
+    if run_isolated("prompt_prepare_is_lock_free") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let workspace = Workspace::discover(&fixture.0).unwrap();
+    let path = workspace_lock::resolve_lock_path(&fixture.0).unwrap();
+    let guard = workspace_lock::acquire(&path, workspace_lock::LockOptions::default()).unwrap();
+    let bytes = fs::read(&path).unwrap();
+    let (send, receive) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let result =
+            PreparedDelete::prepare(&workspace, "api").and_then(|prepared| prepared.preview());
+        send.send(result).unwrap();
+    });
+    let result = receive.recv_timeout(std::time::Duration::from_secs(2));
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    guard.release().unwrap();
+    worker.join().unwrap();
+    assert!(result.is_ok(), "prepare waited for the mutation lock");
+    result.unwrap().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn prompt_controller_freezes_acceptance_and_requires_force_for_loss() {
     if run_isolated("prompt_controller_freezes_acceptance_and_requires_force_for_loss") {
         return;

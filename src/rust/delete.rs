@@ -730,21 +730,9 @@ impl DeletePlan {
                 "--untracked-files=all",
             ],
         )?;
-        for entry in dirty.lines() {
-            warnings.push(format!(
-                "DELETE_GIT_DATA_LOSS: {}: {}",
-                target.display(),
-                entry
-            ));
-        }
+        warnings.extend(checkout_loss_warnings(&target)?);
         for checkout in &linked {
-            for entry in checkout.dirty.lines() {
-                warnings.push(format!(
-                    "DELETE_GIT_DATA_LOSS: {}: {}",
-                    checkout.path.display(),
-                    entry
-                ));
-            }
+            warnings.extend(checkout_loss_warnings(&checkout.path)?);
         }
         warnings.sort();
         let contents = content_inventory(&target)?;
@@ -985,7 +973,7 @@ impl DeletePlan {
         Ok(())
     }
 
-    #[cfg(all(unix, test))]
+    #[cfg(unix)]
     fn execute(&self) -> Result<Value> {
         let path = workspace_lock::resolve_lock_path(&self.workspace_root)?;
         let options = workspace_lock::LockOptions::default();
@@ -1015,8 +1003,93 @@ impl DeletePlan {
     }
 }
 
-/// Immutable prompt boundary. Prepare/preview release the cooperative workspace
-/// lock while the UI waits; execution reacquires it and validates the exact plan.
+// Source receipts store semantic porcelain-v2 evidence, not quoted v1 lines.
+fn checkout_loss_warnings(path: &Path) -> Result<Vec<String>> {
+    let output = git::run_readonly(
+        path,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--ignored=matching",
+            "--untracked-files=all",
+        ],
+    )?;
+    let malformed = || {
+        closed(
+            "DELETE_GIT_DATA_LOSS",
+            "Malformed porcelain-v2 loss evidence",
+            1,
+        )
+    };
+    if output.is_empty() {
+        return Ok(Vec::new());
+    }
+    let text = output.strip_suffix('\0').ok_or_else(malformed)?;
+    let mut records = text.split('\0');
+    let mut warnings = Vec::new();
+    while let Some(record) = records.next() {
+        let kind = record.as_bytes().first().ok_or_else(malformed)?;
+        let (label, status, name) = match kind {
+            b'?' | b'!' => {
+                let name = record
+                    .get(2..)
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(malformed)?;
+                if record.as_bytes().get(1) != Some(&b' ') {
+                    return Err(malformed());
+                }
+                (
+                    if *kind == b'?' {
+                        "untracked"
+                    } else {
+                        "ignored"
+                    },
+                    &record[..1],
+                    name,
+                )
+            }
+            b'1' | b'2' | b'u' => {
+                let count = match kind {
+                    b'1' => 9,
+                    b'2' => 10,
+                    _ => 11,
+                };
+                let fields = record.splitn(count, ' ').collect::<Vec<_>>();
+                if fields.len() != count
+                    || fields.iter().any(|field| field.is_empty())
+                    || fields[1].len() != 2
+                {
+                    return Err(malformed());
+                }
+                if *kind == b'2' && records.next().is_none_or(str::is_empty) {
+                    return Err(malformed());
+                }
+                (
+                    if *kind == b'u' {
+                        "conflicted"
+                    } else {
+                        "tracked"
+                    },
+                    fields[1],
+                    fields[count - 1],
+                )
+            }
+            b'#' => continue,
+            _ => return Err(malformed()),
+        };
+        warnings.push(format!(
+            "DELETE_GIT_DATA_LOSS: {}: {label} {status} {name}",
+            path.display()
+        ));
+    }
+    Ok(warnings)
+}
+
+/// Immutable prompt boundary. Prepare/preview never acquire the mutation lock;
+/// execution acquires it and revalidates the exact accepted plan.
 /// A caller may confirm clean deletion without force; inventoried loss still needs
 /// explicit force. Receipt retries always require force.
 #[cfg(unix)]
@@ -1028,23 +1101,19 @@ pub struct PreparedDelete {
 #[cfg(unix)]
 impl PreparedDelete {
     pub fn prepare(workspace: &Workspace, key: &str) -> Result<Self> {
-        let path = workspace_lock::resolve_lock_path(&workspace.root)?;
-        let options = workspace_lock::LockOptions::default();
-        workspace_lock::with_lock(&path, options.retries, options.incomplete_grace, || {
-            let raw = git::run_readonly(&workspace.root, &["rev-parse", "--git-common-dir"])?;
-            let common = fs::canonicalize(workspace.root.join(raw.trim()))?;
-            let resume = receipt::Receipt::load(&common, key)?;
-            let fresh = if let Some(receipt) = &resume {
-                transaction::preview(receipt, workspace, false, true)?;
-                None
-            } else {
-                Some(DeletePlan::build(workspace, key)?)
-            };
-            Ok(Self {
-                workspace: workspace.clone(),
-                fresh,
-                resume,
-            })
+        let raw = git::run_readonly(&workspace.root, &["rev-parse", "--git-common-dir"])?;
+        let common = fs::canonicalize(workspace.root.join(raw.trim()))?;
+        let resume = receipt::Receipt::load(&common, key)?;
+        let fresh = if let Some(receipt) = &resume {
+            transaction::preview(receipt, workspace, false, true)?;
+            None
+        } else {
+            Some(DeletePlan::build(workspace, key)?)
+        };
+        Ok(Self {
+            workspace: workspace.clone(),
+            fresh,
+            resume,
         })
     }
     pub fn has_git_loss(&self) -> bool {
@@ -1115,21 +1184,6 @@ impl PreparedDelete {
 }
 
 pub fn delete(workspace: &Workspace, args: &Args) -> Result<Value> {
-    #[cfg(unix)]
-    {
-        let path = workspace_lock::resolve_lock_path(&workspace.root)?;
-        let options = workspace_lock::LockOptions::default();
-        workspace_lock::with_lock(&path, options.retries, options.incomplete_grace, || {
-            delete_locked(workspace, args)
-        })
-    }
-    #[cfg(windows)]
-    {
-        delete_locked(workspace, args)
-    }
-}
-
-fn delete_locked(workspace: &Workspace, args: &Args) -> Result<Value> {
     args.only(&["force", "dry-run"])?;
     if !args.has("json") {
         return Err(unsupported(
@@ -1164,7 +1218,14 @@ fn delete_locked(workspace: &Workspace, args: &Args) -> Result<Value> {
                 )
                 .with_details(data));
             }
-            data["result"] = transaction::execute(receipt, workspace, None)?;
+            let path = workspace_lock::resolve_lock_path(&workspace.root)?;
+            let options = workspace_lock::LockOptions::default();
+            data["result"] = workspace_lock::with_lock(
+                &path,
+                options.retries,
+                options.incomplete_grace,
+                || transaction::execute(receipt, &Workspace::discover(&workspace.root)?, None),
+            )?;
             return Ok(data);
         }
     }
@@ -1215,7 +1276,7 @@ fn delete_locked(workspace: &Workspace, args: &Args) -> Result<Value> {
     }
     #[cfg(unix)]
     {
-        data["result"] = plan.execute_locked()?;
+        data["result"] = plan.execute()?;
     }
     #[cfg(windows)]
     {

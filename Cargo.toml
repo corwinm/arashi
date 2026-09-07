@@ -29,6 +29,7 @@ path = "tests/rust_cli.rs"
 crossterm = { version = "=0.29.0", default-features = false, features = ["events", "windows"] }
 serde = { version = "1.0.228", features = ["derive"] }
 sha2 = "0.10"
+url = "=2.5.8"
 zip = { version = "2.4", default-features = false, features = ["deflate-flate2", "flate2"] }
 tempfile = "3"
 # ZIP decoding only: omit the optional zopfli encoder.

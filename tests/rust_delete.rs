@@ -13,6 +13,33 @@ use std::{
 #[path = "rust/delete_network.rs"]
 mod network;
 
+#[cfg(unix)]
+#[test]
+#[ignore = "requires retained TypeScript source and Python 3"]
+fn source_receipt_retry_and_lock_regressions() {
+    if std::env::var("ARASHI_TS_PARITY").as_deref() != Ok("1") {
+        return;
+    }
+    for script in ["delete_receipt_resume.py", "delete_receipt_lock.py"] {
+        let output = Command::new("python3")
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/rust")
+                    .join(script),
+            )
+            .env("ARASHI_DELETE_BIN", env!("CARGO_BIN_EXE_arashi"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{script}:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+}
+
 static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {

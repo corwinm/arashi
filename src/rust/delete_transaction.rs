@@ -148,17 +148,51 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
     }
     if !clone_absent {
         let current = DeletePlan::build(workspace, key)?;
-        // On an explicit retry, inspect surviving content again, but never adopt a
-        // replacement identity, new ref, new worktree or changed checkout OID.
-        for checkout in &current.linked {
-            if !runtime["identities"]["worktrees"]
-                .as_array()
-                .unwrap()
+        // Compare the accepted receipt, not a newly authorized plan. Only proven
+        // completed/absent worktrees may disappear from topology and loss evidence.
+        let changed = || {
+            closed(
+                "DELETE_CONCURRENT_CHANGE",
+                "Accepted Git topology or loss evidence changed",
+                1,
+            )
+        };
+        let mut expected_linked = Vec::new();
+        let mut removed_paths = Vec::new();
+        for old in topology["linkedWorktrees"].as_array().unwrap() {
+            let path = get_path(old, "path")?;
+            let item = items
                 .iter()
-                .any(|identity| identity["path"] == json!(checkout.path))
-            {
-                return Err(stale("New linked ownership appeared during delete"));
+                .find(|item| item["kind"] == "linked-worktree" && item["path"] == old["path"])
+                .ok_or_else(|| stale("Missing linked topology item"))?;
+            if receipt.done(item["id"].as_str().unwrap()) || absent(&path)? {
+                removed_paths.push(path);
+            } else {
+                expected_linked.push(old);
             }
+        }
+        if expected_linked.len() != current.linked.len() {
+            return Err(changed());
+        }
+        for checkout in &current.linked {
+            let observed = json!({"path":checkout.path,"head":checkout.head,"branch":format!("refs/heads/{}",checkout.branch),"detached":false,"bare":false,"locked":null,"prunable":null,"metadataPath":checkout.admin,"present":true});
+            if !expected_linked.iter().any(|old| **old == observed) {
+                return Err(changed());
+            }
+        }
+        let expected_warnings = receipt.record["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|warning| warning.as_str().unwrap())
+            .filter(|warning| {
+                !removed_paths.iter().any(|path| {
+                    warning.starts_with(&format!("DELETE_GIT_DATA_LOSS: {}:", path.display()))
+                })
+            })
+            .collect::<Vec<_>>();
+        if current.warnings != expected_warnings {
+            return Err(changed());
         }
         let old_refs = items
             .iter()
@@ -176,7 +210,7 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
             .map(|item| (item.name.as_str(), item.oid.as_str()))
             .collect::<std::collections::BTreeSet<_>>();
         if refs != old_refs {
-            return Err(stale("Repository ref evidence changed during delete"));
+            return Err(changed());
         }
         let primary = topology["inventory"]
             .as_array()
@@ -193,7 +227,7 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
                         .map(|branch| format!("refs/heads/{branch}"))
                 )
         {
-            return Err(stale("Primary checkout evidence changed during delete"));
+            return Err(changed());
         }
     }
     Ok(())
@@ -357,6 +391,7 @@ pub(super) fn execute(
                             .find(|identity| identity["path"] == json!(path))
                             .unwrap();
                         if !absent(&path)? {
+                            validate_runtime(&receipt, &Workspace::discover(&workspace.root)?)?;
                             receipt::validate_identity(identity, false)?;
                             if let Some(accepted) = accepted {
                                 accepted
