@@ -1,11 +1,19 @@
 // Cross-language filesystem locking, NOT Kitty vendor acceptance.
 // MANAGED_TEST_BIN=/absolute/test-binary node tests/rust/managed-launch-lock-interop.mjs
-import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 const root = mkdtempSync(join(tmpdir(), "arashi-lock-interop-"));
 const test = process.env.MANAGED_TEST_BIN;
 assert.ok(test);
@@ -40,7 +48,9 @@ catch(e){console.log('LOCK_DENIED='+e.message);process.exit(0);}`;
     );
   });
   async function waitFor(token) {
-    if (output.includes(token)) return;
+    if (output.includes(token)) {
+      return;
+    }
     await new Promise((ok, bad) => {
       const timer = setTimeout(() => {
         cleanup();
@@ -72,6 +82,54 @@ catch(e){console.log('LOCK_DENIED='+e.message);process.exit(0);}`;
   return result;
 }
 try {
+  for (const kind of ["source", "rust"]) {
+    for (const [spelling, pid] of [
+      ["decimal", `${process.pid}.0`],
+      ["exponent", `${process.pid}e0`],
+      ["duplicate", `0,"pid":${process.pid}`],
+      ["safe-integer-outside-os", "9007199254740991"],
+    ]) {
+      // Native capability failures must stay conservative, even when Bun reports absence.
+      if (kind === "source" && spelling === "safe-integer-outside-os") {
+        continue;
+      }
+      for (const suffix of ["", ".recovery"]) {
+        const path = join(root, `arashi-v1-interop.lock${suffix}`);
+        mkdirSync(path);
+        const identity = `arashi-v1-interop${suffix ? ":recovery" : ""}`;
+        const duplicates = spelling === "duplicate" ? '"identity":null,"owner":"old",' : "";
+        const raw = `{${duplicates}"createdAt":0,"identity":${JSON.stringify(identity)},"owner":"live","pid":${pid}}`;
+        writeFileSync(join(path, "owner.json"), raw);
+        utimesSync(path, new Date(0), new Date(0));
+        const waiter = start(kind, 80);
+        waiter.child.stdin.end("release\n");
+        await waiter.waitFor("LOCK_DENIED=");
+        await waiter.done;
+        assert.equal(readFileSync(join(path, "owner.json"), "utf8"), raw);
+        assert.deepEqual(readdirSync(root), [`arashi-v1-interop.lock${suffix}`]);
+        rmSync(path, { recursive: true });
+        console.log(`PASS ${kind} ${spelling}${suffix} denied; exact aged owner bytes preserved`);
+      }
+    }
+    for (const spelling of ["decimal", "exponent", "duplicate"]) {
+      const holder = start(kind);
+      await holder.waitFor("LOCK_READY=");
+      const path = join(root, "arashi-v1-interop.lock", "owner.json");
+      const owner = JSON.parse(readFileSync(path));
+      const pid = {
+        decimal: `${owner.pid}.0`,
+        duplicate: `0,"pid":${owner.pid}`,
+        exponent: `${owner.pid}e0`,
+      }[spelling];
+      const raw = JSON.stringify(owner).replace(/"pid":\d+/, `"pid":${pid}`);
+      writeFileSync(path, raw);
+      holder.child.stdin.end("release\n");
+      await holder.waitFor("LOCK_RELEASED");
+      await holder.done;
+      assert.deepEqual(readdirSync(root), []);
+      console.log(`PASS ${kind} releases equivalent ${spelling} owner`);
+    }
+  }
   for (const [holderKind, waiterKind] of [
     ["source", "rust"],
     ["rust", "source"],
@@ -118,8 +176,10 @@ try {
   }
 } finally {
   for (const { child } of children) {
-    if (child.exitCode === null) child.kill();
+    if (child.exitCode === null) {
+      child.kill();
+    }
   }
   await Promise.allSettled(children.map((c) => c.done));
-  rmSync(root, { recursive: true, force: true });
+  rmSync(root, { force: true, recursive: true });
 }

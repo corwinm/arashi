@@ -47,6 +47,37 @@ MANAGED_TEST_BIN=/absolute/test-executable node tests/rust/managed-launch-lock-i
 ARASHI_MANAGED_NATIVE_TMUX=1 cargo test --locked --test rust_managed_launch installed_private_tmux -- --ignored --nocapture
 ```
 
+## Lock-owner serialization review repair
+
+The review at `3f7e6c83d1b8b52191e50292035dbfb42617b8e2` demonstrated aged
+live-owner theft for source-valid decimal PIDs and duplicate members. The fix
+parses a JSON value before validating the final members, normalizes positive
+safe-integer PIDs into `u64`, and shares that interpretation across acquire,
+recovery and release. OS PID conversion failures remain occupied/unknown; Unix
+recovery requires actual ESRCH rather than arbitrary probe failure. Public APIs
+and the retained TypeScript oracle are unchanged.
+
+Expanded `managed-launch-lock-interop.mjs` first failed with native `LOCK_READY`
+where source denied (`target/lock-fix-red.log`). Debug/release now each pass 24
+subprocess scenarios: decimal/exponent/duplicate real live-parent PIDs in aged
+locks and recovery guards preserve exact bytes; equivalent owner spellings
+release successfully; native out-of-OS-range safe integers remain untouched;
+and all four existing cross-language handoff/crash-recovery cases still pass.
+The wide-PID cases are explicitly native conservative-policy tests, **not** Bun
+parity: this installed Bun source run acquired the maximum-safe-integer fixture.
+No claim is made that such a PID identifies a real OS process.
+
+Reverification: focused managed debug/release each 18 passed, 3 opt-in entries
+ignored; source/debug/release executable adapter corpus each 19 passed; comparison
+checked ordered argv, cwd, directive stripping and successful outcomes (not exact
+error envelopes). Source/debug/release installed private tmux acceptance passed.
+Cargo fmt, focused clippy `-D warnings`, JavaScript syntax and diff whitespace
+checks passed. Evidence: `target/lock-fix-*`; comparison is reproducible with
+`python3 target/lock-fix-compare.py`. Builds used the lane's explicit
+`target/managed-cargo` and two jobs. No full suite, Windows slot, user GUI or
+parent-owned consumers were exercised. Independent exact-head re-review and
+consumer integration remain parent-owned.
+
 ## Explicit remaining gates
 
 These new modules are compiled/exercised by path-included integration tests. Per lane ownership, no launch/CLI/lib/Cargo edits were made. Parent must register `pub mod managed_launch`, wire consumers, resolve Herdr source candidates, and review the result. The release CLI is **not** claimed to expose these adapters before that integration.
