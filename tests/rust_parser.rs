@@ -15,6 +15,22 @@ fn parser_probe() {
 }
 
 #[test]
+fn parser_parity_lifecycle_regressions() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = Command::new("node")
+        .arg(root.join("tests/rust/parser-parity.test.mjs"))
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 #[ignore = "requires retained TypeScript dependencies and Node"]
 fn retained_source_parser_processes() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
