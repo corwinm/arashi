@@ -30,7 +30,8 @@ for (const [id, token, keys, retryToken, retryKeys] of rows) {
     const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, XDG_CACHE_HOME: home, ARASHI_PROMPT_CASE: id, TERM: 'xterm-256color' };
     delete env.ARASHI_DIRECTIVE_FILE; delete env.ARASHI_SHELL;
     const argv = source ? [resolve(import.meta.dirname, 'prompt-source.mjs'), source] : ['--exact', 'prompt_fixture', '--nocapture'];
-    const child = pty.spawn(binary, argv, { name: 'xterm-256color', cols: 100, rows: 30, cwd: home, env, useConpty: true });
+    // Use the bundled ConPTY API so cleanup does not probe an exited child PID.
+    const child = pty.spawn(binary, argv, { name: 'xterm-256color', cols: 100, rows: 30, cwd: home, env, useConpty: true, useConptyDll: true });
     let output = '', stage = 0, timedOut = false;
     const result = await new Promise((accept, reject) => {
       const timer = setTimeout(() => { timedOut = true; child.kill(); }, 15000);
@@ -43,6 +44,15 @@ for (const [id, token, keys, retryToken, retryKeys] of rows) {
       });
       child.onExit(event => { clearTimeout(timer); clearTimeout(settlement); accept({ id, ...event, timedOut, output }); });
     });
+    // Release the owned ConPTY handles only after recording the real exit.
+    // The DLL path avoids legacy console-PID probing after the child is gone.
+    if (process.platform === 'win32' && !timedOut) {
+      child.kill();
+      // node-pty 1.1.0's DLL kill waits for another data event to dispose
+      // this worker, but onExit has already closed the output socket.
+      // Dispose the owned worker explicitly; never force a successful exit.
+      child._agent._conoutSocketWorker.dispose();
+    }
     results.push(result);
     if (args.includes('--report')) writeFileSync(resolve(option('--report')), JSON.stringify(results, null, 2));
     assert.equal(timedOut, false, `${id}: deadline\n${output}`);

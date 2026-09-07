@@ -123,7 +123,7 @@ fn native_pty_contract() {
     if std::env::var_os("ARASHI_PROMPT_CASE").is_some() {
         return;
     }
-    let status = std::process::Command::new("node")
+    let mut child = std::process::Command::new("node")
         .arg(
             std::path::Path::new(file!())
                 .with_file_name("rust")
@@ -131,7 +131,20 @@ fn native_pty_contract() {
         )
         .arg("--binary")
         .arg(std::env::current_exe().unwrap())
-        .status()
+        .spawn()
         .unwrap();
+    // A completed row report is not acceptance if ConPTY handles keep Node alive.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("PTY driver did not exit within 90 seconds");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
     assert!(status.success(), "PTY driver failed: {status}");
 }
