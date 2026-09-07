@@ -40,6 +40,25 @@ const rows = [
 rows.push(
   ...semanticCases.map((c) => [c.id, c.kind === "input" ? "Enter text" : "Proceed", c.keys]),
 );
+const progressPath = args.includes("--progress") ? resolve(option("--progress")) : null;
+let completed = 0;
+const writeProgress = () => {
+  if (progressPath) writeFileSync(progressPath, `${completed}/${rows.length}`);
+};
+const writeKeys = (child, keys) => {
+  if (process.platform !== "win32" || !/[\x1b\u{10000}-\u{10ffff}]/u.test(keys)) {
+    child.write(keys);
+    return;
+  }
+  const tokens = keys.match(/\x1b(?:\[[0-9;]*[A-Za-z~]|.)|[\s\S]/gu) ?? [];
+  const writeNext = (index) => {
+    if (index === tokens.length) return;
+    child.write(tokens[index]);
+    setTimeout(() => writeNext(index + 1), 10);
+  };
+  writeNext(0);
+};
+writeProgress();
 const results = [];
 let failures = 0;
 for (const [id, token, keys, retryToken, retryKeys] of rows) {
@@ -79,7 +98,8 @@ for (const [id, token, keys, retryToken, retryKeys] of rows) {
     const argv = source
       ? [resolve(import.meta.dirname, "prompt-source.mjs"), source]
       : ["--exact", "prompt_fixture", "--nocapture"];
-    // Use the bundled ConPTY API so cleanup does not probe an exited child PID.
+    // The system ConPTY path preserves astral input that node-pty 1.1.0's
+    // bundled OpenConsole drops. Clean up its handles directly after onExit.
     const child = pty.spawn(binary, argv, {
       name: "xterm-256color",
       cols: 100,
@@ -87,7 +107,7 @@ for (const [id, token, keys, retryToken, retryKeys] of rows) {
       cwd: home,
       env,
       useConpty: true,
-      useConptyDll: true,
+      useConptyDll: false,
     });
     let output = "",
       stage = 0,
@@ -105,15 +125,15 @@ for (const [id, token, keys, retryToken, retryKeys] of rows) {
         output += data;
         if (stage === 0 && output.includes(token)) {
           stage = 1;
-          child.write(keys);
+          writeKeys(child, keys);
         }
         if (stage === 1 && retryToken && output.includes(retryToken)) {
           stage = 2;
-          child.write(retryKeys);
+          writeKeys(child, retryKeys);
         }
         if (stage < 3 && output.includes("Reuse terminal")) {
           stage = 3;
-          child.write("reuse\r");
+          writeKeys(child, "reuse\r");
         }
       });
       child.onExit((event) => {
@@ -123,12 +143,10 @@ for (const [id, token, keys, retryToken, retryKeys] of rows) {
       });
     });
     // Release the owned ConPTY handles only after recording the real exit.
-    // The DLL path avoids legacy console-PID probing after the child is gone.
+    // Avoid child.kill() here: the legacy path probes already-exited child PIDs.
     if (process.platform === "win32" && !timedOut) {
-      child.kill();
-      // node-pty 1.1.0's DLL kill waits for another data event to dispose
-      // this worker, but onExit has already closed the output socket.
-      // Dispose the owned worker explicitly; never force a successful exit.
+      child._agent._inSocket.destroy();
+      child._agent._outSocket.destroy();
       child._agent._conoutSocketWorker.dispose();
     }
     results.push(result);
@@ -144,6 +162,8 @@ for (const [id, token, keys, retryToken, retryKeys] of rows) {
     failures++;
     console.error(error.message);
   } finally {
+    completed++;
+    writeProgress();
     rmSync(home, { recursive: true, force: true });
   }
 }

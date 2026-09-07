@@ -322,7 +322,8 @@ impl EditBuffer {
             return;
         }
         if (alt && key.code == KeyCode::Backspace)
-            || (ctrl && matches!(key.code, KeyCode::Char('w') | KeyCode::Backspace))
+            || (ctrl && key.code == KeyCode::Char('w'))
+            || (ctrl && key.code == KeyCode::Backspace && !cfg!(windows))
         {
             let start = self.word_left();
             self.chars.drain(start..self.cursor);
@@ -339,6 +340,7 @@ impl EditBuffer {
                 KeyCode::Char('b') => KeyCode::Left,
                 KeyCode::Char('f') => KeyCode::Right,
                 KeyCode::Char('h') => KeyCode::Backspace,
+                KeyCode::Backspace if cfg!(windows) => KeyCode::Backspace,
                 KeyCode::Char('d') => KeyCode::Delete,
                 KeyCode::Char('u') => {
                     self.chars.drain(..self.cursor);

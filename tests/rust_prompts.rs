@@ -284,6 +284,69 @@ fn prompt_fixture() {
     println!("REUSE_OK");
 }
 
+const PTY_DRIVER_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+const PTY_DRIVER_CASE_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
+fn pty_driver_timeout_reason(
+    elapsed: std::time::Duration,
+    idle: std::time::Duration,
+    case_count: usize,
+) -> Option<String> {
+    let hard_timeout = PTY_DRIVER_IDLE_TIMEOUT
+        .saturating_add(PTY_DRIVER_CASE_BUDGET.saturating_mul(case_count as u32));
+    if elapsed > hard_timeout {
+        return Some(format!(
+            "exceeded the derived {}-second hard deadline",
+            hard_timeout.as_secs()
+        ));
+    }
+    if idle >= PTY_DRIVER_IDLE_TIMEOUT {
+        return Some(format!(
+            "made no progress for {} seconds",
+            PTY_DRIVER_IDLE_TIMEOUT.as_secs()
+        ));
+    }
+    None
+}
+
+fn pty_driver_case_count(progress: &str) -> Option<usize> {
+    let (_, total) = progress.trim().split_once('/')?;
+    let total = total.parse().ok()?;
+    (total > 0).then_some(total)
+}
+
+#[test]
+fn pty_driver_watchdog_allows_aggregate_runtime_with_progress() {
+    assert_eq!(
+        pty_driver_timeout_reason(
+            std::time::Duration::from_secs(240),
+            std::time::Duration::from_secs(3),
+            59,
+        ),
+        None,
+    );
+}
+
+#[test]
+fn pty_driver_watchdog_still_detects_idle_and_hard_stalls() {
+    assert_eq!(
+        pty_driver_timeout_reason(
+            std::time::Duration::from_secs(46),
+            std::time::Duration::from_secs(46),
+            59,
+        ),
+        Some("made no progress for 45 seconds".into()),
+    );
+    assert_eq!(
+        pty_driver_timeout_reason(
+            std::time::Duration::from_secs(1_226),
+            std::time::Duration::from_secs(1),
+            59,
+        ),
+        Some("exceeded the derived 1225-second hard deadline".into()),
+    );
+}
+
 #[test]
 fn native_pty_contract() {
     if std::env::var_os("ARASHI_PROMPT_CASE").is_some() {
@@ -291,6 +354,8 @@ fn native_pty_contract() {
     }
     #[cfg(target_os = "macos")]
     let isolated_node_pty = make_isolated_node_pty_non_executable();
+    let progress_dir = tempfile::tempdir().unwrap();
+    let progress_path = progress_dir.path().join("progress");
     let mut command = std::process::Command::new("node");
     command
         .arg(
@@ -299,7 +364,9 @@ fn native_pty_contract() {
                 .join("prompt-pty.mjs"),
         )
         .arg("--binary")
-        .arg(std::env::current_exe().unwrap());
+        .arg(std::env::current_exe().unwrap())
+        .arg("--progress")
+        .arg(&progress_path);
     #[cfg(target_os = "macos")]
     command.env(
         "ARASHI_PROMPT_NODE_MODULES",
@@ -307,15 +374,35 @@ fn native_pty_contract() {
     );
     let mut child = command.spawn().unwrap();
     // A completed row report is not acceptance if ConPTY handles keep Node alive.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    // Monitor row progress because ConPTY startup cost makes aggregate runtime
+    // proportional to the case count; a fixed whole-driver deadline can expire
+    // while rows are still completing normally.
+    let started = std::time::Instant::now();
+    let mut last_progress_at = started;
+    let mut progress = String::new();
+    let mut case_count = 0;
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
-        if std::time::Instant::now() >= deadline {
+        if let Ok(current) = std::fs::read_to_string(&progress_path)
+            && current != progress
+        {
+            if let Some(total) = pty_driver_case_count(&current) {
+                case_count = total;
+            }
+            progress = current;
+            last_progress_at = std::time::Instant::now();
+        }
+        let now = std::time::Instant::now();
+        if let Some(reason) = pty_driver_timeout_reason(
+            now.duration_since(started),
+            now.duration_since(last_progress_at),
+            case_count,
+        ) {
             child.kill().unwrap();
             child.wait().unwrap();
-            panic!("PTY driver did not exit within 90 seconds");
+            panic!("PTY driver {reason} (last progress: {progress:?})");
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     };
