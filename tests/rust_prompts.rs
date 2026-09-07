@@ -20,89 +20,104 @@ fn prompt_fixture() {
             description: Some("second description".into()),
         },
     ];
-    match case.as_str() {
-        "select" | "arrows" | "wrap" => assert_eq!(
-            prompts::select("Choose item", &choices).unwrap(),
-            PromptOutcome::Answer(20)
-        ),
-        "default-select" => assert_eq!(
-            prompts::select("Choose item", &choices).unwrap(),
-            PromptOutcome::Answer(10)
-        ),
-        "multi" => assert_eq!(
-            prompts::multi_select("Choose items", &choices).unwrap(),
-            PromptOutcome::Answer(vec![10, 20])
-        ),
-        "empty-multi" => assert_eq!(
-            prompts::multi_select::<i32>("Choose items", &[]).unwrap(),
-            PromptOutcome::Answer(vec![])
-        ),
-        "input" => assert_eq!(
-            prompts::input("Enter text", None).unwrap(),
-            PromptOutcome::Answer("jké".into())
-        ),
-        "default-input" => assert_eq!(
-            prompts::input("Enter text", Some("fallback")).unwrap(),
-            PromptOutcome::Answer("fallback".into())
-        ),
-        "validate" => assert_eq!(
-            prompts::input_validated("Enter text", None, |s| if s == "ok" {
-                Ok(())
-            } else {
-                Err("Try again".into())
-            })
-            .unwrap(),
-            PromptOutcome::Answer("ok".into())
-        ),
-        "confirm" => assert_eq!(
-            prompts::confirm("Proceed", Some(false)).unwrap(),
-            PromptOutcome::Answer(false)
-        ),
-        "yes" => assert_eq!(
-            prompts::confirm("Proceed", None).unwrap(),
-            PromptOutcome::Answer(true)
-        ),
-        "cancel" => assert_eq!(
-            prompts::input("Enter text", None).unwrap(),
-            PromptOutcome::Cancelled(CancelReason::Exit)
-        ),
-        "eof" => assert_eq!(
-            prompts::input("Enter text", None).unwrap(),
-            PromptOutcome::Cancelled(CancelReason::Abort)
-        ),
-        "cancel-select" => assert_eq!(
-            prompts::select("Choose item", &choices).unwrap(),
-            PromptOutcome::Cancelled(CancelReason::Exit)
-        ),
-        "cancel-multi" => assert_eq!(
-            prompts::multi_select("Choose items", &choices).unwrap(),
-            PromptOutcome::Cancelled(CancelReason::Exit)
-        ),
-        "cancel-confirm" => assert_eq!(
-            prompts::confirm("Proceed", None).unwrap(),
-            PromptOutcome::Cancelled(CancelReason::Exit)
-        ),
-        "panic-restore" => {
-            assert!(
-                std::panic::catch_unwind(|| prompts::input_validated(
-                    "Enter text",
-                    None,
-                    |_| panic!("validator panic")
-                ))
-                .is_err()
-            );
-        }
-        "existing-raw" => {
-            crossterm::terminal::enable_raw_mode().unwrap();
+    if let Ok(spec) = std::env::var("ARASHI_PROMPT_SEMANTIC") {
+        let spec: serde_json::Value = serde_json::from_str(&spec).unwrap();
+        if spec["kind"] == "input" {
             assert_eq!(
-                prompts::input("Enter text", None).unwrap(),
-                PromptOutcome::Answer("ok".into())
+                prompts::input("Enter text", spec["default"].as_str()).unwrap(),
+                PromptOutcome::Answer(spec["expected"].as_str().unwrap().to_owned())
             );
-            assert!(crossterm::terminal::is_raw_mode_enabled().unwrap());
-            crossterm::terminal::disable_raw_mode().unwrap();
+        } else {
+            assert_eq!(
+                prompts::confirm("Proceed", spec["default"].as_bool()).unwrap(),
+                PromptOutcome::Answer(spec["expected"].as_bool().unwrap())
+            );
         }
-        "empty-select" => assert!(prompts::select::<i32>("Choose item", &[]).is_err()),
-        _ => panic!("unknown case {case}"),
+    } else {
+        match case.as_str() {
+            "select" | "arrows" | "wrap" => assert_eq!(
+                prompts::select("Choose item", &choices).unwrap(),
+                PromptOutcome::Answer(20)
+            ),
+            "default-select" => assert_eq!(
+                prompts::select("Choose item", &choices).unwrap(),
+                PromptOutcome::Answer(10)
+            ),
+            "multi" => assert_eq!(
+                prompts::multi_select("Choose items", &choices).unwrap(),
+                PromptOutcome::Answer(vec![10, 20])
+            ),
+            "empty-multi" => assert_eq!(
+                prompts::multi_select::<i32>("Choose items", &[]).unwrap(),
+                PromptOutcome::Answer(vec![])
+            ),
+            "input" => assert_eq!(
+                prompts::input("Enter text", None).unwrap(),
+                PromptOutcome::Answer("jké".into())
+            ),
+            "default-input" => assert_eq!(
+                prompts::input("Enter text", Some("fallback")).unwrap(),
+                PromptOutcome::Answer("fallback".into())
+            ),
+            "validate" => assert_eq!(
+                prompts::input_validated("Enter text", None, |s| if s == "ok" {
+                    Ok(())
+                } else {
+                    Err("Try again".into())
+                })
+                .unwrap(),
+                PromptOutcome::Answer("ok".into())
+            ),
+            "confirm" => assert_eq!(
+                prompts::confirm("Proceed", Some(false)).unwrap(),
+                PromptOutcome::Answer(false)
+            ),
+            "yes" => assert_eq!(
+                prompts::confirm("Proceed", None).unwrap(),
+                PromptOutcome::Answer(true)
+            ),
+            "cancel" => assert_eq!(
+                prompts::input("Enter text", None).unwrap(),
+                PromptOutcome::Cancelled(CancelReason::Exit)
+            ),
+            "eof" => assert_eq!(
+                prompts::input("Enter text", None).unwrap(),
+                PromptOutcome::Cancelled(CancelReason::Abort)
+            ),
+            "cancel-select" => assert_eq!(
+                prompts::select("Choose item", &choices).unwrap(),
+                PromptOutcome::Cancelled(CancelReason::Exit)
+            ),
+            "cancel-multi" => assert_eq!(
+                prompts::multi_select("Choose items", &choices).unwrap(),
+                PromptOutcome::Cancelled(CancelReason::Exit)
+            ),
+            "cancel-confirm" => assert_eq!(
+                prompts::confirm("Proceed", None).unwrap(),
+                PromptOutcome::Cancelled(CancelReason::Exit)
+            ),
+            "panic-restore" => {
+                assert!(
+                    std::panic::catch_unwind(|| prompts::input_validated(
+                        "Enter text",
+                        None,
+                        |_| panic!("validator panic")
+                    ))
+                    .is_err()
+                );
+            }
+            "existing-raw" => {
+                crossterm::terminal::enable_raw_mode().unwrap();
+                assert_eq!(
+                    prompts::input("Enter text", None).unwrap(),
+                    PromptOutcome::Answer("ok".into())
+                );
+                assert!(crossterm::terminal::is_raw_mode_enabled().unwrap());
+                crossterm::terminal::disable_raw_mode().unwrap();
+            }
+            "empty-select" => assert!(prompts::select::<i32>("Choose item", &[]).is_err()),
+            _ => panic!("unknown case {case}"),
+        }
     }
     assert!(
         !crossterm::terminal::is_raw_mode_enabled().unwrap(),
