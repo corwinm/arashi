@@ -1,9 +1,9 @@
 // Explicit source/native acceptance, never a production runtime fallback.
+import { startAuthenticatedGit, withAuthenticatedGitFixture } from "./authenticated-git.mjs";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
-import { startAuthenticatedGit } from "./authenticated-git.mjs";
 
 const [mode, binary] = process.argv.slice(2);
 assert.ok(["source", "native"].includes(mode));
@@ -13,8 +13,7 @@ if (mode === "native") {
 const source = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
 const results = [];
 for (const transport of ["https", "ssh"]) {
-  const fixture = await startAuthenticatedGit();
-  try {
+  await withAuthenticatedGitFixture(startAuthenticatedGit, async (fixture) => {
     const url = fixture.urls[transport];
     const initial = await fixture.commit("seed", "initial");
     await fixture.git("seed", ["push", fixture.remote, "HEAD:main"]);
@@ -82,8 +81,6 @@ for (const transport of ["https", "ssh"]) {
       outgoing,
       transport,
     });
-  } finally {
-    await fixture.close();
-  }
+  });
 }
 console.log(JSON.stringify(results));

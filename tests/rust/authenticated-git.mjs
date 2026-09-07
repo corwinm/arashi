@@ -33,6 +33,14 @@ export async function withCleanup(action, cleanup) {
   return result;
 }
 
+export async function withAuthenticatedGitFixture(start, action) {
+  const fixture = await start();
+  return withCleanup(
+    () => action(fixture),
+    () => fixture.close(),
+  );
+}
+
 // Named for the fixture lifecycle regression; never removes anything but its supplied root.
 export async function removeFixtureRoot(root) {
   for (let attempt = 0; ; attempt += 1) {

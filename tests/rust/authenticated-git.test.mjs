@@ -9,6 +9,51 @@ const fixture = await import("./authenticated-git.mjs").catch((error) => {
   throw error;
 });
 
+test("acceptance fixture cleanup preserves a primary failure", async () => {
+  assert.equal(
+    typeof fixture.withAuthenticatedGitFixture,
+    "function",
+    "authenticated acceptance fixture lifecycle helper is missing",
+  );
+  const primary = new Error("acceptance assertion failure");
+  const cleanup = new Error("acceptance fixture cleanup failure");
+  const server = {
+    close() {
+      throw cleanup;
+    },
+  };
+
+  await assert.rejects(
+    fixture.withAuthenticatedGitFixture(
+      () => server,
+      () => {
+        throw primary;
+      },
+    ),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.cause, primary);
+      assert.deepEqual(error.errors, [primary, cleanup]);
+      return true;
+    },
+  );
+});
+
+test("acceptance fixture cleanup-only failure still fails", async () => {
+  const cleanup = new Error("acceptance fixture cleanup failure");
+  await assert.rejects(
+    fixture.withAuthenticatedGitFixture(
+      () => ({
+        close() {
+          throw cleanup;
+        },
+      }),
+      () => "complete",
+    ),
+    (error) => error === cleanup,
+  );
+});
+
 test("cleanup failure does not replace a primary fixture failure", async () => {
   const primary = new Error("primary readiness failure");
   const cleanup = new Error("fixture cleanup failure");
