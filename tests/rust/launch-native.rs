@@ -546,3 +546,31 @@ fn windows_native_cmd_and_ide_exe_preserve_literal_arguments() {
     }
     assert_eq!(records(d.path()), vec![args.map(String::from).to_vec(); 8]);
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_extensionless_ide_shim_preserves_literal_arguments() {
+    let d = tempfile::tempdir().unwrap();
+    let exe = install_fixture(d.path(), "native");
+    std::fs::write(
+        d.path().join("code.cmd"),
+        "@\"%ARASHI_LAUNCH_NATIVE%\" %*\r\n",
+    )
+    .unwrap();
+    let mut c = fixture_context(d.path());
+    c.env.insert("ARASHI_LAUNCH_NATIVE".into(), exe);
+    let special = d.path().join("space %PATH%!^&() 雪");
+    std::fs::create_dir(&special).unwrap();
+    let expected = vec!["--new-window".to_string(), special.display().to_string()];
+    let command = vec![
+        "cmd.exe".into(),
+        "/d".into(),
+        "/c".into(),
+        "code".into(),
+        expected[0].clone(),
+        expected[1].clone(),
+    ];
+    let result = process::run(&command, d.path(), &c.env, false);
+    assert_eq!(result.exit_code, 0, "{result:?}");
+    assert_eq!(records(d.path()), vec![expected]);
+}

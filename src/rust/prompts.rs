@@ -82,6 +82,17 @@ fn line(text: &str) -> Result<()> {
     out.flush()?;
     Ok(())
 }
+fn clear_menu(lines: usize) -> Result<()> {
+    if lines == 0 {
+        return Ok(());
+    }
+    let mut out = io::stdout().lock();
+    for _ in 0..lines {
+        write!(out, "\x1b[1A\r\x1b[2K")?;
+    }
+    out.flush()?;
+    Ok(())
+}
 fn key(editing: bool) -> Result<std::result::Result<KeyEvent, CancelReason>> {
     loop {
         match event::read() {
@@ -118,14 +129,31 @@ fn key(editing: bool) -> Result<std::result::Result<KeyEvent, CancelReason>> {
         }
     }
 }
+fn viewport(count: usize, cursor: usize, rows: usize) -> std::ops::Range<usize> {
+    let visible = rows.saturating_sub(4).max(1).min(count);
+    let start = cursor.saturating_sub(visible / 2).min(count - visible);
+    start..start + visible
+}
 fn menu<T>(
     message: &str,
     choices: &[Choice<T>],
     cursor: usize,
     checked: Option<&[bool]>,
-) -> Result<()> {
+) -> Result<usize> {
+    let rows = terminal::size().map_or(24, |(_, rows)| usize::from(rows));
+    let visible = viewport(choices.len(), cursor, rows);
+    let mut lines = 1;
     line(message)?;
-    for (i, choice) in choices.iter().enumerate() {
+    if visible.start > 0 {
+        line(&format!("↑ {} more", visible.start))?;
+        lines += 1;
+    }
+    for (i, choice) in choices
+        .iter()
+        .enumerate()
+        .take(visible.end)
+        .skip(visible.start)
+    {
         let mark = if let Some(checked) = checked {
             if checked[i] { "[x]" } else { "[ ]" }
         } else {
@@ -137,13 +165,19 @@ fn menu<T>(
             mark,
             choice.label
         ))?;
+        lines += 1;
         if i == cursor
             && let Some(description) = &choice.description
         {
             line(description)?;
+            lines += 1;
         }
     }
-    Ok(())
+    if visible.end < choices.len() {
+        line(&format!("↓ {} more", choices.len() - visible.end))?;
+        lines += 1;
+    }
+    Ok(lines)
 }
 fn navigate(code: KeyCode, cursor: &mut usize, count: usize) {
     if count == 0 {
@@ -164,8 +198,10 @@ pub fn select<T: Clone>(message: &str, choices: &[Choice<T>]) -> Result<PromptOu
     }
     let session = Session::open()?;
     let mut cursor = 0;
+    let mut rendered = 0;
     loop {
-        menu(message, choices, cursor, None)?;
+        clear_menu(rendered)?;
+        rendered = menu(message, choices, cursor, None)?;
         let k = match key(false)? {
             Ok(k) => k,
             Err(reason) => return session.finish(PromptOutcome::Cancelled(reason)),
@@ -183,8 +219,10 @@ pub fn multi_select<T: Clone>(
     let session = Session::open()?;
     let mut cursor = 0;
     let mut checked = vec![false; choices.len()];
+    let mut rendered = 0;
     loop {
-        menu(message, choices, cursor, Some(&checked))?;
+        clear_menu(rendered)?;
+        rendered = menu(message, choices, cursor, Some(&checked))?;
         let k = match key(false)? {
             Ok(k) => k,
             Err(reason) => return session.finish(PromptOutcome::Cancelled(reason)),
@@ -447,5 +485,19 @@ pub fn confirm(message: &str, default: Option<bool>) -> Result<PromptOutcome<boo
             _ => buffer.edit(k),
         }
         buffer.render()?;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::viewport;
+
+    #[test]
+    fn viewport_keeps_active_choice_visible_and_bounded() {
+        for cursor in [0, 1, 50, 98, 99] {
+            let range = viewport(100, cursor, 10);
+            assert!(range.contains(&cursor), "cursor={cursor}, range={range:?}");
+            assert!(range.len() <= 6, "{range:?}");
+        }
     }
 }
