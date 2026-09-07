@@ -12,7 +12,7 @@
 
 - Known-good delivered baseline: `ce7801727c75dac0e38c6f7442158c297085e82c` on `v2` (native three-platform and source-parity CI passed).
 - Recovery snapshot: `/Users/corwin/Developer/arashi-arashi/.arashi/recovery/astra-takeover-20260905-220453/manifest.json`; draft archives and verified Git bundle beside it. Original drafts remain in their worktrees until explicitly integrated/retired.
-- This plan supersedes ignored `target/port-completion-checklist.md` as the delivery queue. `docs/rust-port.md` remains the current support ledger, not a full-port completion claim.
+- This plan is the sole durable delivery queue. `docs/rust-port.md` remains the current support ledger, not a full-port completion claim.
 - Stable npm, v1 installer endpoints, and v1 binaries are not switched during port development.
 
 ## Completion contract
@@ -40,8 +40,20 @@ Parent alone owns integration `v2`, the tracked plan and final review/CI/push. W
 1. **Recover and integrate existing work.** Checkpoint drafts, resolve concrete failures and shared config changes, verify focused source tests, contract review, quality review, then merge and exact-head CI. Do not discard inherited tests to make a green subset.
 2. **Complete ordinary configured workflows.** Network Git, normal command defaults, setup, human/JSON/errors and noninteractive operation compose in one real workspace. Shared-policy integration tests are required.
 3. **Close retained compatibility.** Interactive selection/confirmation/onboarding/configure; terminal/editor launch; linked/bare/standalone projection; hook/materialization consumers; ignore migration/path policy; recovery/error contracts; all public options below.
-4. **Deliver native lifecycle.** Side-by-side alpha Bash/PowerShell install, real archives, checksums, refresh/update/uninstall and v1 upgrade safety. Tests use disposable homes; no user-home installation or release publication until acceptance.
+4. **Deliver native lifecycle.** Controlled canonical alpha Bash/PowerShell install, real archives, checksums, refresh/update/uninstall and v1 upgrade safety. Tests use disposable homes; no user-home installation or release publication until acceptance.
 5. **Replacement acceptance.** Three-platform native CI, all source oracles, selected retained process suites expanded to all applicable CLI behavior, real CLI journey, docs/skills/extension compatibility review, and clean integrated remote head. Publish only after actual release readiness; a successful alpha workflow is not full port completion.
+
+## Controlled alpha handoff gates
+
+The canonical alpha lifecycle (`ca8eee8`, `981ecf8`, `f9b9df2`), macOS process/lifecycle corrections (`5797f07`, `3ff1d1f`, `839bf54`, `0511415`), and the reviewed Windows process/authentication cleanup through `62b9e896094a37c965b5ae8fac804cc9ffadb907` are integrated. Earlier local macOS reconciliation at `f9b9df2` passed `rust_alpha` (3 tests), alpha packaging (2 tests), alpha distribution (20 tests with 3 native-Windows cases skipped), release builds, completion and distribution contracts, Bash syntax, formatting, and diff checks. This is historical component evidence, not exact-candidate acceptance.
+
+Before a tester handoff:
+
+- [ ] Run formatting, locked all-target Clippy/tests with source oracles, release build, external parity/characterization/native smoke, and the complete Rust alpha workflow matrix on the exact candidate head. Platform-conditioned skips remain noncoverage.
+- [ ] Retain that head's exact artifacts and checksums, then install those bytes into a disposable/private tester home on every supported OS.
+- [ ] Dogfood representative workflows marked supported in `docs/rust-port.md`; verify `aw` resolves inside `.arashi-alpha` and reports the controlled alpha identity.
+- [ ] Refresh from the exact artifact, exercise failed-promotion rollback, uninstall, remove the temporary PATH shadow, and verify the unchanged stable installation is exposed again.
+- [ ] Push normally, read back the remote SHA, and require exact-SHA Rust and alpha CI success. Public release, npm/stable installer migration, automatic update discovery, companion-site publication, and whole-port completion remain separate gates.
 
 ## Public command acceptance inventory
 
