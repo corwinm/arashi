@@ -53,6 +53,7 @@ pub mod completion;
 
 pub mod config;
 pub mod configure;
+pub mod fs_identity;
 pub mod handoff;
 pub mod status;
 
