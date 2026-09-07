@@ -42,7 +42,18 @@ fn exact_local_remote(url: &str) -> Result<PathBuf> {
         ));
     }
     let path = if let Some(path) = url.strip_prefix("file://") {
-        if !path.starts_with('/') || path.contains(['%', '?', '#']) || path.starts_with("//") {
+        #[cfg(windows)]
+        let path = path
+            .strip_prefix('/')
+            .filter(|path| {
+                path.as_bytes().get(1) == Some(&b':')
+                    && path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+            })
+            .unwrap_or(path);
+        if !Path::new(path).is_absolute()
+            || path.contains(['%', '?', '#'])
+            || path.starts_with("//")
+        {
             return Err(unsupported_clone(
                 "Only plain absolute file:// clone URLs are supported by this Rust slice",
             ));

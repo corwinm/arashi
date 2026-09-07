@@ -149,7 +149,9 @@ impl IgnorePlan {
                 "Invalid clone-local arashi.ignoreScope value '{scope}'. Run `git config --local --unset arashi.ignoreScope` or `arashi init --ignore-scope local`."
             )));
         }
-        let local = root.join(git::run(root, &["rev-parse", "--git-path", "info/exclude"])?.trim());
+        let local = crate::paths::lexical(
+            root.join(git::run(root, &["rev-parse", "--git-path", "info/exclude"])?.trim()),
+        );
         let files = [local.clone(), root.join(".gitignore")];
         let before = [read_ignore(&files[0])?, read_ignore(&files[1])?];
         let mut owned = [vec![], vec![]];

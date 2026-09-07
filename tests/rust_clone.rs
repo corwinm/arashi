@@ -149,6 +149,64 @@ fn clone_effects(fixture: &Fixture, names: &[&str]) -> Vec<(String, String, Stri
 }
 
 #[test]
+fn managed_ignore_paths_use_native_path_spelling() {
+    let fixture = Fixture::new();
+    let remote = fixture.remote("api", None);
+    fixture.configure(
+        &serde_json::json!({
+            "version": "1.0.0",
+            "reposDir": "repos",
+            "worktreesDir": ".arashi/worktrees",
+            "repos": {"api": {"path": "repos/api", "gitUrl": remote}}
+        })
+        .to_string(),
+    );
+
+    let output = fixture.command(false, &["clone", "--all", "--json"]);
+
+    assert!(output.status.success(), "{output:?}");
+    let managed = &json(&output)["data"]["managedIgnore"];
+    let local = fixture.workspace.join(".git").join("info").join("exclude");
+    assert_eq!(managed["localExcludePath"], serde_json::json!(local));
+    assert_eq!(managed["targetPath"], serde_json::json!(local));
+    assert_eq!(
+        managed["trackedIgnorePath"],
+        serde_json::json!(fixture.workspace.join(".gitignore"))
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_drive_file_url_clones_local_remote() {
+    let fixture = Fixture::new();
+    let remote = fixture.remote("api", None);
+    fixture.configure(
+        &serde_json::json!({
+            "version": "1.0.0",
+            "reposDir": "repos",
+            "worktreesDir": ".arashi/worktrees",
+            "repos": {
+                "api": {
+                    "path": "repos/api",
+                    "gitUrl": format!("file://{}", remote.display())
+                }
+            }
+        })
+        .to_string(),
+    );
+
+    let output = fixture.command(false, &["clone", "--all", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(clone_effects(&fixture, &["api"])[0].0, "api");
+}
+
+#[test]
 #[ignore = "requires Node and retained TypeScript dependencies"]
 fn local_and_file_remotes_match_source_json_and_effects() {
     let fixture = Fixture::new();
