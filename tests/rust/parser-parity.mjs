@@ -33,6 +33,7 @@ const run = (sourceMode, args) => {
 };
 const results = [];
 const helps = {};
+let mutationError = null;
 try {
   const commands = ["", ...contract.commands.map((c) => c.path)];
   for (const command of commands) {
@@ -94,15 +95,13 @@ try {
       ["shell", "init", shell],
       ["shell", "init", shell, "ignored"],
     ]),
-    ...[
-      ["exec", "--unknown", "-j"],
-      ["exec", "-j", "--jobs", "bad", "--unknown"],
-      ["exec", "-j", "--jobs", "bad"],
-      ["exec", "-j", "--", "--help"],
-      ["switch", "-jj", "--path", "--help"],
-      ["shell", "init", "--json"],
-      ["shell", "init", "powershell"],
-    ],
+    ["exec", "--unknown", "-j"],
+    ["exec", "-j", "--jobs", "bad", "--unknown"],
+    ["exec", "-j", "--jobs", "bad"],
+    ["exec", "-j", "--", "--help"],
+    ["switch", "-jj", "--path", "--help"],
+    ["shell", "init", "--json"],
+    ["shell", "init", "powershell"],
     ...[
       ["--launch", "--no-launch"],
       ["--no-launch", "--launch"],
@@ -153,8 +152,12 @@ try {
     }
 } finally {
   writeFileSync(resolve(process.argv[3]), JSON.stringify({ source, results }, null, 2) + "\n");
-  if (JSON.stringify(readdirSync(cwd)) !== JSON.stringify(["home"]) || readdirSync(home).length)
-    throw Error("Parser invocation mutated disposable cwd/HOME");
+  if (JSON.stringify(readdirSync(cwd)) !== JSON.stringify(["home"]) || readdirSync(home).length) {
+    mutationError = new Error("Parser invocation mutated disposable cwd/HOME");
+  }
   rmSync(cwd, { recursive: true, force: true });
+}
+if (mutationError instanceof Error) {
+  throw mutationError;
 }
 if (results.some((r) => !r.equal)) process.exitCode = 1;
