@@ -1,8 +1,4 @@
-//! Safe native switch selection and parent-shell directory directives.
-//!
-//! Terminal, editor, tmux, sesh, Herdr, cmux and Kitty launchers remain
-//! deliberately unsupported. The only active integration in this slice is the
-//! existing shell wrapper's directive file.
+//! Native switch selection, source-ordered launch policy and shell directives.
 use crate::{
     Error, Result,
     cli::Args,
@@ -115,11 +111,6 @@ fn validate_options(args: &Args) -> Result<()> {
             "Conflicting switch behavior overrides provided (--cd with an explicit launch override). Choose either parent-shell switching or a launch target.",
         ));
     }
-    if launch_intent {
-        return Err(unsupported(
-            "Terminal and editor switch launchers are not yet ported; no process was launched and no directive was written",
-        ));
-    }
     Ok(())
 }
 
@@ -128,6 +119,9 @@ fn configured_mode(config: Option<&Config>) -> Option<&str> {
 }
 
 fn requires_launcher(args: &Args, workspace: &Workspace, has_directive: bool) -> bool {
+    if has_launch_intent(args) {
+        return true;
+    }
     if args.has("cd") {
         return false;
     }
@@ -137,6 +131,94 @@ fn requires_launcher(args: &Args, workspace: &Workspace, has_directive: bool) ->
         Some("launch" | "sesh" | "herdr") | None => true,
         Some(_) => true,
     }
+}
+
+fn has_launch_intent(args: &Args) -> bool {
+    args.has("launch")
+        || args.has("no-cd")
+        || args.has("tab")
+        || !explicit_launch_options(args).is_empty()
+}
+
+fn launch_intent(args: &Args, config: Option<&Config>) -> crate::launch::LaunchIntent {
+    use crate::launch::{Ide, LaunchDisposition, LaunchIntent, LaunchSelector, ManagedFamily};
+    let explicit = explicit_launch_options(args).first().copied();
+    let configured = if args.has("tab")
+        || args.has("ignore-configured-launcher")
+        || args.has("no-default-launch")
+    {
+        None
+    } else {
+        configured_mode(config)
+    };
+    let selector = match explicit.or(configured) {
+        Some("tmux") => LaunchSelector::Managed(ManagedFamily::Tmux),
+        Some("sesh") => LaunchSelector::Managed(ManagedFamily::Sesh),
+        Some("herdr") => LaunchSelector::Managed(ManagedFamily::Herdr),
+        Some("vscode") => LaunchSelector::Ide(Ide::VsCode),
+        Some("cursor") => LaunchSelector::Ide(Ide::Cursor),
+        Some("kiro") => LaunchSelector::Ide(Ide::Kiro),
+        _ => LaunchSelector::Auto,
+    };
+    LaunchIntent {
+        selector,
+        disposition: if args.has("tab") {
+            LaunchDisposition::Tab
+        } else {
+            LaunchDisposition::Window
+        },
+    }
+}
+
+pub(crate) fn launch_error(error: crate::launch::LaunchError) -> Error {
+    use crate::launch::LaunchErrorCode;
+    let code = match error.code {
+        LaunchErrorCode::TmuxContextRequired => "TMUX_CONTEXT_REQUIRED",
+        LaunchErrorCode::SeshRequiresTmux => "SESH_REQUIRES_TMUX",
+        LaunchErrorCode::SeshNotFound => "SESH_NOT_FOUND",
+        LaunchErrorCode::IdeNotFound => "IDE_NOT_FOUND",
+        LaunchErrorCode::TabDispositionUnsupported => "TAB_DISPOSITION_UNSUPPORTED",
+        LaunchErrorCode::LaunchFailed => "LAUNCH_FAILED",
+    };
+    let exit = error.switch_exit_code();
+    Error::new(code, error.message).with_exit_code(exit)
+}
+
+pub(crate) fn execute_launch(
+    plan: &crate::launch::LaunchPlan,
+    path: &Path,
+    repository: &str,
+    branch: &str,
+    context: &crate::launch::LaunchContext,
+) -> Result<crate::launch::LaunchOutcome> {
+    use crate::launch::{LaunchPlan, LaunchTarget, ManagedFamily};
+    // Resolve Herdr authority from Git, never from a configured path guess.
+    let herdr_source = if matches!(plan, LaunchPlan::Managed(p) if p.family == ManagedFamily::Herdr)
+    {
+        git::worktrees(path)?
+            .into_iter()
+            .find(|w| !w.bare)
+            .map(|w| w.path)
+    } else {
+        None
+    };
+    let target = LaunchTarget {
+        worktree_path: path.to_owned(),
+        repository: repository.to_owned(),
+        branch: branch.to_owned(),
+        herdr_source,
+    };
+    match plan {
+        LaunchPlan::Platform(p) => crate::launch::platform::execute_platform(&target, p, context),
+        LaunchPlan::Managed(p) => crate::managed_launch::execute(p, &target, context),
+    }
+    .map_err(launch_error)
+}
+
+fn missing_integration() {
+    eprintln!(
+        "Shell integration is not active, so `arashi switch` cannot change the current shell directory for this invocation.\nHint: run `arashi shell install`, restart your shell, and invoke `arashi` through the installed wrapper."
+    );
 }
 
 fn normalize(path: &Path) -> PathBuf {
@@ -231,6 +313,9 @@ fn discover(workspace: &Workspace, scope: Scope) -> Result<Vec<Candidate>> {
     {
         for name in &config.repo_order {
             let path = child_path(&workspace.root, &config.repos[name].path)?;
+            if !path.exists() {
+                continue;
+            }
             append_worktrees(&mut candidates, name, &path)?;
         }
     }
@@ -301,7 +386,12 @@ fn filter_candidates(
         .collect()
 }
 
-fn select(candidates: Vec<Candidate>, filter: Option<&str>, exact_path: bool) -> Result<Candidate> {
+fn select(
+    candidates: Vec<Candidate>,
+    filter: Option<&str>,
+    exact_path: bool,
+    parent: Option<&str>,
+) -> Result<Candidate> {
     if candidates.is_empty() {
         let message = if exact_path {
             if let Some(filter) = filter.map(str::trim).filter(|filter| !filter.is_empty()) {
@@ -325,9 +415,29 @@ fn select(candidates: Vec<Candidate>, filter: Option<&str>, exact_path: bool) ->
         return Ok(candidates.into_iter().next().unwrap());
     }
     if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        return Err(unsupported(
-            "Interactive switch selection is not yet ported; provide a branch or exact --path",
-        ));
+        let mut candidates = candidates;
+        candidates.sort_by(|a, b| {
+            parent
+                .is_some_and(|p| b.repository == p)
+                .cmp(&parent.is_some_and(|p| a.repository == p))
+                .then(a.repository.cmp(&b.repository))
+                .then(a.branch.cmp(&b.branch))
+                .then(a.path.cmp(&b.path))
+        });
+        let choices = candidates
+            .into_iter()
+            .map(|candidate| crate::prompts::Choice {
+                label: format!("{}: {}", candidate.repository, candidate.branch),
+                description: Some(candidate.path.display().to_string()),
+                value: candidate,
+            })
+            .collect::<Vec<_>>();
+        return match crate::prompts::select("Select a worktree to switch to:", &choices)? {
+            crate::prompts::PromptOutcome::Answer(candidate) => Ok(candidate),
+            crate::prompts::PromptOutcome::Cancelled(_) => {
+                Err(Error::new("USER_CANCELLED", "Switch cancelled.").with_exit_code(0))
+            }
+        };
     }
     Err(usage(
         "AMBIGUOUS_NON_INTERACTIVE",
@@ -400,6 +510,12 @@ pub fn switch(cwd: &Path, args: &Args) -> Result<Value> {
         return Err(usage("USAGE", "switch accepts at most one filter"));
     }
     validate_options(args)?;
+    if args.has("no-cd") {
+        eprintln!("--no-cd is deprecated; use --launch instead.");
+    }
+    if args.has("no-default-launch") {
+        eprintln!("--no-default-launch is deprecated; use --ignore-configured-launcher instead.");
+    }
     let workspace = Workspace::discover(cwd)?;
     if workspace.config.is_none() && (args.has("repos") || args.has("all")) {
         return Err(usage(
@@ -408,11 +524,6 @@ pub fn switch(cwd: &Path, args: &Args) -> Result<Value> {
         ));
     }
     let context = directive_context();
-    if requires_launcher(args, &workspace, context.is_some()) {
-        return Err(unsupported(
-            "The resolved terminal or editor switch launcher is not yet ported; no process was launched and no directive was written",
-        ));
-    }
     let scope = if args.has("all") {
         Scope::All
     } else if args.has("repos") {
@@ -458,9 +569,41 @@ pub fn switch(cwd: &Path, args: &Args) -> Result<Value> {
             },
         ));
     }
-    let selected = select(matched.clone(), filter, args.has("path"))?;
-    let directive_written = context.is_some();
-    if let Some((directive_path, shell)) = context {
+    let parent_name = workspace
+        .root
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let selected = select(
+        matched.clone(),
+        filter,
+        args.has("path"),
+        (scope == Scope::All).then_some(parent_name.as_ref()),
+    )?;
+    let launch = requires_launcher(args, &workspace, context.is_some());
+    let directive_written = !launch && context.is_some();
+    let mut launch_mode = "cd".to_owned();
+    if launch {
+        let mut launch_context = crate::launch::LaunchContext::native()?;
+        launch_context.cwd = cwd.to_owned();
+        if configured_mode(workspace.config.as_ref()) == Some("cd")
+            && !has_launch_intent(args)
+            && context.is_none()
+        {
+            missing_integration();
+        }
+        let intent = launch_intent(args, workspace.config.as_ref());
+        let plan =
+            crate::launch::resolve::preflight(&intent, &launch_context).map_err(launch_error)?;
+        launch_mode = execute_launch(
+            &plan,
+            &selected.path,
+            &selected.repository,
+            &selected.branch,
+            &launch_context,
+        )?
+        .mode;
+    } else if let Some((directive_path, shell)) = context {
         write_directive(&directive_path, &directive(&selected.path, &shell))?;
     } else {
         eprintln!(
@@ -469,7 +612,7 @@ pub fn switch(cwd: &Path, args: &Args) -> Result<Value> {
     }
     Ok(json!({
         "directiveWritten": directive_written,
-        "launchMode": "cd",
+        "launchMode": launch_mode,
         "matchedCandidates": matched.len(),
         "selected": {
             "branchName": selected.branch,

@@ -92,6 +92,10 @@ pub mod doctor;
 
 pub mod status_human;
 
+pub mod create;
+pub mod launch;
+pub mod managed_launch;
+pub mod prompts;
 pub mod switch;
 pub mod sync;
 
