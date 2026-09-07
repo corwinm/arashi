@@ -625,14 +625,19 @@ fn render_human(command: &str, data: &Value) {
             data["workspaceRoot"].as_str().unwrap_or("")
         ),
         "install" => {
-            for key in [
-                "message",
-                "npmEntrypointMessage",
-                "reinstallMessage",
-                "releasesUrl",
-            ] {
+            let symbol = if std::env::var_os("NO_COLOR").is_some() {
+                "[OK]"
+            } else {
+                "✓"
+            };
+            println!("{symbol} {}", data["message"].as_str().unwrap_or(""));
+            for key in ["npmEntrypointMessage", "reinstallMessage"] {
                 println!("{}", data[key].as_str().unwrap_or(""));
             }
+            println!(
+                "Manual releases: {}",
+                data["releasesUrl"].as_str().unwrap_or("")
+            );
         }
         "prune" => println!(
             "{} {} stale worktree metadata entries",
