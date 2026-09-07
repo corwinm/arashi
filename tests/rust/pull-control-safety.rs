@@ -31,31 +31,16 @@ fn stale_ignore_control(source: bool) {
     fs::write(f.root.join(".git/info/exclude"), "# caller prefix\n\n# BEGIN Arashi managed ignore rules\n/repos/\n/.arashi/worktrees/\n# END Arashi managed ignore rules\n").unwrap();
     let incoming = r#"{"version":"1.0.0","reposDir":"repos","worktreesDir":"new-worktrees","repos":{"child":{"path":"repos/child"}}}"#;
     let parent = incoming_config(&f, &[(".arashi/config.json", incoming)]);
-    let before = git(&f.child, &["rev-parse", "HEAD"]);
     let child = f.advance(&f.child_remote, "stale-child", "stale.txt");
     let output = f.run_impl(source, &["pull", "--json"]);
     eprintln!("stale owned ignore source={source}: {}", json(&output));
     assert_eq!(git(&f.root, &["rev-parse", "HEAD"]), parent);
-    if source {
-        assert!(output.status.success());
-        assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), child);
-    } else {
-        // Shared IgnorePlan currently cannot migrate owned rules. Preserve and
-        // expose this coordinated-follow-up boundary, not a successful pull.
-        assert_eq!(output.status.code(), Some(1));
-        let value = json(&output);
-        assert_eq!(
-            value["data"]["results"][1]["repositoryId"],
-            "managed-ignore"
-        );
-        assert!(
-            value["data"]["results"][1]["errorMessage"]
-                .as_str()
-                .unwrap()
-                .contains("Stale managed ignore rules")
-        );
-        assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), before);
-    }
+    assert!(output.status.success(), "{}", json(&output));
+    assert_eq!(git(&f.child, &["rev-parse", "HEAD"]), child);
+    assert_eq!(
+        fs::read_to_string(f.root.join(".git/info/exclude")).unwrap(),
+        "# caller prefix\n\n# BEGIN Arashi managed ignore rules\n/repos/\n/new-worktrees/\n# END Arashi managed ignore rules\n"
+    );
 }
 
 #[test]
@@ -66,6 +51,6 @@ fn source_incoming_owned_ignore_migration() {
 }
 
 #[test]
-fn pull_owned_ignore_migration_reports_shared_helper_boundary() {
+fn pull_incoming_owned_ignore_migration() {
     stale_ignore_control(false);
 }

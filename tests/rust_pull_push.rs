@@ -11,6 +11,8 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 include!("rust/pull-controls.rs");
 include!("rust/pull-control-policies.rs");
 include!("rust/pull-control-safety.rs");
+include!("rust/managed-ignore-controls.rs");
+include!("rust/managed-ignore-helper.rs");
 
 struct Daemon(std::process::Child);
 impl Drop for Daemon {
