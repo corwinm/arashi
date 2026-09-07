@@ -183,7 +183,30 @@ pub fn prepare_command(
     for (index, arg) in values.iter().enumerate() {
         let key = format!("ARASHI_CMD_ARGUMENT_{index}");
         tokens.push(format!("%{key}%"));
-        env.insert(key, quote_windows_argument(arg));
+        // Expansion precedes cmd syntax parsing: argv quoting alone does not
+        // protect an embedded quote followed by shell operators. A forwarding
+        // batch file parses %* once more, so its arguments need a second layer.
+        let escape = |value: &str| {
+            let mut escaped = String::new();
+            for ch in value.chars() {
+                if "()%!^\"<>&|".contains(ch) {
+                    escaped.push('^');
+                }
+                escaped.push(ch);
+            }
+            escaped
+        };
+        // The executable path cannot contain a quote on Windows; keep its
+        // surrounding quotes syntactic so a path containing spaces stays whole.
+        let mut quoted = quote_windows_argument(arg);
+        if index > 0 {
+            quoted = escape(&quoted);
+        }
+        let target = values[0].to_ascii_lowercase();
+        if index > 0 && (target.ends_with(".cmd") || target.ends_with(".bat")) {
+            quoted = escape(&quoted);
+        }
+        env.insert(key, quoted);
     }
     PreparedCommand {
         command: interpreter,

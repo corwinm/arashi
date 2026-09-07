@@ -497,11 +497,14 @@ fn windows_prepare_uses_fixed_tokens_not_raw_user_syntax() {
     assert_eq!(p.command, "cmd.exe");
     assert_eq!(p.args[1], "/v:off");
     assert!(!p.args.last().unwrap().contains("雪"));
-    for (i, arg) in args.iter().enumerate() {
-        assert_eq!(
-            p.env[&format!("ARASHI_CMD_ARGUMENT_{i}")],
-            process::quote_windows_argument(arg)
-        );
+    let expected = [
+        r#""code.cmd""#,
+        r#"^^^"^^^""#,
+        r#"^^^"a\^^^"b\\^^^""#,
+        r#"^^^"^^^%PATH^^^%^^^!^^^^^^^&^^^|^^^(^^^) 雪^^^""#,
+    ];
+    for (i, value) in expected.iter().enumerate() {
+        assert_eq!(p.env[&format!("ARASHI_CMD_ARGUMENT_{i}")], *value);
     }
     assert!(!p.env.contains_key("ARASHI_CMD_ARGUMENT_99"));
     assert!(!p.env.contains_key("PATH"));
@@ -511,21 +514,35 @@ fn windows_prepare_uses_fixed_tokens_not_raw_user_syntax() {
 #[test]
 fn windows_native_cmd_and_ide_exe_preserve_literal_arguments() {
     let d = tempfile::tempdir().unwrap();
+    let nested = d.path().join("space %PATH%!^&() 雪");
+    std::fs::create_dir(&nested).unwrap();
     let exe = install_fixture(d.path(), "native");
     let mut c = fixture_context(d.path());
     c.env.insert("ARASHI_LAUNCH_NATIVE".into(), exe.clone());
-    let batch = d.path().join("launcher.cmd");
-    std::fs::write(&batch, "@\"%ARASHI_LAUNCH_NATIVE%\" %*\r\n").unwrap();
-    let args = ["", "a\"b", "trailing\\", "%PATH%!^&|() 雪"];
-    for prefix in [
+    let mut prefixes = vec![
         vec![exe.clone()],
-        vec![batch.to_str().unwrap().into()],
         vec!["cmd.exe".into(), "/d".into(), "/c".into(), exe],
-    ] {
+    ];
+    for suffix in ["cmd", "bat"] {
+        let batch = nested.join(format!("launcher.{suffix}"));
+        std::fs::write(&batch, "@\"%ARASHI_LAUNCH_NATIVE%\" %*\r\n").unwrap();
+        prefixes.push(vec![batch.to_str().unwrap().into()]);
+    }
+    let args = [
+        "",
+        "a\"b",
+        "trailing\\",
+        "%PATH%!^&|() 雪",
+        "\"&echo INJECTED>canary&rem \"",
+    ];
+    for prefix in prefixes {
         let mut cmd = prefix;
         cmd.extend(args.iter().map(|s| s.to_string()));
-        let r = process::run(&cmd, d.path(), &c.env, false);
-        assert_eq!(r.exit_code, 0, "{r:?}");
+        for detached in [false, true] {
+            let r = process::run(&cmd, d.path(), &c.env, detached);
+            assert!(!d.path().join("canary").exists(), "injection: {cmd:?}");
+            assert_eq!(r.exit_code, 0, "{cmd:?}: {r:?}");
+        }
     }
-    assert_eq!(records(d.path()), vec![args.map(String::from).to_vec(); 3]);
+    assert_eq!(records(d.path()), vec![args.map(String::from).to_vec(); 8]);
 }
