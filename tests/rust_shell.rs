@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicUsize, Ordering},
@@ -25,15 +26,39 @@ impl Home {
     }
 
     fn run(&self, shell: &str, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_arashi"))
-            .args(args)
+        // Keep testing the retained shell mutation domain directly even though
+        // the controlled alpha entrypoint now rejects these public commands.
+        let mutation = args.first() == Some(&"shell")
+            && matches!(args.get(1), Some(&"install") | Some(&"uninstall"));
+        let mut command = if mutation {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "shell_domain_driver", "--nocapture", "--quiet"])
+                .env(
+                    "ARASHI_SHELL_DOMAIN_ARGS",
+                    serde_json::to_string(args).unwrap(),
+                );
+            command
+        } else {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
+            command.args(args);
+            command
+        };
+        let mut output = command
             .current_dir(&self.0)
             .env("HOME", &self.0)
             .env("USERPROFILE", &self.0)
             .env("SHELL", shell)
             .env("NO_COLOR", "1")
             .output()
-            .unwrap()
+            .unwrap();
+        if mutation {
+            const HARNESS_PREFIX: &[u8] = b"\nrunning 1 test\n";
+            if output.stdout.starts_with(HARNESS_PREFIX) {
+                output.stdout.drain(..HARNESS_PREFIX.len());
+            }
+        }
+        output
     }
 
     #[cfg(not(windows))]
@@ -80,6 +105,35 @@ fn assert_home_files(home: &Path, expected: &[&str]) {
     visit(home, home, &mut files);
     files.sort();
     assert_eq!(files, expected);
+}
+
+#[test]
+fn shell_domain_driver() {
+    let Ok(encoded) = std::env::var("ARASHI_SHELL_DOMAIN_ARGS") else {
+        return;
+    };
+    let raw: Vec<String> = serde_json::from_str(&encoded).unwrap();
+    let args = arashi::parser::parse(&raw).unwrap();
+    let exit_code = match arashi::shell::execute(&args) {
+        Ok(data) => {
+            arashi::shell::render_human(&data);
+            0
+        }
+        Err(error) => {
+            if error
+                .details
+                .as_ref()
+                .is_some_and(|details| details["action"] == "uninstall")
+            {
+                arashi::shell::render_human(error.details.as_ref().unwrap());
+            }
+            eprintln!("[ERR] {error}");
+            error.exit_code
+        }
+    };
+    std::io::stdout().flush().unwrap();
+    std::io::stderr().flush().unwrap();
+    std::process::exit(exit_code);
 }
 
 #[test]

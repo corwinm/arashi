@@ -61,3 +61,65 @@ fn canonical_alpha_blocks_stable_update_and_uninstall_dispatch() {
     }
     assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
 }
+
+fn assert_shell_profile_mutation_blocked(args: &[&str], before: &[u8]) {
+    let home = tempfile::tempdir().unwrap();
+    let profile = home.path().join(".bashrc");
+    std::fs::write(&profile, before).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_arashi"))
+        .args(args)
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("SHELL", "/bin/bash")
+        .current_dir(home.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "{args:?}: {output:?}");
+    assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("controlled alpha setup bundle"),
+        "{args:?}: {output:?}"
+    );
+    assert_eq!(std::fs::read(&profile).unwrap(), before, "{args:?}");
+    assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 1);
+}
+
+const UNINSTALLABLE_PROFILE: &[u8] = b"before\n# >>> arashi shell integration >>>\neval \"$(command arashi shell init bash)\"\nsource <(command arashi completion bash)\n# <<< arashi shell integration <<<\nafter\n";
+
+#[test]
+fn canonical_alpha_blocks_shell_install_before_profile_mutation() {
+    assert_shell_profile_mutation_blocked(&["shell", "install"], b"export EXISTING=value\n");
+}
+
+#[test]
+fn canonical_alpha_blocks_root_separator_shell_install() {
+    assert_shell_profile_mutation_blocked(&["--", "shell", "install"], b"export EXISTING=value\n");
+}
+
+#[test]
+fn canonical_alpha_blocks_nested_separator_shell_install() {
+    assert_shell_profile_mutation_blocked(&["shell", "--", "install"], b"export EXISTING=value\n");
+}
+
+#[test]
+fn canonical_alpha_blocks_shell_uninstall_before_profile_mutation() {
+    assert_shell_profile_mutation_blocked(&["shell", "uninstall", "--yes"], UNINSTALLABLE_PROFILE);
+}
+
+#[test]
+fn canonical_alpha_blocks_root_separator_shell_uninstall() {
+    assert_shell_profile_mutation_blocked(
+        &["--", "shell", "uninstall", "--yes"],
+        UNINSTALLABLE_PROFILE,
+    );
+}
+
+#[test]
+fn canonical_alpha_blocks_nested_separator_shell_uninstall() {
+    assert_shell_profile_mutation_blocked(
+        &["shell", "--", "uninstall", "--yes"],
+        UNINSTALLABLE_PROFILE,
+    );
+}

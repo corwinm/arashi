@@ -6,7 +6,7 @@ The complete parser inventory is [contracts/cli-commands.json](../contracts/cli-
 
 ## Alpha readiness
 
-The current tester contract is a **controlled local alpha**, not a public release or a completed port. It uses canonical `aw`/`arashi` names only inside the private `.arashi-alpha` PATH root. Canonical version identity, shell/completion generation, explicit shadow consent, native install/refresh/removal, ownership refusal, failed-promotion rollback, and preservation of stable files and profiles are implemented and covered by the alpha suites. In-CLI `update` and `uninstall` remain blocked so the alpha cannot enter the stable lifecycle.
+The current tester contract is a **controlled local alpha**, not a public release or a completed port. It uses canonical `aw`/`arashi` names only inside the private `.arashi-alpha` PATH root. Canonical version identity, shell/completion generation, explicit shadow consent, native install/refresh/removal, ownership refusal, failed-promotion rollback, and preservation of stable files and profiles are implemented and covered by the alpha suites. In-CLI `update`, `uninstall`, `shell install`, and `shell uninstall` remain blocked so the alpha cannot enter the stable lifecycle or mutate persistent shell profiles; `shell init` and completion generation remain available for non-mutating setup.
 
 Local macOS validation and the separately verified macOS process/lifecycle corrections are available. Canonical Windows PATH assertions, PowerShell/cmd coverage, and the reviewed Windows process/authentication cleanup are integrated through `62b9e896094a37c965b5ae8fac804cc9ffadb907`. Integration alone does not establish exact-head Windows acceptance.
 

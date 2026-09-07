@@ -65,7 +65,7 @@ aw shell init bash
 aw completion bash
 ```
 
-Generated wrappers, completion registrations, and dynamic completion queries use canonical `arashi`. With `.arashi-alpha` first on `PATH`, those calls resolve back to the installed native alpha. `update` and `uninstall` dispatch inside `aw`/`arashi` are blocked so the alpha cannot invoke the stable lifecycle. Use the setup bundle for alpha refresh/removal. `aw install` remains the non-mutating direct-binary informational command.
+Generated wrappers, completion registrations, and dynamic completion queries use canonical `arashi`. With `.arashi-alpha` first on `PATH`, those calls resolve back to the installed native alpha. `update`, `uninstall`, `shell install`, and `shell uninstall` dispatch inside `aw`/`arashi` are blocked so the alpha cannot invoke the stable lifecycle or edit persistent profiles. Use the setup bundle for alpha refresh/removal, and use `shell init` plus completion generation for non-mutating shell setup. `aw install` remains the non-mutating direct-binary informational command.
 
 ## Exact rollback
 

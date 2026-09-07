@@ -59,11 +59,11 @@ pub fn entry() -> i32 {
             return error.exit_code;
         }
     };
-    // Guard the canonical parsed command, including operands following `--`,
-    // before the raw completion protocol or any domain side effects can run.
+    // Guard canonical parsed lifecycle and profile-mutating commands, including
+    // operands following `--`, before completion or domain side effects can run.
     if matches!(
-        args.command.split(' ').next().unwrap(),
-        "uninstall" | "update"
+        args.command.as_str(),
+        "uninstall" | "update" | "shell install" | "shell uninstall"
     ) {
         eprintln!(
             "arashi controlled native alpha: use the controlled alpha setup bundle to refresh or uninstall. Stable lifecycle dispatch is disabled."
