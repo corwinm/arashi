@@ -103,6 +103,7 @@
     "oxfmt": "0.28.0",
     "oxlint": "1.43.0",
     "semantic-release": "25.0.6",
+    "ssh2": "1.17.0",
     "ts-json-schema-generator": "2.4.0",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
