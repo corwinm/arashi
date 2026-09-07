@@ -126,7 +126,7 @@ fn retained_source_consumer_oracles() {
             if script == "matrix" {
                 matrix.push(rows);
             } else {
-                assert_eq!(rows.as_array().unwrap().len(), 7);
+                assert_eq!(rows.as_array().unwrap().len(), 8);
                 assert!(rows.as_array().unwrap().iter().all(|r| r["passed"] == true));
             }
         }
@@ -190,6 +190,31 @@ fn standalone_repository_selection_rejects_before_mutation() {
                 .is_none()
         );
     }
+}
+
+#[test]
+fn no_launch_create_tolerates_non_unicode_environment() {
+    use std::os::unix::ffi::OsStringExt;
+    let f = Fixture::new();
+    let o = f
+        .command(&[
+            "create",
+            "topic",
+            "--json",
+            "--dry-run",
+            "--no-hooks",
+            "--no-launch",
+            "--no-switch",
+        ])
+        .env(
+            "ARASHI_NON_UNICODE",
+            std::ffi::OsString::from_vec(vec![0xff]),
+        )
+        .output()
+        .unwrap();
+    success(&o);
+    let json: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(json.is_object(), "{json}");
 }
 
 #[test]

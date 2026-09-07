@@ -92,7 +92,11 @@ impl LaunchContext {
     pub fn native() -> std::io::Result<Self> {
         Ok(Self {
             platform: Platform::native(),
-            env: std::env::vars().collect(),
+            env: std::env::vars_os()
+                .filter_map(|(key, value)| {
+                    Some((key.into_string().ok()?, value.into_string().ok()?))
+                })
+                .collect(),
             cwd: std::env::current_dir()?,
             home: std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))

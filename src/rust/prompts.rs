@@ -43,10 +43,10 @@ impl Session {
                 ));
             }
         };
-        if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
             return Err(Error::new(
                 "PROMPT_NOT_TERMINAL",
-                "Prompt requires terminal stdin and stderr",
+                "Prompt requires terminal stdin and stdout",
             ));
         }
         let restore = !terminal::is_raw_mode_enabled()?;
@@ -77,7 +77,7 @@ fn display(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).collect()
 }
 fn line(text: &str) -> Result<()> {
-    let mut out = io::stderr().lock();
+    let mut out = io::stdout().lock();
     write!(out, "{}\r\n", display(text))?;
     out.flush()?;
     Ok(())
@@ -342,7 +342,7 @@ impl EditBuffer {
     fn render(&self) -> Result<()> {
         let before: String = self.chars[..self.cursor].iter().collect();
         let after: String = self.chars[self.cursor..].iter().collect();
-        let mut out = io::stderr().lock();
+        let mut out = io::stdout().lock();
         // Save at the cursor rather than guessing Unicode display widths.
         write!(
             out,

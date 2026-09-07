@@ -2,7 +2,7 @@
 import errno, json, os, pathlib, pty, select, signal, subprocess, sys, tempfile, time
 launcher=sys.argv[1:]
 results=[]
-for case in ['switch-select','switch-cancel','switch-all-select','create-select','create-cancel','create-none','create-filtered']:
+for case in ['switch-select','switch-select-stderr-redirect','switch-cancel','switch-all-select','create-select','create-cancel','create-none','create-filtered']:
     with tempfile.TemporaryDirectory(prefix='arashi-consumer-pty-') as temp:
         root=pathlib.Path(temp).resolve()/'workspace'; root.mkdir()
         home=root.parent/'home'; home.mkdir()
@@ -27,6 +27,8 @@ for case in ['switch-select','switch-cancel','switch-all-select','create-select'
         if pid==0:
             import fcntl, struct, termios
             fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 160, 0, 0))
+            if case == 'switch-select-stderr-redirect':
+                error_fd=os.open(home/'stderr',os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600); os.dup2(error_fd,2); os.close(error_fd)
             os.chdir(root); os.execve(launcher[0],launcher+args,env)
         stream=b''; sent=False; status=None; deadline=time.monotonic()+20
         try:
@@ -53,7 +55,7 @@ for case in ['switch-select','switch-cancel','switch-all-select','create-select'
         elif case=='switch-all-select': valid=valid and refs==after and directive=="cd -- '"+str(root)+"'\n"
         elif case=='create-none': valid=valid and 'refs/heads/topic' in after[0] and after[1:]==refs[1:] and directive is None
         elif case=='create-filtered': valid=valid and 'refs/heads/topic' in after[0] and 'refs/heads/topic' in after[2] and after[1]==refs[1] and directive is None
-        elif case=='switch-select': valid=valid and refs==after and directive=="cd -- '"+str(root.parent/'topic')+"'\n"
+        elif case in ['switch-select','switch-select-stderr-redirect']: valid=valid and refs==after and directive=="cd -- '"+str(root.parent/'topic')+"'\n"
         else: valid=valid and 'refs/heads/topic' in after[0] and 'refs/heads/topic' in after[1] and after[2]==refs[2] and directive is None
         results.append({'case':case,'passed':valid,'prompt_seen':sent,'exit':exit_code,'output':stream.decode(errors='replace').replace(str(root.parent),'<FIXTURE>'),'directive':directive.replace(str(root.parent),'<FIXTURE>') if directive else None})
 print(json.dumps(results,indent=2)); sys.exit(0 if all(r['passed'] for r in results) else 1)
