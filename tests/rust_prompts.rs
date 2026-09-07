@@ -4,39 +4,154 @@ mod prompts;
 use prompts::{CancelReason, Choice, PromptOutcome};
 
 #[cfg(target_os = "macos")]
-struct SpawnHelperPermissions {
-    path: std::path::PathBuf,
-    original: std::fs::Permissions,
+#[derive(Clone)]
+struct NodePtySource {
+    package: std::path::PathBuf,
+    platform: String,
 }
 
 #[cfg(target_os = "macos")]
-impl Drop for SpawnHelperPermissions {
-    fn drop(&mut self) {
-        std::fs::set_permissions(&self.path, self.original.clone()).unwrap();
-    }
+struct IsolatedNodePty {
+    _root: tempfile::TempDir,
+    node_modules: std::path::PathBuf,
+    helper: std::path::PathBuf,
 }
 
 #[cfg(target_os = "macos")]
-fn make_spawn_helper_non_executable() -> SpawnHelperPermissions {
-    use std::os::unix::fs::PermissionsExt;
-
+fn resolve_node_pty_source() -> NodePtySource {
     let output = std::process::Command::new("node")
         .args([
             "-e",
-            "const {createRequire}=require('node:module');const {dirname,join,resolve}=require('node:path');const base=process.env.ARASHI_PROMPT_NODE_MODULES?resolve(process.env.ARASHI_PROMPT_NODE_MODULES,'../package.json'):process.cwd()+'/prompt-pty-test.cjs';const moduleRequire=createRequire(base);process.stdout.write(join(dirname(moduleRequire.resolve('node-pty')),'..','prebuilds',`darwin-${process.arch}`,'spawn-helper'));",
+            "const {createRequire}=require('node:module');const {dirname,resolve}=require('node:path');const base=process.env.ARASHI_PROMPT_NODE_MODULES?resolve(process.env.ARASHI_PROMPT_NODE_MODULES,'../package.json'):process.cwd()+'/prompt-pty-test.cjs';const moduleRequire=createRequire(base);process.stdout.write(JSON.stringify({package:dirname(moduleRequire.resolve('node-pty/package.json')),platform:`darwin-${process.arch}`}));",
         ])
         .output()
         .unwrap();
     assert!(
         output.status.success(),
-        "could not resolve node-pty spawn-helper"
+        "could not resolve node-pty package"
     );
-    let path = std::path::PathBuf::from(String::from_utf8(output.stdout).unwrap());
-    let original = std::fs::metadata(&path).unwrap().permissions();
-    let mut non_executable = original.clone();
-    non_executable.set_mode(original.mode() & !0o111);
-    std::fs::set_permissions(&path, non_executable).unwrap();
-    SpawnHelperPermissions { path, original }
+    let resolved: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    NodePtySource {
+        package: resolved["package"].as_str().unwrap().into(),
+        platform: resolved["platform"].as_str().unwrap().to_owned(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn copy_directory(source: &std::path::Path, destination: &std::path::Path) {
+    std::fs::create_dir_all(destination).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let destination = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_directory(&entry.path(), &destination);
+        } else {
+            std::fs::copy(entry.path(), destination).unwrap();
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn make_isolated_node_pty_non_executable_from(source: &NodePtySource) -> IsolatedNodePty {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let node_modules = root.path().join("node_modules");
+    let package = node_modules.join("node-pty");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::copy(
+        source.package.join("package.json"),
+        package.join("package.json"),
+    )
+    .unwrap();
+    copy_directory(&source.package.join("lib"), &package.join("lib"));
+    copy_directory(
+        &source.package.join("prebuilds").join(&source.platform),
+        &package.join("prebuilds").join(&source.platform),
+    );
+    std::fs::write(root.path().join("package.json"), "{}").unwrap();
+
+    let helper = package
+        .join("prebuilds")
+        .join(&source.platform)
+        .join("spawn-helper");
+    let mut permissions = std::fs::metadata(&helper).unwrap().permissions();
+    permissions.set_mode(permissions.mode() & !0o111);
+    std::fs::set_permissions(&helper, permissions).unwrap();
+
+    IsolatedNodePty {
+        _root: root,
+        node_modules,
+        helper,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn make_isolated_node_pty_non_executable() -> IsolatedNodePty {
+    make_isolated_node_pty_non_executable_from(&resolve_node_pty_source())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn node_pty_fixture_isolated_across_concurrent_builds() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let source_root = tempfile::tempdir().unwrap();
+    let package = source_root.path().join("node-pty");
+    let platform = "darwin-test";
+    std::fs::create_dir_all(package.join("lib")).unwrap();
+    std::fs::create_dir_all(package.join("prebuilds").join(platform)).unwrap();
+    std::fs::write(package.join("package.json"), "{}").unwrap();
+    std::fs::write(package.join("lib").join("index.js"), "").unwrap();
+    std::fs::write(
+        package.join("prebuilds").join(platform).join("pty.node"),
+        "fixture",
+    )
+    .unwrap();
+    let source_helper = package
+        .join("prebuilds")
+        .join(platform)
+        .join("spawn-helper");
+    std::fs::write(&source_helper, "fixture").unwrap();
+    let mut permissions = std::fs::metadata(&source_helper).unwrap().permissions();
+    permissions.set_mode(0o640);
+    std::fs::set_permissions(&source_helper, permissions).unwrap();
+    let source = NodePtySource {
+        package,
+        platform: platform.to_owned(),
+    };
+
+    let builds = (0..2)
+        .map(|_| {
+            let source = source.clone();
+            std::thread::spawn(move || make_isolated_node_pty_non_executable_from(&source))
+        })
+        .collect::<Vec<_>>();
+    let fixtures = builds
+        .into_iter()
+        .map(|build| build.join().unwrap())
+        .collect::<Vec<_>>();
+
+    assert_ne!(fixtures[0].node_modules, fixtures[1].node_modules);
+    for fixture in &fixtures {
+        assert_ne!(fixture.helper, source_helper);
+        assert_eq!(
+            std::fs::metadata(&fixture.helper)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640,
+        );
+    }
+    assert_eq!(
+        std::fs::metadata(source_helper)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o640,
+    );
 }
 
 #[test]
@@ -175,17 +290,22 @@ fn native_pty_contract() {
         return;
     }
     #[cfg(target_os = "macos")]
-    let _spawn_helper_permissions = make_spawn_helper_non_executable();
-    let mut child = std::process::Command::new("node")
+    let isolated_node_pty = make_isolated_node_pty_non_executable();
+    let mut command = std::process::Command::new("node");
+    command
         .arg(
             std::path::Path::new(file!())
                 .with_file_name("rust")
                 .join("prompt-pty.mjs"),
         )
         .arg("--binary")
-        .arg(std::env::current_exe().unwrap())
-        .spawn()
-        .unwrap();
+        .arg(std::env::current_exe().unwrap());
+    #[cfg(target_os = "macos")]
+    command.env(
+        "ARASHI_PROMPT_NODE_MODULES",
+        &isolated_node_pty.node_modules,
+    );
+    let mut child = command.spawn().unwrap();
     // A completed row report is not acceptance if ConPTY handles keep Node alive.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
     let status = loop {

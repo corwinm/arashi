@@ -1,4 +1,4 @@
-import { chmodSync, statSync } from "node:fs";
+import { accessSync, chmodSync, constants, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export function ensureDarwinSpawnHelperExecutable(require) {
@@ -11,5 +11,16 @@ export function ensureDarwinSpawnHelperExecutable(require) {
     `darwin-${process.arch}`,
     "spawn-helper",
   );
-  if ((statSync(helper).mode & 0o111) === 0) chmodSync(helper, 0o755);
+  try {
+    accessSync(helper, constants.X_OK);
+    return;
+  } catch (error) {
+    if (error.code !== "EACCES") throw error;
+  }
+
+  const stats = statSync(helper);
+  const groups = new Set([process.getgid(), ...process.getgroups()]);
+  const executeBit = process.getuid() === stats.uid ? 0o100 : groups.has(stats.gid) ? 0o010 : 0o001;
+  chmodSync(helper, stats.mode | executeBit);
+  accessSync(helper, constants.X_OK);
 }
