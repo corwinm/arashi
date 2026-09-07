@@ -8,6 +8,48 @@ const fixture = await import("./authenticated-git.mjs").catch((error) => {
   throw error;
 });
 
+test(
+  "fixture cleanup waits out a transient Windows ownership lock",
+  { skip: process.platform !== "win32" },
+  async () => {
+    assert.equal(typeof fixture.removeFixtureRoot, "function", "fixture cleanup helper is missing");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { spawn } = await import("node:child_process");
+    const { once } = await import("node:events");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "arashi-auth-cleanup-"));
+    const locked = path.join(root, "locked");
+    fs.writeFileSync(locked, "owned fixture data");
+    const holder = spawn(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-Command",
+        "$stream = [IO.File]::Open($env:ARASHI_LOCK_FILE, 'Open', 'ReadWrite', 'None'); " +
+          "[Console]::Out.WriteLine('LOCKED'); Start-Sleep -Milliseconds 300; $stream.Dispose()",
+      ],
+      {
+        env: { ...process.env, ARASHI_LOCK_FILE: locked },
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    try {
+      const [ready] = await once(holder.stdout, "data");
+      assert.match(ready.toString(), /LOCKED/);
+      await fixture.removeFixtureRoot(root);
+      assert.equal(fs.existsSync(root), false);
+    } finally {
+      if (holder.exitCode === null) {
+        await once(holder, "close");
+      }
+      fs.rmSync(root, { force: true, maxRetries: 10, recursive: true, retryDelay: 100 });
+    }
+  },
+);
+
 test("real authenticated HTTPS and SSH clone/fetch/push with denial controls", async () => {
   assert.equal(
     typeof fixture.startAuthenticatedGit,

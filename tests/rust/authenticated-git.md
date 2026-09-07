@@ -50,13 +50,15 @@ CARGO_HOME="$PWD/target/cargo-home" CARGO_TARGET_DIR="$PWD/target" CARGO_BUILD_J
   -- --include-ignored --test-threads=1
 ```
 
-Local macOS acceptance only. The raw transport/source tests are cross-platform
-candidates, **not verified Windows results**. The Windows path grants only the
-current SID access to the disposable tree before key creation, and uses PID-scoped
-`taskkill /T` for owned live children. Its ACL, OpenSSL/SSH discovery, quoting and
-process settlement still require native host-slot acceptance. The Rust native
-application journey is Unix-gated until the separate Windows identity/mutation
-foundation lands. Parent owns Windows scheduling, integration and exact-head CI.
+Native Windows acceptance uses the current user SID ACL before creating any fixture
+contents, so every generated file inherits full control and recursive cleanup remains
+owned. The isolated child environment retains Windows `ProgramData` for system
+OpenSSH, and Git uses its OpenSSL HTTPS backend so the generated CA file has the same
+trust semantics across platforms. Cleanup retries only Windows `EACCES`, `EBUSY`,
+`ENOTEMPTY`, and `EPERM` for a bounded two seconds, then rethrows the filesystem
+failure. A native lock-holder regression proves the transient-EPERM path.
+The Rust native application journey remains Unix-gated until the separate Windows
+identity/mutation foundation lands. Parent owns Windows scheduling and integration.
 
 POSIX children have fixture-owned process groups; timeout/close kills only live
 owned groups. Listeners bind ephemeral `127.0.0.1` ports, and close waits for

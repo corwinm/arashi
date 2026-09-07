@@ -12,6 +12,24 @@ import ssh2 from "ssh2";
 const quote = (value) => `'${value.replaceAll("'", String.raw`'\''`)}'`;
 const equal = (a, b) => a.length === b.length && timingSafeEqual(a, b);
 
+// Named for the fixture lifecycle regression; never removes anything but its supplied root.
+export async function removeFixtureRoot(root) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.rmSync(root, { force: true, recursive: true });
+      return;
+    } catch (error) {
+      const transient = ["EACCES", "EBUSY", "ENOTEMPTY", "EPERM"].includes(error.code);
+      if (process.platform !== "win32" || !transient || attempt >= 19) {
+        throw error;
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+    }
+  }
+}
+
 // Named API is shared by Rust-driven acceptance and the fixture regression.
 // oxlint-disable-next-line import/prefer-default-export
 export async function startAuthenticatedGit() {
@@ -19,10 +37,9 @@ export async function startAuthenticatedGit() {
   fs.chmodSync(root, 0o700);
   const file = (name) => path.join(root, name);
   const write = (name, value) => fs.writeFileSync(file(name), value, { flag: "wx", mode: 0o600 });
-  fs.mkdirSync(file("home"), { mode: 0o700 });
   const environment = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (/^(path|systemroot|windir|temp|tmp|pathext)$/i.test(key)) {
+    if (/^(path|programdata|systemroot|windir|temp|tmp|pathext)$/i.test(key)) {
       environment[key] = value;
     }
   }
@@ -41,7 +58,6 @@ export async function startAuthenticatedGit() {
     USERPROFILE: file("home"),
     XDG_CONFIG_HOME: file("home"),
   });
-  write("gitconfig", "[commit]\n gpgsign = false\n[maintenance]\n auto = false\n");
   const children = new Set(),
     connections = new Set(),
     events = [],
@@ -152,7 +168,7 @@ export async function startAuthenticatedGit() {
       killOwned(proc);
     }
     await Promise.all([...stopped, ...pending]);
-    fs.rmSync(root, { force: true, recursive: true });
+    await removeFixtureRoot(root);
   }
   try {
     if (process.platform === "win32") {
@@ -161,6 +177,11 @@ export async function startAuthenticatedGit() {
       assert.ok(sid, "cannot establish private fixture ACL identity");
       await run("icacls", [root, "/inheritance:r", "/grant:r", `*${sid[0]}:(OI)(CI)F`, "/T", "/Q"]);
     }
+    fs.mkdirSync(file("home"), { mode: 0o700 });
+    write(
+      "gitconfig",
+      "[commit]\n gpgsign = false\n[http]\n sslBackend = openssl\n[maintenance]\n auto = false\n",
+    );
     write(
       "cert.cnf",
       "[req]\ndistinguished_name=dn\nx509_extensions=ca\nprompt=no\n[dn]\nCN=Arashi disposable test CA\n[ca]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n[server]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=IP:127.0.0.1\n",
