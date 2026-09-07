@@ -289,8 +289,19 @@ fn network_linked_caller_data_and_recovery_authority_remain_protected() {
         }
         let before = f.snapshot();
         let out = observed(&f, &["delete", "api", "--force", "--json"], false);
-        assert!(!out.status.success(), "{case}");
-        assert_eq!(f.snapshot(), before, "{case}");
+        if case == "dirty" {
+            assert!(
+                out.status.success(),
+                "authorized dirty loss: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            assert!(!target.exists());
+            assert_eq!(tree(&f.home), before.home);
+            assert_eq!(git(&f.remote, &["show-ref"]), before.remote_refs);
+        } else {
+            assert!(!out.status.success(), "{case}");
+            assert_eq!(f.snapshot(), before, "{case}");
+        }
     }
 }
 
@@ -333,53 +344,50 @@ fn network_normalized_fetch_identities_match_source_without_transport() {
 }
 
 #[test]
-fn network_source_linked_and_dirty_force_contract_is_explicitly_broader() {
-    if std::env::var_os("ARASHI_TS_PARITY").is_none()
-        && std::env::var_os("ARASHI_DELETE_SOURCE_ONLY").is_none()
-    {
-        return;
-    }
-    for linked in [false, true] {
-        let (f, mut server, _) = connected();
-        server.stop();
-        let target = f.workspace.join("repos/api");
-        let dirty = if linked {
-            let path = f.workspace.join("linked");
-            git(
-                &target,
-                &["worktree", "add", "-b", "topic", path.to_str().unwrap()],
+fn network_source_and_native_linked_and_dirty_force_contract() {
+    for source in sources() {
+        for linked in [false, true] {
+            let (f, mut server, _) = connected();
+            server.stop();
+            let target = f.workspace.join("repos/api");
+            let dirty = if linked {
+                let path = f.workspace.join("linked");
+                git(
+                    &target,
+                    &["worktree", "add", "-b", "topic", path.to_str().unwrap()],
+                );
+                path
+            } else {
+                target.clone()
+            };
+            fs::write(
+                dirty.join("caller"),
+                "explicit force discards this source-owned fixture data\n",
+            )
+            .unwrap();
+            let before = f.snapshot();
+            let preview = observed(&f, &["delete", "api", "--dry-run", "--json"], source);
+            assert!(preview.status.success());
+            assert!(
+                json(&preview)["data"]["plan"]["warnings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v.as_str().unwrap().starts_with("DELETE_GIT_DATA_LOSS:"))
             );
-            path
-        } else {
-            target.clone()
-        };
-        fs::write(
-            dirty.join("caller"),
-            "explicit force discards this source-owned fixture data\n",
-        )
-        .unwrap();
-        let before = f.snapshot();
-        let preview = observed(&f, &["delete", "api", "--dry-run", "--json"], true);
-        assert!(preview.status.success());
-        assert!(
-            json(&preview)["data"]["plan"]["warnings"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|v| v.as_str().unwrap().starts_with("DELETE_GIT_DATA_LOSS:"))
-        );
-        let denied = observed(&f, &["delete", "api", "--json"], true);
-        assert_eq!(json(&denied)["error"]["code"], "DELETE_GIT_DATA_LOSS");
-        assert_eq!(
-            fs::read(dirty.join("caller")).unwrap(),
-            b"explicit force discards this source-owned fixture data\n"
-        );
-        let forced = observed(&f, &["delete", "api", "--force", "--json"], true);
-        assert!(forced.status.success());
-        assert!(!target.exists());
-        assert!(!dirty.exists());
-        assert_eq!(tree(&f.home), before.home);
-        assert_eq!(git(&f.remote, &["show-ref"]), before.remote_refs);
+            let denied = observed(&f, &["delete", "api", "--json"], source);
+            assert_eq!(json(&denied)["error"]["code"], "DELETE_GIT_DATA_LOSS");
+            assert_eq!(
+                fs::read(dirty.join("caller")).unwrap(),
+                b"explicit force discards this source-owned fixture data\n"
+            );
+            let forced = observed(&f, &["delete", "api", "--force", "--json"], source);
+            assert!(forced.status.success());
+            assert!(!target.exists());
+            assert!(!dirty.exists());
+            assert_eq!(tree(&f.home), before.home);
+            assert_eq!(git(&f.remote, &["show-ref"]), before.remote_refs);
+        }
     }
 }
 

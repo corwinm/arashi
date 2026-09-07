@@ -136,6 +136,109 @@ fn run(path: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+#[test]
+fn ordinary_attached_dirty_worktrees_are_selected_not_their_siblings() {
+    if run_isolated("ordinary_attached_dirty_worktrees_are_selected_not_their_siblings") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let target = fixture.0.join("repos/api");
+    let linked = fixture.0.join("linked");
+    run(
+        &target,
+        &["worktree", "add", "-b", "topic", linked.to_str().unwrap()],
+    );
+    fs::write(linked.join("caller"), "authorized loss\n").unwrap();
+    fs::write(fixture.0.join("sibling"), "preserve\n").unwrap();
+    let plan = fixture.plan();
+    assert!(
+        plan.plan_json()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["kind"] == "linked-worktree")
+    );
+    plan.validate().unwrap();
+    fs::write(linked.join("caller"), "changed loss\n").unwrap();
+    assert!(plan.validate().is_err());
+    #[cfg(unix)]
+    {
+        fixture.plan().execute().unwrap();
+        assert!(!linked.exists());
+        assert!(!target.exists());
+    }
+    assert_eq!(fs::read(fixture.0.join("sibling")).unwrap(), b"preserve\n");
+}
+
+#[test]
+fn ordinary_loss_refs_are_inventoried_and_forced() {
+    if run_isolated("ordinary_loss_refs_are_inventoried_and_forced") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let target = fixture.0.join("repos/api");
+    run(&target, &["tag", "light"]);
+    run(&target, &["tag", "-a", "annotated", "-m", "release"]);
+    run(&target, &["update-ref", "refs/custom/owned", "HEAD"]);
+    fs::write(target.join("README"), "stash contents\n").unwrap();
+    run(&target, &["stash", "push", "-m", "caller"]);
+    let plan = fixture.plan();
+    for name in [
+        "refs/stash",
+        "refs/tags/light",
+        "refs/tags/light^{}",
+        "refs/tags/annotated",
+        "refs/tags/annotated^{}",
+        "refs/custom/owned",
+    ] {
+        assert!(
+            plan.local_refs.iter().any(|item| item.name == name),
+            "missing {name}"
+        );
+    }
+    assert!(plan.protected_refs.contains(&"refs/stash".to_owned()));
+    assert!(
+        plan.protected_refs
+            .contains(&"refs/tags/annotated".to_owned())
+    );
+    assert!(
+        plan.protected_refs
+            .contains(&"refs/custom/owned".to_owned())
+    );
+    assert!(!plan.protected_refs.contains(&"refs/tags/light".to_owned()));
+    #[cfg(unix)]
+    {
+        plan.execute().unwrap();
+        assert!(!target.exists());
+    }
+}
+
+#[test]
+fn ordinary_dirty_loss_is_authorized_but_later_bytes_are_not() {
+    if run_isolated("ordinary_dirty_loss_is_authorized_but_later_bytes_are_not") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let target = fixture.0.join("repos/api");
+    fs::write(target.join("README"), "authorized\n").unwrap();
+    fs::write(target.join("caller"), "authorized\n").unwrap();
+    let plan = fixture.plan();
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|warning| warning.contains("DELETE_GIT_DATA_LOSS") && warning.contains("caller"))
+    );
+    plan.validate().unwrap();
+    fs::write(target.join("caller"), "replacement\n").unwrap();
+    assert!(plan.validate().is_err());
+    let current = fixture.plan();
+    #[cfg(unix)]
+    {
+        current.execute().unwrap();
+        assert!(!target.exists());
+    }
+}
+
 fn replace_directory_preserving_children(path: &Path) {
     let previous = path.with_extension("previous");
     fs::rename(path, &previous).unwrap();

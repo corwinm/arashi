@@ -930,8 +930,20 @@ fn unsupported_policy_and_topology_cases_fail_before_mutation() {
         }
         let before = fixture.snapshot();
         let output = fixture.run(&["delete", "api", "--force", "--json"]);
-        assert!(!output.status.success(), "unexpected {case} success");
-        assert_eq!(fixture.snapshot(), before, "{case} mutated state");
+        if matches!(case, "linked" | "dirty" | "tag" | "ignored") {
+            // Retained source accepts these selected-owned losses under explicit force.
+            assert!(
+                output.status.success(),
+                "{case}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            assert!(!fixture.workspace.join("repos/api").exists());
+            assert_eq!(tree(&fixture.home), before.home);
+            assert_eq!(git(&fixture.remote, &["show-ref"]), before.remote_refs);
+        } else {
+            assert!(!output.status.success(), "unexpected {case} success");
+            assert_eq!(fixture.snapshot(), before, "{case} mutated state");
+        }
     }
 }
 

@@ -6,6 +6,8 @@ use crate::{
     git,
     managed::{relative, unsupported},
 };
+#[path = "delete_worktree.rs"]
+mod worktree;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -13,6 +15,7 @@ use std::{
 };
 #[cfg(unix)]
 use std::{fs::OpenOptions, io::Write};
+use worktree::LinkedCheckout;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ObjectIdentity {
@@ -61,6 +64,8 @@ impl ObjectIdentity {
 struct LocalRef {
     name: String,
     oid: String,
+    kind: String,
+    peeled: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -88,6 +93,9 @@ struct DeletePlan {
     detached: bool,
     warnings: Vec<String>,
     protected_refs: Vec<String>,
+    contents: Vec<(PathBuf, ObjectIdentity, Vec<u8>)>,
+    dirty: String,
+    linked: Vec<LinkedCheckout>,
 }
 
 // Keep persisted object order local to delete: changing serde_json's global map
@@ -326,12 +334,62 @@ fn no_nested_git(path: &Path, root: bool) -> Result<()> {
     Ok(())
 }
 
+// Freeze authorized checkout contents, not just porcelain labels: an edit to an
+// already-dirty file must invalidate confirmation. Never follow checkout links.
+fn content_inventory(root: &Path) -> Result<Vec<(PathBuf, ObjectIdentity, Vec<u8>)>> {
+    fn visit(
+        root: &Path,
+        path: &Path,
+        items: &mut Vec<(PathBuf, ObjectIdentity, Vec<u8>)>,
+    ) -> Result<()> {
+        let mut entries = fs::read_dir(path)?.collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if path == root && entry.file_name() == ".git" {
+                continue;
+            }
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            let identity = ObjectIdentity::metadata(&metadata);
+            let bytes = if metadata.file_type().is_symlink() {
+                fs::read_link(&path)?
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .to_vec()
+            } else if metadata.is_file() {
+                fs::read(&path)?
+            } else if metadata.is_dir() {
+                Vec::new()
+            } else {
+                return Err(unsupported(
+                    "Delete checkout contains a special file; no changes made",
+                ));
+            };
+            if !identity.matches(&path) {
+                return Err(closed(
+                    "DELETE_CONCURRENT_CHANGE",
+                    "Checkout entry changed while reading",
+                    1,
+                ));
+            }
+            items.push((path.strip_prefix(root).unwrap().to_owned(), identity, bytes));
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                visit(root, &path, items)?;
+            }
+        }
+        Ok(())
+    }
+    let mut items = Vec::new();
+    visit(root, root, &mut items)?;
+    Ok(items)
+}
+
 fn ref_inventory(target: &Path) -> Result<Vec<LocalRef>> {
     let output = git::run_readonly(
         target,
         &[
             "for-each-ref",
-            "--format=%(refname)%09%(objectname)%09%(objecttype)",
+            "--format=%(refname)%09%(objectname)%09%(objecttype)%09%(*objectname)",
             "refs",
         ],
     )?;
@@ -341,10 +399,11 @@ fn ref_inventory(target: &Path) -> Result<Vec<LocalRef>> {
         let name = fields.next().unwrap_or("");
         let oid = fields.next().unwrap_or("");
         let kind = fields.next().unwrap_or("");
-        if name.is_empty()
-            || oid.is_empty()
-            || kind != "commit"
-            || !(name.starts_with("refs/heads/") || name.starts_with("refs/remotes/origin/"))
+        let peeled = fields
+            .next()
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        if name.is_empty() || oid.is_empty() || !matches!(kind, "commit" | "tag" | "tree" | "blob")
         {
             return Err(unsupported(
                 "Tags, symbolic, custom, or non-commit delete refs are not yet ported; no changes made",
@@ -353,6 +412,8 @@ fn ref_inventory(target: &Path) -> Result<Vec<LocalRef>> {
         all.push(LocalRef {
             name: name.to_owned(),
             oid: oid.to_owned(),
+            kind: kind.to_owned(),
+            peeled,
         });
     }
     Ok(all)
@@ -365,12 +426,27 @@ fn local_ref_loss(
 ) -> Result<(Vec<LocalRef>, Vec<String>, Vec<String>)> {
     let mut locals = all
         .iter()
-        .filter(|reference| reference.name.starts_with("refs/heads/"))
+        .filter(|reference| !reference.name.starts_with("refs/remotes/"))
         .cloned()
         .collect::<Vec<_>>();
+    let tags = locals
+        .iter()
+        .filter(|reference| reference.name.starts_with("refs/tags/"))
+        .cloned()
+        .collect::<Vec<_>>();
+    for tag in tags {
+        locals.push(LocalRef {
+            name: format!("{}^{{}}", tag.name),
+            oid: tag.peeled.unwrap_or(tag.oid),
+            kind: "commit".to_owned(),
+            peeled: None,
+        });
+    }
     if detached {
         locals.push(LocalRef {
             name: "HEAD(detached)".to_owned(),
+            kind: "commit".to_owned(),
+            peeled: None,
             oid: git::run_readonly(target, &["rev-parse", "--verify", "HEAD^{commit}"])?
                 .trim()
                 .to_owned(),
@@ -396,7 +472,16 @@ fn local_ref_loss(
     for local in &locals {
         let mut args = vec!["rev-list", "--count", local.oid.as_str(), "--not"];
         args.extend(&remotes);
-        let count = git::run_readonly(target, &args)?;
+        let always_protected = (local.name.starts_with("refs/tags/") && local.kind == "tag")
+            || (!local.name.starts_with("refs/heads/")
+                && !local.name.starts_with("refs/tags/")
+                && local.name != "refs/stash"
+                && local.name != "HEAD(detached)");
+        let count = if always_protected {
+            "1".to_owned()
+        } else {
+            git::run_readonly(target, &args)?
+        };
         let count: u64 = count.trim().parse().map_err(|_| {
             closed(
                 "DELETE_GIT_DATA_LOSS",
@@ -638,7 +723,7 @@ impl DeletePlan {
             ));
         }
         let records = git::worktrees_readonly(&target)?;
-        if records.len() != 1
+        if records.is_empty()
             || records[0].bare
             || records[0].locked
             || records[0].prune_reason.is_some()
@@ -647,6 +732,35 @@ impl DeletePlan {
             return Err(unsupported(
                 "Delete with linked, locked, stale, or non-primary worktrees is not yet ported; no changes made",
             ));
+        }
+        let mut linked = Vec::new();
+        for record in records.iter().skip(1) {
+            let checkout = LinkedCheckout::inspect(&target, record)?;
+            if target.starts_with(&checkout.path)
+                || checkout.path.starts_with(&target)
+                || workspace.root.starts_with(&checkout.path)
+                || parent_common.starts_with(&checkout.path)
+                || workspace
+                    .root
+                    .join(".arashi/config.json")
+                    .starts_with(&checkout.path)
+                || config.repos.iter().any(|(key, repo)| {
+                    key != repository && {
+                        let other = workspace.root.join(&repo.path);
+                        other.starts_with(&checkout.path) || checkout.path.starts_with(&other)
+                    }
+                })
+                || linked.iter().any(|other: &LinkedCheckout| {
+                    checkout.path.starts_with(&other.path) || other.path.starts_with(&checkout.path)
+                })
+            {
+                return Err(closed(
+                    "DELETE_TOPOLOGY_INVALID",
+                    "Linked deletion overlaps unrelated workspace authority",
+                    1,
+                ));
+            }
+            linked.push(checkout);
         }
         let gitlinks = git::run_readonly(&target, &["ls-files", "--stage"])?;
         if gitlinks.lines().any(|line| line.starts_with("160000 ")) {
@@ -664,7 +778,8 @@ impl DeletePlan {
         let ref_inventory = ref_inventory(&target)?;
         let head = fs::read(target.join(".git/HEAD"))?;
         let detached = records[0].branch.is_none();
-        let (refs, warnings, protected_refs) = local_ref_loss(&target, &ref_inventory, detached)?;
+        let (refs, mut warnings, protected_refs) =
+            local_ref_loss(&target, &ref_inventory, detached)?;
         let dirty = git::run_readonly(
             &target,
             &[
@@ -676,11 +791,24 @@ impl DeletePlan {
                 "--untracked-files=all",
             ],
         )?;
-        if !dirty.is_empty() {
-            return Err(unsupported(
-                "Delete of dirty repository contents is not yet ported; no changes made",
+        for entry in dirty.lines() {
+            warnings.push(format!(
+                "DELETE_GIT_DATA_LOSS: {}: {}",
+                target.display(),
+                entry
             ));
         }
+        for checkout in &linked {
+            for entry in checkout.dirty.lines() {
+                warnings.push(format!(
+                    "DELETE_GIT_DATA_LOSS: {}: {}",
+                    checkout.path.display(),
+                    entry
+                ));
+            }
+        }
+        warnings.sort();
+        let contents = content_inventory(&target)?;
         let config_path = workspace.root.join(".arashi/config.json");
         no_symlink_below(&workspace.root, &config_path)?;
         let config_before = fs::read(&config_path)?;
@@ -762,6 +890,9 @@ impl DeletePlan {
             detached,
             warnings,
             protected_refs,
+            contents,
+            dirty,
+            linked,
         })
     }
 
@@ -779,6 +910,14 @@ impl DeletePlan {
             "reasonCode": Value::Null,
             "message": Value::Null
         })];
+        items.extend(self.linked.iter().map(|checkout| {
+            json!({
+                "id": format!("linked-worktree:{}", checkout.path.display()),
+                "kind": "linked-worktree", "ownership": "delete", "path": checkout.path,
+                "ref": Value::Null, "oid": Value::Null, "planned": true, "completed": false,
+                "state": "planned", "reasonCode": Value::Null, "message": Value::Null
+            })
+        }));
         items.extend(self.local_refs.iter().map(|reference| {
             json!({
                 "id": format!("local-ref:{}:{}", reference.name, reference.oid),
@@ -904,7 +1043,7 @@ impl DeletePlan {
                 "--untracked-files=all",
             ],
         )?;
-        if !dirty.is_empty() {
+        if dirty != self.dirty || content_inventory(quarantine)? != self.contents {
             return Err(closed(
                 "DELETE_CONCURRENT_CHANGE",
                 "Quarantined repository contents changed during delete",
@@ -922,6 +1061,31 @@ impl DeletePlan {
             ));
         }
         self.validate()?;
+        for checkout in &self.linked {
+            self.validate_ancestors()?;
+            checkout.validate(&self.repository_path)?;
+            git::run(
+                &self.repository_path,
+                &[
+                    "worktree",
+                    "remove",
+                    "--force",
+                    "--",
+                    checkout.path.to_str().ok_or_else(|| {
+                        closed("DELETE_PATH_UNSAFE", "Linked path is not UTF-8", 1)
+                    })?,
+                ],
+            )?;
+            if fs::symlink_metadata(&checkout.path).is_ok()
+                || fs::symlink_metadata(&checkout.admin).is_ok()
+            {
+                return Err(closed(
+                    "DELETE_PARTIAL_FAILURE",
+                    "Linked worktree removal is incomplete",
+                    1,
+                ));
+            }
+        }
         let quarantine = self
             .repository_path
             .parent()
@@ -1144,7 +1308,14 @@ pub fn delete(workspace: &Workspace, args: &Args) -> Result<Value> {
         plan.validate()?;
         return Ok(data);
     }
-    if !args.has("force") && !plan.protected_refs.is_empty() {
+    if !args.has("force")
+        && (!plan.protected_refs.is_empty()
+            || !plan.dirty.is_empty()
+            || plan
+                .linked
+                .iter()
+                .any(|checkout| !checkout.dirty.is_empty()))
+    {
         data["confirmation"] = json!("not-required");
         return Err(closed(
             "DELETE_GIT_DATA_LOSS",
