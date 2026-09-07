@@ -6,6 +6,7 @@ export function waitForOutput(child, marker, timeoutMs) {
   return new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
+    let exit = null;
     let settled = false;
 
     const cleanup = () => {
@@ -14,6 +15,7 @@ export function waitForOutput(child, marker, timeoutMs) {
       child.stderr?.off("data", onStderr);
       child.off("error", onError);
       child.off("exit", onExit);
+      child.off("close", onClose);
     };
     const finish = (action, value) => {
       if (settled) {
@@ -22,6 +24,10 @@ export function waitForOutput(child, marker, timeoutMs) {
       settled = true;
       cleanup();
       action(value);
+    };
+    const diagnostics = () => {
+      const detail = stderr.trim();
+      return detail ? `: ${detail}` : "";
     };
     const onStdout = (chunk) => {
       stdout += chunk.toString();
@@ -36,18 +42,22 @@ export function waitForOutput(child, marker, timeoutMs) {
       finish(
         reject,
         new Error(
-          `holder failed before output contained ${JSON.stringify(marker)}: ${error.message}`,
+          `holder failed before output contained ${JSON.stringify(marker)}: ${error.message}${diagnostics()}`,
           { cause: error },
         ),
       );
     };
     const onExit = (code, signal) => {
-      const status = code === null ? `signal ${signal}` : `code ${code}`;
-      const detail = stderr.trim();
+      exit = { code, signal };
+    };
+    const onClose = (code, signal) => {
+      const statusCode = exit?.code ?? code;
+      const statusSignal = exit?.signal ?? signal;
+      const status = statusCode === null ? `signal ${statusSignal}` : `code ${statusCode}`;
       finish(
         reject,
         new Error(
-          `holder exited with ${status} before output contained ${JSON.stringify(marker)}${detail ? `: ${detail}` : ""}`,
+          `holder exited with ${status} before output contained ${JSON.stringify(marker)}${diagnostics()}`,
         ),
       );
     };
@@ -55,7 +65,7 @@ export function waitForOutput(child, marker, timeoutMs) {
       finish(
         reject,
         new Error(
-          `holder timed out after ${timeoutMs}ms waiting for output ${JSON.stringify(marker)}`,
+          `holder timed out after ${timeoutMs}ms waiting for output ${JSON.stringify(marker)}${diagnostics()}`,
         ),
       );
     }, timeoutMs);
@@ -64,9 +74,16 @@ export function waitForOutput(child, marker, timeoutMs) {
     child.stderr?.on("data", onStderr);
     child.once("error", onError);
     child.once("exit", onExit);
+    child.once("close", onClose);
 
     if (!childIsRunning(child)) {
       onExit(child.exitCode, child.signalCode);
+      if (
+        (!child.stdout || child.stdout.readableEnded) &&
+        (!child.stderr || child.stderr.readableEnded)
+      ) {
+        onClose(child.exitCode, child.signalCode);
+      }
     }
   });
 }

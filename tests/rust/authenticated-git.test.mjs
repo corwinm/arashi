@@ -9,6 +9,41 @@ const fixture = await import("./authenticated-git.mjs").catch((error) => {
   throw error;
 });
 
+test("cleanup failure does not replace a primary fixture failure", async () => {
+  const primary = new Error("primary readiness failure");
+  const cleanup = new Error("fixture cleanup failure");
+
+  await assert.rejects(
+    fixture.withCleanup(
+      () => {
+        throw primary;
+      },
+      () => {
+        throw cleanup;
+      },
+    ),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.cause, primary);
+      assert.deepEqual(error.errors, [primary, cleanup]);
+      return true;
+    },
+  );
+});
+
+test("cleanup-only failure still fails the fixture operation", async () => {
+  const cleanup = new Error("fixture cleanup failure");
+  await assert.rejects(
+    fixture.withCleanup(
+      () => "ready",
+      () => {
+        throw cleanup;
+      },
+    ),
+    (error) => error === cleanup,
+  );
+});
+
 test(
   "fixture cleanup waits out a transient Windows ownership lock",
   { skip: process.platform !== "win32" },
@@ -36,17 +71,20 @@ test(
         windowsHide: true,
       },
     );
-    try {
-      assert.match(await waitForOutput(holder, "LOCKED", 5000), /LOCKED/);
-      await fixture.removeFixtureRoot(root);
-      assert.equal(fs.existsSync(root), false);
-    } finally {
-      try {
-        await terminateChild(holder, 2000);
-      } finally {
-        fs.rmSync(root, { force: true, maxRetries: 10, recursive: true, retryDelay: 100 });
-      }
-    }
+    await fixture.withCleanup(
+      async () => {
+        assert.match(await waitForOutput(holder, "LOCKED", 5000), /LOCKED/);
+        await fixture.removeFixtureRoot(root);
+        assert.equal(fs.existsSync(root), false);
+      },
+      async () => {
+        try {
+          await terminateChild(holder, 2000);
+        } finally {
+          fs.rmSync(root, { force: true, maxRetries: 10, recursive: true, retryDelay: 100 });
+        }
+      },
+    );
   },
 );
 
@@ -130,9 +168,15 @@ test("real authenticated HTTPS and SSH clone/fetch/push with denial controls", a
       assert.equal(statSync(root).mode & 0o777, 0o700);
     }
     await server.assertNoSecretOutput();
-  } finally {
-    await server.close();
+  } catch (error) {
+    return fixture.withCleanup(
+      () => {
+        throw error;
+      },
+      () => server.close(),
+    );
   }
+  await server.close();
   const { existsSync } = await import("node:fs");
   assert.equal(existsSync(root), false, "private fixture directory must be removed");
 });

@@ -12,6 +12,27 @@ import ssh2 from "ssh2";
 const quote = (value) => `'${value.replaceAll("'", String.raw`'\''`)}'`;
 const equal = (a, b) => a.length === b.length && timingSafeEqual(a, b);
 
+export async function withCleanup(action, cleanup) {
+  let result = null;
+  try {
+    result = await action();
+  } catch (primaryError) {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      const aggregate = new AggregateError(
+        [primaryError, cleanupError],
+        "Fixture operation failed and cleanup was incomplete.",
+      );
+      aggregate.cause = primaryError;
+      throw aggregate;
+    }
+    throw primaryError;
+  }
+  await cleanup();
+  return result;
+}
+
 // Named for the fixture lifecycle regression; never removes anything but its supplied root.
 export async function removeFixtureRoot(root) {
   for (let attempt = 0; ; attempt += 1) {
@@ -484,7 +505,8 @@ export async function startAuthenticatedGit() {
       urls,
     };
   } catch (error) {
-    await close();
-    throw error;
+    return withCleanup(() => {
+      throw error;
+    }, close);
   }
 }

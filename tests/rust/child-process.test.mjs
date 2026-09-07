@@ -1,7 +1,14 @@
 import { terminateChild, waitForOutput } from "./child-process.mjs";
+import { EventEmitter } from "node:events";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { test } from "node:test";
+
+function nodeEmitter() {
+  // Node child processes and streams use EventEmitter rather than EventTarget.
+  // oxlint-disable-next-line unicorn/prefer-event-target
+  return new EventEmitter();
+}
 
 function nodeChild(source) {
   return spawn(process.execPath, ["-e", source], {
@@ -19,6 +26,37 @@ test("waitForOutput accumulates a readiness marker split across chunks", async (
   } finally {
     await terminateChild(child, 1000);
   }
+});
+
+test("waitForOutput drains output emitted between child exit and close", async () => {
+  const child = nodeEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  child.stdout = nodeEmitter();
+  child.stderr = nodeEmitter();
+
+  const output = waitForOutput(child, "LOCKED", 1000);
+  child.exitCode = 0;
+  child.emit("exit", 0, null);
+  child.stdout.emit("data", Buffer.from("LOCKED"));
+  child.emit("close", 0, null);
+
+  assert.equal(await output, "LOCKED");
+});
+
+test("waitForOutput retains diagnostics emitted between child exit and close", async () => {
+  const child = nodeEmitter();
+  child.exitCode = 7;
+  child.signalCode = null;
+  child.stdout = nodeEmitter();
+  child.stderr = nodeEmitter();
+
+  const output = waitForOutput(child, "LOCKED", 1000);
+  child.emit("exit", 7, null);
+  child.stderr.emit("data", Buffer.from("late holder failure"));
+  child.emit("close", 7, null);
+
+  await assert.rejects(output, /exited with code 7.*late holder failure/s);
 });
 
 test("waitForOutput rejects when the child exits before readiness", async () => {
