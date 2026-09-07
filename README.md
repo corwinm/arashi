@@ -14,8 +14,10 @@ This branch contains an incomplete Rust port. Use its separate native alpha name
 
 ```bash
 cargo build --locked --release
-./target/release/aw2 --help
+./target/release/aw --version
 ```
+
+Native v2 is a controlled alpha. For the explicit local canonical-name install and rollback contract, see [docs/rust-alpha-installation.md](docs/rust-alpha-installation.md).
 
 Use `.exe` on Windows. Read the [supported workflows and remaining parity work](./docs/rust-port.md) before testing it. For isolated installation and removal, use the opt-in [Rust alpha setup bundle](./docs/rust-alpha-installation.md). The npm and shell installation instructions below still install stable v1, not this development build.
 

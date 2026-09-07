@@ -1,5 +1,5 @@
-//! Opt-in trusted-local-archive alpha lifecycle. Never manages stable names or PATH.
-//! Schema 1 is shared with the retired Python installer. Concurrent external writers
+//! Opt-in trusted-local-archive lifecycle for canonical alpha names in a private PATH root.
+//! Schema 2 deliberately rejects retired side-by-side installs. Concurrent external writers
 //! are unsupported; changed/unproven recovery contents are deliberately preserved.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -23,9 +23,9 @@ fn refuse<T>(message: impl Into<String>) -> Result<T> {
 }
 fn names() -> [&'static str; 2] {
     if cfg!(windows) {
-        ["arashi2.exe", "aw2.exe"]
+        ["arashi.exe", "aw.exe"]
     } else {
-        ["arashi2", "aw2"]
+        ["arashi", "aw"]
     }
 }
 fn platform() -> Result<String> {
@@ -142,8 +142,8 @@ struct Release {
 }
 impl Release {
     fn validate(&self) -> Result<()> {
-        if self.schema != 1
-            || self.channel != "rust-alpha"
+        if self.schema != 2
+            || self.channel != "rust-alpha-canonical"
             || !version(&self.version)
             || self.platform != platform()?
         {
@@ -156,15 +156,15 @@ impl Release {
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct Files {
-    #[cfg_attr(windows, serde(rename = "arashi2.exe"))]
-    arashi2: String,
-    #[cfg_attr(windows, serde(rename = "aw2.exe"))]
-    aw2: String,
+    #[cfg_attr(windows, serde(rename = "arashi.exe"))]
+    arashi: String,
+    #[cfg_attr(windows, serde(rename = "aw.exe"))]
+    aw: String,
 }
 fn hashes(payload: &Payload) -> Files {
     Files {
-        arashi2: digest(&payload[names()[0]]),
-        aw2: digest(&payload[names()[1]]),
+        arashi: digest(&payload[names()[0]]),
+        aw: digest(&payload[names()[1]]),
     }
 }
 #[derive(Debug, Deserialize, Serialize)]
@@ -408,6 +408,7 @@ fn promote(
 #[derive(Default)]
 struct Args {
     action: String,
+    consent: bool,
     archive: Option<PathBuf>,
     checksum: Option<PathBuf>,
     destination: Option<PathBuf>,
@@ -466,6 +467,11 @@ fn lifecycle_with_rename(
             );
             return Ok(());
         }
+        if !args.consent {
+            return refuse(
+                "install requires --accept-canonical-shadow to acknowledge that adding this directory to PATH shadows stable aw/arashi",
+            );
+        }
         let (meta, payload) = release(
             args.archive.as_deref().ok_or(
                 "install requires --archive and --checksum-file; no latest/stable resolution",
@@ -480,13 +486,13 @@ fn lifecycle_with_rename(
             snapshot.insert(name.clone(), data.clone());
             create(&staging.join(name), data)?;
         }
-        let expected = format!("arashi2 {} (experimental native alpha)\n", meta.version);
+        let expected = format!("arashi {} (controlled native alpha)\n", meta.version);
         for name in names() {
             smoke(&staging.join(name), &expected)?;
         }
         let ledger = Ledger {
-            schema: 1,
-            channel: "rust-alpha".into(),
+            schema: 2,
+            channel: "rust-alpha-canonical".into(),
             directory: destination.to_str().ok_or("Non-UTF-8 destination")?.into(),
             platform: platform()?,
             version: meta.version,
@@ -543,12 +549,12 @@ fn main() {
             .ok_or("Expected install or uninstall; use --help")?;
         if first == "--help" || first == "-h" {
             println!(
-                "Native opt-in Rust alpha setup; never manages stable v1.\nUsage: arashi2-setup install --archive FILE --checksum-file FILE [--install-dir ABSOLUTE/.arashi-alpha]\n       arashi2-setup uninstall [--install-dir ABSOLUTE/.arashi-alpha]\nNo network, Python, Node, PATH/profile or registry changes."
+                "Native opt-in Rust alpha setup; controlled canonical names, never stable v1.\nUsage: arashi-alpha-setup install --accept-canonical-shadow --archive FILE --checksum-file FILE [--install-dir ABSOLUTE/.arashi-alpha]\n       arashi-alpha-setup uninstall [--install-dir ABSOLUTE/.arashi-alpha]\nInstall creates canonical aw/arashi names in a private directory. No network, Python, Node, PATH/profile or registry changes."
             );
             return Ok(());
         }
         if first == "--version" {
-            println!("arashi2-setup {}", env!("CARGO_PKG_VERSION"));
+            println!("arashi-alpha-setup {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         let action = first.into_string().map_err(|_| "Invalid action")?;
@@ -560,6 +566,13 @@ fn main() {
             ..Default::default()
         };
         while let Some(token) = tokens.next() {
+            if token == "--accept-canonical-shadow" {
+                if args.consent {
+                    return refuse("Duplicate alpha setup argument");
+                }
+                args.consent = true;
+                continue;
+            }
             let slot = match token.to_str() {
                 Some("--archive") => &mut args.archive,
                 Some("--checksum-file") => &mut args.checksum,
@@ -608,6 +621,7 @@ mod tests {
         if let Some(archive) = env::var_os("ALPHA_TEST_ARCHIVE") {
             let args = || Args {
                 action: "install".into(),
+                consent: true,
                 archive: Some(PathBuf::from(&archive)),
                 checksum: Some(
                     env::var_os("ALPHA_TEST_CHECKSUM")
@@ -640,8 +654,8 @@ mod tests {
         let backup = temp.path().join("backup");
         fs::create_dir(&old).unwrap();
         fs::create_dir(&stage).unwrap();
-        fs::write(old.join("aw2"), b"previous release").unwrap();
-        fs::write(stage.join("aw2"), b"candidate").unwrap();
+        fs::write(old.join("aw"), b"previous release").unwrap();
+        fs::write(stage.join("aw"), b"candidate").unwrap();
         let result = promote(&stage, &old, &backup, |a, b| {
             if a == stage {
                 Err(io::Error::other("injected promotion failure"))
@@ -655,8 +669,8 @@ mod tests {
                 .to_string()
                 .contains("injected promotion failure")
         );
-        assert_eq!(fs::read(old.join("aw2")).unwrap(), b"previous release");
+        assert_eq!(fs::read(old.join("aw")).unwrap(), b"previous release");
         assert!(!backup.exists());
-        assert_eq!(fs::read(stage.join("aw2")).unwrap(), b"candidate");
+        assert_eq!(fs::read(stage.join("aw")).unwrap(), b"candidate");
     }
 }

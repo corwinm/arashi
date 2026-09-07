@@ -136,7 +136,8 @@ class AlphaDistribution(unittest.TestCase):
             command = ['/bin/bash', str(ARTIFACTS / 'install-alpha.sh')]
         arguments = list(args)
         if not arguments or arguments[0] != 'uninstall':
-            arguments = ['install', '--archive', str(archive or self.archive),
+            arguments = ['install', '--accept-canonical-shadow',
+                         '--archive', str(archive or self.archive),
                          '--checksum-file', str(checksum or self.checksum), *arguments]
         env = self.shell_env.copy()
         # Only the launcher is selected before clearing PATH; setup has no runtime tools.
@@ -147,12 +148,12 @@ class AlphaDistribution(unittest.TestCase):
         return result
 
     def test_bundle_is_native_only(self):
-        self.assertTrue((ARTIFACTS / ('arashi2-setup' + SUFFIX)).is_file())
+        self.assertTrue((ARTIFACTS / ('arashi-alpha-setup' + SUFFIX)).is_file())
         self.assertEqual({p.name for p in ARTIFACTS.iterdir()},
-                         {self.archive.name, self.checksum.name, 'arashi2-setup' + SUFFIX,
+                         {self.archive.name, self.checksum.name, 'arashi-alpha-setup' + SUFFIX,
                           'install-alpha.sh', 'install-alpha.ps1'})
         if not WINDOWS:
-            self.assertTrue(os.access(ARTIFACTS / 'arashi2-setup', os.X_OK))
+            self.assertTrue(os.access(ARTIFACTS / 'arashi-alpha-setup', os.X_OK))
 
     @unittest.skipIf(WINDOWS, 'Bash basename launch')
     def test_launcher_by_basename_without_runtime_path(self):
@@ -163,9 +164,9 @@ class AlphaDistribution(unittest.TestCase):
 
     def test_install_refresh_remove(self):
         self.run_setup()
-        for name in ['aw2', 'arashi2']:
+        for name in ['aw', 'arashi']:
             version = subprocess.check_output([str(self.destination / (name + SUFFIX)), '--version'], text=True)
-            self.assertRegex(version, r'^arashi2 2\.\d+\.\d+-alpha\.\d+ \(experimental native alpha\)\n$')
+            self.assertRegex(version, r'^arashi 2\.\d+\.\d+-alpha\.\d+ \(controlled native alpha\)\n$')
         original = {p.name: p.read_bytes() for p in self.destination.iterdir()}
         self.run_setup()
         self.assertEqual(original, {p.name: p.read_bytes() for p in self.destination.iterdir()})
@@ -174,14 +175,27 @@ class AlphaDistribution(unittest.TestCase):
 
     def test_unowned_directory_is_not_adopted(self):
         self.destination.mkdir()
-        (self.destination / ('aw2' + SUFFIX)).write_text('caller')
+        (self.destination / ('aw' + SUFFIX)).write_text('caller')
         self.run_setup(ok=False)
         self.run_setup('uninstall', ok=False)
-        self.assertEqual((self.destination / ('aw2' + SUFFIX)).read_text(), 'caller')
+        self.assertEqual((self.destination / ('aw' + SUFFIX)).read_text(), 'caller')
+
+    def test_install_requires_explicit_canonical_shadow_consent(self):
+        if WINDOWS:
+            command = [shutil.which(os.environ.get('ALPHA_POWERSHELL', 'powershell.exe')),
+                       '-NoProfile', '-NonInteractive', '-File', str(ARTIFACTS / 'install-alpha.ps1')]
+        else:
+            command = ['/bin/bash', str(ARTIFACTS / 'install-alpha.sh')]
+        result = subprocess.run(command + ['install', '--archive', str(self.archive),
+            '--checksum-file', str(self.checksum)], env=self.shell_env,
+            capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('--accept-canonical-shadow', result.stderr)
+        self.assertFalse(self.destination.exists())
 
     def test_modified_payload_refuses_refresh_and_removal(self):
         self.run_setup()
-        binary = self.destination / ('aw2' + SUFFIX)
+        binary = self.destination / ('aw' + SUFFIX)
         binary.write_bytes(b'caller modified')
         self.run_setup(ok=False)
         self.run_setup('uninstall', ok=False)
@@ -213,7 +227,7 @@ class AlphaDistribution(unittest.TestCase):
             with zipfile.ZipFile(self.archive) as source, zipfile.ZipFile(bad, 'w') as target:
                 for item in source.infolist():
                     data = source.read(item)
-                    if kind == 'smoke' and item.filename.startswith('aw2'):
+                    if kind == 'smoke' and item.filename.startswith('aw'):
                         data = b'not an executable'
                     if kind == 'duplicate-json' and item.filename == 'release.json':
                         data = data.replace(b'{', b'{"schema":1,', 1)
@@ -221,7 +235,7 @@ class AlphaDistribution(unittest.TestCase):
                         value = json.loads(data)
                         value['version'] = '2.0.0'
                         data = json.dumps(value).encode()
-                    if kind == 'member-link' and item.filename.startswith('aw2'):
+                    if kind == 'member-link' and item.filename.startswith('aw'):
                         item.external_attr = (0o120777 << 16)
                     if kind == 'platform' and item.filename == 'release.json':
                         value = json.loads(data)
@@ -251,7 +265,7 @@ class AlphaDistribution(unittest.TestCase):
         self.assertTrue(self.destination.is_symlink())
         self.destination.unlink()
         self.run_setup()
-        binary = self.destination / ('aw2' + SUFFIX)
+        binary = self.destination / ('aw' + SUFFIX)
         binary.unlink()
         binary.symlink_to(caller / 'missing')
         self.run_setup('uninstall', ok=False)
@@ -259,7 +273,7 @@ class AlphaDistribution(unittest.TestCase):
 
     def test_hardlinked_payload_is_preserved(self):
         self.run_setup()
-        binary = self.destination / ('aw2' + SUFFIX)
+        binary = self.destination / ('aw' + SUFFIX)
         caller = Path(self.temp.name) / 'caller-hardlink'
         os.link(binary, caller)
         original = caller.read_bytes()
@@ -301,7 +315,7 @@ class AlphaDistribution(unittest.TestCase):
             self.assertEqual(json.loads(manifest.read_bytes()), data)
         for data in [original.replace(b'{', b'{"schema":1,', 1),
                      original.replace(b'"files":{', b'"files":{"extra":"no",', 1),
-                     original.replace(b'"files":{', b'"files":{"' + ('aw2' + SUFFIX).encode() + b'":"duplicate",', 1)]:
+                     original.replace(b'"files":{', b'"files":{"' + ('aw' + SUFFIX).encode() + b'":"duplicate",', 1)]:
             manifest.write_bytes(data)
             self.run_setup(ok=False)
             self.run_setup('uninstall', ok=False)
@@ -313,34 +327,23 @@ class AlphaDistribution(unittest.TestCase):
         # The native unit seam injects only rename; real release archive/ownership
         # and filesystem operations are used. There is no production fault flag.
         result = subprocess.run(['cargo', 'test', '--locked', '--release', '--bin',
-                                 'arashi2-setup', 'failed_promotion_restores_real_old_directory',
+                                 'arashi-alpha-setup', 'failed_promotion_restores_real_old_directory',
                                  '--', '--nocapture'], cwd=ROOT, capture_output=True, text=True,
                                 env={**os.environ, 'ALPHA_TEST_ARCHIVE': str(self.archive),
                                      'ALPHA_TEST_CHECKSUM': str(self.checksum)})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('real release rollback verified', result.stdout)
 
-    def test_legacy_python_created_install_refresh_and_remove(self):
-        # Development-only historical oracle: exact base commit, never bundled.
-        baseline = ROOT / 'target/native-alpha-evidence/python-baseline/scripts/alpha/alpha_setup.py'
-        if not baseline.exists():
-            baseline.parent.mkdir(parents=True, exist_ok=True)
-            result = subprocess.run(['git', 'show',
-                '932f449c3d872145eb9b6a7043421bff7b5eed3f:scripts/alpha/alpha_setup.py'],
-                cwd=ROOT, capture_output=True, check=True)
-            baseline.write_bytes(result.stdout)
-        for refresh in [False, True]:
-            result = subprocess.run([sys.executable, '-B', str(baseline), 'install',
-                '--archive', str(self.archive), '--checksum-file', str(self.checksum)],
-                env={**os.environ, 'HOME': str(self.home), 'USERPROFILE': str(self.home)},
-                capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            old = json.loads((self.destination / '.arashi-alpha-ownership.json').read_bytes())
-            if refresh:
-                self.run_setup()
-                self.assertEqual(old, json.loads((self.destination / '.arashi-alpha-ownership.json').read_bytes()))
-            self.run_setup('uninstall')
-            self.assertFalse(self.destination.exists())
+    def test_existing_side_by_side_alpha_is_not_adopted(self):
+        self.destination.mkdir()
+        old = self.destination / ('aw2.exe' if WINDOWS else 'aw2')
+        old.write_bytes(b'caller-owned retired alpha')
+        manifest = self.destination / '.arashi-alpha-ownership.json'
+        manifest.write_text('{"schema":1,"channel":"rust-alpha"}\n')
+        self.run_setup(ok=False)
+        self.run_setup('uninstall', ok=False)
+        self.assertEqual(old.read_bytes(), b'caller-owned retired alpha')
+        self.assertTrue(manifest.exists())
 
     def test_missing_helper_has_no_path_or_interpreter_fallback(self):
         isolated = Path(self.temp.name) / 'incomplete'
@@ -352,12 +355,12 @@ class AlphaDistribution(unittest.TestCase):
             launcher = 'install-alpha.ps1'
             command = [shutil.which(os.environ.get('ALPHA_POWERSHELL', 'powershell.exe')),
                        '-NoProfile', '-NonInteractive', '-File']
-            for name in ['python.exe', 'python3.exe', 'node.exe', 'arashi2-setup.exe']:
+            for name in ['python.exe', 'python3.exe', 'node.exe', 'arashi-alpha-setup.exe']:
                 (shadow / name).write_bytes(b'invalid executable must not be selected')
         else:
             launcher = 'install-alpha.sh'
             command = ['/bin/bash']
-            for name in ['python', 'python3', 'node', 'arashi2-setup']:
+            for name in ['python', 'python3', 'node', 'arashi-alpha-setup']:
                 path = shadow / name
                 path.write_text('#!/bin/bash\nprintf ran > "' + str(marker) + '"\nexit 88\n')
                 path.chmod(0o755)
@@ -365,16 +368,16 @@ class AlphaDistribution(unittest.TestCase):
         result = subprocess.run(command + [str(isolated / launcher), '--help'],
             env={**os.environ, 'PATH': str(shadow)}, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Missing or unsafe native arashi2-setup', result.stderr)
+        self.assertIn('Missing or unsafe native arashi-alpha-setup', result.stderr)
         self.assertFalse(marker.exists())
         if not WINDOWS:
-            helper = isolated / 'arashi2-setup'
+            helper = isolated / 'arashi-alpha-setup'
             shutil.copyfile(ARTIFACTS / helper.name, helper)
             helper.chmod(0o644)
             result = subprocess.run(command + [str(isolated / launcher), '--help'],
                 env={**os.environ, 'PATH': str(shadow)}, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn('Missing or unsafe native arashi2-setup', result.stderr)
+            self.assertIn('Missing or unsafe native arashi-alpha-setup', result.stderr)
             self.assertFalse(marker.exists())
 
     @unittest.skipUnless(WINDOWS, 'native Windows junction acceptance')
@@ -390,36 +393,36 @@ class AlphaDistribution(unittest.TestCase):
         finally:
             os.rmdir(self.destination)
 
-    def test_alias_does_not_enable_stable_shell_or_updater(self):
+    def test_canonical_alpha_does_not_use_stable_lifecycle(self):
         self.run_setup()
-        for command in ['update', 'uninstall', 'install', 'shell', 'shell-init', 'completion']:
-            result = subprocess.run([str(self.destination / ('aw2' + SUFFIX)), command],
+        for command in ['update', 'uninstall']:
+            result = subprocess.run([str(self.destination / ('aw' + SUFFIX)), command],
                                     capture_output=True, text=True,
                                     env={**os.environ, 'HOME': str(self.home)})
             self.assertNotEqual(result.returncode, 0, command)
-            self.assertIn('Use the separate alpha setup bundle', result.stderr)
+            self.assertIn('controlled alpha setup bundle', result.stderr)
 
-    def test_packaged_parser_keeps_identity_and_blocks_stable_dispatch(self):
+    def test_packaged_canonical_shell_completion_and_path_shadow(self):
         self.run_setup()
-        for name in ['aw2', 'arashi2']:
+        for name in ['aw', 'arashi']:
             binary = str(self.destination / (name + SUFFIX))
             env = {**os.environ, 'HOME': str(self.home), 'USERPROFILE': str(self.home),
-                   'PATH': str(Path(self.temp.name) / 'no-runtime')}
-            for args in [['--', 'shell', 'init', 'bash'], ['--', 'completion', 'bash'],
-                         ['--', 'completion', '__query', '0', 'aw'], ['--', 'update'],
-                         ['--', 'uninstall']]:
-                result = subprocess.run([binary, *args], env=env, cwd=self.home,
-                                        capture_output=True, text=True)
-                self.assertNotEqual(result.returncode, 0, args)
-                self.assertEqual(result.stdout, '')
-                self.assertIn('Use the separate alpha setup bundle', result.stderr)
-            for args in [['--help'], ['help', 'create'], ['--help', '--version']]:
+                   'PATH': str(self.destination)}
+            for args in [['shell', 'init', 'bash'], ['completion', 'bash']]:
                 result = subprocess.run([binary, *args], env=env, cwd=self.home,
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn('arashi2', result.stdout)
-                self.assertNotIn('Usage: aw ', result.stdout)
-                self.assertNotIn('$ arashi ', result.stdout)
+                self.assertIn('command arashi', result.stdout)
+                self.assertNotIn('arashi2', result.stdout)
+                self.assertNotIn('aw2', result.stdout)
+        if not WINDOWS:
+            result = subprocess.run(['/bin/bash', '-c',
+                'command -v aw; aw --version; aw completion bash'], env={**self.shell_env,
+                'PATH': str(self.destination)}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(result.stdout.startswith(str(self.destination / 'aw') + '\n'))
+            self.assertIn('(controlled native alpha)', result.stdout)
+            self.assertIn('complete -F _arashi arashi', result.stdout)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package host-built native alpha aliases; no release/tag/network operations."""
+"""Package host-built canonical native alpha; no release/tag/network operations."""
 import argparse
 from pathlib import Path
 import re
@@ -27,7 +27,7 @@ def platform_id():
 
 def names():
     suffix = '.exe' if os.name == 'nt' else ''
-    return ['arashi2' + suffix, 'aw2' + suffix]
+    return ['arashi' + suffix, 'aw' + suffix]
 
 
 def digest(data):
@@ -71,13 +71,13 @@ def main():
         path = args.binary_dir.resolve() / name
         regular(path)
         result = subprocess.run([str(path), '--version'], capture_output=True, text=True, check=True)
-        if result.stdout != 'arashi2 ' + version + ' (experimental native alpha)\n' or result.stderr:
+        if result.stdout != 'arashi ' + version + ' (controlled native alpha)\n' or result.stderr:
             raise ValueError('Not a native alpha binary: ' + str(path))
         payload[name] = path.read_bytes()
-    payload['release.json'] = json_bytes({'schema': 1, 'channel': 'rust-alpha',
+    payload['release.json'] = json_bytes({'schema': 2, 'channel': 'rust-alpha-canonical',
                                           'version': version, 'platform': platform_id()})
     args.output.mkdir(parents=True, exist_ok=True)
-    archive = args.output / ('arashi2-' + version + '-' + platform_id() + '.zip')
+    archive = args.output / ('arashi-' + version + '-' + platform_id() + '.zip')
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as output:
         for name, data in sorted(payload.items()):
             info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
@@ -86,11 +86,11 @@ def main():
             info.compress_type = zipfile.ZIP_DEFLATED
             output.writestr(info, data)
     archive.with_suffix('.zip.sha256').write_bytes((digest(archive.read_bytes()) + '  ' + archive.name + '\n').encode('ascii'))
-    helper = 'arashi2-setup' + ('.exe' if os.name == 'nt' else '')
+    helper = 'arashi-alpha-setup' + ('.exe' if os.name == 'nt' else '')
     helper_path = args.binary_dir.resolve() / helper
     regular(helper_path)
     result = subprocess.run([str(helper_path), '--version'], capture_output=True, text=True, check=True)
-    if result.stdout != 'arashi2-setup ' + version + '\n' or result.stderr:
+    if result.stdout != 'arashi-alpha-setup ' + version + '\n' or result.stderr:
         raise ValueError('Wrong native setup identity')
     shutil.copy2(helper_path, args.output / helper)
     for name in ['install-alpha.sh', 'install-alpha.ps1']:

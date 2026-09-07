@@ -1,5 +1,7 @@
 # Alpha distribution integration evidence
 
+> Historical side-by-side `aw2` evidence. The current controlled canonical-name contract is documented in [rust-alpha-installation.md](rust-alpha-installation.md).
+
 This is a local macOS arm64 distribution milestone, not completion of the Rust port.
 
 ## Inputs and composition
@@ -15,17 +17,17 @@ This is a local macOS arm64 distribution milestone, not completion of the Rust p
 
 All logs below are lane-local under `target/alpha-integration-evidence/`.
 
-| Gate | Result | Evidence |
-| --- | --- | --- |
-| Focused behavioral RED | 2 expected failures | `red.log` |
-| Focused GREEN | 2 passed | `green.log` |
-| `ARASHI_TS_PARITY=1 cargo test --locked --offline --all-targets -- --include-ignored --test-threads=1` | 438 passed, 0 failed, 0 ignored; 28 executable groups; exit 0 | `source-integrated-final.log`, `source-integrated.exit` |
-| `cargo fmt --check` | exit 0 | `fmt.log` |
-| `cargo clippy --locked --offline --all-targets -- -D warnings` | exit 0 | `clippy.log` |
-| `cargo build --locked --offline --release` | exit 0 | `build.log` |
-| `python3 -B tests/rust/alpha_distribution.py` | 18 passed, 1 native-Windows skip | `release-lifecycle.log` |
-| `node tests/rust/parity.mjs target/release/arashi target/alpha-integration-evidence/source-parity.json` | 15 comparisons passed | `release-parity.log`, `source-parity.json` |
-| Fresh tester packaging and native tar member listing | exact five native-only members | `fresh-package.log`, `fresh-bundle/`, `artifact-sha256.json` |
+| Gate                                                                                                    | Result                                                        | Evidence                                                     |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| Focused behavioral RED                                                                                  | 2 expected failures                                           | `red.log`                                                    |
+| Focused GREEN                                                                                           | 2 passed                                                      | `green.log`                                                  |
+| `ARASHI_TS_PARITY=1 cargo test --locked --offline --all-targets -- --include-ignored --test-threads=1`  | 438 passed, 0 failed, 0 ignored; 28 executable groups; exit 0 | `source-integrated-final.log`, `source-integrated.exit`      |
+| `cargo fmt --check`                                                                                     | exit 0                                                        | `fmt.log`                                                    |
+| `cargo clippy --locked --offline --all-targets -- -D warnings`                                          | exit 0                                                        | `clippy.log`                                                 |
+| `cargo build --locked --offline --release`                                                              | exit 0                                                        | `build.log`                                                  |
+| `python3 -B tests/rust/alpha_distribution.py`                                                           | 18 passed, 1 native-Windows skip                              | `release-lifecycle.log`                                      |
+| `node tests/rust/parity.mjs target/release/arashi target/alpha-integration-evidence/source-parity.json` | 15 comparisons passed                                         | `release-parity.log`, `source-parity.json`                   |
+| Fresh tester packaging and native tar member listing                                                    | exact five native-only members                                | `fresh-package.log`, `fresh-bundle/`, `artifact-sha256.json` |
 
 Cargo used `CARGO_HOME=$PWD/target/cargo-home` and `CARGO_TARGET_DIR=$PWD/target`. Full source and release lifecycle gates ran sequentially, not concurrently. The first source attempt failed because this lane lacked `commander`; a lane-local `corepack pnpm --ignore-workspace install --frozen-lockfile --ignore-scripts` supplied retained-source development dependencies without changing package files. The complete rerun above passed; `source-integrated.log` and `source-dependencies.log` preserve the prerequisite failure and repair.
 

@@ -1,74 +1,104 @@
-# Rust alpha setup
+# Controlled canonical Rust alpha
 
-`aw2` and `arashi2` are the same incomplete native Rust alpha CLI. They coexist with stable `aw`/`arashi`; they do not replace it. Read the [support ledger](rust-port.md) before using alpha commands on a workspace.
+The native alpha uses the canonical executable names `aw` and `arashi`. It is for coordinated personal testing only. It is incomplete; read the [support ledger](rust-port.md) before using it on a workspace.
 
-## Get a tester bundle
+The alpha does **not** replace files in the stable installation. It installs into a private `$HOME/.arashi-alpha` directory (Windows: `%USERPROFILE%\.arashi-alpha`). It shadows stable v1 only when you explicitly put that directory before the stable directory on `PATH`. Stable npm packages, website installers, update discovery, release workflows, and `$HOME/.arashi/bin` remain unchanged.
 
-Use an artifact from the **Rust alpha distribution artifacts** workflow for your OS/architecture and a reviewed commit. There is no published alpha installer endpoint or automatic “latest” lookup. Stable npm and website installers still install v1.
+## Build a local tester bundle
 
-Alternatively, create a host-native bundle locally:
+From a reviewed checkout:
 
 ```sh
-cargo build --locked --release --bin arashi2 --bin aw2 --bin arashi2-setup
+cargo build --locked --release --bin arashi --bin aw --bin arashi-alpha-setup
 python3 -B scripts/alpha/package.py --output target/alpha-distribution
 ```
 
-The workflow download contains a `*-tester.tar.gz` (macOS/Linux) or `*-tester.zip` (Windows) and its SHA-256 file. Extract that **inner tester archive**, not just the outer GitHub artifact download: `tar -xzf <exact-tester.tar.gz>` on macOS/Linux, or `Expand-Archive <exact-tester.zip> <new-directory>` on Windows. The inner tar preserves executable modes that GitHub artifact transport otherwise strips.
+Packaging is local and host-native. It performs no tag, upload, npm, update, or network operation. The output includes a platform payload ZIP, its `.zip.sha256`, and a mode-preserving `*-tester.tar.gz` on macOS/Linux or `*-tester.zip` on Windows. Extract the tester archive into a new directory. It contains only the payload ZIP, checksum, `arashi-alpha-setup` (`.exe` on Windows), and the Bash/PowerShell launchers.
 
-The extracted directory contains a platform-named payload ZIP, its `.zip.sha256` file, `arashi2-setup` (`.exe` on Windows), and Bash/PowerShell launchers. Keep them together. **No Python, Node, Bun, Rust toolchain or network access is required for install, refresh, removal, or the installed CLI.** Python is only a maintainer packaging/test dependency. Bash is used on macOS/Linux; Windows supports PowerShell 5.1 or 7. Launchers execute the exact adjacent native helper, never a PATH candidate or interpreter fallback. The helper stays in the tester bundle; it is not installed into alpha or stable paths.
+Install, refresh, uninstall, and the installed CLI require no Python, Node, Bun, Rust toolchain, or network access. The launcher executes the exact adjacent native setup helper and never searches `PATH` for one.
 
-## Install or refresh
+## Install and opt in to shadowing
 
-From the extracted tester bundle, substitute its exact ZIP filename:
+Substitute the exact artifact name produced for the host:
 
 ```sh
 bash ./install-alpha.sh install \
-  --archive ./arashi2-2.0.0-alpha.1-macos-arm64.zip \
-  --checksum-file ./arashi2-2.0.0-alpha.1-macos-arm64.zip.sha256
-"$HOME/.arashi-alpha/aw2" --version
+  --accept-canonical-shadow \
+  --archive ./arashi-2.0.0-alpha.1-macos-arm64.zip \
+  --checksum-file ./arashi-2.0.0-alpha.1-macos-arm64.zip.sha256
 ```
 
 Windows PowerShell:
 
 ```powershell
-.\install-alpha.ps1 install --archive .\arashi2-2.0.0-alpha.1-windows-x64.zip --checksum-file .\arashi2-2.0.0-alpha.1-windows-x64.zip.sha256
-& "$env:USERPROFILE\.arashi-alpha\aw2.exe" --version
+.\install-alpha.ps1 install --accept-canonical-shadow `
+  --archive .\arashi-2.0.0-alpha.1-windows-x64.zip `
+  --checksum-file .\arashi-2.0.0-alpha.1-windows-x64.zip.sha256
 ```
 
-Re-run `install` with another trusted alpha bundle to refresh. Existing schema-1 installations created by the earlier Python setup can be refreshed or removed by this native helper without Python. Only explicit `2.x.y-alpha.N` releases for the running OS/architecture are accepted. Both executables must pass the native alpha version smoke test before replacement. Downloads, signatures, automatic updates and stable-major migration are not implemented. SHA-256 detects damaged/mismatched bytes, **not authenticity**: the workflow commit and downloaded setup code must be trusted.
+`--accept-canonical-shadow` is mandatory for every install or refresh. It acknowledges that the private directory contains canonical names. Setup itself does not edit `PATH`, shell profiles, registry values, stable files, or npm state.
 
-Default ownership is confined to `$HOME/.arashi-alpha` (Windows: `%USERPROFILE%\.arashi-alpha`), containing only the two binaries and `.arashi-alpha-ownership.json`. `--install-dir` accepts a canonical absolute path ending in `.arashi-alpha` beneath an existing ordinary directory; it cannot target `.arashi/bin` or adopt an existing unowned directory.
+For one shell session, explicitly shadow stable after installation:
 
-## Shell and removal
+```sh
+export PATH="$HOME/.arashi-alpha:$PATH"
+command -v aw
+aw --version
+```
 
-Alpha uses the integrated native parser and dispatcher, with alpha help/version identity. A guard on the canonical parsed command blocks stable installation and shell/completion dispatch even after an argument separator (`aw2 -- shell init bash`). Help remains an inventory, not a claim that all listed policies are implemented.
+PowerShell:
 
-Setup makes **no PATH, profile, registry or shell-block changes**. Invoke the absolute path, or manually add the alpha-only directory to PATH. Alpha-specific shell wrappers and completions are pending. `aw2 shell`, `completion`, `install`, `update` and `uninstall` deliberately fail rather than emit stable wrappers or invoke stable lifecycle code. Parent-shell switching integration is not provided by this bundle.
+```powershell
+$env:Path = "$env:USERPROFILE\.arashi-alpha;$env:Path"
+Get-Command aw
+aw --version
+```
 
-Keep the setup bundle for removal:
+The version output is `arashi 2.x.y-alpha.N (controlled native alpha)`. Verify `command -v aw`/`Get-Command aw` resolves inside `.arashi-alpha` before testing. Do not add this directory permanently unless you accept managing that profile edit yourself.
+
+## Shell and completion
+
+Canonical native shell and completion generation are enabled:
+
+```sh
+aw shell init bash
+aw completion bash
+```
+
+Generated wrappers, completion registrations, and dynamic completion queries use canonical `arashi`. With `.arashi-alpha` first on `PATH`, those calls resolve back to the installed native alpha. `update` and `uninstall` dispatch inside `aw`/`arashi` are blocked so the alpha cannot invoke the stable lifecycle. Use the setup bundle for alpha refresh/removal. `aw install` remains the non-mutating direct-binary informational command.
+
+## Exact rollback
+
+Keep the extracted setup bundle. First remove any temporary `PATH` prefix from the current shell (or start a fresh shell), then run:
 
 ```sh
 bash ./install-alpha.sh uninstall
+hash -r 2>/dev/null || true
+command -v aw
+aw --version
 ```
+
+PowerShell:
 
 ```powershell
+$env:Path = (($env:Path -split ';') | Where-Object { $_ -ne "$env:USERPROFILE\.arashi-alpha" }) -join ';'
 .\install-alpha.ps1 uninstall
+Get-Command aw
+aw --version
 ```
 
-Pass the same `--install-dir` if installation used an override. Removal verifies the closed alpha manifest and every payload hash, then removes only those files and their empty directory. Manual PATH entries remain yours to remove. Stable v1 binaries, ownership manifests, npm packages and shell integration are never managed by this setup.
+Removal validates the closed schema-2 ownership manifest and every payload hash, then removes only `aw`, `arashi`, the manifest, and the empty `.arashi-alpha` directory. It never restores stable bytes because it never changed them; removing the PATH shadow exposes the unchanged stable installation. If you made a persistent profile edit, remove that exact edit manually.
 
-## Refusal and recovery
+Refresh uses an adjacent stage and backup directory. Both new binaries must pass an exact alpha-version smoke test before promotion. A failed promotion restores the prior owned alpha when possible and reports any preserved recovery directory.
 
-Changed/missing payloads, unknown manifest schemas/properties, added caller files, symlinks, hardlinks, Windows reparse points and occupied/stale locks block automatic mutation. Preserve those files and inspect the reported location; do not delete or rewrite an ownership manifest to force adoption. A failed pre-publication smoke test preserves the old install. A failed directory promotion attempts rollback; a busy Windows executable or interrupted operation can require manual recovery from the reported `.arashi-alpha-backup-*` directory. Never remove a lock while setup is running.
+## Refusal and retired `aw2` installs
 
-If the launcher reports a missing/non-executable helper, re-extract the complete trusted inner tester archive for this platform; do not substitute an executable found on PATH. On POSIX, a manually copied trusted helper may need `chmod +x ./arashi2-setup`. No runtime fallback is attempted.
+Changed/missing payloads, unknown or duplicate manifest fields, extra files, symlinks, hardlinks, Windows reparse points, wrong-platform archives, malformed checksums, stale locks, and unowned destinations fail closed. Setup preserves unproven contents for manual recovery.
 
-Manual alternative: verify a trusted ZIP's checksum, extract only `arashi2` and `aw2` (`.exe` on Windows) into a **new private directory**, and invoke them by absolute path. Do not rename them to `arashi`/`aw`. Manual extraction does not create installer ownership and must be removed manually.
+The former schema-1 `aw2`/`arashi2` development install is not migrated or adopted. Remove it with its original trusted setup bundle before installing this alpha. If that bundle is unavailable or the old install is modified, leave `$HOME/.arashi-alpha` untouched, move it aside only after manual inspection, and install into a clean default location. Never rewrite its ownership manifest to force adoption.
 
-The lifecycle serializes its own invocations but does not promise crash-atomicity or protection against arbitrary concurrent external filesystem writers. Uninstall may stop partially on an OS error and preserve the remaining files for recovery. Close running alpha commands before refresh/removal on Windows.
+SHA-256 detects accidental corruption, not authenticity. Build locally from a reviewed commit or trust the exact workflow commit. No public alpha release or stable update channel is part of this contract.
 
-## Validation and transition gates
+## Validation
 
-`python3 -B tests/rust/alpha_distribution.py` packages and exercises actual release binaries using disposable Unicode HOME paths and a setup PATH without Python or any other runtime tools. It extracts the real tester archive with native tools, verifies the native-only member boundary and executable mode, tests missing-helper refusal without fallback, and migrates installations created by the exact historical Python installer (a development-only oracle). It covers refresh/removal, stable-file/profile preservation, caller collisions, changed payloads/manifests, corrupt/traversing/wrong-platform archives, smoke failure, promotion rollback, links and reproducible packaging. Windows CI runs the same lifecycle through PowerShell 5.1 and 7, plus junction refusal; the macOS run cannot establish those Windows results.
-
-CI only retains tester artifacts; it has no release-upload or repository-write permission. Stable publication is unchanged. Before native v2 becomes stable, independently accept npm/direct-install v1-to-v2 migration, canonical-name ownership and updater discovery (including a final v1 bridge release if necessary). Do not retire alpha aliases or migrate alpha ownership into the v1 ledger implicitly. Companion website/skill instructions require parent-owned updates before public alpha publication.
+`python3 -B tests/rust/alpha_distribution.py` builds the local artifact contract around actual release binaries, extracts the tester archive with native tools, and exercises install, refresh, canonical PATH shadowing, shell/completion, refusal cases, and rollback in disposable Unicode HOME paths. CI may retain short-lived workflow artifacts, but has no release-upload or repository-write permission.

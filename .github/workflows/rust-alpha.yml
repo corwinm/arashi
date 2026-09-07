@@ -3,9 +3,29 @@ on:
   workflow_dispatch:
   push:
     branches: [v2]
-    paths: ['src/rust/**', 'Cargo.toml', 'Cargo.lock', 'scripts/alpha/**', 'tests/rust/alpha_distribution.py', 'tests/windows/alpha-preflight.py', '.github/workflows/rust-alpha.yml']
+    paths:
+      [
+        "src/rust/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "scripts/alpha/**",
+        "tests/rust_alpha.rs",
+        "tests/rust/alpha_*.py",
+        "tests/windows/alpha-preflight.py",
+        ".github/workflows/rust-alpha.yml",
+      ]
   pull_request:
-    paths: ['src/rust/**', 'Cargo.toml', 'Cargo.lock', 'scripts/alpha/**', 'tests/rust/alpha_distribution.py', 'tests/windows/alpha-preflight.py', '.github/workflows/rust-alpha.yml']
+    paths:
+      [
+        "src/rust/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "scripts/alpha/**",
+        "tests/rust_alpha.rs",
+        "tests/rust/alpha_*.py",
+        "tests/windows/alpha-preflight.py",
+        ".github/workflows/rust-alpha.yml",
+      ]
 permissions:
   contents: read
 jobs:
@@ -22,20 +42,20 @@ jobs:
           fetch-depth: 0 # Historical schema-1 installer oracle for migration tests.
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: "3.11"
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
-      - name: Build separate native alpha executables
-        run: cargo +stable build --locked --release --bin arashi2 --bin aw2 --bin arashi2-setup
+      - name: Build canonical native alpha executables
+        run: cargo +stable build --locked --release --bin arashi --bin aw --bin arashi-alpha-setup
       - name: Real archive and isolated-home lifecycle acceptance
         run: python -B tests/rust/alpha_distribution.py
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - name: Native aw2 configured workspace journey
+      - name: Native aw configured workspace journey
         shell: bash
         run: |
-          binary=target/release/aw2
+          binary=target/release/aw
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
           node tests/rust/parity.mjs "$binary" target/alpha-native-smoke.json --native-only
       - name: PowerShell 7 lifecycle acceptance

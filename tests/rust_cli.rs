@@ -75,7 +75,10 @@ fn version_and_alias() {
     for binary in [env!("CARGO_BIN_EXE_arashi"), env!("CARGO_BIN_EXE_aw")] {
         let o = Command::new(binary).arg("--version").output().unwrap();
         assert!(o.status.success());
-        assert_eq!(String::from_utf8(o.stdout).unwrap(), "2.0.0-alpha.1\n");
+        assert_eq!(
+            String::from_utf8(o.stdout).unwrap(),
+            "arashi 2.0.0-alpha.1 (controlled native alpha)\n"
+        );
     }
 }
 #[test]

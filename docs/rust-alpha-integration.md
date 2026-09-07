@@ -1,5 +1,7 @@
 # Alpha distribution integration acceptance
 
+> Historical side-by-side `aw2` evidence. The current controlled canonical-name contract is documented in [rust-alpha-installation.md](rust-alpha-installation.md).
+
 Merged integrated `v2` at `502721b84c234d6f3bb86b22b0a25f5d258415e7` into the clean alpha lane at `f70d788e8545f435229b06909f39fa7cc11b7d2a`. Work is local to `v2-alpha-distribution`; no integration-branch edits, push, PR or publication.
 
 The merged dependency contract retains Unix `rustix`, all integrated test targets and the native alpha helper dependencies. Canonical dispatch/parser/completion behavior is retained. Alpha now checks the canonical parsed command before stable lifecycle/shell/completion dispatch, closing the `aw2 -- shell init bash` bypass. Parsed help/version keeps alpha identity. The existing native helper's ownership, rollback and adjacent-launcher implementation is unchanged.

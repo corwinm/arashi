@@ -8,7 +8,7 @@ import winreg
 
 root = Path(__file__).resolve().parents[2] / 'target' / 'native-alpha-evidence' / 'extracted-tester'
 powershell = __import__('shutil').which(os.environ.get('ALPHA_POWERSHELL', 'powershell.exe'))
-assert powershell and (root / 'arashi2-setup.exe').is_file()
+assert powershell and (root / 'arashi-alpha-setup.exe').is_file()
 results = []
 def user_path():
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment') as key:
@@ -37,14 +37,14 @@ with tempfile.TemporaryDirectory(prefix='arashi-alpha-native-') as temp:
         results.append({'case': label, 'exit': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr})
     run('help argv forwarding', ['--help'], 0)
     run('missing explicit artifacts', ['install'], 1)
-    run('stable override refused', ['install', '--install-dir', str(stable)], 1)
+    run('stable override refused', ['install', '--accept-canonical-shadow', '--install-dir', str(stable)], 1)
     destination = home / '.arashi-alpha'
     destination.mkdir()
-    (destination / 'aw2.exe').write_bytes(b'caller alpha')
-    run('unowned refresh refused', ['install', '--archive', 'missing.zip', '--checksum-file', 'missing.sha256'], 1)
+    (destination / 'aw.exe').write_bytes(b'caller alpha')
+    run('unowned refresh refused', ['install', '--accept-canonical-shadow', '--archive', 'missing.zip', '--checksum-file', 'missing.sha256'], 1)
     run('unowned uninstall refused', ['uninstall'], 1)
-    assert (destination / 'aw2.exe').read_bytes() == b'caller alpha'
-    (destination / 'aw2.exe').unlink()
+    assert (destination / 'aw.exe').read_bytes() == b'caller alpha'
+    (destination / 'aw.exe').unlink()
     destination.rmdir()
     caller = home / 'caller'
     caller.mkdir()
@@ -59,4 +59,4 @@ assert user_path() == before_path
 print(json.dumps({'platform': os.name, 'python': __import__('sys').version, 'cases': results,
                   'stable_bytes_preserved': True, 'user_path_preserved': True,
                   'hashes': {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-                             for name in ['arashi2-setup.exe', 'install-alpha.ps1']}}))
+                             for name in ['arashi-alpha-setup.exe', 'install-alpha.ps1']}}))

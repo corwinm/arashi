@@ -16,13 +16,6 @@ path = "src/rust/main.rs"
 name = "aw"
 path = "src/rust/aw.rs"
 
-[[bin]]
-name = "arashi2"
-path = "src/rust/arashi2.rs"
-
-[[bin]]
-name = "aw2"
-path = "src/rust/aw2.rs"
 
 [[test]]
 name = "rust_config"
@@ -70,7 +63,7 @@ name = "rust_prune"
 path = "tests/rust_prune.rs"
 
 [[bin]]
-name = "arashi2-setup"
+name = "arashi-alpha-setup"
 path = "src/rust/alpha_setup.rs"
 
 [target.'cfg(windows)'.dependencies]

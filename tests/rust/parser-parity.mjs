@@ -141,9 +141,11 @@ try {
         expected.stdout =
           JSON.parse(readFileSync(new URL("../../package.json", import.meta.url))).version ===
           expected.stdout.trim()
-            ? readFileSync(new URL("../../Cargo.toml", import.meta.url), "utf8").match(
-                /^version = "([^"]+)"/m,
-              )[1] + "\n"
+            ? `arashi ${
+                readFileSync(new URL("../../Cargo.toml", import.meta.url), "utf8").match(
+                  /^version = "([^"]+)"/m,
+                )[1]
+              } (controlled native alpha)\n`
             : expected.stdout;
       const equal = JSON.stringify(expected) === JSON.stringify(actual);
       results.push({ args, expected, actual, equal });

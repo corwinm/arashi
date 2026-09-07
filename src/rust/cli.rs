@@ -35,32 +35,15 @@ impl Args {
 }
 pub use crate::parser::parse;
 pub fn entry() -> i32 {
-    entry_with_identity(false)
-}
-
-/// Alpha uses the same parser and dispatcher, but never canonical installation integration.
-pub fn alpha_entry() -> i32 {
-    entry_with_identity(true)
-}
-
-fn entry_with_identity(alpha: bool) -> i32 {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut args = match crate::parser::invocation(&raw) {
         Ok(crate::parser::Invocation::Command(args)) => args,
         Ok(crate::parser::Invocation::Output { text, stderr, code }) => {
-            let text = if alpha {
-                if text == format!("{}\n", env!("CARGO_PKG_VERSION")) {
-                    format!(
-                        "arashi2 {} (experimental native alpha)\n",
-                        env!("CARGO_PKG_VERSION")
-                    )
-                } else {
-                    text.replace("aw|arashi", "aw2|arashi2")
-                        .replace("Usage: arashi ", "Usage: arashi2 ")
-                        .replace("Usage: aw ", "Usage: arashi2 ")
-                        .replace("$ arashi ", "$ arashi2 ")
-                        .replace("\narashi\n", "\narashi2\n")
-                }
+            let text = if text == format!("{}\n", env!("CARGO_PKG_VERSION")) {
+                format!(
+                    "arashi {} (controlled native alpha)\n",
+                    env!("CARGO_PKG_VERSION")
+                )
             } else {
                 text
             };
@@ -78,14 +61,12 @@ fn entry_with_identity(alpha: bool) -> i32 {
     };
     // Guard the canonical parsed command, including operands following `--`,
     // before the raw completion protocol or any domain side effects can run.
-    if alpha
-        && matches!(
-            args.command.split(' ').next().unwrap(),
-            "install" | "uninstall" | "update" | "shell" | "shell-init" | "completion"
-        )
-    {
+    if matches!(
+        args.command.split(' ').next().unwrap(),
+        "uninstall" | "update"
+    ) {
         eprintln!(
-            "arashi2 alpha: installer and shell integration commands are disabled. Use the separate alpha setup bundle to refresh/uninstall; stable arashi/aw are never managed here."
+            "arashi controlled native alpha: use the controlled alpha setup bundle to refresh or uninstall. Stable lifecycle dispatch is disabled."
         );
         return 1;
     }
