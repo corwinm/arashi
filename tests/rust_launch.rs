@@ -104,7 +104,16 @@ fn child_fixture() {
         "fail" => std::process::exit(17),
         "long" => {
             std::fs::write(std::env::var("ARASHI_LAUNCH_RECORD").unwrap(), "started").unwrap();
-            std::thread::sleep(Duration::from_millis(850));
+            use std::io::Read;
+            let mut socket =
+                std::net::TcpStream::connect(std::env::var("ARASHI_LAUNCH_BARRIER").unwrap())
+                    .unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(15)))
+                .unwrap();
+            let mut release = [0];
+            socket.read_exact(&mut release).unwrap();
+            assert_eq!(release, [1]);
             std::fs::write(std::env::var("ARASHI_LAUNCH_FINISHED").unwrap(), "survived").unwrap();
         }
         "streams" => {
@@ -156,15 +165,57 @@ fn real_child_strips_directives_and_drains_streams() {
     assert!(r.stdout.len() >= 262144);
     assert_eq!(r.stderr.len(), 262144);
 }
+// Readiness is the child's TCP connection. Completion is forbidden until the
+// parent has received the launcher result and explicitly releases the child.
+// Deadlines are deadlock watchdogs, not assertions about machine speed.
+fn detached_barrier<T: Send>(
+    env: &mut Environment,
+    run: impl FnOnce(&Environment) -> T + Send,
+) -> T {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    env.insert(
+        "ARASHI_LAUNCH_BARRIER".into(),
+        listener.local_addr().unwrap().to_string(),
+    );
+    std::thread::scope(|scope| {
+        let (send, receive) = std::sync::mpsc::channel();
+        scope.spawn(move || {
+            let _ = send.send(run(env));
+        });
+        let start = Instant::now();
+        let mut socket = loop {
+            match listener.accept() {
+                Ok((socket, _)) => break socket,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        start.elapsed() < Duration::from_secs(10),
+                        "child never reached readiness barrier"
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        let result = receive.recv_timeout(Duration::from_secs(10));
+        // Release even when the launcher improperly waits, so failure can settle.
+        socket.write_all(&[1]).unwrap();
+        result.expect("launcher waited for a child blocked on parent release")
+    })
+}
 #[test]
 fn detached_survives_and_immediate_failure_is_not_success() {
     let d = tempfile::tempdir().unwrap();
-    let (cmd, env) = child("long", d.path());
-    let start = Instant::now();
-    let r = process::run(&cmd, d.path(), &env, true);
+    let (cmd, mut env) = child("long", d.path());
+    let r = detached_barrier(&mut env, |env| {
+        let result = process::run(&cmd, d.path(), env, true);
+        assert!(!d.path().join("finished").exists());
+        result
+    });
     assert_eq!(r.exit_code, 0);
-    assert!(start.elapsed() < Duration::from_millis(750));
     assert!(d.path().join("record").exists());
+    let start = Instant::now();
     while !d.path().join("finished").exists() && start.elapsed() < Duration::from_secs(4) {
         std::thread::sleep(Duration::from_millis(10));
     }

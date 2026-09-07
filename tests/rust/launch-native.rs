@@ -219,6 +219,89 @@ fn records(dir: &std::path::Path) -> Vec<Vec<String>> {
         .collect()
 }
 #[test]
+fn captured_spawn_failure_contract() {
+    let d = tempfile::tempdir().unwrap();
+    let c = fixture_context(d.path());
+    let missing = d.path().join("absent");
+    let r = process::run(&[missing.to_str().unwrap().into()], d.path(), &c.env, false);
+    assert_eq!(
+        (r.exit_code, r.stdout.as_str(), r.stderr.as_str()),
+        (1, "", "")
+    );
+}
+#[test]
+fn missing_cwd_contract() {
+    let d = tempfile::tempdir().unwrap();
+    let c = fixture_context(d.path());
+    let missing = d.path().join("absent");
+    let command = vec![std::env::current_exe().unwrap().to_str().unwrap().into()];
+    let r = process::run(&command, &missing, &c.env, false);
+    assert_eq!(r.exit_code, -1);
+    assert!(r.stdout.is_empty());
+    assert_eq!(
+        r.stderr,
+        format!("Working directory not found: {}", missing.display())
+    );
+}
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_direct_exec_refuses_implicit_shell_in_both_modes() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let c = fixture_context(d.path());
+    let script = d.path().join("no-shebang");
+    std::fs::write(&script, "printf executed > \"$1\"\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for detached in [false, true] {
+        for executable in [script.to_str().unwrap(), "no-shebang"] {
+            let marker = d.path().join("must-not-execute");
+            let r = process::run(
+                &[executable.into(), marker.to_str().unwrap().into()],
+                d.path(),
+                &c.env,
+                detached,
+            );
+            assert!(
+                !marker.exists(),
+                "implicit shell executed: {r:?}, detached={detached}"
+            );
+            assert_eq!(
+                (r.exit_code, r.stdout.as_str(), r.stderr.as_str()),
+                (-1, "", "spawn ENOEXEC")
+            );
+        }
+    }
+}
+#[cfg(unix)]
+#[test]
+fn direct_exec_explicit_shell_shebang_and_native_controls() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let c = fixture_context(d.path());
+    let script = d.path().join("script");
+    let shebang = d.path().join("shebang");
+    std::fs::write(&script, "printf executed > \"$1\"\n").unwrap();
+    std::fs::write(&shebang, "#!/bin/sh\nprintf executed > \"$1\"\n").unwrap();
+    std::fs::set_permissions(&shebang, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for detached in [false, true] {
+        for mut command in [
+            vec!["/bin/sh".into(), script.to_str().unwrap().into()],
+            vec!["shebang".into()],
+        ] {
+            let marker = d.path().join("positive");
+            command.push(marker.to_str().unwrap().into());
+            let r = process::run(&command, d.path(), &c.env, detached);
+            assert_eq!(r.exit_code, 0, "{r:?}");
+            assert_eq!(std::fs::read_to_string(&marker).unwrap(), "executed");
+            std::fs::remove_file(marker).unwrap();
+        }
+        assert_eq!(
+            process::run(&["/usr/bin/true".into()], d.path(), &c.env, detached).exit_code,
+            0
+        );
+    }
+}
+#[test]
 fn native_executable_literal_arguments() {
     let d = tempfile::tempdir().unwrap();
     let exe = install_fixture(d.path(), "native");
@@ -278,7 +361,7 @@ fn real_wezterm_window_uses_detached_start_after_cli_failure() {
     let mut c = fixture_context(d.path());
     c.env.insert("TERM_PROGRAM".into(), "WezTerm".into());
     c.env.insert("ARASHI_LAUNCH_MODE".into(), "wezterm".into());
-    c.env.insert("ARASHI_LAUNCH_DELAY".into(), "850".into());
+
     c.env.insert(
         "ARASHI_LAUNCH_FINISHED".into(),
         d.path().join("finished").to_str().unwrap().into(),
@@ -293,10 +376,16 @@ fn real_wezterm_window_uses_detached_start_after_cli_failure() {
     .unwrap() else {
         panic!()
     };
-    let start = Instant::now();
-    let out = platform::execute_platform(&target(d.path()), &p, &c).unwrap();
+    let mut env = c.env.clone();
+    let out = detached_barrier(&mut env, |env| {
+        c.env = env.clone();
+        let result = platform::execute_platform(&target(d.path()), &p, &c);
+        assert!(!d.path().join("finished").exists());
+        result
+    })
+    .unwrap();
     assert_eq!(out.command[1], "start");
-    assert!(start.elapsed() < Duration::from_millis(750));
+    let start = Instant::now();
     while !d.path().join("finished").exists() && start.elapsed() < Duration::from_secs(4) {
         std::thread::sleep(Duration::from_millis(10));
     }

@@ -34,6 +34,16 @@ fn main() {
     {
         std::process::exit(18);
     }
+    if let Ok(address) = env::var("ARASHI_LAUNCH_BARRIER") {
+        use std::io::Read;
+        let mut socket = std::net::TcpStream::connect(address).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(15)))
+            .unwrap();
+        let mut release = [0];
+        socket.read_exact(&mut release).unwrap();
+        assert_eq!(release, [1]);
+    }
     if let Ok(delay) = env::var("ARASHI_LAUNCH_DELAY") {
         std::thread::sleep(Duration::from_millis(delay.parse().unwrap()));
     }

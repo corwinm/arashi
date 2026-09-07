@@ -19,6 +19,11 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & cargo clippy --locked --test rust_launch -- -D warnings
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$probe = Join-Path $Repository 'target\launch-process-probe.exe'
+& rustc --edition=2024 tests/rust/launch-process-probe.rs -o $probe
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& node tests/rust/launch-source.mjs $probe
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $actual = (& git rev-parse HEAD).Trim()
 $dirty = & git status --porcelain
 if ($LASTEXITCODE -ne 0 -or $actual -ne $ExpectedSha -or $dirty) { throw 'Launcher revision changed during validation' }

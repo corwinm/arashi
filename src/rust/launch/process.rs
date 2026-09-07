@@ -1,5 +1,8 @@
 //! Launch-only child lifecycle: never uses the tree-killing operation runner.
 use super::{Environment, Platform};
+#[cfg(target_os = "macos")]
+#[path = "direct_exec.rs"]
+mod direct_exec;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -199,10 +202,15 @@ pub fn run(command: &[String], cwd: &Path, env: &Environment, detached: bool) ->
     if command.is_empty() {
         return ProcessResult::failure("Empty launch command");
     }
+    if !cwd.exists() {
+        return ProcessResult::failure(format!("Working directory not found: {}", cwd.display()));
+    }
     let platform = Platform::native();
     let normalized = child_environment(env, platform);
     let mut actual = command.to_vec();
-    if let Some(path) = find_executable(&actual[0], cwd, &normalized, platform) {
+    if platform != Platform::MacOs
+        && let Some(path) = find_executable(&actual[0], cwd, &normalized, platform)
+    {
         actual[0] = path.to_string_lossy().into_owned();
     }
     let prepared = prepare_command(&actual, &normalized, platform);
@@ -228,7 +236,34 @@ pub fn run(command: &[String], cwd: &Path, env: &Environment, detached: bool) ->
         .envs(&prepared.env)
         .stdin(Stdio::null());
     if !detached {
-        return match cmd.output() {
+        #[cfg(target_os = "macos")]
+        if let Err(e) = direct_exec::prepare(
+            &mut cmd,
+            prepared
+                .env
+                .iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        ) {
+            return ProcessResult::failure(e);
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = match cmd.spawn() {
+            Ok(child) => child,
+            // Node records asynchronous spawn errors as exit 1 with empty pipes;
+            // Darwin ENOEXEC is instead a synchronous throw.
+            Err(e) if cfg!(target_os = "macos") && e.raw_os_error() == Some(8) => {
+                return ProcessResult::failure("spawn ENOEXEC");
+            }
+            Err(_) => {
+                return ProcessResult {
+                    exit_code: 1,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                };
+            }
+        };
+        return match child.wait_with_output() {
             Ok(out) => ProcessResult {
                 exit_code: out.status.code().unwrap_or(128),
                 stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -254,8 +289,23 @@ pub fn run(command: &[String], cwd: &Path, env: &Environment, detached: bool) ->
             });
         }
     }
+    // Register after setsid: direct exec never returns Ok into later callbacks.
+    #[cfg(target_os = "macos")]
+    if let Err(e) = direct_exec::prepare(
+        &mut cmd,
+        prepared
+            .env
+            .iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect(),
+    ) {
+        return ProcessResult::failure(e);
+    }
     let mut child = match cmd.spawn() {
         Ok(child) => child,
+        Err(e) if cfg!(target_os = "macos") && e.raw_os_error() == Some(8) => {
+            return ProcessResult::failure("spawn ENOEXEC");
+        }
         Err(e) => return ProcessResult::failure(e),
     };
     let start = Instant::now();
