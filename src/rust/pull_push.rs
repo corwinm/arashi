@@ -390,25 +390,19 @@ fn reject_observation_drivers(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn changes_control_files(plan: &PullPlan) -> bool {
-    if plan.state != "update" {
-        return false;
-    }
-    git::run(
+// Inspect the incoming tree, not merely control-file names. A .gitmodules
+// edit alone is ordinary content; gitlinks introduce unsupported checkout work.
+fn incoming_checkout_safe(plan: &PullPlan) -> Result<()> {
+    let tree = git::run(
         &plan.remote.path,
-        &[
-            "diff-tree",
-            "--no-commit-id",
-            "--name-only",
-            "-r",
-            &format!("{}..{}", plan.head, plan.remote_oid),
-        ],
-    )
-    .is_ok_and(|paths| {
-        paths.lines().any(|path| {
-            path == ".arashi/config.json" || path == ".gitignore" || path == ".gitmodules"
-        })
-    })
+        &["ls-tree", "-r", "-z", &plan.remote_oid],
+    )?;
+    if tree.split('\0').any(|entry| entry.starts_with("160000 ")) {
+        return Err(unsupported(
+            "Incoming submodules are not supported; no merge attempted",
+        ));
+    }
+    Ok(())
 }
 
 fn exact_ref(path: &Path, reference: &str) -> Option<String> {
@@ -535,14 +529,15 @@ fn default_remote_branch(remote: &Remote) -> Result<String> {
 }
 
 fn branch_target(repository: &Repository, remote: &Remote) -> Result<String> {
+    // Pull's explicit configured base overrides the checkout's existing upstream.
+    if let Some((base, _)) = &repository.base {
+        return Ok(base.strip_prefix("origin/").unwrap_or(base).to_owned());
+    }
     if let Some(upstream) = upstream(&repository.path) {
         return upstream
             .strip_prefix("origin/")
             .map(str::to_owned)
             .ok_or_else(|| unsupported("Only origin upstreams are supported"));
-    }
-    if let Some((base, _)) = &repository.base {
-        return Ok(base.strip_prefix("origin/").unwrap_or(base).to_owned());
     }
     default_remote_branch(remote)
 }
@@ -726,6 +721,9 @@ fn execute_pull(plan: &PullPlan, timeout: Option<Duration>) -> Value {
         "failed" => pull_result(plan, "failed", start, plan.message.clone(), None),
         "diverged" => pull_result(plan, "manual-update", start, plan.message.clone(), None),
         "update" => {
+            if let Err(error) = incoming_checkout_safe(plan) {
+                return pull_result(plan, "failed", start, Some(error.message), None);
+            }
             let unchanged = same_remote(&plan.repository, &plan.remote)
                 && head(&plan.repository.path).is_ok_and(|value| value == plan.head)
                 && clean(&plan.repository.path).unwrap_or(false)
@@ -840,11 +838,25 @@ fn execute_pull(plan: &PullPlan, timeout: Option<Duration>) -> Value {
     }
 }
 
-pub fn pull(workspace: &Workspace, args: &Args) -> Result<Value> {
-    let mut repositories = repositories(workspace, args)?;
-    // Source pulls the configuration-owning parent first, even when --only
-    // lists it last. Push retains the explicit selection order.
-    repositories.sort_by_key(|repository| repository.path != workspace.root);
+fn pull_remote(repository: &Repository) -> Result<Option<Remote>> {
+    if repository.path.exists() {
+        crate::managed::safe(&repository.path)?;
+        let root = git::run(&repository.path, &["rev-parse", "--show-toplevel"])?;
+        let root = root.strip_suffix('\n').unwrap_or(&root);
+        if crate::paths::canonicalize(root)? != crate::paths::canonicalize(&repository.path)? {
+            return Err(unsupported(
+                "Selected path is not a repository root; no pull attempted",
+            ));
+        }
+    }
+    remote(repository)
+}
+
+fn pull_failure(repository: &str, message: String) -> Value {
+    json!({"elapsedSeconds":0,"repositoryId":repository,"status":"failed","errorMessage":message})
+}
+
+fn reconcile_pull_ignore(workspace: &Workspace) -> Result<Value> {
     let config = workspace.config.as_ref().unwrap();
     let ignore = crate::managed::IgnorePlan::build(
         &workspace.root,
@@ -852,50 +864,76 @@ pub fn pull(workspace: &Workspace, args: &Args) -> Result<Value> {
         &config.worktrees_dir,
         false,
     )?;
-    if ignore.data["attempted"] == true {
-        return Err(unsupported(
-            "Pull currently requires managed paths to be already ignored; no changes made",
-        ));
+    ignore.apply(&mut crate::managed::Transaction::default())?;
+    Ok(ignore.data)
+}
+
+pub fn pull(workspace: &Workspace, args: &Args) -> Result<Value> {
+    let mut selected = repositories(workspace, args)?;
+    // Retain the initial non-executing safety preflight, but never fetch or plan
+    // children before the parent can replace their configuration and selection.
+    for repository in &selected {
+        pull_remote(repository)?;
     }
-    let remotes = repositories
+    selected.sort_by_key(|repository| repository.path != workspace.root);
+    let mut workspace = workspace.clone();
+    let mut ignore = None;
+    if !selected
         .iter()
-        .map(remote)
-        .collect::<Result<Vec<_>>>()?;
-    let plans = repositories
-        .into_iter()
-        .zip(remotes)
-        .map(|(repository, remote)| {
-            let saved = repository.clone();
-            plan_pull(repository, remote).or_else(|error| {
-                Ok(PullPlan {
-                    repository: saved,
-                    remote: Remote {
-                        path: PathBuf::new(),
-                        network: false,
-                        url: String::new(),
-                    },
-                    branch: String::new(),
-                    head: String::new(),
-                    remote_oid: String::new(),
-                    configured_base: None,
-                    state: "failed",
-                    message: Some(error.to_string()),
-                })
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    if plans.iter().any(changes_control_files) {
-        return Err(unsupported(
-            "Pulling configuration, ignore, or submodule control files is outside this bounded slice; no changes made",
-        ));
+        .any(|repository| repository.path == workspace.root)
+    {
+        ignore = Some(reconcile_pull_ignore(&workspace)?);
     }
-    let timeout = config.raw["hooks"]["timeout"]
-        .as_u64()
-        .map(Duration::from_millis);
-    let results: Vec<_> = plans
-        .iter()
-        .map(|plan| execute_pull(plan, timeout))
-        .collect();
+    let mut results = Vec::new();
+    let mut remaining = std::collections::VecDeque::from(selected);
+    while let Some(repository) = remaining.pop_front() {
+        let parent = repository.path == workspace.root;
+        let name = repository.name.clone();
+        let timeout = workspace.config.as_ref().unwrap().raw["hooks"]["timeout"]
+            .as_u64()
+            .filter(|value| *value != 0)
+            .map(Duration::from_millis);
+        // Resolve again at the actual repository boundary, including newly
+        // selected paths. A stale remote/checkout preflight is not authority.
+        let row = match pull_remote(&repository).and_then(|remote| plan_pull(repository, remote)) {
+            Ok(plan) => execute_pull(&plan, timeout),
+            Err(error) => pull_failure(&name, error.to_string()),
+        };
+        let updated = row["status"] == "updated";
+        results.push(row);
+        if parent {
+            if updated {
+                let reload = (|| -> Result<Vec<Repository>> {
+                    crate::managed::safe(&workspace.root.join(".arashi/config.json"))?;
+                    workspace.config = Some(crate::config::Config::load(&workspace.root)?);
+                    Ok(repositories(&workspace, args)?
+                        .into_iter()
+                        .filter(|repository| repository.path != workspace.root)
+                        .collect())
+                })();
+                match reload {
+                    Ok(repositories) => remaining = repositories.into(),
+                    Err(error) => {
+                        results.push(pull_failure(
+                            "workspace-config",
+                            format!("Failed to reload pulled workspace configuration: {error}"),
+                        ));
+                        break;
+                    }
+                }
+            }
+            match reconcile_pull_ignore(&workspace) {
+                Ok(data) => ignore = Some(data),
+                Err(error) => {
+                    results.push(pull_failure(
+                        "managed-ignore",
+                        format!("Managed ignore reconciliation failed: {error}"),
+                    ));
+                    break;
+                }
+            }
+        }
+    }
     let failures = results
         .iter()
         .filter(|value| value["status"] == "failed" || value["status"] == "manual-update")
@@ -907,7 +945,11 @@ pub fn pull(workspace: &Workspace, args: &Args) -> Result<Value> {
     } else {
         "partial-failure"
     };
-    Ok(json!({"managedIgnore":ignore.data,"overallStatus":overall,"results":results}))
+    let mut data = json!({"overallStatus":overall,"results":results});
+    if let Some(ignore) = ignore {
+        data["managedIgnore"] = ignore;
+    }
+    Ok(data)
 }
 
 struct PushPlan {
