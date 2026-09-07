@@ -10,6 +10,36 @@ mod lifecycle {
         fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
+    fn process_state(pid: u32) -> Option<String> {
+        let output = Command::new("/bin/ps")
+            .args(["-p", &pid.to_string(), "-o", "stat="])
+            .output()
+            .unwrap();
+        output.status.success().then(|| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .to_owned()
+        })
+    }
+    fn assert_descendant_settled(home: &Path) {
+        let pid = fs::read_to_string(home.join("pid"))
+            .expect("descendant must publish its pid")
+            .parse::<u32>()
+            .expect("descendant pid must be numeric");
+        let started = std::time::Instant::now();
+        loop {
+            let state = process_state(pid);
+            if state.as_deref().is_none_or(|state| state.starts_with('Z')) {
+                break;
+            }
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(2),
+                "timeout left descendant {pid} running in state {state:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        fs::remove_file(home.join("pid")).unwrap();
+    }
     fn record(f: &Fixture, label: &str, o: &Output) {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lifecycle");
         fs::create_dir_all(&dir).unwrap();
@@ -243,18 +273,19 @@ printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$ARASHI_HOOK_NAME" "$ARASHI_HOOK
             fs::write(config_path, serde_json::to_vec(&config).unwrap()).unwrap();
             let body = if detached {
                 // Publish readiness only after detaching, retaining the inherited
-                // descriptors so this exercises the source lineage contract.
-                r#"python3 -c 'import os,time; os.setsid(); open(os.environ["HOME"]+"/ready","w").write("ready"); time.sleep(10); open(os.environ["HOME"]+"/late","w").write("escaped")' &
+                // descriptors so this exercises the source lineage contract. The
+                // descendant deliberately records TERM and keeps running until KILL.
+                r#"python3 -c 'import os,signal,time; os.setsid(); home=os.environ["HOME"]; open(home+"/pid","w").write(str(os.getpid())); open(home+"/ready","w").write("ready"); signal.signal(signal.SIGTERM,lambda *_: open(home+"/late","w").write("term observed")); time.sleep(30)' &
 trap 'exit 0' TERM
 wait"#
             } else {
-                r#"(printf ready > "$HOME/ready"; sleep 10; printf escaped > "$HOME/late") &
+                r#"python3 -c 'import os,signal,time; home=os.environ["HOME"]; open(home+"/pid","w").write(str(os.getpid())); open(home+"/ready","w").write("ready"); signal.signal(signal.SIGTERM,lambda *_: open(home+"/late","w").write("term observed")); time.sleep(30)' &
 trap 'exit 0' TERM
 wait"#
             };
             hook(&f.repo.join(".arashi/hooks/pre-remove.zulu.sh"), body);
             let before = f.coordinated_effects();
-            let assert_timeout_cleanup = |o: &Output| {
+            let assert_timeout_cleanup = |o: &Output, elapsed: std::time::Duration| {
                 assert!(!o.status.success());
                 let result: Value = serde_json::from_slice(&o.stdout).unwrap();
                 let outcomes = result["error"]["details"]["hookOutcomes"]
@@ -274,18 +305,22 @@ wait"#
                     fs::read_to_string(f.home.join("ready")).expect("descendant must start"),
                     "ready"
                 );
-                // Outwait the descendant's delayed write even if it started just
-                // before CLI exit. Readiness prevents a vacuous cleanup pass.
-                std::thread::sleep(std::time::Duration::from_millis(10_100));
                 assert!(
-                    !f.home.join("late").exists(),
-                    "timeout left a live descendant"
+                    elapsed < std::time::Duration::from_secs(15),
+                    "timeout cleanup exceeded its bounded settlement: {elapsed:?}"
                 );
+                // A marker written while TERM is being handled says nothing about
+                // liveness after the CLI settles. Inspect the recorded process
+                // directly, treating a killed-but-not-yet-reaped zombie as stopped.
+                assert_descendant_settled(&f.home);
                 assert_eq!(before, f.coordinated_effects());
                 fs::remove_file(f.home.join("ready")).unwrap();
+                let _ = fs::remove_file(f.home.join("late"));
             };
             let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| {
+                let started = std::time::Instant::now();
                 let o = f.run(true, REMOVE);
+                let elapsed = started.elapsed();
                 record(
                     &f,
                     if detached {
@@ -295,10 +330,12 @@ wait"#
                     },
                     &o,
                 );
-                assert_timeout_cleanup(&o);
+                assert_timeout_cleanup(&o, elapsed);
                 o
             });
+            let started = std::time::Instant::now();
             let n = f.run(false, REMOVE);
+            let elapsed = started.elapsed();
             record(
                 &f,
                 if detached {
@@ -308,7 +345,7 @@ wait"#
                 },
                 &n,
             );
-            assert_timeout_cleanup(&n);
+            assert_timeout_cleanup(&n, elapsed);
             if let Some(s) = source {
                 compare(&s, &n);
             }
