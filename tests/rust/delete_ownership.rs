@@ -136,6 +136,150 @@ fn run(path: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+#[cfg(unix)]
+#[test]
+fn delete_identity_keeps_removed_object_allocated() {
+    use std::os::unix::fs::MetadataExt;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("owned");
+    fs::write(&path, "owned").unwrap();
+    let identity = ObjectIdentity::path(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    assert_eq!(identity.pin.file().metadata().unwrap().nlink(), 0);
+    fs::write(&path, "replacement").unwrap();
+    assert!(!identity.matches(&path));
+}
+
+#[cfg(unix)]
+#[test]
+fn prompt_controller_freezes_acceptance_and_requires_force_for_loss() {
+    if run_isolated("prompt_controller_freezes_acceptance_and_requires_force_for_loss") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let workspace = Workspace::discover(&fixture.0).unwrap();
+    let prepared = PreparedDelete::prepare(&workspace, "api").unwrap();
+    assert!(!prepared.has_git_loss());
+    prepared.preview().unwrap();
+    fs::write(fixture.0.join("repos/api/caller"), "new loss\n").unwrap();
+    assert!(prepared.execute(false).is_err());
+    let prepared = PreparedDelete::prepare(&workspace, "api").unwrap();
+    assert!(prepared.has_git_loss());
+    assert_eq!(
+        prepared.execute(false).unwrap_err().code,
+        "DELETE_GIT_DATA_LOSS"
+    );
+    PreparedDelete::prepare(&workspace, "api")
+        .unwrap()
+        .execute(true)
+        .unwrap();
+    assert!(!fixture.0.join("repos/api").exists());
+}
+
+#[test]
+fn nested_git_file_is_foreign_even_when_force_authorizes_dirty_loss() {
+    if run_isolated("nested_git_file_is_foreign_even_when_force_authorizes_dirty_loss") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let target = fixture.0.join("repos/api");
+    let other = fixture.0.join("other");
+    fs::create_dir(&other).unwrap();
+    run(&other, &["init", "--initial-branch=main"]);
+    fs::write(other.join("caller"), "foreign\n").unwrap();
+    run(&other, &["add", "caller"]);
+    run(&other, &["commit", "-m", "foreign"]);
+    let nested = target.join("nested");
+    run(
+        &other,
+        &["worktree", "add", "-b", "topic", nested.to_str().unwrap()],
+    );
+    assert!(DeletePlan::build(&Workspace::discover(&fixture.0).unwrap(), "api").is_err());
+    assert_eq!(fs::read(nested.join("caller")).unwrap(), b"foreign\n");
+}
+
+#[test]
+fn ordinary_delete_interrupted_quarantine_is_not_abandoned_on_retry() {
+    if run_isolated("ordinary_delete_interrupted_quarantine_is_not_abandoned_on_retry") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let plan = fixture.plan();
+    let receipt = receipt::Receipt::create(&plan).unwrap();
+    drop(receipt);
+    let quarantine = plan
+        .repository_path
+        .parent()
+        .unwrap()
+        .join(quarantine_name("api"));
+    fs::rename(&plan.repository_path, &quarantine).unwrap();
+    let args = Args {
+        command: "delete".to_owned(),
+        positional: vec!["api".to_owned()],
+        options: [("force".to_owned(), vec![]), ("json".to_owned(), vec![])]
+            .into_iter()
+            .collect(),
+    };
+    delete(&Workspace::discover(&fixture.0).unwrap(), &args).unwrap();
+    assert!(
+        !quarantine.exists(),
+        "successful retry must not strand invocation-owned clone contents"
+    );
+    assert!(!plan.repository_path.exists());
+    assert_eq!(fs::read(&plan.config_path).unwrap(), plan.config_after);
+}
+
+#[cfg(unix)]
+#[test]
+fn ordinary_delete_receipt_survives_publication_failure_and_resumes() {
+    if run_isolated("ordinary_delete_receipt_survives_publication_failure_and_resumes") {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let plan = fixture.plan();
+    let config_dir = fixture.0.join(".arashi");
+    fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let error = plan.execute().unwrap_err();
+    fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        !plan.repository_path.exists(),
+        "source deletes clone before config publication"
+    );
+    assert_eq!(fs::read(&plan.config_path).unwrap(), plan.config_before);
+    assert_eq!(error.code, "DELETE_PARTIAL_FAILURE");
+    assert!(plan.receipts_path.is_dir());
+    let foreign = plan.receipts_path.join("foreign-note");
+    fs::write(&foreign, "preserve\n").unwrap();
+    let args = Args {
+        command: "delete".to_owned(),
+        positional: vec!["api".to_owned()],
+        options: [("force".to_owned(), vec![]), ("json".to_owned(), vec![])]
+            .into_iter()
+            .collect(),
+    };
+    delete(&Workspace::discover(&fixture.0).unwrap(), &args).unwrap();
+    assert_eq!(fs::read(&plan.config_path).unwrap(), plan.config_after);
+    assert_eq!(fs::read(&foreign).unwrap(), b"preserve\n");
+    assert_eq!(fs::read_dir(&plan.receipts_path).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn ordinary_delete_accepts_valid_empty_source_receipt_storage() {
+    if run_isolated("ordinary_delete_accepts_valid_empty_source_receipt_storage") {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let receipts = fixture.0.join(".git/.arashi-delete-receipts");
+    fs::create_dir(&receipts).unwrap();
+    fs::set_permissions(&receipts, fs::Permissions::from_mode(0o700)).unwrap();
+    fixture.plan().execute().unwrap();
+    assert!(receipts.is_dir());
+    assert_eq!(fs::read_dir(&receipts).unwrap().count(), 0);
+}
+
 #[test]
 fn ordinary_attached_dirty_worktrees_are_selected_not_their_siblings() {
     if run_isolated("ordinary_attached_dirty_worktrees_are_selected_not_their_siblings") {
@@ -196,6 +340,12 @@ fn ordinary_loss_refs_are_inventoried_and_forced() {
             "missing {name}"
         );
     }
+    assert!(
+        plan.local_refs
+            .windows(2)
+            .all(|pair| pair[0].name <= pair[1].name),
+        "source orders ref identities bytewise"
+    );
     assert!(plan.protected_refs.contains(&"refs/stash".to_owned()));
     assert!(
         plan.protected_refs

@@ -310,6 +310,22 @@ fn network_normalized_fetch_identities_match_source_without_transport() {
     for source in sources() {
         for (configured, stored) in [
             (
+                "https://example.test/team/%61pi.git",
+                "https://example.test/team/api",
+            ),
+            (
+                "https://[2001:0db8:0:0::1]:443/team/api.git",
+                "https://[2001:db8::1]/team/api",
+            ),
+            (
+                "https://example.test/team/old/../api.git",
+                "https://example.test/team/api",
+            ),
+            (
+                "https://%75ser@example.test/team/caf%C3%A9.git",
+                "https://user@example.test/team/café",
+            ),
+            (
                 "https://EXAMPLE.test:443/team/api.git/",
                 "https://example.test/team/api",
             ),
@@ -392,54 +408,159 @@ fn network_source_and_native_linked_and_dirty_force_contract() {
 }
 
 #[test]
-fn network_publication_failure_restores_clone_and_cleanup_failure_reports_partial() {
-    use std::os::unix::fs::PermissionsExt;
-    for partial in [false, true] {
+fn file_relative_and_localhost_fetch_identities_execute_without_transport() {
+    for source in sources() {
+        for relative_url in [false, true] {
+            let (f, mut server, _) = connected();
+            server.stop();
+            let target = f.workspace.join("repos/api");
+            let configured = if relative_url {
+                "../api.git".to_owned()
+            } else {
+                format!("file://localhost{}", f.remote.display())
+            };
+            let stored = if relative_url {
+                "../../../api.git".to_owned()
+            } else {
+                f.remote.to_str().unwrap().to_owned()
+            };
+            git(&target, &["remote", "set-url", "origin", &stored]);
+            set_url(&f, Some(&configured));
+            let preview = observed(&f, &["delete", "api", "--dry-run", "--json"], source);
+            assert!(preview.status.success());
+            let forced = observed(&f, &["delete", "api", "--force", "--json"], source);
+            assert!(forced.status.success());
+            assert!(!target.exists());
+        }
+    }
+}
+
+#[test]
+fn network_stash_tags_custom_refs_and_other_tracking_refs_match_source_loss_contract() {
+    let mut expected = None;
+    for source in sources() {
         let (f, mut server, _) = connected();
         server.stop();
         let target = f.workspace.join("repos/api");
-        let blocked = if partial {
-            target.join(".git/objects")
-        } else {
-            f.workspace.join(".arashi")
-        };
-        let before = f.snapshot();
-        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o555)).unwrap();
-        let out = observed(&f, &["delete", "api", "--force", "--json"], false);
-        if partial {
-            assert_eq!(json(&out)["error"]["code"], "DELETE_PARTIAL_FAILURE");
-            let quarantine = fs::read_dir(f.workspace.join("repos"))
-                .unwrap()
-                .map(|e| e.unwrap().path())
-                .find(|p| {
-                    p.file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .starts_with(".arashi-delete-")
-                })
-                .unwrap();
-            fs::set_permissions(
-                quarantine.join(".git/objects"),
-                fs::Permissions::from_mode(0o755),
-            )
-            .unwrap();
-            assert!(!target.exists());
-            let config: Value =
-                serde_json::from_slice(&fs::read(f.workspace.join(".arashi/config.json")).unwrap())
-                    .unwrap();
-            assert!(config["repos"].get("api").is_none());
-            assert!(
-                json(&out)["error"]["message"]
-                    .as_str()
-                    .unwrap()
-                    .contains(quarantine.to_str().unwrap())
-            );
-        } else {
-            fs::set_permissions(&blocked, fs::Permissions::from_mode(0o755)).unwrap();
-            assert!(!out.status.success());
-            assert_eq!(f.snapshot(), before);
+        git(&target, &["tag", "light"]);
+        git(&target, &["tag", "-a", "annotated", "-m", "release"]);
+        git(&target, &["update-ref", "refs/custom/caller", "HEAD"]);
+        git(
+            &target,
+            &[
+                "remote",
+                "add",
+                "upstream",
+                "https://unavailable.example/api.git",
+            ],
+        );
+        git(
+            &target,
+            &["update-ref", "refs/remotes/upstream/main", "HEAD"],
+        );
+        fs::write(target.join("README.md"), "stash-only caller content\n").unwrap();
+        git(&target, &["stash", "push", "-m", "caller"]);
+        let keep_before = tree(&f.workspace.join("repos/keep"));
+        let preview = observed(&f, &["delete", "api", "--dry-run", "--json"], source);
+        assert!(
+            preview.status.success(),
+            "{}",
+            String::from_utf8_lossy(&preview.stdout)
+        );
+        let document = json(&preview);
+        let refs = document["data"]["plan"]["items"].as_array().unwrap().iter().filter(|item|item["kind"]=="local-ref").map(|item|serde_json::json!({"ref":item["ref"],"protected":item["reasonCode"]=="DELETE_GIT_DATA_LOSS"})).collect::<Vec<_>>();
+        if source {
+            expected = Some(refs);
+        } else if let Some(expected) = &expected {
+            assert_eq!(&refs, expected);
         }
-        assert_eq!(tree(&f.home), before.home);
-        assert_eq!(git(&f.remote, &["show-ref"]), before.remote_refs);
+        let denied = observed(&f, &["delete", "api", "--json"], source);
+        assert_eq!(json(&denied)["error"]["code"], "DELETE_GIT_DATA_LOSS");
+        let forced = observed(&f, &["delete", "api", "--force", "--json"], source);
+        assert!(forced.status.success());
+        assert!(!target.exists());
+        assert_eq!(tree(&f.workspace.join("repos/keep")), keep_before);
+    }
+}
+
+#[test]
+fn network_receipts_cross_source_native_retry_and_preserve_foreign_storage() {
+    if std::env::var_os("ARASHI_TS_PARITY").is_none() {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    for source_first in [true, false] {
+        let (f, mut server, _) = connected();
+        server.stop();
+        let target = f.workspace.join("repos/api");
+        let config_dir = f.workspace.join(".arashi");
+        let before = fs::read(config_dir.join("config.json")).unwrap();
+        fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let failed = observed(&f, &["delete", "api", "--force", "--json"], source_first);
+        fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!failed.status.success());
+        assert!(
+            !target.exists(),
+            "source ordering: {}",
+            String::from_utf8_lossy(&failed.stdout)
+        );
+        assert_eq!(fs::read(config_dir.join("config.json")).unwrap(), before);
+        let directory = f.workspace.join(".git/.arashi-delete-receipts");
+        let foreign = directory.join("foreign-note");
+        fs::write(&foreign, "preserve\n").unwrap();
+        let retry = observed(&f, &["delete", "api", "--force", "--json"], !source_first);
+        assert!(
+            retry.status.success(),
+            "source_first={source_first}: {}",
+            String::from_utf8_lossy(&retry.stdout)
+        );
+        assert_eq!(fs::read(&foreign).unwrap(), b"preserve\n");
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        let config: Value =
+            serde_json::from_slice(&fs::read(config_dir.join("config.json")).unwrap()).unwrap();
+        assert!(config["repos"].get("api").is_none());
+    }
+}
+
+#[test]
+fn network_publication_and_cleanup_failures_follow_source_ordering() {
+    use std::os::unix::fs::PermissionsExt;
+    for source in sources() {
+        for partial in [false, true] {
+            let (f, mut server, _) = connected();
+            server.stop();
+            let target = f.workspace.join("repos/api");
+            let blocked = if partial {
+                target.join(".git/objects")
+            } else {
+                f.workspace.join(".arashi")
+            };
+            let before = f.snapshot();
+            let config_before = fs::read(f.workspace.join(".arashi/config.json")).unwrap();
+            let keep_before = tree(&f.workspace.join("repos/keep"));
+            fs::set_permissions(&blocked, fs::Permissions::from_mode(0o555)).unwrap();
+            let out = observed(&f, &["delete", "api", "--force", "--json"], source);
+            assert!(!out.status.success());
+            assert_eq!(json(&out)["error"]["code"], "DELETE_PARTIAL_FAILURE");
+            // Source restores the owned (possibly partially cleaned) clone on cleanup
+            // failure, but does not resurrect it after configuration publication fails.
+            assert_eq!(target.exists(), partial);
+            assert_eq!(
+                fs::read(f.workspace.join(".arashi/config.json")).unwrap(),
+                config_before
+            );
+            fs::set_permissions(&blocked, fs::Permissions::from_mode(0o755)).unwrap();
+            if !partial {
+                let retry = observed(&f, &["delete", "api", "--force", "--json"], source);
+                assert!(
+                    retry.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&retry.stdout)
+                );
+            }
+            assert_eq!(tree(&f.workspace.join("repos/keep")), keep_before);
+            assert_eq!(tree(&f.home), before.home);
+            assert_eq!(git(&f.remote, &["show-ref"]), before.remote_refs);
+        }
     }
 }

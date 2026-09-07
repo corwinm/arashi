@@ -83,10 +83,10 @@ impl LinkedCheckout {
         }
         no_nested_git(&path, true)?;
         Ok(Self {
-            identity: ObjectIdentity::metadata(&metadata),
+            identity: ObjectIdentity::path(&path)?,
             ancestors,
             marker,
-            marker_identity: ObjectIdentity::metadata(&marker_metadata),
+            marker_identity: ObjectIdentity::path(&marker_path)?,
             admin_identity: ObjectIdentity::path(&admin)?,
             metadata: content_inventory(&admin)?,
             contents: content_inventory(&path)?,

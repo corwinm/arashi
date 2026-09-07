@@ -949,31 +949,32 @@ fn unsupported_policy_and_topology_cases_fail_before_mutation() {
 
 #[cfg(unix)]
 #[test]
-fn config_publication_failure_restores_the_identity_checked_quarantine() {
+fn config_publication_failure_preserves_source_receipt_and_original_configuration() {
     use std::os::unix::fs::PermissionsExt;
     let fixture = Fixture::new();
     let before = fixture.snapshot();
     let arashi = fixture.workspace.join(".arashi");
+    let config_before = fs::read(arashi.join("config.json")).unwrap();
+    let keep_before = tree(&fixture.workspace.join("repos/keep"));
     fs::set_permissions(&arashi, fs::Permissions::from_mode(0o555)).unwrap();
     let output = fixture.run(&["delete", "api", "--force", "--json"]);
     fs::set_permissions(&arashi, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!output.status.success());
-    assert!(fixture.workspace.join("repos/api").is_dir());
+    assert!(!fixture.workspace.join("repos/api").exists());
+    assert_eq!(fs::read(arashi.join("config.json")).unwrap(), config_before);
+    assert_eq!(tree(&fixture.workspace.join("repos/keep")), keep_before);
     assert!(
-        fs::read_dir(fixture.workspace.join("repos"))
-            .unwrap()
-            .all(|entry| {
-                !entry
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".arashi-delete-")
-            })
+        fixture
+            .workspace
+            .join(".git/.arashi-delete-receipts")
+            .is_dir()
     );
-    let mut after = fixture.snapshot();
-    let mut expected = before;
-    // Permission modes are intentionally outside byte snapshots; content must be exact.
-    after.workspace.remove(Path::new(".arashi"));
-    expected.workspace.remove(Path::new(".arashi"));
-    assert_eq!(after, expected);
+    let retry = fixture.run(&["delete", "api", "--force", "--json"]);
+    assert!(
+        retry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retry.stdout)
+    );
+    assert_eq!(tree(&fixture.home), before.home);
+    assert_eq!(git(&fixture.remote, &["show-ref"]), before.remote_refs);
 }
