@@ -385,6 +385,54 @@ fn create(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+fn aggregate(results: Vec<(&'static str, Result<()>)>) -> Result<()> {
+    let mut errors = results
+        .into_iter()
+        .filter_map(|(context, result)| result.err().map(|error| (context, error)))
+        .collect::<Vec<_>>();
+    if errors.len() == 1 {
+        return Err(errors.pop().unwrap().1);
+    }
+    if errors.is_empty() {
+        return Ok(());
+    }
+    refuse(
+        errors
+            .into_iter()
+            .map(|(context, error)| format!("{context}: {error}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+fn finish_operation(
+    operation: Result<()>,
+    cleanup: impl FnOnce() -> Result<()>,
+    unlock: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let cleanup = cleanup();
+    let unlock = unlock();
+    aggregate(vec![
+        ("Alpha operation failed", operation),
+        ("Alpha staging cleanup failed", cleanup),
+        ("Alpha lock cleanup failed", unlock),
+    ])
+}
+fn cleanup_backup(
+    backup: &Path,
+    payload: &Payload,
+    cleanup: impl FnOnce(&Path, &Payload) -> Result<()>,
+) -> Result<()> {
+    match cleanup(backup, payload) {
+        Ok(()) => Ok(()),
+        Err(error) => aggregate(vec![
+            ("Previous alpha cleanup failed", Err(error)),
+            (
+                "Previous alpha retained for recovery",
+                refuse(backup.display().to_string()),
+            ),
+        ]),
+    }
+}
 fn promote(
     stage: &Path,
     destination: &Path,
@@ -394,12 +442,24 @@ fn promote(
     rename(destination, backup)?;
     if let Err(error) = rename(stage, destination) {
         if fs::symlink_metadata(destination).is_err_and(|e| e.kind() == io::ErrorKind::NotFound) {
-            rename(backup, destination)?;
+            if let Err(restoration) = rename(backup, destination) {
+                return aggregate(vec![
+                    ("Alpha promotion failed", Err(error.into())),
+                    ("Alpha rollback restoration failed", Err(restoration.into())),
+                    (
+                        "Previous alpha retained for recovery",
+                        refuse(backup.display().to_string()),
+                    ),
+                ]);
+            }
         } else {
-            eprintln!(
-                "Recovery required; previous alpha retained at {}",
-                backup.display()
-            );
+            return aggregate(vec![
+                ("Alpha promotion failed", Err(error.into())),
+                (
+                    "Previous alpha retained for recovery",
+                    refuse(backup.display().to_string()),
+                ),
+            ]);
         }
         return Err(error.into());
     }
@@ -512,7 +572,7 @@ fn lifecycle_with_rename(
             fs::remove_dir(&backup)?;
             promote(&staging, &destination, &backup, &rename)?;
             stage = None;
-            remove_owned_tree(&backup, &old.payload)?;
+            cleanup_backup(&backup, &old.payload, remove_owned_tree)?;
         } else {
             if fs::symlink_metadata(&destination).is_ok() {
                 return refuse("Destination appeared during staging");
@@ -528,18 +588,17 @@ fn lifecycle_with_rename(
         );
         Ok(())
     })();
-    let cleanup = stage
-        .as_ref()
-        .map(|p| remove_owned_tree(p, &snapshot))
-        .transpose();
-    let unlock = fs::remove_dir(&lock);
-    if let Err(e) = &cleanup {
-        eprintln!("Alpha staging preserved for recovery: {e}");
-    }
-    result?;
-    cleanup?;
-    unlock?;
-    Ok(())
+    finish_operation(
+        result,
+        || {
+            stage
+                .as_ref()
+                .map(|path| remove_owned_tree(path, &snapshot))
+                .transpose()
+                .map(|_| ())
+        },
+        || fs::remove_dir(&lock).map_err(Into::into),
+    )
 }
 fn main() {
     let result = (|| -> Result<()> {
@@ -663,14 +722,123 @@ mod tests {
                 fs::rename(a, b)
             }
         });
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("injected promotion failure")
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "injected promotion failure"
         );
         assert_eq!(fs::read(old.join("aw")).unwrap(), b"previous release");
         assert!(!backup.exists());
         assert_eq!(fs::read(stage.join("aw")).unwrap(), b"candidate");
+    }
+
+    #[test]
+    fn primary_and_cleanup_errors_are_preserved_in_operation_order() {
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let error = finish_operation(
+            refuse("primary failure"),
+            || {
+                attempts.borrow_mut().push("staging");
+                refuse("staging failure")
+            },
+            || {
+                attempts.borrow_mut().push("unlock");
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(attempts.into_inner(), ["staging", "unlock"]);
+        assert_eq!(
+            error.to_string(),
+            "Alpha operation failed: primary failure\nAlpha staging cleanup failed: staging failure"
+        );
+    }
+
+    #[test]
+    fn multiple_cleanup_errors_are_preserved_and_all_cleanups_run() {
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let error = finish_operation(
+            Ok(()),
+            || {
+                attempts.borrow_mut().push("staging");
+                refuse("staging failure")
+            },
+            || {
+                attempts.borrow_mut().push("unlock");
+                refuse("unlock failure")
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(attempts.into_inner(), ["staging", "unlock"]);
+        assert_eq!(
+            error.to_string(),
+            "Alpha staging cleanup failed: staging failure\nAlpha lock cleanup failed: unlock failure"
+        );
+    }
+
+    #[test]
+    fn failed_rollback_reports_both_failures_and_retained_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join(".arashi-alpha");
+        let stage = temp.path().join("stage");
+        let backup = temp.path().join(".arashi-alpha-backup-test");
+        fs::create_dir(&old).unwrap();
+        fs::create_dir(&stage).unwrap();
+        fs::write(old.join("aw"), b"previous release").unwrap();
+        fs::write(stage.join("aw"), b"candidate").unwrap();
+
+        let error = promote(&stage, &old, &backup, |a, b| {
+            if a == stage {
+                Err(io::Error::other("injected promotion failure"))
+            } else if a == backup {
+                Err(io::Error::other("injected restoration failure"))
+            } else {
+                fs::rename(a, b)
+            }
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Alpha promotion failed: injected promotion failure\nAlpha rollback restoration failed: injected restoration failure\nPrevious alpha retained for recovery: {}",
+                backup.display()
+            )
+        );
+        assert_eq!(fs::read(backup.join("aw")).unwrap(), b"previous release");
+        assert!(!old.exists());
+        assert_eq!(fs::read(stage.join("aw")).unwrap(), b"candidate");
+    }
+
+    #[test]
+    fn post_promotion_backup_cleanup_failure_reports_exact_retained_location() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join(".arashi-alpha");
+        let stage = temp.path().join("stage");
+        let backup = temp.path().join(".arashi-alpha-backup-test");
+        fs::create_dir(&destination).unwrap();
+        fs::create_dir(&stage).unwrap();
+        fs::write(destination.join("aw"), b"previous release").unwrap();
+        fs::write(stage.join("aw"), b"candidate").unwrap();
+        promote(&stage, &destination, &backup, |from, to| {
+            fs::rename(from, to)
+        })
+        .unwrap();
+
+        let error = cleanup_backup(&backup, &Payload::new(), |_, _| {
+            refuse("injected backup deletion failure")
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Previous alpha cleanup failed: injected backup deletion failure\nPrevious alpha retained for recovery: {}",
+                backup.display()
+            )
+        );
+        assert_eq!(fs::read(destination.join("aw")).unwrap(), b"candidate");
+        assert_eq!(fs::read(backup.join("aw")).unwrap(), b"previous release");
     }
 }
