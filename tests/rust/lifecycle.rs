@@ -275,11 +275,11 @@ printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$ARASHI_HOOK_NAME" "$ARASHI_HOOK
                 // Publish readiness only after detaching, retaining the inherited
                 // descriptors so this exercises the source lineage contract. The
                 // descendant deliberately records TERM and keeps running until KILL.
-                r#"python3 -c 'import os,signal,time; os.setsid(); home=os.environ["HOME"]; open(home+"/pid","w").write(str(os.getpid())); open(home+"/ready","w").write("ready"); signal.signal(signal.SIGTERM,lambda *_: open(home+"/late","w").write("term observed")); time.sleep(30)' &
+                r#"python3 -c 'import os,signal,time; os.setsid(); home=os.environ["HOME"]; open(home+"/pid","w").write(str(os.getpid())); signal.signal(signal.SIGTERM,lambda *_: open(home+"/late","w").write("term observed")); open(home+"/ready","w").write("ready"); time.sleep(30)' &
 trap 'exit 0' TERM
 wait"#
             } else {
-                r#"python3 -c 'import os,signal,time; home=os.environ["HOME"]; open(home+"/pid","w").write(str(os.getpid())); open(home+"/ready","w").write("ready"); signal.signal(signal.SIGTERM,lambda *_: open(home+"/late","w").write("term observed")); time.sleep(30)' &
+                r#"python3 -c 'import os,signal,time; home=os.environ["HOME"]; open(home+"/pid","w").write(str(os.getpid())); signal.signal(signal.SIGTERM,lambda *_: open(home+"/late","w").write("term observed")); open(home+"/ready","w").write("ready"); time.sleep(30)' &
 trap 'exit 0' TERM
 wait"#
             };
@@ -309,13 +309,18 @@ wait"#
                     elapsed < std::time::Duration::from_secs(15),
                     "timeout cleanup exceeded its bounded settlement: {elapsed:?}"
                 );
+                assert_eq!(
+                    fs::read_to_string(f.home.join("late"))
+                        .expect("descendant must observe TERM before KILL escalation"),
+                    "term observed"
+                );
                 // A marker written while TERM is being handled says nothing about
                 // liveness after the CLI settles. Inspect the recorded process
                 // directly, treating a killed-but-not-yet-reaped zombie as stopped.
                 assert_descendant_settled(&f.home);
                 assert_eq!(before, f.coordinated_effects());
                 fs::remove_file(f.home.join("ready")).unwrap();
-                let _ = fs::remove_file(f.home.join("late"));
+                fs::remove_file(f.home.join("late")).unwrap();
             };
             let source = std::env::var_os("ARASHI_TS_PARITY").map(|_| {
                 let started = std::time::Instant::now();
