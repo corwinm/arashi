@@ -5,6 +5,8 @@ use std::{
     process::{Command, Output},
     sync::atomic::{AtomicUsize, Ordering},
 };
+#[path = "rust/doctor_network.rs"]
+mod doctor_network;
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 struct Fixture {
     root: PathBuf,
@@ -310,15 +312,9 @@ fn git_conversion_filters_are_rejected_before_execution() {
 
 #[test]
 fn unsupported_policies_do_not_mutate_or_leak_scripts() {
-    for policy in ["remote", "hook", "inline", "materialization", "preference"] {
+    for policy in ["hook", "inline", "materialization", "preference"] {
         let f = Fixture::new(true);
         match policy {
-            "remote" => {
-                f.git(
-                    &f.root,
-                    &["remote", "add", "origin", "https://example.invalid/repo"],
-                );
-            }
             "hook" => {
                 fs::create_dir_all(f.root.join(".arashi/hooks")).unwrap();
                 fs::write(f.root.join(".arashi/hooks/pre-create.sh"), "touch sentinel").unwrap();
