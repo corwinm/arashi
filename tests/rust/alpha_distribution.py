@@ -424,6 +424,50 @@ class AlphaDistribution(unittest.TestCase):
             self.assertIn('(controlled native alpha)', result.stdout)
             self.assertIn('complete -F _arashi arashi', result.stdout)
 
+    @unittest.skipUnless(WINDOWS, 'native Windows canonical PATH acceptance')
+    def test_windows_powershell_and_cmd_resolve_canonical_alpha_from_private_path(self):
+        self.run_setup()
+        expected = self.destination / 'aw.exe'
+        env = {**self.shell_env, 'PATH': str(self.destination),
+               'ALPHA_EXPECTED_AW': str(expected)}
+
+        powershell_executable = self.shell
+        if not powershell_executable:
+            self.fail('Native PowerShell is required for Windows PATH acceptance')
+        powershell = subprocess.run([
+            powershell_executable, '-NoProfile', '-NonInteractive', '-Command',
+            "$resolved = (Get-Command aw -CommandType Application -ErrorAction Stop).Source\n"
+            "if (-not [string]::Equals([IO.Path]::GetFullPath($resolved), "
+            "[IO.Path]::GetFullPath($env:ALPHA_EXPECTED_AW), "
+            "[StringComparison]::OrdinalIgnoreCase)) { throw 'aw resolved outside private alpha' }\n"
+            "Write-Output 'RESOLVED_PRIVATE_ALPHA=1'\n"
+            "& aw --version\n"
+            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+            "& aw completion powershell\n"
+            "exit $LASTEXITCODE\n",
+        ], env=env, cwd=self.home, capture_output=True, text=True)
+        self.assertEqual(powershell.returncode, 0, powershell.stdout + powershell.stderr)
+        self.assertIn('RESOLVED_PRIVATE_ALPHA=1', powershell.stdout)
+        self.assertIn('(controlled native alpha)', powershell.stdout)
+        self.assertIn('Register-ArgumentCompleter -Native -CommandName arashi, aw',
+                      powershell.stdout)
+        self.assertIn('& arashi completion __query', powershell.stdout)
+
+        cmd = shutil.which('cmd.exe')
+        if not cmd:
+            self.fail('Native cmd.exe is required for Windows PATH acceptance')
+        script = Path(self.temp.name) / 'canonical-path-shadow.cmd'
+        script.write_bytes(('@echo off\r\n'
+                            'for %%I in (aw.exe) do if /I not "%%~$PATH:I"=='
+                            '"%ALPHA_EXPECTED_AW%" exit /b 97\r\n'
+                            'echo RESOLVED_PRIVATE_ALPHA=1\r\n'
+                            'aw --version\r\n').encode())
+        cmd_result = subprocess.run([cmd, '/d', '/q', '/c', str(script)], env=env, cwd=self.home,
+                                    capture_output=True, text=True)
+        self.assertEqual(cmd_result.returncode, 0, cmd_result.stdout + cmd_result.stderr)
+        self.assertIn('RESOLVED_PRIVATE_ALPHA=1', cmd_result.stdout)
+        self.assertIn('(controlled native alpha)', cmd_result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -39,7 +39,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          fetch-depth: 0 # Historical schema-1 installer oracle for migration tests.
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"

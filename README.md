@@ -10,7 +10,7 @@ Arashi is a Git worktree manager for meta-repositories. It coordinates related r
 
 ## Rust v2 — in development
 
-This branch contains an incomplete Rust port. Use its separate native alpha names without replacing your installed CLI:
+This branch contains an incomplete Rust port. Build the canonical `aw`/`arashi` alpha locally without replacing your installed CLI:
 
 ```bash
 cargo build --locked --release
