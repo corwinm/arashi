@@ -204,6 +204,27 @@ Verified integration checkpoint: `1042a8b865d3c0041a28da09c19f572c7a298820`, pus
 
 This closes the outstanding integration/CI blockers, not the replacement contract. Ordinary connected-workspace diagnosis still rejects remote/tracking policy (`src/rust/doctor.rs`); pull still rejects incoming control-file changes (`src/rust/pull_push.rs`); the public-command inventory, broader mutation topology/policy, interactive integration, authenticated transport and supported Windows mutation contracts remain open. Preserve those requirements rather than treating passing bounded fixtures as whole-port completion. A documentation successor to this checkpoint must retain separate exact-head CI evidence; these links identify the tested implementation checkpoint, not that successor.
 
+## Remaining-work delivery order
+
+Corwin explicitly requested completion of the remaining work, with a post after each numbered step. Baseline: remote-verified `07c77e0fa4b79ec3d2902ad5aecca05ad16a52ae`. Worker completion is not step completion: independently review, merge into `v2`, validate, push normally and verify exact-head platform/source CI before posting completion. Continue to the next step without waiting for another prompt. No PRs, force pushes or release publication.
+
+1. **Remote-backed doctor and delete.** Implementation owners: `v2-status-network` (doctor) and `v2-delete` (delete). Source-compatible diagnosis and retirement of real network clones, including failure and caller-state effects.
+2. **Pull control-file/configuration updates.** Owner: `v2-pull-push`. Parent-first update, configuration reload and remaining-child reselection against retained source; preserve push and timeout contracts.
+3. **Default create/switch/editor launch and interactive configure.** Source-contract design precedes nonconflicting implementation assignments. Require real prompt/cancellation and shell/launcher acceptance, not registration or mocked success alone.
+4. **Remaining Windows mutation, topology, policy and authenticated-transport acceptance.** Inventory every public command/option against retained source and track executable evidence. Include installation lifecycle and companion integration requirements without changing stable publication. Do not narrow this step to the already-passing native subset.
+
+The parent owns this plan, shared integration reconciliation and CI. Initial parallel workers own command-local changes only; shared primitives require explicit ownership coordination. Source-enabled full suites are serialized at integrated checkpoints; focused worker suites use isolated Cargo output directories and bounded concurrency.
+
+### Active continuation checkpoint
+
+No numbered step is complete yet. The source inventory in `target/remaining-command-acceptance.json` covers 27 public commands; its coverage check is structural, not behavior acceptance.
+
+- Doctor candidate `d6d1ce601ca45d01b928db241141965b9d07a27b` is under independent source/spec review.
+- Delete candidate `cdfbdb2665b34502cddaf71f8b8820f6724d8e8d` failed the ordinary-delete completion review: dirty/attached-linked force, stash/tags, durable receipt/lock/retry and URL forms remain. `v2-delete` is continuing implementation; the safe bounded extension is not full step 1. Evidence: its `target/delete-network-spec-review.md` and independent oracle.
+- Pull candidate `30a84304ccc06fbf87a039ca663ba3e6a8ed3971` needs incoming owned-ignore migration. Its owner now also owns `managed.rs` and is continuing before review; source/native failure evidence is in `target/step2-controls/`.
+- Shared foundation owners: `v2-prompts` (native prompts and Cargo dependency changes), `v2-switch` (platform launch), `v2-managed-launch` (managed adapters), `v2-configure-edit` (editable settings, script/config transactions and shared workspace lock), `v2-alpha-windows` (held filesystem identity), and `v2-clone` (real authenticated TLS/SSH Git fixtures and test-only npm dependencies). Library/CLI registration and actual command consumers remain parent integration work; passing standalone primitive tests cannot close steps 3 or 4.
+- Preserve the unrelated dirty historical `v2-configure-json` worktree. The prompt owner was relocated rather than resetting it. Native Windows execution is serialized through the parent; identity has the first slot.
+
 ## Model and continuity
 
 User prefers Astra. Parent and first workers were verified as `gpt-6-astra` in live session metadata. Delegation inherits the parent (global model/provider overrides are empty). For this delivery, pause and notify Corwin on an actual model quota/reset event; otherwise continue without nudges. Never silently substitute a coding model. Keep ownership, heads, evidence and unresolved gates here so a resumed session does not repeat the earlier recovery loop.
