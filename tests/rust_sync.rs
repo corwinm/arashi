@@ -1361,11 +1361,22 @@ fn recovery_revalidates_repository_identity_before_each_mutation() {
 fn branch_created_then_timeout_is_inspected_rolled_back_and_settles_quickly() {
     let f = Fixture::new(&["zeta"]);
     git(&f.root, &["checkout", "-b", "slow-branch"]);
-    f.config(json!({"version":"1.0.0","reposDir":"repos","sync":{"timeoutSeconds":1.0},"repos":{"zeta":{"path":"repos/zeta"}}}));
+    // The third target-ref observation is the per-repository revalidation after
+    // its cumulative timer starts. Spend two seconds there to reproduce the old
+    // one-second pre-launch failure, then leave three seconds for revalidation
+    // before the injected 30-second mutation stall must time out.
+    f.config(json!({"version":"1.0.0","reposDir":"repos","sync":{"timeoutSeconds":5.0},"repos":{"zeta":{"path":"repos/zeta"}}}));
     let marker = f.temp.join("branch-slept");
     let pid_file = f.temp.join("branch-descendant-pid");
+    let target_ref_count = f.temp.join("branch-target-ref-count");
+    let pre_mutation_delay = f.temp.join("branch-pre-mutation-delay");
     let body = format!(
-        "if [ \"$1\" = branch ] || [ \"$1\" = update-ref ]; then\n  if [ ! -e '{}' ]; then\n    \"$REAL_GIT\" \"$@\" || exit $?\n    : > '{}'\n    perl -MPOSIX=setsid -e 'open(F,q(>),q({})); print F $$; close F; $SIG{{TERM}}=q(IGNORE); select undef,undef,undef,0.1; POSIX::close(3); setsid(); sleep 30' & wait\n    exit 0\n  fi\nfi",
+        "if [ \"$PWD\" = '{}' ] && [ \"$1\" = for-each-ref ] && [ \"$3\" = refs/heads/slow-branch ]; then\n  count=0; [ ! -e '{}' ] || count=$(cat '{}')\n  count=$((count + 1)); printf '%s' \"$count\" > '{}'\n  if [ \"$count\" = 3 ]; then sleep 2; : > '{}'; fi\nfi\nif [ \"$1\" = branch ] || [ \"$1\" = update-ref ]; then\n  if [ ! -e '{}' ]; then\n    \"$REAL_GIT\" \"$@\" || exit $?\n    : > '{}'\n    perl -MPOSIX=setsid -e 'open(F,q(>),q({})); print F $$; close F; $SIG{{TERM}}=q(IGNORE); select undef,undef,undef,0.1; POSIX::close(3); setsid(); sleep 30' & wait\n    exit 0\n  fi\nfi",
+        f.repo("zeta").display(),
+        target_ref_count.display(),
+        target_ref_count.display(),
+        target_ref_count.display(),
+        pre_mutation_delay.display(),
         marker.display(),
         marker.display(),
         pid_file.display()
@@ -1373,6 +1384,10 @@ fn branch_created_then_timeout_is_inspected_rolled_back_and_settles_quickly() {
     let path = git_shim(&f, &body);
     let started = std::time::Instant::now();
     let output = f.run_with_path(&["sync", "--json"], &path);
+    assert!(
+        pre_mutation_delay.exists(),
+        "fixture did not reach the delayed pre-mutation revalidation"
+    );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(20),
         "timeout did not settle boundedly: {:?}",
