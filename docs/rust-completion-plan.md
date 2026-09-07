@@ -30,7 +30,7 @@ Parent alone owns integration `v2`, the tracked plan and final review/CI/push. W
 - `v2-shell`: recover shell and committed handoff; integrate current completion baseline in this lane.
 - `v2-add`: recover add, integrate clone baseline, support ordinary noninteractive network add/clone.
 - `v2-pull-push`: recover pull/push, implement ordinary Git transports and preserve source failure/selection semantics.
-- `v2-alpha-distribution`: side-by-side `aw2` packaging/install lifecycle; never stable publication.
+- `v2-alpha-canonical`: controlled canonical `aw`/`arashi` private-PATH-shadow packaging/install lifecycle; never stable publication.
 - `v2-move`, `v2-delete`: recover/review inherited drafts against source change-transfer and repository-deletion behavior.
 - `v2-parser`: native parser/help compatibility in a separate module; integrate after command-family dispatch changes.
 - Read-only contract audit: `/tmp/arashi-v2-completion-matrix.md` (pending); promote relevant requirements here after source verification.
