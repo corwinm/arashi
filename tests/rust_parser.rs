@@ -56,11 +56,20 @@ fn explicit_values_match_source_in_processes() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = std::env::var("ARASHI_TS_SOURCE")
         .unwrap_or_else(|_| root.join("src/index.ts").to_string_lossy().into_owned());
-    let program = std::path::Path::new(&source).with_file_name("cli-program.ts");
-    let cwd = std::env::temp_dir().join(format!("arashi-parser-values-{}", std::process::id()));
+    let source_program = std::path::Path::new(&source).with_file_name("cli-program.ts");
+    let cwd = std::env::temp_dir().join(format!("arashi parser values ü-{}", std::process::id()));
     std::fs::create_dir_all(&cwd).unwrap();
+    let program = cwd.join("cli-program.ts");
+    std::fs::write(
+        &program,
+        "const {pathToFileURL} = await import('node:url');\n\
+         const source = await import(pathToFileURL(process.env.ARASHI_REAL_PARSER_PROGRAM));\n\
+         export const buildProgram = source.buildProgram;\n",
+    )
+    .unwrap();
     let script = r#"
-const {buildProgram} = await import(process.env.ARASHI_PARSER_PROGRAM);
+const {pathToFileURL} = await import('node:url');
+const {buildProgram} = await import(pathToFileURL(process.env.ARASHI_PARSER_PROGRAM).href);
 const program = buildProgram({includeHelpBanner:false});
 function visit(command, path) {
  for (const child of command.commands) visit(child, [...path, child.name()]);
@@ -125,6 +134,7 @@ program.parse(JSON.parse(process.env.ARASHI_PARSER_PROBE), {from:'user'});
         let source = Command::new("node")
             .args(["--input-type=module", "-e", script])
             .env("ARASHI_PARSER_PROGRAM", &program)
+            .env("ARASHI_REAL_PARSER_PROGRAM", &source_program)
             .env("ARASHI_PARSER_PROBE", &raw)
             .env("NO_COLOR", "1")
             .current_dir(&cwd)
