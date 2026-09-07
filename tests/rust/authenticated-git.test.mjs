@@ -1,3 +1,4 @@
+import { terminateChild, waitForOutput } from "./child-process.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -17,7 +18,6 @@ test(
     const os = await import("node:os");
     const path = await import("node:path");
     const { spawn } = await import("node:child_process");
-    const { once } = await import("node:events");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "arashi-auth-cleanup-"));
     const locked = path.join(root, "locked");
     fs.writeFileSync(locked, "owned fixture data");
@@ -37,15 +37,15 @@ test(
       },
     );
     try {
-      const [ready] = await once(holder.stdout, "data");
-      assert.match(ready.toString(), /LOCKED/);
+      assert.match(await waitForOutput(holder, "LOCKED", 5000), /LOCKED/);
       await fixture.removeFixtureRoot(root);
       assert.equal(fs.existsSync(root), false);
     } finally {
-      if (holder.exitCode === null) {
-        await once(holder, "close");
+      try {
+        await terminateChild(holder, 2000);
+      } finally {
+        fs.rmSync(root, { force: true, maxRetries: 10, recursive: true, retryDelay: 100 });
       }
-      fs.rmSync(root, { force: true, maxRetries: 10, recursive: true, retryDelay: 100 });
     }
   },
 );

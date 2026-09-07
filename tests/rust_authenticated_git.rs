@@ -17,7 +17,11 @@ fn driver(args: &[&str]) {
 
 #[test]
 fn real_git_authenticated_tls_ssh_clone_fetch_push_and_denials() {
-    driver(&["--test", "tests/rust/authenticated-git.test.mjs"]);
+    driver(&[
+        "--test",
+        "tests/rust/child-process.test.mjs",
+        "tests/rust/authenticated-git.test.mjs",
+    ]);
 }
 
 // Windows application mutation awaits the independent native identity foundation.
