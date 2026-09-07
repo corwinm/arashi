@@ -216,12 +216,19 @@ fn choice(v: &Value, choices: &[&str], scope: &str) -> Result<()> {
     }
     Ok(())
 }
-fn integer(v: &Value, scope: &str) -> Result<()> {
-    if !v.as_u64().is_some_and(|n| (1..=2_147_483_647).contains(&n)) {
-        return Err(invalid(format!(
-            "{scope}: must be an integer from 1 through 2147483647"
-        )));
-    }
+fn integer(v: &mut Value, scope: &str) -> Result<()> {
+    let n = v
+        .as_f64()
+        .filter(|n| n.is_finite() && n.fract() == 0.0 && (1.0..=2_147_483_647.0).contains(n))
+        .ok_or_else(|| {
+            invalid(format!(
+                "{scope}: must be an integer from 1 through 2147483647"
+            ))
+        })?;
+    // JSON/JavaScript numbers such as 1000.0 are valid integers. Normalize the
+    // runtime copy so as_u64 consumers use the value rather than their default;
+    // Config::persisted retains the original parsed representation.
+    *v = json!(n as u64);
     Ok(())
 }
 fn defaults(v: &mut Value) -> Result<()> {
@@ -416,7 +423,7 @@ impl Config {
                 branch(b, "meta.baseBranch")?;
             }
         }
-        if let Some(n) = v.get("worktreeNaming") {
+        if let Some(n) = v.get_mut("worktreeNaming") {
             keys(
                 n,
                 &["style", "branchSlashes", "maxPathLength"],
@@ -432,13 +439,13 @@ impl Config {
             if let Some(s) = n.get("branchSlashes") {
                 choice(s, &["preserve", "flatten"], "worktreeNaming.branchSlashes")?;
             }
-            if let Some(s) = n.get("maxPathLength") {
+            if let Some(s) = n.get_mut("maxPathLength") {
                 integer(s, "worktreeNaming.maxPathLength")?;
             }
         }
-        if let Some(h) = v.get("hooks") {
+        if let Some(h) = v.get_mut("hooks") {
             keys(h, &["timeout", "scripts"], "hooks")?;
-            if let Some(t) = h.get("timeout") {
+            if let Some(t) = h.get_mut("timeout") {
                 integer(t, "hooks.timeout")?;
             }
             if let Some(s) = h.get("scripts") {
