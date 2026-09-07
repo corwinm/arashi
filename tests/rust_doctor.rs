@@ -47,6 +47,8 @@ impl Fixture {
             .env("XDG_CONFIG_HOME", &self.home)
             .env("GIT_CONFIG_GLOBAL", self.home.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
+            // Both setup and oracle runs use only owned local/file and loopback Git fixtures.
+            .env("GIT_ALLOW_PROTOCOL", "file:git")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("NO_COLOR", "1")
             .env_remove("FORCE_COLOR");
