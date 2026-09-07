@@ -1,3 +1,4 @@
+import semanticCases from './prompt-cases.json' with { type: 'json' };
 import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,12 +23,17 @@ const rows = [
   ['cancel', 'Enter text', '\u0003'], ['eof', 'Enter text', '\u0004'],
   ['empty-select', 'PROMPT_RESULT_OK', ''],
 ];
+rows.push(...semanticCases.map(c => [c.id, c.kind === 'input' ? 'Enter text' : 'Proceed', c.keys]));
 const results = [];
+let failures = 0;
 for (const [id, token, keys, retryToken, retryKeys] of rows) {
   if (source && ['validate', 'eof', 'empty-select', 'empty-multi', 'arrows', 'wrap', 'cancel-select', 'cancel-multi', 'cancel-confirm', 'panic-restore', 'existing-raw'].includes(id)) continue;
+  if (args.includes('--semantic-only') && !semanticCases.some(c => c.id === id)) continue;
   const home = mkdtempSync(join(tmpdir(), 'arashi-prompt-'));
   try {
     const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, XDG_CACHE_HOME: home, ARASHI_PROMPT_CASE: id, TERM: 'xterm-256color' };
+    const semantic = semanticCases.find(c => c.id === id);
+    if (semantic) env.ARASHI_PROMPT_SEMANTIC = JSON.stringify(semantic);
     delete env.ARASHI_DIRECTIVE_FILE; delete env.ARASHI_SHELL;
     const argv = source ? [resolve(import.meta.dirname, 'prompt-source.mjs'), source] : ['--exact', 'prompt_fixture', '--nocapture'];
     // Use the bundled ConPTY API so cleanup does not probe an exited child PID.
@@ -61,7 +67,8 @@ for (const [id, token, keys, retryToken, retryKeys] of rows) {
     assert.match(output, /REUSE_OK/);
     if (id === 'select') assert.match(output, /description/);
     console.log(`PASS ${source ? 'source' : 'native'} ${id}`);
-  } finally { rmSync(home, { recursive: true, force: true }); }
+  } catch (error) { failures++; console.error(error.message); } finally { rmSync(home, { recursive: true, force: true }); }
 }
 if (args.includes('--report')) writeFileSync(resolve(option('--report')), JSON.stringify(results, null, 2));
-console.log(`${results.length} PTY cases passed (${process.platform === 'win32' ? 'ConPTY' : 'POSIX PTY'})`);
+if (failures) process.exitCode = 1;
+console.log(`${results.length - failures}/${results.length} PTY cases passed (${process.platform === 'win32' ? 'ConPTY' : 'POSIX PTY'})`);

@@ -1,0 +1,282 @@
+[
+  {
+    "id": "clear-default",
+    "keys": "\u007f\r",
+    "expected": "",
+    "kind": "input",
+    "default": "fallback"
+  },
+  {
+    "id": "edit-default",
+    "keys": "\tX\r",
+    "expected": "fallbackX",
+    "kind": "input",
+    "default": "fallback"
+  },
+  {
+    "id": "erase-typed-default",
+    "keys": "x\u007f\r",
+    "expected": "fallback",
+    "kind": "input",
+    "default": "fallback"
+  },
+  {
+    "id": "erase-prefill",
+    "keys": "\t\u007f\u007f\u007f\u007f\u007f\u007f\u007f\u007f\r",
+    "expected": "",
+    "kind": "input",
+    "default": "fallback"
+  },
+  {
+    "id": "tab-false",
+    "keys": "\t\r",
+    "expected": true,
+    "kind": "confirm",
+    "default": false
+  },
+  {
+    "id": "tab-true",
+    "keys": "\t\r",
+    "expected": false,
+    "kind": "confirm",
+    "default": true
+  },
+  {
+    "id": "double-tab",
+    "keys": "\t\t\r",
+    "expected": false,
+    "kind": "confirm",
+    "default": false
+  },
+  {
+    "id": "unknown-false",
+    "keys": "maybe\r",
+    "expected": false,
+    "kind": "confirm",
+    "default": false
+  },
+  {
+    "id": "unknown-true",
+    "keys": "maybe\r",
+    "expected": true,
+    "kind": "confirm",
+    "default": true
+  },
+  {
+    "id": "prefix-y",
+    "keys": "Yonder\r",
+    "expected": true,
+    "kind": "confirm",
+    "default": false
+  },
+  {
+    "id": "prefix-n",
+    "keys": "Never\r",
+    "expected": false,
+    "kind": "confirm",
+    "default": true
+  },
+  {
+    "id": "leading-space",
+    "keys": " yes\r",
+    "expected": false,
+    "kind": "confirm",
+    "default": false
+  },
+  {
+    "id": "typed-tab",
+    "keys": "no\t\r",
+    "expected": true,
+    "kind": "confirm",
+    "default": false
+  },
+  {
+    "id": "left-insert",
+    "keys": "ac\u001b[Db\r",
+    "expected": "abc",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "right-insert",
+    "keys": "ac\u001b[D\u001b[Cb\r",
+    "expected": "acb",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "delete",
+    "keys": "abc\u001b[D\u001b[D\u001b[3~\r",
+    "expected": "ac",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "home-end",
+    "keys": "bc\u001b[Ha\u001b[Fd\r",
+    "expected": "abcd",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-a-e",
+    "keys": "bc\u0001a\u0005d\r",
+    "expected": "abcd",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-b-f",
+    "keys": "ac\u0002b\u0006d\r",
+    "expected": "abcd",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-h",
+    "keys": "abc\b\r",
+    "expected": "ab",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-u",
+    "keys": "abc\u0015x\r",
+    "expected": "x",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-k",
+    "keys": "abcd\u0002\u0002\u000b\r",
+    "expected": "ab",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-w",
+    "keys": "one two\u0017\r",
+    "expected": "one ",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "unicode-cursor",
+    "keys": "a\u00e9z\u001b[D\u007f\r",
+    "expected": "az",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "tab-text",
+    "keys": "a\tb\r",
+    "expected": "a\tb",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-d-delete",
+    "keys": "abc\u0001\u0004\r",
+    "expected": "bc",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-d-end",
+    "keys": "abc\u0004\r",
+    "expected": "abc",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-u-middle",
+    "keys": "abcd\u0002\u0002\u0015\r",
+    "expected": "cd",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-w-punctuation",
+    "keys": "one.two  \u0017\r",
+    "expected": "one.",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "cursor-bounds",
+    "keys": "a\u001b[H\u001b[D\u007f\u001b[F\u001b[C\u001b[3~\r",
+    "expected": "a",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "astral-cursor",
+    "keys": "a\ud83d\ude00z\u001b[D\u007f\r",
+    "expected": "az",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "confirm-edit",
+    "keys": "nex\u0001\u001b[3~y\r",
+    "expected": true,
+    "kind": "confirm",
+    "default": false
+  },
+  {
+    "id": "word-left",
+    "keys": "one two\u001b[1;5DX\r",
+    "expected": "one Xtwo",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "word-right",
+    "keys": "one two\u0001\u001b[1;5CX\r",
+    "expected": "one Xtwo",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "alt-left",
+    "keys": "one two\u001bbX\r",
+    "expected": "one Xtwo",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "alt-right",
+    "keys": "one two\u0001\u001bfX\r",
+    "expected": "one Xtwo",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "alt-delete",
+    "keys": "one two\u0001\u001bd\r",
+    "expected": "two",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "ctrl-delete",
+    "keys": "one two\u0001\u001b[3;5~\r",
+    "expected": "two",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "alt-backspace",
+    "keys": "one two\u001b\u007f\r",
+    "expected": "one ",
+    "kind": "input",
+    "default": null
+  },
+  {
+    "id": "word-delete-punctuation",
+    "keys": "one.. two\u0001\u001b[1;5C\u001bd\r",
+    "expected": "onetwo",
+    "kind": "input",
+    "default": null
+  }
+]

@@ -82,22 +82,25 @@ fn line(text: &str) -> Result<()> {
     out.flush()?;
     Ok(())
 }
-fn key() -> Result<std::result::Result<KeyEvent, CancelReason>> {
+fn key(editing: bool) -> Result<std::result::Result<KeyEvent, CancelReason>> {
     loop {
         match event::read() {
             Ok(Event::Key(k)) if k.kind != KeyEventKind::Release => {
                 if k.modifiers.contains(KeyModifiers::CONTROL) {
                     match k.code {
                         KeyCode::Char('c') => return Ok(Err(CancelReason::Exit)),
+                        KeyCode::Char('d') if editing => return Ok(Ok(k)),
                         KeyCode::Char('d') | KeyCode::Char('z') => {
                             return Ok(Err(CancelReason::Abort));
                         }
+                        _ if editing => return Ok(Ok(k)),
                         _ => continue,
                     }
                 }
-                if !k
-                    .modifiers
-                    .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+                if editing
+                    || !k
+                        .modifiers
+                        .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
                 {
                     return Ok(Ok(k));
                 }
@@ -163,7 +166,7 @@ pub fn select<T: Clone>(message: &str, choices: &[Choice<T>]) -> Result<PromptOu
     let mut cursor = 0;
     loop {
         menu(message, choices, cursor, None)?;
-        let k = match key()? {
+        let k = match key(false)? {
             Ok(k) => k,
             Err(reason) => return session.finish(PromptOutcome::Cancelled(reason)),
         };
@@ -182,7 +185,7 @@ pub fn multi_select<T: Clone>(
     let mut checked = vec![false; choices.len()];
     loop {
         menu(message, choices, cursor, Some(&checked))?;
-        let k = match key()? {
+        let k = match key(false)? {
             Ok(k) => k,
             Err(reason) => return session.finish(PromptOutcome::Cancelled(reason)),
         };
@@ -205,6 +208,164 @@ pub fn multi_select<T: Clone>(
 pub fn input(message: &str, default: Option<&str>) -> Result<PromptOutcome<String>> {
     input_validated(message, default, |_| Ok(()))
 }
+// Node readline's \w is ASCII, including underscore.
+fn word(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+// Character-indexed editing follows the retained Node readline controls.
+#[derive(Default)]
+struct EditBuffer {
+    chars: Vec<char>,
+    cursor: usize,
+}
+impl EditBuffer {
+    fn text(&self) -> String {
+        self.chars.iter().collect()
+    }
+    fn set(&mut self, text: &str) {
+        self.chars = text.chars().collect();
+        self.cursor = self.chars.len();
+    }
+    fn word_left(&self) -> usize {
+        let mut at = self.cursor;
+        while at > 0 && self.chars[at - 1].is_whitespace() {
+            at -= 1;
+        }
+        if at > 0 {
+            let category = word(self.chars[at - 1]);
+            while at > 0
+                && !self.chars[at - 1].is_whitespace()
+                && word(self.chars[at - 1]) == category
+            {
+                at -= 1;
+            }
+        }
+        at
+    }
+    fn word_right(&self, deleting: bool) -> usize {
+        let mut at = self.cursor;
+        if at < self.chars.len() {
+            let first = self.chars[at];
+            while at < self.chars.len()
+                && if first.is_whitespace() {
+                    self.chars[at].is_whitespace()
+                } else if word(first) {
+                    word(self.chars[at])
+                } else {
+                    !word(self.chars[at]) && (deleting || !self.chars[at].is_whitespace())
+                }
+            {
+                at += 1;
+            }
+            while at < self.chars.len() && self.chars[at].is_whitespace() {
+                at += 1;
+            }
+        }
+        at
+    }
+    fn edit(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if key.modifiers.contains(KeyModifiers::SUPER) {
+            return;
+        }
+        if (ctrl && key.code == KeyCode::Left) || (alt && key.code == KeyCode::Char('b')) {
+            self.cursor = self.word_left();
+            return;
+        }
+        if (ctrl && key.code == KeyCode::Right) || (alt && key.code == KeyCode::Char('f')) {
+            self.cursor = self.word_right(false);
+            return;
+        }
+        if ((ctrl || alt) && key.code == KeyCode::Delete) || (alt && key.code == KeyCode::Char('d'))
+        {
+            self.chars.drain(self.cursor..self.word_right(true));
+            return;
+        }
+        if (alt && key.code == KeyCode::Backspace)
+            || (ctrl && matches!(key.code, KeyCode::Char('w') | KeyCode::Backspace))
+        {
+            let start = self.word_left();
+            self.chars.drain(start..self.cursor);
+            self.cursor = start;
+            return;
+        }
+        if alt {
+            return;
+        }
+        let code = if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('a') => KeyCode::Home,
+                KeyCode::Char('e') => KeyCode::End,
+                KeyCode::Char('b') => KeyCode::Left,
+                KeyCode::Char('f') => KeyCode::Right,
+                KeyCode::Char('h') => KeyCode::Backspace,
+                KeyCode::Char('d') => KeyCode::Delete,
+                KeyCode::Char('u') => {
+                    self.chars.drain(..self.cursor);
+                    self.cursor = 0;
+                    return;
+                }
+                KeyCode::Char('k') => {
+                    self.chars.truncate(self.cursor);
+                    return;
+                }
+                _ => return,
+            }
+        } else {
+            key.code
+        };
+        match code {
+            KeyCode::Left => self.cursor = self.cursor.saturating_sub(1),
+            KeyCode::Right => self.cursor = (self.cursor + 1).min(self.chars.len()),
+            KeyCode::Home => self.cursor = 0,
+            KeyCode::End => self.cursor = self.chars.len(),
+            KeyCode::Backspace if self.cursor > 0 => {
+                self.cursor -= 1;
+                self.chars.remove(self.cursor);
+            }
+            KeyCode::Delete if self.cursor < self.chars.len() => {
+                self.chars.remove(self.cursor);
+            }
+            KeyCode::Char(c) if !c.is_control() => {
+                self.chars.insert(self.cursor, c);
+                self.cursor += 1;
+            }
+            KeyCode::Tab => {
+                self.chars.insert(self.cursor, char::from(9));
+                self.cursor += 1;
+            }
+            _ => {}
+        }
+    }
+    fn render(&self) -> Result<()> {
+        let before: String = self.chars[..self.cursor].iter().collect();
+        let after: String = self.chars[self.cursor..].iter().collect();
+        let mut out = io::stderr().lock();
+        // Save at the cursor rather than guessing Unicode display widths.
+        write!(
+            out,
+            "\r\x1b[2K{}\x1b[s{}\x1b[u",
+            display(&before),
+            display(&after)
+        )?;
+        out.flush()?;
+        Ok(())
+    }
+}
+fn editing_key(buffer: &EditBuffer) -> Result<std::result::Result<KeyEvent, CancelReason>> {
+    Ok(match key(true)? {
+        Ok(k)
+            if k.modifiers.contains(KeyModifiers::CONTROL)
+                && k.code == KeyCode::Char('d')
+                && buffer.chars.is_empty() =>
+        {
+            Err(CancelReason::Abort)
+        }
+        other => other,
+    })
+}
 pub fn input_validated(
     message: &str,
     default: Option<&str>,
@@ -216,18 +377,20 @@ pub fn input_validated(
         message,
         default.map(|d| format!(" ({d})")).unwrap_or_default()
     ))?;
-    let mut value = String::new();
+    let mut default = default.unwrap_or("").to_owned();
+    let mut buffer = EditBuffer::default();
     loop {
-        let k = match key()? {
+        let k = match editing_key(&buffer)? {
             Ok(k) => k,
             Err(reason) => return session.finish(PromptOutcome::Cancelled(reason)),
         };
         match k.code {
             KeyCode::Enter => {
+                let value = buffer.text();
                 let answer = if value.is_empty() {
-                    default.unwrap_or("").to_string()
+                    default.clone()
                 } else {
-                    value.clone()
+                    value
                 };
                 match validate(&answer) {
                     Ok(()) => {
@@ -237,31 +400,52 @@ pub fn input_validated(
                     Err(message) => line(&message)?,
                 }
             }
-            KeyCode::Backspace => {
-                value.pop();
+            KeyCode::Backspace if buffer.chars.is_empty() => default.clear(),
+            KeyCode::Tab if buffer.chars.is_empty() => {
+                buffer.set(&default);
+                default.clear();
             }
-            KeyCode::Char(c) if !c.is_control() => value.push(c),
-            _ => continue,
+            _ => buffer.edit(k),
         }
-        let mut out = io::stderr().lock();
-        write!(out, "\r\x1b[2K{}", display(&value))?;
-        out.flush()?;
+        buffer.render()?;
+    }
+}
+fn boolean_value(text: &str, default: bool) -> bool {
+    match text.as_bytes().first() {
+        Some(b'y' | b'Y') => true,
+        Some(b'n' | b'N') => false,
+        _ => default,
     }
 }
 pub fn confirm(message: &str, default: Option<bool>) -> Result<PromptOutcome<bool>> {
+    let session = Session::open()?;
     let default = default.unwrap_or(true);
-    let answer = input_validated(
-        &format!("{} ({})", message, if default { "Y/n" } else { "y/N" }),
-        Some(if default { "yes" } else { "no" }),
-        |text| match text.to_ascii_lowercase().as_str() {
-            "y" | "yes" | "n" | "no" => Ok(()),
-            _ => Err("Please answer yes or no".into()),
-        },
-    )?;
-    Ok(match answer {
-        PromptOutcome::Answer(text) => {
-            PromptOutcome::Answer(matches!(text.to_ascii_lowercase().as_str(), "yes" | "y"))
+    line(&format!(
+        "{} ({})",
+        message,
+        if default { "Y/n" } else { "y/N" }
+    ))?;
+    let mut buffer = EditBuffer::default();
+    loop {
+        let k = match editing_key(&buffer)? {
+            Ok(k) => k,
+            Err(reason) => return session.finish(PromptOutcome::Cancelled(reason)),
+        };
+        match k.code {
+            KeyCode::Enter => {
+                line("")?;
+                return session.finish(PromptOutcome::Answer(boolean_value(
+                    &buffer.text(),
+                    default,
+                )));
+            }
+            KeyCode::Tab => buffer.set(if boolean_value(&buffer.text(), default) {
+                "No"
+            } else {
+                "Yes"
+            }),
+            _ => buffer.edit(k),
         }
-        PromptOutcome::Cancelled(reason) => PromptOutcome::Cancelled(reason),
-    })
+        buffer.render()?;
+    }
 }
