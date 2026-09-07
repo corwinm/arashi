@@ -1,5 +1,119 @@
 //! Source-first remote diagnosis with byte-exact checkout and HOME protection.
 
+fn non_origin_base(remotes: &[&str]) -> (Fixture, std::path::PathBuf) {
+    let f = Fixture::new(true);
+    let path = f.root.join(".arashi/config.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    config["baseBranch"] = "main".into();
+    fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
+    f.git(&f.root, &["commit", "-am", "base"]);
+    for remote in remotes {
+        let bare = f.root.parent().unwrap().join(format!("{remote}.git"));
+        f.git(
+            &f.root,
+            &[
+                "clone",
+                "--bare",
+                f.root.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        f.git(&f.root, &["remote", "add", remote, bare.to_str().unwrap()]);
+    }
+    let first = f.root.parent().unwrap().join(format!("{}.git", remotes[0]));
+    advance(&f, &first, "main");
+    (f, first)
+}
+
+fn ambiguous_default_remote(human: bool) {
+    let (f, _) = non_origin_base(&["a", "b"]);
+    assert!(f.git(&f.root, &["for-each-ref", "refs/remotes"]).is_empty());
+    let before = f.snapshot();
+    let source_only = std::env::var_os("ARASHI_DOCTOR_CHARACTERIZE").is_some();
+    let source = if source_only || std::env::var_os("ARASHI_TS_PARITY").is_some() {
+        let output = f.run(true, &f.root, human);
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        assert_eq!(
+            before,
+            f.snapshot(),
+            "source JSON/human must not fetch or mutate any bytes"
+        );
+        Some(output)
+    } else {
+        None
+    };
+    if source_only {
+        return;
+    }
+    let output = f.run(false, &f.root, human);
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        before,
+        f.snapshot(),
+        "ambiguous JSON/human must not fetch or mutate any bytes"
+    );
+    if let Some(source) = source {
+        if human {
+            assert_eq!(output.stdout, source.stdout, "complete human output");
+        } else {
+            let native: Value = serde_json::from_slice(&output.stdout).unwrap();
+            let retained: Value = serde_json::from_slice(&source.stdout).unwrap();
+            assert_eq!(native, retained, "complete JSON envelope");
+        }
+        assert_eq!(output.stderr, source.stderr);
+        assert_eq!(output.status.code(), source.status.code());
+    }
+    if !human {
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let findings = value["data"]["findings"].as_array().unwrap();
+        assert!(
+            findings
+                .iter()
+                .any(|v| v["code"] == "REPOSITORY_NO_UPSTREAM")
+        );
+        let base = findings
+            .iter()
+            .find(|v| v["code"] == "REPOSITORY_CONFIGURED_BASE_UNAVAILABLE")
+            .unwrap();
+        assert_eq!(base["details"]["reason"], "unresolved-target");
+        assert!(base["details"]["remote"].is_null());
+        assert!(base["details"]["compareRef"].is_null());
+    }
+}
+
+#[test]
+fn remote_ambiguous_default_json_is_unresolved_without_effects() {
+    ambiguous_default_remote(false);
+}
+
+#[test]
+fn remote_ambiguous_default_human_is_unresolved_without_effects() {
+    ambiguous_default_remote(true);
+}
+
+#[test]
+fn remote_non_origin_resolved_targets_still_refresh() {
+    for selection in ["sole", "upstream", "matching"] {
+        let remotes: &[&str] = if selection == "sole" {
+            &["a"]
+        } else {
+            &["a", "b"]
+        };
+        let (f, _) = non_origin_base(remotes);
+        if selection != "sole" {
+            // Resolve the second remote, not the ambiguous first fallback.
+            f.git(&f.root, &["fetch", "b"]);
+            if selection == "upstream" {
+                f.git(&f.root, &["branch", "--set-upstream-to=b/main", "main"]);
+            }
+            advance(&f, &f.root.parent().unwrap().join("b.git"), "main");
+        }
+        oracle(&f, &["REPOSITORY_CONFIGURED_BASE_BEHIND"]);
+    }
+}
+
 #[test]
 fn remote_default_preserves_origin_named_logical_branch() {
     let f = Fixture::new(true);

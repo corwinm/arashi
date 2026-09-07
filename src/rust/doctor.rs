@@ -344,11 +344,18 @@ fn doctor_default_branch(path: &Path) -> Option<String> {
 }
 fn default_remote(path: &Path) -> Option<String> {
     let remotes = optional(path, &["remote"])?;
-    remotes
+    let remotes: Vec<_> = remotes
         .lines()
-        .find(|r| *r == "origin")
-        .or_else(|| remotes.lines().next())
-        .map(str::to_owned)
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .collect();
+    if remotes.contains(&"origin") {
+        Some("origin".into())
+    } else if remotes.len() == 1 {
+        Some(remotes[0].into())
+    } else {
+        None
+    }
 }
 fn remote_for_branch(path: &Path, branch: &str) -> Option<String> {
     if read_git(
