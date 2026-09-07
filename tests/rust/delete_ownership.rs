@@ -243,3 +243,50 @@ fn quarantine_revalidation_rejects_new_detached_linked_ownership() {
     assert!(linked.join("README").is_file());
     assert!(quarantine.join("README").is_file());
 }
+
+#[cfg(unix)]
+#[test]
+fn quarantine_revalidation_freezes_network_rewrites_and_recovery_authority() {
+    if run_isolated("quarantine_revalidation_freezes_network_rewrites_and_recovery_authority") {
+        return;
+    }
+    for receipt in [false, true] {
+        let fixture = Fixture::new();
+        let target = fixture.0.join("repos/api");
+        let url = "https://example.test/team/api.git";
+        run(&target, &["remote", "set-url", "origin", url]);
+        let config_path = fixture.0.join(".arashi/config.json");
+        let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        config["repos"]["api"]["gitUrl"] = json!(url);
+        fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let plan = fixture.plan();
+        let quarantine = fixture.0.join("repos/quarantine");
+        fs::rename(&target, &quarantine).unwrap();
+        assert!(
+            plan.validate_quarantine(&quarantine, &plan.config_before)
+                .is_ok(),
+            "positive control"
+        );
+        if receipt {
+            let directory = fixture.0.join(".git/.arashi-delete-receipts");
+            fs::create_dir(&directory).unwrap();
+            fs::write(directory.join("pending.json"), "new recovery authority\n").unwrap();
+        } else {
+            run(
+                &fixture.0,
+                &[
+                    "config",
+                    "url.https://elsewhere.test/.insteadOf",
+                    "https://example.test/",
+                ],
+            );
+        }
+        assert!(
+            plan.validate_quarantine(&quarantine, &plan.config_before)
+                .is_err(),
+            "receipt={receipt}: changed authority accepted"
+        );
+        assert!(quarantine.join("README").is_file());
+        assert_eq!(fs::read(&config_path).unwrap(), plan.config_before);
+    }
+}

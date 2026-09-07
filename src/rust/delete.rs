@@ -82,6 +82,9 @@ struct DeletePlan {
     ref_inventory: Vec<LocalRef>,
     head: Vec<u8>,
     git_config: Vec<u8>,
+    configured_url: Option<String>,
+    fetch_authority: Vec<String>,
+    receipts_path: PathBuf,
     detached: bool,
     warnings: Vec<String>,
     protected_refs: Vec<String>,
@@ -290,6 +293,8 @@ fn no_unsafe_git_configuration(target: &Path) -> Result<()> {
         if key == "core.fsmonitor"
             || key == "core.worktree"
             || key == "extensions.worktreeconfig"
+            || key == "extensions.partialclone"
+            || (key.starts_with("remote.") && key.ends_with(".promisor"))
             || key.starts_with("filter.") && (key.ends_with(".clean") || key.ends_with(".process"))
         {
             return Err(unsupported(
@@ -411,12 +416,101 @@ fn local_ref_loss(
     Ok((locals, warnings, protected))
 }
 
-fn matching_origin(target: &Path, repo: &RepoConfig) -> Result<()> {
+// Delete only identifies fetch authority: --get-url applies Git rewrites without
+// connecting, fetching, or starting a transport helper. Publication evidence stays
+// local, as in retained delete-git-loss.ts, including when origin is unavailable.
+fn fetch_identity(cwd: &Path, input: &str) -> Result<String> {
+    if input.is_empty() || input.trim() != input || input.chars().any(char::is_control) {
+        return Err(closed(
+            "DELETE_TOPOLOGY_INVALID",
+            "Malformed clone fetch URL",
+            1,
+        ));
+    }
+    let rewritten = git::run_readonly(cwd, &["ls-remote", "--get-url", "--", input])?;
+    let urls = rewritten.lines().collect::<Vec<_>>();
+    if urls.len() != 1 {
+        return Err(closed(
+            "DELETE_TOPOLOGY_INVALID",
+            "Fetch URL rewrite is unavailable",
+            1,
+        ));
+    }
+    let url = urls[0];
+    if Path::new(url).is_absolute() {
+        return Ok(format!("file:{}", fs::canonicalize(url)?.display()));
+    }
+    // Do not invent identities for helpers, ambiguous escapes, passwords, query
+    // strings or exotic URL forms. These remain explicit pre-mutation exclusions.
+    if !crate::clone::network_url(url)
+        || !url.is_ascii()
+        || url.chars().any(|c| c.is_control() || c.is_whitespace())
+        || url.contains(['%', '\\', '?', '#'])
+    {
+        return Err(unsupported(
+            "Delete fetch URL identity is not supported; no changes made",
+        ));
+    }
+    let (scheme, authority, path) = if let Some((scheme, rest)) = url.split_once("://") {
+        let (authority, path) = rest.split_once('/').unwrap();
+        (scheme, authority, path)
+    } else {
+        let (authority, path) = url.split_once(':').unwrap();
+        ("ssh", authority, path)
+    };
+    let (user, host) = authority.rsplit_once('@').unwrap_or(("", authority));
+    if user.contains([':', '@'])
+        || host.is_empty()
+        || host.starts_with('-')
+        || host.contains(['[', ']', '@'])
+        || !host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':'))
+    {
+        return Err(unsupported(
+            "Delete fetch URL authority is not supported; no changes made",
+        ));
+    }
+    let mut host = host.to_ascii_lowercase();
+    if let Some((name, port)) = host.split_once(':') {
+        let number = port
+            .parse::<u16>()
+            .map_err(|_| unsupported("Delete fetch URL port is invalid; no changes made"))?;
+        host = if (scheme == "https" && number == 443) || (scheme == "http" && number == 80) {
+            name.to_owned()
+        } else {
+            format!("{name}:{number}")
+        };
+    }
+    let path = path.trim_end_matches('/');
+    let path = if path.to_ascii_lowercase().ends_with(".git") {
+        &path[..path.len() - 4]
+    } else {
+        path
+    };
+    let path = path.trim_end_matches('/');
+    if path.is_empty() || path.split('/').any(|part| matches!(part, "." | "..")) {
+        return Err(unsupported(
+            "Delete fetch URL repository path is unsupported; no changes made",
+        ));
+    }
+    Ok(format!(
+        "{scheme}://{}{host}/{path}",
+        if user.is_empty() {
+            String::new()
+        } else {
+            format!("{user}@")
+        }
+    ))
+}
+
+fn matching_origin(
+    workspace: &Path,
+    target: &Path,
+    configured: Option<&str>,
+) -> Result<Vec<String>> {
     let urls = git::run_readonly(target, &["remote", "get-url", "--all", "origin"])?;
-    let configured = repo
-        .raw
-        .get("gitUrl")
-        .and_then(Value::as_str)
+    let configured = configured
         .filter(|url| !url.trim().is_empty())
         .or_else(|| urls.lines().next())
         .ok_or_else(|| {
@@ -426,31 +520,28 @@ fn matching_origin(target: &Path, repo: &RepoConfig) -> Result<()> {
                 1,
             )
         })?;
-    let configured = Path::new(configured);
-    if !configured.is_absolute() || !configured.exists() {
-        return Err(unsupported(
-            "Delete currently requires an existing absolute filesystem origin",
-        ));
-    }
     let remotes = git::run_readonly(target, &["remote"])?;
     if remotes.lines().collect::<Vec<_>>() != ["origin"] {
         return Err(unsupported(
             "Delete with non-origin or multiple remotes is not yet ported; no changes made",
         ));
     }
-    let configured = fs::canonicalize(configured)?;
-    let matches = urls.lines().any(|url| {
-        let path = Path::new(url);
-        path.is_absolute() && fs::canonicalize(path).is_ok_and(|candidate| candidate == configured)
-    });
-    if !matches {
+    // Configured rewrites belong to the execution workspace; stored fetch URLs
+    // belong to the clone. Freeze both to catch changed inherited rewrite policy.
+    let configured = fetch_identity(workspace, configured)?;
+    let mut identities = urls
+        .lines()
+        .map(|url| fetch_identity(target, url))
+        .collect::<Result<Vec<_>>>()?;
+    if !identities.contains(&configured) {
         return Err(closed(
             "DELETE_TOPOLOGY_INVALID",
             "Configured repository URL does not match the clone origin",
             1,
         ));
     }
-    Ok(())
+    identities.insert(0, configured);
+    Ok(identities)
 }
 
 impl DeletePlan {
@@ -564,7 +655,12 @@ impl DeletePlan {
             ));
         }
         no_nested_git(&target, true)?;
-        matching_origin(&target, repo)?;
+        let configured_url = repo
+            .raw
+            .get("gitUrl")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let fetch_authority = matching_origin(&workspace.root, &target, configured_url.as_deref())?;
         let ref_inventory = ref_inventory(&target)?;
         let head = fs::read(target.join(".git/HEAD"))?;
         let detached = records[0].branch.is_none();
@@ -660,6 +756,9 @@ impl DeletePlan {
             ref_inventory,
             head,
             git_config: fs::read(canonical_target.join(".git/config"))?,
+            configured_url,
+            fetch_authority,
+            receipts_path: receipts,
             detached,
             warnings,
             protected_refs,
@@ -743,6 +842,26 @@ impl DeletePlan {
     #[cfg(unix)]
     fn validate_quarantine(&self, quarantine: &Path, expected_config: &[u8]) -> Result<()> {
         self.validate_ancestors()?;
+        if !matches!(fs::symlink_metadata(&self.receipts_path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        {
+            return Err(closed(
+                "DELETE_CONCURRENT_CHANGE",
+                "Delete recovery authority appeared or is unavailable",
+                1,
+            ));
+        }
+        if matching_origin(
+            &self.workspace_root,
+            quarantine,
+            self.configured_url.as_deref(),
+        )? != self.fetch_authority
+        {
+            return Err(closed(
+                "DELETE_CONCURRENT_CHANGE",
+                "Quarantined fetch authority changed",
+                1,
+            ));
+        }
         let records = git::worktrees_readonly(quarantine)?;
         if records.len() != 1
             || records[0].bare

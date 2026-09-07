@@ -9,6 +9,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(unix)]
+#[path = "rust/delete_network.rs"]
+mod network;
+
 static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
