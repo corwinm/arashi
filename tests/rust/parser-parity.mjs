@@ -33,7 +33,10 @@ const run = (sourceMode, args) => {
 };
 const results = [];
 const helps = {};
+let primaryError = null;
+let reportError = null;
 let mutationError = null;
+let cleanupError = null;
 try {
   const commands = ["", ...contract.commands.map((c) => c.path)];
   for (const command of commands) {
@@ -150,14 +153,39 @@ try {
       results.push({ args, expected, actual, equal });
       console.log(`${equal ? "PASS" : "DIFF"} ${JSON.stringify(args)}`);
     }
-} finally {
+} catch (error) {
+  primaryError = error;
+}
+try {
   writeFileSync(resolve(process.argv[3]), JSON.stringify({ source, results }, null, 2) + "\n");
+} catch (error) {
+  reportError = error;
+}
+try {
   if (JSON.stringify(readdirSync(cwd)) !== JSON.stringify(["home"]) || readdirSync(home).length) {
     mutationError = new Error("Parser invocation mutated disposable cwd/HOME");
   }
+} catch (error) {
+  mutationError = error;
+}
+try {
   rmSync(cwd, { recursive: true, force: true });
+} catch (error) {
+  cleanupError = error;
 }
-if (mutationError instanceof Error) {
-  throw mutationError;
+const errors = [primaryError, reportError, mutationError, cleanupError].filter(
+  (error) => error !== null,
+);
+if (errors.length === 1) {
+  throw errors[0];
 }
-if (results.some((r) => !r.equal)) process.exitCode = 1;
+if (errors.length > 1) {
+  const aggregate = new AggregateError(errors, "Parser parity lifecycle failed.");
+  if (primaryError !== null) {
+    aggregate.cause = primaryError;
+  }
+  throw aggregate;
+}
+if (results.some((r) => !r.equal)) {
+  process.exitCode = 1;
+}
