@@ -16,10 +16,17 @@ impl GitDaemon {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        let mut command = Command::new("git");
+        let output = Command::new("git").arg("--exec-path").output().unwrap();
+        assert!(
+            output.status.success(),
+            "git --exec-path: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let executable =
+            Path::new(String::from_utf8(output.stdout).unwrap().trim()).join("git-daemon");
+        let mut command = Command::new(executable);
         command
             .args([
-                "daemon",
                 "--reuseaddr",
                 "--export-all",
                 "--listen=127.0.0.1",

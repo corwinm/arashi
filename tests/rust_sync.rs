@@ -3,10 +3,47 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        Condvar, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+const MAX_NATIVE_COMMANDS: usize = 4;
+static NATIVE_COMMANDS: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+
+struct NativeCommandPermit;
+
+impl NativeCommandPermit {
+    fn acquire() -> Self {
+        let (active, available) = &NATIVE_COMMANDS;
+        let mut active = active.lock().unwrap_or_else(|error| error.into_inner());
+        while *active >= MAX_NATIVE_COMMANDS {
+            active = available
+                .wait(active)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        *active += 1;
+        Self
+    }
+}
+
+impl Drop for NativeCommandPermit {
+    fn drop(&mut self) {
+        let (active, available) = &NATIVE_COMMANDS;
+        let mut active = active.lock().unwrap_or_else(|error| error.into_inner());
+        *active -= 1;
+        available.notify_one();
+    }
+}
+
+fn time_native_command<T>(command: impl FnOnce() -> T) -> (T, std::time::Duration) {
+    let _permit = NativeCommandPermit::acquire();
+    let started = std::time::Instant::now();
+    let output = command();
+    (output, started.elapsed())
+}
 
 #[cfg(unix)]
 const TIMEOUT_FIXTURE_PRE_MUTATION_DELAY_SECS: u64 = 2;
@@ -35,6 +72,7 @@ impl Fixture {
         let temp = arashi::paths::canonicalize(&temp).unwrap();
         let root = temp.join("workspace");
         let home = temp.join("home");
+        fs::create_dir(fixture_temp_namespace(&home)).unwrap();
         fs::create_dir(&home).unwrap();
         init(&root);
         fs::create_dir(root.join(".arashi")).unwrap();
@@ -75,17 +113,26 @@ impl Fixture {
         .unwrap();
     }
     fn run(&self, args: &[&str]) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
-        command.args(args).current_dir(&self.root);
-        isolated(&mut command, &self.home);
-        command.output().unwrap()
+        time_native_command(|| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
+            command.args(args).current_dir(&self.root);
+            isolated(&mut command, &self.home);
+            command.output().unwrap()
+        })
+        .0
     }
     #[cfg(unix)]
     fn run_with_path(&self, args: &[&str], path: &str) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
-        command.args(args).current_dir(&self.root).env("PATH", path);
-        isolated(&mut command, &self.home);
-        command.output().unwrap()
+        self.run_with_path_timed(args, path).0
+    }
+    #[cfg(unix)]
+    fn run_with_path_timed(&self, args: &[&str], path: &str) -> (Output, std::time::Duration) {
+        time_native_command(|| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
+            command.args(args).current_dir(&self.root).env("PATH", path);
+            isolated(&mut command, &self.home);
+            command.output().unwrap()
+        })
     }
     fn json(&self, args: &[&str]) -> (Output, Value) {
         let output = self.run(args);
@@ -106,17 +153,89 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.temp);
+        let _ = fs::remove_dir_all(fixture_temp_namespace(&self.home));
     }
 }
 
+fn fixture_temp_namespace(home: &Path) -> PathBuf {
+    home.parent().unwrap().with_extension("process-temp")
+}
+
 fn isolated(command: &mut Command, home: &Path) {
+    let temp = fixture_temp_namespace(home);
     command
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("XDG_CONFIG_HOME", home)
+        // Native process-tree lineage files must be fixture-private. Keep this
+        // namespace outside the snapshotted fixture tree because Apple's Git
+        // may also create xcrun_db in TMPDIR.
+        .env("TMPDIR", &temp)
+        .env("TMP", &temp)
+        .env("TEMP", &temp)
         .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_TERMINAL_PROMPT", "0");
+}
+
+#[test]
+fn fixture_commands_use_private_temp_namespaces_outside_preservation_snapshots() {
+    let first = Fixture::new(&[]);
+    let second = Fixture::new(&[]);
+    let temp_dirs = |fixture: &Fixture| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
+        isolated(&mut command, &fixture.home);
+        ["TMPDIR", "TMP", "TEMP"].map(|key| {
+            PathBuf::from(
+                command
+                    .get_envs()
+                    .find(|(candidate, _)| *candidate == key)
+                    .and_then(|(_, value)| value)
+                    .unwrap(),
+            )
+        })
+    };
+
+    let first_temp_dirs = temp_dirs(&first);
+    let second_temp_dirs = temp_dirs(&second);
+    assert!(
+        first_temp_dirs
+            .iter()
+            .all(|path| path == &first_temp_dirs[0])
+    );
+    assert!(
+        second_temp_dirs
+            .iter()
+            .all(|path| path == &second_temp_dirs[0])
+    );
+    assert!(first_temp_dirs[0].is_dir());
+    assert!(second_temp_dirs[0].is_dir());
+    assert!(!first_temp_dirs[0].starts_with(&first.temp));
+    assert!(!second_temp_dirs[0].starts_with(&second.temp));
+    assert_ne!(first_temp_dirs[0], second_temp_dirs[0]);
+}
+
+#[test]
+fn queued_fixture_wait_is_excluded_from_native_command_elapsed_time() {
+    let permits = (0..MAX_NATIVE_COMMANDS)
+        .map(|_| NativeCommandPermit::acquire())
+        .collect::<Vec<_>>();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let waiter = std::thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        time_native_command(|| entered_tx.send(()).unwrap()).1
+    });
+    started_rx.recv().unwrap();
+    assert!(
+        entered_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err(),
+        "queued command entered before a fixture permit was available"
+    );
+    drop(permits);
+    entered_rx.recv().unwrap();
+    assert!(waiter.join().unwrap() < std::time::Duration::from_secs(1));
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -1393,16 +1512,15 @@ fn branch_created_then_timeout_is_inspected_rolled_back_and_settles_quickly() {
         pid_file.display()
     );
     let path = git_shim(&f, &body);
-    let started = std::time::Instant::now();
-    let output = f.run_with_path(&["sync", "--json"], &path);
+    let (output, elapsed) = f.run_with_path_timed(&["sync", "--json"], &path);
     assert!(
         pre_mutation_delay.exists(),
         "fixture did not reach the delayed pre-mutation revalidation"
     );
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(20),
+        elapsed < std::time::Duration::from_secs(20),
         "timeout did not settle boundedly: {:?}",
-        started.elapsed()
+        elapsed
     );
     assert!(
         marker.exists(),
@@ -1460,16 +1578,15 @@ fn checkout_then_timeout_is_inspected_restored_and_settles_quickly() {
         pid_file.display()
     );
     let path = git_shim(&f, &body);
-    let started = std::time::Instant::now();
-    let output = f.run_with_path(&["sync", "--json"], &path);
+    let (output, elapsed) = f.run_with_path_timed(&["sync", "--json"], &path);
     assert!(
         pre_mutation_delay.exists(),
         "fixture did not reach the delayed pre-mutation revalidation"
     );
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(20),
+        elapsed < std::time::Duration::from_secs(20),
         "timeout did not settle boundedly: {:?}",
-        started.elapsed()
+        elapsed
     );
     assert!(
         marker.exists(),
@@ -1526,16 +1643,15 @@ fn stalled_recovery_mutation(operation: &str) {
             pid_file.display()
         );
         let path = git_shim(&f, &body);
-        let started = std::time::Instant::now();
-        let output = f.run_with_path(&["sync", "--json"], &path);
+        let (output, elapsed) = f.run_with_path_timed(&["sync", "--json"], &path);
         assert!(
             pid_file.exists(),
             "{operation}: recovery injection never ran"
         );
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(20),
+            elapsed < std::time::Duration::from_secs(20),
             "{operation}: recovery was unbounded: {:?}",
-            started.elapsed()
+            elapsed
         );
         assert!(
             !process_alive(&pid_file),
@@ -1603,10 +1719,9 @@ fn recovery_waiting_wrapper(child_ignores_term: bool) {
         late.display()
     );
     let path = git_shim(&f, &body);
-    let started = std::time::Instant::now();
-    let output = f.run_with_path(&["sync", "--json"], &path);
+    let (output, elapsed) = f.run_with_path_timed(&["sync", "--json"], &path);
     assert!(pid_file.exists(), "KILL fixture never spawned its child");
-    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    assert!(elapsed < std::time::Duration::from_secs(20));
     assert!(!process_alive(&pid_file), "recovery child survived KILL");
     assert_eq!(output.status.code(), Some(1));
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
