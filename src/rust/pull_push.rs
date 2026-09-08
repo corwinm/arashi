@@ -1373,13 +1373,24 @@ mod timeout_tests {
 
     #[test]
     #[ignore = "subprocess fixture"]
+    #[allow(clippy::zombie_processes)] // Deliberately orphan the inherited-pipe holder.
     fn pipe_launcher() {
         if !Path::new("settlement-fixture").is_file() {
             return;
         }
         fs::write("launcher.pid", std::process::id().to_string()).unwrap();
-        let mut child = helper(HOLDER, Path::new(".")).spawn().unwrap();
-        child.wait().unwrap();
+        #[cfg(unix)]
+        {
+            let child = helper(HOLDER, Path::new(".")).spawn().unwrap();
+            fs::write("launcher-child.pid", child.id().to_string()).unwrap();
+            ready(Path::new("holder.pid"));
+            fs::write("launcher-exiting", b"exiting before descendant").unwrap();
+        }
+        #[cfg(windows)]
+        {
+            let mut child = helper(HOLDER, Path::new(".")).spawn().unwrap();
+            child.wait().unwrap();
+        }
     }
 
     fn ready(path: &Path) {
@@ -1464,10 +1475,31 @@ mod timeout_tests {
         let (tx, rx) = mpsc::channel();
         let cwd = checkout.clone();
         let runner = thread::spawn(move || {
-            tx.send(super::run_git(&argv, &cwd, Some(Duration::from_secs(3))))
+            tx.send(super::run_git(&argv, &cwd, Some(Duration::from_secs(2))))
                 .unwrap();
         });
         ready(&checkout.join("holder.pid"));
+        #[cfg(unix)]
+        {
+            ready(&checkout.join("launcher-exiting"));
+            let launcher = fs::read_to_string(checkout.join("launcher.pid")).unwrap();
+            let started = Instant::now();
+            while live(launcher.trim()) && started.elapsed() < Duration::from_secs(1) {
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                !live(launcher.trim()),
+                "launcher did not exit before holder"
+            );
+            assert_eq!(
+                fs::read_to_string(checkout.join("launcher-child.pid")).unwrap(),
+                fs::read_to_string(checkout.join("holder.pid")).unwrap(),
+                "launcher did not record the inherited-pipe descendant"
+            );
+        }
+        #[cfg(unix)]
+        let returned = rx.recv_timeout(Duration::from_secs(4));
+        #[cfg(windows)]
         let returned = rx.recv_timeout(Duration::from_secs(8));
         let owned_live = ["holder.pid", "launcher.pid"]
             .map(|name| live(fs::read_to_string(checkout.join(name)).unwrap().trim()));
@@ -1482,7 +1514,7 @@ mod timeout_tests {
             .unwrap();
         assert!(output.timed_out);
         assert!(
-            output.elapsed_ms >= 3000 && output.elapsed_ms < 8000,
+            output.elapsed_ms >= 2000 && output.elapsed_ms < 4000,
             "elapsed={}ms",
             output.elapsed_ms
         );
