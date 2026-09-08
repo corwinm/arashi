@@ -1,7 +1,9 @@
 //! Retained mkdir/owner.json identity protocol, including recovery guard and owner readback.
 use super::*;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde_json::value::RawValue;
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, Write},
     path::PathBuf,
@@ -10,13 +12,13 @@ use std::{
 };
 const POLL: Duration = Duration::from_millis(50);
 const STALE: Duration = Duration::from_secs(30);
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 struct Owner {
     #[serde(rename = "createdAt")]
     created_at: f64,
     identity: String,
     owner: String,
-    pid: u32,
+    pid: u64,
 }
 pub struct IdentityLock {
     pub path: PathBuf,
@@ -54,20 +56,18 @@ fn uid() -> u32 {
     }
     unsafe { getuid() }
 }
-fn pid_alive(pid: u32) -> bool {
+fn pid_alive(pid: u64) -> bool {
     #[cfg(unix)]
     {
         unsafe extern "C" {
             fn kill(pid: i32, sig: i32) -> i32;
         }
-        if pid > i32::MAX as u32 {
-            return false;
+        if pid > i32::MAX as u64 {
+            return true;
         }
-        // No signal is delivered. Permission denial proves presence, not death.
-        unsafe {
-            kill(pid as i32, 0) == 0
-                || io::Error::last_os_error().kind() == io::ErrorKind::PermissionDenied
-        }
+        // No signal is delivered. Only ESRCH proves absence; permission or
+        // other capability errors cannot authorize recovery.
+        unsafe { kill(pid as i32, 0) == 0 || io::Error::last_os_error().raw_os_error() != Some(3) }
     }
     #[cfg(windows)]
     {
@@ -77,6 +77,9 @@ fn pid_alive(pid: u32) -> bool {
             fn GetExitCodeProcess(process: *mut std::ffi::c_void, code: *mut u32) -> i32;
             fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
         }
+        let Ok(pid) = u32::try_from(pid) else {
+            return true;
+        };
         unsafe {
             let h = OpenProcess(0x1000, 0, pid);
             if h.is_null() {
@@ -139,7 +142,7 @@ fn new_owner(identity: &str, root: &Path) -> io::Result<Owner> {
             .as_millis() as f64,
         identity: identity.into(),
         owner,
-        pid: std::process::id(),
+        pid: u64::from(std::process::id()),
     })
 }
 fn write_owner(path: &Path, owner: &Owner, create: bool) -> io::Result<()> {
@@ -159,11 +162,42 @@ fn read_owner(path: &Path) -> io::Result<Option<Owner>> {
         Err(e) if missing(&e) => return Ok(None),
         Err(e) => return Err(e),
     };
-    let owner: Owner = match serde_json::from_slice(&raw) {
-        Ok(o) => o,
-        Err(_) => return Ok(None),
+    Ok(parse_owner(&raw).ok().flatten())
+}
+// JSON.parse resolves duplicate members before validating Number.isSafeInteger.
+// Use the same normalized owner for acquisition, recovery readback and release.
+fn parse_owner(raw: &[u8]) -> serde_json::Result<Option<Owner>> {
+    let raw: Box<RawValue> = serde_json::from_slice(raw)?;
+    if !raw.get().trim_start().starts_with('{') {
+        return Ok(None);
+    }
+    let value: BTreeMap<String, Box<RawValue>> = serde_json::from_str(raw.get())?;
+    let number = |name| value.get(name)?.get().parse::<f64>().ok();
+    let string = |name| serde_json::from_str::<String>(value.get(name)?.get()).ok();
+    let Some(pid) = number("pid") else {
+        return Ok(None);
     };
-    Ok((!owner.owner.is_empty() && owner.pid > 0 && owner.created_at.is_finite()).then_some(owner))
+    if !(1.0..=9_007_199_254_740_991.0).contains(&pid) || pid.fract() != 0.0 {
+        return Ok(None);
+    }
+    let Some(owner) = string("owner") else {
+        return Ok(None);
+    };
+    if owner.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Owner {
+        created_at: match number("createdAt") {
+            Some(created_at) => created_at,
+            None => return Ok(None),
+        },
+        identity: match string("identity") {
+            Some(identity) => identity,
+            None => return Ok(None),
+        },
+        owner,
+        pid: pid as u64,
+    }))
 }
 fn suffix(path: &Path, tail: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
@@ -323,7 +357,11 @@ fn recovery_guard(path: &Path, identity: &str) -> io::Result<Option<IdentityLock
         .to_string_lossy()
         .strip_prefix(&prefix)
         .and_then(|s| s.split('-').next())
-        .and_then(|s| s.parse::<u32>().ok())
+        .and_then(|s| {
+            s.parse::<u64>()
+                .ok()
+                .filter(|pid| *pid > 0 && *pid <= 9_007_199_254_740_991)
+        })
         .is_some_and(pid_alive)
     {
         return Ok(None);
@@ -392,9 +430,8 @@ fn release_owned(path: &Path, owner: &Owner) -> io::Result<()> {
                 Err(e) if missing(&e) => return Ok(None),
                 Err(e) => return Err(e),
             };
-            let value: Value = serde_json::from_slice(&raw)?;
             // Malformed JSON is a release failure, never permission to remove a lock.
-            Ok(serde_json::from_value::<Owner>(value).ok())
+            parse_owner(&raw).map_err(io::Error::other)
         })?;
         if observed.is_none() {
             if !markers(path)?.is_empty() {
