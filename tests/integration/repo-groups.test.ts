@@ -5,6 +5,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
+const PRINT_WORKING_DIRECTORY = [process.execPath, "-e", "console.log(process.cwd())"];
 
 interface CommandResult {
   exitCode: number;
@@ -113,7 +114,7 @@ const selectorCommandArgs = (
     case "create":
       return ["create", `feature/selector-${suffix}`, ...selectors, ...jsonArgs];
     case "exec":
-      return ["exec", ...selectors, ...jsonArgs, "--", "pwd"];
+      return ["exec", ...selectors, ...jsonArgs, "--", ...PRINT_WORKING_DIRECTORY];
     case "push":
       return ["push", ...selectors, "--dry-run", ...jsonArgs];
     default:
@@ -417,7 +418,7 @@ describe("repository group command integration", () => {
       "--group",
       "core,docs",
       "--",
-      "pwd",
+      ...PRINT_WORKING_DIRECTORY,
     ]);
     expect(multiGroup.exitCode).toBe(0);
     expect(multiGroup.stdout).toContain("[repo-a] ok (0)");
@@ -431,7 +432,7 @@ describe("repository group command integration", () => {
       "--only",
       "repo-a",
       "--",
-      "pwd",
+      ...PRINT_WORKING_DIRECTORY,
     ]);
     expect(intersection.exitCode).toBe(0);
     expect(intersection.stdout).toContain("[repo-a] ok (0)");
