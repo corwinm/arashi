@@ -135,7 +135,7 @@ class AlphaDistribution(unittest.TestCase):
         else:
             command = ['/bin/bash', str(ARTIFACTS / 'install-alpha.sh')]
         arguments = list(args)
-        if not arguments or arguments[0] != 'uninstall':
+        if not arguments or arguments[0] not in ['uninstall', 'cleanup-backup']:
             arguments = ['install', '--accept-canonical-shadow',
                          '--archive', str(archive or self.archive),
                          '--checksum-file', str(checksum or self.checksum), *arguments]
@@ -392,6 +392,59 @@ class AlphaDistribution(unittest.TestCase):
             self.assertEqual(list(caller.iterdir()), [])
         finally:
             os.rmdir(self.destination)
+
+    def test_partial_owned_uninstall_retries_from_retained_ledger(self):
+        self.run_setup()
+        (self.destination / ('arashi' + SUFFIX)).unlink()
+        self.assertTrue((self.destination / '.arashi-alpha-ownership.json').is_file())
+        self.run_setup('uninstall')
+        self.assertFalse(self.destination.exists())
+
+    def test_partial_owned_backup_has_explicit_retry(self):
+        self.run_setup()
+        backup = self.home / '.arashi-alpha-backup-explicit-retry'
+        self.destination.rename(backup)
+        self.run_setup()
+        (backup / ('arashi' + SUFFIX)).unlink()
+        self.run_setup('cleanup-backup', '--recovery-dir', str(backup))
+        self.assertFalse(backup.exists())
+        self.assertTrue((self.destination / ('aw' + SUFFIX)).is_file())
+
+    @unittest.skipUnless(WINDOWS, 'native Windows locked executable acceptance')
+    def test_windows_locked_executable_uninstall_is_retryable(self):
+        self.run_setup()
+        locked = self.destination / 'aw.exe'
+        with locked.open('rb'):
+            result = self.run_setup('uninstall', ok=False)
+            self.assertIn('Alpha setup refused/failed:', result.stderr)
+            self.assertTrue((self.destination / '.arashi-alpha-ownership.json').is_file())
+            self.assertFalse((self.destination / 'arashi.exe').exists())
+            self.assertTrue(locked.is_file())
+        self.run_setup('uninstall')
+        self.assertFalse(self.destination.exists())
+
+    @unittest.skipUnless(WINDOWS, 'native Windows locked backup acceptance')
+    def test_windows_locked_refresh_backup_is_truthful_and_retryable(self):
+        self.run_setup()
+        backup = self.home / '.arashi-alpha-backup-lock-regression'
+        self.destination.rename(backup)
+        self.run_setup()
+        locked = backup / 'aw.exe'
+        try:
+            with locked.open('rb'):
+                result = self.run_setup('cleanup-backup', '--recovery-dir', str(backup), ok=False)
+                self.assertIn('Previous alpha cleanup incomplete; recovery path retained',
+                              result.stderr)
+                self.assertIn(backup.name, result.stderr)
+                self.assertTrue((backup / '.arashi-alpha-ownership.json').is_file())
+                self.assertFalse((backup / 'arashi.exe').exists())
+                self.assertTrue((backup / 'aw.exe').is_file())
+                self.assertTrue((self.destination / 'aw.exe').is_file())
+        finally:
+            if backup.exists():
+                self.run_setup('cleanup-backup', '--recovery-dir', str(backup))
+        self.assertFalse(backup.exists())
+        self.assertTrue((self.destination / 'aw.exe').is_file())
 
     def test_canonical_alpha_does_not_use_stable_lifecycle(self):
         self.run_setup()
