@@ -8,6 +8,16 @@ use std::{
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(unix)]
+const TIMEOUT_FIXTURE_PRE_MUTATION_DELAY_SECS: u64 = 2;
+#[cfg(unix)]
+const TIMEOUT_FIXTURE_MUTATION_HEADROOM_SECS: u64 = 3;
+
+#[cfg(unix)]
+fn timeout_fixture_budget_secs() -> u64 {
+    TIMEOUT_FIXTURE_PRE_MUTATION_DELAY_SECS + TIMEOUT_FIXTURE_MUTATION_HEADROOM_SECS
+}
+
 struct Fixture {
     temp: PathBuf,
     root: PathBuf,
@@ -1365,13 +1375,14 @@ fn branch_created_then_timeout_is_inspected_rolled_back_and_settles_quickly() {
     // its cumulative timer starts. Spend two seconds there to reproduce the old
     // one-second pre-launch failure, then leave three seconds for revalidation
     // before the injected 30-second mutation stall must time out.
-    f.config(json!({"version":"1.0.0","reposDir":"repos","sync":{"timeoutSeconds":5.0},"repos":{"zeta":{"path":"repos/zeta"}}}));
+    f.config(json!({"version":"1.0.0","reposDir":"repos","sync":{"timeoutSeconds":timeout_fixture_budget_secs()},"repos":{"zeta":{"path":"repos/zeta"}}}));
     let marker = f.temp.join("branch-slept");
     let pid_file = f.temp.join("branch-descendant-pid");
     let target_ref_count = f.temp.join("branch-target-ref-count");
     let pre_mutation_delay = f.temp.join("branch-pre-mutation-delay");
+    let pre_mutation_delay_secs = TIMEOUT_FIXTURE_PRE_MUTATION_DELAY_SECS;
     let body = format!(
-        "if [ \"$PWD\" = '{}' ] && [ \"$1\" = for-each-ref ] && [ \"$3\" = refs/heads/slow-branch ]; then\n  count=0; [ ! -e '{}' ] || count=$(cat '{}')\n  count=$((count + 1)); printf '%s' \"$count\" > '{}'\n  if [ \"$count\" = 3 ]; then sleep 2; : > '{}'; fi\nfi\nif [ \"$1\" = branch ] || [ \"$1\" = update-ref ]; then\n  if [ ! -e '{}' ]; then\n    \"$REAL_GIT\" \"$@\" || exit $?\n    : > '{}'\n    perl -MPOSIX=setsid -e 'open(F,q(>),q({})); print F $$; close F; $SIG{{TERM}}=q(IGNORE); select undef,undef,undef,0.1; POSIX::close(3); setsid(); sleep 30' & wait\n    exit 0\n  fi\nfi",
+        "if [ \"$PWD\" = '{}' ] && [ \"$1\" = for-each-ref ] && [ \"$3\" = refs/heads/slow-branch ]; then\n  count=0; [ ! -e '{}' ] || count=$(cat '{}')\n  count=$((count + 1)); printf '%s' \"$count\" > '{}'\n  if [ \"$count\" = 3 ]; then sleep {pre_mutation_delay_secs}; : > '{}'; fi\nfi\nif [ \"$1\" = branch ] || [ \"$1\" = update-ref ]; then\n  if [ ! -e '{}' ]; then\n    \"$REAL_GIT\" \"$@\" || exit $?\n    : > '{}'\n    perl -MPOSIX=setsid -e 'open(F,q(>),q({})); print F $$; close F; $SIG{{TERM}}=q(IGNORE); select undef,undef,undef,0.1; POSIX::close(3); setsid(); sleep 30' & wait\n    exit 0\n  fi\nfi",
         f.repo("zeta").display(),
         target_ref_count.display(),
         target_ref_count.display(),
@@ -1427,11 +1438,23 @@ fn checkout_then_timeout_is_inspected_restored_and_settles_quickly() {
     let f = Fixture::new(&["zeta"]);
     git(&f.root, &["checkout", "-b", "slow-checkout"]);
     git(&f.repo("zeta"), &["branch", "slow-checkout"]);
-    f.config(json!({"version":"1.0.0","reposDir":"repos","sync":{"timeoutSeconds":1.0},"repos":{"zeta":{"path":"repos/zeta"}}}));
+    // The third target-ref observation is the per-repository revalidation after
+    // its cumulative timer starts. Deliberately consume the old one-second budget,
+    // then retain a separate mutation headroom window. This keeps host scheduling
+    // before checkout from deciding whether the post-mutation timeout seam runs.
+    f.config(json!({"version":"1.0.0","reposDir":"repos","sync":{"timeoutSeconds":timeout_fixture_budget_secs()},"repos":{"zeta":{"path":"repos/zeta"}}}));
     let marker = f.temp.join("checkout-slept");
     let pid_file = f.temp.join("checkout-descendant-pid");
+    let target_ref_count = f.temp.join("checkout-target-ref-count");
+    let pre_mutation_delay = f.temp.join("checkout-pre-mutation-delay");
+    let pre_mutation_delay_secs = TIMEOUT_FIXTURE_PRE_MUTATION_DELAY_SECS;
     let body = format!(
-        "if [ \"$1\" = checkout ] && [ ! -e '{}' ]; then\n  \"$REAL_GIT\" \"$@\" || exit $?\n  : > '{}'\n  perl -MPOSIX=setsid -e 'open(F,q(>),q({})); print F $$; close F; $SIG{{TERM}}=q(IGNORE); select undef,undef,undef,0.1; POSIX::close(3); setsid(); sleep 30' & wait\n  exit 0\nfi",
+        "if [ \"$PWD\" = '{}' ] && [ \"$1\" = for-each-ref ] && [ \"$3\" = refs/heads/slow-checkout ]; then\n  count=0; [ ! -e '{}' ] || count=$(cat '{}')\n  count=$((count + 1)); printf '%s' \"$count\" > '{}'\n  if [ \"$count\" = 3 ]; then sleep {pre_mutation_delay_secs}; : > '{}'; fi\nfi\nif [ \"$1\" = checkout ] && [ ! -e '{}' ]; then\n  \"$REAL_GIT\" \"$@\" || exit $?\n  : > '{}'\n  perl -MPOSIX=setsid -e 'open(F,q(>),q({})); print F $$; close F; $SIG{{TERM}}=q(IGNORE); select undef,undef,undef,0.1; POSIX::close(3); setsid(); sleep 30' & wait\n  exit 0\nfi",
+        f.repo("zeta").display(),
+        target_ref_count.display(),
+        target_ref_count.display(),
+        target_ref_count.display(),
+        pre_mutation_delay.display(),
         marker.display(),
         marker.display(),
         pid_file.display()
@@ -1439,6 +1462,10 @@ fn checkout_then_timeout_is_inspected_restored_and_settles_quickly() {
     let path = git_shim(&f, &body);
     let started = std::time::Instant::now();
     let output = f.run_with_path(&["sync", "--json"], &path);
+    assert!(
+        pre_mutation_delay.exists(),
+        "fixture did not reach the delayed pre-mutation revalidation"
+    );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(20),
         "timeout did not settle boundedly: {:?}",
