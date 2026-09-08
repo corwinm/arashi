@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -498,6 +499,128 @@ describe("delete resume receipts", () => {
     const malformed = receipt("api", path);
     malformed.runtime.identities.clone.path = "/replacement";
     malformed.runtime.identities.clone.leaf.path = "/replacement";
+    await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
+
+    await expect(
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
+    ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
+  });
+
+  test("accepts the fully validated modern native receipt shape", async () => {
+    const root = await createTempDir("delete-receipt-modern-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const modern = receipt("api", path);
+    const runtime = modern.runtime as DeleteResumeReceipt["runtime"] & {
+      destructionPreparedItemIds: string[];
+      quarantinePath: string;
+      worktreeQuarantines: Array<{ path: string; quarantinePath: string }>;
+    };
+    const suffix = createHash("sha256")
+      .update(`arashi-delete-quarantine-v1\0${modern.planId}`)
+      .digest("hex");
+    runtime.quarantinePath = `/.arashi-delete-617069-${suffix}`;
+    runtime.worktreeQuarantines = [];
+    runtime.destructionPreparedItemIds = [];
+    await createDeleteResumeReceipt(path, modern, provenReceiptSafety);
+
+    await expect(
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
+    ).resolves.toMatchObject({ receipt: modern });
+  });
+
+  test.each(["forged-clone", "wrong-source", "duplicate-source", "duplicate-destination"])(
+    "rejects %s native quarantine provenance",
+    async (mutation) => {
+      const root = await createTempDir(`delete-receipt-quarantine-${mutation}-`);
+      const path = receiptPathForRepositoryKey(root, "api");
+      const malformed = receipt("api", path);
+      const suffix = createHash("sha256")
+        .update(`arashi-delete-quarantine-v1\0${malformed.planId}`)
+        .digest("hex");
+      const runtime = malformed.runtime as DeleteResumeReceipt["runtime"] & {
+        destructionPreparedItemIds: string[];
+        quarantinePath: string;
+        worktreeQuarantines: Array<{ path: string; quarantinePath: string }>;
+      };
+      runtime.quarantinePath = `/.arashi-delete-617069-${suffix}`;
+      const worktreeQuarantine = (source: string): string =>
+        `/linked/.arashi-delete-worktree-${createHash("sha256").update(source, "utf8").digest("hex")}-${suffix}`;
+      runtime.worktreeQuarantines = [
+        { path: "/linked/a", quarantinePath: worktreeQuarantine("/linked/a") },
+        { path: "/linked/b", quarantinePath: worktreeQuarantine("/linked/b") },
+      ];
+      runtime.destructionPreparedItemIds = [];
+      malformed.identities.splice(
+        1,
+        0,
+        { id: "linked-a", kind: "linked-worktree", path: "/linked/a", ref: null, oid: null },
+        { id: "linked-b", kind: "linked-worktree", path: "/linked/b", ref: null, oid: null },
+      );
+      runtime.identities.worktrees = [
+        {
+          path: "/linked/a",
+          leaf: { path: "/linked/a", identity: "a", kind: "directory" },
+          ancestors: [],
+        },
+        {
+          path: "/linked/b",
+          leaf: { path: "/linked/b", identity: "b", kind: "directory" },
+          ancestors: [],
+        },
+      ];
+      if (mutation === "forged-clone") runtime.quarantinePath = "/workspace/forged";
+      if (mutation === "wrong-source") runtime.worktreeQuarantines[0]!.path = "/linked/foreign";
+      if (mutation === "duplicate-source") runtime.worktreeQuarantines[1]!.path = "/linked/a";
+      if (mutation === "duplicate-destination")
+        runtime.worktreeQuarantines[1]!.quarantinePath =
+          runtime.worktreeQuarantines[0]!.quarantinePath;
+      await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
+
+      await expect(
+        readValidatedDeleteReceipt(
+          path,
+          { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+          provenReceiptSafety,
+        ),
+      ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
+    },
+  );
+
+  test.each([
+    ["unknown", ["missing"]],
+    ["completed-overlap", ["item"]],
+    ["partial-canonical-group", ["item"]],
+  ])("rejects malformed prepared ledger: %s", async (_case, prepared) => {
+    const root = await createTempDir("delete-receipt-prepared-ledger-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const malformed = receipt("api", path);
+    malformed.identities.push({
+      id: "ref",
+      kind: "local-ref",
+      path: null,
+      ref: "refs/heads/main",
+      oid: "a".repeat(40),
+    });
+    if (_case === "completed-overlap") malformed.completedItemIds = ["item"];
+    const runtime = malformed.runtime as DeleteResumeReceipt["runtime"] & {
+      destructionPreparedItemIds: string[];
+      quarantinePath: string;
+      worktreeQuarantines: Array<{ path: string; quarantinePath: string }>;
+    };
+    const suffix = createHash("sha256")
+      .update(`arashi-delete-quarantine-v1\0${malformed.planId}`)
+      .digest("hex");
+    runtime.quarantinePath = `/.arashi-delete-617069-${suffix}`;
+    runtime.worktreeQuarantines = [];
+    runtime.destructionPreparedItemIds = prepared;
     await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
 
     await expect(

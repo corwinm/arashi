@@ -60,6 +60,23 @@ impl ObjectIdentity {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ContentIdentity {
+    identity: filesystem_identity::ObjectIdentity,
+    kind: filesystem_identity::ObjectKind,
+    creation_time: Option<std::time::SystemTime>,
+}
+
+impl ContentIdentity {
+    fn pinned(pin: &filesystem_identity::PinnedObject) -> Self {
+        Self {
+            identity: pin.identity(),
+            kind: pin.kind(),
+            creation_time: pin.creation_time(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LocalRef {
     name: String,
@@ -93,7 +110,7 @@ struct DeletePlan {
     detached: bool,
     warnings: Vec<String>,
     protected_refs: Vec<String>,
-    contents: Vec<(PathBuf, ObjectIdentity, Vec<u8>)>,
+    contents: Vec<(PathBuf, ContentIdentity, Vec<u8>)>,
     dirty: String,
     linked: Vec<LinkedCheckout>,
 }
@@ -184,13 +201,13 @@ fn closed(code: &str, message: impl Into<String>, exit: i32) -> Error {
 }
 
 #[cfg(any(unix, test))]
-fn quarantine_name(repository_key: &str) -> String {
+fn quarantine_prefix(repository_key: &str) -> String {
     let encoded = repository_key
         .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    format!(".arashi-delete-{encoded}-{}", std::process::id())
+    format!(".arashi-delete-{encoded}-")
 }
 
 fn ancestor_identities(path: &Path) -> Result<Vec<(PathBuf, ObjectIdentity)>> {
@@ -336,11 +353,11 @@ fn no_nested_git(path: &Path, root: bool) -> Result<()> {
 
 // Freeze authorized checkout contents, not just porcelain labels: an edit to an
 // already-dirty file must invalidate confirmation. Never follow checkout links.
-fn content_inventory(root: &Path) -> Result<Vec<(PathBuf, ObjectIdentity, Vec<u8>)>> {
+fn content_inventory(root: &Path) -> Result<Vec<(PathBuf, ContentIdentity, Vec<u8>)>> {
     fn visit(
         root: &Path,
         path: &Path,
-        items: &mut Vec<(PathBuf, ObjectIdentity, Vec<u8>)>,
+        items: &mut Vec<(PathBuf, ContentIdentity, Vec<u8>)>,
     ) -> Result<()> {
         let mut entries = fs::read_dir(path)?.collect::<std::io::Result<Vec<_>>>()?;
         entries.sort_by_key(|entry| entry.file_name());
@@ -349,23 +366,23 @@ fn content_inventory(root: &Path) -> Result<Vec<(PathBuf, ObjectIdentity, Vec<u8
                 continue;
             }
             let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)?;
-            let identity = ObjectIdentity::path(&path)?;
-            let bytes = if metadata.file_type().is_symlink() {
+            let pin = filesystem_identity::PinnedObject::open(&path)?;
+            let identity = ContentIdentity::pinned(&pin);
+            let bytes = if identity.kind == filesystem_identity::ObjectKind::Symlink {
                 fs::read_link(&path)?
                     .as_os_str()
                     .as_encoded_bytes()
                     .to_vec()
-            } else if metadata.is_file() {
+            } else if identity.kind == filesystem_identity::ObjectKind::File {
                 fs::read(&path)?
-            } else if metadata.is_dir() {
+            } else if identity.kind == filesystem_identity::ObjectKind::Directory {
                 Vec::new()
             } else {
                 return Err(unsupported(
                     "Delete checkout contains a special file; no changes made",
                 ));
             };
-            if !identity.matches(&path) {
+            if !pin.matches_path(&path)? {
                 return Err(closed(
                     "DELETE_CONCURRENT_CHANGE",
                     "Checkout entry changed while reading",
@@ -373,7 +390,7 @@ fn content_inventory(root: &Path) -> Result<Vec<(PathBuf, ObjectIdentity, Vec<u8
                 ));
             }
             items.push((path.strip_prefix(root).unwrap().to_owned(), identity, bytes));
-            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            if identity.kind == filesystem_identity::ObjectKind::Directory {
                 visit(root, &path, items)?;
             }
         }
@@ -1347,21 +1364,3 @@ pub fn delete(workspace: &Workspace, args: &Args) -> Result<Value> {
 #[cfg(test)]
 #[path = "../../tests/rust/delete_ownership.rs"]
 mod ownership_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::quarantine_name;
-    use std::path::{Component, Path};
-
-    #[test]
-    fn quarantine_name_cannot_inherit_path_components_from_repository_key() {
-        let name = quarantine_name("api/../../outside\\also");
-        assert_eq!(Path::new(&name).components().count(), 1);
-        assert!(matches!(
-            Path::new(&name).components().next(),
-            Some(Component::Normal(_))
-        ));
-        assert!(!name.contains("../"));
-        assert!(!name.contains('\\'));
-    }
-}

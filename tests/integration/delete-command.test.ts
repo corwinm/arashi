@@ -772,7 +772,7 @@ describe("spawned configured repository delete", () => {
     expect(readFileSync(compatibleHook, "utf8")).toBe("echo compatible\n");
   });
 
-  test("reconciles an unledgered worktree removal and a terminal durable receipt", async () => {
+  test("rejects an unledgered worktree removal instead of inferring completion from absence", async () => {
     const { configPath, workspace } = fixture();
     const clone = join(workspace, "repos", "api");
     const linked = join(workspace, ".arashi", "worktrees", "gap", "repos", "api");
@@ -839,30 +839,11 @@ describe("spawned configured repository delete", () => {
     git(clone, "worktree", "remove", "--force", linked);
 
     const deleted = run(workspace, ["delete", "api", "--force", "--json"]);
-    expect(deleted.status, deleted.stderr).toBe(0);
-    const after = readFileSync(configPath);
-    expect(after).toEqual(expectedAfter);
-    const receipt: DeleteResumeReceipt = {
-      ...initialReceipt,
-      completedItemIds: plan.items.map(({ id }: { id: string }) => id),
-      completedPhases: [
-        "provenance",
-        "worktrees",
-        "metadata",
-        "canonical-clone",
-        "workspace-hooks",
-        "configuration",
-      ],
-      remainingPhases: ["verification"],
-    };
-    await createDeleteResumeReceipt(receiptPath, receipt);
-
-    const resumed = run(workspace, ["delete", "api", "--force", "--json"]);
-
-    expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
-    expect(JSON.parse(resumed.stdout).data.repositoryKey).toBe("api");
-    expect(existsSync(receiptPath)).toBe(false);
-    expect(JSON.parse(readFileSync(configPath, "utf8")).repos.api).toBeUndefined();
+    expect(deleted.status, `${deleted.stdout}\n${deleted.stderr}`).toBe(1);
+    expect(JSON.parse(deleted.stdout).error).toMatchObject({ code: "DELETE_PARTIAL_FAILURE" });
+    expect(readFileSync(configPath)).toEqual(before);
+    expect(existsSync(topology.canonicalClonePath)).toBe(true);
+    expect(existsSync(receiptPath)).toBe(true);
   });
 
   test("forced deletion treats a configured linked path as active, not as the canonical clone", () => {

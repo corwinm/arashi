@@ -12,7 +12,7 @@ import {
   stat,
   type FileHandle,
 } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { persistExpectedBytesAtomically } from "./configure-transaction.ts";
 import type { DeletionPathIdentity } from "./delete-identity.ts";
@@ -43,6 +43,9 @@ export interface DeleteResumeReceipt {
     workspaceRoot: string;
     configPath: string;
     clonePath: string;
+    quarantinePath?: string;
+    worktreeQuarantines?: Array<{ path: string; quarantinePath: string }>;
+    destructionPreparedItemIds?: string[];
     hookPaths: string[];
     expectedConfigBase64: string;
     nextConfigBase64: string;
@@ -446,6 +449,23 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
     "topology",
     "identities",
   ];
+  const quarantineRuntimeKeys = [...runtimeKeys, "quarantinePath", "worktreeQuarantines"];
+  const nativeRuntimeKeys = [...quarantineRuntimeKeys, "destructionPreparedItemIds"];
+  const hasQuarantineRuntime =
+    exactKeys(runtime ?? {}, quarantineRuntimeKeys) || exactKeys(runtime ?? {}, nativeRuntimeKeys);
+  const validNativeQuarantines =
+    hasQuarantineRuntime &&
+    typeof runtime?.quarantinePath === "string" &&
+    Array.isArray(runtime.worktreeQuarantines) &&
+    runtime.worktreeQuarantines.every(
+      (entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        exactKeys(entry as Record<string, unknown>, ["path", "quarantinePath"]) &&
+        typeof (entry as Record<string, unknown>).path === "string" &&
+        typeof (entry as Record<string, unknown>).quarantinePath === "string",
+    );
   const validIdentities =
     Array.isArray(identities) &&
     identities.every(
@@ -476,7 +496,8 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
     !stringArray(record.warnings) ||
     !runtime ||
     Array.isArray(runtime) ||
-    !exactKeys(runtime, runtimeKeys) ||
+    (!exactKeys(runtime, runtimeKeys) && !validNativeQuarantines) ||
+    (exactKeys(runtime, nativeRuntimeKeys) && !stringArray(runtime.destructionPreparedItemIds)) ||
     typeof runtime.workspaceRoot !== "string" ||
     typeof runtime.configPath !== "string" ||
     typeof runtime.clonePath !== "string" ||
@@ -550,6 +571,68 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
   const deletionPaths = (value: unknown): string[] =>
     (value as DeletionPathIdentity[]).map(({ path }) => path).toSorted();
   const parsedRuntime = runtime as DeleteResumeReceipt["runtime"];
+  const runtimeWorktreePaths = deletionPaths(parsedRuntime.identities.worktrees);
+  const planSuffix = createHash("sha256")
+    .update(`arashi-delete-quarantine-v1\0${record.planId as string}`)
+    .digest("hex");
+  const expectedCloneQuarantine = join(
+    dirname(parsedRuntime.clonePath),
+    `.arashi-delete-${Buffer.from(record.repositoryKey as string, "utf8").toString("hex")}-${planSuffix}`,
+  );
+  const quarantineMappings = parsedRuntime.worktreeQuarantines ?? [];
+  const expectedMappings = parsedRuntime.identities.worktrees.map(({ path }) => ({
+    path,
+    quarantinePath: join(
+      dirname(path),
+      `.arashi-delete-worktree-${createHash("sha256").update(path, "utf8").digest("hex")}-${planSuffix}`,
+    ),
+  }));
+  const contains = (ancestor: string, candidate: string): boolean => {
+    const value = relative(ancestor, candidate);
+    return (
+      value === "" ||
+      (value !== ".." && !value.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+    );
+  };
+  const protectedPaths = [
+    parsedRuntime.workspaceRoot,
+    parsedRuntime.configPath,
+    parsedRuntime.topology.commonDirectory,
+    parsedRuntime.topology.configuredActivePath,
+    parsedRuntime.topology.primaryPath,
+    parsedRuntime.topology.canonicalClonePath,
+    ...parsedRuntime.topology.inventory.map(({ path }) => path),
+    ...parsedRuntime.topology.linkedWorktrees.flatMap(({ path, metadataPath }) =>
+      metadataPath === null ? [path] : [path, metadataPath],
+    ),
+    ...parsedRuntime.topology.staleMetadata.flatMap(({ path, worktreePath }) => [
+      path,
+      worktreePath,
+    ]),
+    ...receiptIdentities.flatMap(({ path }) => (path === null ? [] : [path])),
+  ];
+  const quarantineDestinations = [
+    parsedRuntime.quarantinePath ?? "",
+    ...quarantineMappings.map(({ quarantinePath }) => quarantinePath),
+  ];
+  const quarantineProvenanceIsConsistent =
+    !hasQuarantineRuntime ||
+    (isAbsolute(parsedRuntime.clonePath) &&
+      parsedRuntime.quarantinePath === expectedCloneQuarantine &&
+      JSON.stringify(quarantineMappings) === JSON.stringify(expectedMappings) &&
+      new Set(quarantineMappings.map(({ path }) => path)).size === quarantineMappings.length &&
+      new Set(quarantineMappings.map(({ quarantinePath }) => quarantinePath)).size ===
+        quarantineMappings.length &&
+      new Set(quarantineDestinations).size === quarantineDestinations.length &&
+      quarantineDestinations.every(
+        (destination) =>
+          isAbsolute(destination) &&
+          protectedPaths.every((protectedPath) => !contains(destination, protectedPath)),
+      ) &&
+      quarantineMappings.every(
+        ({ path, quarantinePath }) =>
+          isAbsolute(path) && path !== quarantinePath && dirname(path) === dirname(quarantinePath),
+      ));
   const deletionIdentitiesAreSelfConsistent = [
     parsedRuntime.identities.clone,
     ...parsedRuntime.identities.worktrees,
@@ -562,14 +645,46 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
     parsedRuntime.identities.clone.path === parsedRuntime.clonePath &&
     pathsForKind("canonical-clone").length === 1 &&
     pathsForKind("canonical-clone")[0] === parsedRuntime.clonePath &&
-    JSON.stringify(deletionPaths(parsedRuntime.identities.worktrees)) ===
-      JSON.stringify(pathsForKind("linked-worktree")) &&
+    JSON.stringify(runtimeWorktreePaths) === JSON.stringify(pathsForKind("linked-worktree")) &&
     JSON.stringify(deletionPaths(parsedRuntime.identities.metadata)) ===
       JSON.stringify(pathsForKind("worktree-metadata")) &&
     JSON.stringify(deletionPaths(parsedRuntime.identities.hooks)) ===
       JSON.stringify(pathsForKind("workspace-hook")) &&
     JSON.stringify([...parsedRuntime.hookPaths].toSorted()) ===
       JSON.stringify(pathsForKind("workspace-hook"));
+  const prepared = parsedRuntime.destructionPreparedItemIds ?? [];
+  const canonicalGroup = receiptIdentities
+    .filter(({ kind }) => kind === "canonical-clone" || kind === "local-ref")
+    .map(({ id }) => id);
+  const preparedKinds = new Set([
+    "linked-worktree",
+    "worktree-metadata",
+    "canonical-clone",
+    "local-ref",
+    "workspace-hook",
+  ]);
+  const preparedGroupIsValid =
+    prepared.length === 0 ||
+    (prepared.length === 1 &&
+      receiptIdentities.some(
+        ({ id, kind }) => id === prepared[0] && preparedKinds.has(kind) && kind !== "local-ref",
+      )) ||
+    (prepared.length === canonicalGroup.length &&
+      canonicalGroup.every((id) => prepared.includes(id)));
+  const preparedLedgerIsConsistent =
+    new Set(prepared).size === prepared.length &&
+    prepared.every(
+      (id) =>
+        !completedItems.has(id) &&
+        receiptIdentities.some(({ id: itemId, kind }) => itemId === id && preparedKinds.has(kind)),
+    ) &&
+    preparedGroupIsValid &&
+    prepared.every((id) => {
+      const item = receiptIdentities.find(({ id: itemId }) => itemId === id);
+      return (
+        item !== undefined && phases.indexOf(receiptPhaseForKind(item.kind)!) === completed.length
+      );
+    });
   if (
     new Set(completed).size !== completed.length ||
     new Set(remaining).size !== remaining.length ||
@@ -582,7 +697,9 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
       (identities as DeleteReceiptIdentity[]).length ||
     !phaseLedgerIsConsistent ||
     !activePhaseIsPrefix ||
-    !runtimeProvenanceIsConsistent
+    !runtimeProvenanceIsConsistent ||
+    !quarantineProvenanceIsConsistent ||
+    !preparedLedgerIsConsistent
   )
     throw new DeleteReceiptError("DELETE_RECEIPT_INVALID", "Delete receipt ledger is invalid.");
   return value as DeleteResumeReceipt;

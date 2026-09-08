@@ -44,6 +44,25 @@ fn stale(message: &str) -> Error {
 fn unsafe_storage(message: &str) -> Error {
     closed("DELETE_RECEIPT_UNSAFE", message, 1)
 }
+fn parent(path: &Path) -> Result<&Path> {
+    path.parent()
+        .ok_or_else(|| invalid("Receipt path parent is unavailable"))
+}
+fn quarantine_suffix(plan_id: &str) -> String {
+    hash(format!("arashi-delete-quarantine-v1\0{plan_id}").as_bytes())
+}
+fn clone_quarantine_path(clone: &Path, key: &str, suffix: &str) -> Result<PathBuf> {
+    Ok(parent(clone)?.join(format!("{}{suffix}", quarantine_prefix(key))))
+}
+fn linked_quarantine_path(path: &Path, suffix: &str) -> Result<PathBuf> {
+    let encoded = path
+        .to_str()
+        .ok_or_else(|| invalid("Non-UTF-8 worktree path"))?;
+    Ok(parent(path)?.join(format!(
+        ".arashi-delete-worktree-{}-{suffix}",
+        hash(encoded.as_bytes())
+    )))
+}
 
 pub(super) fn path(common: &Path, key: &str) -> PathBuf {
     common
@@ -103,7 +122,7 @@ fn read_plain(path: &Path) -> Result<(Vec<u8>, ObjectIdentity)> {
     Ok((bytes, identity))
 }
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn rename_noreplace(source: &Path, destination: &Path) -> Result<()> {
+pub(super) fn rename_noreplace(source: &Path, destination: &Path) -> Result<()> {
     rustix::fs::renameat_with(
         rustix::fs::CWD,
         source,
@@ -115,7 +134,7 @@ fn rename_noreplace(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn rename_noreplace(_source: &Path, _destination: &Path) -> Result<()> {
+pub(super) fn rename_noreplace(_source: &Path, _destination: &Path) -> Result<()> {
     Err(unsafe_storage(
         "Atomic no-replace receipt rename is unavailable on this platform",
     ))
@@ -365,7 +384,7 @@ pub(super) struct Receipt {
 impl Receipt {
     pub fn load(common: &Path, key: &str) -> Result<Option<Self>> {
         let path = path(common, key);
-        let directory = storage(path.parent().unwrap())?;
+        let directory = storage(parent(&path)?)?;
         match fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
@@ -374,7 +393,7 @@ impl Receipt {
         let (bytes, identity) = read_plain(&path)?;
         let record: Value = serde_json::from_slice(&bytes)
             .map_err(|_| invalid("Delete receipt is not UTF-8 JSON"))?;
-        let receipt = Self {
+        let mut receipt = Self {
             path,
             record,
             bytes,
@@ -382,7 +401,50 @@ impl Receipt {
             directory: directory.ok_or_else(|| unsafe_storage("Receipt storage disappeared"))?,
         };
         receipt.validate_schema(common, key)?;
+        if receipt.upgrade_legacy_runtime(key)? {
+            receipt.validate_schema(common, key)?;
+            receipt.persist()?;
+        }
         Ok(Some(receipt))
+    }
+    fn upgrade_legacy_runtime(&mut self, key: &str) -> Result<bool> {
+        let needs_quarantines = self.record["runtime"].get("quarantinePath").is_none();
+        let needs_prepared = self.record["runtime"]
+            .get("destructionPreparedItemIds")
+            .is_none();
+        if !needs_quarantines && !needs_prepared {
+            return Ok(false);
+        }
+        let plan_id = text(&self.record, "planId")?.to_owned();
+        let suffix = quarantine_suffix(&plan_id);
+        let runtime = self.record["runtime"]
+            .as_object_mut()
+            .ok_or_else(|| invalid("Invalid receipt runtime"))?;
+        let clone_path = PathBuf::from(
+            runtime["clonePath"]
+                .as_str()
+                .ok_or_else(|| invalid("Invalid clone path"))?,
+        );
+        if needs_quarantines {
+            runtime.insert(
+                "quarantinePath".to_owned(),
+                json!(clone_quarantine_path(&clone_path, key, &suffix)?),
+            );
+            let worktrees = runtime["identities"]["worktrees"]
+                .as_array()
+                .ok_or_else(|| invalid("Invalid runtime identities"))?
+                .iter()
+                .map(|identity| {
+                    let path = PathBuf::from(text(identity, "path")?);
+                    Ok(json!({"path":path,"quarantinePath":linked_quarantine_path(&path, &suffix)?}))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            runtime.insert("worktreeQuarantines".to_owned(), json!(worktrees));
+        }
+        if needs_prepared {
+            runtime.insert("destructionPreparedItemIds".to_owned(), json!([]));
+        }
+        Ok(true)
     }
     fn validate_schema(&self, common: &Path, key: &str) -> Result<()> {
         let r = &self.record;
@@ -499,7 +561,38 @@ impl Receipt {
             }
         }
         let runtime = &r["runtime"];
-        if !exact(
+        let modern_runtime = exact(
+            runtime,
+            &[
+                "workspaceRoot",
+                "configPath",
+                "clonePath",
+                "quarantinePath",
+                "worktreeQuarantines",
+                "destructionPreparedItemIds",
+                "hookPaths",
+                "expectedConfigBase64",
+                "nextConfigBase64",
+                "topology",
+                "identities",
+            ],
+        );
+        let quarantine_runtime = exact(
+            runtime,
+            &[
+                "workspaceRoot",
+                "configPath",
+                "clonePath",
+                "quarantinePath",
+                "worktreeQuarantines",
+                "hookPaths",
+                "expectedConfigBase64",
+                "nextConfigBase64",
+                "topology",
+                "identities",
+            ],
+        );
+        let legacy_runtime = exact(
             runtime,
             &[
                 "workspaceRoot",
@@ -511,11 +604,94 @@ impl Receipt {
                 "topology",
                 "identities",
             ],
-        ) {
+        );
+        if !modern_runtime && !quarantine_runtime && !legacy_runtime {
             return Err(invalid("Invalid receipt runtime"));
         }
         for field in ["workspaceRoot", "configPath", "clonePath"] {
             text(runtime, field)?;
+        }
+        if modern_runtime || quarantine_runtime {
+            let clone_path = Path::new(text(runtime, "clonePath")?);
+            let quarantine_path = Path::new(text(runtime, "quarantinePath")?);
+            let suffix = quarantine_suffix(text(r, "planId")?);
+            if !clone_path.is_absolute()
+                || quarantine_path != clone_quarantine_path(clone_path, key, &suffix)?
+            {
+                return Err(invalid("Invalid quarantine provenance"));
+            }
+            let worktree_quarantines = runtime["worktreeQuarantines"]
+                .as_array()
+                .ok_or_else(|| invalid("Invalid worktree quarantine provenance"))?;
+            let worktree_paths = runtime["identities"]["worktrees"]
+                .as_array()
+                .ok_or_else(|| invalid("Invalid runtime identities"))?;
+            if worktree_quarantines.len() != worktree_paths.len() {
+                return Err(invalid("Invalid worktree quarantine provenance"));
+            }
+            let mut sources = std::collections::BTreeSet::new();
+            let mut destinations = std::collections::BTreeSet::new();
+            destinations.insert(quarantine_path.to_owned());
+            for (identity, item) in worktree_paths.iter().zip(worktree_quarantines) {
+                if !exact(item, &["path", "quarantinePath"])
+                    || !item["path"].is_string()
+                    || !item["quarantinePath"].is_string()
+                    || identity["path"] != item["path"]
+                {
+                    return Err(invalid("Invalid worktree quarantine provenance"));
+                }
+                let path = Path::new(text(item, "path")?);
+                let quarantine = Path::new(text(item, "quarantinePath")?);
+                if !path.is_absolute()
+                    || quarantine != linked_quarantine_path(path, &suffix)?
+                    || !sources.insert(path.to_owned())
+                    || !destinations.insert(quarantine.to_owned())
+                {
+                    return Err(invalid("Invalid worktree quarantine provenance"));
+                }
+            }
+        }
+        let prepared = if modern_runtime {
+            strings(&runtime["destructionPreparedItemIds"])?
+        } else {
+            Vec::new()
+        };
+        let prepared_set = prepared.iter().collect::<std::collections::BTreeSet<_>>();
+        if prepared_set.len() != prepared.len()
+            || prepared.iter().any(|id| done.contains(id))
+            || prepared.iter().any(|id| !ids.contains(&id.as_str()))
+        {
+            return Err(invalid("Invalid destruction prepared ledger"));
+        }
+        if !prepared.is_empty() {
+            let canonical = items
+                .iter()
+                .filter(|item| matches!(text(item, "kind"), Ok("canonical-clone" | "local-ref")))
+                .map(|item| text(item, "id"))
+                .collect::<Result<Vec<_>>>()?;
+            let one_linked = prepared.len() == 1
+                && items
+                    .iter()
+                    .any(|item| item["id"] == prepared[0] && item["kind"] == "linked-worktree");
+            let canonical_group = prepared.len() == canonical.len()
+                && canonical
+                    .iter()
+                    .all(|id| prepared.iter().any(|value| value == id));
+            if !one_linked && !canonical_group {
+                return Err(invalid("Prepared destruction group is incomplete"));
+            }
+            let active = completed.len();
+            if prepared.iter().any(|id| {
+                items
+                    .iter()
+                    .find(|item| item["id"] == *id)
+                    .and_then(|item| phase(item["kind"].as_str().unwrap_or("")))
+                    != Some(active)
+            }) {
+                return Err(invalid(
+                    "Prepared destruction group is outside the active phase",
+                ));
+            }
         }
         let hooks = strings(&runtime["hookPaths"])?;
         unbase64(text(runtime, "expectedConfigBase64")?)?;
@@ -639,7 +815,7 @@ impl Receipt {
         Ok(())
     }
     pub fn create(plan: &DeletePlan) -> Result<Self> {
-        let common = plan.receipts_path.parent().unwrap();
+        let common = parent(&plan.receipts_path)?;
         let path = path(common, &plan.repository_key);
         if storage(&plan.receipts_path)?.is_none() {
             fs::DirBuilder::new()
@@ -662,8 +838,25 @@ impl Receipt {
             json!({"path":plan.repository_path,"head":plan.checkout_head,"branch":plan.checkout_branch.as_ref().map(|branch| format!("refs/heads/{branch}")),"detached":plan.detached,"bare":false,"locked":null,"prunable":null,"metadataPath":null,"present":true}),
         ];
         inventory.extend(linked.clone());
-        let mut record = json!({"version":1,"planId":"","parentIdentity":hash(format!("{{\"commonDirectory\":{}}}",quoted(common.to_str().unwrap())).as_bytes()),"repositoryKey":plan.repository_key,"configDigest":hash(&plan.config_before),"originalEntryDigest":hash(&original_entry(&plan.config_before,&plan.repository_key)?),"identities":items,"completedItemIds":[],"completedPhases":[],"remainingPhases":PHASES,"retryArgv":["aw","delete",plan.repository_key,"--force","--json"],"warnings":plan.warnings,"runtime":{"workspaceRoot":plan.workspace_root,"configPath":plan.config_path,"clonePath":plan.repository_path,"hookPaths":[],"expectedConfigBase64":base64(&plan.config_before),"nextConfigBase64":base64(&plan.config_after),"topology":{"commonDirectory":plan.repository_path.join(".git"),"configuredActivePath":plan.repository_path,"primaryPath":plan.repository_path,"canonicalClonePath":plan.repository_path,"linkedWorktrees":linked,"staleMetadata":[],"inventory":inventory},"identities":{"clone":capture(&plan.repository_path)?,"worktrees":worktrees,"metadata":[],"hooks":[]}}});
-        record["planId"] = json!(plan_hash(&record)?);
+        let mut record = json!({"version":1,"planId":"","parentIdentity":hash(format!("{{\"commonDirectory\":{}}}",quoted(common.to_str().ok_or_else(|| invalid("Non-UTF-8 parent"))?)).as_bytes()),"repositoryKey":plan.repository_key,"configDigest":hash(&plan.config_before),"originalEntryDigest":hash(&original_entry(&plan.config_before,&plan.repository_key)?),"identities":items,"completedItemIds":[],"completedPhases":[],"remainingPhases":PHASES,"retryArgv":["aw","delete",plan.repository_key,"--force","--json"],"warnings":plan.warnings,"runtime":{"workspaceRoot":plan.workspace_root,"configPath":plan.config_path,"clonePath":plan.repository_path,"hookPaths":[],"expectedConfigBase64":base64(&plan.config_before),"nextConfigBase64":base64(&plan.config_after),"topology":{"commonDirectory":plan.repository_path.join(".git"),"configuredActivePath":plan.repository_path,"primaryPath":plan.repository_path,"canonicalClonePath":plan.repository_path,"linkedWorktrees":linked,"staleMetadata":[],"inventory":inventory},"identities":{"clone":capture(&plan.repository_path)?,"worktrees":worktrees,"metadata":[],"hooks":[]}}});
+        let plan_id = plan_hash(&record)?;
+        record["planId"] = json!(&plan_id);
+        let suffix = quarantine_suffix(&plan_id);
+        record["runtime"]["quarantinePath"] = json!(clone_quarantine_path(
+            &plan.repository_path,
+            &plan.repository_key,
+            &suffix
+        )?);
+        record["runtime"]["worktreeQuarantines"] = json!(
+            plan.linked
+                .iter()
+                .map(|item| Ok(json!({
+                    "path": item.path,
+                    "quarantinePath": linked_quarantine_path(&item.path, &suffix)?,
+                })))
+                .collect::<Result<Vec<_>>>()?
+        );
+        record["runtime"]["destructionPreparedItemIds"] = json!([]);
         let mut bytes = serialize_record(&record)?;
         bytes.push(b'\n');
         let mut file = OpenOptions::new()
@@ -696,7 +889,7 @@ impl Receipt {
         Ok(receipt)
     }
     pub fn check(&self) -> Result<()> {
-        if storage(self.path.parent().unwrap())? != Some(self.directory.clone()) {
+        if storage(parent(&self.path)?)? != Some(self.directory.clone()) {
             return Err(unsafe_storage("Receipt directory identity changed"));
         }
         let (bytes, identity) = read_plain(&self.path)?;
@@ -713,7 +906,7 @@ impl Receipt {
         let quarantine_dir = tempfile::Builder::new()
             .prefix(".receipt-quarantine-")
             .permissions(fs::Permissions::from_mode(0o700))
-            .tempdir_in(self.path.parent().unwrap())?
+            .tempdir_in(parent(&self.path)?)?
             .keep();
         let quarantine = quarantine_dir.join("receipt");
         if let Err(error) = rename_noreplace(&self.path, &quarantine) {
@@ -739,7 +932,7 @@ impl Receipt {
             .map_err(|_| stale("Receipt changed before conditional persistence"))?;
         let mut bytes = serialize_record(&self.record)?;
         bytes.push(b'\n');
-        let mut staged = tempfile::NamedTempFile::new_in(self.path.parent().unwrap())?;
+        let mut staged = tempfile::NamedTempFile::new_in(parent(&self.path)?)?;
         staged.write_all(&bytes)?;
         staged.as_file().sync_all()?;
         let old_bytes = self.bytes.clone();
@@ -751,7 +944,7 @@ impl Receipt {
         if let Err(error) = published {
             return Err(error.into());
         }
-        fs::File::open(self.path.parent().unwrap())?.sync_all()?;
+        fs::File::open(parent(&self.path)?)?.sync_all()?;
         self.bytes = bytes;
         self.identity = ObjectIdentity::path(&self.path)?;
         self.check()
@@ -761,8 +954,8 @@ impl Receipt {
             return Err(stale("Quarantined receipt changed concurrently"));
         }
         fs::remove_file(&quarantine)?;
-        fs::remove_dir(quarantine.parent().unwrap())?;
-        fs::File::open(self.path.parent().unwrap())?.sync_all()?;
+        fs::remove_dir(parent(&quarantine)?)?;
+        fs::File::open(parent(&self.path)?)?.sync_all()?;
         Ok(())
     }
     pub fn persist(&mut self) -> Result<()> {
@@ -779,8 +972,8 @@ impl Receipt {
             return Err(stale("Quarantined receipt changed concurrently"));
         }
         fs::remove_file(&quarantine)?;
-        fs::remove_dir(quarantine.parent().unwrap())?;
-        fs::File::open(self.path.parent().unwrap())?.sync_all()?;
+        fs::remove_dir(parent(&quarantine)?)?;
+        fs::File::open(parent(&self.path)?)?.sync_all()?;
         Ok(())
     }
     pub fn remove(self) -> Result<()> {
@@ -799,6 +992,33 @@ impl Receipt {
         F: FnOnce(),
     {
         self.remove_with(race)
+    }
+    pub fn prepared(&self, id: &str) -> bool {
+        self.record["runtime"]["destructionPreparedItemIds"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|value| value == id))
+    }
+    pub fn prepare(&mut self, ids: &[String]) -> Result<()> {
+        if ids.iter().any(|id| self.done(id)) {
+            return Err(invalid("Cannot prepare an already completed item"));
+        }
+        self.record["runtime"]["destructionPreparedItemIds"] = json!(ids);
+        self.persist()
+    }
+    pub fn complete_prepared(&mut self, ids: &[String]) -> Result<()> {
+        if !ids.iter().all(|id| self.prepared(id)) {
+            return Err(invalid("Destruction completion lacks prepared provenance"));
+        }
+        for id in ids {
+            if !self.done(id) {
+                self.record["completedItemIds"]
+                    .as_array_mut()
+                    .ok_or_else(|| invalid("Invalid completed item ledger"))?
+                    .push(json!(id));
+            }
+        }
+        self.record["runtime"]["destructionPreparedItemIds"] = json!([]);
+        self.persist()
     }
     pub fn done(&self, id: &str) -> bool {
         self.record["completedItemIds"]

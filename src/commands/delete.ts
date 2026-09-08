@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, readFile, realpath, rename } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Command } from "commander";
 import { loadConfigureSnapshot, type ConfigureSnapshot } from "./configure.ts";
 import { ConfigError } from "../lib/config.ts";
@@ -1243,30 +1243,51 @@ const createReceiptRecord = (
   json: boolean,
   completedPhases: DeletePhaseName[],
   completedItemIds: string[],
-): DeleteResumeReceipt => ({
-  version: 1,
-  planId: plan.id,
-  parentIdentity: runtime.parentIdentity,
-  repositoryKey,
-  configDigest: receiptPlanConfigDigest(runtime.acceptedConfigDigest, runtime.expectedConfigBytes),
-  originalEntryDigest: runtime.originalEntryDigest,
-  identities: plan.items.map(({ id, kind, path, ref, oid }) => ({ id, kind, path, ref, oid })),
-  completedItemIds,
-  completedPhases,
-  remainingPhases: DELETE_PHASE_NAMES.filter((phase) => !completedPhases.includes(phase)),
-  retryArgv: ["aw", "delete", repositoryKey, "--force", ...(json ? ["--json"] : [])],
-  warnings: [...plan.warnings],
-  runtime: {
-    workspaceRoot: runtime.workspaceRoot,
-    configPath: runtime.configPath,
-    clonePath: runtime.clonePath,
-    hookPaths: [...runtime.hookPaths],
-    expectedConfigBase64: Buffer.from(runtime.expectedConfigBytes).toString("base64"),
-    nextConfigBase64: Buffer.from(runtime.nextConfigBytes).toString("base64"),
-    topology: runtime.topology,
-    identities: runtime.identities,
-  },
-});
+  destructionPreparedItemIds: string[] = [],
+): DeleteResumeReceipt => {
+  const suffix = createHash("sha256")
+    .update(`arashi-delete-quarantine-v1\0${plan.id}`)
+    .digest("hex");
+  return {
+    version: 1,
+    planId: plan.id,
+    parentIdentity: runtime.parentIdentity,
+    repositoryKey,
+    configDigest: receiptPlanConfigDigest(
+      runtime.acceptedConfigDigest,
+      runtime.expectedConfigBytes,
+    ),
+    originalEntryDigest: runtime.originalEntryDigest,
+    identities: plan.items.map(({ id, kind, path, ref, oid }) => ({ id, kind, path, ref, oid })),
+    completedItemIds,
+    completedPhases,
+    remainingPhases: DELETE_PHASE_NAMES.filter((phase) => !completedPhases.includes(phase)),
+    retryArgv: ["aw", "delete", repositoryKey, "--force", ...(json ? ["--json"] : [])],
+    warnings: [...plan.warnings],
+    runtime: {
+      workspaceRoot: runtime.workspaceRoot,
+      configPath: runtime.configPath,
+      clonePath: runtime.clonePath,
+      quarantinePath: join(
+        dirname(runtime.clonePath),
+        `.arashi-delete-${Buffer.from(repositoryKey, "utf8").toString("hex")}-${suffix}`,
+      ),
+      worktreeQuarantines: runtime.identities.worktrees.map(({ path }) => ({
+        path,
+        quarantinePath: join(
+          dirname(path),
+          `.arashi-delete-worktree-${createHash("sha256").update(path, "utf8").digest("hex")}-${suffix}`,
+        ),
+      })),
+      destructionPreparedItemIds,
+      hookPaths: [...runtime.hookPaths],
+      expectedConfigBase64: Buffer.from(runtime.expectedConfigBytes).toString("base64"),
+      nextConfigBase64: Buffer.from(runtime.nextConfigBytes).toString("base64"),
+      topology: runtime.topology,
+      identities: runtime.identities,
+    },
+  };
+};
 
 const executePlannedRepository = async (
   repositoryKey: string,
@@ -1286,39 +1307,39 @@ const executePlannedRepository = async (
   let durable = false;
   const completedPhases: DeletePhaseName[] = [];
   const completedItemIds: string[] = [];
+  let destructionPreparedItemIds: string[] = [];
   let activePhase: DeletePhase | null = null;
   let activeItemId: string | null = null;
-  const expectedIdentityForItem = (item: DeleteRepositoryItem): DeletionPathIdentity | null => {
-    if (item.kind === "canonical-clone") return runtime.identities.clone;
-    if (item.kind === "linked-worktree")
-      return runtime.identities.worktrees.find(({ path }) => path === item.path) ?? null;
-    if (item.kind === "worktree-metadata")
-      return runtime.identities.metadata.find(({ path }) => path === item.path) ?? null;
-    if (item.kind === "workspace-hook")
-      return runtime.identities.hooks.find(({ path }) => path === item.path) ?? null;
-    return null;
-  };
-  const proveCompleted = async (items: DeleteRepositoryItem[]): Promise<boolean> => {
-    if (items.some(({ kind }) => kind === "config-entry")) {
-      const current = await readFile(runtime.configPath);
-      return Buffer.from(current).equals(Buffer.from(runtime.nextConfigBytes));
-    }
-    const identities = items
-      .map(expectedIdentityForItem)
-      .filter((identity): identity is DeletionPathIdentity => identity !== null);
-    if (identities.length === 0) return false;
-    try {
-      for (const identity of identities) await validateExpectedAbsence(identity);
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  const pathExists = async (path: string): Promise<boolean> =>
+    lstat(path)
+      .then(() => true)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      });
+  const receiptRuntime = (): DeleteResumeReceipt["runtime"] =>
+    createReceiptRecord(
+      repositoryKey,
+      plan,
+      runtime,
+      json,
+      completedPhases,
+      completedItemIds,
+      destructionPreparedItemIds,
+    ).runtime;
   const persist = async (): Promise<void> => {
     receiptBytes = await updateDeleteResumeReceipt(
       runtime.receiptPath,
       receiptBytes!,
-      createReceiptRecord(repositoryKey, plan, runtime, json, completedPhases, completedItemIds),
+      createReceiptRecord(
+        repositoryKey,
+        plan,
+        runtime,
+        json,
+        completedPhases,
+        completedItemIds,
+        destructionPreparedItemIds,
+      ),
     );
     const loaded = await readValidatedDeleteReceipt(runtime.receiptPath, {
       parentIdentity: runtime.parentIdentity,
@@ -1337,19 +1358,36 @@ const executePlannedRepository = async (
   };
   const completeItems = async (
     items: DeleteRepositoryItem[],
-    action: () => Promise<void>,
+    action: (prepared: boolean, prepare: () => Promise<void>) => Promise<void>,
   ): Promise<void> => {
     if (items.every(({ id }) => completedItemIds.includes(id))) return;
+    const ids = items.map(({ id }) => id);
+    const requiresPrepared = items.some(({ kind }) => kind !== "config-entry");
     activeItemId = items.find(({ id }) => !completedItemIds.includes(id))?.id ?? null;
     irreversible = true;
-    durable = false;
-    if (!(await proveCompleted(items))) await action();
+    const alreadyPrepared = ids.every((id) => destructionPreparedItemIds.includes(id));
+    durable = alreadyPrepared;
+    await action(alreadyPrepared, async () => {
+      destructionPreparedItemIds = [...ids];
+      await persist();
+      durable = true;
+    });
+    if (requiresPrepared && !ids.every((id) => destructionPreparedItemIds.includes(id)))
+      throw new Error("Delete destruction completed without durable prepared provenance.");
+    const previousCompleted = [...completedItemIds];
+    completedItemIds.push(...ids.filter((id) => !completedItemIds.includes(id)));
+    destructionPreparedItemIds = [];
+    try {
+      await persist();
+    } catch (error) {
+      completedItemIds.splice(0, completedItemIds.length, ...previousCompleted);
+      destructionPreparedItemIds = [...ids];
+      throw error;
+    }
     for (const item of items) {
-      if (!completedItemIds.includes(item.id)) completedItemIds.push(item.id);
       const resultItem = result.items.find(({ id }) => id === item.id);
       if (resultItem) Object.assign(resultItem, { completed: true, state: "completed" });
     }
-    await persist();
     activeItemId = null;
   };
   try {
@@ -1361,7 +1399,7 @@ const executePlannedRepository = async (
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const existing = await readValidatedDeleteReceipt(runtime.receiptPath, {
+      let existing = await readValidatedDeleteReceipt(runtime.receiptPath, {
         parentIdentity: runtime.parentIdentity,
         repositoryKey,
       });
@@ -1375,10 +1413,31 @@ const executePlannedRepository = async (
         throw deleteError("DELETE_RECEIPT_STALE", "Existing delete receipt is stale.", {
           repositoryKey,
         });
+      if (
+        existing.receipt.runtime.quarantinePath === undefined ||
+        existing.receipt.runtime.worktreeQuarantines === undefined ||
+        existing.receipt.runtime.destructionPreparedItemIds === undefined
+      ) {
+        const upgraded = createReceiptRecord(
+          repositoryKey,
+          plan,
+          runtime,
+          json,
+          existing.receipt.completedPhases as DeletePhaseName[],
+          existing.receipt.completedItemIds,
+          [],
+        );
+        await updateDeleteResumeReceipt(runtime.receiptPath, existing.bytes, upgraded);
+        existing = await readValidatedDeleteReceipt(runtime.receiptPath, {
+          parentIdentity: runtime.parentIdentity,
+          repositoryKey,
+        });
+      }
       receiptBytes = existing.bytes;
       receiptIdentity = existing.identity;
       completedPhases.push(...(existing.receipt.completedPhases as DeletePhaseName[]));
       completedItemIds.push(...existing.receipt.completedItemIds);
+      destructionPreparedItemIds = [...(existing.receipt.runtime.destructionPreparedItemIds ?? [])];
       for (const item of result.items) {
         if (completedItemIds.includes(item.id))
           Object.assign(item, { completed: true, state: "completed" });
@@ -1408,13 +1467,52 @@ const executePlannedRepository = async (
         ({ kind, path }) => kind === "linked-worktree" && path === worktree.path,
       );
       if (!item || completedItemIds.includes(item.id)) continue;
-      await completeItems([item], async () => {
+      await completeItems([item], async (prepared, prepare) => {
         const identity = runtime.identities.worktrees.find(({ path }) => path === worktree.path);
-        if (identity) await validateDeletionIdentity(identity);
-        await gitExec(
-          ["worktree", "remove", "--force", "--", worktree.path],
-          runtime.topology.primaryPath,
-        );
+        if (!identity) throw new Error("Delete worktree identity provenance is missing.");
+        const quarantine = receiptRuntime().worktreeQuarantines?.find(
+          ({ path }) => path === worktree.path,
+        )?.quarantinePath;
+        if (!quarantine) throw new Error("Delete worktree quarantine provenance is missing.");
+        if (!prepared && !(await pathExists(worktree.path))) {
+          if (!(await pathExists(quarantine)))
+            throw deleteError("DELETE_RECEIPT_STALE", "Unprepared worktree deletion is absent.", {
+              repositoryKey,
+            });
+          await rename(quarantine, worktree.path);
+          await validateDeletionIdentity(identity);
+        }
+        if (prepared && (await pathExists(worktree.path)))
+          throw deleteError("DELETE_RECEIPT_STALE", "Prepared worktree source was recreated.", {
+            repositoryKey,
+          });
+        if (await pathExists(quarantine)) {
+          await quarantineAndRemoveIdentity(identity, {
+            quarantinePath: quarantine,
+            alreadyQuarantined: true,
+            preserveQuarantineOnFailure: true,
+          });
+        } else if (!prepared) {
+          await quarantineAndRemoveIdentity(identity, {
+            quarantinePath: quarantine,
+            preserveQuarantineOnFailure: () => destructionPreparedItemIds.includes(item.id),
+            afterRestore: async (restored) => {
+              await gitExec(["worktree", "repair", "--", restored], runtime.topology.primaryPath);
+            },
+            beforeRemove: async (moved) => {
+              await gitExec(["worktree", "repair", "--", moved], runtime.topology.primaryPath);
+              await prepare();
+            },
+          });
+        }
+        if (!prepared && !destructionPreparedItemIds.includes(item.id))
+          throw new Error("Worktree destruction was not durably prepared.");
+        await gitExec(["worktree", "prune", "--expire", "now"], runtime.topology.primaryPath);
+        await validateExpectedAbsence(identity);
+        if (await pathExists(quarantine))
+          throw new Error("Prepared worktree quarantine remains after destruction.");
+        if (worktree.metadataPath && (await pathExists(worktree.metadataPath)))
+          throw new Error("Prepared worktree administration remains after destruction.");
       });
     }
     if (!completedPhases.includes("worktrees")) await finish(activePhase);
@@ -1427,7 +1525,13 @@ const executePlannedRepository = async (
         ({ kind, path }) => kind === "worktree-metadata" && path === metadata.path,
       );
       if (!item || completedItemIds.includes(item.id)) continue;
-      await completeItems([item], () => quarantineAndRemoveIdentity(metadata));
+      await completeItems([item], async (prepared, prepare) => {
+        if (prepared)
+          throw deleteError("DELETE_RECEIPT_STALE", "Prepared metadata recovery is unavailable.", {
+            repositoryKey,
+          });
+        await quarantineAndRemoveIdentity(metadata, { beforeRemove: prepare });
+      });
     }
     if (!completedPhases.includes("metadata")) await finish(activePhase);
     else completePhase(result, activePhase, order++);
@@ -1437,9 +1541,40 @@ const executePlannedRepository = async (
     const cloneItems = plan.items.filter(
       ({ kind }) => kind === "canonical-clone" || kind === "local-ref",
     );
-    await completeItems(cloneItems, async () => {
-      await validateDeletionIdentity(runtime.identities.clone);
-      await quarantineAndRemoveIdentity(runtime.identities.clone);
+    await completeItems(cloneItems, async (prepared, prepare) => {
+      const quarantine = receiptRuntime().quarantinePath;
+      if (!quarantine) throw new Error("Delete clone quarantine provenance is missing.");
+      if (!prepared && !(await pathExists(runtime.identities.clone.path))) {
+        if (!(await pathExists(quarantine)))
+          throw deleteError("DELETE_RECEIPT_STALE", "Unprepared clone deletion is absent.", {
+            repositoryKey,
+          });
+        await rename(quarantine, runtime.identities.clone.path);
+        await validateDeletionIdentity(runtime.identities.clone);
+      }
+      if (prepared && (await pathExists(runtime.identities.clone.path)))
+        throw deleteError("DELETE_RECEIPT_STALE", "Prepared clone source was recreated.", {
+          repositoryKey,
+        });
+      if (await pathExists(quarantine)) {
+        await quarantineAndRemoveIdentity(runtime.identities.clone, {
+          quarantinePath: quarantine,
+          alreadyQuarantined: true,
+          preserveQuarantineOnFailure: true,
+        });
+      } else if (!prepared) {
+        await quarantineAndRemoveIdentity(runtime.identities.clone, {
+          quarantinePath: quarantine,
+          preserveQuarantineOnFailure: () =>
+            cloneItems.every(({ id }) => destructionPreparedItemIds.includes(id)),
+          beforeRemove: prepare,
+        });
+      }
+      if (!prepared && !cloneItems.every(({ id }) => destructionPreparedItemIds.includes(id)))
+        throw new Error("Clone destruction was not durably prepared.");
+      await validateExpectedAbsence(runtime.identities.clone);
+      if (await pathExists(quarantine))
+        throw new Error("Prepared clone quarantine remains after destruction.");
     });
     if (!completedPhases.includes("canonical-clone")) await finish(activePhase);
     else completePhase(result, activePhase, order++);
@@ -1451,7 +1586,13 @@ const executePlannedRepository = async (
         ({ kind, path }) => kind === "workspace-hook" && path === hook.path,
       );
       if (!item || completedItemIds.includes(item.id)) continue;
-      await completeItems([item], () => quarantineAndRemoveIdentity(hook));
+      await completeItems([item], async (prepared, prepare) => {
+        if (prepared)
+          throw deleteError("DELETE_RECEIPT_STALE", "Prepared hook recovery is unavailable.", {
+            repositoryKey,
+          });
+        await quarantineAndRemoveIdentity(hook, { beforeRemove: prepare });
+      });
     }
     if (!completedPhases.includes("workspace-hooks")) await finish(activePhase);
     else completePhase(result, activePhase, order++);

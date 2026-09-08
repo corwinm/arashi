@@ -89,7 +89,7 @@ for change in [
         wrapper = base / "bin"
         wrapper.mkdir()
         (wrapper / "git").write_text(
-            '#!/bin/sh\ncase " $* " in *" worktree remove "*) printf "review denied worktree removal\\n" >&2; exit 1;; esac\nexec '
+            '#!/bin/sh\ncase " $* " in *" worktree repair "*) printf "review denied worktree repair\\n" >&2; exit 1;; esac\nexec '
             + GIT
             + ' "$@"\n'
         )

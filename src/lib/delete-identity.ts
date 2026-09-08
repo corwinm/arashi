@@ -229,33 +229,45 @@ const validateMovedLeaf = async (
 
 export const quarantineAndRemoveIdentity = async (
   captured: DeletionPathIdentity,
-  overrides: Partial<DeletionIdentityIO> = {},
+  overrides: Partial<DeletionIdentityIO> & {
+    quarantinePath?: string;
+    alreadyQuarantined?: boolean;
+    preserveQuarantineOnFailure?: boolean | (() => boolean);
+    afterRestore?: (restored: string) => Promise<void>;
+  } = {},
 ): Promise<void> => {
   const io = resolveIO(overrides);
-  await validateDeletionIdentity(captured, io);
   const parent = captured.ancestors.at(-1);
   if (!parent) return unsafe(captured.path, "parent-unavailable", "Deletion target has no parent.");
-  await inspectForValidation(parent, io, "ancestor-identity-changed");
-  const quarantine = resolve(dirname(captured.path), io.quarantineName());
+  const quarantine =
+    overrides.quarantinePath ?? resolve(dirname(captured.path), io.quarantineName());
   if (dirname(quarantine) !== dirname(captured.path) || quarantine === captured.path)
     unsafe(
       captured.path,
       "quarantine-path-invalid",
       "A same-parent quarantine path is unavailable.",
     );
-  try {
-    await io.rename(captured.path, quarantine);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EXDEV" || code === "ENOTSUP" || code === "EINVAL")
-      unsafe(
-        captured.path,
-        "atomic-rename-unavailable",
-        "Same-parent atomic rename is unavailable.",
-      );
-    if (code === "ENOENT" || code === "EEXIST" || code === "ENOTEMPTY")
-      changed(captured.path, "rename-anomaly", "Deletion target changed during quarantine rename.");
-    throw error;
+  if (!overrides.alreadyQuarantined) {
+    await validateDeletionIdentity(captured, io);
+    await inspectForValidation(parent, io, "ancestor-identity-changed");
+    try {
+      await io.rename(captured.path, quarantine);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EXDEV" || code === "ENOTSUP" || code === "EINVAL")
+        unsafe(
+          captured.path,
+          "atomic-rename-unavailable",
+          "Same-parent atomic rename is unavailable.",
+        );
+      if (code === "ENOENT" || code === "EEXIST" || code === "ENOTEMPTY")
+        changed(
+          captured.path,
+          "rename-anomaly",
+          "Deletion target changed during quarantine rename.",
+        );
+      throw error;
+    }
   }
   try {
     if (io.afterRename) await io.afterRename(captured.path, quarantine);
@@ -266,6 +278,11 @@ export const quarantineAndRemoveIdentity = async (
     await validateMovedLeaf(quarantine, captured, io);
     await io.rm(quarantine, { recursive: captured.leaf.kind === "directory" });
   } catch (error) {
+    const preserve =
+      typeof overrides.preserveQuarantineOnFailure === "function"
+        ? overrides.preserveQuarantineOnFailure()
+        : overrides.preserveQuarantineOnFailure;
+    if (preserve) throw error;
     try {
       await inspectForValidation(parent, io, "ancestor-identity-changed");
       try {
@@ -280,6 +297,7 @@ export const quarantineAndRemoveIdentity = async (
       }
       await validateMovedLeaf(quarantine, captured, io);
       await io.rename(quarantine, captured.path);
+      if (overrides.afterRestore) await overrides.afterRestore(captured.path);
     } catch {
       if (error instanceof DeletionIdentityError && error.reason === "quarantine-identity-changed")
         throw error;

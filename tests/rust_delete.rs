@@ -149,6 +149,36 @@ impl Fixture {
         command.output().unwrap()
     }
 
+    #[cfg(unix)]
+    fn run_with_nofile_limit(&self, args: &[&str], limit: u64) -> Output {
+        let limit = limit.to_string();
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                "ulimit -n \"$1\"; shift; exec \"$@\"",
+                "arashi-delete-rlimit",
+                &limit,
+                env!("CARGO_BIN_EXE_arashi"),
+            ])
+            .args(args)
+            .current_dir(&self.workspace)
+            .env("HOME", &self.home)
+            .env("USERPROFILE", &self.home)
+            .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", self.home.join(".gitconfig"))
+            .env("GIT_AUTHOR_NAME", "Delete Test")
+            .env("GIT_AUTHOR_EMAIL", "delete@example.test")
+            .env("GIT_COMMITTER_NAME", "Delete Test")
+            .env("GIT_COMMITTER_EMAIL", "delete@example.test")
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "commit.gpgSign")
+            .env("GIT_CONFIG_VALUE_0", "false")
+            .env("NO_COLOR", "1");
+        command.output().unwrap()
+    }
+
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             workspace: tree(&self.workspace),
@@ -810,6 +840,31 @@ fn forced_clean_target_deletes_only_the_owned_clone_and_exact_config_entry() {
                     .starts_with(".arashi-delete-")
             })
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_large_checkout_succeeds_with_bounded_file_descriptor_limit() {
+    let fixture = Fixture::new();
+    let bulk = fixture.workspace.join("repos/api/bulk");
+    fs::create_dir(&bulk).unwrap();
+    for index in 0..300 {
+        fs::write(bulk.join(format!("entry-{index:03}")), format!("{index}\n")).unwrap();
+    }
+
+    let output = fixture.run_with_nofile_limit(&["delete", "api", "--force", "--json"], 256);
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!fixture.workspace.join("repos/api").try_exists().unwrap());
+    let config: Value =
+        serde_json::from_slice(&fs::read(fixture.workspace.join(".arashi/config.json")).unwrap())
+            .unwrap();
+    assert!(config["repos"].get("api").is_none());
 }
 
 #[cfg(unix)]

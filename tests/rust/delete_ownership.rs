@@ -1,11 +1,59 @@
 //! Deterministic mutation-boundary tests; only disposable repositories.
 use super::*;
 use std::{
-    process::Command,
+    process::{Child, Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
 };
 static ID: AtomicU64 = AtomicU64::new(0);
 const ISOLATED_TEST: &str = "ARASHI_DELETE_OWNERSHIP_TEST";
+const INTERRUPTED_WORKSPACE: &str = "ARASHI_DELETE_INTERRUPTED_WORKSPACE";
+const RACE_POINT: &str = "ARASHI_DELETE_RACE_POINT";
+
+fn run_race_child(point: &str) -> bool {
+    if std::env::var(RACE_POINT).as_deref() != Ok(point) {
+        return false;
+    }
+    let root = PathBuf::from(std::env::var_os("ARASHI_DELETE_RACE_WORKSPACE").unwrap());
+    let plan = DeletePlan::build(&Workspace::discover(&root).unwrap(), "api").unwrap();
+    let _ = plan.execute();
+    true
+}
+
+fn spawn_race(test: &str, fixture: &Fixture, point: &str) -> (Child, PathBuf) {
+    let ready = fixture.0.join(format!("race-{point}-ready"));
+    let resume = fixture.0.join(format!("race-{point}-resume"));
+    let child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env(ISOLATED_TEST, test)
+        .env(RACE_POINT, point)
+        .env("ARASHI_DELETE_RACE_WORKSPACE", &fixture.0)
+        .env("ARASHI_DELETE_RACE_READY", &ready)
+        .env("ARASHI_DELETE_RACE_RESUME", &resume)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ready.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "race child did not pause"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    (child, resume)
+}
+
+fn finish_race(child: Child, resume: &Path) {
+    fs::write(resume, "resume\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "race child failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 // Reexec instead of mutating the environment of the multithreaded test process.
 // Both fixture Git commands and in-process production reads use this private home.
@@ -321,21 +369,184 @@ fn nested_git_file_is_foreign_even_when_force_authorizes_dirty_loss() {
     assert_eq!(fs::read(nested.join("caller")).unwrap(), b"foreign\n");
 }
 
+#[cfg(unix)]
+#[test]
+fn config_publication_preserves_a_concurrent_unowned_replacement() {
+    if run_race_child("config-publish") {
+        return;
+    }
+    if run_isolated("config_publication_preserves_a_concurrent_unowned_replacement") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let test =
+        "delete::ownership_tests::config_publication_preserves_a_concurrent_unowned_replacement";
+    let (child, resume) = spawn_race(test, &fixture, "config-publish");
+    let config = fixture.0.join(".arashi/config.json");
+    fs::rename(&config, fixture.0.join("accepted-config")).unwrap();
+    fs::write(&config, "foreign configuration\n").unwrap();
+    finish_race(child, &resume);
+    assert_eq!(fs::read(config).unwrap(), b"foreign configuration\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn clone_quarantine_rename_preserves_a_concurrent_unowned_destination() {
+    if run_race_child("clone-rename") {
+        return;
+    }
+    if run_isolated("clone_quarantine_rename_preserves_a_concurrent_unowned_destination") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let test = "delete::ownership_tests::clone_quarantine_rename_preserves_a_concurrent_unowned_destination";
+    let (child, resume) = spawn_race(test, &fixture, "clone-rename");
+    let receipt = receipt::Receipt::load(&fixture.0.join(".git"), "api")
+        .unwrap()
+        .unwrap();
+    let quarantine = PathBuf::from(
+        receipt.record["runtime"]["quarantinePath"]
+            .as_str()
+            .unwrap(),
+    );
+    drop(receipt);
+    fs::create_dir(&quarantine).unwrap();
+    finish_race(child, &resume);
+    assert!(
+        quarantine.is_dir(),
+        "unowned destination was replaced and deleted"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn clone_cleanup_preserves_a_concurrent_unowned_replacement() {
+    if run_race_child("clone-cleanup") {
+        return;
+    }
+    if run_isolated("clone_cleanup_preserves_a_concurrent_unowned_replacement") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let test = "delete::ownership_tests::clone_cleanup_preserves_a_concurrent_unowned_replacement";
+    let (child, resume) = spawn_race(test, &fixture, "clone-cleanup");
+    let receipt = receipt::Receipt::load(&fixture.0.join(".git"), "api")
+        .unwrap()
+        .unwrap();
+    let quarantine = PathBuf::from(
+        receipt.record["runtime"]["quarantinePath"]
+            .as_str()
+            .unwrap(),
+    );
+    drop(receipt);
+    let accepted = fixture.0.join("accepted-quarantine");
+    fs::rename(&quarantine, &accepted).unwrap();
+    fs::create_dir(&quarantine).unwrap();
+    fs::write(quarantine.join("foreign"), "preserve\n").unwrap();
+    finish_race(child, &resume);
+    assert_eq!(fs::read(quarantine.join("foreign")).unwrap(), b"preserve\n");
+    assert!(accepted.join("README").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_worktree_removal_preserves_a_concurrent_unowned_replacement() {
+    if run_race_child("linked-remove") {
+        return;
+    }
+    if run_isolated("linked_worktree_removal_preserves_a_concurrent_unowned_replacement") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let target = fixture.0.join("repos/api");
+    let linked = fixture.0.join("linked");
+    run(
+        &target,
+        &["worktree", "add", "-b", "topic", linked.to_str().unwrap()],
+    );
+    let marker = fs::read(linked.join(".git")).unwrap();
+    let test = "delete::ownership_tests::linked_worktree_removal_preserves_a_concurrent_unowned_replacement";
+    let (child, resume) = spawn_race(test, &fixture, "linked-remove");
+    let accepted = fixture.0.join("accepted-linked");
+    fs::rename(&linked, &accepted).unwrap();
+    fs::create_dir(&linked).unwrap();
+    fs::write(linked.join(".git"), marker).unwrap();
+    fs::write(linked.join("foreign"), "preserve\n").unwrap();
+    finish_race(child, &resume);
+    assert_eq!(fs::read(linked.join("foreign")).unwrap(), b"preserve\n");
+    assert!(accepted.join("README").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_worktree_removal_ignores_a_post_quarantine_canonical_replacement() {
+    if run_race_child("linked-remove-after-quarantine") {
+        return;
+    }
+    if run_isolated("linked_worktree_removal_ignores_a_post_quarantine_canonical_replacement") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let target = fixture.0.join("repos/api");
+    let linked = fixture.0.join("linked");
+    run(
+        &target,
+        &["worktree", "add", "-b", "topic", linked.to_str().unwrap()],
+    );
+    let marker = fs::read(linked.join(".git")).unwrap();
+    let test = "delete::ownership_tests::linked_worktree_removal_ignores_a_post_quarantine_canonical_replacement";
+    let (child, resume) = spawn_race(test, &fixture, "linked-remove-after-quarantine");
+    assert!(!linked.exists(), "accepted worktree was not quarantined");
+    fs::create_dir(&linked).unwrap();
+    fs::write(linked.join(".git"), marker).unwrap();
+    fs::write(linked.join("foreign"), "preserve\n").unwrap();
+    finish_race(child, &resume);
+    assert_eq!(fs::read(linked.join("foreign")).unwrap(), b"preserve\n");
+}
+
 #[test]
 fn ordinary_delete_interrupted_quarantine_is_not_abandoned_on_retry() {
+    if let Some(root) = std::env::var_os(INTERRUPTED_WORKSPACE) {
+        let root = PathBuf::from(root);
+        let plan = DeletePlan::build(&Workspace::discover(&root).unwrap(), "api").unwrap();
+        let receipt = receipt::Receipt::create(&plan).unwrap();
+        let quarantine = PathBuf::from(
+            receipt.record["runtime"]["quarantinePath"]
+                .as_str()
+                .unwrap(),
+        );
+        fs::rename(&plan.repository_path, quarantine).unwrap();
+        return;
+    }
     if run_isolated("ordinary_delete_interrupted_quarantine_is_not_abandoned_on_retry") {
         return;
     }
     let fixture = Fixture::new();
     let plan = fixture.plan();
-    let receipt = receipt::Receipt::create(&plan).unwrap();
-    drop(receipt);
-    let quarantine = plan
-        .repository_path
-        .parent()
+    let test =
+        "delete::ownership_tests::ordinary_delete_interrupted_quarantine_is_not_abandoned_on_retry";
+    let interrupted = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env(ISOLATED_TEST, test)
+        .env(INTERRUPTED_WORKSPACE, &fixture.0)
+        .output()
+        .unwrap();
+    assert!(
+        interrupted.status.success(),
+        "interrupted process failed:\n{}\n{}",
+        String::from_utf8_lossy(&interrupted.stdout),
+        String::from_utf8_lossy(&interrupted.stderr)
+    );
+    let receipt = receipt::Receipt::load(&fixture.0.join(".git"), "api")
         .unwrap()
-        .join(quarantine_name("api"));
-    fs::rename(&plan.repository_path, &quarantine).unwrap();
+        .unwrap();
+    let quarantine = PathBuf::from(
+        receipt.record["runtime"]["quarantinePath"]
+            .as_str()
+            .unwrap(),
+    );
+    assert!(quarantine.is_dir());
+    drop(receipt);
     let args = Args {
         command: "delete".to_owned(),
         positional: vec!["api".to_owned()],
@@ -350,6 +561,219 @@ fn ordinary_delete_interrupted_quarantine_is_not_abandoned_on_retry() {
     );
     assert!(!plan.repository_path.exists());
     assert_eq!(fs::read(&plan.config_path).unwrap(), plan.config_after);
+}
+
+#[cfg(unix)]
+#[test]
+fn ordinary_delete_rejects_a_conflicting_quarantine_generation() {
+    if run_isolated("ordinary_delete_rejects_a_conflicting_quarantine_generation") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let target = fixture.0.join("repos/api");
+    let conflict = target
+        .parent()
+        .unwrap()
+        .join(format!("{}999999", quarantine_prefix("api")));
+    fs::create_dir(&conflict).unwrap();
+    fs::write(conflict.join("foreign"), "preserve\n").unwrap();
+    let result = fixture.plan().execute();
+    assert!(result.is_err(), "conflicting quarantine was ignored");
+    assert!(target.is_dir());
+    assert_eq!(fs::read(conflict.join("foreign")).unwrap(), b"preserve\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_quarantine_paths_use_the_full_domain_separated_plan_identity() {
+    if run_isolated("legacy_quarantine_paths_use_the_full_domain_separated_plan_identity") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let target = fixture.0.join("repos/api");
+    let linked = fixture.0.join("linked");
+    run(
+        &target,
+        &["worktree", "add", "-b", "topic", linked.to_str().unwrap()],
+    );
+    let plan = fixture.plan();
+    let receipt = receipt::Receipt::create(&plan).unwrap();
+    let mut legacy = receipt.record.clone();
+    let plan_id = legacy["planId"].as_str().unwrap().to_owned();
+    legacy["runtime"]
+        .as_object_mut()
+        .unwrap()
+        .remove("quarantinePath");
+    legacy["runtime"]
+        .as_object_mut()
+        .unwrap()
+        .remove("worktreeQuarantines");
+    legacy["runtime"]
+        .as_object_mut()
+        .unwrap()
+        .remove("destructionPreparedItemIds");
+    drop(receipt);
+    fs::write(
+        receipt::path(&fixture.0.join(".git"), "api"),
+        format!("{}\n", serde_json::to_string_pretty(&legacy).unwrap()),
+    )
+    .unwrap();
+
+    let upgraded = receipt::Receipt::load(&fixture.0.join(".git"), "api")
+        .unwrap()
+        .unwrap();
+    let suffix = receipt::hash(format!("arashi-delete-quarantine-v1\0{plan_id}").as_bytes());
+    assert_eq!(suffix.len(), 64);
+    assert_eq!(
+        upgraded.record["runtime"]["quarantinePath"],
+        json!(
+            target
+                .parent()
+                .unwrap()
+                .join(format!("{}{suffix}", quarantine_prefix("api")))
+        )
+    );
+    assert_eq!(
+        upgraded.record["runtime"]["worktreeQuarantines"][0]["quarantinePath"],
+        json!(linked.parent().unwrap().join(format!(
+            ".arashi-delete-worktree-{}-{suffix}",
+            receipt::hash(linked.to_str().unwrap().as_bytes())
+        )))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn modern_receipt_rejects_non_bijective_or_forged_quarantine_mappings() {
+    if run_isolated("modern_receipt_rejects_non_bijective_or_forged_quarantine_mappings") {
+        return;
+    }
+    for mutation in [
+        "wrong-clone",
+        "wrong-source",
+        "duplicate-source",
+        "duplicate-destination",
+    ] {
+        let fixture = Fixture::new();
+        let target = fixture.0.join("repos/api");
+        let linked_a = fixture.0.join("linked-a");
+        let linked_b = fixture.0.join("linked-b");
+        run(
+            &target,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "topic-a",
+                linked_a.to_str().unwrap(),
+            ],
+        );
+        run(
+            &target,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "topic-b",
+                linked_b.to_str().unwrap(),
+            ],
+        );
+        let receipt = receipt::Receipt::create(&fixture.plan()).unwrap();
+        let mut record = receipt.record.clone();
+        drop(receipt);
+        match mutation {
+            "wrong-clone" => {
+                record["runtime"]["quarantinePath"] = json!(fixture.0.join("forged"));
+            }
+            "wrong-source" => {
+                record["runtime"]["worktreeQuarantines"][0]["path"] =
+                    json!(fixture.0.join("foreign"));
+            }
+            "duplicate-source" => {
+                record["runtime"]["worktreeQuarantines"][1]["path"] =
+                    record["runtime"]["worktreeQuarantines"][0]["path"].clone();
+            }
+            "duplicate-destination" => {
+                record["runtime"]["worktreeQuarantines"][1]["quarantinePath"] =
+                    record["runtime"]["worktreeQuarantines"][0]["quarantinePath"].clone();
+            }
+            _ => unreachable!(),
+        }
+        fs::write(
+            receipt::path(&fixture.0.join(".git"), "api"),
+            format!("{}\n", serde_json::to_string_pretty(&record).unwrap()),
+        )
+        .unwrap();
+        let loaded =
+            std::panic::catch_unwind(|| receipt::Receipt::load(&fixture.0.join(".git"), "api"));
+        assert!(loaded.is_ok(), "{mutation}: malformed receipt panicked");
+        assert!(
+            loaded.unwrap().is_err(),
+            "{mutation}: malformed quarantine provenance was accepted"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn canonical_destruction_crash_resumes_from_durable_write_ahead() {
+    if run_race_child("clone-after-destruction") {
+        return;
+    }
+    if run_isolated("canonical_destruction_crash_resumes_from_durable_write_ahead") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let test =
+        "delete::ownership_tests::canonical_destruction_crash_resumes_from_durable_write_ahead";
+    let (mut child, _resume) = spawn_race(test, &fixture, "clone-after-destruction");
+    let target = fixture.0.join("repos/api");
+    assert!(!target.exists());
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let args = Args {
+        command: "delete".to_owned(),
+        positional: vec!["api".to_owned()],
+        options: [("force".to_owned(), vec![]), ("json".to_owned(), vec![])]
+            .into_iter()
+            .collect(),
+    };
+    delete(&Workspace::discover(&fixture.0).unwrap(), &args).unwrap();
+    assert!(!target.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_destruction_crash_resumes_from_durable_write_ahead() {
+    if run_race_child("linked-after-destruction") {
+        return;
+    }
+    if run_isolated("linked_destruction_crash_resumes_from_durable_write_ahead") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let target = fixture.0.join("repos/api");
+    let linked = fixture.0.join("linked");
+    run(
+        &target,
+        &["worktree", "add", "-b", "topic", linked.to_str().unwrap()],
+    );
+    let test = "delete::ownership_tests::linked_destruction_crash_resumes_from_durable_write_ahead";
+    let (mut child, _resume) = spawn_race(test, &fixture, "linked-after-destruction");
+    assert!(!linked.exists());
+    assert!(target.exists());
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let args = Args {
+        command: "delete".to_owned(),
+        positional: vec!["api".to_owned()],
+        options: [("force".to_owned(), vec![]), ("json".to_owned(), vec![])]
+            .into_iter()
+            .collect(),
+    };
+    delete(&Workspace::discover(&fixture.0).unwrap(), &args).unwrap();
+    assert!(!linked.exists());
+    assert!(!target.exists());
 }
 
 #[cfg(unix)]

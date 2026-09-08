@@ -542,22 +542,36 @@ fn network_publication_and_cleanup_failures_follow_source_ordering() {
             let out = observed(&f, &["delete", "api", "--force", "--json"], source);
             assert!(!out.status.success());
             assert_eq!(json(&out)["error"]["code"], "DELETE_PARTIAL_FAILURE");
-            // Source restores the owned (possibly partially cleaned) clone on cleanup
-            // failure, but does not resurrect it after configuration publication fails.
-            assert_eq!(target.exists(), partial);
+            // Destruction is write-ahead prepared before cleanup. A cleanup failure
+            // therefore leaves the exact captured clone in deterministic quarantine,
+            // rather than restoring a partially destroyed repository to its live path.
+            assert!(!target.exists());
+            let cleanup_root = if partial {
+                fs::read_dir(target.parent().unwrap())
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.starts_with(".arashi-delete-617069-"))
+                    })
+                    .expect("prepared clone quarantine")
+                    .join(".git/objects")
+            } else {
+                blocked.clone()
+            };
             assert_eq!(
                 fs::read(f.workspace.join(".arashi/config.json")).unwrap(),
                 config_before
             );
-            fs::set_permissions(&blocked, fs::Permissions::from_mode(0o755)).unwrap();
-            if !partial {
-                let retry = observed(&f, &["delete", "api", "--force", "--json"], source);
-                assert!(
-                    retry.status.success(),
-                    "{}",
-                    String::from_utf8_lossy(&retry.stdout)
-                );
-            }
+            fs::set_permissions(&cleanup_root, fs::Permissions::from_mode(0o755)).unwrap();
+            let retry = observed(&f, &["delete", "api", "--force", "--json"], source);
+            assert!(
+                retry.status.success(),
+                "{}",
+                String::from_utf8_lossy(&retry.stdout)
+            );
             assert_eq!(tree(&f.workspace.join("repos/keep")), keep_before);
             assert_eq!(tree(&f.home), before.home);
             assert_eq!(git(&f.remote, &["show-ref"]), before.remote_refs);
