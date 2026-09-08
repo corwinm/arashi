@@ -240,9 +240,11 @@ fn ignore_findings(w: &Workspace) -> Result<Vec<Value>> {
             }
             rules.push(rule);
         }
-        let local = w
-            .root
-            .join(read_git(&w.root, &["rev-parse", "--git-path", "info/exclude"])?.trim());
+        let git_path = read_git(&w.root, &["rev-parse", "--git-path", "info/exclude"])?;
+        // Git emits slash-delimited paths on Windows; rebuilding components gives
+        // the native spelling used by the retained Node path resolver.
+        let native_git_path: PathBuf = Path::new(git_path.trim()).components().collect();
+        let local = w.root.join(native_git_path);
         for (target, path) in [("local", local), ("tracked", w.root.join(".gitignore"))] {
             let text = match fs::read_to_string(&path) {
                 Ok(s) => s,

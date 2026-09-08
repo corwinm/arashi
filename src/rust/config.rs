@@ -674,7 +674,7 @@ impl Workspace {
             "CONFIG_NOT_FOUND",
             format!(
                 "Configuration file not found at {}. Run \"arashi init\" to create it.",
-                cwd.join(".arashi/config.json").display()
+                cwd.join(".arashi").join("config.json").display()
             ),
         ))
     }

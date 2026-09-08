@@ -207,6 +207,52 @@ fn ordinary_and_outside() {
     f.check(&f.root, &["DOCTOR_NOT_IN_WORKSPACE"]);
     f.check(&f.home, &["DOCTOR_NOT_IN_WORKSPACE"]);
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_config_not_found_path_uses_native_separators() {
+    let outside = Fixture::new(false);
+    let cwd = outside.root.join("résumé");
+    fs::create_dir(&cwd).unwrap();
+    let output = outside.run(false, &cwd, false);
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let error = value["error"]["details"]["findings"][0]["details"]["error"]
+        .as_str()
+        .unwrap();
+    let config_path = cwd.join(".arashi").join("config.json");
+    assert!(
+        error.contains(config_path.to_string_lossy().as_ref()),
+        "configuration error used non-native path separators: {error}"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_managed_ignore_path_uses_native_separators() {
+    let configured = Fixture::new(true);
+    let exclude_path = configured.root.join(".git").join("info").join("exclude");
+    fs::write(
+        &exclude_path,
+        "# BEGIN Arashi managed ignore rules\n/old/\n# END Arashi managed ignore rules\n",
+    )
+    .unwrap();
+    let output = configured.run(false, &configured.root, false);
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let stale = value["data"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["code"] == "MANAGED_IGNORE_STALE_RULE")
+        .unwrap();
+    assert_eq!(stale["details"]["path"], json!(exclude_path));
+    assert!(
+        stale["message"]
+            .as_str()
+            .unwrap()
+            .contains(exclude_path.to_string_lossy().as_ref())
+    );
+}
+
 #[test]
 fn configured_parent_child_order() {
     let f = Fixture::new(true);
