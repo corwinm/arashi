@@ -1,5 +1,6 @@
 import { terminateChild, waitForOutput } from "./child-process.mjs";
 import assert from "node:assert/strict";
+import path from "node:path";
 import { test } from "node:test";
 
 const fixture = await import("./authenticated-git.mjs").catch((error) => {
@@ -166,16 +167,55 @@ test(
   },
 );
 
-test("authenticated Git fixture preserves the installed Git SSL backend", async () => {
+test("installed Git SSL backend probe isolates present and absent system selection", () => {
+  assert.equal(typeof fixture.detectInstalledGitSslBackend, "function");
+  const calls = [];
+  const execute = (command, args, options) => {
+    calls.push({ args, command, options });
+    return calls.length === 1
+      ? { status: 0, stderr: "", stdout: "schannel\n" }
+      : { status: 1, stderr: "", stdout: "" };
+  };
+  assert.equal(fixture.detectInstalledGitSslBackend(execute), "schannel");
+  assert.equal(fixture.detectInstalledGitSslBackend(execute), null);
+  for (const call of calls) {
+    assert.equal(call.command, "git");
+    assert.deepEqual(call.args, ["config", "--system", "--get", "http.sslBackend"]);
+    assert.equal(call.options.encoding, "utf8");
+    assert.equal(call.options.env.GIT_CONFIG_GLOBAL, undefined);
+    assert.equal(call.options.env.GIT_CONFIG_SYSTEM, undefined);
+    assert.equal(call.options.env.GIT_CONFIG_NOSYSTEM, undefined);
+  }
+});
+
+test("authenticated Git fixture isolates Schannel revocation configuration", async () => {
   const server = await fixture.startAuthenticatedGit();
   try {
-    const configuredBackend = await server.run(
-      "git",
-      ["config", "--global", "--get", "http.sslBackend"],
-      { allowFailure: true },
-    );
-    assert.equal(configuredBackend.code, 1);
-    assert.equal(configuredBackend.stdout, "");
+    const configured = (key) =>
+      server.run("git", ["config", "--global", "--get", key], {
+        allowFailure: true,
+        transport: "https",
+      });
+    const expectations = new Map([
+      ["http.sslVerify", "true"],
+      ["http.sslCAInfo", path.join(server.root, "ca.pem")],
+      ["http.schannelUseSSLCAInfo", "true"],
+      ["http.schannelCheckRevoke", "false"],
+    ]);
+    for (const [key, expected] of expectations) {
+      const result = await configured(key);
+      assert.equal(result.code, 0, `${key} must be configured`);
+      assert.equal(result.stdout.trim(), expected);
+    }
+    const configuredBackend = await configured("http.sslBackend");
+    assert.ok("installedSslBackend" in server);
+    if (server.installedSslBackend) {
+      assert.equal(configuredBackend.code, 0);
+      assert.equal(configuredBackend.stdout.trim(), server.installedSslBackend);
+    } else {
+      assert.equal(configuredBackend.code, 1);
+      assert.equal(configuredBackend.stdout, "");
+    }
   } finally {
     await server.close();
   }

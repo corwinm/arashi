@@ -11,6 +11,36 @@ import ssh2 from "ssh2";
 
 const quote = (value) => `'${value.replaceAll("'", String.raw`'\''`)}'`;
 const equal = (a, b) => a.length === b.length && timingSafeEqual(a, b);
+const supportedSslBackends = new Set([
+  "gnutls",
+  "mbedtls",
+  "openssl",
+  "rustls",
+  "schannel",
+  "secure-transport",
+  "wolfssl",
+]);
+
+export function detectInstalledGitSslBackend(execute = spawnSync) {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (/^(path|programdata|systemroot|windir|temp|tmp|pathext)$/i.test(key)) {
+      env[key] = value;
+    }
+  }
+  const result = execute("git", ["config", "--system", "--get", "http.sslBackend"], {
+    encoding: "utf8",
+    env,
+    windowsHide: true,
+  });
+  const backend = result.stdout.trim().toLowerCase();
+  if (result.status === 1 && backend === "") {
+    return null;
+  }
+  assert.equal(result.status, 0, "cannot inspect the installed Git SSL backend");
+  assert.ok(supportedSslBackends.has(backend), `unsupported installed Git SSL backend: ${backend}`);
+  return backend;
+}
 
 export async function withCleanup(action, cleanup) {
   let result = null;
@@ -62,6 +92,7 @@ export async function removeFixtureRoot(root) {
 // Named API is shared by Rust-driven acceptance and the fixture regression.
 // oxlint-disable-next-line import/prefer-default-export
 export async function startAuthenticatedGit() {
+  const installedSslBackend = detectInstalledGitSslBackend();
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "arashi-auth-")));
   fs.chmodSync(root, 0o700);
   const file = (name) => path.join(root, name);
@@ -465,6 +496,7 @@ export async function startAuthenticatedGit() {
     for (const mode of ["valid", "wrong-credential", "wrong-trust"]) {
       const wrongCredential = mode === "wrong-credential",
         wrongTrust = mode === "wrong-trust";
+      const sslBackend = installedSslBackend ? ` sslBackend = ${installedSslBackend}\n` : "";
       write(
         `${mode}.known_hosts`,
         `[127.0.0.1]:${sshPort} ${fs.readFileSync(file(wrongTrust ? "wrong-host.pub" : "host.pub"), "utf8")}`,
@@ -476,7 +508,7 @@ export async function startAuthenticatedGit() {
       const helper = `!${quote(process.execPath)} ${quote(file("credential.cjs"))} ${quote(file(wrongCredential ? "wrong-credentials.json" : "credentials.json"))}`;
       write(
         `${mode}.gitconfig`,
-        `${fs.readFileSync(file("gitconfig"), "utf8")}[http]\n sslVerify = true\n sslCAInfo = ${JSON.stringify(file(wrongTrust ? "wrong-ca.pem" : "ca.pem"))}\n schannelUseSSLCAInfo = true\n[credential]\n helper = ${JSON.stringify(helper)}\n`,
+        `${fs.readFileSync(file("gitconfig"), "utf8")}[http]\n${sslBackend} sslVerify = true\n sslCAInfo = ${JSON.stringify(file(wrongTrust ? "wrong-ca.pem" : "ca.pem"))}\n schannelUseSSLCAInfo = true\n schannelCheckRevoke = false\n[credential]\n helper = ${JSON.stringify(helper)}\n`,
       );
     }
     let serial = 0;
@@ -504,6 +536,7 @@ export async function startAuthenticatedGit() {
       },
       events,
       git,
+      installedSslBackend,
       remote,
       root,
       run,
