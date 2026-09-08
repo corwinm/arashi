@@ -136,6 +136,104 @@ fn run(path: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn malformed_porcelain_v2_tracked_records_fail_closed() {
+    let oid = "0123456789012345678901234567890123456789";
+    let valid = [
+        format!("1 M. N... 100644 100644 100644 {oid} {oid} file\0"),
+        format!("2 R. N... 100644 100644 100644 {oid} {oid} R100 new\0old\0"),
+        format!("u UU N... 100644 100644 100644 100644 {oid} {oid} {oid} file\0"),
+    ];
+    for record in valid {
+        assert!(
+            parse_checkout_loss_warnings(Path::new("/repo"), &record).is_ok(),
+            "valid control={record:?}"
+        );
+    }
+    let malformed = [
+        format!("1 ZZ N... 100644 100644 100644 {oid} {oid} file\0"),
+        format!("1 M. N... 100644 100648 100644 {oid} {oid} file\0"),
+        format!("1 M. N... 100644 100644 100644 nope {oid} file\0"),
+        format!("1 M. broken 100644 100644 100644 {oid} {oid} file\0"),
+        format!("2 R. N... 100644 100644 100644 {oid} {oid} R101 new\0old\0"),
+        format!("2 R. N... 100644 100644 100644 {oid} {oid} R100 new\0../old\0"),
+        format!("u XX N... 100644 100644 100644 100644 {oid} {oid} {oid} file\0"),
+        format!("u UU N... 100644 100644 100644 100644 {oid} {oid} nope file\0"),
+        format!("u UU N... 100644 100644 100644 {oid} {oid} {oid} file\0"),
+    ];
+    for record in malformed {
+        let error = parse_checkout_loss_warnings(Path::new("/repo"), &record).unwrap_err();
+        assert_eq!(error.code, "DELETE_GIT_DATA_LOSS", "record={record:?}");
+    }
+}
+
+#[test]
+fn transaction_failure_classification_respects_irreversible_boundary() {
+    let before = transaction::classify_execution_failure(
+        closed(
+            "DELETE_CONCURRENT_CHANGE",
+            "pre-destructive revalidation failed",
+            1,
+        ),
+        false,
+        "worktrees",
+        json!({"phase":"worktrees"}),
+        "api",
+    );
+    assert_eq!(before.code, "DELETE_CONCURRENT_CHANGE");
+    assert_eq!(before.message, "pre-destructive revalidation failed");
+
+    let after = transaction::classify_execution_failure(
+        closed(
+            "DELETE_CONCURRENT_CHANGE",
+            "pre-destructive revalidation failed",
+            1,
+        ),
+        true,
+        "worktrees",
+        json!({"phase":"worktrees"}),
+        "api",
+    );
+    assert_eq!(after.code, "DELETE_PARTIAL_FAILURE");
+    assert_eq!(after.details.unwrap()["repositoryKey"], "api");
+}
+
+#[cfg(unix)]
+#[test]
+fn receipt_updates_and_retirement_preserve_concurrent_replacements() {
+    if run_isolated("receipt_updates_and_retirement_preserve_concurrent_replacements") {
+        return;
+    }
+    for retiring in [false, true] {
+        let fixture = Fixture::new();
+        let plan = fixture.plan();
+        let mut receipt = receipt::Receipt::create(&plan).unwrap();
+        let receipt_path = receipt::path(&fixture.0.join(".git"), "api");
+        let saved = receipt_path.with_extension(if retiring {
+            "retire-old"
+        } else {
+            "persist-old"
+        });
+        let replacement = format!("concurrent replacement {retiring}\n").into_bytes();
+        let race = || {
+            fs::rename(&receipt_path, &saved).unwrap();
+            fs::write(&receipt_path, &replacement).unwrap();
+        };
+        let error = if retiring {
+            receipt.remove_with_race(race).unwrap_err()
+        } else {
+            receipt.persist_with_race(race).unwrap_err()
+        };
+        assert_eq!(error.code, "DELETE_RECEIPT_STALE");
+        assert_eq!(fs::read(&receipt_path).unwrap(), replacement);
+        assert!(
+            saved.exists(),
+            "the accepted receipt must remain recoverable"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn delete_identity_keeps_removed_object_allocated() {

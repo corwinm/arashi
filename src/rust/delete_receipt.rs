@@ -2,7 +2,7 @@
 use super::*;
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 unsafe extern "C" {
     fn geteuid() -> u32;
 }
@@ -101,6 +101,24 @@ fn read_plain(path: &Path) -> Result<(Vec<u8>, ObjectIdentity)> {
         return Err(unsafe_storage("Delete receipt changed while reading"));
     }
     Ok((bytes, identity))
+}
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn rename_noreplace(source: &Path, destination: &Path) -> Result<()> {
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        source,
+        rustix::fs::CWD,
+        destination,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(std::io::Error::from)?;
+    Ok(())
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn rename_noreplace(_source: &Path, _destination: &Path) -> Result<()> {
+    Err(unsafe_storage(
+        "Atomic no-replace receipt rename is unavailable on this platform",
+    ))
 }
 fn exact(value: &Value, keys: &[&str]) -> bool {
     value
@@ -687,25 +705,100 @@ impl Receipt {
         }
         Ok(())
     }
-    pub fn persist(&mut self) -> Result<()> {
-        self.check()?;
+    fn quarantine_with<F>(&self, before_rename: F) -> Result<PathBuf>
+    where
+        F: FnOnce(),
+    {
+        before_rename();
+        let quarantine_dir = tempfile::Builder::new()
+            .prefix(".receipt-quarantine-")
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir_in(self.path.parent().unwrap())?
+            .keep();
+        let quarantine = quarantine_dir.join("receipt");
+        if let Err(error) = rename_noreplace(&self.path, &quarantine) {
+            let _ = fs::remove_dir(&quarantine_dir);
+            return Err(error);
+        }
+        let accepted = read_plain(&quarantine)
+            .is_ok_and(|(bytes, identity)| bytes == self.bytes && identity == self.identity);
+        if !accepted {
+            let restored = rename_noreplace(&quarantine, &self.path);
+            if restored.is_ok() {
+                let _ = fs::remove_dir(&quarantine_dir);
+            }
+            return Err(stale("Receipt bytes or identity changed concurrently"));
+        }
+        Ok(quarantine)
+    }
+    fn persist_with<F>(&mut self, before_rename: F) -> Result<()>
+    where
+        F: FnOnce(),
+    {
+        self.check()
+            .map_err(|_| stale("Receipt changed before conditional persistence"))?;
         let mut bytes = serialize_record(&self.record)?;
         bytes.push(b'\n');
         let mut staged = tempfile::NamedTempFile::new_in(self.path.parent().unwrap())?;
         staged.write_all(&bytes)?;
         staged.as_file().sync_all()?;
-        self.check()?;
-        fs::rename(staged.path(), &self.path)?;
+        let old_bytes = self.bytes.clone();
+        let old_identity = self.identity.clone();
+        let quarantine = self.quarantine_with(before_rename)?;
+        let published = staged
+            .persist_noclobber(&self.path)
+            .map_err(|error| error.error);
+        if let Err(error) = published {
+            return Err(error.into());
+        }
         fs::File::open(self.path.parent().unwrap())?.sync_all()?;
         self.bytes = bytes;
         self.identity = ObjectIdentity::path(&self.path)?;
         self.check()
-    }
-    pub fn remove(self) -> Result<()> {
-        self.check()?;
-        fs::remove_file(&self.path)?;
+            .map_err(|_| stale("Published receipt could not be revalidated"))?;
+        let (quarantined_bytes, quarantined_identity) = read_plain(&quarantine)?;
+        if quarantined_bytes != old_bytes || quarantined_identity != old_identity {
+            return Err(stale("Quarantined receipt changed concurrently"));
+        }
+        fs::remove_file(&quarantine)?;
+        fs::remove_dir(quarantine.parent().unwrap())?;
         fs::File::open(self.path.parent().unwrap())?.sync_all()?;
         Ok(())
+    }
+    pub fn persist(&mut self) -> Result<()> {
+        self.persist_with(|| {})
+    }
+    fn remove_with<F>(self, before_rename: F) -> Result<()>
+    where
+        F: FnOnce(),
+    {
+        self.check()?;
+        let quarantine = self.quarantine_with(before_rename)?;
+        let (bytes, identity) = read_plain(&quarantine)?;
+        if bytes != self.bytes || identity != self.identity {
+            return Err(stale("Quarantined receipt changed concurrently"));
+        }
+        fs::remove_file(&quarantine)?;
+        fs::remove_dir(quarantine.parent().unwrap())?;
+        fs::File::open(self.path.parent().unwrap())?.sync_all()?;
+        Ok(())
+    }
+    pub fn remove(self) -> Result<()> {
+        self.remove_with(|| {})
+    }
+    #[cfg(test)]
+    pub(super) fn persist_with_race<F>(&mut self, race: F) -> Result<()>
+    where
+        F: FnOnce(),
+    {
+        self.persist_with(race)
+    }
+    #[cfg(test)]
+    pub(super) fn remove_with_race<F>(self, race: F) -> Result<()>
+    where
+        F: FnOnce(),
+    {
+        self.remove_with(race)
     }
     pub fn done(&self, id: &str) -> bool {
         self.record["completedItemIds"]

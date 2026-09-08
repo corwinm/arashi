@@ -357,6 +357,7 @@ pub(super) fn execute(
         }
     }
     let mut active = 0usize;
+    let mut irreversible_started = false;
     let mut durable = true;
     let operation = (|| -> Result<()> {
         for phase in 0..6 {
@@ -403,6 +404,7 @@ pub(super) fn execute(
                             }
                             receipt.check()?;
                             durable = false;
+                            irreversible_started = true;
                             git::run(
                                 &clone_path,
                                 &[
@@ -446,6 +448,7 @@ pub(super) fn execute(
                             }
                             receipt.check()?;
                             durable = false;
+                            irreversible_started = true;
                             fs::rename(&clone_path, &quarantine)?;
                             let remove = (|| -> Result<()> {
                                 // The original parent chain must still be owned after rename.
@@ -491,6 +494,7 @@ pub(super) fn execute(
                         receipt.check()?;
                         durable = false;
                         if fs::read(&config_path)? != after {
+                            irreversible_started = true;
                             publish(&config_path, &before, &after)?;
                         }
                         receipt.complete(&ids)?;
@@ -523,14 +527,33 @@ pub(super) fn execute(
             // mutated state; a validated on-disk file alone is not safe retry proof.
             durable = durable && receipt.check().is_ok();
             let output = result(&receipt, Some(active), durable, Some(&error));
-            Err(closed(
-                "DELETE_PARTIAL_FAILURE",
-                format!("Delete phase {} failed: {}", PHASES[active], error.message),
-                1,
-            )
-            .with_details(json!({"result":output,"repositoryKey":receipt.record["repositoryKey"]})))
+            Err(classify_execution_failure(
+                error,
+                irreversible_started,
+                PHASES[active],
+                output,
+                receipt.record["repositoryKey"].as_str().unwrap(),
+            ))
         }
     }
+}
+
+pub(super) fn classify_execution_failure(
+    error: Error,
+    irreversible_started: bool,
+    phase: &str,
+    output: Value,
+    repository_key: &str,
+) -> Error {
+    if !irreversible_started {
+        return error;
+    }
+    closed(
+        "DELETE_PARTIAL_FAILURE",
+        format!("Delete phase {phase} failed: {}", error.message),
+        1,
+    )
+    .with_details(json!({"result":output,"repositoryKey":repository_key}))
 }
 pub(super) fn preview(
     receipt: &Receipt,

@@ -28,8 +28,7 @@ use std::{
 use std::{fs::OpenOptions, io::Write};
 use worktree::LinkedCheckout;
 
-#[path = "fs_identity.rs"]
-mod filesystem_identity;
+use crate::fs_identity as filesystem_identity;
 #[derive(Clone, Debug)]
 struct ObjectIdentity {
     pin: std::sync::Arc<filesystem_identity::PinnedObject>,
@@ -1003,7 +1002,135 @@ impl DeletePlan {
     }
 }
 
+fn malformed_loss_evidence() -> Error {
+    closed(
+        "DELETE_GIT_DATA_LOSS",
+        "Malformed porcelain-v2 loss evidence",
+        1,
+    )
+}
+fn valid_xy(value: &str, kind: u8) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 2 {
+        return false;
+    }
+    match kind {
+        b'1' => b".MTAD".contains(&bytes[0]) && b".MTD".contains(&bytes[1]) && bytes != b"..",
+        b'2' => matches!(bytes[0], b'R' | b'C') && b".MTADU".contains(&bytes[1]),
+        b'u' => matches!(value, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU"),
+        _ => false,
+    }
+}
+fn valid_submodule(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes == b"N..."
+        || (bytes.len() == 4
+            && bytes[0] == b'S'
+            && matches!(bytes[1], b'.' | b'C')
+            && matches!(bytes[2], b'.' | b'M')
+            && matches!(bytes[3], b'.' | b'U'))
+}
+fn valid_mode(value: &str) -> bool {
+    value.len() == 6 && value.bytes().all(|byte| matches!(byte, b'0'..=b'7'))
+}
+fn valid_oid(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+fn valid_status_path(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('/')
+        && value
+            .split('/')
+            .all(|component| !matches!(component, "" | "." | ".."))
+}
+fn valid_score(value: &str, status: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 2
+        && bytes.len() <= 4
+        && bytes[0] == status.as_bytes()[0]
+        && bytes[1..].iter().all(u8::is_ascii_digit)
+        && value[1..].parse::<u8>().is_ok_and(|score| score <= 100)
+}
+
 // Source receipts store semantic porcelain-v2 evidence, not quoted v1 lines.
+fn parse_checkout_loss_warnings(path: &Path, output: &str) -> Result<Vec<String>> {
+    if output.is_empty() {
+        return Ok(Vec::new());
+    }
+    let text = output
+        .strip_suffix('\0')
+        .ok_or_else(malformed_loss_evidence)?;
+    let mut records = text.split('\0');
+    let mut warnings = Vec::new();
+    while let Some(record) = records.next() {
+        let kind = *record
+            .as_bytes()
+            .first()
+            .ok_or_else(malformed_loss_evidence)?;
+        let (label, status, name) = match kind {
+            b'?' | b'!' => {
+                let name = record
+                    .get(2..)
+                    .filter(|name| valid_status_path(name))
+                    .ok_or_else(malformed_loss_evidence)?;
+                if record.as_bytes().get(1) != Some(&b' ') {
+                    return Err(malformed_loss_evidence());
+                }
+                (
+                    if kind == b'?' { "untracked" } else { "ignored" },
+                    &record[..1],
+                    name,
+                )
+            }
+            b'1' | b'2' | b'u' => {
+                let count = match kind {
+                    b'1' => 9,
+                    b'2' => 10,
+                    _ => 11,
+                };
+                let fields = record.splitn(count, ' ').collect::<Vec<_>>();
+                let modes = match kind {
+                    b'1' | b'2' => &fields.get(3..6),
+                    _ => &fields.get(3..7),
+                };
+                let oids = match kind {
+                    b'1' | b'2' => &fields.get(6..8),
+                    _ => &fields.get(7..10),
+                };
+                if fields.len() != count
+                    || fields.iter().any(|field| field.is_empty())
+                    || !valid_xy(fields[1], kind)
+                    || !valid_submodule(fields[2])
+                    || !modes.is_some_and(|values| values.iter().all(|value| valid_mode(value)))
+                    || !oids.is_some_and(|values| values.iter().all(|value| valid_oid(value)))
+                    || !valid_status_path(fields[count - 1])
+                    || (kind == b'2' && !valid_score(fields[8], fields[1]))
+                {
+                    return Err(malformed_loss_evidence());
+                }
+                if kind == b'2' && !records.next().is_some_and(valid_status_path) {
+                    return Err(malformed_loss_evidence());
+                }
+                (
+                    if kind == b'u' {
+                        "conflicted"
+                    } else {
+                        "tracked"
+                    },
+                    fields[1],
+                    fields[count - 1],
+                )
+            }
+            b'#' => continue,
+            _ => return Err(malformed_loss_evidence()),
+        };
+        warnings.push(format!(
+            "DELETE_GIT_DATA_LOSS: {}: {label} {status} {name}",
+            path.display()
+        ));
+    }
+    Ok(warnings)
+}
 fn checkout_loss_warnings(path: &Path) -> Result<Vec<String>> {
     let output = git::run_readonly(
         path,
@@ -1017,75 +1144,7 @@ fn checkout_loss_warnings(path: &Path) -> Result<Vec<String>> {
             "--untracked-files=all",
         ],
     )?;
-    let malformed = || {
-        closed(
-            "DELETE_GIT_DATA_LOSS",
-            "Malformed porcelain-v2 loss evidence",
-            1,
-        )
-    };
-    if output.is_empty() {
-        return Ok(Vec::new());
-    }
-    let text = output.strip_suffix('\0').ok_or_else(malformed)?;
-    let mut records = text.split('\0');
-    let mut warnings = Vec::new();
-    while let Some(record) = records.next() {
-        let kind = record.as_bytes().first().ok_or_else(malformed)?;
-        let (label, status, name) = match kind {
-            b'?' | b'!' => {
-                let name = record
-                    .get(2..)
-                    .filter(|name| !name.is_empty())
-                    .ok_or_else(malformed)?;
-                if record.as_bytes().get(1) != Some(&b' ') {
-                    return Err(malformed());
-                }
-                (
-                    if *kind == b'?' {
-                        "untracked"
-                    } else {
-                        "ignored"
-                    },
-                    &record[..1],
-                    name,
-                )
-            }
-            b'1' | b'2' | b'u' => {
-                let count = match kind {
-                    b'1' => 9,
-                    b'2' => 10,
-                    _ => 11,
-                };
-                let fields = record.splitn(count, ' ').collect::<Vec<_>>();
-                if fields.len() != count
-                    || fields.iter().any(|field| field.is_empty())
-                    || fields[1].len() != 2
-                {
-                    return Err(malformed());
-                }
-                if *kind == b'2' && records.next().is_none_or(str::is_empty) {
-                    return Err(malformed());
-                }
-                (
-                    if *kind == b'u' {
-                        "conflicted"
-                    } else {
-                        "tracked"
-                    },
-                    fields[1],
-                    fields[count - 1],
-                )
-            }
-            b'#' => continue,
-            _ => return Err(malformed()),
-        };
-        warnings.push(format!(
-            "DELETE_GIT_DATA_LOSS: {}: {label} {status} {name}",
-            path.display()
-        ));
-    }
-    Ok(warnings)
+    parse_checkout_loss_warnings(path, &output)
 }
 
 /// Immutable prompt boundary. Prepare/preview never acquire the mutation lock;
