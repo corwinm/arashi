@@ -45,12 +45,17 @@ let completed = 0;
 const writeProgress = () => {
   if (progressPath) writeFileSync(progressPath, `${completed}/${rows.length}`);
 };
+const escapeCharacter = String.fromCodePoint(27);
 const writeKeys = (child, keys) => {
-  if (process.platform !== "win32" || !/[\x1b\u{10000}-\u{10ffff}]/u.test(keys)) {
+  if (
+    process.platform !== "win32" ||
+    !new RegExp(`[${escapeCharacter}\\u{10000}-\\u{10ffff}]`, "u").test(keys)
+  ) {
     child.write(keys);
     return;
   }
-  const tokens = keys.match(/\x1b(?:\[[0-9;]*[A-Za-z~]|.)|[\s\S]/gu) ?? [];
+  const tokens =
+    keys.match(new RegExp(`${escapeCharacter}(?:\\[[0-9;]*[A-Za-z~]|.)|[\\s\\S]`, "gu")) ?? [];
   const writeNext = (index) => {
     if (index === tokens.length) return;
     child.write(tokens[index]);
