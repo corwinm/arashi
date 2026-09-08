@@ -3,10 +3,47 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        Condvar, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+const MAX_NATIVE_COMMANDS: usize = 4;
+static NATIVE_COMMANDS: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+
+struct NativeCommandPermit;
+
+impl NativeCommandPermit {
+    fn acquire() -> Self {
+        let (active, available) = &NATIVE_COMMANDS;
+        let mut active = active.lock().unwrap_or_else(|error| error.into_inner());
+        while *active >= MAX_NATIVE_COMMANDS {
+            active = available
+                .wait(active)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        *active += 1;
+        Self
+    }
+}
+
+impl Drop for NativeCommandPermit {
+    fn drop(&mut self) {
+        let (active, available) = &NATIVE_COMMANDS;
+        let mut active = active.lock().unwrap_or_else(|error| error.into_inner());
+        *active -= 1;
+        available.notify_one();
+    }
+}
+
+fn time_native_command<T>(command: impl FnOnce() -> T) -> (T, std::time::Duration) {
+    let _permit = NativeCommandPermit::acquire();
+    let started = std::time::Instant::now();
+    let output = command();
+    (output, started.elapsed())
+}
 
 #[cfg(unix)]
 const TIMEOUT_FIXTURE_PRE_MUTATION_DELAY_SECS: u64 = 2;
@@ -75,17 +112,26 @@ impl Fixture {
         .unwrap();
     }
     fn run(&self, args: &[&str]) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
-        command.args(args).current_dir(&self.root);
-        isolated(&mut command, &self.home);
-        command.output().unwrap()
+        time_native_command(|| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
+            command.args(args).current_dir(&self.root);
+            isolated(&mut command, &self.home);
+            command.output().unwrap()
+        })
+        .0
     }
     #[cfg(unix)]
     fn run_with_path(&self, args: &[&str], path: &str) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
-        command.args(args).current_dir(&self.root).env("PATH", path);
-        isolated(&mut command, &self.home);
-        command.output().unwrap()
+        self.run_with_path_timed(args, path).0
+    }
+    #[cfg(unix)]
+    fn run_with_path_timed(&self, args: &[&str], path: &str) -> (Output, std::time::Duration) {
+        time_native_command(|| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
+            command.args(args).current_dir(&self.root).env("PATH", path);
+            isolated(&mut command, &self.home);
+            command.output().unwrap()
+        })
     }
     fn json(&self, args: &[&str]) -> (Output, Value) {
         let output = self.run(args);
@@ -114,9 +160,60 @@ fn isolated(command: &mut Command, home: &Path) {
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("XDG_CONFIG_HOME", home)
+        // Native process-tree lineage files must be fixture-private. The shared
+        // OS temp directory allows stale same-PID names from another concurrent
+        // fixture to make Lineage::create fail with EEXIST.
+        .env("TMPDIR", home)
+        .env("TMP", home)
+        .env("TEMP", home)
         .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_TERMINAL_PROMPT", "0");
+}
+
+#[test]
+fn fixture_commands_use_private_temp_namespaces() {
+    let first = Fixture::new(&[]);
+    let second = Fixture::new(&[]);
+    let temp_dirs = |fixture: &Fixture| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
+        isolated(&mut command, &fixture.home);
+        ["TMPDIR", "TMP", "TEMP"].map(|key| {
+            command
+                .get_envs()
+                .find(|(candidate, _)| *candidate == key)
+                .and_then(|(_, value)| value)
+                .unwrap()
+                .to_owned()
+        })
+    };
+
+    assert_eq!(temp_dirs(&first), [first.home.as_os_str(); 3]);
+    assert_eq!(temp_dirs(&second), [second.home.as_os_str(); 3]);
+    assert_ne!(first.home, second.home);
+}
+
+#[test]
+fn queued_fixture_wait_is_excluded_from_native_command_elapsed_time() {
+    let permits = (0..MAX_NATIVE_COMMANDS)
+        .map(|_| NativeCommandPermit::acquire())
+        .collect::<Vec<_>>();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let waiter = std::thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        time_native_command(|| entered_tx.send(()).unwrap()).1
+    });
+    started_rx.recv().unwrap();
+    assert!(
+        entered_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err(),
+        "queued command entered before a fixture permit was available"
+    );
+    drop(permits);
+    entered_rx.recv().unwrap();
+    assert!(waiter.join().unwrap() < std::time::Duration::from_secs(1));
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -1393,16 +1490,15 @@ fn branch_created_then_timeout_is_inspected_rolled_back_and_settles_quickly() {
         pid_file.display()
     );
     let path = git_shim(&f, &body);
-    let started = std::time::Instant::now();
-    let output = f.run_with_path(&["sync", "--json"], &path);
+    let (output, elapsed) = f.run_with_path_timed(&["sync", "--json"], &path);
     assert!(
         pre_mutation_delay.exists(),
         "fixture did not reach the delayed pre-mutation revalidation"
     );
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(20),
+        elapsed < std::time::Duration::from_secs(20),
         "timeout did not settle boundedly: {:?}",
-        started.elapsed()
+        elapsed
     );
     assert!(
         marker.exists(),
@@ -1460,16 +1556,15 @@ fn checkout_then_timeout_is_inspected_restored_and_settles_quickly() {
         pid_file.display()
     );
     let path = git_shim(&f, &body);
-    let started = std::time::Instant::now();
-    let output = f.run_with_path(&["sync", "--json"], &path);
+    let (output, elapsed) = f.run_with_path_timed(&["sync", "--json"], &path);
     assert!(
         pre_mutation_delay.exists(),
         "fixture did not reach the delayed pre-mutation revalidation"
     );
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(20),
+        elapsed < std::time::Duration::from_secs(20),
         "timeout did not settle boundedly: {:?}",
-        started.elapsed()
+        elapsed
     );
     assert!(
         marker.exists(),
@@ -1526,16 +1621,15 @@ fn stalled_recovery_mutation(operation: &str) {
             pid_file.display()
         );
         let path = git_shim(&f, &body);
-        let started = std::time::Instant::now();
-        let output = f.run_with_path(&["sync", "--json"], &path);
+        let (output, elapsed) = f.run_with_path_timed(&["sync", "--json"], &path);
         assert!(
             pid_file.exists(),
             "{operation}: recovery injection never ran"
         );
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(20),
+            elapsed < std::time::Duration::from_secs(20),
             "{operation}: recovery was unbounded: {:?}",
-            started.elapsed()
+            elapsed
         );
         assert!(
             !process_alive(&pid_file),
@@ -1603,10 +1697,9 @@ fn recovery_waiting_wrapper(child_ignores_term: bool) {
         late.display()
     );
     let path = git_shim(&f, &body);
-    let started = std::time::Instant::now();
-    let output = f.run_with_path(&["sync", "--json"], &path);
+    let (output, elapsed) = f.run_with_path_timed(&["sync", "--json"], &path);
     assert!(pid_file.exists(), "KILL fixture never spawned its child");
-    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    assert!(elapsed < std::time::Duration::from_secs(20));
     assert!(!process_alive(&pid_file), "recovery child survived KILL");
     assert_eq!(output.status.code(), Some(1));
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();

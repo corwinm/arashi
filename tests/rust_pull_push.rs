@@ -85,10 +85,9 @@ fn daemon(f: &Fixture) -> (Daemon, String) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
-    let child = git_command()
+    let child = git_daemon_command()
         .process_group(0)
         .args([
-            "daemon",
             "--reuseaddr",
             "--listen=127.0.0.1",
             &format!("--port={port}"),
@@ -116,6 +115,75 @@ fn daemon(f: &Fixture) -> (Daemon, String) {
     }
     (guard, format!("git://127.0.0.1:{port}/child.git"))
 }
+
+#[cfg(unix)]
+fn daemon_processes(port: u16) -> Vec<u32> {
+    let needle = format!("--port={port}");
+    let output = Command::new("/bin/ps")
+        .args(["-eo", "pid=,command="])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.contains("git-daemon") && line.contains(&needle))
+        .filter_map(|line| line.split_whitespace().next()?.parse().ok())
+        .collect()
+}
+
+#[cfg(unix)]
+fn assert_daemon_stopped(port: u16) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let processes = daemon_processes(port);
+        if processes.is_empty() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "owned git-daemon processes survived cleanup: {processes:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn git_daemon_fixture_reaps_server_on_success_and_panic() {
+    let f = Fixture::new(None);
+    let (server, url) = daemon(&f);
+    let port = url
+        .strip_prefix("git://127.0.0.1:")
+        .unwrap()
+        .split('/')
+        .next()
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    assert!(
+        daemon_processes(port).contains(&server.0.id()),
+        "fixture must own the actual listening git-daemon process"
+    );
+    drop(server);
+    assert_daemon_stopped(port);
+
+    let mut panic_port = None;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (_daemon, url) = daemon(&f);
+        panic_port = Some(
+            url.strip_prefix("git://127.0.0.1:")
+                .unwrap()
+                .split('/')
+                .next()
+                .unwrap()
+                .parse::<u16>()
+                .unwrap(),
+        );
+        panic!("exercise daemon drop during unwinding");
+    }));
+    assert!(result.is_err());
+    assert_daemon_stopped(panic_port.unwrap());
+}
+
 #[test]
 fn real_git_transport_pull_and_push() {
     let f = Fixture::new(None);
@@ -541,13 +609,30 @@ fn seed(base: &Path, remote: &Path, name: &str) {
 }
 
 fn git_command() -> Command {
-    let mut command = Command::new("git");
+    isolated_git_command("git")
+}
+
+fn isolated_git_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
     // Match the CLI fixture's isolation: caller autocrlf must not change checkout bytes.
     command.env("GIT_CONFIG_NOSYSTEM", "1").env(
         "GIT_CONFIG_GLOBAL",
         if cfg!(windows) { "NUL" } else { "/dev/null" },
     );
     command
+}
+
+#[cfg(not(windows))]
+fn git_daemon_command() -> Command {
+    let output = git_command().arg("--exec-path").output().unwrap();
+    assert!(
+        output.status.success(),
+        "git --exec-path: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let executable =
+        PathBuf::from(String::from_utf8(output.stdout).unwrap().trim()).join("git-daemon");
+    isolated_git_command(executable)
 }
 
 fn git(cwd: &Path, args: &[&str]) -> String {
