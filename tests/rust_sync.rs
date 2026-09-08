@@ -72,6 +72,7 @@ impl Fixture {
         let temp = arashi::paths::canonicalize(&temp).unwrap();
         let root = temp.join("workspace");
         let home = temp.join("home");
+        fs::create_dir(fixture_temp_namespace(&home)).unwrap();
         fs::create_dir(&home).unwrap();
         init(&root);
         fs::create_dir(root.join(".arashi")).unwrap();
@@ -152,45 +153,66 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.temp);
+        let _ = fs::remove_dir_all(fixture_temp_namespace(&self.home));
     }
 }
 
+fn fixture_temp_namespace(home: &Path) -> PathBuf {
+    home.parent().unwrap().with_extension("process-temp")
+}
+
 fn isolated(command: &mut Command, home: &Path) {
+    let temp = fixture_temp_namespace(home);
     command
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("XDG_CONFIG_HOME", home)
-        // Native process-tree lineage files must be fixture-private. The shared
-        // OS temp directory allows stale same-PID names from another concurrent
-        // fixture to make Lineage::create fail with EEXIST.
-        .env("TMPDIR", home)
-        .env("TMP", home)
-        .env("TEMP", home)
+        // Native process-tree lineage files must be fixture-private. Keep this
+        // namespace outside the snapshotted fixture tree because Apple's Git
+        // may also create xcrun_db in TMPDIR.
+        .env("TMPDIR", &temp)
+        .env("TMP", &temp)
+        .env("TEMP", &temp)
         .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_TERMINAL_PROMPT", "0");
 }
 
 #[test]
-fn fixture_commands_use_private_temp_namespaces() {
+fn fixture_commands_use_private_temp_namespaces_outside_preservation_snapshots() {
     let first = Fixture::new(&[]);
     let second = Fixture::new(&[]);
     let temp_dirs = |fixture: &Fixture| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_arashi"));
         isolated(&mut command, &fixture.home);
         ["TMPDIR", "TMP", "TEMP"].map(|key| {
-            command
-                .get_envs()
-                .find(|(candidate, _)| *candidate == key)
-                .and_then(|(_, value)| value)
-                .unwrap()
-                .to_owned()
+            PathBuf::from(
+                command
+                    .get_envs()
+                    .find(|(candidate, _)| *candidate == key)
+                    .and_then(|(_, value)| value)
+                    .unwrap(),
+            )
         })
     };
 
-    assert_eq!(temp_dirs(&first), [first.home.as_os_str(); 3]);
-    assert_eq!(temp_dirs(&second), [second.home.as_os_str(); 3]);
-    assert_ne!(first.home, second.home);
+    let first_temp_dirs = temp_dirs(&first);
+    let second_temp_dirs = temp_dirs(&second);
+    assert!(
+        first_temp_dirs
+            .iter()
+            .all(|path| path == &first_temp_dirs[0])
+    );
+    assert!(
+        second_temp_dirs
+            .iter()
+            .all(|path| path == &second_temp_dirs[0])
+    );
+    assert!(first_temp_dirs[0].is_dir());
+    assert!(second_temp_dirs[0].is_dir());
+    assert!(!first_temp_dirs[0].starts_with(&first.temp));
+    assert!(!second_temp_dirs[0].starts_with(&second.temp));
+    assert_ne!(first_temp_dirs[0], second_temp_dirs[0]);
 }
 
 #[test]
