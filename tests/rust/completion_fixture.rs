@@ -3,7 +3,10 @@ use std::{fs, path::Path, process::Command};
 // Register lightweight worktrees using Git's on-disk format. No checkout per
 // record is needed: completion only consumes `git worktree list --porcelain -z`.
 // Unlike a freshly written PATH shim, this exercises the installed Git producer.
-pub fn large_worktree_fixture(root: &Path) {
+// Use long lock reasons for pipe-volume acceptance, and many registrations for
+// the separate full-byte drain test with its explicit deadline. This avoids
+// conflating pipe throughput with hundreds of Git metadata lookups.
+pub fn large_worktree_fixture(root: &Path, indices: std::ops::Range<usize>, large_reasons: bool) {
     let git = |args: &[&str]| {
         let output = Command::new("git")
             .arg("-C")
@@ -21,7 +24,7 @@ pub fn large_worktree_fixture(root: &Path) {
         r#"{"repos":{},"version":"1.0.0"}"#,
     )
     .unwrap();
-    for index in 0..800 {
+    for index in indices {
         let worktree = root.join(format!("completion-{index}"));
         let admin = root.join(format!(".git/worktrees/completion-{index}"));
         fs::create_dir(&worktree).unwrap();
@@ -37,6 +40,9 @@ pub fn large_worktree_fixture(root: &Path) {
         )
         .unwrap();
         fs::write(admin.join("commondir"), "../..\n").unwrap();
+        if large_reasons {
+            fs::write(admin.join("locked"), "x".repeat(16 * 1024)).unwrap();
+        }
         fs::write(
             admin.join("HEAD"),
             format!("ref: refs/heads/topic-{index}\n"),

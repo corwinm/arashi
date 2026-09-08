@@ -560,9 +560,10 @@ fn query_drains_large_git_worktree_output_within_the_budget() {
     let _guard = dynamic_guard();
     let temp = TempDir::new("large-git-output");
     let root = &temp.0;
-    completion_fixture::large_worktree_fixture(root);
+    completion_fixture::large_worktree_fixture(root, 792..800, true);
     // Production acceptance: no debug budget override or freshly created
-    // shell producer. Deterministic full-byte draining is tested separately.
+    // shell producer. Large lock reasons exercise pipe volume with bounded
+    // metadata work; the 800-record full-byte drain is tested separately.
     let output = Command::new(env!("CARGO_BIN_EXE_arashi"))
         .args([
             "completion",
@@ -584,6 +585,14 @@ fn query_drains_large_git_worktree_output_within_the_budget() {
             .iter()
             .any(|(value, _)| value == "topic-799")
     );
+    // Inspect after the query, so this assertion does not warm the producer.
+    let producer = Command::new("git")
+        .args(["worktree", "list", "--porcelain", "-z"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(producer.status.success(), "{producer:?}");
+    assert!(producer.stdout.len() > 131_072, "must exceed pipe capacity");
 }
 
 #[cfg(unix)]

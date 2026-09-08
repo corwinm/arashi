@@ -15,7 +15,7 @@ fn drains_every_git_byte_independently_of_the_production_query_budget() {
         std::env::temp_dir().join(format!("arashi-completion-drain-{}", std::process::id())),
     );
     fs::create_dir(&directory.0).unwrap();
-    fixture::large_worktree_fixture(&directory.0);
+    fixture::large_worktree_fixture(&directory.0, 0..800, false);
     // Force producer latency beyond QUERY_BUDGET. This tests draining with
     // an explicit test deadline, not the production query's time contract.
     let args = [
