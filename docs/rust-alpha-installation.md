@@ -87,13 +87,13 @@ Get-Command aw
 aw --version
 ```
 
-Removal validates the closed schema-2 ownership manifest and every payload hash, then removes only `aw`, `arashi`, the manifest, and the empty `.arashi-alpha` directory. It never restores stable bytes because it never changed them; removing the PATH shadow exposes the unchanged stable installation. If you made a persistent profile edit, remove that exact edit manually.
+Removal validates the closed schema-2 ownership manifest and every remaining payload hash, then removes only `aw`, `arashi`, the manifest, and the empty `.arashi-alpha` directory. The manifest is removed last, so rerunning uninstall safely finishes a partial removal after a locked executable is released. It never restores stable bytes because it never changed them; removing the PATH shadow exposes the unchanged stable installation. If you made a persistent profile edit, remove that exact edit manually.
 
-Refresh uses an adjacent stage and backup directory. Both new binaries must pass an exact alpha-version smoke test before promotion. A failed promotion restores the prior owned alpha when possible and reports any preserved recovery directory.
+Refresh uses an adjacent stage and backup directory. Both new binaries must pass an exact alpha-version smoke test before promotion. A failed promotion restores the prior owned alpha when possible and reports any preserved recovery directory. If old-backup cleanup is interrupted, release the locked file and run `install-alpha.sh cleanup-backup --recovery-dir <reported-path>` (or the same arguments through `install-alpha.ps1`); setup revalidates the current install, the closed recovery payload, and the exact sibling backup path before removing remaining owned files.
 
 ## Refusal and retired `aw2` installs
 
-Changed/missing payloads, unknown or duplicate manifest fields, extra files, symlinks, hardlinks, Windows reparse points, wrong-platform archives, malformed checksums, stale locks, and unowned destinations fail closed. Setup preserves unproven contents for manual recovery.
+Changed payloads, missing ownership manifests, unknown or duplicate manifest fields, extra files, symlinks, hardlinks, Windows reparse points, wrong-platform archives, malformed checksums, stale locks, and unowned destinations fail closed. Refresh still requires a complete owned install. Uninstall and explicit backup cleanup accept only missing executable entries whose remaining bytes match the retained ownership manifest, allowing an interrupted removal to be retried without broadening ownership. Setup preserves unproven contents for manual recovery.
 
 The former schema-1 `aw2`/`arashi2` development install is not migrated or adopted. Remove it with its original trusted setup bundle before installing this alpha. If that bundle is unavailable or the old install is modified, leave `$HOME/.arashi-alpha` untouched, move it aside only after manual inspection, and install into a clean default location. Never rewrite its ownership manifest to force adoption.
 

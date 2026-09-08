@@ -229,7 +229,59 @@ fn owned(destination: &Path) -> Result<Owned> {
         root: identity(destination, true)?,
     })
 }
-fn remove_owned_tree(path: &Path, payload: &Payload) -> Result<()> {
+fn removable(path: &Path) -> Result<Owned> {
+    removable_at(path, path)
+}
+fn removable_at(path: &Path, destination: &Path) -> Result<Owned> {
+    ancestors(path)?;
+    let actual = entries(path)?;
+    let expected = [names()[0], names()[1], LEDGER];
+    if !actual.iter().any(|name| name == LEDGER)
+        || actual.iter().any(|name| !expected.contains(&name.as_str()))
+    {
+        return refuse("Unowned/missing/extra alpha files; preserve directory for manual recovery");
+    }
+    let mut payload = Payload::new();
+    let mut identities = BTreeMap::new();
+    for name in actual {
+        identities.insert(name.clone(), identity(&path.join(&name), false)?);
+        payload.insert(name.clone(), read(&path.join(name), MAX)?);
+    }
+    let ledger: Ledger = serde_json::from_slice(&payload[LEDGER])?;
+    Release {
+        schema: ledger.schema,
+        channel: ledger.channel,
+        platform: ledger.platform,
+        version: ledger.version,
+    }
+    .validate()?;
+    if Some(ledger.directory.as_str()) != destination.to_str() {
+        return refuse("Alpha ownership manifest/payload mismatch; no files removed");
+    }
+    for (index, name) in names().iter().enumerate() {
+        if let Some(data) = payload.get(*name) {
+            let expected = if index == 0 {
+                &ledger.files.arashi
+            } else {
+                &ledger.files.aw
+            };
+            if digest(data) != *expected {
+                return refuse("Alpha ownership manifest/payload mismatch; no files removed");
+            }
+        }
+    }
+    Ok(Owned {
+        payload,
+        identities,
+        root: identity(path, true)?,
+    })
+}
+fn remove_owned_tree_with_ops(
+    path: &Path,
+    payload: &Payload,
+    remove: impl Fn(&Path) -> io::Result<()>,
+    remove_dir: impl Fn(&Path) -> io::Result<()>,
+) -> Result<()> {
     identity(path, true)?;
     if entries(path)? != payload.keys().cloned().collect::<Vec<_>>() {
         return refuse(format!(
@@ -245,11 +297,34 @@ fn remove_owned_tree(path: &Path, payload: &Payload) -> Result<()> {
             ));
         }
     }
-    for name in payload.keys() {
-        fs::remove_file(path.join(name))?;
+    for name in payload.keys().filter(|name| name.as_str() != LEDGER) {
+        remove(&path.join(name))?;
     }
-    fs::remove_dir(path)?;
+    let ledger = payload.get(LEDGER);
+    if ledger.is_some() {
+        remove(&path.join(LEDGER))?;
+    }
+    if let Err(error) = remove_dir(path) {
+        let restoration = match ledger {
+            Some(data) => create(&path.join(LEDGER), data),
+            None => Ok(()),
+        };
+        return aggregate(vec![
+            ("Recovery directory removal failed", Err(error.into())),
+            ("Ownership ledger restoration failed", restoration),
+        ]);
+    }
     Ok(())
+}
+fn remove_owned_tree_with(
+    path: &Path,
+    payload: &Payload,
+    remove: impl Fn(&Path) -> io::Result<()>,
+) -> Result<()> {
+    remove_owned_tree_with_ops(path, payload, remove, |directory| fs::remove_dir(directory))
+}
+fn remove_owned_tree(path: &Path, payload: &Payload) -> Result<()> {
+    remove_owned_tree_with(path, payload, |entry| fs::remove_file(entry))
 }
 fn release(archive: &Path, checksum: &Path) -> Result<(Release, Payload)> {
     let bytes = read(archive, 2 * MAX)?;
@@ -424,13 +499,23 @@ fn cleanup_backup(
 ) -> Result<()> {
     match cleanup(backup, payload) {
         Ok(()) => Ok(()),
-        Err(error) => aggregate(vec![
-            ("Previous alpha cleanup failed", Err(error)),
-            (
-                "Previous alpha retained for recovery",
-                refuse(backup.display().to_string()),
-            ),
-        ]),
+        Err(error) => {
+            let retained = match fs::symlink_metadata(backup) {
+                Ok(_) => refuse(backup.display().to_string()),
+                Err(inspect) if inspect.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(inspect) => refuse(format!(
+                    "{} (retention status could not be inspected: {inspect})",
+                    backup.display()
+                )),
+            };
+            aggregate(vec![
+                ("Previous alpha cleanup failed", Err(error)),
+                (
+                    "Previous alpha cleanup incomplete; recovery path retained",
+                    retained,
+                ),
+            ])
+        }
     }
 }
 fn promote(
@@ -472,6 +557,7 @@ struct Args {
     archive: Option<PathBuf>,
     checksum: Option<PathBuf>,
     destination: Option<PathBuf>,
+    recovery: Option<PathBuf>,
 }
 fn lifecycle(args: Args) -> Result<()> {
     lifecycle_with_rename(args, |a, b| fs::rename(a, b))
@@ -511,14 +597,47 @@ fn lifecycle_with_rename(
     let mut stage: Option<PathBuf> = None;
     let mut snapshot = Payload::new();
     let result = (|| -> Result<()> {
-        let old = match fs::symlink_metadata(&destination) {
-            Ok(_) => Some(owned(&destination)?),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e.into()),
-        };
+        if args.action == "cleanup-backup" {
+            let backup = args
+                .recovery
+                .as_deref()
+                .ok_or("cleanup-backup requires --recovery-dir")?;
+            if !backup.is_absolute()
+                || backup.parent() != Some(parent)
+                || backup
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_none_or(|name| !name.starts_with(".arashi-alpha-backup-"))
+                || backup
+                    .components()
+                    .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+                || backup.to_str().is_none()
+            {
+                return refuse(
+                    "Recovery directory must be an absolute sibling named .arashi-alpha-backup-*",
+                );
+            }
+            let current = owned(&destination)?;
+            let old = removable_at(backup, &destination)?;
+            if owned(&destination)? != current || removable_at(backup, &destination)? != old {
+                return refuse("Alpha install or recovery backup changed during preflight");
+            }
+            cleanup_backup(backup, &old.payload, remove_owned_tree)?;
+            println!(
+                "Removed owned previous alpha backup at {}",
+                backup.display()
+            );
+            return Ok(());
+        }
         if args.action == "uninstall" {
-            let old = old.ok_or("No owned alpha installation; nothing removed")?;
-            if owned(&destination)? != old {
+            let old = match fs::symlink_metadata(&destination) {
+                Ok(_) => removable(&destination)?,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    return Err("No owned alpha installation; nothing removed".into());
+                }
+                Err(e) => return Err(e.into()),
+            };
+            if removable(&destination)? != old {
                 return refuse("Alpha install changed during preflight");
             }
             remove_owned_tree(&destination, &old.payload)?;
@@ -527,6 +646,11 @@ fn lifecycle_with_rename(
             );
             return Ok(());
         }
+        let old = match fs::symlink_metadata(&destination) {
+            Ok(_) => Some(owned(&destination)?),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        };
         if !args.consent {
             return refuse(
                 "install requires --accept-canonical-shadow to acknowledge that adding this directory to PATH shadows stable aw/arashi",
@@ -608,7 +732,7 @@ fn main() {
             .ok_or("Expected install or uninstall; use --help")?;
         if first == "--help" || first == "-h" {
             println!(
-                "Native opt-in Rust alpha setup; controlled canonical names, never stable v1.\nUsage: arashi-alpha-setup install --accept-canonical-shadow --archive FILE --checksum-file FILE [--install-dir ABSOLUTE/.arashi-alpha]\n       arashi-alpha-setup uninstall [--install-dir ABSOLUTE/.arashi-alpha]\nInstall creates canonical aw/arashi names in a private directory. No network, Python, Node, PATH/profile or registry changes."
+                "Native opt-in Rust alpha setup; controlled canonical names, never stable v1.\nUsage: arashi-alpha-setup install --accept-canonical-shadow --archive FILE --checksum-file FILE [--install-dir ABSOLUTE/.arashi-alpha]\n       arashi-alpha-setup uninstall [--install-dir ABSOLUTE/.arashi-alpha]\n       arashi-alpha-setup cleanup-backup --recovery-dir ABSOLUTE/.arashi-alpha-backup-* [--install-dir ABSOLUTE/.arashi-alpha]\nInstall creates canonical aw/arashi names in a private directory. No network, Python, Node, PATH/profile or registry changes."
             );
             return Ok(());
         }
@@ -617,8 +741,8 @@ fn main() {
             return Ok(());
         }
         let action = first.into_string().map_err(|_| "Invalid action")?;
-        if action != "install" && action != "uninstall" {
-            return refuse("Expected install or uninstall");
+        if action != "install" && action != "uninstall" && action != "cleanup-backup" {
+            return refuse("Expected install, uninstall or cleanup-backup");
         }
         let mut args = Args {
             action,
@@ -636,6 +760,7 @@ fn main() {
                 Some("--archive") => &mut args.archive,
                 Some("--checksum-file") => &mut args.checksum,
                 Some("--install-dir") => &mut args.destination,
+                Some("--recovery-dir") => &mut args.recovery,
                 _ => return refuse("Unknown alpha setup argument"),
             };
             if slot.is_some() {
@@ -688,6 +813,7 @@ mod tests {
                         .into(),
                 ),
                 destination: Some(old.clone()),
+                recovery: None,
             };
             lifecycle(args()).unwrap();
             let original = owned(&old).unwrap();
@@ -811,34 +937,175 @@ mod tests {
         assert_eq!(fs::read(stage.join("aw")).unwrap(), b"candidate");
     }
 
+    fn owned_fixture(path: &Path) -> Payload {
+        fs::create_dir(path).unwrap();
+        let mut payload = Payload::new();
+        payload.insert(names()[0].into(), b"first executable".to_vec());
+        payload.insert(names()[1].into(), b"second executable".to_vec());
+        for (name, data) in &payload {
+            create(&path.join(name), data).unwrap();
+        }
+        let ledger = Ledger {
+            schema: 2,
+            channel: "rust-alpha-canonical".into(),
+            directory: path.to_str().unwrap().into(),
+            platform: platform().unwrap(),
+            version: "2.0.0-alpha.1".into(),
+            files: hashes(&payload),
+        };
+        let mut data = serde_json::to_vec(&serde_json::to_value(&ledger).unwrap()).unwrap();
+        data.push(b'\n');
+        create(&path.join(LEDGER), &data).unwrap();
+        payload.insert(LEDGER.into(), data);
+        payload
+    }
+
     #[test]
-    fn post_promotion_backup_cleanup_failure_reports_exact_retained_location() {
+    fn late_executable_deletion_failure_keeps_ownership_retryable() {
         let temp = tempfile::tempdir().unwrap();
-        let destination = temp.path().join(".arashi-alpha");
-        let stage = temp.path().join("stage");
-        let backup = temp.path().join(".arashi-alpha-backup-test");
-        fs::create_dir(&destination).unwrap();
+        let destination = temp.path().canonicalize().unwrap().join(".arashi-alpha");
+        let payload = owned_fixture(&destination);
+        let late = destination.join(names()[1]);
+
+        let error = remove_owned_tree_with(&destination, &payload, |path| {
+            if path == late {
+                Err(io::Error::other(
+                    "injected late executable deletion failure",
+                ))
+            } else {
+                fs::remove_file(path)
+            }
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "injected late executable deletion failure"
+        );
+        assert!(destination.join(LEDGER).is_file());
+        assert!(!destination.join(names()[0]).exists());
+        assert!(destination.join(names()[1]).is_file());
+        let retained = removable(&destination).unwrap();
+        remove_owned_tree(&destination, &retained.payload).unwrap();
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn final_directory_removal_failure_restores_ledger_for_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().canonicalize().unwrap().join(".arashi-alpha");
+        let payload = owned_fixture(&destination);
+
+        let error = remove_owned_tree_with_ops(
+            &destination,
+            &payload,
+            |path| fs::remove_file(path),
+            |_| Err(io::Error::other("injected final directory removal failure")),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "injected final directory removal failure"
+        );
+        assert_eq!(entries(&destination).unwrap(), [LEDGER]);
+        let retained = removable(&destination).unwrap();
+        remove_owned_tree(&destination, &retained.payload).unwrap();
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn explicit_backup_retry_preserves_current_installation() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let destination = root.join(".arashi-alpha");
+        let backup = root.join(".arashi-alpha-backup-test");
+        owned_fixture(&destination);
+        fs::rename(&destination, &backup).unwrap();
+        fs::remove_file(backup.join(names()[0])).unwrap();
+        owned_fixture(&destination);
+        let current = owned(&destination).unwrap();
+
+        lifecycle(Args {
+            action: "cleanup-backup".into(),
+            destination: Some(destination.clone()),
+            recovery: Some(backup.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert!(!backup.exists());
+        assert_eq!(owned(&destination).unwrap(), current);
+    }
+
+    #[test]
+    fn backup_cleanup_error_after_removal_does_not_claim_retention() {
+        let temp = tempfile::tempdir().unwrap();
+        let backup = temp
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join(".arashi-alpha-backup-test");
+        fs::create_dir(&backup).unwrap();
+
+        let error = cleanup_backup(&backup, &Payload::new(), |path, _| {
+            fs::remove_dir(path)?;
+            refuse("injected failure after completed deletion")
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "injected failure after completed deletion"
+        );
+        assert!(!backup.exists());
+    }
+
+    #[test]
+    fn partial_backup_cleanup_reports_incomplete_path_and_remains_retryable() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let destination = root.join(".arashi-alpha");
+        let stage = root.join("stage");
+        let backup = root.join(".arashi-alpha-backup-test");
+        let payload = owned_fixture(&destination);
         fs::create_dir(&stage).unwrap();
-        fs::write(destination.join("aw"), b"previous release").unwrap();
-        fs::write(stage.join("aw"), b"candidate").unwrap();
+        fs::write(stage.join("candidate"), b"candidate").unwrap();
         promote(&stage, &destination, &backup, |from, to| {
             fs::rename(from, to)
         })
         .unwrap();
+        let late = backup.join(names()[1]);
 
-        let error = cleanup_backup(&backup, &Payload::new(), |_, _| {
-            refuse("injected backup deletion failure")
+        let error = cleanup_backup(&backup, &payload, |path, payload| {
+            remove_owned_tree_with(path, payload, |entry| {
+                if entry == late {
+                    Err(io::Error::other(
+                        "injected late executable deletion failure",
+                    ))
+                } else {
+                    fs::remove_file(entry)
+                }
+            })
         })
         .unwrap_err();
 
         assert_eq!(
             error.to_string(),
             format!(
-                "Previous alpha cleanup failed: injected backup deletion failure\nPrevious alpha retained for recovery: {}",
+                "Previous alpha cleanup failed: injected late executable deletion failure\nPrevious alpha cleanup incomplete; recovery path retained: {}",
                 backup.display()
             )
         );
-        assert_eq!(fs::read(destination.join("aw")).unwrap(), b"candidate");
-        assert_eq!(fs::read(backup.join("aw")).unwrap(), b"previous release");
+        assert_eq!(
+            fs::read(destination.join("candidate")).unwrap(),
+            b"candidate"
+        );
+        assert!(backup.join(LEDGER).is_file());
+        assert!(!backup.join(names()[0]).exists());
+        assert!(backup.join(names()[1]).is_file());
+        let retained = removable_at(&backup, &destination).unwrap();
+        remove_owned_tree(&backup, &retained.payload).unwrap();
+        assert!(!backup.exists());
     }
 }
