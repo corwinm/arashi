@@ -53,8 +53,9 @@ CARGO_HOME="$PWD/target/cargo-home" CARGO_TARGET_DIR="$PWD/target" CARGO_BUILD_J
 Native Windows acceptance uses the current user SID ACL before creating any fixture
 contents, so every generated file inherits full control and recursive cleanup remains
 owned. The isolated child environment retains Windows `ProgramData` for system
-OpenSSH, and Git uses its OpenSSL HTTPS backend so the generated CA file has the same
-trust semantics across platforms. Cleanup retries only Windows `EACCES`, `EBUSY`,
+OpenSSH. Git keeps its installed default HTTPS backend; explicit CA-file trust and
+Schannel CA-file opt-in preserve the same verification semantics across platforms.
+Cleanup retries only Windows `EACCES`, `EBUSY`,
 `ENOTEMPTY`, and `EPERM` for a bounded two seconds, then rethrows the filesystem
 failure. A native lock-holder regression proves the transient-EPERM path.
 The Rust native application journey remains Unix-gated until the separate Windows

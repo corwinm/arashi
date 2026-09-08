@@ -207,10 +207,7 @@ export async function startAuthenticatedGit() {
       await run("icacls", [root, "/inheritance:r", "/grant:r", `*${sid[0]}:(OI)(CI)F`, "/T", "/Q"]);
     }
     fs.mkdirSync(file("home"), { mode: 0o700 });
-    write(
-      "gitconfig",
-      "[commit]\n gpgsign = false\n[http]\n sslBackend = openssl\n[maintenance]\n auto = false\n",
-    );
+    write("gitconfig", "[commit]\n gpgsign = false\n[maintenance]\n auto = false\n");
     write(
       "cert.cnf",
       "[req]\ndistinguished_name=dn\nx509_extensions=ca\nprompt=no\n[dn]\nCN=Arashi disposable test CA\n[ca]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n[server]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=IP:127.0.0.1\n",
@@ -479,7 +476,7 @@ export async function startAuthenticatedGit() {
       const helper = `!${quote(process.execPath)} ${quote(file("credential.cjs"))} ${quote(file(wrongCredential ? "wrong-credentials.json" : "credentials.json"))}`;
       write(
         `${mode}.gitconfig`,
-        `${fs.readFileSync(file("gitconfig"), "utf8")}[http]\n sslVerify = true\n sslCAInfo = ${JSON.stringify(file(wrongTrust ? "wrong-ca.pem" : "ca.pem"))}\n[credential]\n helper = ${JSON.stringify(helper)}\n`,
+        `${fs.readFileSync(file("gitconfig"), "utf8")}[http]\n sslVerify = true\n sslCAInfo = ${JSON.stringify(file(wrongTrust ? "wrong-ca.pem" : "ca.pem"))}\n schannelUseSSLCAInfo = true\n[credential]\n helper = ${JSON.stringify(helper)}\n`,
       );
     }
     let serial = 0;

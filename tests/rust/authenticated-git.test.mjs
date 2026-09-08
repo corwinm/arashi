@@ -166,6 +166,21 @@ test(
   },
 );
 
+test("authenticated Git fixture preserves the installed Git SSL backend", async () => {
+  const server = await fixture.startAuthenticatedGit();
+  try {
+    const configuredBackend = await server.run(
+      "git",
+      ["config", "--global", "--get", "http.sslBackend"],
+      { allowFailure: true },
+    );
+    assert.equal(configuredBackend.code, 1);
+    assert.equal(configuredBackend.stdout, "");
+  } finally {
+    await server.close();
+  }
+});
+
 test("real authenticated HTTPS and SSH clone/fetch/push with denial controls", async () => {
   assert.equal(
     typeof fixture.startAuthenticatedGit,
