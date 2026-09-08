@@ -83,10 +83,11 @@ catch(e){console.log('LOCK_DENIED='+e.message);process.exit(0);}`;
 }
 try {
   for (const kind of ["source", "rust"]) {
-    for (const [spelling, pid] of [
+    for (const [spelling, pid, createdAt = "0"] of [
       ["decimal", `${process.pid}.0`],
       ["exponent", `${process.pid}e0`],
       ["duplicate", `0,"pid":${process.pid}`],
+      ["extreme-created-at", `${process.pid}`, "1e400"],
       ["safe-integer-outside-os", "9007199254740991"],
     ]) {
       // Native capability failures must stay conservative, even when Bun reports absence.
@@ -98,7 +99,7 @@ try {
         mkdirSync(path);
         const identity = `arashi-v1-interop${suffix ? ":recovery" : ""}`;
         const duplicates = spelling === "duplicate" ? '"identity":null,"owner":"old",' : "";
-        const raw = `{${duplicates}"createdAt":0,"identity":${JSON.stringify(identity)},"owner":"live","pid":${pid}}`;
+        const raw = `{${duplicates}"createdAt":${createdAt},"identity":${JSON.stringify(identity)},"owner":"live","pid":${pid}}`;
         writeFileSync(join(path, "owner.json"), raw);
         utimesSync(path, new Date(0), new Date(0));
         const waiter = start(kind, 80);

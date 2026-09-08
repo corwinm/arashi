@@ -1,7 +1,9 @@
 //! Retained mkdir/owner.json identity protocol, including recovery guard and owner readback.
 use super::*;
 use serde::Serialize;
+use serde_json::value::RawValue;
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, Write},
     path::PathBuf,
@@ -160,27 +162,42 @@ fn read_owner(path: &Path) -> io::Result<Option<Owner>> {
         Err(e) if missing(&e) => return Ok(None),
         Err(e) => return Err(e),
     };
-    Ok(serde_json::from_slice::<Value>(&raw)
-        .ok()
-        .and_then(parse_owner))
+    Ok(parse_owner(&raw).ok().flatten())
 }
 // JSON.parse resolves duplicate members before validating Number.isSafeInteger.
 // Use the same normalized owner for acquisition, recovery readback and release.
-fn parse_owner(value: Value) -> Option<Owner> {
-    let pid = value.get("pid")?.as_f64()?;
+fn parse_owner(raw: &[u8]) -> serde_json::Result<Option<Owner>> {
+    let raw: Box<RawValue> = serde_json::from_slice(raw)?;
+    if !raw.get().trim_start().starts_with('{') {
+        return Ok(None);
+    }
+    let value: BTreeMap<String, Box<RawValue>> = serde_json::from_str(raw.get())?;
+    let number = |name| value.get(name)?.get().parse::<f64>().ok();
+    let string = |name| serde_json::from_str::<String>(value.get(name)?.get()).ok();
+    let Some(pid) = number("pid") else {
+        return Ok(None);
+    };
     if !(1.0..=9_007_199_254_740_991.0).contains(&pid) || pid.fract() != 0.0 {
-        return None;
+        return Ok(None);
     }
-    let owner = value.get("owner")?.as_str()?;
+    let Some(owner) = string("owner") else {
+        return Ok(None);
+    };
     if owner.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(Owner {
-        created_at: value.get("createdAt")?.as_f64()?,
-        identity: value.get("identity")?.as_str()?.into(),
-        owner: owner.into(),
+    Ok(Some(Owner {
+        created_at: match number("createdAt") {
+            Some(created_at) => created_at,
+            None => return Ok(None),
+        },
+        identity: match string("identity") {
+            Some(identity) => identity,
+            None => return Ok(None),
+        },
+        owner,
         pid: pid as u64,
-    })
+    }))
 }
 fn suffix(path: &Path, tail: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
@@ -413,9 +430,8 @@ fn release_owned(path: &Path, owner: &Owner) -> io::Result<()> {
                 Err(e) if missing(&e) => return Ok(None),
                 Err(e) => return Err(e),
             };
-            let value: Value = serde_json::from_slice(&raw)?;
             // Malformed JSON is a release failure, never permission to remove a lock.
-            Ok(parse_owner(value))
+            parse_owner(&raw).map_err(io::Error::other)
         })?;
         if observed.is_none() {
             if !markers(path)?.is_empty() {
