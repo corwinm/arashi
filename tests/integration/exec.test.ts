@@ -5,6 +5,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
+const PRINT_WORKING_DIRECTORY = [process.execPath, "-e", "console.log(process.cwd())"];
 
 interface CommandResult {
   exitCode: number;
@@ -120,7 +121,7 @@ describe("exec command", () => {
       "--only",
       "repo-b",
       "--",
-      "pwd",
+      ...PRINT_WORKING_DIRECTORY,
     ]);
 
     expect(result.exitCode).toBe(0);
@@ -153,7 +154,13 @@ describe("exec command", () => {
   test("filters with --only and reports unknown repositories as usage errors", async () => {
     const workspaceRoot = await createWorkspace();
 
-    const filtered = await runArashi(workspaceRoot, ["exec", "--only", "repo-b", "--", "pwd"]);
+    const filtered = await runArashi(workspaceRoot, [
+      "exec",
+      "--only",
+      "repo-b",
+      "--",
+      ...PRINT_WORKING_DIRECTORY,
+    ]);
     expect(filtered.exitCode).toBe(0);
     expect(filtered.stdout).not.toContain("[repo-a]");
     expect(filtered.stdout).toContain("[repo-b] ok (0)");
@@ -163,13 +170,19 @@ describe("exec command", () => {
       "--only",
       "repo-a,repo-b",
       "--",
-      "pwd",
+      ...PRINT_WORKING_DIRECTORY,
     ]);
     expect(commaSeparated.exitCode).toBe(0);
     expect(commaSeparated.stdout).toContain("[repo-a] ok (0)");
     expect(commaSeparated.stdout).toContain("[repo-b] ok (0)");
 
-    const missing = await runArashi(workspaceRoot, ["exec", "--only", "missing", "--", "pwd"]);
+    const missing = await runArashi(workspaceRoot, [
+      "exec",
+      "--only",
+      "missing",
+      "--",
+      ...PRINT_WORKING_DIRECTORY,
+    ]);
     expect(missing.exitCode).toBe(2);
     expect(missing.stderr).toContain("Unknown repositories in --only filter: missing");
   });
@@ -177,12 +190,22 @@ describe("exec command", () => {
   test("supports --dirty and no-match cases", async () => {
     const workspaceRoot = await createWorkspace();
 
-    const clean = await runArashi(workspaceRoot, ["exec", "--dirty", "--", "pwd"]);
+    const clean = await runArashi(workspaceRoot, [
+      "exec",
+      "--dirty",
+      "--",
+      ...PRINT_WORKING_DIRECTORY,
+    ]);
     expect(clean.exitCode).toBe(0);
     expect(clean.stdout).toContain("No repositories selected for exec");
 
     await writeFile(join(workspaceRoot, "repos", "repo-b", "dirty.txt"), "dirty\n");
-    const dirty = await runArashi(workspaceRoot, ["exec", "--dirty", "--", "pwd"]);
+    const dirty = await runArashi(workspaceRoot, [
+      "exec",
+      "--dirty",
+      "--",
+      ...PRINT_WORKING_DIRECTORY,
+    ]);
     expect(dirty.exitCode).toBe(0);
     expect(dirty.stdout).not.toContain("[repo-a]");
     expect(dirty.stdout).toContain("[repo-b] ok (0)");
