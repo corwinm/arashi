@@ -21,6 +21,13 @@ const supportedSslBackends = new Set([
   "wolfssl",
 ]);
 
+export function isTlsTrustDenial(stderr, sslBackend) {
+  if (sslBackend === "schannel") {
+    return /\bschannel:\s+error 0x[\da-f]{8}\b/i.test(stderr);
+  }
+  return /certificate|SSL/i.test(stderr);
+}
+
 export function detectInstalledGitSslBackend(execute = spawnSync) {
   const env = {};
   for (const [key, value] of Object.entries(process.env)) {

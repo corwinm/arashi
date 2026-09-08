@@ -167,6 +167,24 @@ test(
   },
 );
 
+test("TLS trust denial diagnostics accept certificate backends and explicit Schannel errors", () => {
+  assert.equal(typeof fixture.isTlsTrustDenial, "function");
+  for (const [backend, diagnostic] of [
+    ["openssl", "SSL certificate problem: unable to get local issuer certificate"],
+    ["gnutls", "gnutls_handshake() failed: Error in the certificate verification."],
+    ["schannel", "schannel: error 0x00000008"],
+  ]) {
+    assert.equal(fixture.isTlsTrustDenial(diagnostic, backend), true, diagnostic);
+  }
+  for (const [backend, diagnostic] of [
+    ["openssl", "fatal: unable to access URL: Failed to connect to 127.0.0.1 port 443"],
+    ["gnutls", "fatal: Authentication failed"],
+    ["schannel", "schannel: failed to receive handshake, SSL/TLS connection failed"],
+  ]) {
+    assert.equal(fixture.isTlsTrustDenial(diagnostic, backend), false, diagnostic);
+  }
+});
+
 test("installed Git SSL backend probe isolates present and absent system selection", () => {
   assert.equal(typeof fixture.detectInstalledGitSslBackend, "function");
   const calls = [];
@@ -245,7 +263,7 @@ test("real authenticated HTTPS and SSH clone/fetch/push with denial controls", a
         const causes = {
           https: {
             "wrong-credential": /authentication failed|401/i,
-            "wrong-trust": /certificate|SSL/i,
+            "wrong-trust": (stderr) => fixture.isTlsTrustDenial(stderr, server.installedSslBackend),
           },
           ssh: {
             "wrong-credential": /permission denied/i,
@@ -253,7 +271,11 @@ test("real authenticated HTTPS and SSH clone/fetch/push with denial controls", a
           },
         };
         const cause = causes[transport][mode];
-        assert.match(denied.stderr, cause);
+        if (typeof cause === "function") {
+          assert.ok(cause(denied.stderr), denied.stderr);
+        } else {
+          assert.match(denied.stderr, cause);
+        }
         assert.equal(
           server.events.slice(before).filter((event) => event.kind === "backend").length,
           0,
