@@ -12,8 +12,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  adoptUnpreparedQuarantine,
   captureDeletionIdentity,
-  quarantineAndRemoveIdentity,
+  quarantineAndRetainIdentity,
   validateDeletionIdentity,
   validateExpectedAbsence,
   type DeletionIdentityIO,
@@ -40,7 +41,10 @@ describe("identity-anchored deletion", () => {
     const captured = await captureDeletionIdentity(owned, "directory");
 
     expect(captured.leaf.identity).toMatch(
-      new RegExp(`^${process.platform === "win32" ? "windows" : "posix"}:`, "u"),
+      new RegExp(
+        `^${process.platform === "win32" ? "windows" : "posix"}-v2:[0-9]+:[0-9]+:[0-9]+$`,
+        "u",
+      ),
     );
     expect(captured.ancestors.map(({ path }) => path)).toContain(dirname(owned));
 
@@ -111,7 +115,7 @@ describe("identity-anchored deletion", () => {
       },
     };
 
-    await expect(quarantineAndRemoveIdentity(captured, io)).rejects.toMatchObject({
+    await expect(quarantineAndRetainIdentity(captured, io)).rejects.toMatchObject({
       code: "DELETE_CONCURRENT_CHANGE",
       reason: "quarantine-identity-changed",
     });
@@ -128,8 +132,8 @@ describe("identity-anchored deletion", () => {
     let quarantine = "";
 
     await expect(
-      quarantineAndRemoveIdentity(captured, {
-        beforeRemove: async (moved) => {
+      quarantineAndRetainIdentity(captured, {
+        beforeRetain: async (moved) => {
           quarantine = moved;
           await rename(moved, `${moved}.owned`);
           await rename(replacement, moved);
@@ -143,17 +147,88 @@ describe("identity-anchored deletion", () => {
     expect(await readFile(join(`${quarantine}.owned`, "KEEP"), "utf8")).toBe("owned\n");
   });
 
-  test("restores the quarantined object after post-rename validation fails when guards still match", async () => {
+  test("retires an accepted identity without recursively unlinking it", async () => {
     const { owned } = await fixture();
     const captured = await captureDeletionIdentity(owned, "directory");
+
+    const quarantine = await quarantineAndRetainIdentity(captured);
+    expect(await readFile(join(quarantine, "KEEP"), "utf8")).toBe("owned\n");
+    await expect(readFile(join(owned, "KEEP"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("accepts a durable legacy retirement without unlinking it", async () => {
+    const { owned } = await fixture();
+    const captured = await captureDeletionIdentity(owned, "directory");
+    const quarantine = `${owned}.quarantine`;
+    const retired = `${quarantine}.retiring`;
+    await rename(owned, retired);
     await expect(
-      quarantineAndRemoveIdentity(captured, {
-        afterRename: async () => {
+      quarantineAndRetainIdentity(captured, {
+        alreadyQuarantined: true,
+        quarantinePath: quarantine,
+      }),
+    ).resolves.toBe(retired);
+    expect(await readFile(join(retired, "KEEP"), "utf8")).toBe("owned\n");
+  });
+
+  test("preserves the quarantined object after post-rename validation fails", async () => {
+    const { owned } = await fixture();
+    const captured = await captureDeletionIdentity(owned, "directory");
+    let quarantine = "";
+    await expect(
+      quarantineAndRetainIdentity(captured, {
+        afterRename: async (_source, moved) => {
+          quarantine = moved;
           throw new Error("injected validation failure");
         },
       }),
     ).rejects.toThrow(/injected validation failure/u);
-    expect(await readFile(join(owned, "KEEP"), "utf8")).toBe("owned\n");
+    await expect(readFile(join(owned, "KEEP"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(quarantine, "KEEP"), "utf8")).toBe("owned\n");
+  });
+
+  test.each(["directory", "file"] as const)(
+    "never attempts a %s quarantine restoration that can overwrite a recreated source",
+    async (kind) => {
+      const { owned } = await fixture();
+      const source = kind === "directory" ? owned : join(dirname(owned), "owned-file");
+      if (kind === "file") await writeFile(source, "owned-file\n");
+      const captured = await captureDeletionIdentity(source, kind);
+      let calls = 0;
+      let quarantine = "";
+      await expect(
+        quarantineAndRetainIdentity(captured, {
+          rename: async (from, to) => {
+            calls += 1;
+            await rename(from, to);
+            if (calls === 1) quarantine = to;
+          },
+          afterRename: async () => {
+            throw new Error("injected post-rename failure");
+          },
+        }),
+      ).rejects.toThrow(/injected post-rename failure/u);
+      expect(calls).toBe(1);
+      await expect(readFile(source)).rejects.toMatchObject({ code: "ENOENT" });
+      if (kind === "directory")
+        expect(await readFile(join(quarantine, "KEEP"), "utf8")).toBe("owned\n");
+      else expect(await readFile(quarantine, "utf8")).toBe("owned-file\n");
+    },
+  );
+
+  test("adopts an exact unprepared quarantine and fails closed on a recreated source", async () => {
+    const { owned } = await fixture();
+    const captured = await captureDeletionIdentity(owned, "directory");
+    const quarantine = `${owned}.quarantine`;
+    await rename(owned, quarantine);
+    await expect(adoptUnpreparedQuarantine(captured, quarantine)).resolves.toBe(quarantine);
+    await mkdir(owned);
+    await writeFile(join(owned, "REPLACEMENT"), "replacement\n");
+    await expect(adoptUnpreparedQuarantine(captured, quarantine)).rejects.toMatchObject({
+      code: "DELETE_CONCURRENT_CHANGE",
+    });
+    expect(await readFile(join(owned, "REPLACEMENT"), "utf8")).toBe("replacement\n");
+    expect(await readFile(join(quarantine, "KEEP"), "utf8")).toBe("owned\n");
   });
 
   test("preserves quarantine when restoration destination was recreated", async () => {
@@ -161,7 +236,7 @@ describe("identity-anchored deletion", () => {
     const captured = await captureDeletionIdentity(owned, "directory");
     let quarantine = "";
     await expect(
-      quarantineAndRemoveIdentity(captured, {
+      quarantineAndRetainIdentity(captured, {
         afterRename: async (source, moved) => {
           quarantine = moved;
           await mkdir(source);
@@ -169,10 +244,7 @@ describe("identity-anchored deletion", () => {
           throw new Error("injected validation failure");
         },
       }),
-    ).rejects.toMatchObject({
-      code: "DELETE_CONCURRENT_CHANGE",
-      reason: "quarantine-restore-unsafe",
-    });
+    ).rejects.toThrow(/injected validation failure/u);
     expect(await readFile(join(owned, "REPLACEMENT"), "utf8")).toBe("keep\n");
     expect(await readFile(join(quarantine, "KEEP"), "utf8")).toBe("owned\n");
   });
@@ -180,16 +252,14 @@ describe("identity-anchored deletion", () => {
   test("treats cross-device or non-atomic rename anomalies as unsafe and does not remove", async () => {
     const { owned } = await fixture();
     const captured = await captureDeletionIdentity(owned, "directory");
-    const remove = vi.fn();
     const renameFailure = Object.assign(new Error("cross-device"), { code: "EXDEV" });
 
     await expect(
-      quarantineAndRemoveIdentity(captured, {
+      quarantineAndRetainIdentity(captured, {
         rename: async () => Promise.reject(renameFailure),
-        rm: remove,
       }),
     ).rejects.toMatchObject({ code: "DELETE_PATH_UNSAFE", reason: "atomic-rename-unavailable" });
-    expect(remove).not.toHaveBeenCalled();
+
     expect(await readFile(join(owned, "KEEP"), "utf8")).toBe("owned\n");
   });
 

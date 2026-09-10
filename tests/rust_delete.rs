@@ -829,16 +829,27 @@ fn forced_clean_target_deletes_only_the_owned_clone_and_exact_config_entry() {
             .unwrap();
     assert!(config["repos"].get("api").is_none());
     assert!(config["repos"].get("keep").is_some());
+    let retained = fs::read_dir(fixture.workspace.join("repos"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".arashi-delete-")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(retained.len(), 1);
+    assert!(retained[0].path().join(".git").is_dir());
     assert!(
-        fs::read_dir(fixture.workspace.join("repos"))
+        document["data"]["result"]["warnings"]
+            .as_array()
             .unwrap()
-            .all(|entry| {
-                !entry
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".arashi-delete-")
-            })
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap()
+                .starts_with("DELETE_RETAINED_CLEANUP: "))
     );
 }
 

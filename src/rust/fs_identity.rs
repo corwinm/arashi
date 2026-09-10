@@ -6,7 +6,12 @@
 //! These no-follow opens protect the final component only. Ancestor validation,
 //! byte/mode checks, and publication/rollback policy remain the caller's job.
 //! `matches_path` is an observation, NOT an atomic conditional unlink/rename.
-use std::{fs::File, io, path::Path, time::SystemTime};
+use std::{
+    fs::File,
+    io,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ObjectIdentity {
@@ -42,6 +47,29 @@ impl PinnedObject {
         Self::from_file(open_nofollow(path)?)
     }
 
+    pub fn open_directory(path: &Path) -> io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use rustix::fs::{Mode, OFlags, open};
+            Self::from_file(File::from(open(
+                path,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )?))
+        }
+        #[cfg(windows)]
+        {
+            let pinned = Self::open(path)?;
+            if pinned.kind != ObjectKind::Directory {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "path is not a directory",
+                ));
+            }
+            Ok(pinned)
+        }
+    }
+
     /// Takes ownership of an already-opened object. The caller chooses access
     /// rights and is responsible for its original no-follow/create-new policy.
     pub fn from_file(file: File) -> io::Result<Self> {
@@ -64,6 +92,29 @@ impl PinnedObject {
     pub fn creation_time(&self) -> Option<SystemTime> {
         self.creation_time
     }
+    pub fn persisted_identity(&self) -> io::Result<String> {
+        let created = self
+            .creation_time
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "creation time unavailable"))?
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "creation time predates epoch")
+            })?
+            .as_nanos();
+        if created == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "creation time unavailable",
+            ));
+        }
+        Ok(format!(
+            "{}-v2:{}:{}:{}",
+            if cfg!(windows) { "windows" } else { "posix" },
+            self.identity.volume,
+            self.identity.file_id,
+            created
+        ))
+    }
     /// Borrow the held object for metadata/handle operations. Access rights are
     /// platform dependent; use `from_file` when the caller needs writable access.
     pub fn file(&self) -> &File {
@@ -74,7 +125,9 @@ impl PinnedObject {
     /// and must not be silently promoted into ownership or permission to clean up.
     pub fn matches_path(&self, path: &Path) -> io::Result<bool> {
         match Self::open(path) {
-            Ok(now) => Ok(self.identity == now.identity && self.kind == now.kind),
+            Ok(now) => Ok(self.identity == now.identity
+                && self.kind == now.kind
+                && self.creation_time == now.creation_time),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         }

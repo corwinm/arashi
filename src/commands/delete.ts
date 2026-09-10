@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, realpath, rename } from "node:fs/promises";
+import { lstat, readFile, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Command } from "commander";
 import { loadConfigureSnapshot, type ConfigureSnapshot } from "./configure.ts";
 import { ConfigError } from "../lib/config.ts";
@@ -16,10 +16,14 @@ import {
 } from "../lib/hooks.ts";
 import { GitLossEvidenceError, inspectRepositoryGitLoss } from "../lib/delete-git-loss.ts";
 import {
+  adoptUnpreparedQuarantine,
   captureDeletionIdentity,
-  quarantineAndRemoveIdentity,
+  deletionRetirementPath,
+  quarantineAndRetainIdentity,
   validateDeletionIdentity,
   validateExpectedAbsence,
+  validatePreparedQuarantine,
+  validateResidueIdentity,
   type DeletionPathIdentity,
 } from "../lib/delete-identity.ts";
 import {
@@ -35,15 +39,21 @@ import {
 } from "../lib/workspace-transaction-lock.ts";
 import { persistExpectedBytesAtomically } from "../lib/configure-transaction.ts";
 import {
+  allocateDeleteGenerationSuffix,
   createDeleteResumeReceipt,
+  normalizePreparedDeleteWarnings,
+  recoverDeleteConfigurationBytes,
+  remapDeleteResidues,
   readValidatedDeleteReceipt,
   readValidatedDeleteReceiptBytes,
   receiptPathForRepositoryKey,
   receiptPlanConfigDigest,
   removeDeleteResumeReceipt,
   runDeleteBatchTransaction,
+  terminalDeleteResiduePath,
   updateDeleteResumeReceipt,
   type DeleteResumeReceipt,
+  type DeleteTerminalResidue,
   type ValidatedDeleteReceipt,
 } from "../lib/delete-transaction.ts";
 import resolveUnaliasedPhysicalPath from "../lib/physical-path.ts";
@@ -592,7 +602,9 @@ interface PlannedRepositoryRuntime {
 
 export interface RuntimeDeletionIdentities {
   clone: DeletionPathIdentity;
+  canonicalGitAdmin: DeletionPathIdentity;
   worktrees: DeletionPathIdentity[];
+  worktreeAdmins: DeletionPathIdentity[];
   metadata: DeletionPathIdentity[];
   hooks: DeletionPathIdentity[];
 }
@@ -608,13 +620,22 @@ export const captureRuntimeDeletionIdentities = async (
     topology.linkedWorktrees.filter(({ present }) => present).map(({ path }) => path),
   );
   const metadataPaths = uniqueSortedPaths(topology.staleMetadata.map(({ path }) => path));
+  const worktreeAdminPaths = uniqueSortedPaths(
+    topology.linkedWorktrees.flatMap(({ metadataPath, present }) =>
+      present && metadataPath !== null ? [metadataPath] : [],
+    ),
+  );
   return {
     clone: await captureDeletionIdentity(topology.canonicalClonePath, "directory"),
+    canonicalGitAdmin: await captureDeletionIdentity(topology.commonDirectory, "directory"),
     hooks: await Promise.all(
       uniqueSortedPaths(hookPaths).map((path) => captureDeletionIdentity(path, "file")),
     ),
     metadata: await Promise.all(
       metadataPaths.map((path) => captureDeletionIdentity(path, "directory")),
+    ),
+    worktreeAdmins: await Promise.all(
+      worktreeAdminPaths.map((path) => captureDeletionIdentity(path, "directory")),
     ),
     worktrees: await Promise.all(
       worktreePaths.map((path) => captureDeletionIdentity(path, "directory")),
@@ -626,7 +647,13 @@ export const validateRuntimeDeletionIdentities = async (
   identities: RuntimeDeletionIdentities,
 ): Promise<void> => {
   await validateDeletionIdentity(identities.clone);
-  for (const identity of [...identities.worktrees, ...identities.metadata, ...identities.hooks]) {
+  await validateDeletionIdentity(identities.canonicalGitAdmin);
+  for (const identity of [
+    ...identities.worktrees,
+    ...identities.worktreeAdmins,
+    ...identities.metadata,
+    ...identities.hooks,
+  ]) {
     await validateDeletionIdentity(identity);
   }
 };
@@ -643,8 +670,21 @@ const validatePresentOrExpectedAbsent = async (
   }
 };
 
-export const removePlannedWorkspaceHooks = async (hooks: DeletionPathIdentity[]): Promise<void> => {
-  for (const hook of hooks) await quarantineAndRemoveIdentity(hook);
+const pathExists = async (path: string): Promise<boolean> =>
+  lstat(path)
+    .then(() => true)
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    });
+
+const pauseDeleteCommandTestBoundary = async (point: string): Promise<void> => {
+  if (process.env.NODE_ENV !== "test" || process.env.ARASHI_DELETE_TEST_PAUSE !== point) return;
+  const ready = process.env.ARASHI_DELETE_TEST_READY;
+  const resume = process.env.ARASHI_DELETE_TEST_RESUME;
+  if (!ready || !resume) throw new Error("Delete command test boundary paths are missing.");
+  await writeFile(ready, point, { flag: "wx" });
+  while (!(await pathExists(resume))) await new Promise((resolve) => setTimeout(resolve, 10));
 };
 
 const deleteError = (
@@ -653,6 +693,15 @@ const deleteError = (
   details: Record<string, unknown>,
   exitCode = 1,
 ): DeleteCommandError => new DeleteCommandError(code, message, details, exitCode);
+
+export const removePlannedWorkspaceHooks = async (hooks: DeletionPathIdentity[]): Promise<void> => {
+  for (const hook of hooks) await validateDeletionIdentity(hook);
+  throw deleteError(
+    "DELETE_PATH_UNSAFE",
+    "Workspace hook deletion requires durable receipt transaction provenance.",
+    { reason: "durable-receipt-required" },
+  );
+};
 
 const assertPlainDirectory = async (path: string): Promise<string> => {
   let metadata: Awaited<ReturnType<typeof lstat>>;
@@ -1123,6 +1172,8 @@ const reconstructReceiptPlan = (
     receipt.runtime.configPath !== join(receipt.runtime.workspaceRoot, ".arashi", "config.json") ||
     receipt.runtime.clonePath !== receipt.runtime.topology.canonicalClonePath ||
     receipt.runtime.identities.clone.path !== receipt.runtime.clonePath ||
+    receipt.runtime.identities.canonicalGitAdmin.path !==
+      receipt.runtime.topology.commonDirectory ||
     stableHash(receipt.runtime.hookPaths) !==
       stableHash(receipt.runtime.identities.hooks.map(({ path }) => path))
   )
@@ -1244,12 +1295,13 @@ const createReceiptRecord = (
   completedPhases: DeletePhaseName[],
   completedItemIds: string[],
   destructionPreparedItemIds: string[] = [],
-): DeleteResumeReceipt => {
-  const suffix = createHash("sha256")
+  generationSuffix = createHash("sha256")
     .update(`arashi-delete-quarantine-v1\0${plan.id}`)
-    .digest("hex");
+    .digest("hex"),
+  terminalResidues: DeleteTerminalResidue[] = [],
+): DeleteResumeReceipt => {
   return {
-    version: 1,
+    version: 2,
     planId: plan.id,
     parentIdentity: runtime.parentIdentity,
     repositoryKey,
@@ -1264,19 +1316,20 @@ const createReceiptRecord = (
     remainingPhases: DELETE_PHASE_NAMES.filter((phase) => !completedPhases.includes(phase)),
     retryArgv: ["aw", "delete", repositoryKey, "--force", ...(json ? ["--json"] : [])],
     warnings: [...plan.warnings],
+    terminalResidues: [...terminalResidues],
     runtime: {
       workspaceRoot: runtime.workspaceRoot,
       configPath: runtime.configPath,
       clonePath: runtime.clonePath,
       quarantinePath: join(
         dirname(runtime.clonePath),
-        `.arashi-delete-${Buffer.from(repositoryKey, "utf8").toString("hex")}-${suffix}`,
+        `.arashi-delete-${Buffer.from(repositoryKey, "utf8").toString("hex")}-${generationSuffix}`,
       ),
       worktreeQuarantines: runtime.identities.worktrees.map(({ path }) => ({
         path,
         quarantinePath: join(
           dirname(path),
-          `.arashi-delete-worktree-${createHash("sha256").update(path, "utf8").digest("hex")}-${suffix}`,
+          `.arashi-delete-worktree-${createHash("sha256").update(path, "utf8").digest("hex")}-${generationSuffix}`,
         ),
       })),
       destructionPreparedItemIds,
@@ -1300,6 +1353,36 @@ const executePlannedRepository = async (
   ) => Promise<void>,
 ): Promise<DeleteRepositoryResult> => {
   const result = createDeleteResult(plan, repositoryKey, json);
+  const baseGenerationSuffix = createHash("sha256")
+    .update(`arashi-delete-quarantine-v1\0${plan.id}`)
+    .digest("hex");
+  const cloneQuarantinePrefix = `.arashi-delete-${Buffer.from(repositoryKey, "utf8").toString("hex")}-`;
+  const retainedPathForItem = (item: DeleteRepositoryItem, path: string, suffix: string): string =>
+    join(
+      dirname(path),
+      `.arashi-delete-retained-${createHash("sha256")
+        .update("arashi-delete-retained-v1\0")
+        .update(plan.id)
+        .update("\0")
+        .update(item.id)
+        .digest("hex")}-${suffix}`,
+    );
+  const generationSuffix = runtime.resumeReceipt?.runtime.quarantinePath
+    ? basename(runtime.resumeReceipt.runtime.quarantinePath).slice(cloneQuarantinePrefix.length)
+    : await allocateDeleteGenerationSuffix(baseGenerationSuffix, (suffix) => [
+        join(dirname(runtime.clonePath), `${cloneQuarantinePrefix}${suffix}`),
+        ...runtime.identities.worktrees.map(({ path }) =>
+          join(
+            dirname(path),
+            `.arashi-delete-worktree-${createHash("sha256").update(path, "utf8").digest("hex")}-${suffix}`,
+          ),
+        ),
+        ...plan.items.flatMap((item) =>
+          item.path && (item.kind === "worktree-metadata" || item.kind === "workspace-hook")
+            ? [retainedPathForItem(item, item.path, suffix)]
+            : [],
+        ),
+      ]);
   let order = 1;
   let irreversible = false;
   let receiptBytes: Uint8Array | null = null;
@@ -1308,15 +1391,11 @@ const executePlannedRepository = async (
   const completedPhases: DeletePhaseName[] = [];
   const completedItemIds: string[] = [];
   let destructionPreparedItemIds: string[] = [];
+  let terminalResidues: DeleteTerminalResidue[] = [
+    ...(runtime.resumeReceipt?.terminalResidues ?? []),
+  ];
   let activePhase: DeletePhase | null = null;
   let activeItemId: string | null = null;
-  const pathExists = async (path: string): Promise<boolean> =>
-    lstat(path)
-      .then(() => true)
-      .catch((error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return false;
-        throw error;
-      });
   const receiptRuntime = (): DeleteResumeReceipt["runtime"] =>
     createReceiptRecord(
       repositoryKey,
@@ -1326,21 +1405,23 @@ const executePlannedRepository = async (
       completedPhases,
       completedItemIds,
       destructionPreparedItemIds,
+      generationSuffix,
+      terminalResidues,
     ).runtime;
   const persist = async (): Promise<void> => {
-    receiptBytes = await updateDeleteResumeReceipt(
-      runtime.receiptPath,
-      receiptBytes!,
-      createReceiptRecord(
-        repositoryKey,
-        plan,
-        runtime,
-        json,
-        completedPhases,
-        completedItemIds,
-        destructionPreparedItemIds,
-      ),
+    const nextReceipt = createReceiptRecord(
+      repositoryKey,
+      plan,
+      runtime,
+      json,
+      completedPhases,
+      completedItemIds,
+      destructionPreparedItemIds,
+      generationSuffix,
+      terminalResidues,
     );
+    receiptBytes = await updateDeleteResumeReceipt(runtime.receiptPath, receiptBytes!, nextReceipt);
+    runtime.resumeReceipt = nextReceipt;
     const loaded = await readValidatedDeleteReceipt(runtime.receiptPath, {
       parentIdentity: runtime.parentIdentity,
       repositoryKey,
@@ -1354,6 +1435,21 @@ const executePlannedRepository = async (
       if (!completedItemIds.includes(id)) completedItemIds.push(id);
     }
     completedPhases.push(phase.name);
+    await persist();
+  };
+  const adoptUnprepared = async (
+    identity: DeletionPathIdentity,
+    quarantine: string,
+    ids: string[],
+  ): Promise<void> => {
+    if (
+      ids.every((id) => completedItemIds.includes(id)) ||
+      ids.every((id) => destructionPreparedItemIds.includes(id)) ||
+      (await pathExists(identity.path))
+    )
+      return;
+    await adoptUnpreparedQuarantine(identity, quarantine);
+    destructionPreparedItemIds = [...ids];
     await persist();
   };
   const completeItems = async (
@@ -1390,12 +1486,39 @@ const executePlannedRepository = async (
     }
     activeItemId = null;
   };
+  const validateRetainedWorktreeAdministration = async (
+    worktree: WorktreeRemovalPlan["linkedWorktrees"][number],
+    quarantine: string,
+  ): Promise<void> => {
+    const identity = runtime.identities.worktreeAdmins.find(
+      ({ path }) => path === worktree.metadataPath,
+    );
+    if (!identity)
+      throw new Error("Delete worktree administration identity provenance is missing.");
+    await validateDeletionIdentity(identity);
+    const head = await readFile(join(worktree.metadataPath!, "HEAD"), "utf8");
+    if (!worktree.branch || head !== `ref: ${worktree.branch}\n`)
+      throw deleteError(
+        "DELETE_CONCURRENT_CHANGE",
+        "Linked checkout administration branch changed during recovery.",
+        { repositoryKey },
+      );
+    const gitdir = (await readFile(join(worktree.metadataPath!, "gitdir"), "utf8")).trimEnd();
+    const observed = isAbsolute(gitdir) ? resolve(gitdir) : resolve(worktree.metadataPath!, gitdir);
+    const allowed = [resolve(worktree.path, ".git"), resolve(quarantine, ".git")];
+    if (!allowed.includes(observed))
+      throw deleteError(
+        "DELETE_CONCURRENT_CHANGE",
+        "Linked checkout administration topology changed during recovery.",
+        { repositoryKey },
+      );
+  };
   try {
     activePhase = markPhase(result, "provenance", order++);
     try {
       receiptBytes = await createDeleteResumeReceipt(
         runtime.receiptPath,
-        createReceiptRecord(repositoryKey, plan, runtime, json, [], []),
+        createReceiptRecord(repositoryKey, plan, runtime, json, [], [], [], generationSuffix),
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -1403,7 +1526,16 @@ const executePlannedRepository = async (
         parentIdentity: runtime.parentIdentity,
         repositoryKey,
       });
-      const expected = createReceiptRecord(repositoryKey, plan, runtime, json, [], []);
+      const expected = createReceiptRecord(
+        repositoryKey,
+        plan,
+        runtime,
+        json,
+        [],
+        [],
+        [],
+        generationSuffix,
+      );
       if (
         existing.receipt.planId !== expected.planId ||
         existing.receipt.configDigest !== expected.configDigest ||
@@ -1416,7 +1548,8 @@ const executePlannedRepository = async (
       if (
         existing.receipt.runtime.quarantinePath === undefined ||
         existing.receipt.runtime.worktreeQuarantines === undefined ||
-        existing.receipt.runtime.destructionPreparedItemIds === undefined
+        existing.receipt.runtime.destructionPreparedItemIds === undefined ||
+        existing.receipt.terminalResidues === undefined
       ) {
         const upgraded = createReceiptRecord(
           repositoryKey,
@@ -1426,6 +1559,7 @@ const executePlannedRepository = async (
           existing.receipt.completedPhases as DeletePhaseName[],
           existing.receipt.completedItemIds,
           [],
+          generationSuffix,
         );
         await updateDeleteResumeReceipt(runtime.receiptPath, existing.bytes, upgraded);
         existing = await readValidatedDeleteReceipt(runtime.receiptPath, {
@@ -1438,6 +1572,7 @@ const executePlannedRepository = async (
       completedPhases.push(...(existing.receipt.completedPhases as DeletePhaseName[]));
       completedItemIds.push(...existing.receipt.completedItemIds);
       destructionPreparedItemIds = [...(existing.receipt.runtime.destructionPreparedItemIds ?? [])];
+      terminalResidues = [...(existing.receipt.terminalResidues ?? [])];
       for (const item of result.items) {
         if (completedItemIds.includes(item.id))
           Object.assign(item, { completed: true, state: "completed" });
@@ -1460,7 +1595,51 @@ const executePlannedRepository = async (
       await persist();
     } else completePhase(result, activePhase, order++);
 
+    if (await pathExists(runtime.identities.clone.path)) {
+      await validateDeletionIdentity(runtime.identities.canonicalGitAdmin);
+    } else {
+      const cloneQuarantine = receiptRuntime().quarantinePath;
+      if (!cloneQuarantine)
+        throw deleteError("DELETE_RECEIPT_STALE", "Canonical quarantine provenance is missing.", {
+          repositoryKey,
+        });
+      const retainedClone = (await pathExists(cloneQuarantine))
+        ? cloneQuarantine
+        : deletionRetirementPath(cloneQuarantine);
+      await validateResidueIdentity(
+        runtime.identities.canonicalGitAdmin,
+        join(
+          retainedClone,
+          relative(runtime.identities.clone.path, runtime.identities.canonicalGitAdmin.path),
+        ),
+      );
+    }
+
     activePhase = markPhase(result, "worktrees", order++);
+    irreversible = true;
+    for (const worktree of runtime.topology.linkedWorktrees) {
+      const item = plan.items.find(
+        ({ kind, path }) => kind === "linked-worktree" && path === worktree.path,
+      );
+      const identity = runtime.identities.worktrees.find(({ path }) => path === worktree.path);
+      const quarantine = receiptRuntime().worktreeQuarantines?.find(
+        ({ path }) => path === worktree.path,
+      )?.quarantinePath;
+      if (item && identity && quarantine) {
+        if (completedItemIds.includes(item.id)) {
+          await validateExpectedAbsence(identity);
+          const retiredQuarantine = deletionRetirementPath(quarantine);
+          const retainedWorktree = (await pathExists(quarantine)) ? quarantine : retiredQuarantine;
+          await validatePreparedQuarantine(identity, retainedWorktree);
+          if (await pathExists(runtime.identities.clone.path))
+            await validateRetainedWorktreeAdministration(worktree, quarantine);
+          continue;
+        }
+        if (!(await pathExists(identity.path)))
+          await validateRetainedWorktreeAdministration(worktree, quarantine);
+        await adoptUnprepared(identity, quarantine, [item.id]);
+      }
+    }
     await revalidatePhase?.("worktrees", new Set(completedItemIds));
     for (const worktree of runtime.topology.linkedWorktrees) {
       const item = plan.items.find(
@@ -1474,51 +1653,60 @@ const executePlannedRepository = async (
           ({ path }) => path === worktree.path,
         )?.quarantinePath;
         if (!quarantine) throw new Error("Delete worktree quarantine provenance is missing.");
-        if (!prepared && !(await pathExists(worktree.path))) {
-          if (!(await pathExists(quarantine)))
-            throw deleteError("DELETE_RECEIPT_STALE", "Unprepared worktree deletion is absent.", {
-              repositoryKey,
-            });
-          await rename(quarantine, worktree.path);
-          await validateDeletionIdentity(identity);
-        }
+        const metadataPath = worktree.metadataPath;
+        const adminIdentity = runtime.identities.worktreeAdmins.find(
+          ({ path }) => path === metadataPath,
+        );
+        if (!adminIdentity)
+          throw new Error("Delete worktree administration identity provenance is missing.");
+
         if (prepared && (await pathExists(worktree.path)))
           throw deleteError("DELETE_RECEIPT_STALE", "Prepared worktree source was recreated.", {
             repositoryKey,
           });
-        if (await pathExists(quarantine)) {
-          await quarantineAndRemoveIdentity(identity, {
+        const retiredQuarantine = deletionRetirementPath(quarantine);
+        if ((await pathExists(quarantine)) || (prepared && (await pathExists(retiredQuarantine)))) {
+          await quarantineAndRetainIdentity(identity, {
             quarantinePath: quarantine,
             alreadyQuarantined: true,
-            preserveQuarantineOnFailure: true,
           });
         } else if (!prepared) {
-          await quarantineAndRemoveIdentity(identity, {
+          await quarantineAndRetainIdentity(identity, {
             quarantinePath: quarantine,
-            preserveQuarantineOnFailure: () => destructionPreparedItemIds.includes(item.id),
-            afterRestore: async (restored) => {
-              await gitExec(["worktree", "repair", "--", restored], runtime.topology.primaryPath);
-            },
-            beforeRemove: async (moved) => {
-              await gitExec(["worktree", "repair", "--", moved], runtime.topology.primaryPath);
+            beforeRetain: async () => {
+              await pauseDeleteCommandTestBoundary("linked-after-quarantine");
+              await validateRetainedWorktreeAdministration(worktree, quarantine);
               await prepare();
+              await pauseDeleteCommandTestBoundary("linked-after-prepare");
             },
           });
         }
         if (!prepared && !destructionPreparedItemIds.includes(item.id))
           throw new Error("Worktree destruction was not durably prepared.");
-        await gitExec(["worktree", "prune", "--expire", "now"], runtime.topology.primaryPath);
         await validateExpectedAbsence(identity);
-        if (await pathExists(quarantine))
-          throw new Error("Prepared worktree quarantine remains after destruction.");
-        if (worktree.metadataPath && (await pathExists(worktree.metadataPath)))
-          throw new Error("Prepared worktree administration remains after destruction.");
+        const retainedWorktree = (await pathExists(quarantine)) ? quarantine : retiredQuarantine;
+        await validatePreparedQuarantine(identity, retainedWorktree);
+        // The administration directory is retained with the canonical clone,
+        // whose receipt-owned quarantine is established later in this transaction.
+        if (await pathExists(adminIdentity.path)) await validateDeletionIdentity(adminIdentity);
       });
+      await pauseDeleteCommandTestBoundary("linked-after-completion");
     }
     if (!completedPhases.includes("worktrees")) await finish(activePhase);
     else completePhase(result, activePhase, order++);
 
     activePhase = markPhase(result, "metadata", order++);
+    for (const metadata of runtime.identities.metadata) {
+      const item = plan.items.find(
+        ({ kind, path }) => kind === "worktree-metadata" && path === metadata.path,
+      );
+      if (item)
+        await adoptUnprepared(
+          metadata,
+          retainedPathForItem(item, metadata.path, generationSuffix),
+          [item.id],
+        );
+    }
     await revalidatePhase?.("metadata", new Set(completedItemIds));
     for (const metadata of runtime.identities.metadata) {
       const item = plan.items.find(
@@ -1526,60 +1714,79 @@ const executePlannedRepository = async (
       );
       if (!item || completedItemIds.includes(item.id)) continue;
       await completeItems([item], async (prepared, prepare) => {
-        if (prepared)
-          throw deleteError("DELETE_RECEIPT_STALE", "Prepared metadata recovery is unavailable.", {
+        const quarantine = retainedPathForItem(item, metadata.path, generationSuffix);
+
+        if (prepared && (await pathExists(metadata.path)))
+          throw deleteError("DELETE_RECEIPT_STALE", "Prepared metadata source was recreated.", {
             repositoryKey,
           });
-        await quarantineAndRemoveIdentity(metadata, { beforeRemove: prepare });
+        if (await pathExists(quarantine))
+          await quarantineAndRetainIdentity(metadata, {
+            quarantinePath: quarantine,
+            alreadyQuarantined: true,
+          });
+        else
+          await quarantineAndRetainIdentity(metadata, {
+            quarantinePath: quarantine,
+            beforeRetain: prepare,
+          });
       });
     }
     if (!completedPhases.includes("metadata")) await finish(activePhase);
     else completePhase(result, activePhase, order++);
 
     activePhase = markPhase(result, "canonical-clone", order++);
-    await revalidatePhase?.("canonical-clone", new Set(completedItemIds));
     const cloneItems = plan.items.filter(
       ({ kind }) => kind === "canonical-clone" || kind === "local-ref",
     );
+    const cloneQuarantine = receiptRuntime().quarantinePath;
+    if (cloneQuarantine)
+      await adoptUnprepared(
+        runtime.identities.clone,
+        cloneQuarantine,
+        cloneItems.map(({ id }) => id),
+      );
+    await revalidatePhase?.("canonical-clone", new Set(completedItemIds));
     await completeItems(cloneItems, async (prepared, prepare) => {
       const quarantine = receiptRuntime().quarantinePath;
       if (!quarantine) throw new Error("Delete clone quarantine provenance is missing.");
-      if (!prepared && !(await pathExists(runtime.identities.clone.path))) {
-        if (!(await pathExists(quarantine)))
-          throw deleteError("DELETE_RECEIPT_STALE", "Unprepared clone deletion is absent.", {
-            repositoryKey,
-          });
-        await rename(quarantine, runtime.identities.clone.path);
-        await validateDeletionIdentity(runtime.identities.clone);
-      }
+
       if (prepared && (await pathExists(runtime.identities.clone.path)))
         throw deleteError("DELETE_RECEIPT_STALE", "Prepared clone source was recreated.", {
           repositoryKey,
         });
-      if (await pathExists(quarantine)) {
-        await quarantineAndRemoveIdentity(runtime.identities.clone, {
+      const retiredQuarantine = deletionRetirementPath(quarantine);
+      if ((await pathExists(quarantine)) || (prepared && (await pathExists(retiredQuarantine)))) {
+        await quarantineAndRetainIdentity(runtime.identities.clone, {
           quarantinePath: quarantine,
           alreadyQuarantined: true,
-          preserveQuarantineOnFailure: true,
         });
       } else if (!prepared) {
-        await quarantineAndRemoveIdentity(runtime.identities.clone, {
+        await quarantineAndRetainIdentity(runtime.identities.clone, {
           quarantinePath: quarantine,
-          preserveQuarantineOnFailure: () =>
-            cloneItems.every(({ id }) => destructionPreparedItemIds.includes(id)),
-          beforeRemove: prepare,
+          beforeRetain: prepare,
         });
       }
       if (!prepared && !cloneItems.every(({ id }) => destructionPreparedItemIds.includes(id)))
         throw new Error("Clone destruction was not durably prepared.");
       await validateExpectedAbsence(runtime.identities.clone);
-      if (await pathExists(quarantine))
-        throw new Error("Prepared clone quarantine remains after destruction.");
+      const retainedClone = (await pathExists(quarantine)) ? quarantine : retiredQuarantine;
+      await validatePreparedQuarantine(runtime.identities.clone, retainedClone);
     });
     if (!completedPhases.includes("canonical-clone")) await finish(activePhase);
     else completePhase(result, activePhase, order++);
+    await pauseDeleteCommandTestBoundary("clone-phase-completed");
 
     activePhase = markPhase(result, "workspace-hooks", order++);
+    for (const hook of runtime.identities.hooks) {
+      const item = plan.items.find(
+        ({ kind, path }) => kind === "workspace-hook" && path === hook.path,
+      );
+      if (item)
+        await adoptUnprepared(hook, retainedPathForItem(item, hook.path, generationSuffix), [
+          item.id,
+        ]);
+    }
     await revalidatePhase?.("workspace-hooks", new Set(completedItemIds));
     for (const hook of runtime.identities.hooks) {
       const item = plan.items.find(
@@ -1587,11 +1794,22 @@ const executePlannedRepository = async (
       );
       if (!item || completedItemIds.includes(item.id)) continue;
       await completeItems([item], async (prepared, prepare) => {
-        if (prepared)
-          throw deleteError("DELETE_RECEIPT_STALE", "Prepared hook recovery is unavailable.", {
+        const quarantine = retainedPathForItem(item, hook.path, generationSuffix);
+
+        if (prepared && (await pathExists(hook.path)))
+          throw deleteError("DELETE_RECEIPT_STALE", "Prepared hook source was recreated.", {
             repositoryKey,
           });
-        await quarantineAndRemoveIdentity(hook, { beforeRemove: prepare });
+        if (await pathExists(quarantine))
+          await quarantineAndRetainIdentity(hook, {
+            quarantinePath: quarantine,
+            alreadyQuarantined: true,
+          });
+        else
+          await quarantineAndRetainIdentity(hook, {
+            quarantinePath: quarantine,
+            beforeRetain: prepare,
+          });
       });
     }
     if (!completedPhases.includes("workspace-hooks")) await finish(activePhase);
@@ -1609,18 +1827,41 @@ const executePlannedRepository = async (
           { repositoryKey, reason: "config-removal-not-proven" },
         );
     }
-    await completeItems([configItem], async () => {
-      const persisted = await persistExpectedBytesAtomically(
-        runtime.configPath,
-        runtime.nextConfigBytes,
+    if (!completedItemIds.includes(configItem.id)) {
+      activeItemId = configItem.id;
+      irreversible = true;
+      durable = false;
+      const current = await readFile(runtime.configPath);
+      await recoverDeleteConfigurationBytes(
+        current,
         runtime.expectedConfigBytes,
+        runtime.nextConfigBytes,
+        async () => {
+          const published = await persistExpectedBytesAtomically(
+            runtime.configPath,
+            runtime.nextConfigBytes,
+            runtime.expectedConfigBytes,
+          );
+          if (!published)
+            throw deleteError("DELETE_CONCURRENT_CHANGE", "Configuration changed after planning.", {
+              repositoryKey,
+              reason: "config-bytes-changed",
+            });
+        },
+        async () => {
+          completedItemIds.push(configItem.id);
+          try {
+            await persist();
+          } catch (error) {
+            completedItemIds.splice(completedItemIds.indexOf(configItem.id), 1);
+            throw error;
+          }
+          const resultItem = result.items.find(({ id }) => id === configItem.id);
+          if (resultItem) Object.assign(resultItem, { completed: true, state: "completed" });
+          activeItemId = null;
+        },
       );
-      if (!persisted)
-        throw deleteError("DELETE_CONCURRENT_CHANGE", "Configuration changed after planning.", {
-          repositoryKey,
-          reason: "config-bytes-changed",
-        });
-    });
+    }
     if (!completedPhases.includes("configuration")) await finish(activePhase);
     else completePhase(result, activePhase, order++);
 
@@ -1632,7 +1873,103 @@ const executePlannedRepository = async (
         repositoryKey,
         reason: "receipt-bytes-changed",
       });
-    await removeDeleteResumeReceipt(runtime.receiptPath, receiptBytes!, receiptIdentity!);
+    const receiptState = receiptRuntime();
+    let retainedCleanup: DeleteTerminalResidue[] = [];
+    for (const item of plan.items) {
+      if (!completedItemIds.includes(item.id) || !item.path) continue;
+      if (item.kind === "linked-worktree") {
+        const quarantine = receiptState.worktreeQuarantines?.find(
+          ({ path }) => path === item.path,
+        )?.quarantinePath;
+        if (quarantine)
+          retainedCleanup.push({
+            itemId: item.id,
+            source: item.path,
+            destination: await terminalDeleteResiduePath(quarantine),
+          });
+      }
+      if (item.kind === "canonical-clone" && receiptState.quarantinePath) {
+        retainedCleanup.push({
+          itemId: item.id,
+          source: item.path,
+          destination: await terminalDeleteResiduePath(receiptState.quarantinePath),
+        });
+      }
+      if (item.kind === "worktree-metadata" || item.kind === "workspace-hook")
+        retainedCleanup.push({
+          itemId: item.id,
+          source: item.path,
+          destination: retainedPathForItem(item, item.path, generationSuffix),
+        });
+    }
+    for (const ancestor of retainedCleanup.filter(({ source }) =>
+      plan.items.some(
+        (item) =>
+          item.path === source &&
+          (item.kind === "canonical-clone" || item.kind === "linked-worktree"),
+      ),
+    ))
+      retainedCleanup = remapDeleteResidues(
+        retainedCleanup,
+        ancestor.source,
+        ancestor.destination,
+      ) as DeleteTerminalResidue[];
+    for (const residue of retainedCleanup) {
+      if (
+        plan.items.some(
+          (item) =>
+            item.path === residue.source &&
+            (item.kind === "worktree-metadata" || item.kind === "workspace-hook"),
+        )
+      )
+        residue.destination = await terminalDeleteResiduePath(residue.destination);
+    }
+    retainedCleanup = retainedCleanup.toSorted((left, right) =>
+      bytewise(
+        `${left.itemId}\0${left.source}\0${left.destination}`,
+        `${right.itemId}\0${right.source}\0${right.destination}`,
+      ),
+    );
+    if (!completedPhases.includes("verification")) completedPhases.push("verification");
+    if (terminalResidues.length === 0) terminalResidues = retainedCleanup;
+    else if (stableHash(terminalResidues) !== stableHash(retainedCleanup))
+      throw deleteError("DELETE_RECEIPT_STALE", "Terminal delete residue mapping is stale.", {
+        repositoryKey,
+        reason: "terminal-residue-mismatch",
+      });
+    for (const residue of terminalResidues) {
+      const item = plan.items.find(({ id }) => id === residue.itemId)!;
+      const identity =
+        item.kind === "canonical-clone"
+          ? runtime.identities.clone
+          : item.kind === "linked-worktree"
+            ? runtime.identities.worktrees.find(({ path }) => path === item.path)
+            : item.kind === "worktree-metadata"
+              ? runtime.identities.metadata.find(({ path }) => path === item.path)
+              : runtime.identities.hooks.find(({ path }) => path === item.path);
+      if (!identity)
+        throw deleteError("DELETE_RECEIPT_STALE", "Terminal delete residue identity is missing.", {
+          repositoryKey,
+          reason: "terminal-residue-identity-missing",
+        });
+      await validateResidueIdentity(identity, residue.destination);
+    }
+    await persist();
+    const retainedReceipt = await removeDeleteResumeReceipt(
+      runtime.receiptPath,
+      receiptBytes!,
+      receiptIdentity!,
+    );
+    const outputCleanup = [
+      ...terminalResidues,
+      { source: runtime.receiptPath, destination: retainedReceipt },
+    ];
+    result.warnings = sortRepositoryKeys([
+      ...result.warnings,
+      ...outputCleanup.map(
+        ({ source, destination }) => `DELETE_RETAINED_CLEANUP: ${source} -> ${destination}`,
+      ),
+    ]);
     completePhase(result, activePhase, order++);
     result.retry = {
       safe: false,
@@ -1860,6 +2197,10 @@ export const executeDelete = async (
           },
           revalidateTarget: async ({ plan, repositoryKey }) => {
             const runtime = runtimePlans.get(repositoryKey)!;
+            const receiptRuntimeState =
+              runtime.resumeReceipt?.runtime ??
+              createReceiptRecord(repositoryKey, plan, runtime, options.json === true, [], [])
+                .runtime;
             await discoverDeleteHookPaths(
               runtime.workspaceRoot,
               repositoryKey,
@@ -1867,6 +2208,12 @@ export const executeDelete = async (
               runtime.topology.configuredActivePath,
             );
             const completed = new Set(runtime.resumeReceipt?.completedItemIds ?? []);
+            const prepared = new Set(
+              runtime.resumeReceipt?.runtime.destructionPreparedItemIds ?? [],
+            );
+            const preparedDestructionPending = plan.items.some(
+              (item) => prepared.has(item.id) && !completed.has(item.id),
+            );
             const isCompleted = (kind: DeleteItemKind, path: string | null = null) => {
               const item = plan.items.find(
                 (candidate) =>
@@ -1891,25 +2238,121 @@ export const executeDelete = async (
             if (!isCompleted("canonical-clone")) {
               const cloneState = await validatePresentOrExpectedAbsent(runtime.identities.clone);
               const absentWorktreePaths = new Set<string>();
+              const unpreparedWorktreePaths = new Set<string>();
+              const preparedWorktreePaths = new Map<string, string>();
               for (const identity of runtime.identities.worktrees) {
-                if (
-                  !isCompleted("linked-worktree", identity.path) &&
-                  (await validatePresentOrExpectedAbsent(identity)) === "absent"
-                )
-                  absentWorktreePaths.add(identity.path);
+                const item = plan.items.find(
+                  ({ kind, path }) => kind === "linked-worktree" && path === identity.path,
+                );
+                if (!item || isCompleted("linked-worktree", identity.path)) continue;
+                const quarantine = receiptRuntimeState.worktreeQuarantines?.find(
+                  ({ path }) => path === identity.path,
+                )?.quarantinePath;
+                if (prepared.has(item.id)) {
+                  if (!quarantine)
+                    throw deleteError(
+                      "DELETE_RECEIPT_STALE",
+                      "Prepared worktree quarantine is missing.",
+                      { repositoryKey },
+                    );
+                  await validateExpectedAbsence(identity);
+                  if (await pathExists(quarantine)) {
+                    await validatePreparedQuarantine(identity, quarantine);
+                    preparedWorktreePaths.set(identity.path, quarantine);
+                  } else absentWorktreePaths.add(identity.path);
+                } else if ((await validatePresentOrExpectedAbsent(identity)) === "absent") {
+                  if (quarantine && (await pathExists(quarantine))) {
+                    await validatePreparedQuarantine(identity, quarantine);
+                    unpreparedWorktreePaths.add(identity.path);
+                  } else absentWorktreePaths.add(identity.path);
+                }
+              }
+              for (const identity of runtime.identities.worktreeAdmins) {
+                const worktree = runtime.topology.linkedWorktrees.find(
+                  ({ metadataPath }) => metadataPath === identity.path,
+                );
+                if (worktree && !isCompleted("linked-worktree", worktree.path)) {
+                  const item = plan.items.find(
+                    ({ kind, path }) => kind === "linked-worktree" && path === worktree.path,
+                  );
+                  const quarantine = receiptRuntimeState.worktreeQuarantines?.find(
+                    ({ path }) => path === worktree.path,
+                  )?.quarantinePath;
+                  if (absentWorktreePaths.has(worktree.path)) {
+                    if (await pathExists(identity.path)) await validateDeletionIdentity(identity);
+                  } else if (
+                    item &&
+                    prepared.has(item.id) &&
+                    quarantine &&
+                    !(await pathExists(quarantine))
+                  ) {
+                    if (await pathExists(identity.path)) await validateDeletionIdentity(identity);
+                  } else await validateDeletionIdentity(identity);
+                }
               }
               for (const identity of runtime.identities.metadata) {
                 if (!isCompleted("worktree-metadata", identity.path))
                   await validatePresentOrExpectedAbsent(identity);
               }
-              if (cloneState === "present") {
+              const linkedRetirementStarted =
+                absentWorktreePaths.size > 0 ||
+                unpreparedWorktreePaths.size > 0 ||
+                preparedWorktreePaths.size > 0 ||
+                runtime.topology.linkedWorktrees.some(({ path }) =>
+                  isCompleted("linked-worktree", path),
+                );
+              if (
+                cloneState === "present" &&
+                !preparedDestructionPending &&
+                !linkedRetirementStarted
+              ) {
                 const refreshed = await inspectGitWorktreeTopology(runtime.clonePath);
+                const retainedWorktreePaths = new Map(
+                  receiptRuntimeState.worktreeQuarantines
+                    ?.filter(({ path }) => isCompleted("linked-worktree", path))
+                    .map(({ path, quarantinePath }) => [path, quarantinePath] as const) ?? [],
+                );
+                const repairedUnpreparedPaths = new Map<string, string>();
+                for (const worktree of runtime.topology.linkedWorktrees) {
+                  if (!unpreparedWorktreePaths.has(worktree.path)) continue;
+                  const quarantine = receiptRuntimeState.worktreeQuarantines?.find(
+                    ({ path }) => path === worktree.path,
+                  )?.quarantinePath;
+                  if (
+                    quarantine &&
+                    refreshed.linkedWorktrees.some(
+                      ({ path, metadataPath }) =>
+                        path === quarantine && metadataPath === worktree.metadataPath,
+                    )
+                  )
+                    repairedUnpreparedPaths.set(worktree.path, quarantine);
+                }
                 const expectedTopology = {
                   ...runtime.topology,
-                  linkedWorktrees: runtime.topology.linkedWorktrees.filter(
-                    ({ path }) =>
-                      !isCompleted("linked-worktree", path) && !absentWorktreePaths.has(path),
-                  ),
+                  linkedWorktrees: runtime.topology.linkedWorktrees
+                    .filter(
+                      ({ path }) =>
+                        !absentWorktreePaths.has(path) &&
+                        (!unpreparedWorktreePaths.has(path) || repairedUnpreparedPaths.has(path)),
+                    )
+                    .map((worktree) => ({
+                      ...worktree,
+                      path:
+                        preparedWorktreePaths.get(worktree.path) ??
+                        repairedUnpreparedPaths.get(worktree.path) ??
+                        retainedWorktreePaths.get(worktree.path) ??
+                        worktree.path,
+                    })),
+                  staleMetadata: [
+                    ...runtime.topology.staleMetadata,
+                    ...runtime.topology.linkedWorktrees.flatMap((worktree) =>
+                      unpreparedWorktreePaths.has(worktree.path) &&
+                      !repairedUnpreparedPaths.has(worktree.path) &&
+                      worktree.metadataPath
+                        ? [{ path: worktree.metadataPath, worktreePath: worktree.path }]
+                        : [],
+                    ),
+                  ],
                 };
                 if (
                   stableHash(topologyIdentity(refreshed)) !==
@@ -1922,10 +2365,7 @@ export const executeDelete = async (
                   );
                 const refreshedLoss = await inspectRepositoryGitLoss(refreshed);
                 const completedWorktreePaths = runtime.topology.linkedWorktrees
-                  .filter(
-                    ({ path }) =>
-                      isCompleted("linked-worktree", path) || absentWorktreePaths.has(path),
-                  )
+                  .filter(({ path }) => absentWorktreePaths.has(path))
                   .map(({ path }) => path);
                 const expectedWarnings = plan.warnings.filter(
                   (warning) =>
@@ -1933,10 +2373,17 @@ export const executeDelete = async (
                       warning.startsWith(`DELETE_GIT_DATA_LOSS: ${path}:`),
                     ),
                 );
+                const refreshedWarnings = normalizePreparedDeleteWarnings(
+                  normalizePreparedDeleteWarnings(
+                    normalizePreparedDeleteWarnings(refreshedLoss.warnings, retainedWorktreePaths),
+                    preparedWorktreePaths,
+                  ),
+                  repairedUnpreparedPaths,
+                );
                 if (
                   stableHash({
                     items: refEvidence(refreshedLoss.items),
-                    warnings: refreshedLoss.warnings,
+                    warnings: refreshedWarnings,
                   }) !== stableHash({ items: refEvidence(plan.items), warnings: expectedWarnings })
                 )
                   throw deleteError(
@@ -1980,36 +2427,170 @@ export const executeDelete = async (
               options.json === true,
               async (phase, completed) => {
                 const runtime = runtimePlans.get(repositoryKey)!;
+                const receiptRuntimeState =
+                  runtime.resumeReceipt?.runtime ??
+                  createReceiptRecord(repositoryKey, plan, runtime, options.json === true, [], [])
+                    .runtime;
                 const remaining = (kind: DeleteItemKind) =>
                   plan.items.filter((item) => item.kind === kind && !completed.has(item.id));
                 if (phase === "worktrees") {
                   if (remaining("linked-worktree").length === 0) return;
                   await validateDeletionIdentity(runtime.identities.clone);
                   const absentPaths = new Set<string>();
+                  const unpreparedPaths = new Set<string>();
+                  const preparedPaths = new Map<string, string>();
                   for (const identity of runtime.identities.worktrees) {
                     const item = remaining("linked-worktree").find(
                       ({ path }) => path === identity.path,
                     );
-                    if (item && (await validatePresentOrExpectedAbsent(identity)) === "absent")
-                      absentPaths.add(identity.path);
+                    if (!item) continue;
+                    const prepared =
+                      runtime.resumeReceipt?.runtime.destructionPreparedItemIds?.includes(
+                        item.id,
+                      ) === true;
+                    if (prepared) {
+                      const quarantine = receiptRuntimeState.worktreeQuarantines?.find(
+                        ({ path }) => path === identity.path,
+                      )?.quarantinePath;
+                      if (!quarantine)
+                        throw deleteError(
+                          "DELETE_RECEIPT_STALE",
+                          "Prepared worktree quarantine is missing.",
+                          { repositoryKey },
+                        );
+                      const retiredQuarantine = deletionRetirementPath(quarantine);
+                      const preparedQuarantine = (await pathExists(quarantine))
+                        ? quarantine
+                        : (await pathExists(retiredQuarantine))
+                          ? retiredQuarantine
+                          : undefined;
+                      await validateExpectedAbsence(identity);
+                      if (preparedQuarantine) {
+                        await validatePreparedQuarantine(identity, preparedQuarantine);
+                        preparedPaths.set(identity.path, preparedQuarantine);
+                      } else absentPaths.add(identity.path);
+                    } else if ((await validatePresentOrExpectedAbsent(identity)) === "absent") {
+                      const quarantine = receiptRuntimeState.worktreeQuarantines?.find(
+                        ({ path }) => path === identity.path,
+                      )?.quarantinePath;
+                      if (quarantine && (await pathExists(quarantine))) {
+                        await validatePreparedQuarantine(identity, quarantine);
+                        unpreparedPaths.add(identity.path);
+                      } else absentPaths.add(identity.path);
+                    }
                   }
+                  for (const identity of runtime.identities.worktreeAdmins) {
+                    const worktree = runtime.topology.linkedWorktrees.find(
+                      ({ metadataPath }) => metadataPath === identity.path,
+                    );
+                    const item = worktree
+                      ? remaining("linked-worktree").find(({ path }) => path === worktree.path)
+                      : undefined;
+                    if (!item) continue;
+                    const prepared =
+                      runtime.resumeReceipt?.runtime.destructionPreparedItemIds?.includes(
+                        item.id,
+                      ) === true;
+                    const quarantine = receiptRuntimeState.worktreeQuarantines?.find(
+                      ({ path }) => path === worktree!.path,
+                    )?.quarantinePath;
+                    if (absentPaths.has(worktree!.path)) {
+                      if (await pathExists(identity.path)) await validateDeletionIdentity(identity);
+                    } else if (prepared && quarantine && !(await pathExists(quarantine))) {
+                      if (await pathExists(identity.path)) await validateDeletionIdentity(identity);
+                    } else await validateDeletionIdentity(identity);
+                  }
+                  if (preparedPaths.size > 0 || unpreparedPaths.size > 0) return;
                   const refreshed = await inspectGitWorktreeTopology(runtime.clonePath);
-                  const completedPaths = new Set(
-                    plan.items
-                      .filter(({ id, kind }) => kind === "linked-worktree" && completed.has(id))
-                      .map(({ path }) => path),
+                  const retainedPaths = new Map(
+                    receiptRuntimeState.worktreeQuarantines
+                      ?.filter(({ path }) =>
+                        plan.items.some(
+                          ({ id, kind, path: itemPath }) =>
+                            kind === "linked-worktree" && itemPath === path && completed.has(id),
+                        ),
+                      )
+                      .map(({ path, quarantinePath }) => [path, quarantinePath] as const) ?? [],
                   );
+                  const retiringPreparedPaths = new Map<string, string>();
+                  for (const worktree of runtime.topology.linkedWorktrees) {
+                    const quarantine = receiptRuntimeState.worktreeQuarantines?.find(
+                      ({ path }) => path === worktree.path,
+                    )?.quarantinePath;
+                    if (
+                      quarantine &&
+                      preparedPaths.get(worktree.path) === deletionRetirementPath(quarantine)
+                    )
+                      retiringPreparedPaths.set(worktree.path, quarantine);
+                  }
                   const expectedTopology = {
                     ...topologyIdentity(runtime.topology),
-                    linkedWorktrees: runtime.topology.linkedWorktrees.filter(
-                      ({ path }) => !completedPaths.has(path) && !absentPaths.has(path),
-                    ),
+                    linkedWorktrees: runtime.topology.linkedWorktrees
+                      .filter(
+                        ({ path }) =>
+                          !absentPaths.has(path) &&
+                          !unpreparedPaths.has(path) &&
+                          !retainedPaths.has(path) &&
+                          !retiringPreparedPaths.has(path),
+                      )
+                      .map((worktree) => ({
+                        ...worktree,
+                        path:
+                          preparedPaths.get(worktree.path) ??
+                          retainedPaths.get(worktree.path) ??
+                          worktree.path,
+                      })),
+                    staleMetadata: [
+                      ...runtime.topology.staleMetadata,
+                      ...runtime.topology.linkedWorktrees.flatMap((worktree) => {
+                        if (!worktree.metadataPath) return [];
+                        if (unpreparedPaths.has(worktree.path))
+                          return [{ path: worktree.metadataPath, worktreePath: worktree.path }];
+                        if (retainedPaths.has(worktree.path))
+                          return [{ path: worktree.metadataPath, worktreePath: worktree.path }];
+                        const quarantine = retiringPreparedPaths.get(worktree.path);
+                        return quarantine
+                          ? [{ path: worktree.metadataPath, worktreePath: quarantine }]
+                          : [];
+                      }),
+                    ],
                   };
                   if (stableHash(topologyIdentity(refreshed)) !== stableHash(expectedTopology))
                     throw deleteError(
                       "DELETE_CONCURRENT_CHANGE",
                       "Git topology changed before worktree deletion.",
                       { repositoryKey, reason: "git-topology-changed" },
+                    );
+                  const refreshedLoss = await inspectRepositoryGitLoss(refreshed);
+                  const refreshedWarnings = normalizePreparedDeleteWarnings(
+                    normalizePreparedDeleteWarnings(refreshedLoss.warnings, retainedPaths),
+                    preparedPaths,
+                  );
+                  const completedWorktreePaths = runtime.topology.linkedWorktrees
+                    .filter(
+                      ({ path }) =>
+                        absentPaths.has(path) ||
+                        retainedPaths.has(path) ||
+                        retiringPreparedPaths.has(path),
+                    )
+                    .map(({ path }) => path);
+                  const expectedWarnings = plan.warnings.filter(
+                    (warning) =>
+                      !completedWorktreePaths.some((path) =>
+                        warning.startsWith(`DELETE_GIT_DATA_LOSS: ${path}:`),
+                      ),
+                  );
+                  if (
+                    stableHash({
+                      items: refEvidence(refreshedLoss.items),
+                      warnings: refreshedWarnings,
+                    }) !==
+                    stableHash({ items: refEvidence(plan.items), warnings: expectedWarnings })
+                  )
+                    throw deleteError(
+                      "DELETE_CONCURRENT_CHANGE",
+                      "Git evidence changed before worktree deletion.",
+                      { repositoryKey, reason: "git-evidence-changed" },
                     );
                 } else if (phase === "metadata") {
                   for (const identity of runtime.identities.metadata) {
@@ -2023,27 +2604,49 @@ export const executeDelete = async (
                     (await validatePresentOrExpectedAbsent(runtime.identities.clone)) === "absent"
                   )
                     return;
+                  if (
+                    plan.items.some(
+                      ({ id, kind }) => kind === "linked-worktree" && completed.has(id),
+                    )
+                  ) {
+                    await validateDeletionIdentity(runtime.identities.clone);
+                    for (const identity of runtime.identities.worktreeAdmins) {
+                      if (await pathExists(identity.path)) await validateDeletionIdentity(identity);
+                    }
+                    return;
+                  }
                   const refreshed = await inspectGitWorktreeTopology(runtime.clonePath);
                   const refreshedLoss = await inspectRepositoryGitLoss(refreshed);
-                  const completedWorktreePaths = runtime.topology.linkedWorktrees
-                    .filter(({ path }) => {
-                      const item = plan.items.find(
-                        (candidate) =>
-                          candidate.kind === "linked-worktree" && candidate.path === path,
-                      );
-                      return item ? completed.has(item.id) : false;
-                    })
-                    .map(({ path }) => path);
+                  const retainedPaths = new Map<string, string>();
+                  const retiredCompletedPaths = new Set<string>();
+                  for (const { path, quarantinePath } of receiptRuntimeState.worktreeQuarantines ??
+                    []) {
+                    if (
+                      !plan.items.some(
+                        ({ id, kind, path: itemPath }) =>
+                          kind === "linked-worktree" && itemPath === path && completed.has(id),
+                      )
+                    )
+                      continue;
+                    const retiring = deletionRetirementPath(quarantinePath);
+                    if (!(await pathExists(quarantinePath)) && (await pathExists(retiring))) {
+                      retainedPaths.set(path, retiring);
+                      retiredCompletedPaths.add(path);
+                    } else retainedPaths.set(path, quarantinePath);
+                  }
                   const expectedWarnings = plan.warnings.filter(
                     (warning) =>
-                      !completedWorktreePaths.some((path) =>
+                      ![...retiredCompletedPaths].some((path) =>
                         warning.startsWith(`DELETE_GIT_DATA_LOSS: ${path}:`),
                       ),
                   );
                   if (
                     stableHash({
                       items: refEvidence(refreshedLoss.items),
-                      warnings: refreshedLoss.warnings,
+                      warnings: normalizePreparedDeleteWarnings(
+                        refreshedLoss.warnings,
+                        retainedPaths,
+                      ),
                     }) !==
                     stableHash({ items: refEvidence(plan.items), warnings: expectedWarnings })
                   )

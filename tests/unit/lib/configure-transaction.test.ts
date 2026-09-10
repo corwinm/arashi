@@ -416,6 +416,41 @@ describe("configure transaction", () => {
     ]);
   });
 
+  test("syncs the containing directory after replacement publication", async () => {
+    const original = bytes("original bytes");
+    const events: string[] = [];
+    const dependencies = {
+      open: async () => ({
+        chmod: async () => {},
+        chown: async () => {},
+        close: async () => {},
+        stat: async () => ({ gid: 20, uid: 501 }),
+        sync: async () => {
+          events.push("sync-stage");
+        },
+        writeFile: async () => {},
+      }),
+      platform: "linux" as const,
+      readFile: async () => original,
+      rename: async () => events.push("publish"),
+      rm: async () => {},
+      stat: async () => ({ gid: 20, mode: 0o600 }),
+      syncParentDirectory: async (path: string) => events.push(`sync-parent:${path}`),
+      temporaryName: () => ".config.json.durable.tmp",
+    } as unknown as Parameters<typeof persistExpectedBytesAtomically>[3];
+
+    await expect(
+      persistExpectedBytesAtomically(
+        join("workspace", ".arashi", "config.json"),
+        bytes("replacement bytes"),
+        original,
+        dependencies,
+      ),
+    ).resolves.toBe(true);
+
+    expect(events.slice(-2)).toEqual(["publish", `sync-parent:${join("workspace", ".arashi")}`]);
+  });
+
   test("does not replace newer bytes observed after complete staging", async () => {
     const original = bytes("original bytes");
     const newer = bytes("newer external bytes");

@@ -88,8 +88,22 @@ for change in [
         )
         wrapper = base / "bin"
         wrapper.mkdir()
+        blocked = base / "receipt-publication-blocked"
+        receipts_dir = ws / ".git/.arashi-delete-receipts"
         (wrapper / "git").write_text(
-            '#!/bin/sh\ncase " $* " in *" worktree repair "*) printf "review denied worktree repair\\n" >&2; exit 1;; esac\nexec '
+            '#!/bin/sh\ncase " $* " in *" status "*) if [ -d '
+            + repr(str(receipts_dir))
+            + " ] && ls "
+            + repr(str(receipts_dir))
+            + "/*.json >/dev/null 2>&1 && [ ! -e "
+            + repr(str(blocked))
+            + " ]; then : > "
+            + repr(str(blocked))
+            + "; (while [ -d "
+            + repr(str(linked))
+            + " ]; do sleep 0.001; done; chmod 500 "
+            + repr(str(receipts_dir))
+            + ") >/dev/null 2>&1 & fi;; esac\nexec "
             + GIT
             + ' "$@"\n'
         )
@@ -131,17 +145,30 @@ for change in [
             (linked / "ignored-data").write_text("ignored loss\n")
             git(linked, "mv", "README", "renamed file")
             (linked / "renamed file").write_text("staged rename and unstaged edit\n")
-        first = run(change != "native-dirty-receipt", True)
-        assert first.returncode != 0 and target.exists() and linked.exists(), calls
+        first_source = change != "native-dirty-receipt"
+        first = run(first_source, True)
+        receipts_dir.chmod(0o700)
+        assert first.returncode != 0 and target.exists(), calls
+        assert not linked.exists(), calls
         receipts = list((ws / ".git/.arashi-delete-receipts").glob("*.json"))
         assert len(receipts) == 1
         original_receipt = json.loads(receipts[0].read_text())
+        quarantine = pathlib.Path(
+            original_receipt["runtime"]["worktreeQuarantines"][0]["quarantinePath"]
+        )
+        assert quarantine.exists(), calls
         if change == "new-untracked":
+            linked.mkdir()
             (linked / "new-caller-data").write_text(
                 "created AFTER original delete failed\n"
             )
         elif change == "changed-linked-branch":
-            git(linked, "checkout", "other")
+            metadata = pathlib.Path(
+                original_receipt["runtime"]["topology"]["linkedWorktrees"][0][
+                    "metadataPath"
+                ]
+            )
+            (metadata / "HEAD").write_text("ref: refs/heads/other\n")
         preserved_before = {
             "keep": snap(ws / "repos/keep"),
             "origin": snap(origin),
@@ -150,10 +177,12 @@ for change in [
         }
         old_target = snap(target)
         old_linked = snap(linked)
+        old_quarantine = snap(quarantine)
         source = run(change != "source-dirty-receipt")
         source_preserved = (
             old_target == snap(target)
             and old_linked == snap(linked)
+            and old_quarantine == snap(quarantine)
             and config.read_text() == preserved_before["config"]
         )
         native = run(False)
@@ -166,6 +195,7 @@ for change in [
                 "native_deleted_selected": not target.exists() and not linked.exists(),
                 "native_preserved_selected": old_target == snap(target)
                 and old_linked == snap(linked)
+                and old_quarantine == snap(quarantine)
                 and config.read_text() == preserved_before["config"],
                 "unselected_origin_home_preserved": all(
                     snap(p) == preserved_before[k]
@@ -195,14 +225,23 @@ for row in results:
 
 for row in results:
     assert row["unselected_origin_home_preserved"], row["case"]
-    if row["case"] in ["new-untracked", "changed-linked-branch"]:
+    if row["case"] == "new-untracked":
         assert row["source_preserved_selected"] and row["native_preserved_selected"], (
             row["case"]
         )
-        assert row["calls"][2]["exit"] != 0 and not row["native_deleted_selected"], row[
+        assert row["calls"][1]["exit"] != 0 and row["calls"][2]["exit"] != 0, row[
             "case"
         ]
-        assert "DELETE_CONCURRENT_CHANGE" in row["calls"][2]["stdout"], row["case"]
+        assert "DELETE_CONCURRENT_CHANGE" in row["calls"][1]["stdout"], row["case"]
+        assert any(
+            code in row["calls"][2]["stdout"]
+            for code in ["DELETE_CONCURRENT_CHANGE", "DELETE_RECEIPT_STALE"]
+        ), row["case"]
+    elif row["case"] == "changed-linked-branch":
+        assert row["calls"][1]["exit"] != 0 and row["calls"][2]["exit"] != 0, row[
+            "case"
+        ]
+        assert not row["native_deleted_selected"], row["case"]
     else:
         assert row["calls"][1]["exit"] == 0 and row["native_deleted_selected"], row[
             "case"

@@ -110,8 +110,18 @@ interface AtomicConfigurePersistenceDependencies {
   rename(from: string, to: string): Promise<void>;
   rm(path: string, options: { force: true }): Promise<void>;
   stat(path: string): Promise<{ gid: number; mode: number }>;
+  syncParentDirectory?(path: string): Promise<void>;
   temporaryName: (configPath: string) => string;
 }
+
+const syncDirectory = async (path: string): Promise<void> => {
+  const handle = await open(path, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+};
 
 const atomicPersistenceDefaults: AtomicConfigurePersistenceDependencies = {
   open,
@@ -121,6 +131,7 @@ const atomicPersistenceDefaults: AtomicConfigurePersistenceDependencies = {
   rename,
   rm,
   stat,
+  syncParentDirectory: syncDirectory,
   temporaryName: (configPath) =>
     `.${basename(configPath)}.arashi-${process.pid}-${randomUUID()}.tmp`,
 };
@@ -177,6 +188,7 @@ export const persistExpectedBytesAtomically = async (
     if (replace) {
       await dependencies.rename(temporaryPath, persistencePath);
       temporaryExists = false;
+      await dependencies.syncParentDirectory?.(dirname(persistencePath));
       persisted = true;
     }
   } catch (error) {

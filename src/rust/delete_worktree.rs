@@ -1,10 +1,6 @@
 //! Reciprocal attached-worktree ownership and immutable loss evidence.
 use super::*;
 
-fn stale(message: &str) -> Error {
-    closed("DELETE_CONCURRENT_CHANGE", message, 1)
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct LinkedCheckout {
     pub path: PathBuf,
@@ -43,67 +39,16 @@ impl LinkedCheckout {
         Ok(())
     }
 
-    pub fn validate_quarantine_before_repair(&self, moved: &Path) -> Result<()> {
+    pub fn validate_quarantine_for_retirement(&self, moved: &Path) -> Result<()> {
         self.validate_moved_inventory(moved)?;
         if !self.admin_identity.matches(&self.admin)
             || content_inventory(&self.admin)? != self.metadata
         {
             return Err(closed(
                 "DELETE_CONCURRENT_CHANGE",
-                "Linked checkout administration changed before repair",
+                "Linked checkout administration changed before retirement",
                 1,
             ));
-        }
-        Ok(())
-    }
-
-    pub fn validate_quarantine_after_repair(&self, target: &Path, moved: &Path) -> Result<()> {
-        self.validate_moved_inventory(moved)?;
-        if !self.admin_identity.matches(&self.admin) {
-            return Err(closed(
-                "DELETE_CONCURRENT_CHANGE",
-                "Linked checkout administration identity changed during repair",
-                1,
-            ));
-        }
-        let actual = content_inventory(&self.admin)?;
-        if actual.len() != self.metadata.len() {
-            return Err(closed(
-                "DELETE_CONCURRENT_CHANGE",
-                "Linked checkout administration changed during repair",
-                1,
-            ));
-        }
-        for expected in &self.metadata {
-            let current = actual
-                .iter()
-                .find(|entry| entry.0 == expected.0)
-                .ok_or_else(|| stale("Linked checkout administration entry disappeared"))?;
-            if expected.0 == Path::new("gitdir") {
-                if fs::canonicalize(
-                    self.admin.join(
-                        std::str::from_utf8(&current.2)
-                            .map_err(|_| stale("Invalid repaired linked gitdir"))?
-                            .trim(),
-                    ),
-                )? != fs::canonicalize(moved.join(".git"))?
-                {
-                    return Err(stale("Repaired linked gitdir is not reciprocal"));
-                }
-            } else if current != expected {
-                return Err(closed(
-                    "DELETE_CONCURRENT_CHANGE",
-                    "Linked checkout administration changed during repair",
-                    1,
-                ));
-            }
-        }
-        let record = git::worktrees_readonly(target)?
-            .into_iter()
-            .find(|record| record.path == moved)
-            .ok_or_else(|| stale("Repaired linked registration is missing"))?;
-        if record.head != self.head || record.branch.as_deref() != Some(self.branch.as_str()) {
-            return Err(stale("Repaired linked registration changed identity"));
         }
         Ok(())
     }

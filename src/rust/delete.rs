@@ -1008,6 +1008,8 @@ impl DeletePlan {
         self.validate()?;
         let workspace = Workspace::discover(&self.workspace_root)?;
         let receipt = receipt::Receipt::create(self)?;
+        #[cfg(test)]
+        transaction::test_pause("receipt-published")?;
         transaction::execute(receipt, &workspace, Some(self))
     }
 

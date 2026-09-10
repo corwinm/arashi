@@ -9,27 +9,8 @@ fn parent(path: &Path) -> Result<&Path> {
     path.parent()
         .ok_or_else(|| stale("Delete path parent is unavailable"))
 }
-fn quarantine_collisions(expected: &Path, prefix: &str) -> Result<()> {
-    let directory = parent(expected)?;
-    for entry in fs::read_dir(directory)? {
-        let entry = entry?;
-        if entry.path() != expected
-            && entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| name.starts_with(prefix))
-        {
-            return Err(closed(
-                "DELETE_CONCURRENT_CHANGE",
-                "Conflicting delete quarantine generation exists",
-                1,
-            ));
-        }
-    }
-    Ok(())
-}
 #[cfg(test)]
-fn test_pause(point: &str) -> Result<()> {
+pub(super) fn test_pause(point: &str) -> Result<()> {
     if std::env::var("ARASHI_DELETE_RACE_POINT").as_deref() != Ok(point) {
         return Ok(());
     }
@@ -78,6 +59,25 @@ fn config_bytes(receipt: &Receipt) -> Result<(Vec<u8>, Vec<u8>)> {
         receipt::unbase64(runtime["nextConfigBase64"].as_str().unwrap())?,
     ))
 }
+fn normalize_prepared_warnings(
+    warnings: &[String],
+    prepared_paths: &[(PathBuf, PathBuf)],
+) -> Vec<String> {
+    let mut normalized = warnings
+        .iter()
+        .map(|warning| {
+            for (path, quarantine) in prepared_paths {
+                let prefix = format!("DELETE_GIT_DATA_LOSS: {}:", quarantine.display());
+                if let Some(suffix) = warning.strip_prefix(&prefix) {
+                    return format!("DELETE_GIT_DATA_LOSS: {}:{suffix}", path.display());
+                }
+            }
+            warning.clone()
+        })
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized
+}
 fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
     receipt.check()?;
     let runtime = &receipt.record["runtime"];
@@ -95,7 +95,7 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
     let key = receipt.record["repositoryKey"]
         .as_str()
         .ok_or_else(|| stale("Missing repository key"))?;
-    quarantine_collisions(&quarantine_path, &quarantine_prefix(key))?;
+
     if receipt::hash(&before) != receipt.record["configDigest"]
         || receipt::hash(&receipt::original_entry(&before, key)?)
             != receipt.record["originalEntryDigest"]
@@ -159,6 +159,23 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
     }
     let clone_absent = absent(&clone_path)?;
     receipt::validate_identity(&runtime["identities"]["clone"], clone_absent)?;
+    if clone_absent {
+        let retained_clone = if !absent(&quarantine_path)? {
+            quarantine_path.clone()
+        } else {
+            captured_directory_retirement(&quarantine_path)
+        };
+        let moved_admin = retained_clone.join(".git");
+        let captured = receipt::capture(&moved_admin)
+            .map_err(|_| stale("Canonical Git administration is missing or unsafe"))?;
+        if captured["leaf"]["identity"]
+            != runtime["identities"]["canonicalGitAdmin"]["leaf"]["identity"]
+        {
+            return Err(stale("Canonical Git administration identity changed"));
+        }
+    } else {
+        receipt::validate_identity(&runtime["identities"]["canonicalGitAdmin"], false)?;
+    }
     let items = receipt.record["identities"].as_array().unwrap();
     let clone_ids = items
         .iter()
@@ -189,7 +206,10 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
         }
     }
     if clone_done && !quarantine_absent {
-        return Err(stale("Completed clone remains in quarantine"));
+        let moved = receipt::capture(&quarantine_path)?;
+        if moved["leaf"]["identity"] != runtime["identities"]["clone"]["leaf"]["identity"] {
+            return Err(stale("Retained clone quarantine identity changed"));
+        }
     }
     if clone_done && !clone_absent {
         return Err(stale("Completed clone deletion was recreated"));
@@ -200,19 +220,11 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
         ));
     }
     let mut recovery_pending = false;
+    let mut administration_recovery_pending = false;
     for identity in runtime["identities"]["worktrees"].as_array().unwrap() {
         let path = get_path(identity, "path")?;
         let quarantine = worktree_quarantine(runtime, &path)?;
-        let encoded = path
-            .to_str()
-            .ok_or_else(|| stale("Non-UTF-8 worktree path"))?;
-        quarantine_collisions(
-            &quarantine,
-            &format!(
-                ".arashi-delete-worktree-{}-",
-                receipt::hash(encoded.as_bytes())
-            ),
-        )?;
+
         if clone_path.starts_with(&path)
             || path.starts_with(&clone_path)
             || root.starts_with(&path)
@@ -241,6 +253,54 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
         let done = receipt.done(item["id"].as_str().unwrap());
         let prepared = receipt.prepared(item["id"].as_str().unwrap());
         let quarantine_missing = absent(&quarantine)?;
+        let topology_record = topology["linkedWorktrees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["path"] == json!(path))
+            .ok_or_else(|| stale("Missing linked topology record"))?;
+        let admin_path = topology_record["metadataPath"]
+            .as_str()
+            .map(PathBuf::from)
+            .ok_or_else(|| stale("Missing linked administration path"))?;
+        let admin_identity = runtime["identities"]["worktreeAdmins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|identity| identity["path"] == json!(admin_path))
+            .ok_or_else(|| stale("Missing linked administration identity"))?;
+        let admin_missing = absent(&admin_path)?;
+        if !clone_absent {
+            receipt::validate_identity(
+                admin_identity,
+                (prepared || done) && quarantine_missing && admin_missing,
+            )?;
+            if missing && !admin_missing {
+                let branch = topology_record["branch"]
+                    .as_str()
+                    .ok_or_else(|| stale("Missing linked administration branch"))?;
+                if fs::read(admin_path.join("HEAD"))? != format!("ref: {branch}\n").as_bytes() {
+                    return Err(stale(
+                        "Linked administration branch changed during recovery",
+                    ));
+                }
+                let gitdir = fs::read_to_string(admin_path.join("gitdir"))?;
+                let gitdir = PathBuf::from(gitdir.trim_end());
+                let observed = if gitdir.is_absolute() {
+                    gitdir
+                } else {
+                    admin_path.join(gitdir)
+                };
+                if observed != path.join(".git") && observed != quarantine.join(".git") {
+                    return Err(stale(
+                        "Linked administration topology changed during recovery",
+                    ));
+                }
+            }
+        }
+        if (prepared || done) && missing && quarantine_missing && !admin_missing {
+            administration_recovery_pending = true;
+        }
         if prepared && !missing {
             return Err(stale("Prepared linked checkout was recreated"));
         }
@@ -263,11 +323,62 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
             if moved["leaf"]["identity"] != identity["leaf"]["identity"] {
                 return Err(stale("Prepared linked quarantine identity changed"));
             }
+        } else if done && !quarantine_missing {
+            let moved = receipt::capture(&quarantine)?;
+            if moved["leaf"]["identity"] != identity["leaf"]["identity"] {
+                return Err(stale("Retained linked quarantine identity changed"));
+            }
         } else if !prepared && !quarantine_missing {
             return Err(stale("Unexpected linked checkout quarantine remains"));
         }
     }
-    if !clone_absent && !recovery_pending {
+    if let Some(residues) = receipt.record["terminalResidues"].as_array() {
+        for residue in residues {
+            let item_id = residue["itemId"]
+                .as_str()
+                .ok_or_else(|| stale("Invalid terminal residue item"))?;
+            let source = residue["source"]
+                .as_str()
+                .ok_or_else(|| stale("Invalid terminal residue source"))?;
+            let destination = get_path(residue, "destination")?;
+            let item = items
+                .iter()
+                .find(|item| item["id"] == item_id && item["path"] == source)
+                .ok_or_else(|| stale("Terminal residue item provenance changed"))?;
+            let identity = match item["kind"].as_str() {
+                Some("canonical-clone") => &runtime["identities"]["clone"],
+                Some("linked-worktree") => runtime["identities"]["worktrees"]
+                    .as_array()
+                    .and_then(|identities| {
+                        identities
+                            .iter()
+                            .find(|identity| identity["path"] == source)
+                    })
+                    .ok_or_else(|| stale("Terminal residue identity is missing"))?,
+                _ => return Err(stale("Terminal residue item kind changed")),
+            };
+            let captured = receipt::capture(&destination)
+                .map_err(|_| stale("Terminal residue is missing or unsafe"))?;
+            if captured["leaf"]["identity"] != identity["leaf"]["identity"] {
+                return Err(stale("Terminal residue identity changed"));
+            }
+        }
+    }
+    let prepared_destruction_pending = items.iter().any(|item| {
+        receipt.prepared(item["id"].as_str().unwrap_or_default())
+            && !receipt.done(item["id"].as_str().unwrap_or_default())
+    });
+    let linked_retirement_started = items.iter().any(|item| {
+        item["kind"] == "linked-worktree"
+            && (receipt.prepared(item["id"].as_str().unwrap_or_default())
+                || receipt.done(item["id"].as_str().unwrap_or_default()))
+    });
+    if !clone_absent
+        && !recovery_pending
+        && !administration_recovery_pending
+        && !prepared_destruction_pending
+        && !linked_retirement_started
+    {
         let current = DeletePlan::build(workspace, key)?;
         // Compare the accepted receipt, not a newly authorized plan. Only proven
         // completed/absent worktrees may disappear from topology and loss evidence.
@@ -278,18 +389,30 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
                 1,
             )
         };
-        let mut expected_linked = Vec::new();
+        let mut expected_linked: Vec<Value> = Vec::new();
         let mut removed_paths = Vec::new();
+        let mut prepared_paths = Vec::new();
         for old in topology["linkedWorktrees"].as_array().unwrap() {
             let path = get_path(old, "path")?;
             let item = items
                 .iter()
                 .find(|item| item["kind"] == "linked-worktree" && item["path"] == old["path"])
                 .ok_or_else(|| stale("Missing linked topology item"))?;
-            if receipt.done(item["id"].as_str().unwrap()) || absent(&path)? {
+            let id = item["id"].as_str().unwrap();
+            if receipt.done(id) || receipt.prepared(id) {
+                let quarantine = worktree_quarantine(runtime, &path)?;
+                if absent(&quarantine)? {
+                    removed_paths.push(path);
+                } else {
+                    let mut expected = old.clone();
+                    expected["path"] = json!(quarantine);
+                    expected_linked.push(expected);
+                    prepared_paths.push((path.clone(), quarantine));
+                }
+            } else if absent(&path)? {
                 removed_paths.push(path);
             } else {
-                expected_linked.push(old);
+                expected_linked.push(old.clone());
             }
         }
         if expected_linked.len() != current.linked.len() {
@@ -297,7 +420,7 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
         }
         for checkout in &current.linked {
             let observed = json!({"path":checkout.path,"head":checkout.head,"branch":format!("refs/heads/{}",checkout.branch),"detached":false,"bare":false,"locked":null,"prunable":null,"metadataPath":checkout.admin,"present":true});
-            if !expected_linked.iter().any(|old| **old == observed) {
+            if !expected_linked.contains(&observed) {
                 return Err(changed());
             }
         }
@@ -305,14 +428,15 @@ fn validate_runtime(receipt: &Receipt, workspace: &Workspace) -> Result<()> {
             .as_array()
             .unwrap()
             .iter()
-            .map(|warning| warning.as_str().unwrap())
+            .map(|warning| warning.as_str().unwrap().to_owned())
             .filter(|warning| {
                 !removed_paths.iter().any(|path| {
                     warning.starts_with(&format!("DELETE_GIT_DATA_LOSS: {}:", path.display()))
                 })
             })
             .collect::<Vec<_>>();
-        if current.warnings != expected_warnings {
+        let current_warnings = normalize_prepared_warnings(&current.warnings, &prepared_paths);
+        if current_warnings != expected_warnings {
             return Err(changed());
         }
         let old_refs = items
@@ -374,7 +498,15 @@ pub(super) fn serialize_without_repository(before: &[u8], key: &str) -> Result<V
     }
     Err(stale("No receipt repository map"))
 }
-fn publish(path: &Path, before: &[u8], after: &[u8]) -> Result<()> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ConfigPublishStage {
+    StagedSynced,
+    PublishedBeforeParentSync,
+}
+fn publish_with<F>(path: &Path, before: &[u8], after: &[u8], mut boundary: F) -> Result<()>
+where
+    F: FnMut(ConfigPublishStage) -> Result<()>,
+{
     no_symlink_below(parent(path)?, path)?;
     let identity = ObjectIdentity::path(path)?;
     if fs::read(path)? != before {
@@ -390,6 +522,7 @@ fn publish(path: &Path, before: &[u8], after: &[u8]) -> Result<()> {
         .as_file()
         .set_permissions(fs::metadata(path)?.permissions())?;
     staged.as_file().sync_all()?;
+    boundary(ConfigPublishStage::StagedSynced)?;
     if !identity.matches(path) || fs::read(path)? != before {
         return Err(closed(
             "DELETE_CONCURRENT_CHANGE",
@@ -397,30 +530,8 @@ fn publish(path: &Path, before: &[u8], after: &[u8]) -> Result<()> {
             1,
         ));
     }
-    let quarantine_dir = tempfile::Builder::new()
-        .prefix(".config-publication-")
-        .tempdir_in(parent(path)?)?
-        .keep();
-    let quarantine = quarantine_dir.join("expected-config");
-    #[cfg(test)]
-    test_pause("config-publish")?;
-    receipt::rename_noreplace(path, &quarantine)?;
-    if !identity.matches(&quarantine) || fs::read(&quarantine)? != before {
-        if absent(path)? && receipt::rename_noreplace(&quarantine, path).is_ok() {
-            let _ = fs::remove_dir(&quarantine_dir);
-        }
-        return Err(closed(
-            "DELETE_CONCURRENT_CHANGE",
-            "Configuration changed during publication",
-            1,
-        ));
-    }
-    if let Err(error) = receipt::rename_noreplace(staged.path(), path) {
-        if absent(path)? {
-            let _ = receipt::rename_noreplace(&quarantine, path);
-        }
-        return Err(error);
-    }
+    staged.persist(path).map_err(|error| error.error)?;
+    boundary(ConfigPublishStage::PublishedBeforeParentSync)?;
     fs::File::open(parent(path)?)?.sync_all()?;
     if fs::read(path)? != after {
         return Err(closed(
@@ -429,22 +540,57 @@ fn publish(path: &Path, before: &[u8], after: &[u8]) -> Result<()> {
             1,
         ));
     }
-    if identity.matches(&quarantine) {
-        fs::remove_file(&quarantine)?;
-        fs::remove_dir(&quarantine_dir)?;
-    }
     Ok(())
 }
-fn remove_captured_directory(path: &Path, expected: &Value) -> Result<()> {
-    let captured = receipt::capture(path)?;
-    if captured["leaf"]["identity"] != expected["leaf"]["identity"] {
+fn publish(path: &Path, before: &[u8], after: &[u8]) -> Result<()> {
+    publish_with(path, before, after, |_stage| {
+        #[cfg(test)]
+        match _stage {
+            ConfigPublishStage::StagedSynced => test_pause("config-publish")?,
+            ConfigPublishStage::PublishedBeforeParentSync => test_pause("config-replace-after")?,
+        }
+        Ok(())
+    })
+}
+#[cfg(test)]
+pub(super) fn publish_with_stage<F>(
+    path: &Path,
+    before: &[u8],
+    after: &[u8],
+    boundary: F,
+) -> Result<()>
+where
+    F: FnMut(ConfigPublishStage) -> Result<()>,
+{
+    publish_with(path, before, after, boundary)
+}
+fn captured_directory_retirement(path: &Path) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(".retiring");
+    PathBuf::from(value)
+}
+fn retain_captured_directory(path: &Path, expected: &Value) -> Result<()> {
+    let final_retirement = captured_directory_retirement(path);
+    let active = if !absent(path)? {
+        path.to_path_buf()
+    } else if !absent(&final_retirement)? {
+        final_retirement.clone()
+    } else {
+        return Err(stale("Prepared delete quarantine is missing"));
+    };
+    #[cfg(test)]
+    test_pause("quarantine-final-retain")?;
+    let pinned = filesystem_identity::PinnedObject::open_directory(&active)?;
+    if pinned.kind() != filesystem_identity::ObjectKind::Directory
+        || json!(pinned.persisted_identity()?) != expected["leaf"]["identity"]
+    {
         return Err(stale("Quarantine generation changed before cleanup"));
     }
-    fs::remove_dir_all(path)?;
-    if !absent(path)? {
-        return Err(stale("Quarantine remains after cleanup"));
+    if pinned.matches_path(&active)? {
+        Ok(())
+    } else {
+        Err(stale("Quarantine generation changed before retention"))
     }
-    Ok(())
 }
 fn move_captured_directory(source: &Path, destination: &Path, expected: &Value) -> Result<()> {
     receipt::rename_noreplace(source, destination)?;
@@ -486,7 +632,23 @@ fn result(receipt: &Receipt, active: Option<usize>, durable: bool, error: Option
     }
     let completed = receipt.record["completedPhases"].as_array().unwrap().len();
     let phases = PHASES.iter().enumerate().map(|(index,name)| json!({"name":name,"state":if index < completed {"completed"}else if active==Some(index){"failed"}else{"pending"},"itemIds":items.iter().filter(|item| receipt::phase(item["kind"].as_str().unwrap())==Some(index)).map(|item|item["id"].clone()).collect::<Vec<_>>(),"error":if active==Some(index){error.map(|error|json!({"code":error.code,"message":error.message}))}else{None},"startedOrder":if index <= active.unwrap_or(6){Some(index*2+1)}else{None},"completedOrder":if index < completed{Some(index*2+2)}else{None}})).collect::<Vec<_>>();
-    json!({"items":items,"phases":phases,"retry":{"safe":durable,"argv":if durable{receipt.record["retryArgv"].clone()}else{Value::Null},"guidance":if durable{"Retry the exact configured repository after reviewing surviving state."}else if error.is_some(){"Resume provenance is unavailable; inspect surviving state manually."}else{"Deletion completed; no retry is required."}},"warnings":receipt.record["warnings"]})
+    let mut warnings = receipt.record["warnings"].as_array().unwrap().clone();
+    if let Some(residues) = receipt.record["terminalResidues"].as_array() {
+        warnings.extend(residues.iter().map(|residue| {
+            json!(format!(
+                "DELETE_RETAINED_CLEANUP: {} -> {}",
+                residue["source"].as_str().unwrap(),
+                residue["destination"].as_str().unwrap()
+            ))
+        }));
+    }
+    warnings.sort_by(|left, right| {
+        left.as_str()
+            .unwrap()
+            .as_bytes()
+            .cmp(right.as_str().unwrap().as_bytes())
+    });
+    json!({"items":items,"phases":phases,"retry":{"safe":durable,"argv":if durable{receipt.record["retryArgv"].clone()}else{Value::Null},"guidance":if durable{"Retry the exact configured repository after reviewing surviving state."}else if error.is_some(){"Resume provenance is unavailable; inspect surviving state manually."}else{"Deletion completed; no retry is required."}},"warnings":warnings})
 }
 pub(super) fn execute(
     mut receipt: Receipt,
@@ -494,6 +656,7 @@ pub(super) fn execute(
     accepted: Option<&DeletePlan>,
 ) -> Result<Value> {
     validate_runtime(&receipt, workspace)?;
+    receipt.persist_legacy_upgrade()?;
     let runtime = receipt.record["runtime"].clone();
     let clone_path = get_path(&runtime, "clonePath")?;
     let quarantine_path = get_path(&runtime, "quarantinePath")?;
@@ -512,10 +675,19 @@ pub(super) fn execute(
         .map(text_item_id)
         .collect::<Result<Vec<_>>>()?;
     let clone_prepared = !clone_ids.is_empty() && clone_ids.iter().all(|id| receipt.prepared(id));
-    if clone_prepared && absent(&clone_path)? && absent(&quarantine_path)? {
+    let clone_completed = !clone_ids.is_empty() && clone_ids.iter().all(|id| receipt.done(id));
+    if clone_prepared
+        && absent(&clone_path)?
+        && absent(&quarantine_path)?
+        && absent(&captured_directory_retirement(&quarantine_path))?
+    {
         receipt.complete_prepared(&clone_ids)?;
     }
-    if !clone_prepared && absent(&clone_path)? && fs::read(&config_path)? == before {
+    if !clone_prepared
+        && !clone_completed
+        && absent(&clone_path)?
+        && fs::read(&config_path)? == before
+    {
         let quarantine = quarantine_path.clone();
         if !absent(&quarantine)?
             && let Ok(moved) = receipt::capture(&quarantine)
@@ -552,39 +724,33 @@ pub(super) fn execute(
             .ok_or_else(|| stale("Missing linked receipt item identifier"))?
             .to_owned();
         let prepared = receipt.prepared(&id);
-        if prepared && absent(&path)? && absent(&quarantine)? {
+        if prepared
+            && absent(&path)?
+            && absent(&quarantine)?
+            && absent(&captured_directory_retirement(&quarantine))?
+        {
             let metadata = runtime["topology"]["linkedWorktrees"]
                 .as_array()
                 .and_then(|items| items.iter().find(|value| value["path"] == json!(path)))
                 .and_then(|value| value["metadataPath"].as_str())
                 .map(PathBuf::from)
                 .ok_or_else(|| stale("Missing linked administration provenance"))?;
-            if !absent(&metadata)?
-                || git::worktrees_readonly(&clone_path)?
+            if absent(&metadata)? {
+                if git::worktrees_readonly(&clone_path)?
                     .iter()
                     .any(|record| record.path == path || record.path == quarantine)
-            {
-                return Err(stale("Prepared linked destruction is not complete"));
+                {
+                    return Err(stale("Prepared linked destruction is not complete"));
+                }
+                receipt.complete_prepared(std::slice::from_ref(&id))?;
             }
-            receipt.complete_prepared(std::slice::from_ref(&id))?;
         } else if !prepared && absent(&path)? && !receipt.done(&id) {
             receipt.check()?;
             let moved = receipt::capture(&quarantine)?;
             if moved["leaf"]["identity"] != identity["leaf"]["identity"] {
                 return Err(stale("Quarantined linked checkout identity changed"));
             }
-            move_captured_directory(&quarantine, &path, identity)?;
-            git::run(
-                &clone_path,
-                &[
-                    "worktree",
-                    "repair",
-                    "--",
-                    path.to_str()
-                        .ok_or_else(|| stale("Non-UTF-8 worktree path"))?,
-                ],
-            )?;
-            fs::File::open(parent(&path)?)?.sync_all()?;
+            receipt.prepare(std::slice::from_ref(&id))?;
         }
     }
     validate_runtime(&receipt, &Workspace::discover(&workspace.root)?)?;
@@ -647,65 +813,22 @@ pub(super) fn execute(
                             fs::File::open(parent(&path)?)?.sync_all()?;
                             #[cfg(test)]
                             test_pause("linked-remove-after-quarantine")?;
-                            let prepared = (|| -> Result<()> {
-                                if let Some(checkout) = checkout {
-                                    checkout.validate_quarantine_before_repair(&quarantine)?;
-                                }
-                                git::run(
-                                    &clone_path,
-                                    &[
-                                        "worktree",
-                                        "repair",
-                                        "--",
-                                        quarantine.to_str().ok_or_else(|| {
-                                            stale("Non-UTF-8 worktree quarantine path")
-                                        })?,
-                                    ],
-                                )?;
-                                if let Some(checkout) = checkout {
-                                    checkout.validate_quarantine_after_repair(
-                                        &clone_path,
-                                        &quarantine,
-                                    )?;
-                                }
-                                receipt.prepare(std::slice::from_ref(&id))
-                            })();
-                            if let Err(error) = prepared {
-                                if absent(&path)? {
-                                    move_captured_directory(&quarantine, &path, identity)?;
-                                    let _ = git::run(
-                                        &clone_path,
-                                        &[
-                                            "worktree",
-                                            "repair",
-                                            "--",
-                                            path.to_str()
-                                                .ok_or_else(|| stale("Non-UTF-8 worktree path"))?,
-                                        ],
-                                    );
-                                    fs::File::open(parent(&path)?)?.sync_all()?;
-                                }
-                                return Err(error);
+                            if let Some(checkout) = checkout {
+                                checkout.validate_quarantine_for_retirement(&quarantine)?;
                             }
+                            receipt.prepare(std::slice::from_ref(&id))?;
                             #[cfg(test)]
                             test_pause("linked-prepared")?;
                         }
                         irreversible_started = true;
                         durable = true;
-                        git::run(
-                            &clone_path,
-                            &[
-                                "worktree",
-                                "remove",
-                                "--force",
-                                "--",
-                                quarantine
-                                    .to_str()
-                                    .ok_or_else(|| stale("Non-UTF-8 worktree quarantine path"))?,
-                            ],
-                        )?;
-                        if !absent(&path)? || !absent(&quarantine)? {
-                            return Err(stale("Linked destruction paths remain"));
+                        if !absent(&quarantine)?
+                            || !absent(&captured_directory_retirement(&quarantine))?
+                        {
+                            retain_captured_directory(&quarantine, identity)?;
+                        }
+                        if !absent(&path)? {
+                            return Err(stale("Linked source remains after retirement"));
                         }
                         let admin = accepted
                             .and_then(|plan| {
@@ -721,12 +844,14 @@ pub(super) fn execute(
                                     .map(PathBuf::from)
                             })
                             .ok_or_else(|| stale("Missing linked administration provenance"))?;
-                        if !absent(&admin)?
-                            || git::worktrees_readonly(&clone_path)?
-                                .iter()
-                                .any(|record| record.path == path || record.path == quarantine)
-                        {
-                            return Err(stale("Linked administration remains after destruction"));
+                        let admin_identity = runtime["identities"]["worktreeAdmins"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|identity| identity["path"] == json!(admin))
+                            .ok_or_else(|| stale("Missing linked administration identity"))?;
+                        if !absent(&admin)? {
+                            receipt::validate_identity(admin_identity, false)?;
                         }
                         fs::File::open(parent(&path)?)?.sync_all()?;
                         #[cfg(test)]
@@ -767,7 +892,13 @@ pub(super) fn execute(
                             )?;
                             fs::File::open(parent(&clone_path)?)?.sync_all()?;
                             receipt::validate_identity(&runtime["identities"]["clone"], true)?;
-                            if let Some(plan) = accepted {
+                            let linked_completed = receipt.record["identities"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .filter(|item| item["kind"] == "linked-worktree")
+                                .any(|item| receipt.done(item["id"].as_str().unwrap()));
+                            if let Some(plan) = accepted.filter(|_| !linked_completed) {
                                 plan.validate_quarantine(&quarantine, &before)?;
                             } else {
                                 let moved = receipt::capture(&quarantine)?;
@@ -785,12 +916,10 @@ pub(super) fn execute(
                         durable = true;
                         #[cfg(test)]
                         test_pause("clone-cleanup")?;
-                        remove_captured_directory(&quarantine, &runtime["identities"]["clone"])?;
+                        retain_captured_directory(&quarantine, &runtime["identities"]["clone"])?;
                         fs::File::open(parent(&clone_path)?)?.sync_all()?;
                         receipt::validate_identity(&runtime["identities"]["clone"], true)?;
-                        if !absent(&quarantine)? {
-                            return Err(stale("Canonical quarantine remains after destruction"));
-                        }
+
                         #[cfg(test)]
                         test_pause("clone-after-destruction")?;
                         receipt.complete_prepared(&ids)?;
@@ -826,8 +955,108 @@ pub(super) fn execute(
     match operation {
         Ok(()) => {
             receipt.finish(6)?;
-            let output = result(&receipt, None, false, None);
-            receipt.remove()?;
+            let mut retained = Vec::new();
+            for item in receipt.record["identities"].as_array().unwrap() {
+                let id = item["id"].as_str().unwrap();
+                if !receipt.done(id) {
+                    continue;
+                }
+                let Some(source) = item["path"].as_str() else {
+                    continue;
+                };
+                let quarantine = match item["kind"].as_str() {
+                    Some("canonical-clone") => receipt.record["runtime"]["quarantinePath"]
+                        .as_str()
+                        .map(PathBuf::from),
+                    Some("linked-worktree") => receipt.record["runtime"]["worktreeQuarantines"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|entry| entry["path"] == source)
+                        .and_then(|entry| entry["quarantinePath"].as_str())
+                        .map(PathBuf::from),
+                    _ => None,
+                };
+                if let Some(quarantine) = quarantine {
+                    let retirement = captured_directory_retirement(&quarantine);
+                    let destination = if !absent(&quarantine)? {
+                        quarantine
+                    } else if !absent(&retirement)? {
+                        retirement
+                    } else {
+                        continue;
+                    };
+                    retained.push(json!({
+                        "itemId": id,
+                        "source": source,
+                        "destination": destination,
+                    }));
+                }
+            }
+            retained.sort_by(|left, right| {
+                let key = |value: &Value| {
+                    format!(
+                        "{}\0{}\0{}",
+                        value["itemId"].as_str().unwrap(),
+                        value["source"].as_str().unwrap(),
+                        value["destination"].as_str().unwrap()
+                    )
+                };
+                key(left).as_bytes().cmp(key(right).as_bytes())
+            });
+            if receipt.record["terminalResidues"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+            {
+                receipt.record["terminalResidues"] = json!(retained);
+            } else if receipt.record["terminalResidues"] != json!(retained) {
+                return Err(stale("Terminal delete residue mapping is stale"));
+            }
+            for residue in receipt.record["terminalResidues"].as_array().unwrap() {
+                let item = receipt.record["identities"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|item| item["id"] == residue["itemId"])
+                    .ok_or_else(|| stale("Terminal residue item is missing"))?;
+                let expected = match item["kind"].as_str() {
+                    Some("canonical-clone") => &runtime["identities"]["clone"],
+                    Some("linked-worktree") => runtime["identities"]["worktrees"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|identity| identity["path"] == item["path"])
+                        .ok_or_else(|| stale("Terminal residue identity is missing"))?,
+                    _ => return Err(stale("Unsupported terminal residue item")),
+                };
+                let captured = receipt::capture(Path::new(
+                    residue["destination"]
+                        .as_str()
+                        .ok_or_else(|| stale("Terminal residue destination is invalid"))?,
+                ))?;
+                if captured["leaf"]["identity"] != expected["leaf"]["identity"] {
+                    return Err(stale("Terminal delete residue identity changed"));
+                }
+            }
+            receipt.persist()?;
+            #[cfg(test)]
+            test_pause("terminal-residues-persisted")?;
+            let mut output = result(&receipt, None, false, None);
+            let receipt_path = receipt.path.clone();
+            let retained_receipt = receipt.remove()?;
+            let retained_receipt_warning = format!(
+                "DELETE_RETAINED_CLEANUP: {} -> {}",
+                receipt_path.display(),
+                retained_receipt.display()
+            );
+            let warnings = output["warnings"].as_array_mut().unwrap();
+            warnings.push(Value::String(retained_receipt_warning));
+            warnings.sort_by(|left, right| {
+                left.as_str()
+                    .unwrap()
+                    .as_bytes()
+                    .cmp(right.as_str().unwrap().as_bytes())
+            });
             Ok(output)
         }
         Err(error) => {

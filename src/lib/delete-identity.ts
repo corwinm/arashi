@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { BigIntStats } from "node:fs";
-import { lstat, realpath, rename, rm } from "node:fs/promises";
+import { lstat, realpath, rename } from "node:fs/promises";
 import { dirname, parse, resolve } from "node:path";
 
 export type DeletionPathKind = "directory" | "file";
 
 type NoFollowMetadata = Pick<
   BigIntStats,
-  "dev" | "ino" | "isDirectory" | "isFile" | "isSymbolicLink"
+  "birthtimeNs" | "dev" | "ino" | "isDirectory" | "isFile" | "isSymbolicLink"
 >;
 
 export interface DeletionPathIdentityEntry {
@@ -27,10 +27,10 @@ export interface DeletionIdentityIO {
   realpath: (path: string) => Promise<string>;
   identityOf: (metadata: NoFollowMetadata, path: string) => string;
   rename: (source: string, destination: string) => Promise<void>;
-  rm: (path: string, options: { recursive?: boolean; force?: boolean }) => Promise<void>;
+
   quarantineName: () => string;
   afterRename?: (source: string, quarantine: string) => Promise<void>;
-  beforeRemove?: (quarantine: string) => Promise<void>;
+  beforeRetain?: (quarantine: string) => Promise<void>;
 }
 
 export class DeletionIdentityError extends Error {
@@ -60,7 +60,14 @@ const defaultIdentityOf = (metadata: NoFollowMetadata): string => {
       "",
       "identity-unavailable",
     );
-  return `${process.platform === "win32" ? "windows" : "posix"}:${metadata.dev.toString()}:${metadata.ino.toString()}`;
+  if (metadata.birthtimeNs <= 0n)
+    throw new DeletionIdentityError(
+      "DELETE_PATH_UNSAFE",
+      "The runtime cannot provide stable file creation identity.",
+      "",
+      "creation-identity-unavailable",
+    );
+  return `${process.platform === "win32" ? "windows" : "posix"}-v2:${metadata.dev.toString()}:${metadata.ino.toString()}:${metadata.birthtimeNs.toString()}`;
 };
 
 const defaults: DeletionIdentityIO = {
@@ -69,7 +76,6 @@ const defaults: DeletionIdentityIO = {
   identityOf: defaultIdentityOf,
   quarantineName: () => `.${randomUUID()}.arashi-delete`,
   rename,
-  rm,
 };
 
 const resolveIO = (overrides: Partial<DeletionIdentityIO> = {}): DeletionIdentityIO => ({
@@ -227,15 +233,56 @@ const validateMovedLeaf = async (
     changed(quarantine, "quarantine-identity-changed", "The quarantined object changed identity.");
 };
 
-export const quarantineAndRemoveIdentity = async (
+export const deletionRetirementPath = (quarantine: string): string => `${quarantine}.retiring`;
+
+const existsNoFollow = async (path: string, io: DeletionIdentityIO): Promise<boolean> => {
+  try {
+    await io.lstat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+};
+
+export const validatePreparedQuarantine = async (
+  captured: DeletionPathIdentity,
+  quarantine: string,
+  overrides: Partial<DeletionIdentityIO> = {},
+): Promise<void> => {
+  const io = resolveIO(overrides);
+  const parent = captured.ancestors.at(-1);
+  if (!parent) return unsafe(captured.path, "parent-unavailable", "Deletion target has no parent.");
+  if (dirname(quarantine) !== dirname(captured.path) || quarantine === captured.path)
+    unsafe(quarantine, "quarantine-path-invalid", "A same-parent quarantine path is unavailable.");
+  await inspectForValidation(parent, io, "ancestor-identity-changed");
+  await validateMovedLeaf(quarantine, captured, io);
+};
+
+export const validateResidueIdentity = async (
+  captured: DeletionPathIdentity,
+  destination: string,
+  overrides: Partial<DeletionIdentityIO> = {},
+): Promise<void> => validateMovedLeaf(destination, captured, resolveIO(overrides));
+
+export const adoptUnpreparedQuarantine = async (
+  captured: DeletionPathIdentity,
+  quarantine: string,
+  overrides: Partial<DeletionIdentityIO> = {},
+): Promise<string> => {
+  const io = resolveIO(overrides);
+  await validateExpectedAbsence(captured, io);
+  await validatePreparedQuarantine(captured, quarantine, io);
+  return quarantine;
+};
+
+export const quarantineAndRetainIdentity = async (
   captured: DeletionPathIdentity,
   overrides: Partial<DeletionIdentityIO> & {
     quarantinePath?: string;
     alreadyQuarantined?: boolean;
-    preserveQuarantineOnFailure?: boolean | (() => boolean);
-    afterRestore?: (restored: string) => Promise<void>;
   } = {},
-): Promise<void> => {
+): Promise<string> => {
   const io = resolveIO(overrides);
   const parent = captured.ancestors.at(-1);
   if (!parent) return unsafe(captured.path, "parent-unavailable", "Deletion target has no parent.");
@@ -270,42 +317,33 @@ export const quarantineAndRemoveIdentity = async (
     }
   }
   try {
-    if (io.afterRename) await io.afterRename(captured.path, quarantine);
+    const removalPath =
+      overrides.alreadyQuarantined &&
+      !(await existsNoFollow(quarantine, io)) &&
+      (await existsNoFollow(deletionRetirementPath(quarantine), io))
+        ? deletionRetirementPath(quarantine)
+        : quarantine;
+    if (io.afterRename) await io.afterRename(captured.path, removalPath);
     await inspectForValidation(parent, io, "ancestor-identity-changed");
-    await validateMovedLeaf(quarantine, captured, io);
-    if (io.beforeRemove) await io.beforeRemove(quarantine);
+    await validateMovedLeaf(removalPath, captured, io);
+    if (io.beforeRetain) await io.beforeRetain(quarantine);
     await inspectForValidation(parent, io, "ancestor-identity-changed");
-    await validateMovedLeaf(quarantine, captured, io);
-    await io.rm(quarantine, { recursive: captured.leaf.kind === "directory" });
+    await validateMovedLeaf(removalPath, captured, io);
+    // Physical unlink cannot be coupled to a previously captured filesystem
+    // identity on Node/POSIX. The verified receipt-owned quarantine is the
+    // terminal state; cleanup is intentionally left for explicit manual policy.
+    return removalPath;
   } catch (error) {
-    const preserve =
-      typeof overrides.preserveQuarantineOnFailure === "function"
-        ? overrides.preserveQuarantineOnFailure()
-        : overrides.preserveQuarantineOnFailure;
-    if (preserve) throw error;
     try {
       await inspectForValidation(parent, io, "ancestor-identity-changed");
-      try {
-        await io.lstat(captured.path);
-        changed(
-          captured.path,
-          "quarantine-restore-unsafe",
-          "The original destination was recreated; preserved the quarantined object.",
-        );
-      } catch (sourceError) {
-        if ((sourceError as NodeJS.ErrnoException).code !== "ENOENT") throw sourceError;
-      }
-      await validateMovedLeaf(quarantine, captured, io);
-      await io.rename(quarantine, captured.path);
-      if (overrides.afterRestore) await overrides.afterRestore(captured.path);
-    } catch {
+      const removalPath = (await existsNoFollow(quarantine, io))
+        ? quarantine
+        : deletionRetirementPath(quarantine);
+      await validateMovedLeaf(removalPath, captured, io);
+    } catch (validationError) {
       if (error instanceof DeletionIdentityError && error.reason === "quarantine-identity-changed")
         throw error;
-      changed(
-        quarantine,
-        "quarantine-restore-unsafe",
-        "Quarantine restoration guards failed; preserved the quarantined object.",
-      );
+      if (validationError instanceof DeletionIdentityError) throw validationError;
     }
     throw error;
   }

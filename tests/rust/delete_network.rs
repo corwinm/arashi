@@ -211,12 +211,17 @@ fn network_retirement_uses_local_loss_evidence_even_when_origin_diverges_or_is_o
                     .unwrap();
             assert!(value["repos"].get("api").is_none());
             assert!(value["repos"].get("keep").is_some());
-            assert!(!fs::read_dir(f.workspace.join("repos")).unwrap().any(|v| {
-                v.unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".arashi-delete-")
-            }));
+            assert_eq!(
+                fs::read_dir(f.workspace.join("repos"))
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .filter(|v| v
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".arashi-delete-"))
+                    .count(),
+                1
+            );
             server.stop();
         }
     }
@@ -515,7 +520,7 @@ fn network_receipts_cross_source_native_retry_and_preserve_foreign_storage() {
             String::from_utf8_lossy(&retry.stdout)
         );
         assert_eq!(fs::read(&foreign).unwrap(), b"preserve\n");
-        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 2);
         let config: Value =
             serde_json::from_slice(&fs::read(config_dir.join("config.json")).unwrap()).unwrap();
         assert!(config["repos"].get("api").is_none());
@@ -523,7 +528,7 @@ fn network_receipts_cross_source_native_retry_and_preserve_foreign_storage() {
 }
 
 #[test]
-fn network_publication_and_cleanup_failures_follow_source_ordering() {
+fn network_publication_failures_and_read_only_retention_follow_source_ordering() {
     use std::os::unix::fs::PermissionsExt;
     for source in sources() {
         for partial in [false, true] {
@@ -540,14 +545,10 @@ fn network_publication_and_cleanup_failures_follow_source_ordering() {
             let keep_before = tree(&f.workspace.join("repos/keep"));
             fs::set_permissions(&blocked, fs::Permissions::from_mode(0o555)).unwrap();
             let out = observed(&f, &["delete", "api", "--force", "--json"], source);
-            assert!(!out.status.success());
-            assert_eq!(json(&out)["error"]["code"], "DELETE_PARTIAL_FAILURE");
-            // Destruction is write-ahead prepared before cleanup. A cleanup failure
-            // therefore leaves the exact captured clone in deterministic quarantine,
-            // rather than restoring a partially destroyed repository to its live path.
-            assert!(!target.exists());
-            let cleanup_root = if partial {
-                fs::read_dir(target.parent().unwrap())
+            if partial {
+                assert!(out.status.success());
+                assert!(!target.exists());
+                let retained = fs::read_dir(target.parent().unwrap())
                     .unwrap()
                     .filter_map(Result::ok)
                     .map(|entry| entry.path())
@@ -556,16 +557,34 @@ fn network_publication_and_cleanup_failures_follow_source_ordering() {
                             .and_then(|name| name.to_str())
                             .is_some_and(|name| name.starts_with(".arashi-delete-617069-"))
                     })
-                    .expect("prepared clone quarantine")
-                    .join(".git/objects")
-            } else {
-                blocked.clone()
-            };
+                    .expect("retained clone quarantine");
+                fs::set_permissions(
+                    retained.join(".git/objects"),
+                    fs::Permissions::from_mode(0o755),
+                )
+                .unwrap();
+                let config: Value = serde_json::from_slice(
+                    &fs::read(f.workspace.join(".arashi/config.json")).unwrap(),
+                )
+                .unwrap();
+                assert!(config["repos"].get("api").is_none());
+                assert_eq!(tree(&f.workspace.join("repos/keep")), keep_before);
+                assert_eq!(tree(&f.home), before.home);
+                assert_eq!(git(&f.remote, &["show-ref"]), before.remote_refs);
+                continue;
+            }
+            assert!(!out.status.success());
+            assert_eq!(json(&out)["error"]["code"], "DELETE_PARTIAL_FAILURE");
+            // Destruction is write-ahead prepared before cleanup. A cleanup failure
+            // therefore leaves the exact captured clone in deterministic quarantine,
+            // rather than restoring a partially destroyed repository to its live path.
+            assert!(!target.exists());
+
             assert_eq!(
                 fs::read(f.workspace.join(".arashi/config.json")).unwrap(),
                 config_before
             );
-            fs::set_permissions(&cleanup_root, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&blocked, fs::Permissions::from_mode(0o755)).unwrap();
             let retry = observed(&f, &["delete", "api", "--force", "--json"], source);
             assert!(
                 retry.status.success(),
