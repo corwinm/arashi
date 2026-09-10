@@ -25,7 +25,7 @@ A normal user must be able to install alongside v1; initialize a configured work
 
 Parent alone owns integration `v2`, the tracked plan and final review/CI/push. Workers commit locally; no force pushes, amendments, resets, or concurrent writes to another lane.
 
-- `v2-switch`: switch repairs and shared config/default reconciliation with the read-only `v2-configure-json` draft. Include configure inspection; editing/interactive configure remains follow-on.
+- `v2-switch`: switch repairs and shared config/default reconciliation include the integrated read-only configure inspection. The superseded `v2-configure-json` draft was retired after its useful behavior was verified present in `v2`; editing/interactive configure remains follow-on.
 - `v2-sync-local`: diagnose actual timeout/recovery failures and produce verified native sync.
 - `v2-shell`: recover shell and committed handoff; integrate current completion baseline in this lane.
 - `v2-add`: recover add, integrate clone baseline, support ordinary noninteractive network add/clone.
