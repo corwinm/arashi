@@ -54,11 +54,12 @@ afterEach(async () => {
 });
 
 describe("delete runtime planned identities", () => {
-  test("captures the canonical clone, every registered worktree and metadata directory, and exact hooks", async () => {
+  test("captures canonical Git administration, every worktree and metadata directory, and exact hooks", async () => {
     const { clone, hook, metadata, topology, worktree } = await fixture();
     const identities = await captureRuntimeDeletionIdentities(topology, [hook]);
 
     expect(identities.clone.path).toBe(clone);
+    expect(identities.canonicalGitAdmin.path).toBe(join(clone, ".git"));
     expect(identities.worktrees.map(({ path }) => path)).toEqual([worktree]);
     expect(identities.metadata.map(({ path }) => path)).toEqual([metadata]);
     expect(identities.hooks.map(({ path }) => path)).toEqual([hook]);

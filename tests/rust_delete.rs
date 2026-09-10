@@ -9,6 +9,37 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(unix)]
+#[path = "rust/delete_network.rs"]
+mod network;
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires retained TypeScript source and Python 3"]
+fn source_receipt_retry_and_lock_regressions() {
+    if std::env::var("ARASHI_TS_PARITY").as_deref() != Ok("1") {
+        return;
+    }
+    for script in ["delete_receipt_resume.py", "delete_receipt_lock.py"] {
+        let output = Command::new("python3")
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/rust")
+                    .join(script),
+            )
+            .env("ARASHI_DELETE_BIN", env!("CARGO_BIN_EXE_arashi"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{script}:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+}
+
 static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
@@ -100,6 +131,36 @@ impl Fixture {
             Command::new(env!("CARGO_BIN_EXE_arashi"))
         };
         command
+            .args(args)
+            .current_dir(&self.workspace)
+            .env("HOME", &self.home)
+            .env("USERPROFILE", &self.home)
+            .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", self.home.join(".gitconfig"))
+            .env("GIT_AUTHOR_NAME", "Delete Test")
+            .env("GIT_AUTHOR_EMAIL", "delete@example.test")
+            .env("GIT_COMMITTER_NAME", "Delete Test")
+            .env("GIT_COMMITTER_EMAIL", "delete@example.test")
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "commit.gpgSign")
+            .env("GIT_CONFIG_VALUE_0", "false")
+            .env("NO_COLOR", "1");
+        command.output().unwrap()
+    }
+
+    #[cfg(unix)]
+    fn run_with_nofile_limit(&self, args: &[&str], limit: u64) -> Output {
+        let limit = limit.to_string();
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                "ulimit -n \"$1\"; shift; exec \"$@\"",
+                "arashi-delete-rlimit",
+                &limit,
+                env!("CARGO_BIN_EXE_arashi"),
+            ])
             .args(args)
             .current_dir(&self.workspace)
             .env("HOME", &self.home)
@@ -768,17 +829,53 @@ fn forced_clean_target_deletes_only_the_owned_clone_and_exact_config_entry() {
             .unwrap();
     assert!(config["repos"].get("api").is_none());
     assert!(config["repos"].get("keep").is_some());
+    let retained = fs::read_dir(fixture.workspace.join("repos"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".arashi-delete-")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(retained.len(), 1);
+    assert!(retained[0].path().join(".git").is_dir());
     assert!(
-        fs::read_dir(fixture.workspace.join("repos"))
+        document["data"]["result"]["warnings"]
+            .as_array()
             .unwrap()
-            .all(|entry| {
-                !entry
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".arashi-delete-")
-            })
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap()
+                .starts_with("DELETE_RETAINED_CLEANUP: "))
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_large_checkout_succeeds_with_bounded_file_descriptor_limit() {
+    let fixture = Fixture::new();
+    let bulk = fixture.workspace.join("repos/api/bulk");
+    fs::create_dir(&bulk).unwrap();
+    for index in 0..300 {
+        fs::write(bulk.join(format!("entry-{index:03}")), format!("{index}\n")).unwrap();
+    }
+
+    let output = fixture.run_with_nofile_limit(&["delete", "api", "--force", "--json"], 256);
+
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!fixture.workspace.join("repos/api").try_exists().unwrap());
+    let config: Value =
+        serde_json::from_slice(&fs::read(fixture.workspace.join(".arashi/config.json")).unwrap())
+            .unwrap();
+    assert!(config["repos"].get("api").is_none());
 }
 
 #[cfg(unix)]
@@ -926,38 +1023,51 @@ fn unsupported_policy_and_topology_cases_fail_before_mutation() {
         }
         let before = fixture.snapshot();
         let output = fixture.run(&["delete", "api", "--force", "--json"]);
-        assert!(!output.status.success(), "unexpected {case} success");
-        assert_eq!(fixture.snapshot(), before, "{case} mutated state");
+        if matches!(case, "linked" | "dirty" | "tag" | "ignored") {
+            // Retained source accepts these selected-owned losses under explicit force.
+            assert!(
+                output.status.success(),
+                "{case}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            assert!(!fixture.workspace.join("repos/api").exists());
+            assert_eq!(tree(&fixture.home), before.home);
+            assert_eq!(git(&fixture.remote, &["show-ref"]), before.remote_refs);
+        } else {
+            assert!(!output.status.success(), "unexpected {case} success");
+            assert_eq!(fixture.snapshot(), before, "{case} mutated state");
+        }
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn config_publication_failure_restores_the_identity_checked_quarantine() {
+fn config_publication_failure_preserves_source_receipt_and_original_configuration() {
     use std::os::unix::fs::PermissionsExt;
     let fixture = Fixture::new();
     let before = fixture.snapshot();
     let arashi = fixture.workspace.join(".arashi");
+    let config_before = fs::read(arashi.join("config.json")).unwrap();
+    let keep_before = tree(&fixture.workspace.join("repos/keep"));
     fs::set_permissions(&arashi, fs::Permissions::from_mode(0o555)).unwrap();
     let output = fixture.run(&["delete", "api", "--force", "--json"]);
     fs::set_permissions(&arashi, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!output.status.success());
-    assert!(fixture.workspace.join("repos/api").is_dir());
+    assert!(!fixture.workspace.join("repos/api").exists());
+    assert_eq!(fs::read(arashi.join("config.json")).unwrap(), config_before);
+    assert_eq!(tree(&fixture.workspace.join("repos/keep")), keep_before);
     assert!(
-        fs::read_dir(fixture.workspace.join("repos"))
-            .unwrap()
-            .all(|entry| {
-                !entry
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".arashi-delete-")
-            })
+        fixture
+            .workspace
+            .join(".git/.arashi-delete-receipts")
+            .is_dir()
     );
-    let mut after = fixture.snapshot();
-    let mut expected = before;
-    // Permission modes are intentionally outside byte snapshots; content must be exact.
-    after.workspace.remove(Path::new(".arashi"));
-    expected.workspace.remove(Path::new(".arashi"));
-    assert_eq!(after, expected);
+    let retry = fixture.run(&["delete", "api", "--force", "--json"]);
+    assert!(
+        retry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retry.stdout)
+    );
+    assert_eq!(tree(&fixture.home), before.home);
+    assert_eq!(git(&fixture.remote, &["show-ref"]), before.remote_refs);
 }

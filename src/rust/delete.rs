@@ -6,6 +6,19 @@ use crate::{
     git,
     managed::{relative, unsupported},
 };
+#[path = "delete_git_url.rs"]
+mod fetch_url;
+#[cfg(unix)]
+#[path = "delete_receipt.rs"]
+mod receipt;
+#[cfg(unix)]
+#[path = "delete_transaction.rs"]
+mod transaction;
+#[cfg(unix)]
+#[path = "workspace_transaction.rs"]
+mod workspace_lock;
+#[path = "delete_worktree.rs"]
+mod worktree;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -13,47 +26,54 @@ use std::{
 };
 #[cfg(unix)]
 use std::{fs::OpenOptions, io::Write};
+use worktree::LinkedCheckout;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+use crate::fs_identity as filesystem_identity;
+#[derive(Clone, Debug)]
 struct ObjectIdentity {
+    pin: std::sync::Arc<filesystem_identity::PinnedObject>,
+}
+impl PartialEq for ObjectIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.pin.identity() == other.pin.identity()
+            && self.pin.kind() == other.pin.kind()
+            && self.pin.creation_time() == other.pin.creation_time()
+    }
+}
+impl Eq for ObjectIdentity {}
+impl ObjectIdentity {
+    fn path(path: &Path) -> Result<Self> {
+        Ok(Self {
+            pin: std::sync::Arc::new(filesystem_identity::PinnedObject::open(path)?),
+        })
+    }
     #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(windows)]
-    file_index: Option<u64>,
-    #[cfg(windows)]
-    volume: Option<u32>,
+    fn file(file: &fs::File) -> Result<Self> {
+        Ok(Self {
+            pin: std::sync::Arc::new(filesystem_identity::PinnedObject::from_file(
+                file.try_clone()?,
+            )?),
+        })
+    }
+    fn matches(&self, path: &Path) -> bool {
+        self.pin.matches_path(path).unwrap_or(false)
+    }
 }
 
-impl ObjectIdentity {
-    fn metadata(metadata: &fs::Metadata) -> Self {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            Self {
-                device: metadata.dev(),
-                inode: metadata.ino(),
-            }
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            Self {
-                file_index: metadata.file_index(),
-                volume: metadata.volume_serial_number(),
-            }
-        }
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ContentIdentity {
+    identity: filesystem_identity::ObjectIdentity,
+    kind: filesystem_identity::ObjectKind,
+    creation_time: Option<std::time::SystemTime>,
+}
 
-    fn path(path: &Path) -> Result<Self> {
-        Ok(Self::metadata(&fs::symlink_metadata(path)?))
-    }
-
-    fn matches(&self, path: &Path) -> bool {
-        fs::symlink_metadata(path)
-            .map(|metadata| Self::metadata(&metadata) == *self)
-            .unwrap_or(false)
+impl ContentIdentity {
+    fn pinned(pin: &filesystem_identity::PinnedObject) -> Self {
+        Self {
+            identity: pin.identity(),
+            kind: pin.kind(),
+            creation_time: pin.creation_time(),
+        }
     }
 }
 
@@ -61,6 +81,8 @@ impl ObjectIdentity {
 struct LocalRef {
     name: String,
     oid: String,
+    kind: String,
+    peeled: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -82,9 +104,15 @@ struct DeletePlan {
     ref_inventory: Vec<LocalRef>,
     head: Vec<u8>,
     git_config: Vec<u8>,
+    configured_url: Option<String>,
+    fetch_authority: Vec<String>,
+    receipts_path: PathBuf,
     detached: bool,
     warnings: Vec<String>,
     protected_refs: Vec<String>,
+    contents: Vec<(PathBuf, ContentIdentity, Vec<u8>)>,
+    dirty: String,
+    linked: Vec<LinkedCheckout>,
 }
 
 // Keep persisted object order local to delete: changing serde_json's global map
@@ -173,13 +201,13 @@ fn closed(code: &str, message: impl Into<String>, exit: i32) -> Error {
 }
 
 #[cfg(any(unix, test))]
-fn quarantine_name(repository_key: &str) -> String {
+fn quarantine_prefix(repository_key: &str) -> String {
     let encoded = repository_key
         .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    format!(".arashi-delete-{encoded}-{}", std::process::id())
+    format!(".arashi-delete-{encoded}-")
 }
 
 fn ancestor_identities(path: &Path) -> Result<Vec<(PathBuf, ObjectIdentity)>> {
@@ -194,7 +222,7 @@ fn ancestor_identities(path: &Path) -> Result<Vec<(PathBuf, ObjectIdentity)>> {
                     1,
                 ));
             }
-            Ok((ancestor.to_owned(), ObjectIdentity::metadata(&metadata)))
+            Ok((ancestor.to_owned(), ObjectIdentity::path(ancestor)?))
         })
         .collect()
 }
@@ -290,6 +318,8 @@ fn no_unsafe_git_configuration(target: &Path) -> Result<()> {
         if key == "core.fsmonitor"
             || key == "core.worktree"
             || key == "extensions.worktreeconfig"
+            || key == "extensions.partialclone"
+            || (key.starts_with("remote.") && key.ends_with(".promisor"))
             || key.starts_with("filter.") && (key.ends_with(".clean") || key.ends_with(".process"))
         {
             return Err(unsupported(
@@ -305,9 +335,6 @@ fn no_nested_git(path: &Path, root: bool) -> Result<()> {
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
         let file_type = entry.file_type()?;
-        if file_type.is_symlink() || !file_type.is_dir() {
-            continue;
-        }
         if entry.file_name() == ".git" {
             if root {
                 continue;
@@ -316,9 +343,62 @@ fn no_nested_git(path: &Path, root: bool) -> Result<()> {
                 "Nested Git repository in delete target; no changes made",
             ));
         }
+        if file_type.is_symlink() || !file_type.is_dir() {
+            continue;
+        }
         no_nested_git(&entry.path(), false)?;
     }
     Ok(())
+}
+
+// Freeze authorized checkout contents, not just porcelain labels: an edit to an
+// already-dirty file must invalidate confirmation. Never follow checkout links.
+fn content_inventory(root: &Path) -> Result<Vec<(PathBuf, ContentIdentity, Vec<u8>)>> {
+    fn visit(
+        root: &Path,
+        path: &Path,
+        items: &mut Vec<(PathBuf, ContentIdentity, Vec<u8>)>,
+    ) -> Result<()> {
+        let mut entries = fs::read_dir(path)?.collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if path == root && entry.file_name() == ".git" {
+                continue;
+            }
+            let path = entry.path();
+            let pin = filesystem_identity::PinnedObject::open(&path)?;
+            let identity = ContentIdentity::pinned(&pin);
+            let bytes = if identity.kind == filesystem_identity::ObjectKind::Symlink {
+                fs::read_link(&path)?
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .to_vec()
+            } else if identity.kind == filesystem_identity::ObjectKind::File {
+                fs::read(&path)?
+            } else if identity.kind == filesystem_identity::ObjectKind::Directory {
+                Vec::new()
+            } else {
+                return Err(unsupported(
+                    "Delete checkout contains a special file; no changes made",
+                ));
+            };
+            if !pin.matches_path(&path)? {
+                return Err(closed(
+                    "DELETE_CONCURRENT_CHANGE",
+                    "Checkout entry changed while reading",
+                    1,
+                ));
+            }
+            items.push((path.strip_prefix(root).unwrap().to_owned(), identity, bytes));
+            if identity.kind == filesystem_identity::ObjectKind::Directory {
+                visit(root, &path, items)?;
+            }
+        }
+        Ok(())
+    }
+    let mut items = Vec::new();
+    visit(root, root, &mut items)?;
+    Ok(items)
 }
 
 fn ref_inventory(target: &Path) -> Result<Vec<LocalRef>> {
@@ -326,7 +406,7 @@ fn ref_inventory(target: &Path) -> Result<Vec<LocalRef>> {
         target,
         &[
             "for-each-ref",
-            "--format=%(refname)%09%(objectname)%09%(objecttype)",
+            "--format=%(refname)%09%(objectname)%09%(objecttype)%09%(*objectname)",
             "refs",
         ],
     )?;
@@ -336,10 +416,11 @@ fn ref_inventory(target: &Path) -> Result<Vec<LocalRef>> {
         let name = fields.next().unwrap_or("");
         let oid = fields.next().unwrap_or("");
         let kind = fields.next().unwrap_or("");
-        if name.is_empty()
-            || oid.is_empty()
-            || kind != "commit"
-            || !(name.starts_with("refs/heads/") || name.starts_with("refs/remotes/origin/"))
+        let peeled = fields
+            .next()
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        if name.is_empty() || oid.is_empty() || !matches!(kind, "commit" | "tag" | "tree" | "blob")
         {
             return Err(unsupported(
                 "Tags, symbolic, custom, or non-commit delete refs are not yet ported; no changes made",
@@ -348,6 +429,8 @@ fn ref_inventory(target: &Path) -> Result<Vec<LocalRef>> {
         all.push(LocalRef {
             name: name.to_owned(),
             oid: oid.to_owned(),
+            kind: kind.to_owned(),
+            peeled,
         });
     }
     Ok(all)
@@ -360,17 +443,37 @@ fn local_ref_loss(
 ) -> Result<(Vec<LocalRef>, Vec<String>, Vec<String>)> {
     let mut locals = all
         .iter()
-        .filter(|reference| reference.name.starts_with("refs/heads/"))
+        .filter(|reference| !reference.name.starts_with("refs/remotes/"))
         .cloned()
         .collect::<Vec<_>>();
+    let tags = locals
+        .iter()
+        .filter(|reference| reference.name.starts_with("refs/tags/"))
+        .cloned()
+        .collect::<Vec<_>>();
+    for tag in tags {
+        locals.push(LocalRef {
+            name: format!("{}^{{}}", tag.name),
+            oid: tag.peeled.unwrap_or(tag.oid),
+            kind: "commit".to_owned(),
+            peeled: None,
+        });
+    }
     if detached {
         locals.push(LocalRef {
             name: "HEAD(detached)".to_owned(),
+            kind: "commit".to_owned(),
+            peeled: None,
             oid: git::run_readonly(target, &["rev-parse", "--verify", "HEAD^{commit}"])?
                 .trim()
                 .to_owned(),
         });
     }
+    locals.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.oid.cmp(&right.oid))
+    });
     let remotes = all
         .iter()
         .filter(|reference| reference.name.starts_with("refs/remotes/"))
@@ -391,7 +494,16 @@ fn local_ref_loss(
     for local in &locals {
         let mut args = vec!["rev-list", "--count", local.oid.as_str(), "--not"];
         args.extend(&remotes);
-        let count = git::run_readonly(target, &args)?;
+        let always_protected = (local.name.starts_with("refs/tags/") && local.kind == "tag")
+            || (!local.name.starts_with("refs/heads/")
+                && !local.name.starts_with("refs/tags/")
+                && local.name != "refs/stash"
+                && local.name != "HEAD(detached)");
+        let count = if always_protected {
+            "1".to_owned()
+        } else {
+            git::run_readonly(target, &args)?
+        };
         let count: u64 = count.trim().parse().map_err(|_| {
             closed(
                 "DELETE_GIT_DATA_LOSS",
@@ -411,12 +523,43 @@ fn local_ref_loss(
     Ok((locals, warnings, protected))
 }
 
-fn matching_origin(target: &Path, repo: &RepoConfig) -> Result<()> {
+// Delete only identifies fetch authority: --get-url applies Git rewrites without
+// connecting, fetching, or starting a transport helper. Publication evidence stays
+// local, as in retained delete-git-loss.ts, including when origin is unavailable.
+fn fetch_identity(cwd: &Path, input: &str) -> Result<String> {
+    if input.is_empty() || input.trim() != input || input.chars().any(char::is_control) {
+        return Err(closed(
+            "DELETE_TOPOLOGY_INVALID",
+            "Malformed clone fetch URL",
+            1,
+        ));
+    }
+    let rewritten = git::run_readonly(cwd, &["ls-remote", "--get-url", "--", input])?;
+    let urls = rewritten.lines().collect::<Vec<_>>();
+    if urls.len() != 1 {
+        return Err(closed(
+            "DELETE_TOPOLOGY_INVALID",
+            "Fetch URL rewrite is unavailable",
+            1,
+        ));
+    }
+    let url = urls[0];
+    fetch_url::canonicalize(url, cwd).map_err(|message| {
+        closed(
+            "DELETE_TOPOLOGY_INVALID",
+            format!("Invalid Git fetch URL identity: {message}"),
+            1,
+        )
+    })
+}
+
+fn matching_origin(
+    workspace: &Path,
+    target: &Path,
+    configured: Option<&str>,
+) -> Result<Vec<String>> {
     let urls = git::run_readonly(target, &["remote", "get-url", "--all", "origin"])?;
-    let configured = repo
-        .raw
-        .get("gitUrl")
-        .and_then(Value::as_str)
+    let configured = configured
         .filter(|url| !url.trim().is_empty())
         .or_else(|| urls.lines().next())
         .ok_or_else(|| {
@@ -426,31 +569,22 @@ fn matching_origin(target: &Path, repo: &RepoConfig) -> Result<()> {
                 1,
             )
         })?;
-    let configured = Path::new(configured);
-    if !configured.is_absolute() || !configured.exists() {
-        return Err(unsupported(
-            "Delete currently requires an existing absolute filesystem origin",
-        ));
-    }
-    let remotes = git::run_readonly(target, &["remote"])?;
-    if remotes.lines().collect::<Vec<_>>() != ["origin"] {
-        return Err(unsupported(
-            "Delete with non-origin or multiple remotes is not yet ported; no changes made",
-        ));
-    }
-    let configured = fs::canonicalize(configured)?;
-    let matches = urls.lines().any(|url| {
-        let path = Path::new(url);
-        path.is_absolute() && fs::canonicalize(path).is_ok_and(|candidate| candidate == configured)
-    });
-    if !matches {
+    // Configured rewrites belong to the execution workspace; stored fetch URLs
+    // belong to the clone. Freeze both to catch changed inherited rewrite policy.
+    let configured = fetch_identity(workspace, configured)?;
+    let mut identities = urls
+        .lines()
+        .map(|url| fetch_identity(target, url))
+        .collect::<Result<Vec<_>>>()?;
+    if !identities.contains(&configured) {
         return Err(closed(
             "DELETE_TOPOLOGY_INVALID",
             "Configured repository URL does not match the clone origin",
             1,
         ));
     }
-    Ok(())
+    identities.insert(0, configured);
+    Ok(identities)
 }
 
 impl DeletePlan {
@@ -473,14 +607,11 @@ impl DeletePlan {
         let parent_common = git::run_readonly(&workspace.root, &["rev-parse", "--git-common-dir"])?;
         let parent_common = fs::canonicalize(workspace.root.join(parent_common.trim()))?;
         let receipts = parent_common.join(".arashi-delete-receipts");
-        match fs::symlink_metadata(&receipts) {
-            Ok(_) => {
-                return Err(unsupported(
-                    "Existing delete recovery authority requires retained-source receipt validation; no changes made",
-                ));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
+        #[cfg(unix)]
+        receipt::storage(&receipts)?;
+        #[cfg(windows)]
+        if fs::symlink_metadata(&receipts).is_ok() {
+            return Err(unsupported("Windows receipt validation is not yet ported"));
         }
         let repos_base = workspace.root.join(relative(&config.repos_dir)?);
         let configured_relative = relative(&repo.path)?;
@@ -547,7 +678,7 @@ impl DeletePlan {
             ));
         }
         let records = git::worktrees_readonly(&target)?;
-        if records.len() != 1
+        if records.is_empty()
             || records[0].bare
             || records[0].locked
             || records[0].prune_reason.is_some()
@@ -557,6 +688,35 @@ impl DeletePlan {
                 "Delete with linked, locked, stale, or non-primary worktrees is not yet ported; no changes made",
             ));
         }
+        let mut linked = Vec::new();
+        for record in records.iter().skip(1) {
+            let checkout = LinkedCheckout::inspect(&target, record)?;
+            if target.starts_with(&checkout.path)
+                || checkout.path.starts_with(&target)
+                || workspace.root.starts_with(&checkout.path)
+                || parent_common.starts_with(&checkout.path)
+                || workspace
+                    .root
+                    .join(".arashi/config.json")
+                    .starts_with(&checkout.path)
+                || config.repos.iter().any(|(key, repo)| {
+                    key != repository && {
+                        let other = workspace.root.join(&repo.path);
+                        other.starts_with(&checkout.path) || checkout.path.starts_with(&other)
+                    }
+                })
+                || linked.iter().any(|other: &LinkedCheckout| {
+                    checkout.path.starts_with(&other.path) || other.path.starts_with(&checkout.path)
+                })
+            {
+                return Err(closed(
+                    "DELETE_TOPOLOGY_INVALID",
+                    "Linked deletion overlaps unrelated workspace authority",
+                    1,
+                ));
+            }
+            linked.push(checkout);
+        }
         let gitlinks = git::run_readonly(&target, &["ls-files", "--stage"])?;
         if gitlinks.lines().any(|line| line.starts_with("160000 ")) {
             return Err(unsupported(
@@ -564,11 +724,17 @@ impl DeletePlan {
             ));
         }
         no_nested_git(&target, true)?;
-        matching_origin(&target, repo)?;
+        let configured_url = repo
+            .raw
+            .get("gitUrl")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let fetch_authority = matching_origin(&workspace.root, &target, configured_url.as_deref())?;
         let ref_inventory = ref_inventory(&target)?;
         let head = fs::read(target.join(".git/HEAD"))?;
         let detached = records[0].branch.is_none();
-        let (refs, warnings, protected_refs) = local_ref_loss(&target, &ref_inventory, detached)?;
+        let (refs, mut warnings, protected_refs) =
+            local_ref_loss(&target, &ref_inventory, detached)?;
         let dirty = git::run_readonly(
             &target,
             &[
@@ -580,11 +746,12 @@ impl DeletePlan {
                 "--untracked-files=all",
             ],
         )?;
-        if !dirty.is_empty() {
-            return Err(unsupported(
-                "Delete of dirty repository contents is not yet ported; no changes made",
-            ));
+        warnings.extend(checkout_loss_warnings(&target)?);
+        for checkout in &linked {
+            warnings.extend(checkout_loss_warnings(&checkout.path)?);
         }
+        warnings.sort();
+        let contents = content_inventory(&target)?;
         let config_path = workspace.root.join(".arashi/config.json");
         no_symlink_below(&workspace.root, &config_path)?;
         let config_before = fs::read(&config_path)?;
@@ -660,9 +827,15 @@ impl DeletePlan {
             ref_inventory,
             head,
             git_config: fs::read(canonical_target.join(".git/config"))?,
+            configured_url,
+            fetch_authority,
+            receipts_path: receipts,
             detached,
             warnings,
             protected_refs,
+            contents,
+            dirty,
+            linked,
         })
     }
 
@@ -680,6 +853,14 @@ impl DeletePlan {
             "reasonCode": Value::Null,
             "message": Value::Null
         })];
+        items.extend(self.linked.iter().map(|checkout| {
+            json!({
+                "id": format!("linked-worktree:{}", checkout.path.display()),
+                "kind": "linked-worktree", "ownership": "delete", "path": checkout.path,
+                "ref": Value::Null, "oid": Value::Null, "planned": true, "completed": false,
+                "state": "planned", "reasonCode": Value::Null, "message": Value::Null
+            })
+        }));
         items.extend(self.local_refs.iter().map(|reference| {
             json!({
                 "id": format!("local-ref:{}:{}", reference.name, reference.oid),
@@ -743,6 +924,19 @@ impl DeletePlan {
     #[cfg(unix)]
     fn validate_quarantine(&self, quarantine: &Path, expected_config: &[u8]) -> Result<()> {
         self.validate_ancestors()?;
+        receipt::storage(&self.receipts_path)?;
+        if matching_origin(
+            &self.workspace_root,
+            quarantine,
+            self.configured_url.as_deref(),
+        )? != self.fetch_authority
+        {
+            return Err(closed(
+                "DELETE_CONCURRENT_CHANGE",
+                "Quarantined fetch authority changed",
+                1,
+            ));
+        }
         let records = git::worktrees_readonly(quarantine)?;
         if records.len() != 1
             || records[0].bare
@@ -785,7 +979,7 @@ impl DeletePlan {
                 "--untracked-files=all",
             ],
         )?;
-        if !dirty.is_empty() {
+        if dirty != self.dirty || content_inventory(quarantine)? != self.contents {
             return Err(closed(
                 "DELETE_CONCURRENT_CHANGE",
                 "Quarantined repository contents changed during delete",
@@ -797,134 +991,26 @@ impl DeletePlan {
 
     #[cfg(unix)]
     fn execute(&self) -> Result<Value> {
+        let path = workspace_lock::resolve_lock_path(&self.workspace_root)?;
+        let options = workspace_lock::LockOptions::default();
+        workspace_lock::with_lock(&path, options.retries, options.incomplete_grace, || {
+            self.execute_locked()
+        })
+    }
+
+    #[cfg(unix)]
+    fn execute_locked(&self) -> Result<Value> {
         if self.detached {
             return Err(unsupported(
                 "Detached delete mutation is not yet ported; no changes made",
             ));
         }
         self.validate()?;
-        let quarantine = self
-            .repository_path
-            .parent()
-            .unwrap()
-            .join(quarantine_name(&self.repository_key));
-        if fs::symlink_metadata(&quarantine).is_ok() {
-            return Err(closed(
-                "DELETE_CONCURRENT_CHANGE",
-                "Private delete quarantine is occupied; no changes made",
-                1,
-            ));
-        }
-        fs::rename(&self.repository_path, &quarantine)?;
-        let restore_quarantine = |quarantine: &Path| {
-            self.validate_ancestors().is_ok()
-                && matches!(fs::symlink_metadata(&self.repository_path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
-                && self.repository_identity.matches(quarantine)
-                && fs::rename(quarantine, &self.repository_path).is_ok()
-        };
-        if let Err(error) = self.validate_quarantine(&quarantine, &self.config_before) {
-            if !restore_quarantine(&quarantine) {
-                return Err(closed(
-                    "DELETE_PARTIAL_FAILURE",
-                    format!(
-                        "Delete pre-publication validation failed and quarantine could not be restored: {error}"
-                    ),
-                    1,
-                ));
-            }
-            return Err(error);
-        }
-        if let Err(error) = publish_config(self) {
-            if !restore_quarantine(&quarantine) {
-                return Err(closed(
-                    "DELETE_PARTIAL_FAILURE",
-                    format!(
-                        "Configuration publication failed and quarantine could not be restored: {error}"
-                    ),
-                    1,
-                ));
-            }
-            return Err(error);
-        }
-        if let Err(error) = self.validate_quarantine(&quarantine, &self.config_after) {
-            return Err(closed(
-                "DELETE_PARTIAL_FAILURE",
-                format!(
-                    "Configuration was updated but quarantine validation failed; repository preserved at {}: {error}",
-                    quarantine.display()
-                ),
-                1,
-            ));
-        }
-        fs::remove_dir_all(&quarantine).map_err(|error| {
-            closed(
-                "DELETE_PARTIAL_FAILURE",
-                format!(
-                    "Configuration was updated but repository cleanup is incomplete at {}: {error}",
-                    quarantine.display()
-                ),
-                1,
-            )
-        })?;
-        let plan = self.plan_json();
-        let items = plan["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .cloned()
-            .map(|mut item| {
-                item["completed"] = json!(true);
-                item["state"] = json!("completed");
-                item
-            })
-            .collect::<Vec<_>>();
-        let phases = [
-            "provenance",
-            "worktrees",
-            "metadata",
-            "canonical-clone",
-            "workspace-hooks",
-            "configuration",
-            "verification",
-        ]
-        .into_iter()
-        .enumerate()
-        .map(|(order, name)| {
-            let kinds: &[&str] = match name {
-                "provenance" => &["resume-receipt"],
-                "worktrees" => &["linked-worktree"],
-                "metadata" => &["worktree-metadata"],
-                "canonical-clone" => &["canonical-clone", "local-ref"],
-                "workspace-hooks" => &["workspace-hook"],
-                "configuration" => &["config-entry"],
-                "verification" => &["preserved-global-hook"],
-                _ => unreachable!(),
-            };
-            let item_ids = items
-                .iter()
-                .filter(|item| {
-                    item["kind"]
-                        .as_str()
-                        .is_some_and(|kind| kinds.contains(&kind))
-                })
-                .map(|item| item["id"].clone())
-                .collect::<Vec<_>>();
-            json!({
-                "name": name,
-                "state": "completed",
-                "itemIds": item_ids,
-                "error": Value::Null,
-                "startedOrder": order + 1,
-                "completedOrder": order + 1
-            })
-        })
-        .collect::<Vec<_>>();
-        Ok(json!({
-            "items": items,
-            "phases": phases,
-            "retry": {"safe":false,"argv":Value::Null,"guidance":"Deletion completed."},
-            "warnings": self.warnings
-        }))
+        let workspace = Workspace::discover(&self.workspace_root)?;
+        let receipt = receipt::Receipt::create(self)?;
+        #[cfg(test)]
+        transaction::test_pause("receipt-published")?;
+        transaction::execute(receipt, &workspace, Some(self))
     }
 
     #[cfg(windows)]
@@ -935,56 +1021,244 @@ impl DeletePlan {
     }
 }
 
+fn malformed_loss_evidence() -> Error {
+    closed(
+        "DELETE_GIT_DATA_LOSS",
+        "Malformed porcelain-v2 loss evidence",
+        1,
+    )
+}
+fn valid_xy(value: &str, kind: u8) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 2 {
+        return false;
+    }
+    match kind {
+        b'1' => b".MTAD".contains(&bytes[0]) && b".MTD".contains(&bytes[1]) && bytes != b"..",
+        b'2' => matches!(bytes[0], b'R' | b'C') && b".MTADU".contains(&bytes[1]),
+        b'u' => matches!(value, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU"),
+        _ => false,
+    }
+}
+fn valid_submodule(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes == b"N..."
+        || (bytes.len() == 4
+            && bytes[0] == b'S'
+            && matches!(bytes[1], b'.' | b'C')
+            && matches!(bytes[2], b'.' | b'M')
+            && matches!(bytes[3], b'.' | b'U'))
+}
+fn valid_mode(value: &str) -> bool {
+    value.len() == 6 && value.bytes().all(|byte| matches!(byte, b'0'..=b'7'))
+}
+fn valid_oid(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+fn valid_status_path(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('/')
+        && value
+            .split('/')
+            .all(|component| !matches!(component, "" | "." | ".."))
+}
+fn valid_score(value: &str, status: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 2
+        && bytes.len() <= 4
+        && bytes[0] == status.as_bytes()[0]
+        && bytes[1..].iter().all(u8::is_ascii_digit)
+        && value[1..].parse::<u8>().is_ok_and(|score| score <= 100)
+}
+
+// Source receipts store semantic porcelain-v2 evidence, not quoted v1 lines.
+fn parse_checkout_loss_warnings(path: &Path, output: &str) -> Result<Vec<String>> {
+    if output.is_empty() {
+        return Ok(Vec::new());
+    }
+    let text = output
+        .strip_suffix('\0')
+        .ok_or_else(malformed_loss_evidence)?;
+    let mut records = text.split('\0');
+    let mut warnings = Vec::new();
+    while let Some(record) = records.next() {
+        let kind = *record
+            .as_bytes()
+            .first()
+            .ok_or_else(malformed_loss_evidence)?;
+        let (label, status, name) = match kind {
+            b'?' | b'!' => {
+                let name = record
+                    .get(2..)
+                    .filter(|name| valid_status_path(name))
+                    .ok_or_else(malformed_loss_evidence)?;
+                if record.as_bytes().get(1) != Some(&b' ') {
+                    return Err(malformed_loss_evidence());
+                }
+                (
+                    if kind == b'?' { "untracked" } else { "ignored" },
+                    &record[..1],
+                    name,
+                )
+            }
+            b'1' | b'2' | b'u' => {
+                let count = match kind {
+                    b'1' => 9,
+                    b'2' => 10,
+                    _ => 11,
+                };
+                let fields = record.splitn(count, ' ').collect::<Vec<_>>();
+                let modes = match kind {
+                    b'1' | b'2' => &fields.get(3..6),
+                    _ => &fields.get(3..7),
+                };
+                let oids = match kind {
+                    b'1' | b'2' => &fields.get(6..8),
+                    _ => &fields.get(7..10),
+                };
+                if fields.len() != count
+                    || fields.iter().any(|field| field.is_empty())
+                    || !valid_xy(fields[1], kind)
+                    || !valid_submodule(fields[2])
+                    || !modes.is_some_and(|values| values.iter().all(|value| valid_mode(value)))
+                    || !oids.is_some_and(|values| values.iter().all(|value| valid_oid(value)))
+                    || !valid_status_path(fields[count - 1])
+                    || (kind == b'2' && !valid_score(fields[8], fields[1]))
+                {
+                    return Err(malformed_loss_evidence());
+                }
+                if kind == b'2' && !records.next().is_some_and(valid_status_path) {
+                    return Err(malformed_loss_evidence());
+                }
+                (
+                    if kind == b'u' {
+                        "conflicted"
+                    } else {
+                        "tracked"
+                    },
+                    fields[1],
+                    fields[count - 1],
+                )
+            }
+            b'#' => continue,
+            _ => return Err(malformed_loss_evidence()),
+        };
+        warnings.push(format!(
+            "DELETE_GIT_DATA_LOSS: {}: {label} {status} {name}",
+            path.display()
+        ));
+    }
+    Ok(warnings)
+}
+fn checkout_loss_warnings(path: &Path) -> Result<Vec<String>> {
+    let output = git::run_readonly(
+        path,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--ignored=matching",
+            "--untracked-files=all",
+        ],
+    )?;
+    parse_checkout_loss_warnings(path, &output)
+}
+
+/// Immutable prompt boundary. Prepare/preview never acquire the mutation lock;
+/// execution acquires it and revalidates the exact accepted plan.
+/// A caller may confirm clean deletion without force; inventoried loss still needs
+/// explicit force. Receipt retries always require force.
 #[cfg(unix)]
-fn publish_config(plan: &DeletePlan) -> Result<()> {
-    plan.validate_ancestors()?;
-    if fs::read(&plan.config_path)? != plan.config_before
-        || !plan.config_identity.matches(&plan.config_path)
-    {
-        return Err(closed(
-            "DELETE_CONCURRENT_CHANGE",
-            "Configuration changed before publication",
-            1,
-        ));
+pub struct PreparedDelete {
+    workspace: Workspace,
+    fresh: Option<DeletePlan>,
+    resume: Option<receipt::Receipt>,
+}
+#[cfg(unix)]
+impl PreparedDelete {
+    pub fn prepare(workspace: &Workspace, key: &str) -> Result<Self> {
+        let raw = git::run_readonly(&workspace.root, &["rev-parse", "--git-common-dir"])?;
+        let common = fs::canonicalize(workspace.root.join(raw.trim()))?;
+        let resume = receipt::Receipt::load(&common, key)?;
+        let fresh = if let Some(receipt) = &resume {
+            transaction::preview(receipt, workspace, false, true)?;
+            None
+        } else {
+            Some(DeletePlan::build(workspace, key)?)
+        };
+        Ok(Self {
+            workspace: workspace.clone(),
+            fresh,
+            resume,
+        })
     }
-    let temp = plan.config_path.with_file_name(format!(
-        ".config.json.arashi-delete-{}.tmp",
-        std::process::id()
-    ));
-    if fs::symlink_metadata(&temp).is_ok() {
-        return Err(closed(
-            "DELETE_CONCURRENT_CHANGE",
-            "Private configuration publication path is occupied",
-            1,
-        ));
+    pub fn has_git_loss(&self) -> bool {
+        self.fresh
+            .as_ref()
+            .map(|plan| {
+                plan.warnings
+                    .iter()
+                    .any(|warning| warning.starts_with("DELETE_GIT_DATA_LOSS:"))
+            })
+            .unwrap_or_else(|| {
+                self.resume.as_ref().unwrap().record["warnings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|warning| {
+                        warning
+                            .as_str()
+                            .unwrap()
+                            .starts_with("DELETE_GIT_DATA_LOSS:")
+                    })
+            })
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)?;
-    let temp_identity = ObjectIdentity::metadata(&file.metadata()?);
-    let operation = (|| -> Result<()> {
-        file.write_all(&plan.config_after)?;
-        file.sync_all()?;
-        fs::set_permissions(&temp, fs::metadata(&plan.config_path)?.permissions())?;
-        if fs::read(&plan.config_path)? != plan.config_before
-            || !plan.config_identity.matches(&plan.config_path)
-            || !temp_identity.matches(&temp)
-        {
-            return Err(closed(
-                "DELETE_CONCURRENT_CHANGE",
-                "Configuration changed during publication",
-                1,
-            ));
+    pub fn is_resume(&self) -> bool {
+        self.resume.is_some()
+    }
+    pub fn preview(&self) -> Result<Value> {
+        if let Some(plan) = &self.fresh {
+            plan.validate()?;
+            Ok(
+                json!({"workspace":self.workspace.metadata(),"repositoryKey":plan.repository_key,"dryRun":true,"force":false,"confirmation":"not-required","plan":plan.plan_json(),"result":null}),
+            )
+        } else {
+            transaction::preview(self.resume.as_ref().unwrap(), &self.workspace, false, true)
         }
-        fs::rename(&temp, &plan.config_path)?;
-        Ok(())
-    })();
-    drop(file);
-    if operation.is_err() && temp_identity.matches(&temp) {
-        let _ = fs::remove_file(&temp);
     }
-    operation
+    pub fn execute(self, force: bool) -> Result<Value> {
+        let path = workspace_lock::resolve_lock_path(&self.workspace.root)?;
+        let options = workspace_lock::LockOptions::default();
+        workspace_lock::with_lock(&path, options.retries, options.incomplete_grace, || {
+            let mut data = self.preview()?;
+            if !force && self.has_git_loss() {
+                return Err(closed(
+                    "DELETE_GIT_DATA_LOSS",
+                    "Inventoried Git loss requires explicit --force",
+                    1,
+                )
+                .with_details(data));
+            }
+            if !force && self.is_resume() {
+                return Err(closed(
+                    "DELETE_CONFIRMATION_REQUIRED",
+                    "Receipt retry requires explicit --force",
+                    2,
+                )
+                .with_details(data));
+            }
+            data["dryRun"] = json!(false);
+            data["force"] = json!(force);
+            data["result"] = if let Some(plan) = self.fresh {
+                plan.execute_locked()?
+            } else {
+                transaction::execute(self.resume.unwrap(), &self.workspace, None)?
+            };
+            Ok(data)
+        })
+    }
 }
 
 pub fn delete(workspace: &Workspace, args: &Args) -> Result<Value> {
@@ -1003,6 +1277,35 @@ pub fn delete(workspace: &Workspace, args: &Args) -> Result<Value> {
     }
     if args.positional.len() != 1 {
         return Err(Error::new("USAGE", "delete accepts exactly one repository"));
+    }
+    #[cfg(unix)]
+    {
+        let raw = git::run_readonly(&workspace.root, &["rev-parse", "--git-common-dir"])?;
+        let common = fs::canonicalize(workspace.root.join(raw.trim()))?;
+        if let Some(receipt) = receipt::Receipt::load(&common, &args.positional[0])? {
+            let mut data =
+                transaction::preview(&receipt, workspace, args.has("force"), args.has("dry-run"))?;
+            if args.has("dry-run") {
+                return Ok(data);
+            }
+            if !args.has("force") {
+                return Err(closed(
+                    "DELETE_CONFIRMATION_REQUIRED",
+                    "Retry requires explicit --force",
+                    2,
+                )
+                .with_details(data));
+            }
+            let path = workspace_lock::resolve_lock_path(&workspace.root)?;
+            let options = workspace_lock::LockOptions::default();
+            data["result"] = workspace_lock::with_lock(
+                &path,
+                options.retries,
+                options.incomplete_grace,
+                || transaction::execute(receipt, &Workspace::discover(&workspace.root)?, None),
+            )?;
+            return Ok(data);
+        }
     }
     let plan = DeletePlan::build(workspace, &args.positional[0])?;
     let plan_json = plan.plan_json();
@@ -1025,7 +1328,14 @@ pub fn delete(workspace: &Workspace, args: &Args) -> Result<Value> {
         plan.validate()?;
         return Ok(data);
     }
-    if !args.has("force") && !plan.protected_refs.is_empty() {
+    if !args.has("force")
+        && (!plan.protected_refs.is_empty()
+            || !plan.dirty.is_empty()
+            || plan
+                .linked
+                .iter()
+                .any(|checkout| !checkout.dirty.is_empty()))
+    {
         data["confirmation"] = json!("not-required");
         return Err(closed(
             "DELETE_GIT_DATA_LOSS",
@@ -1042,28 +1352,17 @@ pub fn delete(workspace: &Workspace, args: &Args) -> Result<Value> {
         )
         .with_details(data));
     }
-    data["result"] = plan.execute()?;
+    #[cfg(unix)]
+    {
+        data["result"] = plan.execute()?;
+    }
+    #[cfg(windows)]
+    {
+        data["result"] = plan.execute()?;
+    }
     Ok(data)
 }
 
 #[cfg(test)]
 #[path = "../../tests/rust/delete_ownership.rs"]
 mod ownership_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::quarantine_name;
-    use std::path::{Component, Path};
-
-    #[test]
-    fn quarantine_name_cannot_inherit_path_components_from_repository_key() {
-        let name = quarantine_name("api/../../outside\\also");
-        assert_eq!(Path::new(&name).components().count(), 1);
-        assert!(matches!(
-            Path::new(&name).components().next(),
-            Some(Component::Normal(_))
-        ));
-        assert!(!name.contains("../"));
-        assert!(!name.contains('\\'));
-    }
-}

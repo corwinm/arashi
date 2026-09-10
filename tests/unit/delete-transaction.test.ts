@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -10,10 +11,16 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import {
+  allocateDeleteGenerationSuffix,
+  classifyDeleteConfigurationBytes,
+  remapDeleteResidues,
+  terminalDeleteResiduePath,
   createDeleteResumeReceipt,
+  normalizePreparedDeleteWarnings,
+  recoverDeleteConfigurationBytes,
   receiptPlanConfigDigest,
   parseWindowsOwnerOnlyAcl,
   readValidatedDeleteReceipt,
@@ -28,8 +35,68 @@ import {
 const createTempDir = (prefix: string): Promise<string> => mkdtemp(join(tmpdir(), prefix));
 const provenReceiptSafety = { assertWindowsOwnerOnly: async (): Promise<boolean> => true };
 
+test("classifies retained delete configuration recovery bytes", () => {
+  const before = Buffer.from("before");
+  const after = Buffer.from("after");
+  expect(classifyDeleteConfigurationBytes(after, before, after)).toBe("already-published");
+  expect(classifyDeleteConfigurationBytes(before, before, after)).toBe("publish");
+  expect(() => classifyDeleteConfigurationBytes(Buffer.from("foreign"), before, after)).toThrow(
+    expect.objectContaining({ code: "DELETE_CONCURRENT_CHANGE" }),
+  );
+});
+
+test("persists configuration completion when recovery observes next bytes", async () => {
+  const events: string[] = [];
+  const before = Buffer.from("before");
+  const after = Buffer.from("after");
+
+  await recoverDeleteConfigurationBytes(
+    after,
+    before,
+    after,
+    async () => events.push("publish"),
+    async () => events.push("persist-completion"),
+  );
+
+  expect(events).toEqual(["persist-completion"]);
+});
+
+test("canonicalizes retiring and nested retained delete residue", async () => {
+  const root = await createTempDir("delete-terminal-residue-");
+  const clone = join(root, "clone");
+  const quarantine = join(root, "clone.quarantine");
+  await mkdir(`${quarantine}.retiring`);
+  await expect(terminalDeleteResiduePath(quarantine)).resolves.toBe(`${quarantine}.retiring`);
+  expect(
+    remapDeleteResidues(
+      [
+        {
+          source: join(clone, ".git", "worktrees", "old"),
+          destination: join(clone, ".git", "worktrees", ".retained-old"),
+        },
+      ],
+      clone,
+      quarantine,
+    ),
+  ).toEqual([
+    {
+      source: join(clone, ".git", "worktrees", "old"),
+      destination: join(quarantine, ".git", "worktrees", ".retained-old"),
+    },
+  ]);
+});
+
+test("allocates a collision-safe retained delete generation suffix", async () => {
+  const root = await createTempDir("delete-generation-");
+  await writeFile(join(root, "base"), "first");
+  await mkdir(join(root, "base-1.retiring"));
+  await expect(
+    allocateDeleteGenerationSuffix("base", (suffix) => [join(root, suffix)]),
+  ).resolves.toBe("base-2");
+});
+
 const receipt = (repositoryKey: string, receiptPath = "/receipt"): DeleteResumeReceipt => ({
-  version: 1,
+  version: 2,
   planId: "c".repeat(64),
   parentIdentity: "d".repeat(64),
   repositoryKey,
@@ -52,6 +119,7 @@ const receipt = (repositoryKey: string, receiptPath = "/receipt"): DeleteResumeR
   ],
   retryArgv: ["aw", "delete", repositoryKey, "--force"],
   warnings: [],
+  terminalResidues: [],
   runtime: {
     workspaceRoot: "/workspace",
     configPath: "/workspace/.arashi/config.json",
@@ -71,10 +139,19 @@ const receipt = (repositoryKey: string, receiptPath = "/receipt"): DeleteResumeR
     identities: {
       clone: {
         path: "/repo",
-        leaf: { path: "/repo", identity: "dev:ino", kind: "directory" },
-        ancestors: [{ path: "/", identity: "root", kind: "directory" }],
+        leaf: { path: "/repo", identity: "posix-v2:1:2:3", kind: "directory" },
+        ancestors: [{ path: "/", identity: "posix-v2:1:1:1", kind: "directory" }],
+      },
+      canonicalGitAdmin: {
+        path: "/repo/.git",
+        leaf: { path: "/repo/.git", identity: "posix-v2:1:3:4", kind: "directory" },
+        ancestors: [
+          { path: "/", identity: "posix-v2:1:1:1", kind: "directory" },
+          { path: "/repo", identity: "posix-v2:1:2:3", kind: "directory" },
+        ],
       },
       worktrees: [],
+      worktreeAdmins: [],
       metadata: [],
       hooks: [],
     },
@@ -124,7 +201,7 @@ describe("delete resume receipts", () => {
   test("applies and verifies owner-only ACLs for Windows receipt creation", async () => {
     const root = await createTempDir("delete-receipt-windows-acl-");
     const path = receiptPathForRepositoryKey(root, "api");
-    const setWindowsOwnerOnly = vi.fn(async () => undefined);
+    const setWindowsOwnerOnly = vi.fn(async (_path: string) => undefined);
     const assertWindowsOwnerOnly = vi.fn(async () => true);
 
     await createDeleteResumeReceipt(path, receipt("api", path), {
@@ -134,7 +211,8 @@ describe("delete resume receipts", () => {
     });
 
     expect(setWindowsOwnerOnly).toHaveBeenNthCalledWith(1, join(root, ".arashi-delete-receipts"));
-    expect(setWindowsOwnerOnly).toHaveBeenNthCalledWith(2, path);
+    expect(setWindowsOwnerOnly.mock.calls[1]?.[0]).not.toBe(path);
+    expect(setWindowsOwnerOnly).toHaveBeenNthCalledWith(3, path);
     expect(assertWindowsOwnerOnly).toHaveBeenCalledWith(join(root, ".arashi-delete-receipts"));
     expect(assertWindowsOwnerOnly).toHaveBeenCalledWith(path);
   });
@@ -181,6 +259,72 @@ describe("delete resume receipts", () => {
       createDeleteResumeReceipt(path, receipt("api", path), provenReceiptSafety),
     ).rejects.toMatchObject({ code: "EEXIST" });
     expect(Buffer.from(created).equals(await readFile(path))).toBe(true);
+  });
+
+  test("keeps the active receipt absent until a complete synced sibling is published", async () => {
+    const root = await createTempDir("delete-receipt-staged-publication-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    let writeObservedActive = false;
+    let syncObservedActive = false;
+
+    const created = await createDeleteResumeReceipt(path, receipt("api", path), {
+      openExclusive: async (target, flags, mode) => {
+        const handle = await open(target, flags, mode);
+        return {
+          chmod: handle.chmod.bind(handle),
+          close: handle.close.bind(handle),
+          stat: handle.stat.bind(handle),
+          sync: async () => {
+            syncObservedActive = await stat(path).then(
+              () => true,
+              () => false,
+            );
+            await handle.sync();
+          },
+          writeFile: async (value) => {
+            writeObservedActive = await stat(path).then(
+              () => true,
+              () => false,
+            );
+            await handle.writeFile(value);
+          },
+        };
+      },
+    });
+
+    expect(writeObservedActive).toBe(false);
+    expect(syncObservedActive).toBe(false);
+    expect(await readFile(path)).toEqual(Buffer.from(created));
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(receipt("api", path));
+  });
+
+  test("exposes deterministic complete pre-publication and post-publication boundaries", async () => {
+    const root = await createTempDir("delete-receipt-publication-boundaries-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const observed: string[] = [];
+    const safety = {
+      publicationBoundary: async (stage: string) => {
+        if (stage === "staged-synced") {
+          await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+        } else {
+          await expect(
+            readValidatedDeleteReceipt(path, {
+              parentIdentity: "d".repeat(64),
+              repositoryKey: "api",
+            }),
+          ).resolves.toMatchObject({ receipt: receipt("api", path) });
+        }
+        observed.push(stage);
+      },
+      syncParentDirectory: async (parent: string) => {
+        expect(parent).toBe(dirname(path));
+        observed.push("parent-synced");
+      },
+    } satisfies Partial<Parameters<typeof createDeleteResumeReceipt>[2]>;
+
+    await createDeleteResumeReceipt(path, receipt("api", path), safety);
+
+    expect(observed).toEqual(["staged-synced", "published-before-parent-sync", "parent-synced"]);
   });
 
   test("removes the exact partial receipt when its initial write fails", async () => {
@@ -347,6 +491,31 @@ describe("delete resume receipts", () => {
     await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  test("retains repeated completed receipts without a deterministic-name collision", async () => {
+    const root = await createTempDir("delete-receipt-repeat-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const first = receipt("api", path);
+    const firstBytes = await createDeleteResumeReceipt(path, first, provenReceiptSafety);
+    const firstRetained = await removeDeleteResumeReceipt(
+      path,
+      firstBytes,
+      undefined,
+      provenReceiptSafety,
+    );
+    const second = { ...receipt("api", path), planId: "e".repeat(64) };
+    const secondBytes = await createDeleteResumeReceipt(path, second, provenReceiptSafety);
+    const secondRetained = await removeDeleteResumeReceipt(
+      path,
+      secondBytes,
+      undefined,
+      provenReceiptSafety,
+    );
+
+    expect(secondRetained).not.toBe(firstRetained);
+    expect(await readFile(firstRetained)).toEqual(Buffer.from(firstBytes));
+    expect(await readFile(secondRetained)).toEqual(Buffer.from(secondBytes));
+  });
+
   test("receipt cleanup also requires the captured file identity", async () => {
     const root = await createTempDir("delete-receipt-remove-identity-");
     const path = receiptPathForRepositoryKey(root, "api");
@@ -372,7 +541,15 @@ describe("delete resume receipts", () => {
       { parentIdentity: "d".repeat(64), repositoryKey: "api" },
       provenReceiptSafety,
     );
-    expect(loaded.receipt).toEqual(receipt("api", path));
+    const original = receipt("api", path);
+    expect(loaded.receipt).toMatchObject(original);
+    expect(loaded.receipt.planId).toBe(original.planId);
+    expect(loaded.receipt.warnings).toEqual(original.warnings);
+    expect(loaded.receipt.terminalResidues).toEqual([]);
+    expect(loaded.receipt.runtime).toMatchObject({
+      destructionPreparedItemIds: [],
+      worktreeQuarantines: [],
+    });
     expect(loaded.bytes).toEqual(await readFile(path));
 
     await writeFile(path, `${JSON.stringify({ ...receipt("api", path), surprise: true })}\n`, {
@@ -385,6 +562,110 @@ describe("delete resume receipts", () => {
         provenReceiptSafety,
       ),
     ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
+  });
+
+  test("fails closed when a receipt lacks canonical Git administration identity", async () => {
+    const root = await createTempDir("delete-receipt-canonical-git-identity-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const ambiguous = receipt("api", path);
+    delete (ambiguous.runtime.identities as unknown as Record<string, unknown>).canonicalGitAdmin;
+    await createDeleteResumeReceipt(path, ambiguous, provenReceiptSafety);
+
+    await expect(
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
+    ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
+  });
+
+  test.each([
+    ["unknown item", [{ itemId: "missing", source: "/repo", destination: "/repo.q" }]],
+    [
+      "duplicate item",
+      [
+        { itemId: "item", source: "/repo", destination: "/repo.q" },
+        { itemId: "item", source: "/repo-2", destination: "/repo-2.q" },
+      ],
+    ],
+    ["wrong source", [{ itemId: "item", source: "/other", destination: "/repo.q" }]],
+  ] as const)("rejects malformed terminal residue ledger: %s", async (_case, terminalResidues) => {
+    const root = await createTempDir("delete-receipt-terminal-ledger-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const malformed = receipt("api", path);
+    malformed.terminalResidues = [...terminalResidues];
+    await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
+    await expect(
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
+    ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
+  });
+
+  test("accepts only the canonical terminal residue destination mapping", async () => {
+    const root = await createTempDir("delete-receipt-terminal-canonical-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const valid = receipt("api", path);
+    const suffix = createHash("sha256")
+      .update(`arashi-delete-quarantine-v1\0${valid.planId}`)
+      .digest("hex");
+    const destination = join(dirname(valid.runtime.clonePath), `.arashi-delete-617069-${suffix}`);
+    Object.assign(valid.runtime, {
+      quarantinePath: destination,
+      worktreeQuarantines: [],
+      destructionPreparedItemIds: [],
+    });
+    valid.completedItemIds = valid.identities.map(({ id }) => id);
+    valid.completedPhases = [
+      "provenance",
+      "worktrees",
+      "metadata",
+      "canonical-clone",
+      "workspace-hooks",
+      "configuration",
+      "verification",
+    ];
+    valid.remainingPhases = [];
+    valid.terminalResidues = [{ itemId: "item", source: "/repo", destination }];
+    const validBytes = await createDeleteResumeReceipt(path, valid, provenReceiptSafety);
+    await expect(
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
+    ).resolves.toMatchObject({ receipt: { terminalResidues: valid.terminalResidues } });
+
+    valid.terminalResidues[0]!.destination = `${destination}.forged`;
+    await updateDeleteResumeReceipt(path, validBytes, valid, provenReceiptSafety);
+    await expect(
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
+    ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
+  });
+
+  test("rejects legacy path identities without rewriting the receipt", async () => {
+    const root = await createTempDir("delete-receipt-legacy-identity-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const legacy = receipt("api", path);
+    legacy.runtime.identities.clone.leaf.identity = "posix:1:2";
+    await createDeleteResumeReceipt(path, legacy, provenReceiptSafety);
+    const persisted = await readFile(path);
+
+    await expect(
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
+    ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
+    expect(await readFile(path)).toEqual(persisted);
   });
 
   test.each(["identity", "runtime", "topology", "path-identity"])(
@@ -509,6 +790,128 @@ describe("delete resume receipts", () => {
     ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
   });
 
+  test("accepts the fully validated modern native receipt shape", async () => {
+    const root = await createTempDir("delete-receipt-modern-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const modern = receipt("api", path);
+    const runtime = modern.runtime as DeleteResumeReceipt["runtime"] & {
+      destructionPreparedItemIds: string[];
+      quarantinePath: string;
+      worktreeQuarantines: Array<{ path: string; quarantinePath: string }>;
+    };
+    const suffix = createHash("sha256")
+      .update(`arashi-delete-quarantine-v1\0${modern.planId}`)
+      .digest("hex");
+    runtime.quarantinePath = `/.arashi-delete-617069-${suffix}`;
+    runtime.worktreeQuarantines = [];
+    runtime.destructionPreparedItemIds = [];
+    await createDeleteResumeReceipt(path, modern, provenReceiptSafety);
+
+    await expect(
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
+    ).resolves.toMatchObject({ receipt: modern });
+  });
+
+  test.each(["forged-clone", "wrong-source", "duplicate-source", "duplicate-destination"])(
+    "rejects %s native quarantine provenance",
+    async (mutation) => {
+      const root = await createTempDir(`delete-receipt-quarantine-${mutation}-`);
+      const path = receiptPathForRepositoryKey(root, "api");
+      const malformed = receipt("api", path);
+      const suffix = createHash("sha256")
+        .update(`arashi-delete-quarantine-v1\0${malformed.planId}`)
+        .digest("hex");
+      const runtime = malformed.runtime as DeleteResumeReceipt["runtime"] & {
+        destructionPreparedItemIds: string[];
+        quarantinePath: string;
+        worktreeQuarantines: Array<{ path: string; quarantinePath: string }>;
+      };
+      runtime.quarantinePath = `/.arashi-delete-617069-${suffix}`;
+      const worktreeQuarantine = (source: string): string =>
+        `/linked/.arashi-delete-worktree-${createHash("sha256").update(source, "utf8").digest("hex")}-${suffix}`;
+      runtime.worktreeQuarantines = [
+        { path: "/linked/a", quarantinePath: worktreeQuarantine("/linked/a") },
+        { path: "/linked/b", quarantinePath: worktreeQuarantine("/linked/b") },
+      ];
+      runtime.destructionPreparedItemIds = [];
+      malformed.identities.splice(
+        1,
+        0,
+        { id: "linked-a", kind: "linked-worktree", path: "/linked/a", ref: null, oid: null },
+        { id: "linked-b", kind: "linked-worktree", path: "/linked/b", ref: null, oid: null },
+      );
+      runtime.identities.worktrees = [
+        {
+          path: "/linked/a",
+          leaf: { path: "/linked/a", identity: "a", kind: "directory" },
+          ancestors: [],
+        },
+        {
+          path: "/linked/b",
+          leaf: { path: "/linked/b", identity: "b", kind: "directory" },
+          ancestors: [],
+        },
+      ];
+      if (mutation === "forged-clone") runtime.quarantinePath = "/workspace/forged";
+      if (mutation === "wrong-source") runtime.worktreeQuarantines[0]!.path = "/linked/foreign";
+      if (mutation === "duplicate-source") runtime.worktreeQuarantines[1]!.path = "/linked/a";
+      if (mutation === "duplicate-destination")
+        runtime.worktreeQuarantines[1]!.quarantinePath =
+          runtime.worktreeQuarantines[0]!.quarantinePath;
+      await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
+
+      await expect(
+        readValidatedDeleteReceipt(
+          path,
+          { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+          provenReceiptSafety,
+        ),
+      ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
+    },
+  );
+
+  test.each([
+    ["unknown", ["missing"]],
+    ["completed-overlap", ["item"]],
+    ["partial-canonical-group", ["item"]],
+  ])("rejects malformed prepared ledger: %s", async (_case, prepared) => {
+    const root = await createTempDir("delete-receipt-prepared-ledger-");
+    const path = receiptPathForRepositoryKey(root, "api");
+    const malformed = receipt("api", path);
+    malformed.identities.push({
+      id: "ref",
+      kind: "local-ref",
+      path: null,
+      ref: "refs/heads/main",
+      oid: "a".repeat(40),
+    });
+    if (_case === "completed-overlap") malformed.completedItemIds = ["item"];
+    const runtime = malformed.runtime as DeleteResumeReceipt["runtime"] & {
+      destructionPreparedItemIds: string[];
+      quarantinePath: string;
+      worktreeQuarantines: Array<{ path: string; quarantinePath: string }>;
+    };
+    const suffix = createHash("sha256")
+      .update(`arashi-delete-quarantine-v1\0${malformed.planId}`)
+      .digest("hex");
+    runtime.quarantinePath = `/.arashi-delete-617069-${suffix}`;
+    runtime.worktreeQuarantines = [];
+    runtime.destructionPreparedItemIds = prepared;
+    await createDeleteResumeReceipt(path, malformed, provenReceiptSafety);
+
+    await expect(
+      readValidatedDeleteReceipt(
+        path,
+        { parentIdentity: "d".repeat(64), repositoryKey: "api" },
+        provenReceiptSafety,
+      ),
+    ).rejects.toMatchObject({ code: "DELETE_RECEIPT_INVALID" });
+  });
+
   test("reads expected receipt bytes through the no-follow owner-only path", async () => {
     const root = await createTempDir("delete-receipt-bytes-");
     const path = receiptPathForRepositoryKey(root, "api");
@@ -599,5 +1002,20 @@ describe("delete batch transaction", () => {
       notStartedTarget: ({ repositoryKey }) => repositoryKey,
     });
     expect(events).toEqual(["all", "target:alpha", "execute:alpha", "target:beta", "execute:beta"]);
+  });
+
+  test("resorts dirty warnings after prepared quarantine paths are normalized", () => {
+    expect(
+      normalizePreparedDeleteWarnings(
+        [
+          "DELETE_GIT_DATA_LOSS: /workspace/.arashi-delete-worktree-api: untracked ?? linked",
+          "DELETE_GIT_DATA_LOSS: /workspace/repos/api: untracked ?? primary",
+        ],
+        [["/workspace/zlinked", "/workspace/.arashi-delete-worktree-api"]],
+      ),
+    ).toEqual([
+      "DELETE_GIT_DATA_LOSS: /workspace/repos/api: untracked ?? primary",
+      "DELETE_GIT_DATA_LOSS: /workspace/zlinked: untracked ?? linked",
+    ]);
   });
 });

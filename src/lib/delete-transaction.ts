@@ -12,7 +12,7 @@ import {
   stat,
   type FileHandle,
 } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { persistExpectedBytesAtomically } from "./configure-transaction.ts";
 import type { DeletionPathIdentity } from "./delete-identity.ts";
@@ -26,8 +26,14 @@ export interface DeleteReceiptIdentity {
   oid: string | null;
 }
 
+export interface DeleteTerminalResidue {
+  itemId: string;
+  source: string;
+  destination: string;
+}
+
 export interface DeleteResumeReceipt {
-  version: 1;
+  version: 2;
   planId: string;
   parentIdentity: string;
   repositoryKey: string;
@@ -39,17 +45,23 @@ export interface DeleteResumeReceipt {
   remainingPhases: string[];
   retryArgv: string[];
   warnings: string[];
+  terminalResidues?: DeleteTerminalResidue[];
   runtime: {
     workspaceRoot: string;
     configPath: string;
     clonePath: string;
+    quarantinePath?: string;
+    worktreeQuarantines?: Array<{ path: string; quarantinePath: string }>;
+    destructionPreparedItemIds?: string[];
     hookPaths: string[];
     expectedConfigBase64: string;
     nextConfigBase64: string;
     topology: WorktreeRemovalPlan;
     identities: {
       clone: DeletionPathIdentity;
+      canonicalGitAdmin: DeletionPathIdentity;
       worktrees: DeletionPathIdentity[];
+      worktreeAdmins: DeletionPathIdentity[];
       metadata: DeletionPathIdentity[];
       hooks: DeletionPathIdentity[];
     };
@@ -74,6 +86,83 @@ export class DeleteReceiptError extends Error {
   }
 }
 
+export const classifyDeleteConfigurationBytes = (
+  current: Uint8Array,
+  expected: Uint8Array,
+  next: Uint8Array,
+): "already-published" | "publish" => {
+  if (Buffer.from(current).equals(Buffer.from(next))) return "already-published";
+  if (Buffer.from(current).equals(Buffer.from(expected))) return "publish";
+  throw Object.assign(new Error("Configuration changed after planning."), {
+    code: "DELETE_CONCURRENT_CHANGE",
+  });
+};
+
+export const recoverDeleteConfigurationBytes = async (
+  current: Uint8Array,
+  expected: Uint8Array,
+  next: Uint8Array,
+  publish: () => Promise<unknown>,
+  persistCompletion: () => Promise<unknown>,
+): Promise<void> => {
+  if (classifyDeleteConfigurationBytes(current, expected, next) === "publish") await publish();
+  await persistCompletion();
+};
+
+export interface DeleteResidueMapping {
+  source: string;
+  destination: string;
+}
+
+export const allocateDeleteGenerationSuffix = async (
+  base: string,
+  pathsForSuffix: (suffix: string) => string[],
+): Promise<string> => {
+  for (let generation = 0; ; generation += 1) {
+    const suffix = generation === 0 ? base : `${base}-${generation}`;
+    let available = true;
+    for (const path of pathsForSuffix(suffix)) {
+      for (const candidate of [path, `${path}.retiring`]) {
+        try {
+          await lstat(candidate);
+          available = false;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+    }
+    if (available) return suffix;
+  }
+};
+
+export const terminalDeleteResiduePath = async (quarantine: string): Promise<string> => {
+  try {
+    await lstat(quarantine);
+    return quarantine;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const retiring = `${quarantine}.retiring`;
+  await lstat(retiring);
+  return retiring;
+};
+
+export const remapDeleteResidues = (
+  residues: DeleteResidueMapping[],
+  oldAncestor: string,
+  newAncestor: string,
+): DeleteResidueMapping[] =>
+  residues.map((residue) => {
+    const child = relative(oldAncestor, residue.destination);
+    if (
+      child === "" ||
+      child === ".." ||
+      child.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
+    )
+      return residue;
+    return { ...residue, destination: resolve(newAncestor, child) };
+  });
+
 export interface DeleteReceiptSafetyIO {
   platform: NodeJS.Platform;
   assertWindowsOwnerOnly: (path: string) => Promise<boolean>;
@@ -83,6 +172,11 @@ export interface DeleteReceiptSafetyIO {
     flags: string,
     mode: number,
   ) => Promise<Pick<FileHandle, "chmod" | "close" | "stat" | "sync" | "writeFile">>;
+  link: (existingPath: string, newPath: string) => Promise<void>;
+  publicationBoundary: (stage: "staged-synced" | "published-before-parent-sync") => Promise<void>;
+  remove: (path: string) => Promise<void>;
+  syncParentDirectory: (path: string) => Promise<void>;
+  temporaryName: (path: string) => string;
 }
 
 const execFileAsync = promisify(execFile);
@@ -181,24 +275,46 @@ const defaultReceiptSafety: DeleteReceiptSafetyIO = {
   setWindowsOwnerOnly: async (path) => {
     await execWindowsAclPowerShell(windowsAclSet, path);
   },
+  link,
   openExclusive: (path, flags, mode) => open(path, flags, mode),
+  publicationBoundary: async () => {},
+  remove: (path) => rm(path, { force: true }),
+  syncParentDirectory: async (path) => {
+    const handle = await open(path, "r");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  },
+  temporaryName: (path) => `.${basename(path)}.arashi-${process.pid}-${randomUUID()}.tmp`,
 };
 
 const serializeReceipt = (receipt: DeleteResumeReceipt): Uint8Array =>
   new TextEncoder().encode(`${JSON.stringify(receipt, null, 2)}\n`);
 
+const bytewise = (left: string, right: string): number =>
+  Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+
+export const normalizePreparedDeleteWarnings = (
+  warnings: readonly string[],
+  preparedPaths: Iterable<readonly [path: string, quarantine: string]>,
+): string[] =>
+  warnings
+    .map((warning) => {
+      for (const [path, quarantine] of preparedPaths) {
+        const prefix = `DELETE_GIT_DATA_LOSS: ${quarantine}:`;
+        if (warning.startsWith(prefix))
+          return `DELETE_GIT_DATA_LOSS: ${path}:${warning.slice(prefix.length)}`;
+      }
+      return warning;
+    })
+    .toSorted(bytewise);
+
 export const receiptPlanConfigDigest = (
   acceptedConfigDigest: string,
   _targetExpectedConfigBytes: Uint8Array,
 ): string => acceptedConfigDigest;
-
-const removePartialReceipt = async (path: string, expectedIdentity: string): Promise<void> => {
-  if ((await assertPlainReceiptNoFollow(path)) !== expectedIdentity) return;
-  const quarantine = join(dirname(path), `.${basename(path)}.${randomUUID()}.partial`);
-  await rename(path, quarantine);
-  if ((await assertPlainReceiptNoFollow(quarantine)) !== expectedIdentity) return;
-  await rm(quarantine);
-};
 
 export const receiptPathForRepositoryKey = (
   parentCommonDirectory: string,
@@ -228,34 +344,39 @@ export const createDeleteResumeReceipt = async (
     await resolvedSafety.setWindowsOwnerOnly(dirname(path));
   }
   await assertReceiptDirectory(path, safety);
-  const handle = await resolvedSafety.openExclusive(path, "wx", 0o600);
-  const createdMetadata = await handle.stat({ bigint: true });
-  const createdIdentity = `${createdMetadata.dev.toString()}:${createdMetadata.ino.toString()}`;
+  const stagedPath = join(dirname(path), resolvedSafety.temporaryName(path));
+  const handle = await resolvedSafety.openExclusive(stagedPath, "wx", 0o600);
+  let stagedExists = true;
+  let published = false;
   try {
     await handle.writeFile(bytes);
     if (process.platform !== "win32") await handle.chmod(0o600);
     await handle.sync();
+    if (resolvedSafety.platform === "win32") {
+      await resolvedSafety.setWindowsOwnerOnly(stagedPath);
+      await assertOwnerOnly(stagedPath, safety);
+    }
+    await resolvedSafety.publicationBoundary("staged-synced");
   } catch (error) {
     await handle.close().catch(() => undefined);
-    try {
-      await removePartialReceipt(path, createdIdentity);
-    } catch {
-      // Never remove a path whose identity no longer proves it is the file created above.
-    }
+    await resolvedSafety.remove(stagedPath).catch(() => undefined);
     throw error;
   }
   await handle.close();
   try {
+    await resolvedSafety.link(stagedPath, path);
+    published = true;
     if (resolvedSafety.platform === "win32") await resolvedSafety.setWindowsOwnerOnly(path);
     await assertOwnerOnly(path, safety);
+    await resolvedSafety.publicationBoundary("published-before-parent-sync");
+    await resolvedSafety.remove(stagedPath);
+    stagedExists = false;
+    await resolvedSafety.syncParentDirectory(dirname(path));
   } catch (error) {
-    try {
-      await removePartialReceipt(path, createdIdentity);
-    } catch {
-      // Never remove a path whose identity no longer proves it is the file created above.
-    }
+    if (stagedExists) await resolvedSafety.remove(stagedPath).catch(() => undefined);
     throw error;
   }
+  if (!published) throw new Error("Delete receipt publication did not complete.");
   return bytes;
 };
 
@@ -313,8 +434,11 @@ const receiptKeys = [
   "remainingPhases",
   "retryArgv",
   "warnings",
+  "terminalResidues",
   "runtime",
 ] as const;
+const legacyReceiptKeys = receiptKeys.filter((key) => key !== "terminalResidues");
+const terminalResidueKeys = ["itemId", "source", "destination"] as const;
 const identityKeys = ["id", "kind", "path", "ref", "oid"] as const;
 const exactKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
   Object.keys(value).length === keys.length && keys.every((key) => key in value);
@@ -329,6 +453,9 @@ const isPathIdentityEntry = (value: unknown): boolean => {
     exactKeys(entry, pathIdentityEntryKeys) &&
     typeof entry.path === "string" &&
     typeof entry.identity === "string" &&
+    /^(?:posix|windows)-v2:(?:0|[1-9][0-9]*):(?:0|[1-9][0-9]*):[1-9][0-9]*$/u.test(
+      entry.identity,
+    ) &&
     (entry.kind === "file" || entry.kind === "directory")
   );
 };
@@ -446,6 +573,23 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
     "topology",
     "identities",
   ];
+  const quarantineRuntimeKeys = [...runtimeKeys, "quarantinePath", "worktreeQuarantines"];
+  const nativeRuntimeKeys = [...quarantineRuntimeKeys, "destructionPreparedItemIds"];
+  const hasQuarantineRuntime =
+    exactKeys(runtime ?? {}, quarantineRuntimeKeys) || exactKeys(runtime ?? {}, nativeRuntimeKeys);
+  const validNativeQuarantines =
+    hasQuarantineRuntime &&
+    typeof runtime?.quarantinePath === "string" &&
+    Array.isArray(runtime.worktreeQuarantines) &&
+    runtime.worktreeQuarantines.every(
+      (entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        exactKeys(entry as Record<string, unknown>, ["path", "quarantinePath"]) &&
+        typeof (entry as Record<string, unknown>).path === "string" &&
+        typeof (entry as Record<string, unknown>).quarantinePath === "string",
+    );
   const validIdentities =
     Array.isArray(identities) &&
     identities.every(
@@ -461,8 +605,8 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
         nullableString((entry as DeleteReceiptIdentity).oid),
     );
   if (
-    !exactKeys(record, receiptKeys) ||
-    record.version !== 1 ||
+    (!exactKeys(record, receiptKeys) && !exactKeys(record, legacyReceiptKeys)) ||
+    record.version !== 2 ||
     typeof record.planId !== "string" ||
     typeof record.parentIdentity !== "string" ||
     typeof record.repositoryKey !== "string" ||
@@ -474,9 +618,22 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
     !stringArray(record.remainingPhases) ||
     !stringArray(record.retryArgv) ||
     !stringArray(record.warnings) ||
+    (record.terminalResidues !== undefined &&
+      (!Array.isArray(record.terminalResidues) ||
+        !record.terminalResidues.every(
+          (entry) =>
+            entry !== null &&
+            typeof entry === "object" &&
+            !Array.isArray(entry) &&
+            exactKeys(entry as Record<string, unknown>, terminalResidueKeys) &&
+            typeof (entry as Record<string, unknown>).itemId === "string" &&
+            typeof (entry as Record<string, unknown>).source === "string" &&
+            typeof (entry as Record<string, unknown>).destination === "string",
+        ))) ||
     !runtime ||
     Array.isArray(runtime) ||
-    !exactKeys(runtime, runtimeKeys) ||
+    (!exactKeys(runtime, runtimeKeys) && !validNativeQuarantines) ||
+    (exactKeys(runtime, nativeRuntimeKeys) && !stringArray(runtime.destructionPreparedItemIds)) ||
     typeof runtime.workspaceRoot !== "string" ||
     typeof runtime.configPath !== "string" ||
     typeof runtime.clonePath !== "string" ||
@@ -488,10 +645,20 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
     !isTopology(runtime.topology) ||
     !runtimeIdentities ||
     Array.isArray(runtimeIdentities) ||
-    !exactKeys(runtimeIdentities, ["clone", "worktrees", "metadata", "hooks"]) ||
+    !exactKeys(runtimeIdentities, [
+      "clone",
+      "canonicalGitAdmin",
+      "worktrees",
+      "worktreeAdmins",
+      "metadata",
+      "hooks",
+    ]) ||
     !isDeletionIdentity(runtimeIdentities.clone) ||
+    !isDeletionIdentity(runtimeIdentities.canonicalGitAdmin) ||
     !Array.isArray(runtimeIdentities.worktrees) ||
     !runtimeIdentities.worktrees.every(isDeletionIdentity) ||
+    !Array.isArray(runtimeIdentities.worktreeAdmins) ||
+    !runtimeIdentities.worktreeAdmins.every(isDeletionIdentity) ||
     !Array.isArray(runtimeIdentities.metadata) ||
     !runtimeIdentities.metadata.every(isDeletionIdentity) ||
     !Array.isArray(runtimeIdentities.hooks) ||
@@ -526,6 +693,7 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
   const firstRemainingIndex =
     remaining.length === 0 ? phases.length : phases.indexOf(remaining[0]!);
   const phaseLedgerIsConsistent = (identities as DeleteReceiptIdentity[]).every((item) => {
+    if (item.kind === "preserved-global-hook") return !completedItems.has(item.id);
     const phase = receiptPhaseForKind(item.kind);
     if (phase === null) return false;
     const phaseIndex = phases.indexOf(phase);
@@ -542,6 +710,7 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
     return !activePhaseGap || !completedItems.has(id);
   });
   const receiptIdentities = identities as DeleteReceiptIdentity[];
+  const terminalResidues = (record.terminalResidues ?? []) as DeleteTerminalResidue[];
   const pathsForKind = (kind: string): string[] =>
     receiptIdentities
       .filter((item) => item.kind === kind && item.path !== null)
@@ -550,9 +719,81 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
   const deletionPaths = (value: unknown): string[] =>
     (value as DeletionPathIdentity[]).map(({ path }) => path).toSorted();
   const parsedRuntime = runtime as DeleteResumeReceipt["runtime"];
+  const runtimeWorktreePaths = deletionPaths(parsedRuntime.identities.worktrees);
+  const planSuffix = createHash("sha256")
+    .update(`arashi-delete-quarantine-v1\0${record.planId as string}`)
+    .digest("hex");
+  const cloneQuarantinePrefix = `.arashi-delete-${Buffer.from(record.repositoryKey as string, "utf8").toString("hex")}-`;
+  const selectedSuffix = parsedRuntime.quarantinePath
+    ? basename(parsedRuntime.quarantinePath).slice(cloneQuarantinePrefix.length)
+    : planSuffix;
+  const validSelectedSuffix =
+    selectedSuffix === planSuffix ||
+    (selectedSuffix.startsWith(`${planSuffix}-`) &&
+      /^\d+$/u.test(selectedSuffix.slice(planSuffix.length + 1)));
+  const expectedCloneQuarantine = join(
+    dirname(parsedRuntime.clonePath),
+    `${cloneQuarantinePrefix}${selectedSuffix}`,
+  );
+  const quarantineMappings = parsedRuntime.worktreeQuarantines ?? [];
+  const expectedMappings = parsedRuntime.identities.worktrees.map(({ path }) => ({
+    path,
+    quarantinePath: join(
+      dirname(path),
+      `.arashi-delete-worktree-${createHash("sha256").update(path, "utf8").digest("hex")}-${selectedSuffix}`,
+    ),
+  }));
+  const contains = (ancestor: string, candidate: string): boolean => {
+    const value = relative(ancestor, candidate);
+    return (
+      value === "" ||
+      (value !== ".." && !value.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+    );
+  };
+  const protectedPaths = [
+    parsedRuntime.workspaceRoot,
+    parsedRuntime.configPath,
+    parsedRuntime.topology.commonDirectory,
+    parsedRuntime.topology.configuredActivePath,
+    parsedRuntime.topology.primaryPath,
+    parsedRuntime.topology.canonicalClonePath,
+    ...parsedRuntime.topology.inventory.map(({ path }) => path),
+    ...parsedRuntime.topology.linkedWorktrees.flatMap(({ path, metadataPath }) =>
+      metadataPath === null ? [path] : [path, metadataPath],
+    ),
+    ...parsedRuntime.topology.staleMetadata.flatMap(({ path, worktreePath }) => [
+      path,
+      worktreePath,
+    ]),
+    ...receiptIdentities.flatMap(({ path }) => (path === null ? [] : [path])),
+  ];
+  const quarantineDestinations = [
+    parsedRuntime.quarantinePath ?? "",
+    ...quarantineMappings.map(({ quarantinePath }) => quarantinePath),
+  ];
+  const quarantineProvenanceIsConsistent =
+    !hasQuarantineRuntime ||
+    (isAbsolute(parsedRuntime.clonePath) &&
+      validSelectedSuffix &&
+      parsedRuntime.quarantinePath === expectedCloneQuarantine &&
+      JSON.stringify(quarantineMappings) === JSON.stringify(expectedMappings) &&
+      new Set(quarantineMappings.map(({ path }) => path)).size === quarantineMappings.length &&
+      new Set(quarantineMappings.map(({ quarantinePath }) => quarantinePath)).size ===
+        quarantineMappings.length &&
+      new Set(quarantineDestinations).size === quarantineDestinations.length &&
+      quarantineDestinations.every(
+        (destination) =>
+          isAbsolute(destination) &&
+          protectedPaths.every((protectedPath) => !contains(destination, protectedPath)),
+      ) &&
+      quarantineMappings.every(
+        ({ path, quarantinePath }) =>
+          isAbsolute(path) && path !== quarantinePath && dirname(path) === dirname(quarantinePath),
+      ));
   const deletionIdentitiesAreSelfConsistent = [
     parsedRuntime.identities.clone,
     ...parsedRuntime.identities.worktrees,
+    ...parsedRuntime.identities.worktreeAdmins,
     ...parsedRuntime.identities.metadata,
     ...parsedRuntime.identities.hooks,
   ].every(({ path, leaf }) => leaf.path === path);
@@ -562,14 +803,113 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
     parsedRuntime.identities.clone.path === parsedRuntime.clonePath &&
     pathsForKind("canonical-clone").length === 1 &&
     pathsForKind("canonical-clone")[0] === parsedRuntime.clonePath &&
-    JSON.stringify(deletionPaths(parsedRuntime.identities.worktrees)) ===
-      JSON.stringify(pathsForKind("linked-worktree")) &&
+    JSON.stringify(runtimeWorktreePaths) === JSON.stringify(pathsForKind("linked-worktree")) &&
+    JSON.stringify(deletionPaths(parsedRuntime.identities.worktreeAdmins)) ===
+      JSON.stringify(
+        parsedRuntime.topology.linkedWorktrees
+          .flatMap(({ metadataPath, present }) =>
+            present && metadataPath !== null ? [metadataPath] : [],
+          )
+          .toSorted(),
+      ) &&
     JSON.stringify(deletionPaths(parsedRuntime.identities.metadata)) ===
       JSON.stringify(pathsForKind("worktree-metadata")) &&
     JSON.stringify(deletionPaths(parsedRuntime.identities.hooks)) ===
       JSON.stringify(pathsForKind("workspace-hook")) &&
     JSON.stringify([...parsedRuntime.hookPaths].toSorted()) ===
       JSON.stringify(pathsForKind("workspace-hook"));
+  const prepared = parsedRuntime.destructionPreparedItemIds ?? [];
+  const canonicalGroup = receiptIdentities
+    .filter(({ kind }) => kind === "canonical-clone" || kind === "local-ref")
+    .map(({ id }) => id);
+  const preparedKinds = new Set([
+    "linked-worktree",
+    "worktree-metadata",
+    "canonical-clone",
+    "local-ref",
+    "workspace-hook",
+  ]);
+  const preparedGroupIsValid =
+    prepared.length === 0 ||
+    (prepared.length === 1 &&
+      receiptIdentities.some(
+        ({ id, kind }) => id === prepared[0] && preparedKinds.has(kind) && kind !== "local-ref",
+      )) ||
+    (prepared.length === canonicalGroup.length &&
+      canonicalGroup.every((id) => prepared.includes(id)));
+  const preparedLedgerIsConsistent =
+    new Set(prepared).size === prepared.length &&
+    prepared.every(
+      (id) =>
+        !completedItems.has(id) &&
+        receiptIdentities.some(({ id: itemId, kind }) => itemId === id && preparedKinds.has(kind)),
+    ) &&
+    preparedGroupIsValid &&
+    prepared.every((id) => {
+      const item = receiptIdentities.find(({ id: itemId }) => itemId === id);
+      return (
+        item !== undefined && phases.indexOf(receiptPhaseForKind(item.kind)!) === completed.length
+      );
+    });
+  const residueKeys = terminalResidues.map(
+    ({ itemId, source, destination }) => `${itemId}\0${source}\0${destination}`,
+  );
+  const terminalItemKinds = new Set([
+    "canonical-clone",
+    "linked-worktree",
+    "worktree-metadata",
+    "workspace-hook",
+  ]);
+  const expectedResidueDestination = (item: DeleteReceiptIdentity): string | null => {
+    let destination: string | null = null;
+    if (item.kind === "canonical-clone") destination = expectedCloneQuarantine;
+    else if (item.kind === "linked-worktree")
+      destination = expectedMappings.find(({ path }) => path === item.path)?.quarantinePath ?? null;
+    else if (
+      item.path !== null &&
+      (item.kind === "worktree-metadata" || item.kind === "workspace-hook")
+    )
+      destination = join(
+        dirname(item.path),
+        `.arashi-delete-retained-${createHash("sha256")
+          .update("arashi-delete-retained-v1\0")
+          .update(record.planId as string)
+          .update("\0")
+          .update(item.id)
+          .digest("hex")}-${selectedSuffix}`,
+      );
+    if (destination === null || item.kind === "canonical-clone" || item.kind === "linked-worktree")
+      return destination;
+    for (const ancestor of terminalResidues) {
+      const ancestorItem = receiptIdentities.find(({ id }) => id === ancestor.itemId);
+      if (
+        ancestorItem &&
+        (ancestorItem.kind === "canonical-clone" || ancestorItem.kind === "linked-worktree") &&
+        contains(ancestor.source, destination)
+      )
+        destination = join(ancestor.destination, relative(ancestor.source, destination));
+    }
+    return destination;
+  };
+  const residueLedgerIsConsistent =
+    residueKeys.join("\0") === residueKeys.toSorted(bytewise).join("\0") &&
+    new Set(terminalResidues.map(({ itemId }) => itemId)).size === terminalResidues.length &&
+    new Set(terminalResidues.map(({ source }) => source)).size === terminalResidues.length &&
+    new Set(terminalResidues.map(({ destination }) => destination)).size ===
+      terminalResidues.length &&
+    terminalResidues.every(({ itemId, source, destination }) => {
+      const item = receiptIdentities.find(({ id }) => id === itemId);
+      const expectedDestination = item ? expectedResidueDestination(item) : null;
+      return (
+        item?.path === source &&
+        terminalItemKinds.has(item.kind) &&
+        expectedDestination !== null &&
+        (destination === expectedDestination ||
+          destination === `${expectedDestination}.retiring`) &&
+        completedItems.has(itemId)
+      );
+    }) &&
+    (terminalResidues.length === 0 || completed.length === phases.length);
   if (
     new Set(completed).size !== completed.length ||
     new Set(remaining).size !== remaining.length ||
@@ -582,10 +922,25 @@ const parseReceipt = (bytes: Uint8Array): DeleteResumeReceipt => {
       (identities as DeleteReceiptIdentity[]).length ||
     !phaseLedgerIsConsistent ||
     !activePhaseIsPrefix ||
-    !runtimeProvenanceIsConsistent
+    !runtimeProvenanceIsConsistent ||
+    !quarantineProvenanceIsConsistent ||
+    !preparedLedgerIsConsistent ||
+    !residueLedgerIsConsistent
   )
     throw new DeleteReceiptError("DELETE_RECEIPT_INVALID", "Delete receipt ledger is invalid.");
-  return value as DeleteResumeReceipt;
+  const normalizedRuntime = hasQuarantineRuntime
+    ? parsedRuntime
+    : {
+        ...parsedRuntime,
+        quarantinePath: expectedCloneQuarantine,
+        worktreeQuarantines: expectedMappings,
+        destructionPreparedItemIds: [],
+      };
+  return {
+    ...(value as DeleteResumeReceipt),
+    terminalResidues,
+    runtime: normalizedRuntime,
+  };
 };
 
 export const readValidatedDeleteReceipt = async (
@@ -716,16 +1071,20 @@ export const removeDeleteResumeReceipt = async (
   expectedBytes: Uint8Array,
   expectedIdentity?: string,
   safety: Partial<DeleteReceiptSafetyIO> = {},
-): Promise<void> => {
+): Promise<string> => {
   await assertReceiptDirectory(path, safety);
   const originalIdentity = await assertPlainReceiptNoFollow(path);
   await assertOwnerOnly(path, safety);
   const parentBefore = await stat(dirname(path), { bigint: true });
   const parentIdentity = `${parentBefore.dev.toString()}:${parentBefore.ino.toString()}`;
-  const quarantine = join(
-    dirname(path),
-    `.${basename(path)}.remove-${process.pid}-${randomUUID()}`,
-  );
+  const quarantine = `${path}.${createHash("sha256").update(expectedBytes).digest("hex")}.retained`;
+  await lstat(quarantine)
+    .then(() => {
+      throw new Error("Retained delete receipt destination already exists; preserved both files.");
+    })
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
   await rename(path, quarantine);
   const restore = async (): Promise<void> => {
     const parentAfter = await stat(dirname(path), { bigint: true });
@@ -761,7 +1120,7 @@ export const removeDeleteResumeReceipt = async (
       await restore();
       throw new Error("Delete receipt changed concurrently; preserved the newer bytes.");
     }
-    await rm(quarantine);
+    return quarantine;
   } catch (error) {
     const stillMoved = await stat(quarantine)
       .then(() => true)

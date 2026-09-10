@@ -1,10 +1,11 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
   existsSync,
@@ -22,6 +23,7 @@ import { inspectGitWorktreeTopology } from "../../src/lib/delete-topology.ts";
 import {
   createDeleteResumeReceipt,
   type DeleteResumeReceipt,
+  type DeleteTerminalResidue,
 } from "../../src/lib/delete-transaction.ts";
 
 const cli = join(dirname(fileURLToPath(import.meta.url)), "../../src/index.ts");
@@ -139,6 +141,21 @@ const run = (cwd: string, args: string[], envOverrides: NodeJS.ProcessEnv = {}) 
     timeout: 15_000,
   });
 
+const waitForPath = async (path: string): Promise<void> => {
+  const deadline = Date.now() + 5_000;
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${path}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+};
+
+const killProcessGroup = async (child: ReturnType<typeof spawn>): Promise<void> => {
+  if (child.pid === undefined) throw new Error("Delete child has no process identifier");
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  process.kill(-child.pid, "SIGKILL");
+  await exited;
+};
+
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -242,6 +259,282 @@ describe("spawned configured repository delete", () => {
     expect(readFileSync(configPath)).toEqual(before);
     expect(existsSync(join(workspace, "repos", "api"))).toBe(true);
     expect(existsSync(join(workspace, ".git", ".arashi-add.transaction.lock"))).toBe(false);
+  });
+
+  test("removes a live worktree without pruning separately planned stale metadata early", () => {
+    const { workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    const linked = join(workspace, ".arashi", "worktrees", "live", "repos", "api");
+    const stale = join(workspace, ".arashi", "worktrees", "stale", "repos", "api");
+    mkdirSync(dirname(linked), { recursive: true });
+    mkdirSync(dirname(stale), { recursive: true });
+    git(clone, "worktree", "add", linked, "-b", "live");
+    git(clone, "worktree", "add", stale, "-b", "stale");
+    rmSync(stale, { recursive: true });
+
+    const result = run(workspace, ["delete", "api", "--force", "--json"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(existsSync(linked)).toBe(false);
+    expect(existsSync(clone)).toBe(false);
+  });
+
+  test("does not delegate prepared checkout deletion to pathname-based git worktree remove", () => {
+    const { workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    const linked = join(workspace, ".arashi", "worktrees", "retry", "repos", "api");
+    mkdirSync(dirname(linked), { recursive: true });
+    git(clone, "worktree", "add", linked, "-b", "retry");
+    writeFileSync(join(linked, "caller"), "authorized loss\n");
+    const wrapperDirectory = join(dirname(workspace), "git-wrapper");
+    mkdirSync(wrapperDirectory);
+    const wrapper = join(wrapperDirectory, "git");
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\ncase " $* " in *" worktree remove "*) echo injected-worktree-remove-failure >&2; exit 1;; esac\nexec ${JSON.stringify(execFileSync("which", ["git"], { encoding: "utf8" }).trim())} "$@"\n`,
+      { mode: 0o755 },
+    );
+
+    const result = run(workspace, ["delete", "api", "--force", "--json"], {
+      PATH: `${wrapperDirectory}:${process.env.PATH}`,
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(existsSync(linked)).toBe(false);
+    expect(existsSync(clone)).toBe(false);
+  });
+
+  test("resumes after process loss exactly after linked quarantine and before prepare", async () => {
+    const { workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    const linked = join(workspace, ".arashi", "worktrees", "repair-gap", "repos", "api");
+    mkdirSync(dirname(linked), { recursive: true });
+    git(clone, "worktree", "add", linked, "-b", "repair-gap");
+    writeFileSync(join(linked, "caller"), "authorized loss\n");
+    const ready = join(dirname(workspace), "repair-pause-ready");
+    const resume = join(dirname(workspace), "repair-pause-resume");
+    const child = spawn(process.execPath, [cli, "delete", "api", "--force", "--json"], {
+      cwd: workspace,
+      detached: true,
+      env: {
+        ...gitEnv,
+        ARASHI_DELETE_TEST_PAUSE: "linked-after-quarantine",
+        ARASHI_DELETE_TEST_READY: ready,
+        ARASHI_DELETE_TEST_RESUME: resume,
+        NODE_ENV: "test",
+      },
+      stdio: "ignore",
+    });
+    await waitForPath(ready);
+    const receiptPath = join(
+      workspace,
+      ".git",
+      ".arashi-delete-receipts",
+      `${createHash("sha256").update("api", "utf8").digest("hex")}.json`,
+    );
+    const interruptedReceipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    const quarantine = interruptedReceipt.runtime.worktreeQuarantines[0].quarantinePath as string;
+    expect(interruptedReceipt.runtime.destructionPreparedItemIds).toEqual([]);
+    expect(existsSync(linked)).toBe(false);
+    expect(existsSync(quarantine)).toBe(true);
+    const registered = git(clone, "worktree", "list", "--porcelain");
+    expect(registered).toContain("branch refs/heads/repair-gap");
+    expect(registered).toContain("prunable gitdir file points to non-existent location");
+    expect(registered).not.toContain(`worktree ${quarantine}`);
+    await killProcessGroup(child);
+
+    const resumed = run(workspace, ["delete", "api", "--force", "--json"]);
+    expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
+    expect(existsSync(quarantine)).toBe(true);
+    expect(existsSync(clone)).toBe(false);
+  });
+
+  test("resumes two linked worktrees after the first completion receipt is durable", async () => {
+    const { workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    const linkedA = join(workspace, ".arashi", "worktrees", "partial-a", "repos", "api");
+    const linkedB = join(workspace, ".arashi", "worktrees", "partial-b", "repos", "api");
+    mkdirSync(dirname(linkedA), { recursive: true });
+    mkdirSync(dirname(linkedB), { recursive: true });
+    git(clone, "worktree", "add", linkedA, "-b", "partial-a");
+    git(clone, "worktree", "add", linkedB, "-b", "partial-b");
+    const canonicalLinkedA = realpathSync(linkedA);
+    const canonicalLinkedB = realpathSync(linkedB);
+    writeFileSync(join(linkedA, "caller"), "authorized loss a\n");
+    writeFileSync(join(linkedB, "caller"), "authorized loss b\n");
+    const ready = join(dirname(workspace), "linked-after-completion-ready");
+    const resume = join(dirname(workspace), "linked-after-completion-resume");
+    const child = spawn(process.execPath, [cli, "delete", "api", "--force", "--json"], {
+      cwd: workspace,
+      detached: true,
+      env: {
+        ...gitEnv,
+        ARASHI_DELETE_TEST_PAUSE: "linked-after-completion",
+        ARASHI_DELETE_TEST_READY: ready,
+        ARASHI_DELETE_TEST_RESUME: resume,
+        NODE_ENV: "test",
+      },
+      stdio: "ignore",
+    });
+    await waitForPath(ready);
+    const receiptPath = join(
+      workspace,
+      ".git",
+      ".arashi-delete-receipts",
+      `${createHash("sha256").update("api", "utf8").digest("hex")}.json`,
+    );
+    const interruptedReceipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    const linkedItems = interruptedReceipt.identities.filter(
+      ({ kind }: { kind: string }) => kind === "linked-worktree",
+    );
+    expect(linkedItems.map(({ path }: { path: string }) => path)).toEqual([
+      canonicalLinkedA,
+      canonicalLinkedB,
+    ]);
+    expect(interruptedReceipt.completedItemIds).toContain(linkedItems[0].id);
+    expect(interruptedReceipt.completedItemIds).not.toContain(linkedItems[1].id);
+    const quarantineA = interruptedReceipt.runtime.worktreeQuarantines.find(
+      ({ path }: { path: string }) => path === canonicalLinkedA,
+    ).quarantinePath as string;
+    expect(existsSync(linkedA)).toBe(false);
+    expect(existsSync(quarantineA)).toBe(true);
+    expect(existsSync(linkedB)).toBe(true);
+    const registered = git(clone, "worktree", "list", "--porcelain");
+    expect(registered).toContain(`worktree ${canonicalLinkedA}`);
+    expect(registered).toContain("prunable gitdir file points to non-existent location");
+    expect(registered).toContain(`worktree ${canonicalLinkedB}`);
+    await killProcessGroup(child);
+
+    const resumed = run(workspace, ["delete", "api", "--force", "--json"]);
+    expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
+    expect(existsSync(linkedA)).toBe(false);
+    expect(existsSync(quarantineA)).toBe(true);
+    expect(existsSync(linkedB)).toBe(false);
+    expect(existsSync(clone)).toBe(false);
+  });
+
+  test.runIf(process.platform !== "win32")(
+    "never delegates Git repair across a recreated administration identity",
+    () => {
+      const { workspace } = fixture();
+      const clone = join(workspace, "repos", "api");
+      const linked = join(workspace, ".arashi", "worktrees", "admin-swap", "repos", "api");
+      mkdirSync(dirname(linked), { recursive: true });
+      git(clone, "worktree", "add", linked, "-b", "admin-swap");
+      writeFileSync(join(linked, "caller"), "authorized loss\n");
+      const admin = readFileSync(join(linked, ".git"), "utf8").trim().slice("gitdir: ".length);
+      const wrapperDirectory = join(dirname(workspace), "admin-swap-bin");
+      const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      const swapped = join(dirname(workspace), "admin-swapped");
+      const mutated = join(dirname(workspace), "foreign-admin-mutated");
+      mkdirSync(wrapperDirectory);
+      writeFileSync(
+        join(wrapperDirectory, "git"),
+        `#!/bin/sh\nif [ "$1" = worktree ] && [ "$2" = repair ] && [ ! -e ${JSON.stringify(swapped)} ]; then\n  mv ${JSON.stringify(admin)} ${JSON.stringify(`${admin}.accepted`)}\n  cp -R ${JSON.stringify(`${admin}.accepted`)} ${JSON.stringify(admin)}\n  : > ${JSON.stringify(swapped)}\n  before=$(cat ${JSON.stringify(join(admin, "gitdir"))})\n  ${JSON.stringify(realGit)} "$@"\n  status=$?\n  after=$(cat ${JSON.stringify(join(admin, "gitdir"))})\n  [ "$before" = "$after" ] || : > ${JSON.stringify(mutated)}\n  exit "$status"\nfi\nexec ${JSON.stringify(realGit)} "$@"\n`,
+        { mode: 0o755 },
+      );
+
+      const result = run(workspace, ["delete", "api", "--force", "--json"], {
+        PATH: `${wrapperDirectory}:${process.env.PATH}`,
+      });
+
+      expect(existsSync(mutated), `${result.stdout}\n${result.stderr}`).toBe(false);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    },
+  );
+
+  test("resumes prepared retiring linked quarantine through command phase validation", async () => {
+    const { workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    const linked = join(workspace, ".arashi", "worktrees", "retiring-gap", "repos", "api");
+    mkdirSync(dirname(linked), { recursive: true });
+    git(clone, "worktree", "add", linked, "-b", "retiring-gap");
+    writeFileSync(join(linked, "caller"), "authorized loss\n");
+    const ready = join(dirname(workspace), "linked-after-prepare-ready");
+    const resume = join(dirname(workspace), "linked-after-prepare-resume");
+    const child = spawn(process.execPath, [cli, "delete", "api", "--force", "--json"], {
+      cwd: workspace,
+      detached: true,
+      env: {
+        ...gitEnv,
+        ARASHI_DELETE_TEST_PAUSE: "linked-after-prepare",
+        ARASHI_DELETE_TEST_READY: ready,
+        ARASHI_DELETE_TEST_RESUME: resume,
+        NODE_ENV: "test",
+      },
+      stdio: "ignore",
+    });
+    await waitForPath(ready);
+    const receiptPath = join(
+      workspace,
+      ".git",
+      ".arashi-delete-receipts",
+      `${createHash("sha256").update("api", "utf8").digest("hex")}.json`,
+    );
+    const interruptedReceipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    const quarantine = interruptedReceipt.runtime.worktreeQuarantines[0].quarantinePath as string;
+    const retiring = `${quarantine}.retiring`;
+    expect(interruptedReceipt.runtime.destructionPreparedItemIds).toHaveLength(1);
+    renameSync(quarantine, retiring);
+    await killProcessGroup(child);
+    expect(existsSync(quarantine)).toBe(false);
+    expect(existsSync(retiring)).toBe(true);
+
+    const resumed = run(workspace, ["delete", "api", "--force", "--json"]);
+    expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
+    expect(existsSync(retiring)).toBe(true);
+    expect(existsSync(clone)).toBe(false);
+  });
+
+  test("resumes linked deletion after canonical clone completion before receipt retirement", async () => {
+    const { configPath, workspace } = fixture();
+    const clone = join(workspace, "repos", "api");
+    const linked = join(workspace, ".arashi", "worktrees", "late-retry", "repos", "api");
+    mkdirSync(dirname(linked), { recursive: true });
+    git(clone, "worktree", "add", linked, "-b", "late-retry");
+    writeFileSync(join(linked, "caller"), "authorized loss\n");
+    const admin = readFileSync(join(linked, ".git"), "utf8").trim().slice("gitdir: ".length);
+    const ready = join(dirname(workspace), "clone-phase-completed-ready");
+    const resume = join(dirname(workspace), "clone-phase-completed-resume");
+    const child = spawn(process.execPath, [cli, "delete", "api", "--force", "--json"], {
+      cwd: workspace,
+      detached: true,
+      env: {
+        ...gitEnv,
+        ARASHI_DELETE_TEST_PAUSE: "clone-phase-completed",
+        ARASHI_DELETE_TEST_READY: ready,
+        ARASHI_DELETE_TEST_RESUME: resume,
+        NODE_ENV: "test",
+      },
+      stdio: "ignore",
+    });
+    await waitForPath(ready);
+    const receiptPath = join(
+      workspace,
+      ".git",
+      ".arashi-delete-receipts",
+      `${createHash("sha256").update("api", "utf8").digest("hex")}.json`,
+    );
+    const interruptedReceipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    const cloneItemIds = interruptedReceipt.identities
+      .filter(({ kind }: { kind: string }) => kind === "canonical-clone" || kind === "local-ref")
+      .map(({ id }: { id: string }) => id);
+    const linkedItemId = interruptedReceipt.identities.find(
+      ({ kind }: { kind: string }) => kind === "linked-worktree",
+    ).id;
+    expect(interruptedReceipt.completedItemIds).toEqual(
+      expect.arrayContaining([linkedItemId, ...cloneItemIds]),
+    );
+    expect(interruptedReceipt.completedPhases).toContain("canonical-clone");
+    expect(JSON.parse(readFileSync(configPath, "utf8")).repos.api).toBeDefined();
+    expect(existsSync(linked)).toBe(false);
+    expect(existsSync(clone)).toBe(false);
+    expect(existsSync(admin)).toBe(false);
+    await killProcessGroup(child);
+
+    const resumed = run(workspace, ["delete", "api", "--force", "--json"]);
+    expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).repos.api).toBeUndefined();
+    expect(existsSync(receiptPath)).toBe(false);
   });
 
   test("deletes from the persisted legacy repository map selected by normalization", () => {
@@ -565,7 +858,63 @@ describe("spawned configured repository delete", () => {
       zeta: { path: "repos/zeta", gitUrl: "https://example.invalid/zeta.git" },
     });
     expect(existsSync(join(workspace, ".git", ".arashi-add.transaction.lock"))).toBe(false);
+    const retainedWarnings = data.result.warnings.filter((warning: string) =>
+      warning.startsWith("DELETE_RETAINED_CLEANUP: "),
+    );
+    expect(retainedWarnings).toHaveLength(3);
+    for (const warning of retainedWarnings) {
+      const [, destination] = warning.split(" -> ");
+      expect(existsSync(destination), warning).toBe(true);
+    }
+    expect(retainedWarnings.some((warning: string) => warning.includes("/repos/api -> "))).toBe(
+      true,
+    );
+    expect(
+      retainedWarnings.some((warning: string) => warning.includes("/pre-create.api.sh -> ")),
+    ).toBe(true);
+    const retainedReceiptPath = retainedWarnings
+      .find((warning: string) => warning.includes(".arashi-delete-receipts/"))!
+      .split(" -> ")[1]!;
+    const retainedReceipt = JSON.parse(readFileSync(retainedReceiptPath, "utf8"));
+    expect(retainedReceipt.warnings).toEqual(data.plan.warnings);
+    expect(retainedReceipt.terminalResidues).toHaveLength(2);
+    expect(retainedReceipt.terminalResidues).toEqual(
+      retainedReceipt.terminalResidues.toSorted(
+        (left: DeleteTerminalResidue, right: DeleteTerminalResidue) =>
+          Buffer.compare(
+            Buffer.from(`${left.itemId}\0${left.source}\0${left.destination}`),
+            Buffer.from(`${right.itemId}\0${right.source}\0${right.destination}`),
+          ),
+      ),
+    );
+    for (const residue of retainedReceipt.terminalResidues)
+      expect(existsSync(residue.destination), JSON.stringify(residue)).toBe(true);
     expect(result.stdout).not.toContain("SECRET_HOOK");
+  });
+
+  test("a completed retained generation does not block deleting a re-added repository", () => {
+    const { configPath, remote, workspace } = fixture();
+    const first = run(workspace, ["delete", "api", "--force", "--json"]);
+    expect(first.status, `${first.stdout}\n${first.stderr}`).toBe(0);
+    const firstWarnings = JSON.parse(first.stdout).data.result.warnings as string[];
+    const firstCloneResidue = firstWarnings
+      .find((warning) => warning.includes("/repos/api -> "))!
+      .split(" -> ")[1]!;
+
+    git(workspace, "clone", remote, join(workspace, "repos", "api"));
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.repos.api = { path: "repos/api", gitUrl: remote, groups: ["backend"] };
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    const second = run(workspace, ["delete", "api", "--force", "--json"]);
+
+    expect(second.status, `${second.stdout}\n${second.stderr}`).toBe(0);
+    const secondWarnings = JSON.parse(second.stdout).data.result.warnings as string[];
+    const secondCloneResidue = secondWarnings
+      .find((warning) => warning.includes("/repos/api -> "))!
+      .split(" -> ")[1]!;
+    expect(secondCloneResidue).not.toBe(firstCloneResidue);
+    expect(existsSync(firstCloneResidue)).toBe(true);
+    expect(existsSync(secondCloneResidue)).toBe(true);
   });
 
   test("deletes exact active repository hooks and their concrete templates only", () => {
@@ -722,7 +1071,7 @@ describe("spawned configured repository delete", () => {
     const hash = (value: unknown) =>
       createHash("sha256").update(JSON.stringify(value)).digest("hex");
     await createDeleteResumeReceipt(receiptPath, {
-      version: 1,
+      version: 2,
       planId: plan.id,
       parentIdentity: hash({ commonDirectory: realpathSync(join(workspace, ".git")) }),
       repositoryKey: "api",
@@ -772,7 +1121,7 @@ describe("spawned configured repository delete", () => {
     expect(readFileSync(compatibleHook, "utf8")).toBe("echo compatible\n");
   });
 
-  test("reconciles an unledgered worktree removal and a terminal durable receipt", async () => {
+  test("preserves a recreated worktree while adopting its exact unprepared quarantine on retry", async () => {
     const { configPath, workspace } = fixture();
     const clone = join(workspace, "repos", "api");
     const linked = join(workspace, ".arashi", "worktrees", "gap", "repos", "api");
@@ -784,6 +1133,7 @@ describe("spawned configured repository delete", () => {
     const plan = dryData.plan;
     const workspaceRoot = dryData.workspace.workspaceRoot as string;
     const topology = await inspectGitWorktreeTopology(join(workspaceRoot, "repos", "api"));
+    const canonicalLinked = topology.linkedWorktrees[0]!.path;
     const hookPaths = [join(workspaceRoot, ".arashi", "hooks", "pre-create.api.sh")];
     const identities = await captureRuntimeDeletionIdentities(topology, hookPaths);
     const before = readFileSync(configPath);
@@ -797,7 +1147,7 @@ describe("spawned configured repository delete", () => {
     const hash = (value: unknown) =>
       createHash("sha256").update(JSON.stringify(value)).digest("hex");
     const initialReceipt: DeleteResumeReceipt = {
-      version: 1,
+      version: 2,
       planId: plan.id,
       parentIdentity: hash({ commonDirectory: parentCommon }),
       repositoryKey: "api",
@@ -836,33 +1186,29 @@ describe("spawned configured repository delete", () => {
       },
     };
     await createDeleteResumeReceipt(receiptPath, initialReceipt);
-    git(clone, "worktree", "remove", "--force", linked);
+    const suffix = createHash("sha256")
+      .update(`arashi-delete-quarantine-v1\0${plan.id}`)
+      .digest("hex");
+    const quarantine = join(
+      dirname(canonicalLinked),
+      `.arashi-delete-worktree-${createHash("sha256").update(canonicalLinked, "utf8").digest("hex")}-${suffix}`,
+    );
+    renameSync(canonicalLinked, quarantine);
+    mkdirSync(canonicalLinked);
+    writeFileSync(join(canonicalLinked, "REPLACEMENT"), "replacement\n");
 
     const deleted = run(workspace, ["delete", "api", "--force", "--json"]);
-    expect(deleted.status, deleted.stderr).toBe(0);
-    const after = readFileSync(configPath);
-    expect(after).toEqual(expectedAfter);
-    const receipt: DeleteResumeReceipt = {
-      ...initialReceipt,
-      completedItemIds: plan.items.map(({ id }: { id: string }) => id),
-      completedPhases: [
-        "provenance",
-        "worktrees",
-        "metadata",
-        "canonical-clone",
-        "workspace-hooks",
-        "configuration",
-      ],
-      remainingPhases: ["verification"],
-    };
-    await createDeleteResumeReceipt(receiptPath, receipt);
-
+    expect(deleted.status, `${deleted.stdout}\n${deleted.stderr}`).toBe(1);
+    expect(JSON.parse(deleted.stdout).error).toMatchObject({ code: "DELETE_CONCURRENT_CHANGE" });
+    expect(readFileSync(join(canonicalLinked, "REPLACEMENT"), "utf8")).toBe("replacement\n");
+    expect(existsSync(quarantine)).toBe(true);
+    expect(readFileSync(configPath)).toEqual(before);
+    expect(existsSync(topology.canonicalClonePath)).toBe(true);
+    expect(existsSync(receiptPath)).toBe(true);
+    rmSync(canonicalLinked, { recursive: true });
     const resumed = run(workspace, ["delete", "api", "--force", "--json"]);
-
     expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
-    expect(JSON.parse(resumed.stdout).data.repositoryKey).toBe("api");
-    expect(existsSync(receiptPath)).toBe(false);
-    expect(JSON.parse(readFileSync(configPath, "utf8")).repos.api).toBeUndefined();
+    expect(existsSync(quarantine)).toBe(true);
   });
 
   test("forced deletion treats a configured linked path as active, not as the canonical clone", () => {
