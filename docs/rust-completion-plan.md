@@ -11,7 +11,7 @@
 ## Baseline and preservation
 
 - Known-good delivered baseline: `ce7801727c75dac0e38c6f7442158c297085e82c` on `v2` (native three-platform and source-parity CI passed).
-- Recovery snapshot: `/Users/corwin/Developer/arashi-arashi/.arashi/recovery/astra-takeover-20260905-220453/manifest.json`; draft archives and verified Git bundle beside it. Original drafts remain in their worktrees until explicitly integrated/retired.
+- The temporary Astra takeover recovery snapshot was audited and retired after its drafts were integrated or superseded; it is no longer an active dependency.
 - This plan is the sole durable delivery queue. `docs/rust-port.md` remains the current support ledger, not a full-port completion claim.
 - Stable npm, v1 installer endpoints, and v1 binaries are not switched during port development.
 
