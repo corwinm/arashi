@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import {
   cleanupFixtureDirectory,
   createBenchmarkFixture,
@@ -12,7 +12,7 @@ const temporaryPaths: string[] = [];
 
 async function pathExists(path: string): Promise<boolean> {
   try {
-    await readFile(path);
+    await access(path);
     return true;
   } catch {
     return false;
@@ -130,6 +130,54 @@ describe("benchmark fixtures", () => {
         expect(await pathExists(hookMarker)).toBe(false);
         expect(await pathExists(staleTrace)).toBe(false);
         await fixture.cleanup();
+      } finally {
+        restoreEnvironment(original);
+      }
+    },
+    120_000,
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "isolates stateful remove benchmarks from inherited user-global hooks",
+    async () => {
+      const hostileHome = await mkdtemp(join(tmpdir(), "arashi-benchmark-hostile-home-"));
+      temporaryPaths.push(hostileHome);
+      const marker = join(hostileHome, "global-pre-remove-ran");
+      const hooksDirectory = join(hostileHome, ".arashi", "hooks");
+      const hook = join(hooksDirectory, "pre-remove.sh");
+      await mkdir(hooksDirectory, { recursive: true });
+      await writeFile(hook, `#!/bin/sh\ntouch '${marker}'\n`, "utf8");
+      await chmod(hook, 0o755);
+
+      const original = { ...process.env };
+      Object.assign(process.env, { HOME: hostileHome, USERPROFILE: hostileHome });
+
+      try {
+        const fixture = await createBenchmarkFixture("small");
+        const isolatedHome = fixture.environment.HOME;
+        expect(isolatedHome).not.toBe(hostileHome);
+        expect(fixture.environment.USERPROFILE).toBe(isolatedHome);
+        expect(await pathExists(isolatedHome!)).toBe(true);
+        try {
+          await fixture.statefulCases.remove.prepare();
+          const result = await invoke(
+            {
+              args: ["--experimental-strip-types", join(import.meta.dirname, "../../src/index.ts")],
+              command: process.execPath,
+            },
+            ["remove", "benchmark-remove", "--force", "--no-check-dirty", "--json"],
+            fixture.refreshedRoot,
+            fixture.environment,
+          );
+
+          expect(result.exitCode, result.stderr).toBe(0);
+          await fixture.statefulCases.remove.verify();
+          expect(await pathExists(marker)).toBe(false);
+        } finally {
+          await fixture.cleanup();
+        }
+        expect(await pathExists(isolatedHome!)).toBe(false);
+        expect(await pathExists(hook)).toBe(true);
       } finally {
         restoreEnvironment(original);
       }

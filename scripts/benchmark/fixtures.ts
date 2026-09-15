@@ -169,8 +169,10 @@ export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFi
   const base = await mkdtemp(join(tmpdir(), `arashi-benchmark-${id}-`));
   const globalConfig = join(base, "gitconfig");
   const hooksPath = join(base, "hooks");
+  const userHome = join(base, "home");
   await writeFile(globalConfig, "", "utf8");
   await mkdir(hooksPath);
+  await mkdir(userHome);
   const environment = createBenchmarkEnvironment(process.env, {
     GIT_ALLOW_PROTOCOL: "file",
     GIT_CONFIG_COUNT: "1",
@@ -179,6 +181,8 @@ export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFi
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_VALUE_0: hooksPath,
     GIT_TERMINAL_PROMPT: "0",
+    HOME: userHome,
+    USERPROFILE: userHome,
   });
 
   try {
