@@ -42,3 +42,9 @@ Optional fast path during active edits:
 ```bash
 pnpm run quality:changed
 ```
+
+## Performance benchmarks
+
+Run the opt-in, cross-platform CLI suite with `pnpm benchmark`. See
+[`docs/performance-benchmarks.md`](docs/performance-benchmarks.md) for fixture definitions, result
+fields, branch-comparison guidance, optional metrics, and the informational CI policy.

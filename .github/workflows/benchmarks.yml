@@ -1,0 +1,40 @@
+name: CLI Benchmarks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Informational benchmark (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+      - uses: pnpm/setup@v2
+        with:
+          version: 11.22.0
+          runtime: node@24.18.0
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - name: Collect informational benchmark
+        run: pnpm benchmark -- --output benchmark-results/result.json
+      - name: Upload machine-readable result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-benchmark-${{ runner.os }}-${{ runner.arch }}
+          path: benchmark-results/result.json
+          if-no-files-found: error
+          retention-days: 30
