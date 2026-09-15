@@ -6,14 +6,16 @@ export function createConcurrencyLimiter(limit: number): ConcurrencyLimiter {
   }
 
   let active = 0;
-  const waiting: Array<() => void> = [];
+  const waiting: (() => void)[] = [];
 
   const acquire = async (): Promise<void> => {
     if (active < limit) {
       active += 1;
       return;
     }
-    await new Promise<void>((resolve) => waiting.push(resolve));
+    await new Promise<void>((resolve) => {
+      waiting.push(resolve);
+    });
   };
 
   const release = (): void => {
@@ -46,16 +48,29 @@ export default async function mapWithConcurrency<T, R>(
 
   const results: R[] = [];
   let nextIndex = 0;
+  let failed = false;
+  let firstError: unknown = null;
 
   const worker = async (): Promise<void> => {
-    while (nextIndex < items.length) {
+    while (!failed && nextIndex < items.length) {
       const index = nextIndex;
       nextIndex += 1;
-      results[index] = await mapper(items[index], index);
+      try {
+        results[index] = await mapper(items[index], index);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          firstError = error;
+        }
+      }
     }
   };
 
   const workerCount = Math.min(limit, items.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  if (failed) {
+    // oxlint-disable-next-line no-throw-literal -- Preserve the mapper's rejection identity.
+    throw firstError;
+  }
   return results;
 }
