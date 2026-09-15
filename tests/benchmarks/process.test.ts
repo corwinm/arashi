@@ -1,5 +1,9 @@
 import { EventEmitter } from "node:events";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
+
+const repositoryRoot = resolve(import.meta.dirname, "../..");
 
 describe("benchmark process completion", () => {
   test("waits for close so stdout can drain after process exit", async () => {
@@ -15,5 +19,17 @@ describe("benchmark process completion", () => {
 
     child.emit("close", 0);
     await expect(completion).resolves.toBe(0);
+  });
+
+  test("uses close-waiting for fixture Git and does not leave stdout pipes unread", async () => {
+    const source = await readFile(
+      resolve(repositoryRoot, "scripts", "benchmark", "fixtures.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('import { waitForProcessClose } from "./process.ts";');
+    expect(source).toContain("await waitForProcessClose(child)");
+    expect(source).not.toContain('child.once("exit"');
+    expect(source).toContain('stdio: ["ignore", "ignore", "pipe"]');
   });
 });

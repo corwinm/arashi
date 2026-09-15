@@ -8,6 +8,7 @@ import { createBenchmarkFixture, type BenchmarkFixture, type FixtureId } from ".
 import { readGitInvocationTrace } from "./git-trace.ts";
 import { executableNamesForPlatform } from "./platform.ts";
 import { waitForProcessClose } from "./process.ts";
+import { buildRuntime, cliRuntime, nodeRuntime, type RuntimeMetadata } from "./runtime.ts";
 import { summarizeDurations } from "./statistics.ts";
 
 interface Options {
@@ -39,6 +40,7 @@ interface CommandDefinition {
   id: string;
   invocation: { method: string; refresh: string; topology: string };
   networkDependent: boolean;
+  runtime?: RuntimeMetadata;
 }
 
 interface AvailabilityMetric {
@@ -353,6 +355,7 @@ const commandDefinitions = (fixture: BenchmarkFixture): CommandDefinition[] => [
       topology: "tracked-remote",
     },
     networkDependent: false,
+    runtime: nodeRuntime("benchmark-only-node-adapter"),
   },
   {
     args: ["status", "--json"],
@@ -422,6 +425,7 @@ async function main(): Promise<void> {
           invocation: definition.invocation,
           networkDependent: definition.networkDependent,
           peakRss: await peakRss(commandCli, definition.args, definition.cwd, options.metrics),
+          runtime: definition.runtime ?? cliRuntime(options.source),
           timing: {
             iterations: options.iterations,
             ...summarizeDurations(samples),
@@ -461,8 +465,13 @@ async function main(): Promise<void> {
         peakRss: unavailablePeakRss,
       },
       platform: { arch: arch(), os: platform(), release: release() },
-      runtime: { name: "node", version: process.version },
-      schemaVersion: 1,
+      runtime: {
+        build: await buildRuntime(options.source, () =>
+          invoke({ args: [], command: "bun" }, ["--version"], repositoryRoot),
+        ),
+        runner: nodeRuntime("node-process"),
+      },
+      schemaVersion: 2,
     };
     const serialized = `${JSON.stringify(result, null, 2)}\n`;
     await mkdir(dirname(options.outputPath), { recursive: true });

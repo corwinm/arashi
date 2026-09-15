@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { afterEach, describe, expect, test } from "vitest";
+import { waitForProcessClose } from "../../scripts/benchmark/process.ts";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const temporaryPaths: string[] = [];
@@ -23,7 +24,14 @@ interface BenchmarkCommandResult {
     topology: string;
   };
   networkDependent: boolean;
+  runtime: RuntimeMetadata;
   timing: { medianMs: number; p95Ms: number; samplesMs: number[] };
+}
+
+interface RuntimeMetadata {
+  method: string;
+  name: string;
+  version: { available: boolean; reason?: string; value?: string };
 }
 
 interface BenchmarkResult {
@@ -40,7 +48,7 @@ interface BenchmarkResult {
     peakRss: { available: boolean };
   };
   platform: { arch: string; os: string };
-  runtime: { name: string; version: string };
+  runtime: { build: RuntimeMetadata; runner: RuntimeMetadata };
   schemaVersion: number;
 }
 
@@ -71,10 +79,7 @@ async function runBenchmark(...args: string[]) {
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
   child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
-  const exitCode = await new Promise<number>((resolveExit, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => resolveExit(code ?? 1));
-  });
+  const exitCode = await waitForProcessClose(child);
   let result: BenchmarkResult | null = null;
   try {
     result = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkResult;
@@ -96,9 +101,20 @@ describe("CLI performance benchmark runner", () => {
     expect(result).not.toBeNull();
     if (!result) throw new Error("Benchmark result was not written.");
     expect(JSON.parse(stdout)).toEqual(result);
-    expect(result.schemaVersion).toBe(1);
-    expect(result.runtime.name).toBe("node");
-    expect(result.runtime.version).toMatch(/^v\d+/);
+    expect(result.schemaVersion).toBe(2);
+    expect(result.runtime.runner).toEqual({
+      method: "node-process",
+      name: "node",
+      version: { available: true, value: process.version },
+    });
+    expect(result.runtime.build).toEqual({
+      method: "not-applicable-source-mode",
+      name: "bun",
+      version: {
+        available: false,
+        reason: "Source mode does not build or invoke the Arashi executable.",
+      },
+    });
     expect(result.platform.os).toBe(process.platform);
     expect(result.platform.arch).toBe(process.arch);
     expect(result.fixtures).toEqual([
@@ -157,6 +173,16 @@ describe("CLI performance benchmark runner", () => {
       method: "checkAllRepos-without-fetch",
       refresh: "disabled-by-injected-fetch-dependency",
       topology: "tracked-remote",
+    });
+    expect(commands["status-local"].runtime).toEqual({
+      method: "benchmark-only-node-adapter",
+      name: "node",
+      version: { available: true, value: process.version },
+    });
+    expect(commands["version"].runtime).toEqual({
+      method: "node-source",
+      name: "node",
+      version: { available: true, value: process.version },
     });
     expect(commands["status-refreshed"].invocation).toEqual({
       method: "arashi-cli-status",
