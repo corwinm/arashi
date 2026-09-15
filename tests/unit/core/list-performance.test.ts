@@ -27,6 +27,16 @@ const porcelain = [
 
 const gitResult = (stdout: string) => Promise.resolve({ exitCode: 0, stderr: "", stdout });
 
+const manyWorktreesPorcelain = (count: number): string =>
+  Array.from({ length: count }, (_, index) =>
+    [
+      `worktree /repo/worktree-${index}`,
+      `HEAD ${index.toString(16).padStart(40, "0")}`,
+      `branch refs/heads/branch-${index}`,
+      "",
+    ].join("\n"),
+  ).join("\n");
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((fulfill) => {
@@ -150,6 +160,74 @@ describe("mode-aware list collection", () => {
       "/repo/slow",
       "/repo/fast",
     ]);
+  });
+
+  test("shares one probe limit across worktrees and nested repositories", async () => {
+    const worktreeCount = 8;
+    const repositoryCount = 8;
+    const concurrency = 8;
+    const releases = new Map<string, ReturnType<typeof deferred<void>>>();
+    const started: string[] = [];
+    let active = 0;
+    let maximumActive = 0;
+
+    const outputPromise = buildListOutput(
+      "/repo",
+      { verbose: true },
+      {
+        concurrency,
+        discoverNestedRepositories: async (worktreePath, _maxDepth, limitProbe) =>
+          Promise.all(
+            Array.from({ length: repositoryCount }, async (_, repositoryIndex) => {
+              const relativePath = `repos/repository-${repositoryIndex}`;
+              const probe = async () => {
+                const key = `${worktreePath}/${relativePath}`;
+                const release = deferred<void>();
+                releases.set(key, release);
+                started.push(key);
+                active += 1;
+                maximumActive = Math.max(maximumActive, active);
+                await release.promise;
+                active -= 1;
+                return {
+                  branch: `branch-${repositoryIndex}`,
+                  commit: repositoryIndex.toString(16).padStart(7, "0"),
+                  hasChanges: repositoryIndex % 2 === 1,
+                  relativePath,
+                };
+              };
+              return limitProbe ? limitProbe(probe) : probe();
+            }),
+          ),
+        execGit: async () => gitResult(manyWorktreesPorcelain(worktreeCount)),
+        probeChanges: async () => false,
+      },
+    );
+
+    for (let completed = 0; completed < worktreeCount * repositoryCount; completed += concurrency) {
+      await vi.waitFor(() => expect(started).toHaveLength(completed + concurrency));
+      for (const key of started.slice(completed, completed + concurrency).toReversed()) {
+        releases.get(key)!.resolve();
+      }
+    }
+
+    const output = await outputPromise;
+    expect(maximumActive).toBe(concurrency);
+    expect(output.worktrees).toHaveLength(worktreeCount);
+    expect(
+      output.worktrees.map((worktree) => ({
+        path: worktree.path,
+        repositories: worktree.subRepositories?.map((repository) => repository.relativePath),
+      })),
+    ).toEqual(
+      Array.from({ length: worktreeCount }, (_, worktreeIndex) => ({
+        path: `/repo/worktree-${worktreeIndex}`,
+        repositories: Array.from(
+          { length: repositoryCount },
+          (_, repositoryIndex) => `repos/repository-${repositoryIndex}`,
+        ),
+      })),
+    );
   });
 });
 

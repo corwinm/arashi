@@ -14,7 +14,10 @@ import { spinner, warn } from "../lib/logger.ts";
 import chalk from "chalk";
 import { exec } from "../lib/git.ts";
 import { loadConfig } from "../lib/config.ts";
-import mapWithConcurrency from "../lib/concurrency.ts";
+import mapWithConcurrency, {
+  createConcurrencyLimiter,
+  type ConcurrencyLimiter,
+} from "../lib/concurrency.ts";
 import type { CommandResult } from "../types/git.ts";
 
 interface SubRepositoryInfo {
@@ -57,10 +60,12 @@ interface ListCollectionDependencies {
   discoverNestedRepositories?: (
     worktreePath: string,
     maxDepth: number,
+    limitProbe: ConcurrencyLimiter,
   ) => Promise<SubRepositoryInfo[]>;
   execGit?: (args: string[], cwd: string) => Promise<CommandResult>;
   parseWorktrees?: (porcelain: string) => WorktreeListItem[];
   probeChanges?: (worktreePath: string) => Promise<boolean>;
+  limitProbe?: ConcurrencyLimiter;
 }
 
 const ZERO = 0;
@@ -75,9 +80,13 @@ const LIST_PROBE_CONCURRENCY = 8;
 
 const normalizeRelativeDisplayPath = (path: string): string => path.replaceAll("\\", "/");
 
-const tryAddGitRepository = async (gitRepos: string[], repoPath: string): Promise<void> => {
+const tryAddGitRepository = async (
+  gitRepos: string[],
+  repoPath: string,
+  limitProbe: ConcurrencyLimiter,
+): Promise<void> => {
   try {
-    await exec(["rev-parse", "--git-dir"], repoPath);
+    await limitProbe(() => exec(["rev-parse", "--git-dir"], repoPath));
     gitRepos.push(repoPath);
   } catch {}
 };
@@ -94,13 +103,14 @@ const handleDirectoryEntry = async (options: {
   entry: { isDirectory: () => boolean; isFile: () => boolean; name: string };
   excludeRoot?: boolean;
   gitRepos: string[];
+  limitProbe: ConcurrencyLimiter;
   rootPath: string;
   scan: (currentPath: string, depth: number) => Promise<void>;
 }): Promise<void> => {
   if (options.entry.name === ".git" && (options.entry.isDirectory() || options.entry.isFile())) {
     const repoPath = options.currentPath;
     if (shouldIncludeRootRepository(options.excludeRoot, repoPath, options.rootPath)) {
-      await tryAddGitRepository(options.gitRepos, repoPath);
+      await tryAddGitRepository(options.gitRepos, repoPath, options.limitProbe);
     }
     return;
   }
@@ -699,7 +709,10 @@ export const gatherWorktreeData = async (
   const changes = await mapWithConcurrency(
     worktrees,
     dependencies.concurrency ?? LIST_PROBE_CONCURRENCY,
-    (worktree) => probeChanges(worktree.path),
+    (worktree) =>
+      dependencies.limitProbe
+        ? dependencies.limitProbe(() => probeChanges(worktree.path))
+        : probeChanges(worktree.path),
   );
   return worktrees.map((worktree, index) => ({ ...worktree, hasChanges: changes[index] }));
 };
@@ -756,11 +769,14 @@ export const parsePorcelainV2BranchStatus = (
 export const discoverSubRepositories = async (
   worktreePath: string,
   maxDepth: number = DEFAULT_MAX_DEPTH,
+  limitProbe: ConcurrencyLimiter = createConcurrencyLimiter(LIST_PROBE_CONCURRENCY),
 ): Promise<SubRepositoryInfo[]> => {
-  const repoPaths = await findGitRepositories(worktreePath, maxDepth, true);
+  const repoPaths = await findGitRepositories(worktreePath, maxDepth, true, limitProbe);
   const results = await mapWithConcurrency(repoPaths, LIST_PROBE_CONCURRENCY, async (repoPath) => {
     try {
-      const status = await exec(["status", "--porcelain=v2", "--branch"], repoPath);
+      const status = await limitProbe(() =>
+        exec(["status", "--porcelain=v2", "--branch"], repoPath),
+      );
       return {
         ...parsePorcelainV2BranchStatus(status.stdout),
         relativePath: normalizeRelativeDisplayPath(relative(worktreePath, repoPath)),
@@ -1031,27 +1047,35 @@ export const buildListOutput = async (
   dependencies: ListCollectionDependencies = {},
 ): Promise<ListCommandOutput> => {
   const plain = !options.json && !options.table && !options.verbose;
-  const worktrees = plain
-    ? await gatherPlainWorktreeData(repoPath, dependencies)
-    : await gatherWorktreeData(repoPath, dependencies);
+  if (plain) {
+    const worktrees = await gatherPlainWorktreeData(repoPath, dependencies);
+    return {
+      repositoryPath: repoPath,
+      totalCount: worktrees.length,
+      worktrees,
+    };
+  }
+
+  const concurrency = dependencies.concurrency ?? LIST_PROBE_CONCURRENCY;
+  const limitProbe = createConcurrencyLimiter(concurrency);
+  const worktrees = await gatherWorktreeData(repoPath, { ...dependencies, limitProbe });
 
   if (options.verbose) {
     const discoverNestedRepositories =
-      dependencies.discoverNestedRepositories ?? discoverSubRepositories;
-    const subRepositories = await mapWithConcurrency(
-      worktrees,
-      dependencies.concurrency ?? LIST_PROBE_CONCURRENCY,
-      async (worktree) => {
-        try {
-          return await discoverNestedRepositories(
-            worktree.path,
-            options.maxDepth || DEFAULT_MAX_DEPTH,
-          );
-        } catch {
-          return [];
-        }
-      },
-    );
+      dependencies.discoverNestedRepositories ??
+      ((worktreePath: string, maxDepth: number, sharedLimitProbe: ConcurrencyLimiter) =>
+        discoverSubRepositories(worktreePath, maxDepth, sharedLimitProbe));
+    const subRepositories = await mapWithConcurrency(worktrees, concurrency, async (worktree) => {
+      try {
+        return await discoverNestedRepositories(
+          worktree.path,
+          options.maxDepth || DEFAULT_MAX_DEPTH,
+          limitProbe,
+        );
+      } catch {
+        return [];
+      }
+    });
     worktrees.forEach((worktree, index) => {
       worktree.subRepositories = subRepositories[index];
     });
@@ -1106,6 +1130,7 @@ export const findGitRepositories = async (
   rootPath: string,
   maxDepth: number,
   excludeRoot?: boolean,
+  limitProbe: ConcurrencyLimiter = createConcurrencyLimiter(LIST_PROBE_CONCURRENCY),
 ): Promise<string[]> => {
   const gitRepos: string[] = [];
   const { readdir } = await import("fs/promises");
@@ -1125,6 +1150,7 @@ export const findGitRepositories = async (
           entry,
           excludeRoot,
           gitRepos,
+          limitProbe,
           rootPath,
           scan,
         });

@@ -1,3 +1,40 @@
+export type ConcurrencyLimiter = <T>(task: () => Promise<T>) => Promise<T>;
+
+export function createConcurrencyLimiter(limit: number): ConcurrencyLimiter {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new RangeError("Concurrency limit must be a positive integer");
+  }
+
+  let active = 0;
+  const waiting: Array<() => void> = [];
+
+  const acquire = async (): Promise<void> => {
+    if (active < limit) {
+      active += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => waiting.push(resolve));
+  };
+
+  const release = (): void => {
+    const next = waiting.shift();
+    if (next) {
+      next();
+    } else {
+      active -= 1;
+    }
+  };
+
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    await acquire();
+    try {
+      return await task();
+    } finally {
+      release();
+    }
+  };
+}
+
 export default async function mapWithConcurrency<T, R>(
   items: readonly T[],
   limit: number,
