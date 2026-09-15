@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import createBenchmarkEnvironment from "./environment.ts";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { waitForProcessClose } from "./process.ts";
 
 export type FixtureId = "small" | "larger";
@@ -19,8 +20,8 @@ export interface BenchmarkFixture {
 }
 
 const definitions = {
-  small: { groupCount: 2, repositoryCount: 2, worktreeCount: 2 },
   larger: { groupCount: 2, repositoryCount: 8, worktreeCount: 6 },
+  small: { groupCount: 2, repositoryCount: 2, worktreeCount: 2 },
 } as const;
 
 interface RecursiveRemoveOptions {
@@ -53,7 +54,9 @@ async function git(cwd: string, args: string[], environment: NodeJS.ProcessEnv):
   let stderr = "";
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
   const exitCode = await waitForProcessClose(child);
-  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${stderr}`);
+  if (exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${stderr}`);
+  }
 }
 
 async function initializeRepository(path: string, environment: NodeJS.ProcessEnv): Promise<void> {
@@ -94,7 +97,7 @@ async function createWorkspace(options: {
   await mkdir(join(root, ".arashi"), { recursive: true });
   await writeFile(join(root, ".gitignore"), "repos/\n", "utf8");
 
-  const repositories: Array<{ name: string; path: string }> = [];
+  const repositories: { name: string; path: string }[] = [];
   const repos: Record<string, { groups: string[]; path: string }> = {};
   for (let index = 1; index <= options.repositoryCount; index += 1) {
     const name = `repo-${String(index).padStart(2, "0")}`;
@@ -149,15 +152,15 @@ export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFi
   const hooksPath = join(base, "hooks");
   await writeFile(globalConfig, "", "utf8");
   await mkdir(hooksPath);
-  const environment = {
-    ...process.env,
+  const environment = createBenchmarkEnvironment(process.env, {
+    GIT_ALLOW_PROTOCOL: "file",
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_GLOBAL: globalConfig,
     GIT_CONFIG_KEY_0: "core.hooksPath",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_VALUE_0: hooksPath,
     GIT_TERMINAL_PROMPT: "0",
-  };
+  });
 
   try {
     const refreshedRoot = await createWorkspace({

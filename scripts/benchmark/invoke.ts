@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
+import createBenchmarkEnvironment from "./environment.ts";
 import { performance } from "node:perf_hooks";
+import { spawn } from "node:child_process";
 import { waitForProcessClose } from "./process.ts";
 
 export interface Invocation {
@@ -14,23 +15,26 @@ export interface ProcessResult {
   stdout: string;
 }
 
-export async function invoke(
+type InvocationParameters = [
   cli: Invocation,
   args: string[],
   cwd: string,
-  extraEnvironment: NodeJS.ProcessEnv = {},
+  extraEnvironment?: NodeJS.ProcessEnv,
+];
+
+export async function invoke(
+  ...[cli, args, cwd, extraEnvironment = {}]: InvocationParameters
 ): Promise<ProcessResult> {
   const start = performance.now();
   const child = spawn(cli.command, [...cli.args, ...args], {
     cwd,
-    env: {
-      ...process.env,
+    env: createBenchmarkEnvironment(process.env, {
       CI: "1",
       FORCE_COLOR: "0",
       GIT_TERMINAL_PROMPT: "0",
       NO_COLOR: "1",
       ...extraEnvironment,
-    },
+    }),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
