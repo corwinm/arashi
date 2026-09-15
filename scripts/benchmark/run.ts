@@ -4,7 +4,7 @@ import { arch, platform, release } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createBenchmarkFixture, type BenchmarkFixture, type FixtureId } from "./fixtures.ts";
 import { readGitInvocationTrace } from "./git-trace.ts";
-import { invoke, type Invocation } from "./invoke.ts";
+import { invoke, type Invocation, type ProcessResult } from "./invoke.ts";
 import { executableNamesForPlatform } from "./platform.ts";
 import { artifactMetadata, buildRuntime, PROVENANCE_ENVIRONMENT_VARIABLE } from "./provenance.ts";
 import { cliRuntime, nodeRuntime, type RuntimeMetadata } from "./runtime.ts";
@@ -20,7 +20,9 @@ interface Options {
 }
 
 interface CommandDefinition {
+  afterEach?: () => Promise<void>;
   args: string[];
+  beforeEach?: () => Promise<void>;
   behavior(stdout: string): Record<string, unknown>;
   cli?: Invocation;
   cwd: string;
@@ -50,7 +52,7 @@ function integerOption(name: string, value: string, allowZero: boolean): number 
 
 function parseOptions(argv: string[]): Options {
   const options: Options = {
-    fixtureIds: ["small", "larger"],
+    fixtureIds: ["small", "medium", "large"],
     iterations: 10,
     metrics: true,
     outputPath: join(repositoryRoot, "benchmark-results", `result-${platform()}-${arch()}.json`),
@@ -70,8 +72,8 @@ function parseOptions(argv: string[]): Options {
       continue;
     } else if (argument === "--fixture") {
       const fixture = value();
-      if (fixture !== "small" && fixture !== "larger") {
-        throw new Error("--fixture must be small or larger.");
+      if (fixture !== "small" && fixture !== "medium" && fixture !== "large") {
+        throw new Error("--fixture must be small, medium, or large.");
       }
       options.fixtureIds = [fixture];
     } else if (argument === "--iterations") {
@@ -112,6 +114,8 @@ async function gitInvocationCount(
   cwd: string,
   tracePath: string,
   environment: NodeJS.ProcessEnv,
+  beforeEach?: () => Promise<void>,
+  afterEach?: () => Promise<void>,
 ): Promise<{ available: boolean; count?: number; method: string; reason?: string }> {
   await rm(tracePath, { force: true });
   const supportPath = `${tracePath}.support`;
@@ -135,8 +139,10 @@ async function gitInvocationCount(
     `${JSON.stringify({ event: "version", sid: "arashi-benchmark-support-probe" })}\n`,
     "utf8",
   );
+  await beforeEach?.();
   const result = await invoke(cli, args, cwd, { ...environment, GIT_TRACE2_EVENT: tracePath });
   if (result.exitCode !== 0) throw new Error(`Trace invocation failed: ${result.stderr}`);
+  await afterEach?.();
 
   return readGitInvocationTrace(tracePath);
 }
@@ -147,6 +153,8 @@ async function peakRss(
   cwd: string,
   enabled: boolean,
   environment: NodeJS.ProcessEnv,
+  beforeEach?: () => Promise<void>,
+  afterEach?: () => Promise<void>,
 ): Promise<AvailabilityMetric> {
   if (!enabled) return { available: false, method: "disabled", reason: "Metrics disabled." };
   if (platform() === "win32") {
@@ -161,6 +169,7 @@ async function peakRss(
   }
 
   const timeArgs = platform() === "darwin" ? ["-l"] : ["-v"];
+  await beforeEach?.();
   const result = await invoke(
     { args: [...timeArgs, cli.command, ...cli.args], command: "/usr/bin/time" },
     args,
@@ -170,6 +179,7 @@ async function peakRss(
   if (result.exitCode !== 0) {
     return { available: false, method: "time", reason: `time exited ${result.exitCode}.` };
   }
+  await afterEach?.();
   const macMatch = result.stderr.match(/(\d+)\s+maximum resident set size/i);
   if (macMatch) return { available: true, bytes: Number(macMatch[1]), method: "time -l" };
   const linuxMatch = result.stderr.match(/Maximum resident set size \(kbytes\):\s*(\d+)/i);
@@ -235,6 +245,48 @@ function localStatusBehavior(stdout: string): Record<string, unknown> {
   return { repositories: result.repositories ?? [] };
 }
 
+function createBehavior(stdout: string, expectedCount: number): Record<string, unknown> {
+  const envelope = JSON.parse(stdout) as {
+    data?: { branchName?: string; successCount?: number };
+    ok?: boolean;
+  };
+  if (
+    envelope.ok !== true ||
+    envelope.data?.branchName !== "benchmark-create" ||
+    envelope.data.successCount !== expectedCount
+  ) {
+    throw new Error("Create benchmark did not report the expected coordinated worktree creation.");
+  }
+  return { branchName: envelope.data.branchName, successCount: envelope.data.successCount };
+}
+
+function removeBehavior(stdout: string, expectedCount: number): Record<string, unknown> {
+  const envelope = JSON.parse(stdout) as {
+    data?: {
+      operations?: Array<{ branchName?: string; status?: string }>;
+      summary?: { successfulBranches?: number; successfulWorktrees?: number };
+    };
+    ok?: boolean;
+  };
+  const operations = envelope.data?.operations ?? [];
+  const successCount =
+    (envelope.data?.summary?.successfulBranches ?? 0) +
+    (envelope.data?.summary?.successfulWorktrees ?? 0);
+  if (
+    envelope.ok !== true ||
+    operations.length !== expectedCount * 2 ||
+    operations.some(
+      (operation) => operation.branchName !== "benchmark-remove" || operation.status !== "success",
+    ) ||
+    successCount !== expectedCount * 2
+  ) {
+    throw new Error(
+      `Remove benchmark did not report the expected coordinated worktree removal (operations=${operations.length}, successes=${successCount}).`,
+    );
+  }
+  return { branchName: "benchmark-remove", operationCount: operations.length, successCount };
+}
+
 const commandDefinitions = (fixture: BenchmarkFixture): CommandDefinition[] => [
   {
     args: ["--version"],
@@ -249,6 +301,36 @@ const commandDefinitions = (fixture: BenchmarkFixture): CommandDefinition[] => [
     behavior: noBehavior,
     cwd: fixture.refreshedRoot,
     id: "help",
+    invocation: cliInvocation,
+    networkDependent: false,
+  },
+  {
+    afterEach: fixture.statefulCases.create.verify,
+    args: [
+      "create",
+      "benchmark-create",
+      "--only",
+      "repo-01,repo-02",
+      "--no-hooks",
+      "--no-progress",
+      "--no-launch",
+      "--no-switch",
+      "--json",
+    ],
+    beforeEach: fixture.statefulCases.create.prepare,
+    behavior: (stdout) => createBehavior(stdout, Math.min(fixture.repositoryCount, 2)),
+    cwd: fixture.refreshedRoot,
+    id: "create-coordinated",
+    invocation: cliInvocation,
+    networkDependent: false,
+  },
+  {
+    afterEach: fixture.statefulCases.remove.verify,
+    args: ["remove", "benchmark-remove", "--force", "--no-check-dirty", "--json"],
+    beforeEach: fixture.statefulCases.remove.prepare,
+    behavior: (stdout) => removeBehavior(stdout, Math.min(fixture.repositoryCount, 2)),
+    cwd: fixture.refreshedRoot,
+    id: "remove-coordinated",
     invocation: cliInvocation,
     networkDependent: false,
   },
@@ -342,6 +424,22 @@ async function executableSize(cli: Invocation, enabled: boolean): Promise<Availa
   }
 }
 
+async function runCommandDefinition(
+  definition: CommandDefinition,
+  cli: Invocation,
+  environment: NodeJS.ProcessEnv,
+  measureCpu: boolean,
+): Promise<{ behavior: Record<string, unknown>; result: ProcessResult }> {
+  await definition.beforeEach?.();
+  const result = await invoke(cli, definition.args, definition.cwd, environment, { measureCpu });
+  if (result.exitCode !== 0) {
+    throw new Error(`${definition.id} failed: ${result.stderr}`);
+  }
+  const behavior = definition.behavior(result.stdout);
+  await definition.afterEach?.();
+  return { behavior, result };
+}
+
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   const cli = resolveCli(options.source);
@@ -353,39 +451,31 @@ async function main(): Promise<void> {
       for (const definition of commandDefinitions(fixture)) {
         const commandCli = definition.cli ?? cli;
         for (let index = 0; index < options.warmup; index += 1) {
-          const warmup = await invoke(
-            commandCli,
-            definition.args,
-            definition.cwd,
-            fixture.environment,
-          );
-          if (warmup.exitCode !== 0) {
-            throw new Error(`${definition.id} warm-up failed: ${warmup.stderr}`);
-          }
+          await runCommandDefinition(definition, commandCli, fixture.environment, false);
         }
-        const samples: number[] = [];
+        const samples: Array<{ cpu: ProcessResult["cpu"]; wallMs: number }> = [];
         let exitCode = 0;
-        let stdout = "";
+        let behavior: Record<string, unknown> = {};
         for (let index = 0; index < options.iterations; index += 1) {
-          const measured = await invoke(
+          const measured = await runCommandDefinition(
+            definition,
             commandCli,
-            definition.args,
-            definition.cwd,
             fixture.environment,
+            options.metrics,
           );
-          exitCode = measured.exitCode;
-          stdout = measured.stdout;
-          if (exitCode !== 0) throw new Error(`${definition.id} failed: ${measured.stderr}`);
-          samples.push(measured.durationMs);
+          exitCode = measured.result.exitCode;
+          behavior = measured.behavior;
+          samples.push({ cpu: measured.result.cpu, wallMs: measured.result.durationMs });
         }
         const tracePath = join(
           definition.cwd,
           ".git",
           `arashi-benchmark-trace-${definition.id}.json`,
         );
+        const durationSummary = summarizeDurations(samples.map((sample) => sample.wallMs));
         commands.push({
           args: definition.args,
-          behavior: definition.behavior(stdout),
+          behavior,
           exitCode,
           fixtureId: fixture.id,
           gitInvocations: await gitInvocationCount(
@@ -394,6 +484,8 @@ async function main(): Promise<void> {
             definition.cwd,
             tracePath,
             fixture.environment,
+            definition.beforeEach,
+            definition.afterEach,
           ),
           id: definition.id,
           invocation: definition.invocation,
@@ -404,11 +496,15 @@ async function main(): Promise<void> {
             definition.cwd,
             options.metrics,
             fixture.environment,
+            definition.beforeEach,
+            definition.afterEach,
           ),
           runtime: definition.runtime ?? cliRuntime(options.source),
           timing: {
             iterations: options.iterations,
-            ...summarizeDurations(samples),
+            medianMs: durationSummary.medianMs,
+            p95Ms: durationSummary.p95Ms,
+            samples: samples.toSorted((left, right) => left.wallMs - right.wallMs),
             warmupIterations: options.warmup,
           },
         });
@@ -454,7 +550,7 @@ async function main(): Promise<void> {
         ),
         runner: nodeRuntime("node-process"),
       },
-      schemaVersion: 3,
+      schemaVersion: 4,
     };
     const serialized = `${JSON.stringify(result, null, 2)}\n`;
     await mkdir(dirname(options.outputPath), { recursive: true });

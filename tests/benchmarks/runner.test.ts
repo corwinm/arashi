@@ -11,7 +11,10 @@ const temporaryPaths: string[] = [];
 interface BenchmarkCommandResult {
   behavior: {
     candidates?: string[];
+    branchName?: string;
+    operationCount?: number;
     repositories?: string[];
+    successCount?: number;
     worktrees?: Array<{ branch: string; subRepositories: string[] }>;
   };
   exitCode: number;
@@ -25,7 +28,20 @@ interface BenchmarkCommandResult {
   };
   networkDependent: boolean;
   runtime: RuntimeMetadata;
-  timing: { medianMs: number; p95Ms: number; samplesMs: number[] };
+  timing: {
+    medianMs: number;
+    p95Ms: number;
+    samples: Array<{
+      cpu: {
+        available: boolean;
+        method: string;
+        reason?: string;
+        systemMs?: number;
+        userMs?: number;
+      };
+      wallMs: number;
+    }>;
+  };
 }
 
 interface RuntimeMetadata {
@@ -118,7 +134,7 @@ describe("CLI performance benchmark runner", () => {
     expect(result).not.toBeNull();
     if (!result) throw new Error("Benchmark result was not written.");
     expect(JSON.parse(stdout)).toEqual(result);
-    expect(result.schemaVersion).toBe(3);
+    expect(result.schemaVersion).toBe(4);
     expect(result.artifact).toEqual({
       available: false,
       reason: "Source mode has no Arashi executable artifact.",
@@ -154,6 +170,8 @@ describe("CLI performance benchmark runner", () => {
     expect(Object.keys(commands)).toEqual([
       "version",
       "help",
+      "create-coordinated",
+      "remove-coordinated",
       "completion-static-query",
       "completion-repository",
       "completion-group",
@@ -166,7 +184,14 @@ describe("CLI performance benchmark runner", () => {
     for (const command of Object.values(commands)) {
       expect(command.fixtureId).toBe("small");
       expect(command.exitCode).toBe(0);
-      expect(command.timing.samplesMs).toHaveLength(1);
+      expect(command.timing.samples).toHaveLength(1);
+      expect(command.timing.samples[0]).toEqual({
+        cpu: expect.objectContaining({
+          available: expect.any(Boolean),
+          method: expect.any(String),
+        }),
+        wallMs: expect.any(Number),
+      });
       expect(command.timing.medianMs).toBeGreaterThanOrEqual(0);
       expect(command.timing.p95Ms).toBeGreaterThanOrEqual(0);
       expect(command.gitInvocations).toEqual(
@@ -174,6 +199,15 @@ describe("CLI performance benchmark runner", () => {
       );
     }
     expect(commands["completion-static-query"].behavior.candidates).toContain("status");
+    expect(commands["create-coordinated"].behavior).toEqual({
+      branchName: "benchmark-create",
+      successCount: 2,
+    });
+    expect(commands["remove-coordinated"].behavior).toEqual({
+      branchName: "benchmark-remove",
+      operationCount: 4,
+      successCount: 4,
+    });
     expect(commands["completion-static-query"].gitInvocations.count).toBe(0);
     expect(commands["completion-repository"].behavior.candidates).toContain("repo-01");
     expect(commands["completion-group"].behavior.candidates).toContain("benchmark-core");
@@ -221,8 +255,8 @@ describe("CLI performance benchmark runner", () => {
     expect(stderr).toContain("--iterations must be a positive integer");
   });
 
-  test("materializes coordinated child worktrees and exposes them in the larger fixture", async () => {
-    const { exitCode, result, stderr } = await runBenchmark("--fixture", "larger");
+  test("materializes coordinated child worktrees and exposes them in the large fixture", async () => {
+    const { exitCode, result, stderr } = await runBenchmark("--fixture", "large");
 
     expect(exitCode, stderr).toBe(0);
     if (!result) throw new Error("Benchmark result was not written.");
@@ -230,7 +264,7 @@ describe("CLI performance benchmark runner", () => {
       expect.objectContaining({
         coordinatedChildWorktreeCount: 40,
         groupCount: 2,
-        id: "larger",
+        id: "large",
         repositoryCount: 8,
         worktreeCount: 6,
       }),
@@ -249,5 +283,17 @@ describe("CLI performance benchmark runner", () => {
         }),
       ]),
     );
+  }, 120_000);
+
+  test("resets stateful create and remove cases before every invocation", async () => {
+    const { exitCode, result, stderr } = await runBenchmark("--warmup", "1", "--iterations", "2");
+
+    expect(exitCode, stderr).toBe(0);
+    if (!result) throw new Error("Benchmark result was not written.");
+    for (const id of ["create-coordinated", "remove-coordinated"]) {
+      const command = result.commands.find((candidate) => candidate.id === id);
+      expect(command?.timing.samples).toHaveLength(2);
+      expect(command?.exitCode).toBe(0);
+    }
   }, 120_000);
 });

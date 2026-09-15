@@ -35,6 +35,31 @@ afterEach(async () => {
 });
 
 describe("benchmark fixtures", () => {
+  test.each([
+    ["small", 2, 2, 2],
+    ["medium", 4, 4, 12],
+    ["large", 8, 6, 40],
+  ] as const)(
+    "materializes the exact %s topology",
+    async (id, repositoryCount, worktreeCount, coordinatedChildWorktreeCount) => {
+      const fixture = await createBenchmarkFixture(id);
+      try {
+        expect(fixture).toEqual(
+          expect.objectContaining({
+            coordinatedChildWorktreeCount,
+            groupCount: 2,
+            id,
+            repositoryCount,
+            worktreeCount,
+          }),
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+    120_000,
+  );
+
   test.runIf(process.platform !== "win32")(
     "strip hostile inherited Git controls from setup and benchmark invocations",
     async () => {

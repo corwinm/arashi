@@ -6,10 +6,11 @@ Run the complete deterministic local suite with one command:
 pnpm benchmark
 ```
 
-The command builds the native executable, creates fresh `small` (2 repositories, 2 workspace
-worktrees, and 2 coordinated child worktrees) and `larger` (8 repositories, 6 workspace worktrees,
-and 40 coordinated child worktrees) fixtures, warms each command, records measured samples, and
-writes JSON to `benchmark-results/`. Both fixtures assign repositories to the `benchmark-core` and
+The command builds the native executable and creates three fresh fixtures: `small` (2 repositories,
+2 workspace worktrees, and 2 coordinated child worktrees), `medium` (4 repositories, 4 workspace
+worktrees, and 12 coordinated child worktrees), and `large` (8 repositories, 6 workspace worktrees,
+and 40 coordinated child worktrees). It warms each command, records measured samples, and writes JSON
+to `benchmark-results/`. All fixtures assign repositories to the `benchmark-core` and
 `benchmark-support` groups and use local filesystem Git remotes. Fixture construction ignores host
 system/global Git configuration and uses an empty hooks directory, so user signing, templates, and
 hooks cannot alter setup.
@@ -29,7 +30,13 @@ into Arashi's existing status collector. The latter invokes normal `aw status --
 its default local-remote refresh. These runtime methods and refresh semantics are recorded in each
 result; no public status option or normal CLI behavior is added or changed.
 
-Result schema version 3 separates runtime provenance at two levels. Top-level `runtime.runner`
+The `create-coordinated` and `remove-coordinated` cases exercise real mutating CLI workflows across
+two selected repositories, keeping the stateful portion representative but bounded as fixtures scale.
+Fixture helpers reset the dedicated benchmark branches and worktrees before every warm-up, measured
+sample, Trace2 invocation, and RSS probe. Each invocation validates both structured command output and
+the resulting branch/worktree state, so stale state cannot make later samples incomparable.
+
+Result schema version 4 separates runtime provenance at two levels. Top-level `runtime.runner`
 identifies the Node process executing the benchmark harness. The one-command orchestrator resolves one
 specific Bun executable, probes its version, uses that same executable to build, and writes a temporary
 provenance record containing the compiler version and the built artifact's SHA-256, filename, and size.
@@ -47,11 +54,16 @@ Each command records sorted samples, median, nearest-rank p95, exit code, and di
 Arashi-originated Git process count. Git counts use root sessions from `GIT_TRACE2_EVENT`, excluding
 Git subprocesses launched by Git itself. A separate support probe seeds a recognized Trace2 event, so
 a supported trace with no Arashi-started Git process is available with count zero; missing, unreadable,
-or unrecognized trace output is unavailable. Peak RSS is collected separately with the host `time` tool on
-macOS/Linux when available, so memory sampling does not alter timing. Unsupported metrics are
-explicitly marked unavailable. Executable size is reported for the built binary.
+or unrecognized trace output is unavailable. Every measured sample contains `wallMs` and a `cpu`
+availability record. On macOS/Linux, `/usr/bin/time -p` reports user and system CPU milliseconds for
+the same child invocation; wall time is still measured by the Node harness at higher resolution.
+Platforms without a truthful privilege-free adapter record CPU as unavailable with a reason rather
+than zero. Peak RSS is collected in a separate invocation with the host `time` tool on macOS/Linux
+when available, so memory sampling does not alter the measured samples. Unsupported metrics are
+explicitly marked unavailable. Executable size is reported for the built binary. `--no-metrics`
+disables CPU, RSS, and executable-size probes explicitly.
 
-Use `--fixture small` or `--fixture larger`, `--warmup N`, `--iterations N`, `--no-metrics`, and
+Use `--fixture small`, `--fixture medium`, or `--fixture large`, `--warmup N`, `--iterations N`, `--no-metrics`, and
 `--output PATH` with `pnpm benchmark:run -- ...` for focused runs. Benchmark tests are opt-in through
 `pnpm benchmark:test`; `pnpm test` does not discover them.
 

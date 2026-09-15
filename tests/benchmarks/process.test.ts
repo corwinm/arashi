@@ -30,6 +30,7 @@ describe("benchmark process completion", () => {
     expect(source).toContain('import { waitForProcessClose } from "./process.ts";');
     expect(source).toContain("await waitForProcessClose(child)");
     expect(source).not.toContain('child.once("exit"');
-    expect(source).toContain('stdio: ["ignore", "ignore", "pipe"]');
+    expect(source).toContain('stdio: ["ignore", "pipe", "pipe"]');
+    expect(source).toContain('child.stdout.setEncoding("utf8").on("data"');
   });
 });
