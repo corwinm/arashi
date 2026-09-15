@@ -1,5 +1,9 @@
 # CLI performance benchmarks
 
+Use the repository contributor toolchain: Node.js 24.18.0 or later and pnpm 11.22.0. The package's
+broader `engines.node` range applies to the installed npm launcher, not repository development
+scripts.
+
 Run the complete deterministic local suite with one command:
 
 ```bash
