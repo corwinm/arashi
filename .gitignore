@@ -15,6 +15,7 @@ Thumbs.db
 bin/arashi.bin*
 bin/arashi-*
 bin/index.js.map
+benchmark-results/
 *.bun-build
 .oxlintcache
 .oxfmtcache

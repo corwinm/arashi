@@ -10,6 +10,10 @@ Please use the primary contribution workflow in the specs repository:
 
 That guide defines the Arashi CLI worktree flow and agent-neutral OpenSpec planning process for Pi, OpenCode, and Hermes.
 
+Repository development uses the guide's Node.js 24.18.0+ and pnpm 11.22.0 toolchain. The
+`engines.node` range describes the installed npm launcher's runtime compatibility; it does not apply
+to contributor scripts, because the pinned pnpm version itself requires a newer Node.js runtime.
+
 ## Implementation Quality Gates
 
 For code changes in this repository, run:
@@ -42,3 +46,9 @@ Optional fast path during active edits:
 ```bash
 pnpm run quality:changed
 ```
+
+## Performance benchmarks
+
+Run the opt-in, cross-platform CLI suite with `pnpm benchmark`. See
+[`docs/performance-benchmarks.md`](docs/performance-benchmarks.md) for fixture definitions, result
+fields, branch-comparison guidance, optional metrics, and the informational CI policy.
