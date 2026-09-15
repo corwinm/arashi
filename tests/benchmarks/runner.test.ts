@@ -34,7 +34,16 @@ interface RuntimeMetadata {
   version: { available: boolean; reason?: string; value?: string };
 }
 
+interface ArtifactMetadata {
+  available: boolean;
+  filename?: string;
+  reason?: string;
+  sha256?: string;
+  sizeBytes?: number;
+}
+
 interface BenchmarkResult {
+  artifact: ArtifactMetadata;
   commands: BenchmarkCommandResult[];
   fixtures: {
     coordinatedChildWorktreeCount: number;
@@ -52,7 +61,7 @@ interface BenchmarkResult {
   schemaVersion: number;
 }
 
-async function runBenchmark(...args: string[]) {
+async function runBenchmarkWithEnvironment(environment: NodeJS.ProcessEnv, ...args: string[]) {
   const outputDirectory = await mkdtemp(join(tmpdir(), "arashi-benchmark-test-"));
   temporaryPaths.push(outputDirectory);
   const outputPath = join(outputDirectory, "result.json");
@@ -73,7 +82,11 @@ async function runBenchmark(...args: string[]) {
       outputPath,
       ...args,
     ],
-    { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      cwd: repositoryRoot,
+      env: { ...process.env, ...environment },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   );
   let stdout = "";
   let stderr = "";
@@ -85,6 +98,10 @@ async function runBenchmark(...args: string[]) {
     result = JSON.parse(await readFile(outputPath, "utf8")) as BenchmarkResult;
   } catch {}
   return { exitCode, result, stderr, stdout };
+}
+
+async function runBenchmark(...args: string[]) {
+  return runBenchmarkWithEnvironment({}, ...args);
 }
 
 afterEach(async () => {
@@ -101,7 +118,11 @@ describe("CLI performance benchmark runner", () => {
     expect(result).not.toBeNull();
     if (!result) throw new Error("Benchmark result was not written.");
     expect(JSON.parse(stdout)).toEqual(result);
-    expect(result.schemaVersion).toBe(2);
+    expect(result.schemaVersion).toBe(3);
+    expect(result.artifact).toEqual({
+      available: false,
+      reason: "Source mode has no Arashi executable artifact.",
+    });
     expect(result.runtime.runner).toEqual({
       method: "node-process",
       name: "node",

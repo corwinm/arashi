@@ -26,7 +26,7 @@ describe("benchmark execution policy", () => {
     );
 
     expect(packageJson.scripts.benchmark).toBe(
-      "pnpm run build && node --experimental-strip-types scripts/benchmark/run.ts",
+      "node --experimental-strip-types scripts/benchmark/orchestrate.ts",
     );
     expect(packageJson.scripts["benchmark:test"]).toContain("tests/benchmarks");
     expect(documentation).toContain("pnpm benchmark");
@@ -36,6 +36,10 @@ describe("benchmark execution policy", () => {
     expect(documentation).toContain("completion-worktree");
     expect(documentation).toContain("checkAllRepos-without-fetch");
     expect(documentation).toContain("same tracked-remote fixture");
+    expect(documentation).toContain("SHA-256");
+    expect(documentation).toContain("compiler provenance unavailable");
+    expect(documentation).toContain("Git-heavy CLI");
+    expect(documentation).toContain("bounded retries");
     expect(documentation).toContain("No wall-clock threshold");
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("actions/upload-artifact");

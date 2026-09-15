@@ -13,6 +13,9 @@ writes JSON to `benchmark-results/`. Both fixtures assign repositories to the `b
 `benchmark-support` groups and use local filesystem Git remotes. Fixture construction ignores host
 system/global Git configuration and uses an empty hooks directory, so user signing, templates, and
 hooks cannot alter setup.
+The same isolated Git configuration and hooks environment is passed to benchmarked Git-heavy CLI
+invocations, Trace2 probes, and RSS samples, not only to fixture construction. Recursive fixture
+cleanup uses three bounded retries with a short delay for transient Windows file locks.
 
 Completion coverage uses the lossless `completion __query` protocol throughout:
 
@@ -26,14 +29,19 @@ into Arashi's existing status collector. The latter invokes normal `aw status --
 its default local-remote refresh. These runtime methods and refresh semantics are recorded in each
 result; no public status option or normal CLI behavior is added or changed.
 
-Result schema version 2 separates runtime provenance at two levels. Top-level `runtime.runner`
-identifies the Node process executing the benchmark harness. Top-level `runtime.build` reports the
-Bun version found by the PATH probe in built/default mode; source mode and failed probes are explicitly
-unavailable. Each command has its own `runtime`: normal default-mode commands are marked as compiled
-Bun executables, `--source` commands as Node source invocations, and `status-local` as the
-benchmark-only Node adapter. The Bun version embedded in a compiled executable is deliberately marked
-unavailable because the harness does not introspect it; `runtime.build` describes the compiler probe,
-not an inferred embedded-runtime version.
+Result schema version 3 separates runtime provenance at two levels. Top-level `runtime.runner`
+identifies the Node process executing the benchmark harness. The one-command orchestrator resolves one
+specific Bun executable, probes its version, uses that same executable to build, and writes a temporary
+provenance record containing the compiler version and the built artifact's SHA-256, filename, and size.
+The runner verifies that record against the exact executable before `runtime.build` reports a compiler
+version. Direct `pnpm benchmark:run` has compiler provenance unavailable even when Bun is on `PATH`;
+it never attributes an existing, stale, or downloaded binary to an unrelated compiler probe. The
+top-level `artifact` identity still records path-neutral filename, byte size, and SHA-256 for direct-run
+comparisons, without exposing an absolute machine path. Source mode remains explicitly not applicable.
+Each command has its own `runtime`: normal default-mode commands are marked as compiled Bun
+executables, `--source` commands as Node source invocations, and `status-local` as the benchmark-only
+Node adapter. The embedded Bun runtime version remains unavailable because it is not introspected from
+the compiled executable.
 
 Each command records sorted samples, median, nearest-rank p95, exit code, and direct
 Arashi-originated Git process count. Git counts use root sessions from `GIT_TRACE2_EVENT`, excluding

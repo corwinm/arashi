@@ -10,6 +10,7 @@ export interface BenchmarkFixture {
   cleanup(): Promise<void>;
   coordinatedChildWorktreeCount: number;
   definitionVersion: number;
+  environment: NodeJS.ProcessEnv;
   groupCount: number;
   id: FixtureId;
   refreshedRoot: string;
@@ -21,6 +22,27 @@ const definitions = {
   small: { groupCount: 2, repositoryCount: 2, worktreeCount: 2 },
   larger: { groupCount: 2, repositoryCount: 8, worktreeCount: 6 },
 } as const;
+
+interface RecursiveRemoveOptions {
+  force: true;
+  maxRetries: number;
+  recursive: true;
+  retryDelay: number;
+}
+
+type RemoveDirectory = (path: string, options: RecursiveRemoveOptions) => Promise<void>;
+
+export async function cleanupFixtureDirectory(
+  path: string,
+  remove: RemoveDirectory = rm,
+): Promise<void> {
+  await remove(path, {
+    force: true,
+    maxRetries: 3,
+    recursive: true,
+    retryDelay: 100,
+  });
+}
 
 async function git(cwd: string, args: string[], environment: NodeJS.ProcessEnv): Promise<void> {
   const child = spawn("git", args, {
@@ -145,15 +167,16 @@ export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFi
       withRemotes: true,
     });
     return {
-      cleanup: () => rm(base, { force: true, recursive: true }),
+      cleanup: () => cleanupFixtureDirectory(base),
       coordinatedChildWorktreeCount: definition.repositoryCount * (definition.worktreeCount - 1),
       definitionVersion: 3,
+      environment,
       id,
       refreshedRoot,
       ...definition,
     };
   } catch (error) {
-    await rm(base, { force: true, recursive: true });
+    await cleanupFixtureDirectory(base);
     throw error;
   }
 }

@@ -1,8 +1,11 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
-import { createBenchmarkFixture } from "../../scripts/benchmark/fixtures.ts";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import {
+  cleanupFixtureDirectory,
+  createBenchmarkFixture,
+} from "../../scripts/benchmark/fixtures.ts";
 
 const temporaryPaths: string[] = [];
 
@@ -47,6 +50,16 @@ describe("benchmark fixtures", () => {
     try {
       const fixture = await createBenchmarkFixture("small");
       expect(fixture).not.toHaveProperty("localRoot");
+      expect(fixture.environment).toEqual(
+        expect.objectContaining({
+          GIT_CONFIG_GLOBAL: expect.stringContaining("gitconfig"),
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_CONFIG_KEY_0: "core.hooksPath",
+          GIT_TERMINAL_PROMPT: "0",
+        }),
+      );
+      expect(fixture.environment.GIT_CONFIG_GLOBAL).not.toBe(globalConfig);
+      expect(fixture.environment.GIT_CONFIG_VALUE_0).not.toBe(hooksPath);
       await fixture.cleanup();
     } finally {
       for (const key of keys) {
@@ -59,4 +72,18 @@ describe("benchmark fixtures", () => {
       }
     }
   }, 120_000);
+
+  test("uses bounded Windows-friendly retries for recursive cleanup", async () => {
+    const remove = vi.fn(async () => undefined);
+
+    await cleanupFixtureDirectory("portable-fixture", remove);
+
+    expect(remove).toHaveBeenCalledWith("portable-fixture", {
+      force: true,
+      maxRetries: 3,
+      recursive: true,
+      retryDelay: 100,
+    });
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
 });

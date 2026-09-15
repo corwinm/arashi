@@ -1,14 +1,13 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { arch, platform, release } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { performance } from "node:perf_hooks";
 import { createBenchmarkFixture, type BenchmarkFixture, type FixtureId } from "./fixtures.ts";
 import { readGitInvocationTrace } from "./git-trace.ts";
+import { invoke, type Invocation } from "./invoke.ts";
 import { executableNamesForPlatform } from "./platform.ts";
-import { waitForProcessClose } from "./process.ts";
-import { buildRuntime, cliRuntime, nodeRuntime, type RuntimeMetadata } from "./runtime.ts";
+import { artifactMetadata, buildRuntime, PROVENANCE_ENVIRONMENT_VARIABLE } from "./provenance.ts";
+import { cliRuntime, nodeRuntime, type RuntimeMetadata } from "./runtime.ts";
 import { summarizeDurations } from "./statistics.ts";
 
 interface Options {
@@ -18,18 +17,6 @@ interface Options {
   outputPath: string;
   source: boolean;
   warmup: number;
-}
-
-interface Invocation {
-  args: string[];
-  command: string;
-}
-
-interface ProcessResult {
-  durationMs: number;
-  exitCode: number;
-  stderr: string;
-  stdout: string;
 }
 
 interface CommandDefinition {
@@ -119,44 +106,18 @@ function resolveCli(source: boolean): Invocation {
   };
 }
 
-async function invoke(
-  cli: Invocation,
-  args: string[],
-  cwd: string,
-  extraEnvironment: NodeJS.ProcessEnv = {},
-): Promise<ProcessResult> {
-  const start = performance.now();
-  const child = spawn(cli.command, [...cli.args, ...args], {
-    cwd,
-    env: {
-      ...process.env,
-      CI: "1",
-      FORCE_COLOR: "0",
-      GIT_TERMINAL_PROMPT: "0",
-      NO_COLOR: "1",
-      ...extraEnvironment,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-  let stderr = "";
-  let stdout = "";
-  child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
-  child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
-  const exitCode = await waitForProcessClose(child);
-  return { durationMs: performance.now() - start, exitCode, stderr, stdout };
-}
-
 async function gitInvocationCount(
   cli: Invocation,
   args: string[],
   cwd: string,
   tracePath: string,
+  environment: NodeJS.ProcessEnv,
 ): Promise<{ available: boolean; count?: number; method: string; reason?: string }> {
   await rm(tracePath, { force: true });
   const supportPath = `${tracePath}.support`;
   await rm(supportPath, { force: true });
   const supportProbe = await invoke({ args: [], command: "git" }, ["version"], cwd, {
+    ...environment,
     GIT_TRACE2_EVENT: supportPath,
   });
   if (supportProbe.exitCode !== 0) {
@@ -174,7 +135,7 @@ async function gitInvocationCount(
     `${JSON.stringify({ event: "version", sid: "arashi-benchmark-support-probe" })}\n`,
     "utf8",
   );
-  const result = await invoke(cli, args, cwd, { GIT_TRACE2_EVENT: tracePath });
+  const result = await invoke(cli, args, cwd, { ...environment, GIT_TRACE2_EVENT: tracePath });
   if (result.exitCode !== 0) throw new Error(`Trace invocation failed: ${result.stderr}`);
 
   return readGitInvocationTrace(tracePath);
@@ -185,6 +146,7 @@ async function peakRss(
   args: string[],
   cwd: string,
   enabled: boolean,
+  environment: NodeJS.ProcessEnv,
 ): Promise<AvailabilityMetric> {
   if (!enabled) return { available: false, method: "disabled", reason: "Metrics disabled." };
   if (platform() === "win32") {
@@ -203,6 +165,7 @@ async function peakRss(
     { args: [...timeArgs, cli.command, ...cli.args], command: "/usr/bin/time" },
     args,
     cwd,
+    environment,
   );
   if (result.exitCode !== 0) {
     return { available: false, method: "time", reason: `time exited ${result.exitCode}.` };
@@ -390,7 +353,12 @@ async function main(): Promise<void> {
       for (const definition of commandDefinitions(fixture)) {
         const commandCli = definition.cli ?? cli;
         for (let index = 0; index < options.warmup; index += 1) {
-          const warmup = await invoke(commandCli, definition.args, definition.cwd);
+          const warmup = await invoke(
+            commandCli,
+            definition.args,
+            definition.cwd,
+            fixture.environment,
+          );
           if (warmup.exitCode !== 0) {
             throw new Error(`${definition.id} warm-up failed: ${warmup.stderr}`);
           }
@@ -399,7 +367,12 @@ async function main(): Promise<void> {
         let exitCode = 0;
         let stdout = "";
         for (let index = 0; index < options.iterations; index += 1) {
-          const measured = await invoke(commandCli, definition.args, definition.cwd);
+          const measured = await invoke(
+            commandCli,
+            definition.args,
+            definition.cwd,
+            fixture.environment,
+          );
           exitCode = measured.exitCode;
           stdout = measured.stdout;
           if (exitCode !== 0) throw new Error(`${definition.id} failed: ${measured.stderr}`);
@@ -420,11 +393,18 @@ async function main(): Promise<void> {
             definition.args,
             definition.cwd,
             tracePath,
+            fixture.environment,
           ),
           id: definition.id,
           invocation: definition.invocation,
           networkDependent: definition.networkDependent,
-          peakRss: await peakRss(commandCli, definition.args, definition.cwd, options.metrics),
+          peakRss: await peakRss(
+            commandCli,
+            definition.args,
+            definition.cwd,
+            options.metrics,
+            fixture.environment,
+          ),
           runtime: definition.runtime ?? cliRuntime(options.source),
           timing: {
             iterations: options.iterations,
@@ -441,6 +421,7 @@ async function main(): Promise<void> {
       reason: options.metrics ? "Peak RSS is reported for each command." : "Metrics disabled.",
     };
     const result = {
+      artifact: await artifactMetadata(options.source, cli.command),
       commands,
       fixtures: fixtures.map(
         ({
@@ -466,12 +447,14 @@ async function main(): Promise<void> {
       },
       platform: { arch: arch(), os: platform(), release: release() },
       runtime: {
-        build: await buildRuntime(options.source, () =>
-          invoke({ args: [], command: "bun" }, ["--version"], repositoryRoot),
+        build: await buildRuntime(
+          options.source,
+          cli.command,
+          process.env[PROVENANCE_ENVIRONMENT_VARIABLE],
         ),
         runner: nodeRuntime("node-process"),
       },
-      schemaVersion: 2,
+      schemaVersion: 3,
     };
     const serialized = `${JSON.stringify(result, null, 2)}\n`;
     await mkdir(dirname(options.outputPath), { recursive: true });
