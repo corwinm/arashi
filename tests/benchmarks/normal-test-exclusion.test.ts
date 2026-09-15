@@ -30,6 +30,12 @@ describe("benchmark execution policy", () => {
     );
     expect(packageJson.scripts["benchmark:test"]).toContain("tests/benchmarks");
     expect(documentation).toContain("pnpm benchmark");
+    expect(documentation).toContain("benchmark-core");
+    expect(documentation).toContain("completion-repository");
+    expect(documentation).toContain("completion-group");
+    expect(documentation).toContain("completion-worktree");
+    expect(documentation).toContain("checkAllRepos-without-fetch");
+    expect(documentation).toContain("same tracked-remote fixture");
     expect(documentation).toContain("No wall-clock threshold");
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("actions/upload-artifact");

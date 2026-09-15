@@ -8,17 +8,33 @@ const repositoryRoot = resolve(import.meta.dirname, "../..");
 const temporaryPaths: string[] = [];
 
 interface BenchmarkCommandResult {
+  behavior: {
+    candidates?: string[];
+    repositories?: string[];
+    worktrees?: Array<{ branch: string; subRepositories: string[] }>;
+  };
   exitCode: number;
   fixtureId: string;
   gitInvocations: { available: boolean; count?: number; method: string };
   id: string;
+  invocation: {
+    method: string;
+    refresh: string;
+    topology: string;
+  };
   networkDependent: boolean;
   timing: { medianMs: number; p95Ms: number; samplesMs: number[] };
 }
 
 interface BenchmarkResult {
   commands: BenchmarkCommandResult[];
-  fixtures: { arch?: string; id: string; repositoryCount: number; worktreeCount: number }[];
+  fixtures: {
+    coordinatedChildWorktreeCount: number;
+    groupCount: number;
+    id: string;
+    repositoryCount: number;
+    worktreeCount: number;
+  }[];
   metrics: {
     executableSize: { available: boolean };
     peakRss: { available: boolean };
@@ -88,6 +104,8 @@ describe("CLI performance benchmark runner", () => {
     expect(result.fixtures).toEqual([
       expect.objectContaining({
         id: "small",
+        coordinatedChildWorktreeCount: 2,
+        groupCount: 2,
         repositoryCount: 2,
         worktreeCount: 2,
       }),
@@ -99,8 +117,10 @@ describe("CLI performance benchmark runner", () => {
     expect(Object.keys(commands)).toEqual([
       "version",
       "help",
-      "completion-static",
-      "completion-dynamic",
+      "completion-static-query",
+      "completion-repository",
+      "completion-group",
+      "completion-worktree",
       "list-plain",
       "list-enriched-json",
       "status-local",
@@ -116,8 +136,33 @@ describe("CLI performance benchmark runner", () => {
         expect.objectContaining({ available: expect.any(Boolean), method: expect.any(String) }),
       );
     }
-    expect(commands["completion-static"].gitInvocations.count).toBe(0);
+    expect(commands["completion-static-query"].behavior.candidates).toContain("status");
+    expect(commands["completion-static-query"].gitInvocations.count).toBe(0);
+    expect(commands["completion-repository"].behavior.candidates).toContain("repo-01");
+    expect(commands["completion-group"].behavior.candidates).toContain("benchmark-core");
+    expect(commands["completion-worktree"].behavior.candidates).toContain("fixture-01");
+    expect(commands["list-enriched-json"].behavior.worktrees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          branch: "fixture-01",
+          subRepositories: expect.arrayContaining(["repos/repo-01", "repos/repo-02"]),
+        }),
+      ]),
+    );
     expect(commands["list-plain"].gitInvocations.count).toBeGreaterThan(0);
+    expect(commands["status-local"].behavior.repositories).toEqual(
+      commands["status-refreshed"].behavior.repositories,
+    );
+    expect(commands["status-local"].invocation).toEqual({
+      method: "checkAllRepos-without-fetch",
+      refresh: "disabled-by-injected-fetch-dependency",
+      topology: "tracked-remote",
+    });
+    expect(commands["status-refreshed"].invocation).toEqual({
+      method: "arashi-cli-status",
+      refresh: "default",
+      topology: "tracked-remote",
+    });
     expect(commands["status-refreshed"].networkDependent).toBe(true);
     expect(result.metrics.peakRss.available).toBe(false);
     expect(result.metrics.executableSize.available).toBe(false);
@@ -128,4 +173,34 @@ describe("CLI performance benchmark runner", () => {
     expect(exitCode).not.toBe(0);
     expect(stderr).toContain("--iterations must be a positive integer");
   });
+
+  test("materializes coordinated child worktrees and exposes them in the larger fixture", async () => {
+    const { exitCode, result, stderr } = await runBenchmark("--fixture", "larger");
+
+    expect(exitCode, stderr).toBe(0);
+    if (!result) throw new Error("Benchmark result was not written.");
+    expect(result.fixtures).toEqual([
+      expect.objectContaining({
+        coordinatedChildWorktreeCount: 40,
+        groupCount: 2,
+        id: "larger",
+        repositoryCount: 8,
+        worktreeCount: 6,
+      }),
+    ]);
+    const commands = Object.fromEntries(result.commands.map((command) => [command.id, command]));
+    expect(commands["completion-repository"].behavior.candidates).toContain("repo-08");
+    expect(commands["completion-group"].behavior.candidates).toEqual(
+      expect.arrayContaining(["benchmark-core"]),
+    );
+    expect(commands["completion-worktree"].behavior.candidates).toContain("fixture-05");
+    expect(commands["list-enriched-json"].behavior.worktrees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          branch: "fixture-05",
+          subRepositories: expect.arrayContaining(["repos/repo-01", "repos/repo-08"]),
+        }),
+      ]),
+    );
+  }, 120_000);
 });

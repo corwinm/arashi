@@ -153,7 +153,7 @@ export interface RepoStatus {
   fullStatus?: string;
 }
 
-interface StatusCommandDependencies {
+export interface StatusCommandDependencies {
   compareCurrentBranchToConfiguredBranch: typeof compareCurrentBranchToConfiguredBranch;
   compareCurrentBranchToDefaultBranch: typeof compareCurrentBranchToDefaultBranch;
   fetchRemoteTrackingTarget: typeof fetchRemoteTrackingTarget;
@@ -488,12 +488,18 @@ export const checkRepoStatus = async (
  * @param verbose - Whether to get full git status output
  * @returns Array of repository statuses
  */
-export const checkAllRepos = (
+interface CheckAllReposOptions {
+  dependencies?: Partial<StatusCommandDependencies>;
+  includeWorkspaceRoot?: boolean;
+  verbose?: boolean;
+}
+
+export const checkAllReposWithDependencies = (
   workspaceRoot: string,
   config: Config,
-  verbose = false,
-  includeWorkspaceRoot = true,
+  options: CheckAllReposOptions = {},
 ): Promise<RepoStatus[]> => {
+  const { dependencies = {}, includeWorkspaceRoot = true, verbose = false } = options;
   const reposToCheck: {
     baseBranch?: string;
     baseBranchSource?: "repository-config" | "workspace-config";
@@ -532,12 +538,21 @@ export const checkAllRepos = (
     checkRepoStatus(repo.name, repo.path, {
       baseBranch: repo.baseBranch,
       baseBranchSource: repo.baseBranchSource,
+      dependencies,
       verbose,
     }),
   );
 
   return Promise.all(statusPromises);
 };
+
+export const checkAllRepos = (
+  workspaceRoot: string,
+  config: Config,
+  verbose = false,
+  includeWorkspaceRoot = true,
+): Promise<RepoStatus[]> =>
+  checkAllReposWithDependencies(workspaceRoot, config, { includeWorkspaceRoot, verbose });
 
 export const shouldIncludeWorkspaceRootInRepositoryChecks = async (
   workspaceRoot: string,

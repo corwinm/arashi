@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { arch, platform, release } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { createBenchmarkFixture, type BenchmarkFixture, type FixtureId } from "./fixtures.ts";
+import { readGitInvocationTrace } from "./git-trace.ts";
 import { executableNamesForPlatform } from "./platform.ts";
+import { waitForProcessClose } from "./process.ts";
 import { summarizeDurations } from "./statistics.ts";
 
 interface Options {
@@ -26,6 +28,17 @@ interface ProcessResult {
   durationMs: number;
   exitCode: number;
   stderr: string;
+  stdout: string;
+}
+
+interface CommandDefinition {
+  args: string[];
+  behavior(stdout: string): Record<string, unknown>;
+  cli?: Invocation;
+  cwd: string;
+  id: string;
+  invocation: { method: string; refresh: string; topology: string };
+  networkDependent: boolean;
 }
 
 interface AvailabilityMetric {
@@ -121,16 +134,15 @@ async function invoke(
       NO_COLOR: "1",
       ...extraEnvironment,
     },
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
   let stderr = "";
+  let stdout = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
-  const exitCode = await new Promise<number>((resolveExit, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => resolveExit(code ?? 1));
-  });
-  return { durationMs: performance.now() - start, exitCode, stderr };
+  const exitCode = await waitForProcessClose(child);
+  return { durationMs: performance.now() - start, exitCode, stderr, stdout };
 }
 
 async function gitInvocationCount(
@@ -140,41 +152,30 @@ async function gitInvocationCount(
   tracePath: string,
 ): Promise<{ available: boolean; count?: number; method: string; reason?: string }> {
   await rm(tracePath, { force: true });
+  const supportPath = `${tracePath}.support`;
+  await rm(supportPath, { force: true });
+  const supportProbe = await invoke({ args: [], command: "git" }, ["version"], cwd, {
+    GIT_TRACE2_EVENT: supportPath,
+  });
+  if (supportProbe.exitCode !== 0) {
+    return {
+      available: false,
+      method: "git-trace2-event-root-sessions",
+      reason: `Git trace support probe failed: ${supportProbe.stderr}`,
+    };
+  }
+  const support = await readGitInvocationTrace(supportPath);
+  await rm(supportPath, { force: true });
+  if (!support.available) return support;
+  await writeFile(
+    tracePath,
+    `${JSON.stringify({ event: "version", sid: "arashi-benchmark-support-probe" })}\n`,
+    "utf8",
+  );
   const result = await invoke(cli, args, cwd, { GIT_TRACE2_EVENT: tracePath });
   if (result.exitCode !== 0) throw new Error(`Trace invocation failed: ${result.stderr}`);
 
-  let contents: string;
-  try {
-    contents = await readFile(tracePath, "utf8");
-  } catch {
-    return { available: true, count: 0, method: "git-trace2-event-root-sessions" };
-  }
-
-  let count = 0;
-  let recognized = false;
-  for (const line of contents.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const event = JSON.parse(line) as { event?: unknown; sid?: unknown };
-      if (event.event === "start" && typeof event.sid === "string") {
-        recognized = true;
-        if (!event.sid.includes("/")) count += 1;
-      }
-    } catch {
-      return {
-        available: false,
-        method: "git-trace2-event-root-sessions",
-        reason: "Git trace output was not JSON lines.",
-      };
-    }
-  }
-  return recognized || contents.trim() === ""
-    ? { available: true, count, method: "git-trace2-event-root-sessions" }
-    : {
-        available: false,
-        method: "git-trace2-event-root-sessions",
-        reason: "Git trace output did not contain process start events.",
-      };
+  return readGitInvocationTrace(tracePath);
 }
 
 async function peakRss(
@@ -213,38 +214,152 @@ async function peakRss(
   return { available: false, method: "time", reason: "Peak RSS was absent from time output." };
 }
 
-const commandDefinitions = (fixture: BenchmarkFixture) => [
-  { args: ["--version"], cwd: fixture.localRoot, id: "version", networkDependent: false },
-  { args: ["--help"], cwd: fixture.localRoot, id: "help", networkDependent: false },
+const noBehavior = () => ({});
+const cliInvocation = {
+  method: "arashi-cli",
+  refresh: "not-applicable",
+  topology: "tracked-remote",
+};
+
+function completionBehavior(stdout: string, expected: string): Record<string, unknown> {
+  const fields = stdout.split("\0");
+  if (fields.at(-1) === "") fields.pop();
+  const candidates = Array.from(
+    { length: Math.floor(fields.length / 2) },
+    (_, index) => fields[index * 2],
+  ).filter((value): value is string => value !== undefined);
+  if (!candidates.includes(expected)) {
+    throw new Error(`Completion candidates did not include ${expected}: ${candidates.join(", ")}`);
+  }
+  return { candidates };
+}
+
+function listBehavior(stdout: string): Record<string, unknown> {
+  const envelope = JSON.parse(stdout) as {
+    data?: {
+      worktrees?: Array<{
+        branch?: string;
+        subRepositories?: Array<{ relativePath?: string }>;
+      }>;
+    };
+  };
+  return {
+    worktrees: (envelope.data?.worktrees ?? []).map(({ branch, subRepositories }) => ({
+      branch,
+      subRepositories: (subRepositories ?? []).flatMap(({ relativePath }) =>
+        relativePath ? [relativePath] : [],
+      ),
+    })),
+  };
+}
+
+function cliStatusBehavior(stdout: string): Record<string, unknown> {
+  const envelope = JSON.parse(stdout) as {
+    data?: { repositories?: Array<{ name?: string }> };
+  };
+  return {
+    repositories: (envelope.data?.repositories ?? []).flatMap(({ name }) => (name ? [name] : [])),
+  };
+}
+
+function localStatusBehavior(stdout: string): Record<string, unknown> {
+  const result = JSON.parse(stdout) as { refreshWarnings?: unknown[]; repositories?: string[] };
+  if ((result.refreshWarnings ?? []).length > 0) {
+    throw new Error("Benchmark-only local status unexpectedly produced refresh warnings.");
+  }
+  return { repositories: result.repositories ?? [] };
+}
+
+const commandDefinitions = (fixture: BenchmarkFixture): CommandDefinition[] => [
   {
-    args: ["completion", "bash"],
-    cwd: fixture.localRoot,
-    id: "completion-static",
+    args: ["--version"],
+    behavior: noBehavior,
+    cwd: fixture.refreshedRoot,
+    id: "version",
+    invocation: cliInvocation,
     networkDependent: false,
   },
   {
-    args: ["completion", "__query", "1", "arashi", "st"],
-    cwd: fixture.localRoot,
-    id: "completion-dynamic",
+    args: ["--help"],
+    behavior: noBehavior,
+    cwd: fixture.refreshedRoot,
+    id: "help",
+    invocation: cliInvocation,
     networkDependent: false,
   },
-  { args: ["list"], cwd: fixture.localRoot, id: "list-plain", networkDependent: false },
+  {
+    args: ["completion", "__query", "1", "--", "arashi", "st"],
+    behavior: (stdout) => completionBehavior(stdout, "status"),
+    cwd: fixture.refreshedRoot,
+    id: "completion-static-query",
+    invocation: cliInvocation,
+    networkDependent: false,
+  },
+  {
+    args: ["completion", "__query", "3", "--", "arashi", "status", "--only", "repo-0"],
+    behavior: (stdout) => completionBehavior(stdout, "repo-01"),
+    cwd: fixture.refreshedRoot,
+    id: "completion-repository",
+    invocation: cliInvocation,
+    networkDependent: false,
+  },
+  {
+    args: ["completion", "__query", "3", "--", "arashi", "status", "--group", "benchmark-c"],
+    behavior: (stdout) => completionBehavior(stdout, "benchmark-core"),
+    cwd: fixture.refreshedRoot,
+    id: "completion-group",
+    invocation: cliInvocation,
+    networkDependent: false,
+  },
+  {
+    args: ["completion", "__query", "4", "--", "arashi", "move", "topic", "--from", "fixture-0"],
+    behavior: (stdout) => completionBehavior(stdout, "fixture-01"),
+    cwd: fixture.refreshedRoot,
+    id: "completion-worktree",
+    invocation: cliInvocation,
+    networkDependent: false,
+  },
+  {
+    args: ["list"],
+    behavior: noBehavior,
+    cwd: fixture.refreshedRoot,
+    id: "list-plain",
+    invocation: cliInvocation,
+    networkDependent: false,
+  },
   {
     args: ["list", "--verbose", "--json"],
-    cwd: fixture.localRoot,
+    behavior: listBehavior,
+    cwd: fixture.refreshedRoot,
     id: "list-enriched-json",
+    invocation: cliInvocation,
     networkDependent: false,
   },
   {
-    args: ["status", "--json"],
-    cwd: fixture.localRoot,
+    args: [fixture.refreshedRoot],
+    behavior: localStatusBehavior,
+    cli: {
+      args: [
+        "--experimental-strip-types",
+        join(repositoryRoot, "scripts", "benchmark", "status-local.ts"),
+      ],
+      command: process.execPath,
+    },
+    cwd: fixture.refreshedRoot,
     id: "status-local",
+    invocation: {
+      method: "checkAllRepos-without-fetch",
+      refresh: "disabled-by-injected-fetch-dependency",
+      topology: "tracked-remote",
+    },
     networkDependent: false,
   },
   {
     args: ["status", "--json"],
+    behavior: cliStatusBehavior,
     cwd: fixture.refreshedRoot,
     id: "status-refreshed",
+    invocation: { method: "arashi-cli-status", refresh: "default", topology: "tracked-remote" },
     networkDependent: true,
   },
 ];
@@ -270,17 +385,20 @@ async function main(): Promise<void> {
     const commands = [];
     for (const fixture of fixtures) {
       for (const definition of commandDefinitions(fixture)) {
+        const commandCli = definition.cli ?? cli;
         for (let index = 0; index < options.warmup; index += 1) {
-          const warmup = await invoke(cli, definition.args, definition.cwd);
+          const warmup = await invoke(commandCli, definition.args, definition.cwd);
           if (warmup.exitCode !== 0) {
             throw new Error(`${definition.id} warm-up failed: ${warmup.stderr}`);
           }
         }
         const samples: number[] = [];
         let exitCode = 0;
+        let stdout = "";
         for (let index = 0; index < options.iterations; index += 1) {
-          const measured = await invoke(cli, definition.args, definition.cwd);
+          const measured = await invoke(commandCli, definition.args, definition.cwd);
           exitCode = measured.exitCode;
+          stdout = measured.stdout;
           if (exitCode !== 0) throw new Error(`${definition.id} failed: ${measured.stderr}`);
           samples.push(measured.durationMs);
         }
@@ -291,12 +409,19 @@ async function main(): Promise<void> {
         );
         commands.push({
           args: definition.args,
+          behavior: definition.behavior(stdout),
           exitCode,
           fixtureId: fixture.id,
-          gitInvocations: await gitInvocationCount(cli, definition.args, definition.cwd, tracePath),
+          gitInvocations: await gitInvocationCount(
+            commandCli,
+            definition.args,
+            definition.cwd,
+            tracePath,
+          ),
           id: definition.id,
+          invocation: definition.invocation,
           networkDependent: definition.networkDependent,
-          peakRss: await peakRss(cli, definition.args, definition.cwd, options.metrics),
+          peakRss: await peakRss(commandCli, definition.args, definition.cwd, options.metrics),
           timing: {
             iterations: options.iterations,
             ...summarizeDurations(samples),
@@ -313,12 +438,23 @@ async function main(): Promise<void> {
     };
     const result = {
       commands,
-      fixtures: fixtures.map(({ definitionVersion, id, repositoryCount, worktreeCount }) => ({
-        definitionVersion,
-        id,
-        repositoryCount,
-        worktreeCount,
-      })),
+      fixtures: fixtures.map(
+        ({
+          coordinatedChildWorktreeCount,
+          definitionVersion,
+          groupCount,
+          id,
+          repositoryCount,
+          worktreeCount,
+        }) => ({
+          coordinatedChildWorktreeCount,
+          definitionVersion,
+          groupCount,
+          id,
+          repositoryCount,
+          worktreeCount,
+        }),
+      ),
       generatedAt: new Date().toISOString(),
       metrics: {
         executableSize: await executableSize(cli, options.metrics),

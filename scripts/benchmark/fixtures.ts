@@ -7,7 +7,9 @@ export type FixtureId = "small" | "larger";
 
 export interface BenchmarkFixture {
   cleanup(): Promise<void>;
+  coordinatedChildWorktreeCount: number;
   definitionVersion: number;
+  groupCount: number;
   id: FixtureId;
   localRoot: string;
   refreshedRoot: string;
@@ -16,8 +18,8 @@ export interface BenchmarkFixture {
 }
 
 const definitions = {
-  small: { repositoryCount: 2, worktreeCount: 2 },
-  larger: { repositoryCount: 8, worktreeCount: 6 },
+  small: { groupCount: 2, repositoryCount: 2, worktreeCount: 2 },
+  larger: { groupCount: 2, repositoryCount: 8, worktreeCount: 6 },
 } as const;
 
 async function git(cwd: string, args: string[]): Promise<void> {
@@ -52,6 +54,7 @@ async function addLocalRemote(repository: string, remote: string): Promise<void>
 
 async function createWorkspace(options: {
   base: string;
+  groupCount: number;
   repositoryCount: number;
   withRemotes: boolean;
   worktreeCount: number;
@@ -63,13 +66,18 @@ async function createWorkspace(options: {
   await mkdir(join(root, ".arashi"), { recursive: true });
   await writeFile(join(root, ".gitignore"), "repos/\n", "utf8");
 
-  const repos: Record<string, { path: string }> = {};
+  const repositories: Array<{ name: string; path: string }> = [];
+  const repos: Record<string, { groups: string[]; path: string }> = {};
   for (let index = 1; index <= options.repositoryCount; index += 1) {
     const name = `repo-${String(index).padStart(2, "0")}`;
     const path = join(root, "repos", name);
     await initializeRepository(path);
     if (options.withRemotes) await addLocalRemote(path, join(remotes, `${name}.git`));
-    repos[name] = { path: `repos/${name}` };
+    repositories.push({ name, path });
+    repos[name] = {
+      groups: [index % options.groupCount === 1 ? "benchmark-core" : "benchmark-support"],
+      path: `repos/${name}`,
+    };
   }
 
   await writeFile(
@@ -83,13 +91,19 @@ async function createWorkspace(options: {
 
   await mkdir(worktrees, { recursive: true });
   for (let index = 1; index < options.worktreeCount; index += 1) {
-    await git(root, [
-      "worktree",
-      "add",
-      "-b",
-      `fixture-${String(index).padStart(2, "0")}`,
-      join(worktrees, `fixture-${String(index).padStart(2, "0")}`),
-    ]);
+    const branch = `fixture-${String(index).padStart(2, "0")}`;
+    const linkedRoot = join(worktrees, branch);
+    await git(root, ["worktree", "add", "-b", branch, linkedRoot]);
+    for (const repository of repositories) {
+      await mkdir(join(linkedRoot, "repos"), { recursive: true });
+      await git(repository.path, [
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        join(linkedRoot, "repos", repository.name),
+      ]);
+    }
   }
   return root;
 }
@@ -111,7 +125,8 @@ export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFi
     });
     return {
       cleanup: () => rm(base, { force: true, recursive: true }),
-      definitionVersion: 1,
+      coordinatedChildWorktreeCount: definition.repositoryCount * (definition.worktreeCount - 1),
+      definitionVersion: 2,
       id,
       localRoot,
       refreshedRoot,
