@@ -28,6 +28,45 @@ describe("Git invocation trace availability", () => {
       available: true,
       count: 0,
       method: "git-trace2-event-root-sessions",
+      repositories: [],
+    });
+  });
+
+  test("attributes root sessions to canonical repositories even when def_repo follows start", async () => {
+    const { readGitInvocationTrace } = await import("../../scripts/benchmark/git-trace.ts");
+    const trace = [
+      { event: "version", sid: "root-a" },
+      { argv: ["git", "status"], event: "start", sid: "root-a" },
+      { event: "def_repo", sid: "root-a", worktree: "/repo-a" },
+      { event: "version", sid: "root-a/child" },
+      { argv: ["git", "maintenance"], event: "start", sid: "root-a/child" },
+      { event: "version", sid: "root-b" },
+      { argv: ["git", "rev-parse"], event: "start", sid: "root-b" },
+      { event: "def_repo", sid: "root-b", worktree: "/repo-b" },
+      { event: "version", sid: "root-c" },
+      { argv: ["git", "--version"], event: "start", sid: "root-c" },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n");
+
+    await expect(
+      readGitInvocationTrace(
+        "trace.json",
+        vi.fn().mockResolvedValue(trace),
+        async (path) => `/canonical${path}`,
+      ),
+    ).resolves.toEqual({
+      available: true,
+      count: 3,
+      method: "git-trace2-event-root-sessions",
+      repositories: [
+        { count: 1, path: "/canonical/repo-a" },
+        { count: 1, path: "/canonical/repo-b" },
+      ],
+      unattributed: {
+        count: 1,
+        reason: "Trace2 emitted no repository identity for these root sessions.",
+      },
     });
   });
 

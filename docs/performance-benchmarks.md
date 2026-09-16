@@ -28,11 +28,11 @@ Completion coverage uses the lossless `completion __query` protocol throughout:
 - `completion-repository`, `completion-group`, and `completion-worktree` capture and assert candidates
   discovered from fixture configuration and Git worktree topology.
 
-`status-local` and `status-refreshed` run against the same tracked-remote fixture. The former uses the
-benchmark-only `checkAllRepos-without-fetch` invocation, injecting a successful no-fetch dependency
-into Arashi's existing status collector. The latter invokes normal `aw status --json`, including
-its default local-remote refresh. These runtime methods and refresh semantics are recorded in each
-result; no public status option or normal CLI behavior is added or changed.
+`status-local` and `status-refreshed` run against the same tracked-remote fixture through the compiled
+CLI. The former invokes public `aw status --local --json`, which never fetches and reports that it used
+existing remote-tracking refs. The latter invokes normal `aw status --json`, including its default
+local-remote refresh. Matching `status-local-verbose` and `status-refreshed-verbose` cases exercise
+verbose collection. Runtime methods and refresh semantics are recorded in each result.
 
 The `create-coordinated` and `remove-coordinated` cases exercise real mutating CLI workflows across
 two selected repositories, keeping the stateful portion representative but bounded as fixtures scale.
@@ -40,7 +40,7 @@ Fixture helpers reset the dedicated benchmark branches and worktrees before ever
 sample, Trace2 invocation, and RSS probe. Each invocation validates both structured command output and
 the resulting branch/worktree state, so stale state cannot make later samples incomparable.
 
-Result schema version 4 separates runtime provenance at two levels. Top-level `runtime.runner`
+Result schema version 5 separates runtime provenance at two levels. Top-level `runtime.runner`
 identifies the Node process executing the benchmark harness. The one-command orchestrator resolves one
 specific Bun executable, probes its version, uses that same executable to build, and writes a temporary
 provenance record containing the compiler version and the built artifact's SHA-256, filename, and size.
@@ -50,13 +50,14 @@ it never attributes an existing, stale, or downloaded binary to an unrelated com
 top-level `artifact` identity still records path-neutral filename, byte size, and SHA-256 for direct-run
 comparisons, without exposing an absolute machine path. Source mode remains explicitly not applicable.
 Each command has its own `runtime`: normal default-mode commands are marked as compiled Bun
-executables, `--source` commands as Node source invocations, and `status-local` as the benchmark-only
-Node adapter. The embedded Bun runtime version remains unavailable because it is not introspected from
-the compiled executable.
+executables and `--source` commands as Node source invocations. The embedded Bun runtime version
+remains unavailable because it is not introspected from the compiled executable.
 
 Each command records sorted samples, median, nearest-rank p95, exit code, and direct
-Arashi-originated Git process count. Git counts use root sessions from `GIT_TRACE2_EVENT`, excluding
-Git subprocesses launched by Git itself. A separate support probe seeds a recognized Trace2 event, so
+Arashi-originated Git process count and a canonical-worktree per-repository breakdown. Git counts use
+root sessions from `GIT_TRACE2_EVENT`, associate each root session with its Trace2 `def_repo` worktree,
+and exclude Git subprocesses launched by Git itself. Sessions without a provable repository identity
+are reported separately as unattributed rather than guessed from argv. A separate support probe seeds a recognized Trace2 event, so
 a supported trace with no Arashi-started Git process is available with count zero; missing, unreadable,
 or unrecognized trace output is unavailable. Every measured sample contains `wallMs` and a `cpu`
 availability record. On macOS/Linux, `/usr/bin/time -p` reports user and system CPU milliseconds for

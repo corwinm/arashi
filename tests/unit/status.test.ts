@@ -6,6 +6,7 @@
 
 import {
   checkRepoStatus,
+  createCommand,
   filterHumanVisibleStatuses,
   formatDefaultOutput,
   formatRepoSection,
@@ -18,6 +19,51 @@ import {
 import { describe, expect, test } from "vitest";
 
 describe("parseGitStatus", () => {
+  test("parses porcelain v2 branch metadata and file records", () => {
+    const output = `# branch.oid 0123456789abcdef
+# branch.head feature/demo
+# branch.upstream origin/feature/demo
+# branch.ab +2 -3
+1 .M N... 100644 100644 100644 abcdef0 abcdef0 src/modified.ts
+1 M. N... 100644 100644 100644 abcdef0 abcdef0 staged.ts
+? new file.txt`;
+
+    expect(parseGitStatus(output)).toEqual({
+      branch: {
+        ahead: 2,
+        behind: 3,
+        isDetached: false,
+        localBranch: "feature/demo",
+        remoteBranch: "origin/feature/demo",
+      },
+      files: [
+        { path: "src/modified.ts", stagingStatus: " ", workingStatus: "M" },
+        { path: "staged.ts", stagingStatus: "M", workingStatus: " " },
+        { path: "new file.txt", stagingStatus: "?", workingStatus: "?" },
+      ],
+    });
+  });
+
+  test("parses porcelain v2 detached HEAD and rename records", () => {
+    const output = `# branch.oid 0123456789abcdef
+# branch.head (detached)
+2 R. N... 100644 100644 100644 abcdef0 abcdef0 R100 renamed.ts\toriginal.ts`;
+
+    const parsed = parseGitStatus(output);
+    expect(parsed.branch).toMatchObject({ isDetached: true, localBranch: "" });
+    expect(parsed.files).toEqual([{ path: "renamed.ts", stagingStatus: "R", workingStatus: " " }]);
+  });
+
+  test("parses porcelain v2 unmerged records", () => {
+    const output = `# branch.oid 0123456789abcdef
+# branch.head feature/demo
+u UU N... 100644 100644 100644 100644 abcdef0 abcdef1 abcdef2 conflicted file.ts`;
+
+    expect(parseGitStatus(output).files).toEqual([
+      { path: "conflicted file.ts", stagingStatus: "U", workingStatus: "U" },
+    ]);
+  });
+
   test("parses clean repository output", () => {
     const output = "## main...origin/main";
     const result = parseGitStatus(output);
@@ -143,6 +189,41 @@ describe("parseBranchLine", () => {
 });
 
 describe("checkRepoStatus", () => {
+  test("local mode never invokes a network refresh and marks repository freshness", async () => {
+    let fetchCalls = 0;
+    const status = await checkRepoStatus("repo-a", process.cwd(), {
+      local: true,
+      dependencies: {
+        compareCurrentBranchToConfiguredBranch: async () => ({
+          branch: "main",
+          reason: "on-default-branch" as const,
+          state: "skipped" as const,
+        }),
+        compareCurrentBranchToDefaultBranch: async () => ({
+          branch: "main",
+          reason: "on-default-branch" as const,
+          state: "skipped" as const,
+        }),
+        fetchRemoteTrackingTarget: async () => {
+          fetchCalls += 1;
+          return { ok: true };
+        },
+        getFullGitStatus: async () => ({ error: null, output: "" }),
+        getGitStatus: async () => ({
+          error: null,
+          output: "# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0",
+        }),
+        resolveRemoteTrackingTarget: async () => ({
+          ok: true as const,
+          target: { branch: "main", remote: "origin", upstream: "origin/main" },
+        }),
+      },
+    });
+
+    expect(fetchCalls).toBe(0);
+    expect(status.freshness).toEqual({ mode: "local", remoteRefsRefreshed: false });
+  });
+
   test("returns clone guidance when repository path is missing", async () => {
     const status = await checkRepoStatus("missing-repo", "/path/that/does/not/exist");
 
@@ -647,6 +728,15 @@ describe("checkRepoStatus", () => {
       reason: "comparison-failed",
       state: "unavailable",
     });
+  });
+});
+
+describe("status command contract", () => {
+  test("publishes local-only freshness mode", () => {
+    const command = createCommand();
+    expect(command.options.find((option) => option.long === "--local")?.description).toContain(
+      "without fetching",
+    );
   });
 });
 

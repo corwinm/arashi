@@ -1,0 +1,103 @@
+import { invoke } from "./invoke.ts";
+import type { RepoStatus } from "../../src/commands/status.ts";
+import { realpath } from "node:fs/promises";
+
+interface StatusBehaviorOptions {
+  canonicalizePath?: (path: string) => Promise<string>;
+  environment: NodeJS.ProcessEnv;
+  expectedRepositoryPaths: string[];
+  local: boolean;
+  verbose: boolean;
+}
+
+function assertStatusEqual(actual: unknown, expected: unknown, label: string): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(
+      `Status benchmark mismatch: ${label}; actual=${JSON.stringify(actual)} expected=${JSON.stringify(expected)}`,
+    );
+  }
+}
+
+export async function validateCliStatusOutput(
+  stdout: string,
+  options: StatusBehaviorOptions,
+): Promise<Record<string, unknown>> {
+  const envelope = JSON.parse(stdout) as {
+    data: {
+      freshness: { mode: string; remoteRefsRefreshed: boolean };
+      repositories: RepoStatus[];
+    };
+    warnings?: unknown[];
+  };
+  const { freshness, repositories } = envelope.data;
+  const canonicalPaths = await Promise.all(
+    repositories.map(({ path }) => (options.canonicalizePath ?? realpath)(path)),
+  );
+  const expectedFreshness = {
+    mode: options.local ? "local" : "refreshed",
+    remoteRefsRefreshed: !options.local,
+  };
+  assertStatusEqual(freshness, expectedFreshness, "command freshness");
+  assertStatusEqual(envelope.warnings ?? [], [], "warnings");
+  assertStatusEqual(
+    canonicalPaths.toSorted(),
+    options.expectedRepositoryPaths.toSorted(),
+    "repository paths",
+  );
+  for (const repo of repositories) {
+    assertStatusEqual(repo.freshness, expectedFreshness, "repository freshness");
+    if (repo.error || repo.refreshWarning) {
+      throw new Error("Status benchmark lost refresh/diagnostic semantics");
+    }
+    if (
+      repo.branch.localBranch !== "main" ||
+      repo.branch.remoteBranch !== "origin/main" ||
+      repo.branch.ahead !== 0 ||
+      repo.branch.behind !== 0 ||
+      repo.branch.isDetached
+    ) {
+      throw new Error("Unexpected branch state");
+    }
+    if (
+      repo.baseBranch !== null ||
+      repo.defaultBranch?.state !== "available" ||
+      repo.defaultBranch.branch !== "main" ||
+      repo.defaultBranch.compareRef !== "refs/remotes/origin/main"
+    ) {
+      throw new Error("Unexpected comparison state");
+    }
+    assertStatusEqual(repo.files, [], "dirty files");
+    if (options.verbose) {
+      const native = await invoke(
+        { command: "git", args: [] },
+        ["status"],
+        repo.path,
+        options.environment,
+      );
+      if (native.exitCode !== 0 || repo.fullStatus !== native.stdout.trim()) {
+        throw new Error("Verbose output differs from native Git status");
+      }
+    } else if (repo.fullStatus !== undefined) {
+      throw new Error("Normal status unexpectedly collected verbose output");
+    }
+  }
+  return {
+    freshness,
+    nativeStatus: options.verbose,
+    repositories: repositories.map((repo) => repo.name),
+    repositoryPaths: canonicalPaths,
+    statuses: repositories.map(
+      ({ name, branch, baseBranch, defaultBranch, files, error, refreshWarning }, index) => ({
+        name,
+        path: canonicalPaths[index],
+        branch,
+        baseBranch,
+        defaultBranch,
+        files,
+        error,
+        refreshWarning,
+      }),
+    ),
+    warnings: envelope.warnings ?? [],
+  };
+}

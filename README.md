@@ -53,6 +53,7 @@ Arashi creates matching worktrees for the configured repositories. From there, u
 
 ```bash
 aw status                         # inspect the coordinated workspace
+aw status --local                 # inspect cached remote-tracking refs without fetching
 aw switch feature-auth-refresh    # return to a worktree
 aw pull                           # update repositories
 aw push --set-upstream            # publish branches

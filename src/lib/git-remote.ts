@@ -473,13 +473,14 @@ export function classifyRemoteTrackingFetchFailure(
 
 export async function resolveRemoteTrackingTarget(
   repoPath: string,
+  runGit: ReadOnlyGitRunner = exec,
 ): Promise<RemoteTrackingTargetResolution> {
   let upstream: string | null = null;
   let remote: string | null = null;
   let branch: string | null = null;
 
   try {
-    const upstreamResult = await exec(
+    const upstreamResult = await runGit(
       ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
       repoPath,
     );
@@ -494,7 +495,7 @@ export async function resolveRemoteTrackingTarget(
   }
 
   if (!remote || !branch) {
-    const fallback = await resolveRemoteAndBranch(repoPath);
+    const fallback = await resolveRemoteAndBranch(repoPath, runGit);
     if (!fallback.ok) {
       return { error: fallback.error, ok: false, upstream };
     }
@@ -519,11 +520,12 @@ export async function resolveRemoteTrackingTarget(
 export async function resolveConfiguredRemoteTrackingTarget(
   repoPath: string,
   branch: string,
+  runGit: ReadOnlyGitRunner = exec,
 ): Promise<RemoteTrackingTargetResolution> {
   const requestedBranch = normalizeLogicalBranchName(branch);
   const remote =
-    (await resolveRemoteForBranch(repoPath, requestedBranch)) ??
-    (await pickDefaultRemote(repoPath));
+    (await resolveRemoteForBranch(repoPath, requestedBranch, runGit)) ??
+    (await pickDefaultRemote(repoPath, runGit));
   if (!remote) {
     return {
       error: `No remote is available for configured base branch '${requestedBranch}'`,
@@ -545,9 +547,10 @@ export async function resolveConfiguredRemoteTrackingTarget(
 export async function fetchRemoteTrackingTarget(
   repoPath: string,
   target: RemoteTrackingTarget,
+  runGit: ReadOnlyGitRunner = exec,
 ): Promise<RemoteTrackingFetchResult> {
   try {
-    await exec(
+    await runGit(
       [
         "fetch",
         "--prune",
@@ -565,11 +568,26 @@ export async function fetchRemoteTrackingTarget(
 
 export async function resolveDefaultBranchTarget(
   repoPath: string,
+  runGit: ReadOnlyGitRunner = exec,
+  preferredRemote?: string | null,
 ): Promise<DefaultBranchTargetResolution> {
   let branch: string | null = null;
+  let selectedPreferredRemote: string | null = null;
 
   try {
-    branch = await getDefaultBranch(repoPath);
+    if (preferredRemote) {
+      const preferredHead = await readOptionalGitValue(runGit, repoPath, [
+        "symbolic-ref",
+        `refs/remotes/${preferredRemote}/HEAD`,
+        "--short",
+      ]);
+      const prefix = `${preferredRemote}/`;
+      if (preferredHead?.startsWith(prefix)) {
+        branch = preferredHead.slice(prefix.length) || null;
+        if (branch) selectedPreferredRemote = preferredRemote;
+      }
+    }
+    branch ??= await getDefaultBranch(repoPath, runGit, preferredRemote ? null : preferredRemote);
   } catch (error) {
     return {
       branch: null,
@@ -578,7 +596,31 @@ export async function resolveDefaultBranchTarget(
     };
   }
 
-  const remote = await resolveRemoteForBranch(repoPath, branch);
+  let remote: string | null = selectedPreferredRemote;
+  if (!remote) {
+    const remoteHeads = await readOptionalGitValue(runGit, repoPath, [
+      "for-each-ref",
+      "--format=%(refname)",
+      "refs/remotes",
+    ]);
+    const matchingHeadRemotes: string[] = [];
+    for (const remoteHead of (remoteHeads ?? "").split("\n")) {
+      if (!remoteHead.startsWith("refs/remotes/") || !remoteHead.endsWith("/HEAD")) continue;
+      const candidateRemote = remoteHead.slice("refs/remotes/".length, -"/HEAD".length);
+      const target = await readOptionalGitValue(runGit, repoPath, [
+        "symbolic-ref",
+        `refs/remotes/${candidateRemote}/HEAD`,
+        "--short",
+      ]);
+      if (target === `${candidateRemote}/${branch}`) matchingHeadRemotes.push(candidateRemote);
+    }
+    if (matchingHeadRemotes.includes("origin")) {
+      remote = "origin";
+    } else if (matchingHeadRemotes.length === 1) {
+      remote = matchingHeadRemotes[0]!;
+    }
+  }
+  remote ??= await resolveRemoteForBranch(repoPath, branch, runGit);
   if (remote) {
     return {
       ok: true,
@@ -594,7 +636,7 @@ export async function resolveDefaultBranchTarget(
     };
   }
 
-  if (await refExists(repoPath, `refs/heads/${branch}`)) {
+  if (await refExists(repoPath, `refs/heads/${branch}`, runGit)) {
     return {
       ok: true,
       target: {
@@ -615,8 +657,9 @@ export async function resolveDefaultBranchTarget(
 export async function resolveConfiguredBranchTarget(
   repoPath: string,
   branch: string,
+  runGit: ReadOnlyGitRunner = exec,
 ): Promise<DefaultBranchTargetResolution> {
-  const remoteResolution = await resolveConfiguredRemoteTrackingTarget(repoPath, branch);
+  const remoteResolution = await resolveConfiguredRemoteTrackingTarget(repoPath, branch, runGit);
   if (remoteResolution.ok) {
     const { target } = remoteResolution;
     return {
@@ -642,9 +685,11 @@ export async function compareCurrentBranchToConfiguredBranch(
   branch: string,
   isDetached = false,
   skipCompareRefs: readonly string[] = [],
+  options: { refresh?: boolean } = {},
+  runGit: ReadOnlyGitRunner = exec,
 ): Promise<DefaultBranchComparison> {
   const requestedBranch = normalizeLogicalBranchName(branch);
-  const resolution = await resolveConfiguredBranchTarget(repoPath, requestedBranch);
+  const resolution = await resolveConfiguredBranchTarget(repoPath, requestedBranch, runGit);
   if (!resolution.ok) {
     return {
       branch: requestedBranch,
@@ -682,8 +727,8 @@ export async function compareCurrentBranchToConfiguredBranch(
     };
   }
 
-  if (target.refreshTarget) {
-    const fetchResult = await fetchRemoteTrackingTarget(repoPath, target.refreshTarget);
+  if (target.refreshTarget && options.refresh !== false) {
+    const fetchResult = await fetchRemoteTrackingTarget(repoPath, target.refreshTarget, runGit);
     if (!fetchResult.ok) {
       return {
         branch: target.branch,
@@ -697,7 +742,7 @@ export async function compareCurrentBranchToConfiguredBranch(
   }
 
   try {
-    const result = await exec(
+    const result = await runGit(
       ["rev-list", "--left-right", "--count", `HEAD...${target.compareRef}`],
       repoPath,
     );
@@ -722,6 +767,8 @@ export async function compareCurrentBranchToDefaultBranch(
   currentBranch: string,
   isDetached = false,
   skipCompareRefs: readonly string[] = [],
+  options: { preferredRemote?: string | null; refresh?: boolean } = {},
+  runGit: ReadOnlyGitRunner = exec,
 ): Promise<DefaultBranchComparison> {
   if (isDetached) {
     return {
@@ -731,7 +778,7 @@ export async function compareCurrentBranchToDefaultBranch(
     };
   }
 
-  const resolution = await resolveDefaultBranchTarget(repoPath);
+  const resolution = await resolveDefaultBranchTarget(repoPath, runGit, options.preferredRemote);
   if (!resolution.ok) {
     return {
       branch: resolution.branch,
@@ -763,8 +810,8 @@ export async function compareCurrentBranchToDefaultBranch(
     };
   }
 
-  if (target.refreshTarget) {
-    const fetchResult = await fetchRemoteTrackingTarget(repoPath, target.refreshTarget);
+  if (target.refreshTarget && options.refresh !== false) {
+    const fetchResult = await fetchRemoteTrackingTarget(repoPath, target.refreshTarget, runGit);
     if (!fetchResult.ok) {
       return {
         branch: target.branch,
@@ -778,7 +825,7 @@ export async function compareCurrentBranchToDefaultBranch(
   }
 
   try {
-    const result = await exec(
+    const result = await runGit(
       ["rev-list", "--left-right", "--count", `HEAD...${target.compareRef}`],
       repoPath,
     );
@@ -929,23 +976,24 @@ function parseRemoteTrackingRef(ref: string | null): { remote: string; branch: s
 
 async function resolveRemoteAndBranch(
   repoPath: string,
+  runGit: ReadOnlyGitRunner = exec,
 ): Promise<{ ok: true; remote: string; branch: string } | { ok: false; error: string }> {
-  const currentBranch = await getCurrentBranch(repoPath);
+  const currentBranch = await getCurrentBranch(repoPath, runGit);
   if (!currentBranch) {
     return { error: "Detached HEAD: cannot determine branch for remote comparison", ok: false };
   }
 
-  const configuredRemote = await getBranchRemote(repoPath, currentBranch);
+  const configuredRemote = await getBranchRemote(repoPath, currentBranch, runGit);
   let remote = configuredRemote && configuredRemote !== "." ? configuredRemote : null;
   if (!remote) {
-    remote = await pickDefaultRemote(repoPath);
+    remote = await pickDefaultRemote(repoPath, runGit);
   }
 
   if (!remote) {
     return { error: "No remotes configured for repository", ok: false };
   }
 
-  const mergeRef = await getBranchMergeRef(repoPath, currentBranch);
+  const mergeRef = await getBranchMergeRef(repoPath, currentBranch, runGit);
   const mergeBranch =
     mergeRef && mergeRef.startsWith("refs/heads/") ? mergeRef.replace("refs/heads/", "") : null;
   const branch = mergeBranch || currentBranch;
@@ -953,12 +1001,16 @@ async function resolveRemoteAndBranch(
   return { branch, ok: true, remote };
 }
 
-async function resolveRemoteForBranch(repoPath: string, branch: string): Promise<string | null> {
-  if (await refExists(repoPath, `refs/remotes/origin/${branch}`)) {
+async function resolveRemoteForBranch(
+  repoPath: string,
+  branch: string,
+  runGit: ReadOnlyGitRunner = exec,
+): Promise<string | null> {
+  if (await refExists(repoPath, `refs/remotes/origin/${branch}`, runGit)) {
     return "origin";
   }
 
-  const remoteRefs = await listRemoteTrackingRefs(repoPath);
+  const remoteRefs = await listRemoteTrackingRefs(repoPath, runGit);
   const matchingRemotes = remoteRefs
     .filter((ref) => ref.branch === branch)
     .map((ref) => ref.remote);
@@ -966,19 +1018,20 @@ async function resolveRemoteForBranch(repoPath: string, branch: string): Promise
     return null;
   }
 
-  const defaultRemote = await pickDefaultRemote(repoPath);
+  const defaultRemote = await pickDefaultRemote(repoPath, runGit);
   if (defaultRemote && matchingRemotes.includes(defaultRemote)) {
     return defaultRemote;
   }
 
-  return matchingRemotes[0] || null;
+  return matchingRemotes.length === 1 ? matchingRemotes[0]! : null;
 }
 
 async function listRemoteTrackingRefs(
   repoPath: string,
+  runGit: ReadOnlyGitRunner = exec,
 ): Promise<{ remote: string; branch: string }[]> {
   try {
-    const result = await exec(
+    const result = await runGit(
       ["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
       repoPath,
     );
@@ -994,18 +1047,25 @@ async function listRemoteTrackingRefs(
   }
 }
 
-async function refExists(repoPath: string, ref: string): Promise<boolean> {
+async function refExists(
+  repoPath: string,
+  ref: string,
+  runGit: ReadOnlyGitRunner = exec,
+): Promise<boolean> {
   try {
-    await exec(["show-ref", "--verify", ref], repoPath);
+    await runGit(["show-ref", "--verify", ref], repoPath);
     return true;
   } catch {
     return false;
   }
 }
 
-async function getCurrentBranch(repoPath: string): Promise<string | null> {
+async function getCurrentBranch(
+  repoPath: string,
+  runGit: ReadOnlyGitRunner = exec,
+): Promise<string | null> {
   try {
-    const result = await exec(["rev-parse", "--abbrev-ref", "HEAD"], repoPath);
+    const result = await runGit(["rev-parse", "--abbrev-ref", "HEAD"], repoPath);
     const branch = result.stdout.trim();
     if (!branch || branch === "HEAD") {
       return null;
@@ -1016,27 +1076,38 @@ async function getCurrentBranch(repoPath: string): Promise<string | null> {
   }
 }
 
-async function getBranchRemote(repoPath: string, branch: string): Promise<string | null> {
+async function getBranchRemote(
+  repoPath: string,
+  branch: string,
+  runGit: ReadOnlyGitRunner = exec,
+): Promise<string | null> {
   try {
-    const result = await exec(["config", "--get", `branch.${branch}.remote`], repoPath);
+    const result = await runGit(["config", "--get", `branch.${branch}.remote`], repoPath);
     return result.stdout.trim() || null;
   } catch {
     return null;
   }
 }
 
-async function getBranchMergeRef(repoPath: string, branch: string): Promise<string | null> {
+async function getBranchMergeRef(
+  repoPath: string,
+  branch: string,
+  runGit: ReadOnlyGitRunner = exec,
+): Promise<string | null> {
   try {
-    const result = await exec(["config", "--get", `branch.${branch}.merge`], repoPath);
+    const result = await runGit(["config", "--get", `branch.${branch}.merge`], repoPath);
     return result.stdout.trim() || null;
   } catch {
     return null;
   }
 }
 
-async function pickDefaultRemote(repoPath: string): Promise<string | null> {
+async function pickDefaultRemote(
+  repoPath: string,
+  runGit: ReadOnlyGitRunner = exec,
+): Promise<string | null> {
   try {
-    const result = await exec(["remote"], repoPath);
+    const result = await runGit(["remote"], repoPath);
     const remotes = result.stdout
       .split("\n")
       .map((remote) => remote.trim())

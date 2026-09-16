@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { arch, platform, release } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createBenchmarkFixture, type BenchmarkFixture, type FixtureId } from "./fixtures.ts";
@@ -9,6 +9,7 @@ import { executableNamesForPlatform } from "./platform.ts";
 import { artifactMetadata, buildRuntime, PROVENANCE_ENVIRONMENT_VARIABLE } from "./provenance.ts";
 import { cliRuntime, nodeRuntime, type RuntimeMetadata } from "./runtime.ts";
 import { summarizeDurations } from "./statistics.ts";
+import { validateCliStatusOutput } from "./status-behavior.ts";
 
 interface Options {
   fixtureIds: FixtureId[];
@@ -23,7 +24,7 @@ interface CommandDefinition {
   afterEach?: () => Promise<void>;
   args: string[];
   beforeEach?: () => Promise<void>;
-  behavior(stdout: string): Record<string, unknown>;
+  behavior(stdout: string): Record<string, unknown> | Promise<Record<string, unknown>>;
   cli?: Invocation;
   cwd: string;
   id: string;
@@ -114,9 +115,18 @@ async function gitInvocationCount(
   cwd: string,
   tracePath: string,
   environment: NodeJS.ProcessEnv,
+  expectedRepositoryPaths?: string[],
   beforeEach?: () => Promise<void>,
   afterEach?: () => Promise<void>,
-): Promise<{ available: boolean; count?: number; method: string; reason?: string }> {
+): Promise<{
+  available: boolean;
+  count?: number;
+  fetchCount?: number;
+  method: string;
+  repositories?: Array<{ count: number; path: string }>;
+  reason?: string;
+  unattributed?: { count: number; reason: string };
+}> {
   await rm(tracePath, { force: true });
   const supportPath = `${tracePath}.support`;
   await rm(supportPath, { force: true });
@@ -144,7 +154,37 @@ async function gitInvocationCount(
   if (result.exitCode !== 0) throw new Error(`Trace invocation failed: ${result.stderr}`);
   await afterEach?.();
 
-  return readGitInvocationTrace(tracePath);
+  const metric = await readGitInvocationTrace(tracePath);
+  const events = (await readFile(tracePath, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event?: string; sid?: string; argv?: string[] });
+  const fetchCount = events.filter(
+    (event) => event.event === "start" && !event.sid?.includes("/") && event.argv?.[1] === "fetch",
+  ).length;
+  if (
+    (args.includes("--local") || cli.args.some((arg) => arg.endsWith("status-local.ts"))) &&
+    fetchCount !== 0
+  )
+    throw new Error("Local status performed a fetch");
+  if (metric.available) {
+    const attributedCount = (metric.repositories ?? []).reduce(
+      (sum, repository) => sum + repository.count,
+      0,
+    );
+    if (attributedCount + (metric.unattributed?.count ?? 0) !== metric.count) {
+      throw new Error("Git trace repository breakdown does not sum to the aggregate count");
+    }
+    if (expectedRepositoryPaths) {
+      const actualPaths = (metric.repositories ?? []).map(({ path }) => path).toSorted();
+      if (JSON.stringify(actualPaths) !== JSON.stringify(expectedRepositoryPaths.toSorted())) {
+        throw new Error(
+          "Status trace repository paths did not match the named fixture repositories",
+        );
+      }
+    }
+  }
+  return { ...metric, fetchCount };
 }
 
 async function peakRss(
@@ -232,21 +272,14 @@ function listBehavior(stdout: string): Record<string, unknown> {
   };
 }
 
-function cliStatusBehavior(stdout: string): Record<string, unknown> {
-  const envelope = JSON.parse(stdout) as {
-    data?: { repositories?: Array<{ name?: string }> };
-  };
-  return {
-    repositories: (envelope.data?.repositories ?? []).flatMap(({ name }) => (name ? [name] : [])),
-  };
-}
-
-function localStatusBehavior(stdout: string): Record<string, unknown> {
-  const result = JSON.parse(stdout) as { refreshWarnings?: unknown[]; repositories?: string[] };
-  if ((result.refreshWarnings ?? []).length > 0) {
-    throw new Error("Benchmark-only local status unexpectedly produced refresh warnings.");
-  }
-  return { repositories: result.repositories ?? [] };
+function cliStatusBehavior(local: boolean, verbose: boolean, fixture: BenchmarkFixture) {
+  return (stdout: string): Promise<Record<string, unknown>> =>
+    validateCliStatusOutput(stdout, {
+      environment: fixture.environment,
+      expectedRepositoryPaths: fixture.repositoryPaths,
+      local,
+      verbose,
+    });
 }
 
 function createBehavior(stdout: string, expectedCount: number): Record<string, unknown> {
@@ -387,17 +420,41 @@ const commandDefinitions = (fixture: BenchmarkFixture): CommandDefinition[] => [
     networkDependent: false,
   },
   {
+    args: ["status", "--local", "--json"],
+    behavior: cliStatusBehavior(true, false, fixture),
+    cwd: fixture.refreshedRoot,
+    id: "status-local",
+    invocation: {
+      method: "arashi-cli-status",
+      refresh: "explicit-local",
+      topology: "tracked-remote",
+    },
+    networkDependent: false,
+  },
+  {
+    args: ["status", "--local", "--verbose", "--json"],
+    behavior: cliStatusBehavior(true, true, fixture),
+    cwd: fixture.refreshedRoot,
+    id: "status-local-verbose",
+    invocation: {
+      method: "arashi-cli-status",
+      refresh: "explicit-local",
+      topology: "tracked-remote",
+    },
+    networkDependent: false,
+  },
+  {
     args: [fixture.refreshedRoot],
-    behavior: localStatusBehavior,
+    behavior: cliStatusBehavior(true, false, fixture),
     cli: {
+      command: process.execPath,
       args: [
         "--experimental-strip-types",
         join(repositoryRoot, "scripts", "benchmark", "status-local.ts"),
       ],
-      command: process.execPath,
     },
     cwd: fixture.refreshedRoot,
-    id: "status-local",
+    id: "status-local-collector",
     invocation: {
       method: "checkAllRepos-without-fetch",
       refresh: "disabled-by-injected-fetch-dependency",
@@ -408,9 +465,17 @@ const commandDefinitions = (fixture: BenchmarkFixture): CommandDefinition[] => [
   },
   {
     args: ["status", "--json"],
-    behavior: cliStatusBehavior,
+    behavior: cliStatusBehavior(false, false, fixture),
     cwd: fixture.refreshedRoot,
     id: "status-refreshed",
+    invocation: { method: "arashi-cli-status", refresh: "default", topology: "tracked-remote" },
+    networkDependent: true,
+  },
+  {
+    args: ["status", "--verbose", "--json"],
+    behavior: cliStatusBehavior(false, true, fixture),
+    cwd: fixture.refreshedRoot,
+    id: "status-refreshed-verbose",
     invocation: { method: "arashi-cli-status", refresh: "default", topology: "tracked-remote" },
     networkDependent: true,
   },
@@ -439,7 +504,7 @@ async function runCommandDefinition(
   if (result.exitCode !== 0) {
     throw new Error(`${definition.id} failed: ${result.stderr}`);
   }
-  const behavior = definition.behavior(result.stdout);
+  const behavior = await definition.behavior(result.stdout);
   await definition.afterEach?.();
   return { behavior, result };
 }
@@ -488,6 +553,7 @@ async function main(): Promise<void> {
             definition.cwd,
             tracePath,
             fixture.environment,
+            definition.id.startsWith("status-") ? fixture.repositoryPaths : undefined,
             definition.beforeEach,
             definition.afterEach,
           ),
@@ -554,7 +620,7 @@ async function main(): Promise<void> {
         ),
         runner: nodeRuntime("node-process"),
       },
-      schemaVersion: 4,
+      schemaVersion: 5,
     };
     const serialized = `${JSON.stringify(result, null, 2)}\n`;
     await mkdir(dirname(options.outputPath), { recursive: true });
