@@ -13,6 +13,7 @@ interface BenchmarkCommandResult {
     candidates?: string[];
     branchName?: string;
     operationCount?: number;
+    paths?: string[];
     repositories?: string[];
     successCount?: number;
     worktrees?: Array<{ branch: string; subRepositories: string[] }>;
@@ -220,6 +221,13 @@ describe("CLI performance benchmark runner", () => {
         }),
       ]),
     );
+    expect(commands["list-plain"].behavior.paths).toHaveLength(2);
+    expect(commands["list-plain"].behavior.paths).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("workspace"),
+        expect.stringContaining("fixture-01"),
+      ]),
+    );
     expect(commands["list-plain"].gitInvocations.count).toBeGreaterThan(0);
     expect(commands["status-local"].behavior.repositories).toEqual(
       commands["status-refreshed"].behavior.repositories,
@@ -275,6 +283,7 @@ describe("CLI performance benchmark runner", () => {
       expect.arrayContaining(["benchmark-core"]),
     );
     expect(commands["completion-worktree"].behavior.candidates).toContain("fixture-05");
+    expect(commands["list-plain"].behavior.paths).toHaveLength(6);
     expect(commands["list-enriched-json"].behavior.worktrees).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

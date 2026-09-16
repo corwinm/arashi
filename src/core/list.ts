@@ -14,6 +14,11 @@ import { spinner, warn } from "../lib/logger.ts";
 import chalk from "chalk";
 import { exec } from "../lib/git.ts";
 import { loadConfig } from "../lib/config.ts";
+import mapWithConcurrency, {
+  createConcurrencyLimiter,
+  type ConcurrencyLimiter,
+} from "../lib/concurrency.ts";
+import type { CommandResult } from "../types/git.ts";
 
 interface SubRepositoryInfo {
   relativePath: string;
@@ -50,6 +55,19 @@ interface ListCommandOutput {
   repositoryPath: string;
 }
 
+interface ListCollectionDependencies {
+  concurrency?: number;
+  discoverNestedRepositories?: (
+    worktreePath: string,
+    maxDepth: number,
+    limitProbe: ConcurrencyLimiter,
+  ) => Promise<SubRepositoryInfo[]>;
+  execGit?: (args: string[], cwd: string) => Promise<CommandResult>;
+  parseWorktrees?: (porcelain: string) => WorktreeListItem[];
+  probeChanges?: (worktreePath: string) => Promise<boolean>;
+  limitProbe?: ConcurrencyLimiter;
+}
+
 const ZERO = 0;
 const DEFAULT_MAX_DEPTH = 3;
 const SHORT_SHA_LENGTH = 7;
@@ -58,12 +76,17 @@ const JSON_INDENT = 2;
 const DETACHED_LABEL = "detached";
 const EMPTY_SHA = "0000000";
 const SKIPPED_DIRECTORY_NAMES = new Set([".arashi", "node_modules"]);
+const LIST_PROBE_CONCURRENCY = 8;
 
 const normalizeRelativeDisplayPath = (path: string): string => path.replaceAll("\\", "/");
 
-const tryAddGitRepository = async (gitRepos: string[], repoPath: string): Promise<void> => {
+const tryAddGitRepository = async (
+  gitRepos: string[],
+  repoPath: string,
+  limitProbe: ConcurrencyLimiter,
+): Promise<void> => {
   try {
-    await exec(["rev-parse", "--git-dir"], repoPath);
+    await limitProbe(() => exec(["rev-parse", "--git-dir"], repoPath));
     gitRepos.push(repoPath);
   } catch {}
 };
@@ -80,13 +103,14 @@ const handleDirectoryEntry = async (options: {
   entry: { isDirectory: () => boolean; isFile: () => boolean; name: string };
   excludeRoot?: boolean;
   gitRepos: string[];
+  limitProbe: ConcurrencyLimiter;
   rootPath: string;
   scan: (currentPath: string, depth: number) => Promise<void>;
 }): Promise<void> => {
   if (options.entry.name === ".git" && (options.entry.isDirectory() || options.entry.isFile())) {
     const repoPath = options.currentPath;
     if (shouldIncludeRootRepository(options.excludeRoot, repoPath, options.rootPath)) {
-      await tryAddGitRepository(options.gitRepos, repoPath);
+      await tryAddGitRepository(options.gitRepos, repoPath, options.limitProbe);
     }
     return;
   }
@@ -607,90 +631,90 @@ export const validateListCommandOutput: (output: unknown) => asserts output is L
  * });
  * ```
  */
-export const gatherWorktreeData = async (repoPath: string): Promise<WorktreeListItem[]> => {
-  try {
-    // Get worktree list in porcelain format
-    const result = await exec(["worktree", "list", "--porcelain"], repoPath);
-    const worktrees: WorktreeListItem[] = [];
+export const parseWorktreePorcelain = (porcelain: string): WorktreeListItem[] => {
+  const worktrees: WorktreeListItem[] = [];
+  const lines = porcelain.trim().split("\n");
+  let currentWorktree: Partial<WorktreeListItem> = {};
+  let isBare = false;
+  let foundFirstNonBare = false;
 
-    // Parse porcelain output
-    const lines = result.stdout.trim().split("\n");
-    let currentWorktree: Partial<WorktreeListItem> = {};
-    let isBare = false;
-    let foundFirstNonBare = false; // Track if we've seen the first non-bare worktree
-
-    for (const line of lines) {
-      if (line === "") {
-        // Empty line indicates end of worktree entry
-        if (currentWorktree.path && !isBare) {
-          // Check if this worktree has uncommitted changes
-          const hasChanges = await hasUncommittedChanges(currentWorktree.path);
-
-          // Determine if this is the main worktree:
-          // - For non-bare repos: matches the repository path
-          // - For bare repos: first non-bare worktree in the list
-          const isMain = !foundFirstNonBare;
-          foundFirstNonBare = true;
-
-          worktrees.push({
-            branch: currentWorktree.branch || null,
-            commit: currentWorktree.commit || EMPTY_SHA,
-            hasChanges,
-            isMain,
-            lockReason: currentWorktree.lockReason,
-            locked: currentWorktree.locked || false,
-            path: currentWorktree.path,
-          } as WorktreeListItem);
-        }
-        currentWorktree = {};
-        isBare = false;
-      } else if (line.startsWith("worktree ")) {
-        currentWorktree.path = line.slice("worktree ".length);
-      } else if (line === "bare") {
-        // Skip bare worktrees
-        isBare = true;
-      } else if (line.startsWith("HEAD ")) {
-        currentWorktree.commit = line.slice("HEAD ".length).slice(ZERO, SHORT_SHA_LENGTH);
-      } else if (line.startsWith("branch ")) {
-        const branchRef = line.slice("branch ".length);
-        // Extract branch name from refs/heads/branch-name
-        currentWorktree.branch = branchRef.replace("refs/heads/", "");
-      } else if (line.startsWith("detached")) {
-        currentWorktree.branch = null;
-      } else if (line.startsWith("locked")) {
-        currentWorktree.locked = true;
-        const reasonMatch = line.match(/^locked\s+(.+)$/);
-        if (reasonMatch) {
-          const [, lockReason] = reasonMatch;
-          currentWorktree.lockReason = lockReason;
-        }
-      }
-    }
-
-    // Handle last worktree if file doesn't end with empty line
+  const finishEntry = (): void => {
     if (currentWorktree.path && !isBare) {
-      const hasChanges = await hasUncommittedChanges(currentWorktree.path);
       const isMain = !foundFirstNonBare;
       foundFirstNonBare = true;
-
       worktrees.push({
         branch: currentWorktree.branch || null,
         commit: currentWorktree.commit || EMPTY_SHA,
-        hasChanges,
+        hasChanges: false,
         isMain,
         lockReason: currentWorktree.lockReason,
         locked: currentWorktree.locked || false,
         path: currentWorktree.path,
-      } as WorktreeListItem);
+      });
     }
+    currentWorktree = {};
+    isBare = false;
+  };
 
-    return worktrees;
+  for (const line of lines) {
+    if (line === "") {
+      finishEntry();
+    } else if (line.startsWith("worktree ")) {
+      currentWorktree.path = line.slice("worktree ".length);
+    } else if (line === "bare") {
+      isBare = true;
+    } else if (line.startsWith("HEAD ")) {
+      currentWorktree.commit = line.slice("HEAD ".length).slice(ZERO, SHORT_SHA_LENGTH);
+    } else if (line.startsWith("branch ")) {
+      currentWorktree.branch = line.slice("branch ".length).replace("refs/heads/", "");
+    } else if (line.startsWith("detached")) {
+      currentWorktree.branch = null;
+    } else if (line.startsWith("locked")) {
+      currentWorktree.locked = true;
+      const reasonMatch = line.match(/^locked\s+(.+)$/);
+      if (reasonMatch) {
+        const [, lockReason] = reasonMatch;
+        currentWorktree.lockReason = lockReason;
+      }
+    }
+  }
+  finishEntry();
+  return worktrees;
+};
+
+export const gatherPlainWorktreeData = async (
+  repoPath: string,
+  dependencies: ListCollectionDependencies = {},
+): Promise<WorktreeListItem[]> => {
+  try {
+    const result = await (dependencies.execGit ?? exec)(
+      ["worktree", "list", "--porcelain"],
+      repoPath,
+    );
+    return (dependencies.parseWorktrees ?? parseWorktreePorcelain)(result.stdout);
   } catch (error) {
     throw new ListCommandError(`Failed to gather worktree data for ${repoPath}`, {
       error,
       repoPath,
     });
   }
+};
+
+export const gatherWorktreeData = async (
+  repoPath: string,
+  dependencies: ListCollectionDependencies = {},
+): Promise<WorktreeListItem[]> => {
+  const worktrees = await gatherPlainWorktreeData(repoPath, dependencies);
+  const probeChanges = dependencies.probeChanges ?? hasUncommittedChanges;
+  const changes = await mapWithConcurrency(
+    worktrees,
+    dependencies.concurrency ?? LIST_PROBE_CONCURRENCY,
+    (worktree) =>
+      dependencies.limitProbe
+        ? dependencies.limitProbe(() => probeChanges(worktree.path))
+        : probeChanges(worktree.path),
+  );
+  return worktrees.map((worktree, index) => ({ ...worktree, hasChanges: changes[index] }));
 };
 
 /**
@@ -724,45 +748,44 @@ export const gatherWorktreeData = async (repoPath: string): Promise<WorktreeList
  * });
  * ```
  */
+export const parsePorcelainV2BranchStatus = (
+  output: string,
+): Pick<SubRepositoryInfo, "branch" | "commit" | "hasChanges"> => {
+  const lines = output.split("\n");
+  const oid = lines.find((line) => line.startsWith("# branch.oid "))?.slice("# branch.oid ".length);
+  if (!oid || oid === "(initial)") {
+    throw new Error("Repository has no commit");
+  }
+  const head = lines
+    .find((line) => line.startsWith("# branch.head "))
+    ?.slice("# branch.head ".length);
+  return {
+    branch: !head || head === "(detached)" || head === "(unknown)" ? null : head,
+    commit: oid.slice(ZERO, SHORT_SHA_LENGTH),
+    hasChanges: lines.some((line) => line.length > ZERO && !line.startsWith("#")),
+  };
+};
+
 export const discoverSubRepositories = async (
   worktreePath: string,
   maxDepth: number = DEFAULT_MAX_DEPTH,
+  limitProbe: ConcurrencyLimiter = createConcurrencyLimiter(LIST_PROBE_CONCURRENCY),
 ): Promise<SubRepositoryInfo[]> => {
-  // Find all git repositories within worktree
-  const repoPaths = await findGitRepositories(worktreePath, maxDepth, true);
-
-  const subRepos: SubRepositoryInfo[] = [];
-
-  for (const repoPath of repoPaths) {
+  const repoPaths = await findGitRepositories(worktreePath, maxDepth, true, limitProbe);
+  const results = await mapWithConcurrency(repoPaths, LIST_PROBE_CONCURRENCY, async (repoPath) => {
     try {
-      // Get branch name
-      let branch: string | null = null;
-      try {
-        const branchResult = await exec(["symbolic-ref", "--short", "HEAD"], repoPath);
-        branch = branchResult.stdout.trim();
-      } catch {
-        // Detached HEAD or error - leave as null
-      }
-
-      // Get short commit SHA
-      const commit = await getShortCommitSha(repoPath);
-
-      // Check for uncommitted changes
-      const hasChanges = await hasUncommittedChanges(repoPath);
-
-      // Get relative path
-      const relativePath = normalizeRelativeDisplayPath(relative(worktreePath, repoPath));
-
-      subRepos.push({
-        branch,
-        commit,
-        hasChanges,
-        relativePath,
-      });
-    } catch {}
-  }
-
-  return subRepos;
+      const status = await limitProbe(() =>
+        exec(["status", "--porcelain=v2", "--branch"], repoPath),
+      );
+      return {
+        ...parsePorcelainV2BranchStatus(status.stdout),
+        relativePath: normalizeRelativeDisplayPath(relative(worktreePath, repoPath)),
+      };
+    } catch {
+      return null;
+    }
+  });
+  return results.filter((result): result is SubRepositoryInfo => result !== null);
 };
 
 /**
@@ -1021,23 +1044,41 @@ export const formatAsJson = (output: ListCommandOutput): string =>
 export const buildListOutput = async (
   repoPath: string,
   options: ListCommandOptions,
+  dependencies: ListCollectionDependencies = {},
 ): Promise<ListCommandOutput> => {
-  // Gather worktree data
-  const worktrees = await gatherWorktreeData(repoPath);
+  const plain = !options.json && !options.table && !options.verbose;
+  if (plain) {
+    const worktrees = await gatherPlainWorktreeData(repoPath, dependencies);
+    return {
+      repositoryPath: repoPath,
+      totalCount: worktrees.length,
+      worktrees,
+    };
+  }
 
-  // If verbose, discover sub-repositories
+  const concurrency = dependencies.concurrency ?? LIST_PROBE_CONCURRENCY;
+  const limitProbe = createConcurrencyLimiter(concurrency);
+  const worktrees = await gatherWorktreeData(repoPath, { ...dependencies, limitProbe });
+
   if (options.verbose) {
-    for (const wt of worktrees) {
+    const discoverNestedRepositories =
+      dependencies.discoverNestedRepositories ??
+      ((worktreePath: string, maxDepth: number, sharedLimitProbe: ConcurrencyLimiter) =>
+        discoverSubRepositories(worktreePath, maxDepth, sharedLimitProbe));
+    const subRepositories = await mapWithConcurrency(worktrees, concurrency, async (worktree) => {
       try {
-        wt.subRepositories = await discoverSubRepositories(
-          wt.path,
+        return await discoverNestedRepositories(
+          worktree.path,
           options.maxDepth || DEFAULT_MAX_DEPTH,
+          limitProbe,
         );
       } catch {
-        // If sub-repo discovery fails, continue without it
-        wt.subRepositories = [];
+        return [];
       }
-    }
+    });
+    worktrees.forEach((worktree, index) => {
+      worktree.subRepositories = subRepositories[index];
+    });
   }
 
   return {
@@ -1089,6 +1130,7 @@ export const findGitRepositories = async (
   rootPath: string,
   maxDepth: number,
   excludeRoot?: boolean,
+  limitProbe: ConcurrencyLimiter = createConcurrencyLimiter(LIST_PROBE_CONCURRENCY),
 ): Promise<string[]> => {
   const gitRepos: string[] = [];
   const { readdir } = await import("fs/promises");
@@ -1108,6 +1150,7 @@ export const findGitRepositories = async (
           entry,
           excludeRoot,
           gitRepos,
+          limitProbe,
           rootPath,
           scan,
         });

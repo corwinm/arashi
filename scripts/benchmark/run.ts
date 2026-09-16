@@ -209,6 +209,10 @@ function completionBehavior(stdout: string, expected: string): Record<string, un
   return { candidates };
 }
 
+function plainListBehavior(stdout: string): Record<string, unknown> {
+  return { paths: stdout.trim().split("\n").filter(Boolean) };
+}
+
 function listBehavior(stdout: string): Record<string, unknown> {
   const envelope = JSON.parse(stdout) as {
     data?: {
@@ -368,7 +372,7 @@ const commandDefinitions = (fixture: BenchmarkFixture): CommandDefinition[] => [
   },
   {
     args: ["list"],
-    behavior: noBehavior,
+    behavior: plainListBehavior,
     cwd: fixture.refreshedRoot,
     id: "list-plain",
     invocation: cliInvocation,

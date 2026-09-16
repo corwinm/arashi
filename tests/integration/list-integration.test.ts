@@ -238,8 +238,20 @@ describe("list command - basic functionality", () => {
     const wt2Path = await createUniqueWorktree(testDir, "bugfix");
 
     const { output, error } = await runListCommand(testDir); // No --table flag
+    const porcelainProcess = spawn(["git", "worktree", "list", "--porcelain"], {
+      cwd: testDir,
+      stdout: "pipe",
+    });
+    const porcelainOutput = await new Response(porcelainProcess.stdout).text();
+    await porcelainProcess.exited;
+    const expectedOutput = `${porcelainOutput
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => line.slice("worktree ".length))
+      .join("\n")}\n`;
 
     expect(error).toBeUndefined();
+    expect(output).toBe(expectedOutput);
     // Simple format: just paths, one per line, no headers
     expect(output).not.toContain("Worktrees");
     expect(output).not.toContain("PATH");
