@@ -4,6 +4,7 @@ import { realpath } from "node:fs/promises";
 export interface GitInvocationMetric {
   available: boolean;
   count?: number;
+  fetchCount?: number;
   method: "git-trace2-event-root-sessions";
   repositories?: Array<{ count: number; path: string }>;
   reason?: string;
@@ -32,13 +33,19 @@ export async function readGitInvocationTrace(
   }
 
   let count = 0;
+  let fetchCount = 0;
   let recognizedInstrumentation = false;
   const rootSessions = new Set<string>();
   const repositoryBySession = new Map<string, string>();
   for (const line of contents.split("\n")) {
     if (!line.trim()) continue;
     try {
-      const event = JSON.parse(line) as { event?: unknown; sid?: unknown; worktree?: unknown };
+      const event = JSON.parse(line) as {
+        argv?: unknown;
+        event?: unknown;
+        sid?: unknown;
+        worktree?: unknown;
+      };
       if (typeof event.event !== "string") {
         return {
           available: false,
@@ -50,6 +57,9 @@ export async function readGitInvocationTrace(
       if (event.event === "start" && typeof event.sid === "string" && !event.sid.includes("/")) {
         count += 1;
         rootSessions.add(event.sid);
+        if (Array.isArray(event.argv) && event.argv[1] === "fetch") {
+          fetchCount += 1;
+        }
       }
       if (
         event.event === "def_repo" &&
@@ -98,6 +108,7 @@ export async function readGitInvocationTrace(
   return {
     available: true,
     count,
+    ...(fetchCount > 0 ? { fetchCount } : {}),
     method,
     repositories,
     ...(unattributedCount > 0

@@ -70,6 +70,22 @@ describe("Git invocation trace availability", () => {
     });
   });
 
+  test("counts root fetch starts without reparsing unavailable trace files", async () => {
+    const { readGitInvocationTrace } = await import("../../scripts/benchmark/git-trace.ts");
+    const trace = [
+      { event: "version", sid: "root" },
+      { argv: ["git", "fetch", "origin"], event: "start", sid: "root" },
+      { event: "def_repo", sid: "root", worktree: "/repo" },
+      { argv: ["git", "fetch"], event: "start", sid: "root/child" },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n");
+
+    await expect(
+      readGitInvocationTrace("trace.json", vi.fn().mockResolvedValue(trace), async (path) => path),
+    ).resolves.toMatchObject({ available: true, count: 1, fetchCount: 1 });
+  });
+
   test.each(["", `${JSON.stringify({ unrelated: true })}\n`])(
     "marks unsupported trace contents unavailable",
     async (contents) => {

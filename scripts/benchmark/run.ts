@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { arch, platform, release } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createBenchmarkFixture, type BenchmarkFixture, type FixtureId } from "./fixtures.ts";
@@ -155,13 +155,8 @@ async function gitInvocationCount(
   await afterEach?.();
 
   const metric = await readGitInvocationTrace(tracePath);
-  const events = (await readFile(tracePath, "utf8"))
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { event?: string; sid?: string; argv?: string[] });
-  const fetchCount = events.filter(
-    (event) => event.event === "start" && !event.sid?.includes("/") && event.argv?.[1] === "fetch",
-  ).length;
+  if (!metric.available) return metric;
+  const fetchCount = metric.fetchCount ?? 0;
   if (
     (args.includes("--local") || cli.args.some((arg) => arg.endsWith("status-local.ts"))) &&
     fetchCount !== 0
