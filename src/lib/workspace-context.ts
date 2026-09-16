@@ -1,3 +1,4 @@
+import type { GitProbeContext } from "./git-probe-context.ts";
 import { basename, dirname, isAbsolute, parse, resolve } from "path";
 import { stat } from "fs/promises";
 import {
@@ -72,9 +73,12 @@ const standaloneConfig = (): Config => ({
   worktreesDir: ".worktrees",
 });
 
-async function discoverConfigured(startPath: string): Promise<ConfiguredWorkspaceContext | null> {
+async function discoverConfigured(
+  startPath: string,
+  probeContext?: GitProbeContext,
+): Promise<ConfiguredWorkspaceContext | null> {
   try {
-    const workspaceRoot = await findWorkspaceRoot(startPath);
+    const workspaceRoot = await findWorkspaceRoot(startPath, { probeContext });
     return {
       config: await loadConfig(workspaceRoot),
       invocationPath: startPath,
@@ -98,10 +102,23 @@ async function isDirectory(path: string): Promise<boolean> {
 /** Resolve the primary, non-bare worktree recorded by Git for an invocation repository. */
 export async function resolveGitMainWorktree(
   invocationPath: string,
-  options: { strict?: boolean } = {},
+  options: { strict?: boolean; probeContext?: GitProbeContext } = {},
 ): Promise<string | null> {
   const absoluteInvocationPath = resolve(invocationPath);
   try {
+    if (options.probeContext) {
+      const identity = await options.probeContext.identity(absoluteInvocationPath);
+      if (identity.bare) return null;
+      const listing = await exec(
+        ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
+        identity.cwd,
+      );
+      const first = listing.stdout
+        .split(/\r?\n/)
+        .find((line) => line.startsWith("worktree "))
+        ?.slice(9);
+      return first ? resolve(first) : null;
+    }
     const bare = await exec(["rev-parse", "--is-bare-repository"], absoluteInvocationPath);
     if (bare.stdout.trim() === "true") return null;
 
@@ -155,12 +172,13 @@ export async function resolveGitMainWorktree(
  */
 export async function resolveWorkspaceContext(
   invocationPath: string = process.cwd(),
+  probeContext?: GitProbeContext,
 ): Promise<WorkspaceContext> {
   const absoluteInvocationPath = resolve(invocationPath);
-  const invocationConfigured = await discoverConfigured(absoluteInvocationPath);
+  const invocationConfigured = await discoverConfigured(absoluteInvocationPath, probeContext);
   if (invocationConfigured) return invocationConfigured;
 
-  const mainRoot = await resolveGitMainWorktree(absoluteInvocationPath);
+  const mainRoot = await resolveGitMainWorktree(absoluteInvocationPath, { probeContext });
   if (!mainRoot) {
     let reason: UnavailableWorkspaceContext["reason"] = "not-git-repository";
     try {
@@ -172,7 +190,7 @@ export async function resolveWorkspaceContext(
     return { invocationPath: absoluteInvocationPath, mode: "unavailable", reason };
   }
 
-  const mainConfigured = await discoverConfigured(mainRoot);
+  const mainConfigured = await discoverConfigured(mainRoot, probeContext);
   if (mainConfigured) return { ...mainConfigured, invocationPath: absoluteInvocationPath };
 
   if (!(await isDirectory(resolve(mainRoot, ".worktrees")))) {
@@ -237,8 +255,34 @@ export async function findConfiguredWorkspaceRoot(
 export async function findConfiguredWorkspaceRoots(
   commandName: string,
   invocationPath: string = process.cwd(),
+  options: { probeContext?: GitProbeContext; configurationRoot?: string } = {},
 ): Promise<WorkspaceRepositoryRoots> {
-  const configurationRoot = await findConfiguredWorkspaceRoot(commandName, invocationPath);
+  const configurationRoot =
+    options.configurationRoot ?? (await findConfiguredWorkspaceRoot(commandName, invocationPath));
+  if (options.probeContext) {
+    let configured;
+    try {
+      configured = await options.probeContext.identity(configurationRoot);
+    } catch {
+      return { configurationRoot, executionRoot: configurationRoot };
+    }
+
+    if (!configured.bare) return { configurationRoot, executionRoot: configurationRoot };
+    let hint = resolve(invocationPath);
+    for (;;) {
+      try {
+        const identity = await options.probeContext.identity(hint);
+        if (identity.repositoryKey === configured.repositoryKey)
+          return { configurationRoot, executionRoot: identity.topLevel ?? configurationRoot };
+      } catch {
+        /* A parent may still belong to the configured repository. */
+      }
+      const parent = dirname(hint);
+      if (parent === hint) break;
+      hint = parent;
+    }
+    return { configurationRoot, executionRoot: configurationRoot };
+  }
   const absoluteInvocationPath = resolve(invocationPath);
   const filesystemRoot = parse(absoluteInvocationPath).root;
   let currentPath = absoluteInvocationPath;

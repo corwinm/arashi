@@ -88,3 +88,28 @@ uploads each JSON result. It is informational and never runs on pull requests. N
 is enforced: hosted-runner contention makes latency gates flaky, and representative baselines do not
 yet justify global tolerances. Refresh uses local remotes; remote-host performance remains outside
 deterministic CI.
+
+## Invocation-scoped status probes
+
+Refreshed status uses one Git probe context for configured repositories or standalone worktrees.
+Repository identity comes from Git's common directory; worktree-local status and HEAD-relative
+comparisons remain scoped to the canonical worktree. Failed read probes are evicted for retry.
+Fetches serialize repository mutations and invalidate ref snapshots before and after each attempt,
+including failed fetches. Cross-worktree fetch sharing requires exact effective configuration and
+spawn semantics, with a positive proof that changing the execution directory cannot change the
+operation. Ambiguous helpers, configuration, environments, or relative endpoints run separately.
+
+On a Git version supporting `%(ahead-behind:HEAD)`, the clean tracked fixture uses at most seven
+root Git sessions per named repository (eight with native verbose status): combined identity,
+exact NUL configuration, one porcelain-v2 status, pre-fetch refs, targeted fetch, post-fetch refs,
+and an optional symbolic remote-HEAD fallback. Older supported Git uses a metadata snapshot and
+scoped `rev-list` comparisons; those extra compatibility probes must not be reported as meeting
+the optimized budget. Local mode never calls fetch and disables Git's implicit promisor lazy fetch.
+
+For issue #372, compare independently built binaries against CLI base
+`b648825295a5c342b6920be0585711678377b452` through the same external adapter and fixture instance.
+Record source and executable hashes, build environment, runtime versions, topology, command argv,
+warmups, samples, and Trace2 attribution. Require semantic equality, including native verbose output,
+and strictly lower counts for every named repository and the aggregate. Named counts plus explicit
+unattributed counts must reconcile; any unexplained candidate session invalidates the comparison.
+The pinned small normal/verbose totals are 39/42, and the large totals are 93/102.

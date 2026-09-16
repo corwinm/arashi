@@ -6,6 +6,8 @@
  * Supports three output modes: default, verbose, and short.
  */
 
+import { GitProbeContext } from "../lib/git-probe-context.ts";
+import { inspectStatusWithContext } from "../lib/status-probe.ts";
 import {
   compareCurrentBranchToConfiguredBranch,
   compareCurrentBranchToDefaultBranch,
@@ -170,6 +172,7 @@ export interface StatusCommandDependencies {
 }
 
 interface CheckRepoStatusOptions {
+  context?: GitProbeContext;
   baseBranch?: string;
   baseBranchSource?: "repository-config" | "workspace-config";
   dependencies?: Partial<StatusCommandDependencies>;
@@ -365,6 +368,14 @@ export const checkRepoStatus = async (
   }
 
   try {
+    if (options.context || !options.dependencies) {
+      const context = options.context ?? new GitProbeContext({ local: options.local });
+      try {
+        return await inspectStatusWithContext(name, path, context, options);
+      } finally {
+        if (!options.context) context.dispose();
+      }
+    }
     let refreshWarning: RepoRefreshWarning | null = null;
     let trackingFetchFailure: {
       error: string;
@@ -578,6 +589,7 @@ export const checkRepoStatus = async (
  * @returns Array of repository statuses
  */
 interface CheckAllReposOptions {
+  context?: GitProbeContext;
   dependencies?: Partial<StatusCommandDependencies>;
   includeWorkspaceRoot?: boolean;
   local?: boolean;
@@ -629,8 +641,12 @@ export const checkAllReposWithDependencies = (
     });
   }
 
+  const context =
+    options.context ??
+    (options.dependencies ? undefined : new GitProbeContext({ local: options.local }));
   const statusPromises = reposToCheck.map((repo) =>
     checkRepoStatus(repo.name, repo.path, {
+      context,
       baseBranch: repo.baseBranch,
       baseBranchSource: repo.baseBranchSource,
       dependencies,
@@ -639,7 +655,9 @@ export const checkAllReposWithDependencies = (
     }),
   );
 
-  return Promise.all(statusPromises);
+  return Promise.all(statusPromises).finally(() => {
+    if (!options.context) context?.dispose();
+  });
 };
 
 export const checkAllRepos = (
@@ -1142,9 +1160,10 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     process.exit(USAGE_EXIT_CODE);
   }
 
+  const probeContext = new GitProbeContext({ local: options.local });
   let workspaceContext;
   try {
-    workspaceContext = await resolveWorkspaceContext();
+    workspaceContext = await resolveWorkspaceContext(process.cwd(), probeContext);
   } catch (error) {
     if (options.json)
       writeJsonEnvelope(
@@ -1171,11 +1190,13 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     const statuses = await Promise.all(
       worktrees.map((worktree) =>
         checkRepoStatus(worktree.branch ?? basename(worktree.path), worktree.path, {
+          context: probeContext,
           local: options.local === true,
           verbose: options.verbose === true,
         }),
       ),
     );
+    probeContext.dispose();
     const callerWorktree = await realpath(process.cwd());
     const currentStatus = statuses.find((status) => resolve(status.path) === callerWorktree);
     const summary = summarizeStatuses(statuses);
@@ -1213,7 +1234,11 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
 
   let workspaceRoots;
   try {
-    workspaceRoots = await findConfiguredWorkspaceRoots("status");
+    workspaceRoots = await findConfiguredWorkspaceRoots("status", process.cwd(), {
+      probeContext,
+      configurationRoot:
+        workspaceContext.mode === "configured" ? workspaceContext.workspaceRoot : undefined,
+    });
   } catch {
     if (options.json) {
       writeJsonEnvelope(
@@ -1324,14 +1349,19 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
 
   statusSpinner?.start();
 
-  const includeWorkspaceRoot = await shouldIncludeWorkspaceRootInRepositoryChecks(repositoryRoot);
-  const statuses = await checkAllRepos(
-    repositoryRoot,
-    configForStatus,
-    options.verbose || false,
+  let includeWorkspaceRoot = true;
+  try {
+    includeWorkspaceRoot = !(await probeContext.identity(repositoryRoot)).bare;
+  } catch {
+    /* Report the repository inspection error below. */
+  }
+  const statuses = await checkAllReposWithDependencies(repositoryRoot, configForStatus, {
+    context: probeContext,
+    verbose: options.verbose === true,
     includeWorkspaceRoot,
-    options.local === true,
-  );
+    local: options.local === true,
+  });
+  probeContext.dispose();
   const visibleStatuses = filterHumanVisibleStatuses(statuses, options);
 
   statusSpinner?.stop();

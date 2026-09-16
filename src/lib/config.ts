@@ -1,3 +1,4 @@
+import type { GitProbeContext } from "./git-probe-context.ts";
 import { runtime } from "./runtime.ts";
 /**
  * Configuration Management Module
@@ -420,7 +421,10 @@ export const configExists = async (repoPath: string): Promise<boolean> => {
  */
 export const findWorkspaceRoot = async (
   startPath: string = process.cwd(),
-  options: { validate?: boolean | ((workspaceRoot: string) => Promise<void>) } = {},
+  options: {
+    validate?: boolean | ((workspaceRoot: string) => Promise<void>);
+    probeContext?: GitProbeContext;
+  } = {},
 ): Promise<string> => {
   const { dirname, isAbsolute, resolve, parse } = await import("path");
 
@@ -440,14 +444,18 @@ export const findWorkspaceRoot = async (
         await loadConfig(currentPath);
       }
       try {
-        const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
-        const rawCommonDirectory = common.stdout.trim();
+        const rawCommonDirectory = options.probeContext
+          ? (await options.probeContext.identity(currentPath)).repositoryKey
+          : (await exec(["rev-parse", "--git-common-dir"], currentPath)).stdout.trim();
         const commonDirectory = isAbsolute(rawCommonDirectory)
           ? resolve(rawCommonDirectory)
           : resolve(currentPath, rawCommonDirectory);
         if (commonDirectory !== currentPath && (await configExists(commonDirectory))) {
-          const bare = await exec(["rev-parse", "--is-bare-repository"], commonDirectory);
-          if (bare.stdout.trim() === "true") {
+          const bare = options.probeContext
+            ? (await options.probeContext.identity(commonDirectory)).bare
+            : (await exec(["rev-parse", "--is-bare-repository"], commonDirectory)).stdout.trim() ===
+              "true";
+          if (bare) {
             return commonDirectory;
           }
         }
@@ -481,8 +489,9 @@ export const findWorkspaceRoot = async (
   const checkedCommonDirectories = new Set<string>();
   while (true) {
     try {
-      const common = await exec(["rev-parse", "--git-common-dir"], currentPath);
-      const rawCommonDirectory = common.stdout.trim();
+      const rawCommonDirectory = options.probeContext
+        ? (await options.probeContext.identity(currentPath)).repositoryKey
+        : (await exec(["rev-parse", "--git-common-dir"], currentPath)).stdout.trim();
       const commonDirectory = isAbsolute(rawCommonDirectory)
         ? resolve(rawCommonDirectory)
         : resolve(currentPath, rawCommonDirectory);
