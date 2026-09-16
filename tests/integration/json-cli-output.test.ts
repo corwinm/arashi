@@ -229,6 +229,23 @@ describe("CLI JSON output contract", () => {
     expect(repositories.map((repo) => repo.name)).toEqual(["Main Repository", "repo-a", "repo-b"]);
   });
 
+  test("status --local makes no-refresh freshness explicit in JSON", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+
+    const result = await runArashi(workspaceRoot, ["status", "--local", "--json"]);
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const data = jsonData(parseSingleJsonDocument(result.stdout));
+    expect(data.freshness).toEqual({ mode: "local", remoteRefsRefreshed: false });
+    expect(jsonArray(data.repositories)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          freshness: { mode: "local", remoteRefsRefreshed: false },
+        }),
+      ]),
+    );
+  });
+
   test("status --json preserves repository diagnostics when root Git metadata is broken", async () => {
     const workspaceRoot = await createCommonWorkspace();
     await writeFile(join(workspaceRoot, "repos", "repo-a", "dirty.txt"), "dirty\n");

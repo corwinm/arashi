@@ -3315,6 +3315,21 @@
       "arguments": [],
       "options": [
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--local",
+          "description": "Use local remote-tracking refs without fetching",
+          "hidden": false,
+          "long": "--local",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
           "candidateKind": "group",
           "conflicts": [],
           "deprecated": false,

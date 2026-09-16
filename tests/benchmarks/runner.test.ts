@@ -10,17 +10,27 @@ const temporaryPaths: string[] = [];
 
 interface BenchmarkCommandResult {
   behavior: {
+    freshness?: { mode: string; remoteRefsRefreshed: boolean };
+    nativeStatus?: boolean;
+    statuses?: unknown[];
     candidates?: string[];
     branchName?: string;
     operationCount?: number;
     paths?: string[];
     repositories?: string[];
+    repositoryPaths?: string[];
     successCount?: number;
     worktrees?: Array<{ branch: string; subRepositories: string[] }>;
   };
   exitCode: number;
   fixtureId: string;
-  gitInvocations: { available: boolean; count?: number; method: string };
+  gitInvocations: {
+    available: boolean;
+    count?: number;
+    method: string;
+    repositories?: Array<{ count: number; path: string }>;
+    unattributed?: { count: number; reason: string };
+  };
   id: string;
   invocation: {
     method: string;
@@ -135,7 +145,7 @@ describe("CLI performance benchmark runner", () => {
     expect(result).not.toBeNull();
     if (!result) throw new Error("Benchmark result was not written.");
     expect(JSON.parse(stdout)).toEqual(result);
-    expect(result.schemaVersion).toBe(4);
+    expect(result.schemaVersion).toBe(5);
     expect(result.artifact).toEqual({
       available: false,
       reason: "Source mode has no Arashi executable artifact.",
@@ -168,6 +178,27 @@ describe("CLI performance benchmark runner", () => {
     const commands: Record<string, BenchmarkCommandResult> = Object.fromEntries(
       result.commands.map((command) => [command.id, command]),
     );
+    expect(commands["status-local"].behavior.freshness).toEqual({
+      mode: "local",
+      remoteRefsRefreshed: false,
+    });
+    expect(commands["status-refreshed"].behavior.freshness).toEqual({
+      mode: "refreshed",
+      remoteRefsRefreshed: true,
+    });
+    expect(commands["status-local-verbose"].behavior.nativeStatus).toBe(true);
+    expect(commands["status-local"].behavior.nativeStatus).toBe(false);
+    expect(commands["status-local"].behavior.statuses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          baseBranch: null,
+          defaultBranch: expect.objectContaining({
+            state: "available",
+            compareRef: "refs/remotes/origin/main",
+          }),
+        }),
+      ]),
+    );
     expect(Object.keys(commands)).toEqual([
       "version",
       "help",
@@ -180,7 +211,10 @@ describe("CLI performance benchmark runner", () => {
       "list-plain",
       "list-enriched-json",
       "status-local",
+      "status-local-verbose",
+      "status-local-collector",
       "status-refreshed",
+      "status-refreshed-verbose",
     ]);
     for (const command of Object.values(commands)) {
       expect(command.fixtureId).toBe("small");
@@ -232,16 +266,42 @@ describe("CLI performance benchmark runner", () => {
     expect(commands["status-local"].behavior.repositories).toEqual(
       commands["status-refreshed"].behavior.repositories,
     );
+    expect(commands["status-local"].behavior.repositoryPaths).toEqual(
+      commands["status-local"].behavior.statuses?.map(
+        (status) => (status as { path: string }).path,
+      ),
+    );
     expect(commands["status-local"].invocation).toEqual({
-      method: "checkAllRepos-without-fetch",
-      refresh: "disabled-by-injected-fetch-dependency",
+      method: "arashi-cli-status",
+      refresh: "explicit-local",
       topology: "tracked-remote",
     });
-    expect(commands["status-local"].runtime).toEqual({
-      method: "benchmark-only-node-adapter",
-      name: "node",
-      version: { available: true, value: process.version },
-    });
+    expect(commands["status-local"].networkDependent).toBe(false);
+    expect(commands["status-local-verbose"].behavior.statuses).toEqual(
+      commands["status-local"].behavior.statuses,
+    );
+    expect(commands["status-local-collector"].behavior).toEqual(commands["status-local"].behavior);
+    expect(commands["status-local"].gitInvocations).toMatchObject({ fetchCount: 0 });
+    for (const id of [
+      "status-local",
+      "status-local-verbose",
+      "status-local-collector",
+      "status-refreshed",
+      "status-refreshed-verbose",
+    ]) {
+      const metric = commands[id].gitInvocations;
+      expect(metric.available).toBe(true);
+      expect(metric.repositories?.map(({ path }) => path).toSorted()).toEqual(
+        commands[id].behavior.repositoryPaths?.toSorted(),
+      );
+      expect(
+        (metric.repositories?.reduce((sum, repository) => sum + repository.count, 0) ?? 0) +
+          (metric.unattributed?.count ?? 0),
+      ).toBe(metric.count);
+    }
+    expect(commands["status-refreshed-verbose"].behavior.statuses).toEqual(
+      commands["status-refreshed"].behavior.statuses,
+    );
     expect(commands["version"].runtime).toEqual({
       method: "node-source",
       name: "node",

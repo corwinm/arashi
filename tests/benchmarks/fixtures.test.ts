@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import {
   cleanupFixtureDirectory,
   createBenchmarkFixture,
@@ -198,4 +198,17 @@ describe("benchmark fixtures", () => {
     });
     expect(remove).toHaveBeenCalledTimes(1);
   });
+});
+
+test("status fixture retains the exact base topology without configured base", async () => {
+  const fixture = await createBenchmarkFixture("small");
+  try {
+    const config = JSON.parse(
+      await readFile(join(fixture.refreshedRoot, ".arashi", "config.json"), "utf8"),
+    );
+    expect(config).not.toHaveProperty("baseBranch");
+    expect(fixture.definitionVersion).toBe(4);
+  } finally {
+    await fixture.cleanup();
+  }
 });

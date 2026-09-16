@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import createBenchmarkEnvironment from "./environment.ts";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -22,6 +22,7 @@ export interface BenchmarkFixture {
   id: FixtureId;
   refreshedRoot: string;
   repositoryCount: number;
+  repositoryPaths: string[];
   statefulCases: { create: StatefulBenchmarkCase; remove: StatefulBenchmarkCase };
   worktreeCount: number;
 }
@@ -195,6 +196,9 @@ export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFi
     const repositoryPaths = Array.from({ length: definition.repositoryCount }, (_, index) =>
       join(refreshedRoot, "repos", `repo-${String(index + 1).padStart(2, "0")}`),
     );
+    const expectedRepositoryPaths = await Promise.all(
+      [refreshedRoot, ...repositoryPaths].map((path) => realpath(path)),
+    );
     const branchPath = (branch: string) => join(base, "worktrees", branch);
     const branchTargets = (branch: string) =>
       repositoryPaths.slice(0, 2).map((repository, index) => ({
@@ -246,6 +250,7 @@ export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFi
       environment,
       id,
       refreshedRoot,
+      repositoryPaths: expectedRepositoryPaths,
       statefulCases: {
         create: {
           prepare: async () => {

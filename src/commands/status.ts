@@ -24,6 +24,7 @@ import { findConfiguredWorkspaceRoots, resolveWorkspaceContext } from "../lib/wo
 import { standaloneWorktrees } from "../lib/standalone.ts";
 import { exec as gitExec, getFullGitStatus, getGitStatus } from "../lib/git.ts";
 import { normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
+
 import { info, error as logError, spinner } from "../lib/logger.ts";
 import { Command } from "commander";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
@@ -92,6 +93,8 @@ export interface StatusOptions {
   short?: boolean;
   /** Output a structured JSON envelope */
   json?: boolean;
+  /** Inspect existing remote-tracking refs without network refresh */
+  local?: boolean;
 }
 
 /**
@@ -100,6 +103,8 @@ export interface StatusOptions {
 export interface GitFileStatus {
   /** Relative path to the file */
   path: string;
+  /** Original path for a rename or copy. */
+  originalPath?: string;
   /** Status in staging area (one character: ' ', 'M', 'A', 'D', 'R', 'C') */
   stagingStatus: string;
   /** Status in working tree (one character: ' ', 'M', 'D', '?') */
@@ -151,6 +156,8 @@ export interface RepoStatus {
   refreshWarning?: RepoRefreshWarning | null;
   /** Full git status output (for verbose mode) */
   fullStatus?: string;
+  /** Freshness contract for remote-tracking data */
+  freshness?: { mode: "local" | "refreshed"; remoteRefsRefreshed: boolean };
 }
 
 export interface StatusCommandDependencies {
@@ -166,6 +173,7 @@ interface CheckRepoStatusOptions {
   baseBranch?: string;
   baseBranchSource?: "repository-config" | "workspace-config";
   dependencies?: Partial<StatusCommandDependencies>;
+  local?: boolean;
   verbose?: boolean;
 }
 
@@ -181,7 +189,7 @@ const defaultStatusCommandDependencies: StatusCommandDependencies = {
 /**
  * Parse git status porcelain output
  *
- * Parses the output of `git status --porcelain=v1 --branch` into structured data.
+ * Parses NUL-delimited porcelain v2, retaining legacy v1 input compatibility.
  *
  * @param output - Git status porcelain output
  * @returns Parsed file statuses and branch information
@@ -233,13 +241,49 @@ export const parseGitStatus = (
   files: GitFileStatus[];
   branch: BranchTrackingInfo;
 } => {
-  const lines = output.split("\n").filter((line) => line.length > ZERO);
+  const nulDelimited = output.includes("\0");
+  const lines = output.split(nulDelimited ? "\0" : "\n").filter((line) => line.length > ZERO);
   const files: GitFileStatus[] = [];
   let branch = createEmptyBranchTrackingInfo();
 
-  for (const line of lines) {
-    if (line.startsWith("##")) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (line.startsWith("# branch.head ")) {
+      const head = line.slice("# branch.head ".length);
+      branch.localBranch = head === "(detached)" ? "" : head;
+      branch.isDetached = head === "(detached)";
+    } else if (line.startsWith("# branch.upstream ")) {
+      branch.remoteBranch = line.slice("# branch.upstream ".length) || null;
+    } else if (line.startsWith("# branch.ab ")) {
+      const match = line.match(/^# branch\.ab \+(\d+) -(\d+)$/);
+      if (match) {
+        branch.ahead = Number.parseInt(match[ONE] ?? "0", DECIMAL_RADIX);
+        branch.behind = Number.parseInt(match[2] ?? "0", DECIMAL_RADIX);
+      }
+    } else if (line.startsWith("# ")) {
+      continue;
+    } else if (line.startsWith("##")) {
       branch = parseBranchLine(line);
+    } else if (line.startsWith("? ")) {
+      files.push({ path: line.slice(2), stagingStatus: "?", workingStatus: "?" });
+    } else if (line.startsWith("! ")) {
+      files.push({ path: line.slice(2), stagingStatus: "!", workingStatus: "!" });
+    } else if (/^[12u] /.test(line)) {
+      const status = line.slice(2, 4).replaceAll(".", " ");
+      const recordType = line[ZERO];
+      const metadataFieldCount = recordType === "1" ? 6 : recordType === "2" ? 7 : 8;
+      const record = line.match(
+        new RegExp(`^[12u] \\S+ (?:\\S+ ){${metadataFieldCount}}([\\s\\S]+)$`),
+      );
+      const recordPath = record?.[ONE] ?? "";
+      const path = nulDelimited ? recordPath : (recordPath.split("\t", ONE)[ZERO] ?? "");
+      const originalPath = recordType === "2" && nulDelimited ? lines[++index] : undefined;
+      files.push({
+        path,
+        ...(originalPath !== undefined ? { originalPath } : {}),
+        stagingStatus: status[ZERO] ?? " ",
+        workingStatus: status[ONE] ?? " ",
+      });
     } else {
       const [stagingStatus = "", workingStatus = ""] = line;
       const path = line.slice(THREE);
@@ -300,7 +344,11 @@ export const checkRepoStatus = async (
   options: CheckRepoStatusOptions = {},
 ): Promise<RepoStatus> => {
   const dependencies = { ...defaultStatusCommandDependencies, ...options.dependencies };
-  const { verbose = false } = options;
+  const { local = false, verbose = false } = options;
+  const freshness = {
+    mode: local ? ("local" as const) : ("refreshed" as const),
+    remoteRefsRefreshed: false,
+  };
   const repoExists = await pathExists(path);
   if (!repoExists) {
     return {
@@ -309,6 +357,7 @@ export const checkRepoStatus = async (
       defaultBranch: null,
       error: `Repository is missing at ${path}. Run \`arashi clone\` to clone missing repositories.`,
       files: [],
+      freshness,
       name,
       path,
       refreshWarning: null,
@@ -323,27 +372,38 @@ export const checkRepoStatus = async (
       message: string;
     } | null = null;
     let trackingCompareRef: string | null = null;
+    let refreshedCompareRef: string | null = null;
     const trackingTarget = await dependencies.resolveRemoteTrackingTarget(path);
     if (trackingTarget.ok) {
-      trackingCompareRef = trackingTarget.target.upstream
-        ? `refs/remotes/${trackingTarget.target.remote}/${trackingTarget.target.branch}`
-        : null;
-      const fetchResult = await dependencies.fetchRemoteTrackingTarget(path, trackingTarget.target);
-      if (!fetchResult.ok) {
-        trackingFetchFailure = fetchResult;
-        refreshWarning = createRefreshWarning(fetchResult);
+      const targetCompareRef = `refs/remotes/${trackingTarget.target.remote}/${trackingTarget.target.branch}`;
+      trackingCompareRef = trackingTarget.target.upstream ? targetCompareRef : null;
+      if (!local) {
+        const fetchResult = await dependencies.fetchRemoteTrackingTarget(
+          path,
+          trackingTarget.target,
+        );
+        if (fetchResult.ok) {
+          freshness.remoteRefsRefreshed = true;
+          refreshedCompareRef = targetCompareRef;
+        }
+        if (!fetchResult.ok) {
+          trackingFetchFailure = fetchResult;
+          refreshWarning = createRefreshWarning(fetchResult);
+        }
       }
     }
 
     const result = await dependencies.getGitStatus(path);
 
     if (result.error) {
+      freshness.remoteRefsRefreshed = false;
       return {
         baseBranch: null,
         branch: createEmptyBranchTrackingInfo(true),
         defaultBranch: null,
         error: result.error,
         files: [],
+        freshness,
         name,
         path,
         refreshWarning,
@@ -361,6 +421,10 @@ export const checkRepoStatus = async (
           configuredBaseBranch,
           parsed.branch.isDetached,
           trackingCompareRef ? [trackingCompareRef] : [],
+          {
+            alreadyRefreshedCompareRefs: refreshedCompareRef ? [refreshedCompareRef] : [],
+            refresh: !local,
+          },
         )
       : null;
     const baseBranch =
@@ -399,6 +463,11 @@ export const checkRepoStatus = async (
       [trackingCompareRef, resolvedBaseBranch?.compareRef].filter(
         (compareRef): compareRef is string => Boolean(compareRef),
       ),
+      {
+        alreadyRefreshedCompareRefs: refreshedCompareRef ? [refreshedCompareRef] : [],
+        preferredRemote: trackingTarget.ok ? trackingTarget.target.remote : null,
+        refresh: !local,
+      },
     );
     const defaultMatchesTracking =
       resolvedDefaultBranch.state === "skipped" &&
@@ -436,6 +505,23 @@ export const checkRepoStatus = async (
         ? { ...baseBranch }
         : resolvedDefaultBranch;
 
+    // A successful local comparison alone is not evidence of a network refresh.
+    const comparisons = [baseBranch, defaultBranch];
+    if (
+      !local &&
+      comparisons.some((comparison) => comparison?.state === "available" && comparison.remote)
+    ) {
+      freshness.remoteRefsRefreshed = true;
+    }
+    if (
+      trackingFetchFailure ||
+      comparisons.some((comparison) => comparison?.state === "unavailable")
+    ) {
+      freshness.remoteRefsRefreshed = false;
+    }
+
+    // Native status preserves Git's conflict, rename, upstream and help diagnostics;
+    // porcelain cannot safely reconstruct this public verbose output.
     let fullStatus: string | undefined = undefined;
     if (verbose) {
       const fullResult = await dependencies.getFullGitStatus(path);
@@ -453,12 +539,14 @@ export const checkRepoStatus = async (
       defaultBranch,
       error: null,
       files: parsed.files,
+      freshness,
       fullStatus,
       name,
       path,
       refreshWarning,
     };
   } catch (error) {
+    freshness.remoteRefsRefreshed = false;
     let errorMessage = "Unknown error";
     if (error instanceof Error) {
       errorMessage = error.message;
@@ -470,6 +558,7 @@ export const checkRepoStatus = async (
       defaultBranch: null,
       error: errorMessage,
       files: [],
+      freshness,
       name,
       path,
       refreshWarning: null,
@@ -491,6 +580,7 @@ export const checkRepoStatus = async (
 interface CheckAllReposOptions {
   dependencies?: Partial<StatusCommandDependencies>;
   includeWorkspaceRoot?: boolean;
+  local?: boolean;
   verbose?: boolean;
 }
 
@@ -499,7 +589,12 @@ export const checkAllReposWithDependencies = (
   config: Config,
   options: CheckAllReposOptions = {},
 ): Promise<RepoStatus[]> => {
-  const { dependencies = {}, includeWorkspaceRoot = true, verbose = false } = options;
+  const {
+    dependencies = {},
+    includeWorkspaceRoot = true,
+    local = false,
+    verbose = false,
+  } = options;
   const reposToCheck: {
     baseBranch?: string;
     baseBranchSource?: "repository-config" | "workspace-config";
@@ -539,6 +634,7 @@ export const checkAllReposWithDependencies = (
       baseBranch: repo.baseBranch,
       baseBranchSource: repo.baseBranchSource,
       dependencies,
+      local,
       verbose,
     }),
   );
@@ -551,8 +647,28 @@ export const checkAllRepos = (
   config: Config,
   verbose = false,
   includeWorkspaceRoot = true,
+  local = false,
 ): Promise<RepoStatus[]> =>
-  checkAllReposWithDependencies(workspaceRoot, config, { includeWorkspaceRoot, verbose });
+  checkAllReposWithDependencies(workspaceRoot, config, {
+    includeWorkspaceRoot,
+    local,
+    verbose,
+  });
+
+const statusFreshness = (local: boolean, statuses: RepoStatus[]) => ({
+  mode: local ? ("local" as const) : ("refreshed" as const),
+  remoteRefsRefreshed:
+    !local &&
+    statuses.length > 0 &&
+    statuses.every((status) => status.freshness?.remoteRefsRefreshed === true),
+});
+
+export const formatFreshnessNotice = (local: boolean, statuses: RepoStatus[] = []): string =>
+  local
+    ? "Freshness: local remote-tracking refs (no fetch performed)"
+    : statusFreshness(local, statuses).remoteRefsRefreshed
+      ? "Freshness: remote-tracking refs refreshed"
+      : "Freshness: remote-tracking refresh incomplete or not applicable";
 
 export const shouldIncludeWorkspaceRootInRepositoryChecks = async (
   workspaceRoot: string,
@@ -1055,6 +1171,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     const statuses = await Promise.all(
       worktrees.map((worktree) =>
         checkRepoStatus(worktree.branch ?? basename(worktree.path), worktree.path, {
+          local: options.local === true,
           verbose: options.verbose === true,
         }),
       ),
@@ -1069,6 +1186,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
           {
             callerWorktree,
             currentBranch: currentStatus?.branch.localBranch ?? null,
+            freshness: statusFreshness(options.local === true, statuses),
             mode: "standalone",
             repositoryPath: workspaceContext.mainRoot,
             summary,
@@ -1080,7 +1198,9 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
         ),
       );
     else {
-      console.log(`Workspace mode: standalone\nMain repository: ${workspaceContext.mainRoot}`);
+      console.log(
+        `Workspace mode: standalone\nMain repository: ${workspaceContext.mainRoot}\n${formatFreshnessNotice(options.local === true, statuses)}`,
+      );
       if (callerWorktree !== workspaceContext.mainRoot)
         console.log(`Caller worktree: ${callerWorktree}`);
       let output = formatDefaultOutput(statuses);
@@ -1210,6 +1330,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
     configForStatus,
     options.verbose || false,
     includeWorkspaceRoot,
+    options.local === true,
   );
   const visibleStatuses = filterHumanVisibleStatuses(statuses, options);
 
@@ -1225,6 +1346,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
         "status",
         {
           filters: filterResult.filters,
+          freshness: statusFreshness(options.local === true, statuses),
           mode: "configured",
           repositories: statuses,
           summary,
@@ -1235,6 +1357,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
       ),
     );
   } else {
+    console.log(formatFreshnessNotice(options.local === true, statuses));
     let output = formatDefaultOutput(visibleStatuses);
     if (options.verbose) {
       output = formatVerboseOutput(visibleStatuses);
@@ -1260,6 +1383,7 @@ export const createCommand = (): Command =>
     .description("Show status of all managed repositories")
     .option("-v, --verbose", "Show full git status output")
     .option("-s, --short", "Show one-line summary per repository")
+    .option("--local", "Use local remote-tracking refs without fetching")
     .option(
       "-o, --only <repo>",
       "Only include a configured child repository (repeatable, comma-separated)",
@@ -1278,6 +1402,7 @@ Examples:
   $ arashi status                    # Default output with colors
   $ arashi status --verbose          # Full git status for each repo
   $ arashi status --short            # One line per repository
+  $ arashi status --local            # Local refs only; no network refresh
   $ arashi status --group docs       # Only check repositories in a group
       `,
     )

@@ -271,23 +271,80 @@ export async function clone(
  * const branch = await getDefaultBranch('/path/to/repo');
  * console.log(`Default branch: ${branch}`);
  */
-export async function getDefaultBranch(repoPath: string): Promise<string> {
-  // Try method 1: symbolic-ref (most reliable)
-  try {
-    const result = await exec(["symbolic-ref", "refs/remotes/origin/HEAD", "--short"], repoPath);
-    const branch = result.stdout.trim().replace(/^origin\//, "");
-    if (branch) {
-      return branch;
+export async function getDefaultBranch(
+  repoPath: string,
+  runGit: (args: string[], cwd: string) => Promise<{ stdout: string }> = exec,
+  preferredRemote?: string | null,
+): Promise<string> {
+  const readRemoteHead = async (remote: string): Promise<string | null> => {
+    try {
+      const result = await runGit(
+        ["symbolic-ref", `refs/remotes/${remote}/HEAD`, "--short"],
+        repoPath,
+      );
+      const target = result.stdout.trim();
+      const prefix = `${remote}/`;
+      return target.startsWith(prefix) ? target.slice(prefix.length) || null : null;
+    } catch {
+      return null;
     }
+  };
+
+  let upstreamRemote: string | null = preferredRemote ?? null;
+  if (preferredRemote === undefined) {
+    try {
+      const upstream = (
+        await runGit(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], repoPath)
+      ).stdout.trim();
+      const separator = upstream.indexOf("/");
+      if (separator > 0) upstreamRemote = upstream.slice(0, separator);
+    } catch {
+      // No current-branch tracking remote.
+    }
+  }
+
+  if (upstreamRemote) {
+    const branch = await readRemoteHead(upstreamRemote);
+    if (branch) return branch;
+  }
+
+  if (upstreamRemote !== "origin") {
+    const branch = await readRemoteHead("origin");
+    if (branch) return branch;
+  }
+
+  let remoteHeads: string[] = [];
+  try {
+    remoteHeads = (
+      await runGit(["for-each-ref", "--format=%(refname)", "refs/remotes"], repoPath)
+    ).stdout
+      .split("\n")
+      .map((ref) => ref.trim())
+      .filter((ref) => ref.startsWith("refs/remotes/") && ref.endsWith("/HEAD"))
+      .map((ref) => ref.slice("refs/remotes/".length, -"/HEAD".length))
+      .filter(Boolean);
   } catch {
-    // Fall through to next method
+    // Fall through to the local compatibility paths.
+  }
+
+  const remainingRemotes = [...new Set(remoteHeads)]
+    .filter((remote) => remote !== upstreamRemote && remote !== "origin")
+    .toSorted();
+  const remainingHeads = (
+    await Promise.all(
+      remainingRemotes.map(async (remote) => [remote, await readRemoteHead(remote)] as const),
+    )
+  ).filter((entry): entry is readonly [string, string] => entry[1] !== null);
+  if (remainingHeads.length === 1) {
+    const branch = remainingHeads[0]?.[1];
+    if (branch) return branch;
   }
 
   // Try method 2: Check common default branch names
   const commonBranches = ["main", "master", "develop"];
   for (const branch of commonBranches) {
     try {
-      await exec(["show-ref", "--verify", `refs/remotes/origin/${branch}`], repoPath);
+      await runGit(["show-ref", "--verify", `refs/remotes/origin/${branch}`], repoPath);
       return branch;
     } catch {
       // Branch doesn't exist, try next
@@ -297,7 +354,7 @@ export async function getDefaultBranch(repoPath: string): Promise<string> {
   // Try method 3: Check common local branch names (bare repos without remotes)
   for (const branch of commonBranches) {
     try {
-      await exec(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
+      await runGit(["show-ref", "--verify", `refs/heads/${branch}`], repoPath);
       return branch;
     } catch {
       // Branch doesn't exist, try next
@@ -306,7 +363,7 @@ export async function getDefaultBranch(repoPath: string): Promise<string> {
 
   // Try method 4: Get first local branch (bare repos without remotes)
   try {
-    const result = await exec(
+    const result = await runGit(
       ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
       repoPath,
     );
@@ -325,7 +382,7 @@ export async function getDefaultBranch(repoPath: string): Promise<string> {
 
   // Try method 5: Get first remote branch
   try {
-    const result = await exec(["branch", "-r", "--list"], repoPath);
+    const result = await runGit(["branch", "-r", "--list"], repoPath);
     const branches = result.stdout
       .trim()
       .split("\n")
@@ -365,7 +422,7 @@ export interface GitStatusResult {
 /**
  * Get git status for a repository using porcelain format
  *
- * Executes `git status --porcelain=v1 --branch` to get machine-readable status.
+ * Executes `git status --porcelain=v2 --branch -z` to get machine-readable status.
  * This format is stable across git versions and provides consistent output for parsing.
  *
  * @param repoPath - Path to the repository
@@ -381,10 +438,10 @@ export interface GitStatusResult {
  */
 export async function getGitStatus(repoPath: string): Promise<GitStatusResult> {
   try {
-    const result = await exec(["status", "--porcelain=v1", "--branch"], repoPath);
+    const result = await exec(["status", "--porcelain=v2", "--branch", "-z"], repoPath);
     return {
       error: null,
-      output: result.stdout.trim(),
+      output: result.stdout,
     };
   } catch (error) {
     // Return error information instead of throwing

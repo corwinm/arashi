@@ -20,7 +20,15 @@ describe("Git invocation trace availability", () => {
 
   test("keeps supported instrumentation available when no Git process starts", async () => {
     const { readGitInvocationTrace } = await import("../../scripts/benchmark/git-trace.ts");
-    const supportedTrace = `${JSON.stringify({ event: "version", evt: "2", sid: "session" })}\n`;
+    const supportedTrace = [
+      { event: "version", evt: "2", sid: "session" },
+      { event: "timer", sid: "session" },
+      { event: "counter", sid: "session" },
+      { event: "th_timer", sid: "session" },
+      { event: "th_counter", sid: "session" },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n");
 
     await expect(
       readGitInvocationTrace("trace.json", vi.fn().mockResolvedValue(supportedTrace)),
@@ -28,7 +36,91 @@ describe("Git invocation trace availability", () => {
       available: true,
       count: 0,
       method: "git-trace2-event-root-sessions",
+      repositories: [],
     });
+  });
+
+  test("marks unknown Trace2 event names unavailable", async () => {
+    const { readGitInvocationTrace } = await import("../../scripts/benchmark/git-trace.ts");
+    const trace = `${JSON.stringify({ event: "banana", sid: "root" })}\n`;
+
+    await expect(
+      readGitInvocationTrace("trace.json", vi.fn().mockResolvedValue(trace)),
+    ).resolves.toMatchObject({
+      available: false,
+      method: "git-trace2-event-root-sessions",
+      reason: expect.stringContaining("recognized Trace2 events"),
+    });
+  });
+
+  test.each([
+    ["start", { event: "start" }],
+    ["def_repo", { event: "def_repo", sid: "root" }],
+  ])("marks a malformed %s event unavailable", async (_name, event) => {
+    const { readGitInvocationTrace } = await import("../../scripts/benchmark/git-trace.ts");
+    const trace = `${JSON.stringify(event)}\n`;
+
+    await expect(
+      readGitInvocationTrace("trace.json", vi.fn().mockResolvedValue(trace)),
+    ).resolves.toMatchObject({
+      available: false,
+      method: "git-trace2-event-root-sessions",
+      reason: expect.stringContaining("malformed Trace2 event"),
+    });
+  });
+
+  test("attributes root sessions to canonical repositories even when def_repo follows start", async () => {
+    const { readGitInvocationTrace } = await import("../../scripts/benchmark/git-trace.ts");
+    const trace = [
+      { event: "version", sid: "root-a" },
+      { argv: ["git", "status"], event: "start", sid: "root-a" },
+      { event: "def_repo", sid: "root-a", worktree: "/repo-a" },
+      { event: "version", sid: "root-a/child" },
+      { argv: ["git", "maintenance"], event: "start", sid: "root-a/child" },
+      { event: "version", sid: "root-b" },
+      { argv: ["git", "rev-parse"], event: "start", sid: "root-b" },
+      { event: "def_repo", sid: "root-b", worktree: "/repo-b" },
+      { event: "version", sid: "root-c" },
+      { argv: ["git", "--version"], event: "start", sid: "root-c" },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n");
+
+    await expect(
+      readGitInvocationTrace(
+        "trace.json",
+        vi.fn().mockResolvedValue(trace),
+        async (path) => `/canonical${path}`,
+      ),
+    ).resolves.toEqual({
+      available: true,
+      count: 3,
+      method: "git-trace2-event-root-sessions",
+      repositories: [
+        { count: 1, path: "/canonical/repo-a" },
+        { count: 1, path: "/canonical/repo-b" },
+      ],
+      unattributed: {
+        count: 1,
+        reason: "Trace2 emitted no repository identity for these root sessions.",
+      },
+    });
+  });
+
+  test("counts root fetch starts without reparsing unavailable trace files", async () => {
+    const { readGitInvocationTrace } = await import("../../scripts/benchmark/git-trace.ts");
+    const trace = [
+      { event: "version", sid: "root" },
+      { argv: ["git", "fetch", "origin"], event: "start", sid: "root" },
+      { event: "def_repo", sid: "root", worktree: "/repo" },
+      { argv: ["git", "fetch"], event: "start", sid: "root/child" },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n");
+
+    await expect(
+      readGitInvocationTrace("trace.json", vi.fn().mockResolvedValue(trace), async (path) => path),
+    ).resolves.toMatchObject({ available: true, count: 1, fetchCount: 1 });
   });
 
   test.each(["", `${JSON.stringify({ unrelated: true })}\n`])(

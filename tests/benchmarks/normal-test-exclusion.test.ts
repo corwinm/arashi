@@ -34,7 +34,9 @@ describe("benchmark execution policy", () => {
     expect(documentation).toContain("completion-repository");
     expect(documentation).toContain("completion-group");
     expect(documentation).toContain("completion-worktree");
-    expect(documentation).toContain("checkAllRepos-without-fetch");
+    expect(documentation).toContain("aw status --local --json");
+    expect(documentation).toContain("status-local-verbose");
+    expect(documentation).not.toContain("checkAllRepos-without-fetch");
     expect(documentation).toContain("same tracked-remote fixture");
     expect(documentation).toContain("SHA-256");
     expect(documentation).toContain("compiler provenance unavailable");
