@@ -275,6 +275,10 @@ interface ContextOptions {
   platform?: string;
   digest?: (bytes: Buffer) => string;
 }
+interface GitExecutable {
+  selected: string;
+  canonical: string;
+}
 interface Attempt {
   outcome?: RemoteTrackingFetchResult;
   fingerprint: Fingerprint;
@@ -334,10 +338,13 @@ export class GitProbeContext {
     }
     return state;
   }
-  #git(cwd: string): Promise<string> {
+  #git(cwd: string): Promise<GitExecutable> {
     return this.#facts.get(`executable:${cwd}`, async () => {
-      if (this.#options.executable)
-        return (this.#options.realpath ?? realpath)(resolve(cwd, this.#options.executable));
+      const canonicalize = this.#options.realpath ?? realpath;
+      if (this.#options.executable) {
+        const selected = resolve(cwd, this.#options.executable);
+        return { selected, canonical: await canonicalize(selected) };
+      }
       const env = this.#environment;
       const windows = (this.#options.platform ?? process.platform) === "win32";
       const suffixes = windows ? (env.PATHEXT ?? ".EXE;.CMD").split(";") : [""];
@@ -348,7 +355,7 @@ export class GitProbeContext {
           const candidate = resolve(cwd, directory, `git${suffix}`);
           try {
             await access(candidate, constants.X_OK);
-            return await realpath(candidate);
+            return { selected: candidate, canonical: await canonicalize(candidate) };
           } catch {
             /* Try the next executable lookup candidate. */
           }
@@ -387,8 +394,9 @@ export class GitProbeContext {
     token: number | null = null,
   ): Promise<ProbeResult> {
     this.#assert();
+    const executable = await this.#git(cwd);
     const call: ProbeCall = {
-      executable: await this.#git(cwd),
+      executable: executable.selected,
       argv,
       cwd,
       environment: {
@@ -584,6 +592,7 @@ export class GitProbeContext {
     safe &&= (this.#environment.PATH ?? "/usr/bin:/bin")
       .split((this.#options.platform ?? process.platform) === "win32" ? ";" : delimiter)
       .every((directory) => isAbsolute(directory));
+    safe &&= this.#options.executable === undefined || isAbsolute(this.#options.executable);
     safe &&= [
       "HOME",
       "USERPROFILE",
@@ -595,7 +604,7 @@ export class GitProbeContext {
       {
         repositoryKey: id.repositoryKey,
         cwdProjection: safe ? "cwd-independent" : "cwd:" + id.cwd,
-        executable: await this.#git(id.cwd),
+        executable: (await this.#git(id.cwd)).canonical,
         lookupMode: this.#options.executable ? "explicit" : "PATH",
         environment: this.#environment,
         configBytes: config.bytes,

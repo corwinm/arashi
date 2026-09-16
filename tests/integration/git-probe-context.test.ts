@@ -1,6 +1,6 @@
 import { checkRepoStatus } from "../../src/commands/status.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -114,6 +114,49 @@ describe("real Git identity and spawn equivalence", () => {
     const id = await new GitProbeContext({ environment: withoutPath }).identity(repo);
     expect(id.repositoryKey).toBe(common);
   });
+  test.runIf(process.platform !== "win32")(
+    "PATH-selected symlink dispatcher preserves invoked-path spawning and canonical fetch equivalence",
+    async () => {
+      const bin = join(root, "dispatcher-bin");
+      const dispatcher = join(bin, "git-dispatcher");
+      const selectedGit = join(bin, "git");
+      const remote = join(root, "dispatcher-remote.git");
+      const quotedGit = `'${executable.replaceAll("'", `'\\''`)}'`;
+      await mkdir(bin);
+      await writeFile(
+        dispatcher,
+        `#!/bin/sh\n[ "\${0##*/}" = git ] || exit 97\nexec ${quotedGit} "$@"\n`,
+      );
+      await chmod(dispatcher, 0o755);
+      await symlink(dispatcher, selectedGit);
+      git(root, "init", "--bare", "-b", "main", remote);
+      git(repo, "remote", "add", "origin", remote);
+      git(repo, "push", "-u", "origin", "main");
+
+      const dispatcherCalls: ProbeCall[] = [];
+      const ctx = new GitProbeContext({
+        environment: { ...env, PATH: bin },
+        run: async (call: ProbeCall) => {
+          dispatcherCalls.push(call);
+          return runGitProbe(call);
+        },
+      });
+      const ids = await Promise.all([repo, linked].map((path) => ctx.identity(path)));
+      await Promise.all(ids.map((id) => ctx.configuration(id)));
+      await ctx.porcelain(ids[0]!);
+      await ctx.refs(ids[0]!, git(repo, "rev-parse", "HEAD").trim());
+      await ctx.nativeStatus(ids[0]!);
+      await Promise.all(
+        ids.map((id) =>
+          ctx.fetch(id, { remote: "origin", branch: "main", upstream: "origin/main" }),
+        ),
+      );
+
+      expect(ids[0]!.repositoryKey).toBe(common);
+      expect(dispatcherCalls.every((call) => call.executable === selectedGit)).toBe(true);
+      expect(dispatcherCalls.filter((call) => call.argv[0] === "fetch")).toHaveLength(1);
+    },
+  );
   test("relative PATH entries cannot authorize cross-worktree fetch equivalence", async () => {
     const remote = join(root, "relative-path-remote.git");
     git(root, "init", "--bare", remote);
