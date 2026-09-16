@@ -20,6 +20,7 @@ async function repo(commit = false) {
   await exec(["init", "-b", "main"], path);
   await exec(["config", "user.name", "Test"], path);
   await exec(["config", "user.email", "test@example.com"], path);
+  await exec(["config", "commit.gpgsign", "false"], path);
   if (commit) {
     await writeFile(join(path, "file"), "content\n");
     await exec(["add", "."], path);
