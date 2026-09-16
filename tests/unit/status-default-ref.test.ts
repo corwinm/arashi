@@ -1,13 +1,78 @@
 import { expect, test } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exec } from "../../src/lib/git.ts";
 import { checkRepoStatus } from "../../src/commands/status.ts";
 import {
   compareCurrentBranchToDefaultBranch,
+  fetchRemoteTrackingTarget,
   resolveDefaultBranchTarget,
 } from "../../src/lib/git-remote.ts";
+
+test("refreshes a no-upstream default target once and still compares it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "arashi-status-no-upstream-"));
+  const remote = join(root, "remote.git");
+  const path = join(root, "repo");
+  const tracePath = join(root, "fetch-trace.json");
+  const previousTrace = process.env.GIT_TRACE2_EVENT;
+  try {
+    await exec(["init", "--bare", remote], root);
+    await exec(["init", "-b", "main", path], root);
+    await exec(["config", "user.name", "Test"], path);
+    await exec(["config", "user.email", "test@example.com"], path);
+    await exec(["commit", "--allow-empty", "-m", "initial", "--no-gpg-sign"], path);
+    await exec(["remote", "add", "origin", remote], path);
+    await exec(["push", "-u", "origin", "main"], path);
+    await exec(["remote", "set-head", "origin", "main"], path);
+    await exec(["config", "--unset", "branch.main.remote"], path);
+    await exec(["config", "--unset", "branch.main.merge"], path);
+
+    let initialFetches = 0;
+    process.env.GIT_TRACE2_EVENT = tracePath;
+    const status = await checkRepoStatus("repo", path, {
+      dependencies: {
+        fetchRemoteTrackingTarget: async (repoPath, target) => {
+          initialFetches += 1;
+          const result = await fetchRemoteTrackingTarget(repoPath, target);
+          if (result.ok) {
+            await rename(remote, `${remote}.offline`);
+          }
+          return result;
+        },
+      },
+    });
+
+    const fetchStarts = (await readFile(tracePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { argv?: string[]; event?: string; sid?: string })
+      .filter(
+        (event) =>
+          event.event === "start" &&
+          event.argv?.[1] === "fetch" &&
+          typeof event.sid === "string" &&
+          !event.sid.includes("/"),
+      );
+    expect(initialFetches).toBe(1);
+    expect(fetchStarts).toHaveLength(1);
+    expect(status.defaultBranch).toMatchObject({
+      ahead: 0,
+      behind: 0,
+      branch: "main",
+      compareRef: "refs/remotes/origin/main",
+      state: "available",
+    });
+    expect(status.freshness).toEqual({ mode: "refreshed", remoteRefsRefreshed: true });
+  } finally {
+    if (previousTrace === undefined) {
+      delete process.env.GIT_TRACE2_EVENT;
+    } else {
+      process.env.GIT_TRACE2_EVENT = previousTrace;
+    }
+    await rm(root, { force: true, recursive: true });
+  }
+});
 
 test("dangling remote HEAD retains its intended missing default target", async () => {
   const path = await mkdtemp(join(tmpdir(), "arashi-status-dangling-"));

@@ -15,6 +15,38 @@ type ReadTraceFile = (path: string, encoding: "utf8") => Promise<string>;
 type CanonicalizePath = (path: string) => Promise<string>;
 
 const method = "git-trace2-event-root-sessions" as const;
+const recognizedTrace2Events = new Set([
+  "alias",
+  "atexit",
+  "child_exit",
+  "child_ready",
+  "child_start",
+  "cmd_ancestry",
+  "cmd_mode",
+  "cmd_name",
+  "cmd_path",
+  "counter",
+  "data",
+  "data_json",
+  "def_param",
+  "def_repo",
+  "error",
+  "exec",
+  "exec_result",
+  "exit",
+  "printf",
+  "region_enter",
+  "region_leave",
+  "signal",
+  "start",
+  "th_counter",
+  "th_timer",
+  "thread_exit",
+  "thread_start",
+  "timer",
+  "too_many_files",
+  "version",
+]);
 
 export async function readGitInvocationTrace(
   tracePath: string,
@@ -46,15 +78,29 @@ export async function readGitInvocationTrace(
         sid?: unknown;
         worktree?: unknown;
       };
-      if (typeof event.event !== "string") {
+      if (typeof event.event !== "string" || !recognizedTrace2Events.has(event.event)) {
         return {
           available: false,
           method,
           reason: "Git trace output did not contain recognized Trace2 events.",
         };
       }
+      if (
+        typeof event.sid !== "string" ||
+        !event.sid ||
+        (event.event === "start" &&
+          (!Array.isArray(event.argv) ||
+            event.argv.some((argument) => typeof argument !== "string"))) ||
+        (event.event === "def_repo" && (typeof event.worktree !== "string" || !event.worktree))
+      ) {
+        return {
+          available: false,
+          method,
+          reason: `Git trace output contained a malformed Trace2 event: ${event.event}.`,
+        };
+      }
       recognizedInstrumentation = true;
-      if (event.event === "start" && typeof event.sid === "string" && !event.sid.includes("/")) {
+      if (event.event === "start" && !event.sid.includes("/")) {
         count += 1;
         rootSessions.add(event.sid);
         if (Array.isArray(event.argv) && event.argv[1] === "fetch") {
@@ -63,10 +109,8 @@ export async function readGitInvocationTrace(
       }
       if (
         event.event === "def_repo" &&
-        typeof event.sid === "string" &&
         !event.sid.includes("/") &&
-        typeof event.worktree === "string" &&
-        event.worktree
+        typeof event.worktree === "string"
       ) {
         repositoryBySession.set(event.sid, event.worktree);
       }

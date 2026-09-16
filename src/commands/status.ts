@@ -372,17 +372,20 @@ export const checkRepoStatus = async (
       message: string;
     } | null = null;
     let trackingCompareRef: string | null = null;
+    let refreshedCompareRef: string | null = null;
     const trackingTarget = await dependencies.resolveRemoteTrackingTarget(path);
     if (trackingTarget.ok) {
-      trackingCompareRef = trackingTarget.target.upstream
-        ? `refs/remotes/${trackingTarget.target.remote}/${trackingTarget.target.branch}`
-        : null;
+      const targetCompareRef = `refs/remotes/${trackingTarget.target.remote}/${trackingTarget.target.branch}`;
+      trackingCompareRef = trackingTarget.target.upstream ? targetCompareRef : null;
       if (!local) {
         const fetchResult = await dependencies.fetchRemoteTrackingTarget(
           path,
           trackingTarget.target,
         );
-        if (fetchResult.ok) freshness.remoteRefsRefreshed = true;
+        if (fetchResult.ok) {
+          freshness.remoteRefsRefreshed = true;
+          refreshedCompareRef = targetCompareRef;
+        }
         if (!fetchResult.ok) {
           trackingFetchFailure = fetchResult;
           refreshWarning = createRefreshWarning(fetchResult);
@@ -418,7 +421,10 @@ export const checkRepoStatus = async (
           configuredBaseBranch,
           parsed.branch.isDetached,
           trackingCompareRef ? [trackingCompareRef] : [],
-          { refresh: !local },
+          {
+            alreadyRefreshedCompareRefs: refreshedCompareRef ? [refreshedCompareRef] : [],
+            refresh: !local,
+          },
         )
       : null;
     const baseBranch =
@@ -458,6 +464,7 @@ export const checkRepoStatus = async (
         (compareRef): compareRef is string => Boolean(compareRef),
       ),
       {
+        alreadyRefreshedCompareRefs: refreshedCompareRef ? [refreshedCompareRef] : [],
         preferredRemote: trackingTarget.ok ? trackingTarget.target.remote : null,
         refresh: !local,
       },

@@ -685,7 +685,7 @@ export async function compareCurrentBranchToConfiguredBranch(
   branch: string,
   isDetached = false,
   skipCompareRefs: readonly string[] = [],
-  options: { refresh?: boolean } = {},
+  options: { alreadyRefreshedCompareRefs?: readonly string[]; refresh?: boolean } = {},
   runGit: ReadOnlyGitRunner = exec,
 ): Promise<DefaultBranchComparison> {
   const requestedBranch = normalizeLogicalBranchName(branch);
@@ -727,7 +727,11 @@ export async function compareCurrentBranchToConfiguredBranch(
     };
   }
 
-  if (target.refreshTarget && options.refresh !== false) {
+  if (
+    target.refreshTarget &&
+    options.refresh !== false &&
+    !options.alreadyRefreshedCompareRefs?.includes(target.compareRef)
+  ) {
     const fetchResult = await fetchRemoteTrackingTarget(repoPath, target.refreshTarget, runGit);
     if (!fetchResult.ok) {
       return {
@@ -767,7 +771,11 @@ export async function compareCurrentBranchToDefaultBranch(
   currentBranch: string,
   isDetached = false,
   skipCompareRefs: readonly string[] = [],
-  options: { preferredRemote?: string | null; refresh?: boolean } = {},
+  options: {
+    alreadyRefreshedCompareRefs?: readonly string[];
+    preferredRemote?: string | null;
+    refresh?: boolean;
+  } = {},
   runGit: ReadOnlyGitRunner = exec,
 ): Promise<DefaultBranchComparison> {
   if (isDetached) {
@@ -810,7 +818,11 @@ export async function compareCurrentBranchToDefaultBranch(
     };
   }
 
-  if (target.refreshTarget && options.refresh !== false) {
+  if (
+    target.refreshTarget &&
+    options.refresh !== false &&
+    !options.alreadyRefreshedCompareRefs?.includes(target.compareRef)
+  ) {
     const fetchResult = await fetchRemoteTrackingTarget(repoPath, target.refreshTarget, runGit);
     if (!fetchResult.ok) {
       return {
