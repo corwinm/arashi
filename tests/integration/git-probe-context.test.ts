@@ -128,6 +128,37 @@ describe("real Git identity and spawn equivalence", () => {
     expect(calls.filter((call) => call.argv[0] === "fetch")).toHaveLength(2);
   });
 
+  test("local branch upstream preserves HEAD-relative divergence", async () => {
+    git(repo, "switch", "-c", "feature");
+    git(repo, "branch", "--set-upstream-to=main", "feature");
+    git(repo, "commit", "--allow-empty", "-m", "feature-only");
+    const status = await checkRepoStatus("repo", repo, { local: true });
+    expect(status.branch).toMatchObject({
+      ahead: 1,
+      behind: 0,
+      localBranch: "feature",
+      remoteBranch: "main",
+    });
+  });
+
+  test("post-fetch refs replace a provisional default selected before the target existed", async () => {
+    const remote = join(root, "remote.git");
+    git(root, "init", "--bare", remote);
+    git(repo, "remote", "add", "origin", remote);
+    git(repo, "push", "origin", "main");
+    git(repo, "switch", "-c", "feature");
+    git(repo, "config", "branch.feature.remote", "origin");
+    git(repo, "config", "branch.feature.merge", "refs/heads/main");
+    git(repo, "branch", "-D", "main");
+    git(repo, "update-ref", "-d", "refs/remotes/origin/main");
+    const status = await checkRepoStatus("repo", repo);
+    expect(status.defaultBranch).toMatchObject({
+      state: "available",
+      branch: "main",
+      remote: "origin",
+    });
+  });
+
   test("detached configured-base reporting stays detached even without a remote", async () => {
     git(repo, "checkout", "--detach");
     const status = await checkRepoStatus("repo", repo, { baseBranch: "main", local: true });

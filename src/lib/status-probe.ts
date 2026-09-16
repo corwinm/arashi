@@ -58,6 +58,7 @@ async function defaultTarget(
   refs: Map<string, RefFact>,
   names: string[],
   selected: string | null,
+  probeRemoteHead = true,
 ): Promise<Target | null> {
   const symbolic = (remote: string) => {
     const ref = refs.get(`refs/remotes/${remote}/HEAD`)?.symref;
@@ -65,7 +66,8 @@ async function defaultTarget(
     return ref?.startsWith(prefix) ? ref.slice(prefix.length) : null;
   };
   for (const remote of new Set([selected, "origin"].filter((v): v is string => !!v))) {
-    const branch = symbolic(remote) ?? (await context.remoteHead(id, remote));
+    const branch =
+      symbolic(remote) ?? (probeRemoteHead ? await context.remoteHead(id, remote) : null);
     if (branch) {
       if (
         selected === remote ||
@@ -128,23 +130,34 @@ export async function inspectStatusWithContext(
   const refs = await context.refs(id, head);
   const names = remoteNames(config);
   let tracking: RemoteTrackingTarget | null = null;
+  let trackingCompareRef: string | null = null;
   if (!parsed.branch.isDetached) {
     const upstream = parsed.branch.remoteBranch;
     const slash = upstream?.indexOf("/") ?? -1;
-    if (upstream && slash > 0 && refs.has(`refs/remotes/${upstream}`))
+    if (upstream && slash > 0 && refs.has(`refs/remotes/${upstream}`)) {
       tracking = { remote: upstream.slice(0, slash), branch: upstream.slice(slash + 1), upstream };
-    else {
+      trackingCompareRef = `refs/remotes/${upstream}`;
+    } else if (upstream && refs.has(`refs/heads/${upstream}`)) {
+      trackingCompareRef = `refs/heads/${upstream}`;
+    } else {
       const configured = value(config, `branch.${parsed.branch.localBranch}.remote`);
-      const remote = configured && configured !== "." ? configured : preferred(names);
       const merge = value(config, `branch.${parsed.branch.localBranch}.merge`);
-      if (remote)
-        tracking = {
-          remote,
-          branch: merge?.startsWith("refs/heads/")
-            ? merge.slice("refs/heads/".length)
-            : parsed.branch.localBranch,
-          upstream: null,
-        };
+      const mergeBranch = merge?.startsWith("refs/heads/")
+        ? merge.slice("refs/heads/".length)
+        : parsed.branch.localBranch;
+      if (configured === ".") {
+        trackingCompareRef = merge?.startsWith("refs/heads/") ? merge : null;
+      } else {
+        const remote = configured ?? preferred(names);
+        if (remote) {
+          tracking = {
+            remote,
+            branch: mergeBranch,
+            upstream: null,
+          };
+          trackingCompareRef = `refs/remotes/${remote}/${mergeBranch}`;
+        }
+      }
     }
   }
   const baseName = options.baseBranch ? normalizeLogicalBranchName(options.baseBranch) : null;
@@ -158,7 +171,7 @@ export async function inspectStatusWithContext(
         await context.fetch(id, { remote: t.remote, branch: t.branch, upstream: t.remoteRef }),
       );
   };
-  const defaultRef = parsed.branch.isDetached
+  let defaultRef = parsed.branch.isDetached
     ? null
     : await defaultTarget(context, id, refs, names, tracking?.remote ?? null);
   if (tracking) await refresh(target(tracking.remote, tracking.branch));
@@ -167,14 +180,30 @@ export async function inspectStatusWithContext(
     if (defaultRef) await refresh(defaultRef);
   }
   const post = fetches.size ? await context.refs(id, head) : refs;
+  if (fetches.size && !parsed.branch.isDetached) {
+    const postFetchDefault = await defaultTarget(
+      context,
+      id,
+      post,
+      names,
+      tracking?.remote ?? null,
+      false,
+    );
+    if (
+      postFetchDefault &&
+      (!postFetchDefault.remote || fetches.has(postFetchDefault.compareRef))
+    ) {
+      defaultRef = postFetchDefault;
+    }
+  }
   if (parsed.branch.remoteBranch) {
-    const trackingRef = `refs/remotes/${parsed.branch.remoteBranch}`;
-    const comparison = post.get(trackingRef);
     // Refreshed divergence is never copied from pre-fetch porcelain branch.ab.
-    parsed.branch.ahead = 0;
-    parsed.branch.behind = 0;
-    if (head && comparison) {
-      const counts = await context.compare(id, head, trackingRef);
+    if (!local) {
+      parsed.branch.ahead = 0;
+      parsed.branch.behind = 0;
+    }
+    if (head && trackingCompareRef && post.has(trackingCompareRef)) {
+      const counts = await context.compare(id, head, trackingCompareRef);
       Object.assign(parsed.branch, counts);
     }
   }
