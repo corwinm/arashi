@@ -7,11 +7,19 @@ import { afterEach, describe, expect, test } from "vitest";
 
 const temporaryDirectories: string[] = [];
 const cliPath = join(dirname(fileURLToPath(import.meta.url)), "../../src/index.ts");
+// This is a deadlock guard, not the completion latency contract. Hosted Windows
+// runners can briefly starve the child while the two-worker suite is spawning Git/npm processes.
+const completionProcessTimeout = 5_000;
 const runQuery = (cwd: string, words: string[]) =>
   spawnSync(
     process.execPath,
     [cliPath, "completion", "__query", String(words.length - 1), "--", ...words],
-    { cwd, encoding: null, env: { ...process.env, NO_COLOR: "1" }, timeout: 1000 },
+    {
+      cwd,
+      encoding: null,
+      env: { ...process.env, NO_COLOR: "1" },
+      timeout: completionProcessTimeout,
+    },
   );
 const records = (stdout: Buffer) => {
   const fields = stdout.toString("utf8").split("\0");
