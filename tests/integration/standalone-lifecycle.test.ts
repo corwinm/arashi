@@ -1197,7 +1197,7 @@ describe("standalone lifecycle", () => {
             localBranch: "status-context",
             remoteBranch: "origin/status-context",
           }),
-          defaultBranch: expect.objectContaining({ branch: "main", state: "available" }),
+          defaultBranch: { branch: null, reason: "unresolved", state: "skipped" },
           files: [expect.objectContaining({ path: "README.md" })],
           fullStatus: expect.stringContaining("README.md"),
           path: canonicalLinked,

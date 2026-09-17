@@ -90,21 +90,7 @@ async function defaultTarget(
       return branch ? [target(remote, branch)] : [];
     });
   if (remaining.length === 1) return remaining[0]!;
-  // Preserve the existing local compatibility ordering without extra Git probes.
-  let branch = ["main", "master", "develop"].find((b) => refs.has(`refs/remotes/origin/${b}`));
-  branch ??= ["main", "master", "develop"].find((b) => refs.has(`refs/heads/${b}`));
-  branch ??= [...refs.keys()]
-    .filter((r) => r.startsWith("refs/heads/"))
-    .toSorted()[0]
-    ?.slice("refs/heads/".length);
-  branch ??= [...refs.keys()]
-    .filter((r) => r.startsWith("refs/remotes/") && !r.endsWith("/HEAD"))
-    .toSorted()[0]
-    ?.slice("refs/remotes/".length)
-    .replace(/^origin\//, "");
-  if (!branch) return null;
-  const remote = forBranch(branch, refs, names);
-  return remote || refs.has(`refs/heads/${branch}`) ? target(remote, branch) : null;
+  return null;
 }
 export async function inspectStatusWithContext(
   name: string,
@@ -174,6 +160,7 @@ export async function inspectStatusWithContext(
   let defaultRef = parsed.branch.isDetached
     ? null
     : await defaultTarget(context, id, refs, names, tracking?.remote ?? null);
+  if (!defaultRef && base) defaultRef = base;
   if (tracking) await refresh(target(tracking.remote, tracking.branch));
   if (!parsed.branch.isDetached) {
     if (base) await refresh(base);
@@ -313,7 +300,11 @@ export async function inspectStatusWithContext(
         !local &&
         fetches.size > 0 &&
         [...fetches.values()].every((r) => r.ok) &&
-        ![baseBranch, defaultBranch].some((c) => c?.state === "unavailable"),
+        ![baseBranch, defaultBranch].some(
+          (comparison) =>
+            comparison?.state === "unavailable" ||
+            (comparison?.state === "skipped" && comparison.reason !== "on-default-branch"),
+        ),
     },
   };
 }

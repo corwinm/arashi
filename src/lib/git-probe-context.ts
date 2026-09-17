@@ -14,6 +14,12 @@ export interface ProbeCall {
   attemptToken: number | null;
   generation: number;
   repository: string | null;
+  purpose: string;
+}
+export interface ProbeAuditEntry extends ProbeCall {
+  contextId: string;
+  parserOwner: string;
+  repositoryAttribution: "canonical" | "provisional";
 }
 export interface ProbeResult {
   stdout: Buffer;
@@ -295,6 +301,56 @@ interface RepositoryState {
   attempts: Attempt[];
 }
 const REF_FORMAT = "%(refname)%00%(objectname)%00%(symref)%00";
+let nextContextId = 0;
+const auditSemantics = (parser: string): { parserOwner: string; purpose: string } => {
+  const semantics: Record<string, { parserOwner: string; purpose: string }> = {
+    "bare identity": {
+      parserOwner: "GitProbeContext bare identity parser",
+      purpose: "bare repository identity fallback",
+    },
+    configuration: {
+      parserOwner: "GitProbeContext effective-config byte parser",
+      purpose: "exact effective configuration snapshot",
+    },
+    identity: {
+      parserOwner: "GitProbeContext identity parser",
+      purpose: "combined repository/worktree identity",
+    },
+    "native stdout (unparsed)": {
+      parserOwner: "none (Git-native stdout)",
+      purpose: "native verbose status",
+    },
+    "porcelain-v2": {
+      parserOwner: "existing NUL porcelain-v2 parser",
+      purpose: "structured worktree status and branch/upstream discovery",
+    },
+    "ref metadata": {
+      parserOwner: "GitProbeContext ref-snapshot parser",
+      purpose: "metadata-only compatibility ref snapshot",
+    },
+    "ref snapshot": {
+      parserOwner: "GitProbeContext ref-snapshot parser",
+      purpose: "HEAD-relative ref snapshot",
+    },
+    "rev-list comparison": {
+      parserOwner: "GitProbeContext rev-list count parser",
+      purpose: "supported-Git fallback divergence comparison",
+    },
+    "symbolic remote HEAD": {
+      parserOwner: "GitProbeContext symbolic remote-HEAD parser",
+      purpose: "selected remote symbolic HEAD fallback",
+    },
+    "targeted fetch": {
+      parserOwner: "GitProbeContext classified fetch-result parser",
+      purpose: "exact targeted remote-tracking refresh",
+    },
+    "worktree listing": {
+      parserOwner: "standalone worktree porcelain parser",
+      purpose: "standalone worktree listing",
+    },
+  };
+  return semantics[parser] ?? { parserOwner: `GitProbeContext ${parser} parser`, purpose: parser };
+};
 export class GitProbeContext {
   #facts = new RetrySafeCache();
   #repositories = new Map<string, RepositoryState>();
@@ -302,6 +358,8 @@ export class GitProbeContext {
   #token = 0;
   #options: ContextOptions;
   #environment: Record<string, string>;
+  #audit: ProbeAuditEntry[] = [];
+  readonly #contextId = `git-probe-context-${++nextContextId}`;
 
   constructor(options: ContextOptions = {}) {
     this.#options = options;
@@ -329,6 +387,21 @@ export class GitProbeContext {
     this.#facts.clear();
     this.#repositories.clear();
     this.#environment = {};
+  }
+  auditLedger(): readonly ProbeAuditEntry[] {
+    return this.#audit.map((entry) => ({
+      ...entry,
+      argv: [...entry.argv],
+      environment: { ...entry.environment },
+    }));
+  }
+  #attribute(start: number, discoveryCwd: string, identity: GitIdentity): void {
+    for (const entry of this.#audit.slice(start)) {
+      if (entry.repositoryAttribution !== "provisional" || entry.cwd !== discoveryCwd) continue;
+      entry.cwd = identity.cwd;
+      entry.repository = identity.repositoryKey;
+      entry.repositoryAttribution = "canonical";
+    }
   }
   #state(id: GitIdentity): RepositoryState {
     let state = this.#repositories.get(id.repositoryKey);
@@ -395,6 +468,7 @@ export class GitProbeContext {
   ): Promise<ProbeResult> {
     this.#assert();
     const executable = await this.#git(cwd);
+    const semantics = auditSemantics(parser);
     const call: ProbeCall = {
       executable: executable.selected,
       argv,
@@ -406,8 +480,17 @@ export class GitProbeContext {
       parser,
       attemptToken: token,
       generation: id ? this.#state(id).generation : 0,
-      repository: id?.repositoryKey ?? null,
+      repository: id?.repositoryKey ?? `provisional:${cwd}`,
+      purpose: semantics.purpose,
     };
+    this.#audit.push({
+      ...call,
+      argv: [...call.argv],
+      contextId: this.#contextId,
+      environment: { ...call.environment },
+      parserOwner: semantics.parserOwner,
+      repositoryAttribution: id ? "canonical" : "provisional",
+    });
     try {
       return await (this.#options.run ?? runGitProbe)(call);
     } catch {
@@ -423,16 +506,20 @@ export class GitProbeContext {
       } catch {
         throw failure("identity");
       }
+      const auditStart = this.#audit.length;
       const result = await this.#run(
         cwd,
         ["rev-parse", "--show-toplevel", "--git-common-dir", "--is-bare-repository"],
         "identity",
       );
-      if (!result.exitCode)
-        return this.#retainDiscoveryCwd(
+      if (!result.exitCode) {
+        const identity = this.#retainDiscoveryCwd(
           await parseIdentity(result.stdout, cwd, this.#options.realpath ?? realpath),
           cwd,
         );
+        this.#attribute(auditStart, cwd, identity);
+        return identity;
+      }
       if (!/this operation must be run in a work tree/.test(result.stderr.toString()))
         throw failure("identity");
       const fallback = await this.#run(
@@ -441,10 +528,12 @@ export class GitProbeContext {
         "bare identity",
       );
       if (fallback.exitCode) throw failure("identity");
-      return this.#retainDiscoveryCwd(
+      const identity = this.#retainDiscoveryCwd(
         await parseIdentity(fallback.stdout, cwd, this.#options.realpath ?? realpath, true),
         cwd,
       );
+      this.#attribute(auditStart, cwd, identity);
+      return identity;
     });
   }
   configuration(id: GitIdentity): Promise<EffectiveConfig> {
@@ -476,6 +565,16 @@ export class GitProbeContext {
   async nativeStatus(id: GitIdentity): Promise<string> {
     const result = await this.#run(id.cwd, ["status"], "native stdout (unparsed)", id);
     if (result.exitCode) throw failure("native status");
+    return result.stdout.toString("utf8");
+  }
+  async worktreeList(id: GitIdentity): Promise<string> {
+    const result = await this.#run(
+      id.cwd,
+      ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
+      "worktree listing",
+      id,
+    );
+    if (result.exitCode) throw failure("worktree listing");
     return result.stdout.toString("utf8");
   }
   async #read<T>(id: GitIdentity, key: string, load: () => Promise<T>): Promise<T> {

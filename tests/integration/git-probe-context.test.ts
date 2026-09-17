@@ -64,6 +64,10 @@ describe("real Git identity and spawn equivalence", () => {
     const ctx = context();
     const ids = await Promise.all([repo, sub, alias, linked].map((p) => ctx.identity(p)));
     expect(new Set(ids.map((i) => i.repositoryKey)).size).toBe(1);
+    for (const entry of ctx.auditLedger()) expect(await realpath(entry.cwd)).toBe(entry.cwd);
+    expect(ctx.auditLedger().every((entry) => entry.repositoryAttribution === "canonical")).toBe(
+      true,
+    );
     expect(new Set(ids.slice(0, 3).map((i) => i.worktreeKey)).size).toBe(1);
     expect(ids[3]!.worktreeKey).not.toBe(ids[0]!.worktreeKey);
     await writeFile(join(linked, "only-linked"), "untracked");
@@ -184,7 +188,7 @@ describe("real Git identity and spawn equivalence", () => {
     });
   });
 
-  test("post-fetch refs replace a provisional default selected before the target existed", async () => {
+  test("configured tracking refresh does not become a guessed remote default", async () => {
     const remote = join(root, "remote.git");
     git(root, "init", "--bare", remote);
     git(repo, "remote", "add", "origin", remote);
@@ -195,11 +199,9 @@ describe("real Git identity and spawn equivalence", () => {
     git(repo, "branch", "-D", "main");
     git(repo, "update-ref", "-d", "refs/remotes/origin/main");
     const status = await checkRepoStatus("repo", repo);
-    expect(status.defaultBranch).toMatchObject({
-      state: "available",
-      branch: "main",
-      remote: "origin",
-    });
+    expect(status.branch.remoteBranch).toBe("origin/main");
+    expect(status.defaultBranch).toEqual({ state: "skipped", branch: null, reason: "unresolved" });
+    expect(status.freshness?.remoteRefsRefreshed).toBe(false);
   });
 
   test("detached configured-base reporting stays detached even without a remote", async () => {

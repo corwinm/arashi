@@ -100,6 +100,11 @@ async function addLocalRemote(
   await git(remote, ["init", "--bare"], environment);
   await git(repository, ["remote", "add", "origin", remote], environment);
   await git(repository, ["push", "--set-upstream", "origin", "main"], environment);
+  await git(
+    repository,
+    ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+    environment,
+  );
 }
 
 async function createWorkspace(options: {

@@ -7,6 +7,8 @@ import {
   checkRepoStatus,
   formatFreshnessNotice,
   parseGitStatus,
+  statusFreshness,
+  type RepoStatus,
 } from "../../src/commands/status.ts";
 
 const roots: string[] = [];
@@ -98,6 +100,74 @@ test("no remote or missing repository cannot claim refreshed refs", async () => 
   ).toBe(false);
   expect(formatFreshnessNotice(false)).not.toBe("Freshness: remote-tracking refs refreshed");
 });
+
+const freshnessStatus = (
+  remoteRefsRefreshed: boolean,
+  outcome: "successful" | "failed" | "skipped" | "not-applicable" | "local",
+): RepoStatus =>
+  ({
+    error: outcome === "failed" ? "refresh failed" : null,
+    freshness: {
+      mode: outcome === "local" ? "local" : "refreshed",
+      remoteRefsRefreshed,
+    },
+    name: outcome,
+    path: `/${outcome}`,
+  }) as RepoStatus;
+
+test.each([
+  [
+    "successful",
+    false,
+    [freshnessStatus(true, "successful")],
+    true,
+    "Freshness: remote-tracking refs refreshed",
+  ],
+  [
+    "failed",
+    false,
+    [freshnessStatus(false, "failed")],
+    false,
+    "Freshness: remote-tracking refresh incomplete or not applicable",
+  ],
+  [
+    "skipped",
+    false,
+    [freshnessStatus(false, "skipped")],
+    false,
+    "Freshness: remote-tracking refresh incomplete or not applicable",
+  ],
+  [
+    "not-applicable",
+    false,
+    [freshnessStatus(false, "not-applicable")],
+    false,
+    "Freshness: remote-tracking refresh incomplete or not applicable",
+  ],
+  [
+    "local",
+    true,
+    [freshnessStatus(false, "local")],
+    false,
+    "Freshness: local remote-tracking refs (no fetch performed)",
+  ],
+  [
+    "mixed",
+    false,
+    [freshnessStatus(true, "successful"), freshnessStatus(false, "skipped")],
+    false,
+    "Freshness: remote-tracking refresh incomplete or not applicable",
+  ],
+] as const)(
+  "%s freshness remains truthful in JSON aggregation and human output",
+  (_name, local, statuses, refreshed, notice) => {
+    expect(statusFreshness(local, [...statuses])).toEqual({
+      mode: local ? "local" : "refreshed",
+      remoteRefsRefreshed: refreshed,
+    });
+    expect(formatFreshnessNotice(local, [...statuses])).toBe(notice);
+  },
+);
 
 test("failed status after successful fetch reports no achieved repository freshness", async () => {
   const path = await repo(true);

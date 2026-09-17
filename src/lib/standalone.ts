@@ -12,6 +12,7 @@ import {
 } from "./hooks.ts";
 import type { HookInputMode, LifecycleHookOutcome } from "./hooks.ts";
 import type { StandaloneWorkspaceContext } from "./workspace-context.ts";
+import type { GitProbeContext } from "./git-probe-context.ts";
 import type { CreateBaseResolutionPlan } from "./create-base.ts";
 
 export class StandaloneDestinationNotIgnoredError extends Error {
@@ -248,11 +249,18 @@ export async function preflightStandaloneGlobalHooks(
   }
 }
 
-export async function standaloneWorktrees(context: StandaloneWorkspaceContext) {
-  const result = await exec(
-    ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
-    context.mainRoot,
-  );
+export async function standaloneWorktrees(
+  context: StandaloneWorkspaceContext,
+  probeContext?: GitProbeContext,
+) {
+  const stdout = probeContext
+    ? await probeContext.worktreeList(await probeContext.identity(context.mainRoot))
+    : (
+        await exec(
+          ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
+          context.mainRoot,
+        )
+      ).stdout;
   const records: Array<{
     branch: string | null;
     head: string;
@@ -260,7 +268,7 @@ export async function standaloneWorktrees(context: StandaloneWorkspaceContext) {
     pruneReason?: string;
   }> = [];
   let current: (typeof records)[number] | null = null;
-  for (const line of result.stdout.split(/\r?\n/)) {
+  for (const line of stdout.split(/\r?\n/)) {
     if (line.startsWith("worktree ")) {
       current = { branch: null, head: "", path: line.slice(9) };
       records.push(current);

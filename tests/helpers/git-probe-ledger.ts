@@ -9,6 +9,7 @@ export interface ProbeCall {
   attemptToken: number | null;
   generation: number;
   repository: string | null;
+  purpose: string;
 }
 export interface ProbeResult {
   stdout: Buffer;
@@ -44,7 +45,9 @@ export class ProbeLedger {
     expect(call.argv).toEqual(step!.argv);
     expect(call.executable).toBe("/tools/git");
     expect(call.cwd.startsWith("/")).toBe(true);
-    expect(typeof call.parser).toBe("string");
+    expect(call.parser.length).toBeGreaterThan(0);
+    expect(call.purpose.length).toBeGreaterThan(0);
+    expect(call.repository).not.toBeNull();
     const reply = await step!.reply;
     entry.stdout = reply.stdout;
     return reply;

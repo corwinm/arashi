@@ -35,7 +35,9 @@ export function validateProbeBudget(
   const repositoryCount = options.fixture === "small" ? 3 : 9;
   const pinned = options.fixture === "small" ? 39 + 3 * verbose : 93 + 9 * verbose;
   if (base.metric.count !== pinned || base.metric.repositories?.length !== repositoryCount) {
-    reject("pinned baseline changed");
+    reject(
+      `pinned baseline changed (count=${base.metric.count ?? "unavailable"}, repositories=${JSON.stringify(base.metric.repositories ?? [])}, unattributed=${JSON.stringify(base.metric.unattributed ?? null)}, expected=${pinned}/${repositoryCount})`,
+    );
   }
   if ((candidate.metric.unattributed?.count ?? 0) !== 0) reject("unattributed candidate sessions");
   if (!isDeepStrictEqual(paths(base), paths(candidate)))

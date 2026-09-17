@@ -1,6 +1,6 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -245,6 +245,73 @@ describe("CLI JSON output contract", () => {
       ]),
     );
   });
+
+  test.skipIf(process.platform === "win32")(
+    "status --local starts no transport or credential helper on the actual CLI path",
+    async () => {
+      const workspaceRoot = await createCommonWorkspace();
+      const marker = join(workspaceRoot, "transport-started.marker");
+      const trace = join(workspaceRoot, "local-git-trace.json");
+      const helperDir = join(workspaceRoot, "transport-canaries");
+      await mkdir(helperDir);
+      for (const name of [
+        "ssh",
+        "git-remote-http",
+        "git-remote-https",
+        "git-remote-ext",
+        "git-credential-canary",
+        "askpass",
+      ]) {
+        const helper = join(helperDir, name);
+        await writeFile(helper, `#!/bin/sh\nprintf '%s\\n' '${name}' >> '${marker}'\nexit 97\n`);
+        await chmod(helper, 0o755);
+      }
+      const repositories = [
+        [workspaceRoot, "ssh://example.invalid/main.git"],
+        [join(workspaceRoot, "repos", "repo-a"), "https://example.invalid/repo-a.git"],
+        [join(workspaceRoot, "repos", "repo-b"), "ext::example.invalid/repo-b.git"],
+      ] as const;
+      for (const [repository, remote] of repositories) {
+        await runGit(repository, ["remote", "add", "origin", remote]);
+        await runGit(repository, ["config", "branch.main.remote", "origin"]);
+        await runGit(repository, ["config", "branch.main.merge", "refs/heads/main"]);
+        await runGit(repository, [
+          "config",
+          "credential.helper",
+          `!${join(helperDir, "git-credential-canary")}`,
+        ]);
+      }
+
+      const result = await runArashi(workspaceRoot, ["status", "--local", "--json"], {
+        GIT_ASKPASS: join(helperDir, "askpass"),
+        GIT_SSH_COMMAND: join(helperDir, "ssh"),
+        GIT_TRACE2_EVENT: trace,
+        PATH: `${helperDir}:${process.env.PATH ?? ""}`,
+      });
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(jsonData(parseSingleJsonDocument(result.stdout)).freshness).toEqual({
+        mode: "local",
+        remoteRefsRefreshed: false,
+      });
+      await expect(stat(marker)).rejects.toThrow();
+      const events = (await readFile(trace, "utf8"))
+        .trim()
+        .split("\n")
+        .map(
+          (line) => JSON.parse(line) as { argv?: string[]; child_class?: string; event: string },
+        );
+      const transportEvents = events.filter((event) => {
+        const argv = event.argv?.join(" ") ?? "";
+        return (
+          ["remote", "transport"].includes(event.child_class ?? "") ||
+          /(?:^|\s)(?:fetch|ls-remote)(?:\s|$)/.test(argv) ||
+          /(?:git-remote-(?:http|https|ext)|git-credential|askpass|ssh|curl)/i.test(argv)
+        );
+      });
+      expect(transportEvents).toEqual([]);
+    },
+  );
 
   test("status --json preserves repository diagnostics when root Git metadata is broken", async () => {
     const workspaceRoot = await createCommonWorkspace();

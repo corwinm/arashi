@@ -4,6 +4,8 @@ import { realpath } from "node:fs/promises";
 
 interface StatusBehaviorOptions {
   canonicalizePath?: (path: string) => Promise<string>;
+  configuredBase?: boolean;
+  expectedDefaultResolution?: "available" | "unresolved";
   environment: NodeJS.ProcessEnv;
   expectedRepositoryPaths: string[];
   local: boolean;
@@ -33,9 +35,10 @@ export async function validateCliStatusOutput(
   const canonicalPaths = await Promise.all(
     repositories.map(({ path }) => (options.canonicalizePath ?? realpath)(path)),
   );
+  const expectedDefault = options.expectedDefaultResolution ?? "available";
   const expectedFreshness = {
     mode: options.local ? "local" : "refreshed",
-    remoteRefsRefreshed: !options.local,
+    remoteRefsRefreshed: !options.local && expectedDefault === "available",
   };
   assertStatusEqual(freshness, expectedFreshness, "command freshness");
   assertStatusEqual(envelope.warnings ?? [], [], "warnings");
@@ -58,13 +61,56 @@ export async function validateCliStatusOutput(
     ) {
       throw new Error("Unexpected branch state");
     }
-    if (
-      repo.baseBranch !== null ||
-      repo.defaultBranch?.state !== "available" ||
-      repo.defaultBranch.branch !== "main" ||
-      repo.defaultBranch.compareRef !== "refs/remotes/origin/main"
-    ) {
-      throw new Error("Unexpected comparison state");
+    const expectedComparison = options.configuredBase
+      ? {
+          baseBranch: {
+            branch: "main",
+            compareRef: "refs/remotes/origin/main",
+            state: "available",
+          },
+          defaultBranch: {
+            branch: "main",
+            compareRef: "refs/remotes/origin/main",
+            state: "available",
+          },
+        }
+      : expectedDefault === "available"
+        ? {
+            baseBranch: null,
+            defaultBranch: {
+              branch: "main",
+              compareRef: "refs/remotes/origin/main",
+              state: "available",
+            },
+          }
+        : {
+            baseBranch: null,
+            defaultBranch: {
+              branch: null,
+              reason: "unresolved",
+              state: "skipped",
+            },
+          };
+    const comparisonMatches = options.configuredBase
+      ? repo.baseBranch?.branch === "main" &&
+        repo.baseBranch.compareRef === "refs/remotes/origin/main" &&
+        repo.baseBranch.state === "available" &&
+        repo.defaultBranch?.branch === "main" &&
+        repo.defaultBranch.compareRef === "refs/remotes/origin/main" &&
+        repo.defaultBranch.state === "available"
+      : expectedDefault === "available"
+        ? repo.baseBranch === null &&
+          repo.defaultBranch?.state === "available" &&
+          repo.defaultBranch.branch === "main" &&
+          repo.defaultBranch.compareRef === "refs/remotes/origin/main"
+        : repo.baseBranch === null &&
+          repo.defaultBranch?.state === "skipped" &&
+          repo.defaultBranch.branch === null &&
+          repo.defaultBranch.reason === "unresolved";
+    if (!comparisonMatches) {
+      throw new Error(
+        `Unexpected comparison state: actual=${JSON.stringify({ baseBranch: repo.baseBranch, defaultBranch: repo.defaultBranch })} expected=${JSON.stringify(expectedComparison)}`,
+      );
     }
     assertStatusEqual(repo.files, [], "dirty files");
     if (options.verbose) {

@@ -55,7 +55,8 @@ test.each([false, true])("one context drives exact clean ledger; verbose=%s", as
     .enqueue(fetch, result())
     .enqueue(refs, result(snapshot(2, 3)));
   if (verbose) ledger.enqueue(["status"], result("Native status with diagnostics\n"));
-  const status = await checkRepoStatus("repo", path, { context: context(ledger), verbose });
+  const probeContext = context(ledger);
+  const status = await checkRepoStatus("repo", path, { context: probeContext, verbose });
   expect(status.error).toBeNull();
   expect(status.branch).toMatchObject({ ahead: 2, behind: 3 });
   expect(status.defaultBranch).toMatchObject({ state: "available", ahead: 2, behind: 3 });
@@ -63,6 +64,28 @@ test.each([false, true])("one context drives exact clean ledger; verbose=%s", as
   expect(ledger.calls).toHaveLength(verbose ? 7 : 6);
   expect(status.fullStatus).toBe(verbose ? "Native status with diagnostics" : undefined);
   expect(ledger.pending).toHaveLength(0);
+  expect(probeContext.auditLedger()).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        argv: identity,
+        cwd: path,
+        parserOwner: "GitProbeContext identity parser",
+        purpose: "combined repository/worktree identity",
+        repository: "/common",
+        repositoryAttribution: "canonical",
+      }),
+      expect.objectContaining({
+        argv: porcelain,
+        parserOwner: "existing NUL porcelain-v2 parser",
+        purpose: "structured worktree status and branch/upstream discovery",
+        repository: "/common",
+        repositoryAttribution: "canonical",
+      }),
+    ]),
+  );
+  expect(probeContext.auditLedger()).toHaveLength(verbose ? 7 : 6);
+  expect(probeContext.auditLedger().every((entry) => entry.purpose.length > 0)).toBe(true);
+  expect(probeContext.auditLedger().every((entry) => entry.repository !== null)).toBe(true);
 });
 test("local mode starts no transport and keeps truthful local divergence", async () => {
   const ledger = setup().enqueue(refs, result(snapshot(9, 8)));
@@ -122,7 +145,7 @@ test("all distinct refresh targets use one pre-view and one post-view", async ()
   expect(ledger.pending).toHaveLength(0);
 });
 
-test("the clean fallback remains within the seventh ledger slot", async () => {
+test("no symbolic remote HEAD is not guessed from conventional branch names", async () => {
   const noHead = `refs/remotes/origin/main\0${oid}\0\0${"0 0"}\0\n`;
   const ledger = setup()
     .enqueue(refs, result(noHead))
@@ -131,7 +154,45 @@ test("the clean fallback remains within the seventh ledger slot", async () => {
     .enqueue(refs, result(noHead));
   const status = await checkRepoStatus("repo", path, { context: context(ledger) });
   expect(status.error).toBeNull();
-  expect(status.freshness?.remoteRefsRefreshed).toBe(true);
+  expect(status.defaultBranch).toEqual({ state: "skipped", branch: null, reason: "unresolved" });
+  expect(status.freshness?.remoteRefsRefreshed).toBe(false);
   expect(ledger.calls).toHaveLength(7);
+  expect(ledger.pending).toHaveLength(0);
+});
+
+test("an explicit configured base remains the default comparison when symbolic HEAD is unavailable", async () => {
+  const noHead = `refs/remotes/origin/main\0${oid}\0\0${"2 3"}\0\n`;
+  const ledger = setup()
+    .enqueue(refs, result(noHead))
+    .enqueue(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], result("", 1))
+    .enqueue(fetch, result())
+    .enqueue(refs, result(noHead));
+  const status = await checkRepoStatus("repo", path, {
+    baseBranch: "main",
+    context: context(ledger),
+  });
+  expect(status.baseBranch).toMatchObject({ branch: "main", state: "available" });
+  expect(status.defaultBranch).toMatchObject({ branch: "main", state: "available" });
+  expect(status.freshness?.remoteRefsRefreshed).toBe(true);
+  expect(ledger.pending).toHaveLength(0);
+});
+
+test("ambiguous remaining symbolic remote HEADs are not guessed", async () => {
+  const ambiguous = [
+    `refs/remotes/origin/main\0${oid}\0\0${"0 0"}\0\n`,
+    `refs/remotes/alpha/main\0${oid}\0\0${"0 0"}\0\n`,
+    `refs/remotes/alpha/HEAD\0${oid}\0refs/remotes/alpha/main\0${"0 0"}\0\n`,
+    `refs/remotes/beta/main\0${oid}\0\0${"0 0"}\0\n`,
+    `refs/remotes/beta/HEAD\0${oid}\0refs/remotes/beta/main\0${"0 0"}\0\n`,
+  ].join("");
+  const ledger = setup()
+    .enqueue(refs, result(ambiguous))
+    .enqueue(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], result("", 1))
+    .enqueue(fetch, result())
+    .enqueue(refs, result(ambiguous));
+  const status = await checkRepoStatus("repo", path, { context: context(ledger) });
+  expect(status.error).toBeNull();
+  expect(status.defaultBranch).toEqual({ state: "skipped", branch: null, reason: "unresolved" });
+  expect(status.freshness?.remoteRefsRefreshed).toBe(false);
   expect(ledger.pending).toHaveLength(0);
 });

@@ -4,6 +4,8 @@ import { basename, join } from "path";
 import { tmpdir } from "os";
 import { spawn } from "../helpers/node-runtime.ts";
 import { ConfigParseError, resolveWorkspaceContext } from "../../src/lib/workspace-context.ts";
+import { GitProbeContext } from "../../src/lib/git-probe-context.ts";
+import { standaloneWorktrees } from "../../src/lib/standalone.ts";
 import {
   ConfigError,
   ConfigValidationError,
@@ -68,6 +70,28 @@ describe("resolveWorkspaceContext", () => {
 
     expect(context.mode).toBe("standalone");
     if (context.mode === "standalone") expect(context.mainRoot).toBe(await realpath(root));
+  });
+
+  test("standalone discovery and listing use one auditable invocation context", async () => {
+    const root = await repository();
+    await mkdir(join(root, ".worktrees"));
+    const probeContext = new GitProbeContext({ local: true });
+    const context = await resolveWorkspaceContext(root, probeContext);
+    expect(context.mode).toBe("standalone");
+    if (context.mode !== "standalone") return;
+
+    await standaloneWorktrees(context, probeContext);
+
+    const ledger = probeContext.auditLedger();
+    expect(ledger.some((entry) => entry.purpose === "standalone worktree listing")).toBe(true);
+    expect(ledger.every((entry) => entry.repository !== null)).toBe(true);
+    expect(
+      ledger.every((entry) => ["canonical", "provisional"].includes(entry.repositoryAttribution)),
+    ).toBe(true);
+    expect(ledger.find((entry) => entry.purpose === "standalone worktree listing")).toMatchObject({
+      repositoryAttribution: "canonical",
+    });
+    expect(new Set(ledger.map((entry) => entry.contextId)).size).toBe(1);
   });
 
   test("configured discovery wins and malformed configuration is not hidden", async () => {

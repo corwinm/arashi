@@ -673,7 +673,7 @@ export const checkAllRepos = (
     verbose,
   });
 
-const statusFreshness = (local: boolean, statuses: RepoStatus[]) => ({
+export const statusFreshness = (local: boolean, statuses: RepoStatus[]) => ({
   mode: local ? ("local" as const) : ("refreshed" as const),
   remoteRefsRefreshed:
     !local &&
@@ -1186,7 +1186,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
       else logError(message);
       process.exit(USAGE_EXIT_CODE);
     }
-    const worktrees = await standaloneWorktrees(workspaceContext);
+    const worktrees = await standaloneWorktrees(workspaceContext, probeContext);
     const statuses = await Promise.all(
       worktrees.map((worktree) =>
         checkRepoStatus(worktree.branch ?? basename(worktree.path), worktree.path, {

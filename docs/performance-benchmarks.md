@@ -113,3 +113,22 @@ warmups, samples, and Trace2 attribution. Require semantic equality, including n
 and strictly lower counts for every named repository and the aggregate. Named counts plus explicit
 unattributed counts must reconcile; any unexplained candidate session invalidates the comparison.
 The pinned small normal/verbose totals are 39/42, and the large totals are 93/102.
+
+Run the immutable issue #372 acceptance comparison only from a clean candidate commit:
+
+```bash
+pnpm benchmark:compare-probes -- --candidate "$(git rev-parse HEAD)" \
+  --output /private/tmp/arashi-probe-comparison.json
+shasum -a 256 /private/tmp/arashi-probe-comparison.json
+```
+
+The comparison workflow creates detached base and candidate worktrees, installs from the pinned
+lockfile offline, and independently builds base `b648825295a5c342b6920be0585711678377b452`
+and the exact candidate. One external adapter process creates one fixture-v4 instance at each scale
+and invokes both compiled binaries through the same `status [--verbose] --json` boundary. It records
+commit and executable hashes, build/install log hashes, controlled build environment, host and
+toolchain versions, exact fixture topology, adapter/fixture source hashes, semantic/native-output
+parity, and Trace2 named/aggregate/unattributed counts. The workflow calls `validateProbeBudget()`
+for small/large normal/verbose and writes the artifact only after every pinned baseline, parity,
+reconciliation, strict-reduction, and 7/8 candidate cap check passes. Keep the output in an immutable
+temporary evidence location; do not commit host-specific comparison results.

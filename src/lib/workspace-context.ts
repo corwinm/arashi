@@ -109,11 +109,8 @@ export async function resolveGitMainWorktree(
     if (options.probeContext) {
       const identity = await options.probeContext.identity(absoluteInvocationPath);
       if (identity.bare) return null;
-      const listing = await exec(
-        ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
-        identity.cwd,
-      );
-      const first = listing.stdout
+      const listing = await options.probeContext.worktreeList(identity);
+      const first = listing
         .split(/\r?\n/)
         .find((line) => line.startsWith("worktree "))
         ?.slice(9);
@@ -182,8 +179,12 @@ export async function resolveWorkspaceContext(
   if (!mainRoot) {
     let reason: UnavailableWorkspaceContext["reason"] = "not-git-repository";
     try {
-      const bare = await exec(["rev-parse", "--is-bare-repository"], absoluteInvocationPath);
-      if (bare.stdout.trim() === "true") reason = "bare-repository";
+      const bare = probeContext
+        ? (await probeContext.identity(absoluteInvocationPath)).bare
+        : (
+            await exec(["rev-parse", "--is-bare-repository"], absoluteInvocationPath)
+          ).stdout.trim() === "true";
+      if (bare) reason = "bare-repository";
     } catch {
       // The default reason is correct when Git cannot inspect the invocation.
     }
