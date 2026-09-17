@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -187,21 +187,41 @@ beforeAll(() => {
     chmodSync(path, 0o755);
   }
   if (process.platform === "win32") {
-    const shim = join(root, "completion-shim.cjs");
+    const sourcePath = join(root, "completion-shim.cs");
+    const executablePath = join(root, "arashi.exe");
+    /* oxlint-disable no-useless-escape -- C# string escaping is preserved inside this TypeScript fixture. */
     writeFileSync(
-      shim,
-      `const fs = require('node:fs');
-const [executable, ...args] = process.argv.slice(2);
-fs.appendFileSync(process.env.COMPLETION_LEDGER, JSON.stringify({ executable, args }) + '\\n');
-if (executable === 'git' || process.env.COMPLETION_DYNAMIC !== '1') process.exit(93);
-process.stdout.write(process.env.COMPLETION_VALUE + '\\0Fixture description\\0');
+      sourcePath,
+      `using System;
+using System.IO;
+using System.Linq;
+using System.Text;
+public static class CompletionShim {
+  private static string Escape(string value) {
+    return value.Replace("\\\\", "\\\\\\\\").Replace("\\\"", "\\\\\\\"");
+  }
+  public static int Main(string[] args) {
+    var executable = Path.GetFileNameWithoutExtension(Environment.GetCommandLineArgs()[0]);
+    var serialized = string.Join(",", args.Select(value => "\\\"" + Escape(value) + "\\\""));
+    File.AppendAllText(Environment.GetEnvironmentVariable("COMPLETION_LEDGER"),
+      "{\\\"executable\\\":\\\"" + Escape(executable) + "\\\",\\\"args\\\":[" + serialized + "]}" + Environment.NewLine);
+    if (executable == "git" || Environment.GetEnvironmentVariable("COMPLETION_DYNAMIC") != "1") return 93;
+    var stdout = Console.OpenStandardOutput();
+    var record = Encoding.UTF8.GetBytes(Environment.GetEnvironmentVariable("COMPLETION_VALUE") + "\\0Fixture description\\0");
+    stdout.Write(record, 0, record.Length);
+    return 0;
+  }
+}
 `,
     );
-    for (const executable of ["arashi", "git"])
-      writeFileSync(
-        join(root, `${executable}.cmd`),
-        `@node "%~dp0completion-shim.cjs" ${executable} %*\r\n`,
-      );
+    /* oxlint-enable no-useless-escape */
+    const compiled = spawnSync(
+      String.raw`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`,
+      ["/nologo", "/target:exe", `/out:${executablePath}`, sourcePath],
+      { encoding: "utf8" },
+    );
+    expect(compiled.status, compiled.stderr || compiled.stdout).toBe(0);
+    copyFileSync(executablePath, join(root, "git.exe"));
   }
 });
 afterAll(() => {
