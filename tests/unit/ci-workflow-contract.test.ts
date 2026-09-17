@@ -144,7 +144,7 @@ const ciContractErrors = (source: string): string[] => {
       [
         "./bin/${{ matrix.artifact }} --version",
         "for shell in bash zsh fish",
-        "arashi-completion-contract-v6:",
+        "arashi-completion-contract-v7:",
       ],
     ],
     [
