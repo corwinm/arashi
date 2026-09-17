@@ -186,6 +186,23 @@ beforeAll(() => {
     );
     chmodSync(path, 0o755);
   }
+  if (process.platform === "win32") {
+    const shim = join(root, "completion-shim.cjs");
+    writeFileSync(
+      shim,
+      `const fs = require('node:fs');
+const [executable, ...args] = process.argv.slice(2);
+fs.appendFileSync(process.env.COMPLETION_LEDGER, JSON.stringify({ executable, args }) + '\\n');
+if (executable === 'git' || process.env.COMPLETION_DYNAMIC !== '1') process.exit(93);
+process.stdout.write(process.env.COMPLETION_VALUE + '\\0Fixture description\\0');
+`,
+    );
+    for (const executable of ["arashi", "git"])
+      writeFileSync(
+        join(root, `${executable}.cmd`),
+        `@node "%~dp0completion-shim.cjs" ${executable} %*\r\n`,
+      );
+  }
 });
 afterAll(() => {
   if (root) rmSync(root, { recursive: true, force: true });
@@ -214,12 +231,6 @@ function run(shell: Shell, fixture: Case, sabotage = false) {
     // PowerShell AST. This avoids TabExpansion2's unrelated filename fallback.
     script = `$ErrorActionPreference = 'Stop'
 function Register-ArgumentCompleter { param([switch]$Native, $CommandName, [scriptblock]$ScriptBlock) $script:Completer = $ScriptBlock; $script:Names = $CommandName }
-function arashi {
-  $record = @{ executable = 'arashi'; args = @($args | ForEach-Object { [string]$_ }) } | ConvertTo-Json -Compress
-  [IO.File]::AppendAllText($env:COMPLETION_LEDGER, $record + [Environment]::NewLine)
-  if ($env:COMPLETION_DYNAMIC -eq '1') { $env:COMPLETION_VALUE + [char]0 + "Fixture description" + [char]0 } else { $global:LASTEXITCODE = 93 }
-}
-function git { [IO.File]::AppendAllText($env:COMPLETION_LEDGER, '{"executable":"git","args":[]}' + [Environment]::NewLine); $global:LASTEXITCODE = 93 }
 . ${psQuote(completionPath)}
 if ('arashi' -notin $script:Names -or 'aw' -notin $script:Names) { throw 'Missing native registration' }
 $line = ${psQuote(fixture.words.join(" "))}
