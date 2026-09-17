@@ -1,6 +1,6 @@
 import { runtime } from "../../helpers/node-runtime.ts";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, rm, symlink } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "fs/promises";
 import {
   detectDefaultBranch,
   detectSetupScript,
@@ -106,6 +106,22 @@ describe("repository discovery regressions", () => {
     await git(mainRepo, "worktree", "add", linkedWorktree, "feature");
 
     expect(await detectDefaultBranch(linkedWorktree)).toBe("release");
+  });
+
+  test("default detection contains no Git-internal filesystem parser", async () => {
+    const source = await readFile(
+      join(import.meta.dirname, "../../../src/core/repository.ts"),
+      "utf8",
+    );
+    const implementation = source.slice(
+      source.indexOf("export const detectDefaultBranch"),
+      source.indexOf(
+        "// ============================================================================",
+        source.indexOf("export const detectDefaultBranch") + 1,
+      ),
+    );
+
+    expect(implementation).not.toMatch(/runtime\.file|["']\.git["']|commondir|packed-refs|objects/);
   });
 
   test("returns repositories in deterministic path order after parallel discovery", async () => {

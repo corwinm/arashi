@@ -200,14 +200,24 @@ describe("benchmark fixtures", () => {
   });
 });
 
-test("status fixture retains the exact base topology without configured base", async () => {
+test("status fixture retains the exact base topology with local symbolic remote HEADs", async () => {
   const fixture = await createBenchmarkFixture("small");
   try {
     const config = JSON.parse(
       await readFile(join(fixture.refreshedRoot, ".arashi", "config.json"), "utf8"),
     );
-    expect(config).not.toHaveProperty("baseBranch");
-    expect(fixture.definitionVersion).toBe(4);
+    expect(config).toMatchObject({ baseBranch: "main" });
+    expect(fixture.definitionVersion).toBe(5);
+    for (const repository of fixture.repositoryPaths) {
+      const result = await invoke(
+        { args: [], command: "git" },
+        ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        repository,
+        fixture.environment,
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("origin/main");
+    }
   } finally {
     await fixture.cleanup();
   }

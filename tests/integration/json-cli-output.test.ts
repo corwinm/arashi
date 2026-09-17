@@ -1,8 +1,10 @@
 import { runtime } from "../helpers/node-runtime.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "fs/promises";
+import { spawn } from "node:child_process";
 import { join } from "path";
 import { tmpdir } from "os";
+import { pathToFileURL } from "node:url";
 
 const CLI_ENTRY = join(import.meta.dirname, "..", "..", "src", "index.ts");
 
@@ -278,6 +280,53 @@ describe("CLI JSON output contract", () => {
     );
     expect(humanResult.stdout).not.toContain("Freshness: remote-tracking refs refreshed");
   });
+
+  test.skipIf(process.platform === "win32")(
+    "status --local cannot read or reveal a file remote's bare HEAD",
+    async () => {
+      const workspaceRoot = await createCommonWorkspace();
+      const repository = join(workspaceRoot, "repos", "repo-a");
+      const remote = await createBareRemote(workspaceRoot, "private-remote");
+      const remoteHead = join(remote, "HEAD");
+      const touched = join(workspaceRoot, "remote-head-opened.marker");
+      await rm(remoteHead);
+      await runCommand(workspaceRoot, ["mkfifo", remoteHead]);
+      await runGit(repository, ["remote", "add", "origin", pathToFileURL(remote).href]);
+      await runGit(repository, ["config", "branch.main.remote", "origin"]);
+      await runGit(repository, ["config", "branch.main.merge", "refs/heads/main"]);
+      const writer = spawn(
+        "/bin/sh",
+        [
+          "-c",
+          `printf '%s\\n' 'ref: refs/heads/secret-default' > "$1"; touch "$2"`,
+          "writer",
+          remoteHead,
+          touched,
+        ],
+        { stdio: "ignore" },
+      );
+
+      try {
+        const result = await runArashi(workspaceRoot, ["status", "--local", "--json"]);
+        expect(result.exitCode, result.stderr).toBe(0);
+        const repositories = jsonArray(
+          jsonData(parseSingleJsonDocument(result.stdout)).repositories,
+        );
+        const targetRepository = repositories.find(({ name }) => name === "repo-a");
+        expect(targetRepository).toEqual(
+          expect.objectContaining({
+            defaultBranch: { branch: null, reason: "unresolved", state: "skipped" },
+            freshness: { mode: "local", remoteRefsRefreshed: false },
+            name: "repo-a",
+          }),
+        );
+        expect(JSON.stringify(targetRepository)).not.toContain("secret-default");
+        await expect(stat(touched)).rejects.toThrow();
+      } finally {
+        writer.kill("SIGKILL");
+      }
+    },
+  );
 
   test.skipIf(process.platform === "win32")(
     "status --local starts no transport or credential helper on the actual CLI path",

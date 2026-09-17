@@ -191,7 +191,10 @@ describe("CLI performance benchmark runner", () => {
     expect(commands["status-local"].behavior.statuses).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          baseBranch: null,
+          baseBranch: expect.objectContaining({
+            compareRef: "refs/remotes/origin/main",
+            state: "available",
+          }),
           defaultBranch: expect.objectContaining({
             state: "available",
             compareRef: "refs/remotes/origin/main",

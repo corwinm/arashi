@@ -61,7 +61,7 @@ const comparableBehavior = (behavior: Record<string, unknown>): string =>
 
 export function validateComparisonArtifact(artifact: ProbeComparisonArtifact): void {
   if (artifact.schemaVersion !== 1) fail("unsupported artifact schema");
-  if (artifact.fixture.definitionVersion !== 4) fail("fixture definition v4 is required");
+  if (artifact.fixture.definitionVersion !== 5) fail("fixture definition v5 is required");
   if (!artifact.provenance.sameAdapterProcess)
     fail("base and candidate did not use one adapter process");
   if (artifact.base.commit !== BASE_COMMIT) fail("immutable base commit differs");
@@ -248,6 +248,7 @@ async function measure(
   if (result.exitCode !== 0)
     throw new Error(`${binary} ${fixture.id} status failed: ${result.stderr}`);
   const behavior = await validateCliStatusOutput(result.stdout, {
+    configuredBase: true,
     environment: fixture.environment,
     expectedDefaultResolution: "available",
     expectedRepositoryPaths: fixture.repositoryPaths,
@@ -404,7 +405,7 @@ export async function runProbeComparison(argv: string[]): Promise<ProbeCompariso
       candidate,
       cases,
       fixture: {
-        definitionVersion: 4,
+        definitionVersion: 5,
         sourceSha256: await fileHash(join(import.meta.dirname, "fixtures.ts")),
         topology,
       },
@@ -423,7 +424,7 @@ export async function runProbeComparison(argv: string[]): Promise<ProbeCompariso
         sameAdapterProcess: true,
         samples: 1,
         symbolicRemoteHeadSetup:
-          "Fixture v4 sets every file:// bare remote HEAD to refs/heads/main before push; both binaries use the same fixture instance without local refs/remotes/origin/HEAD mutation.",
+          "Fixture v5 configures baseBranch=main, sets every file:// bare remote HEAD to refs/heads/main, and sets every local refs/remotes/origin/HEAD to refs/remotes/origin/main before measurement; both binaries use the same fixture instance without mutation between binaries.",
         toolchain: {
           bun: await version(bun, ["--version"], repositoryRoot, environment),
           git: await version("git", ["--version"], repositoryRoot, environment),

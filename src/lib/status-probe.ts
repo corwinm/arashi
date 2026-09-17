@@ -68,7 +68,7 @@ async function defaultTarget(
   };
   for (const remote of new Set([selected, "origin"].filter((v): v is string => !!v))) {
     const branch =
-      symbolic(remote) ?? (probeRemoteHead ? await context.remoteHead(id, remote, config) : null);
+      symbolic(remote) ?? (probeRemoteHead ? await context.remoteHead(id, remote) : null);
     if (branch) {
       if (
         selected === remote ||
@@ -161,7 +161,6 @@ export async function inspectStatusWithContext(
   let defaultRef = parsed.branch.isDetached
     ? null
     : await defaultTarget(context, id, config, refs, names, tracking?.remote ?? null);
-  if (!defaultRef && base) defaultRef = base;
   if (tracking) await refresh(target(tracking.remote, tracking.branch));
   if (!parsed.branch.isDetached) {
     if (base) await refresh(base);

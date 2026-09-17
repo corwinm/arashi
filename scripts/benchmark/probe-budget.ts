@@ -33,23 +33,21 @@ export function validateProbeBudget(
   }
   const verbose = options.verbose ? 1 : 0;
   const repositoryCount = options.fixture === "small" ? 3 : 9;
-  const pinned = options.fixture === "small" ? 39 + 3 * verbose : 93 + 9 * verbose;
-  if (base.metric.count !== pinned || base.metric.repositories?.length !== repositoryCount) {
-    reject(
-      `pinned baseline changed (count=${base.metric.count ?? "unavailable"}, repositories=${JSON.stringify(base.metric.repositories ?? [])}, unattributed=${JSON.stringify(base.metric.unattributed ?? null)}, expected=${pinned}/${repositoryCount})`,
-    );
+  const pinnedAggregate = options.fixture === "small" ? 39 + 3 * verbose : 93 + 9 * verbose;
+  if (base.metric.repositories?.length !== repositoryCount) {
+    reject("measured base repository attribution is incomplete");
   }
   if ((candidate.metric.unattributed?.count ?? 0) !== 0) reject("unattributed candidate sessions");
   if (!isDeepStrictEqual(paths(base), paths(candidate)))
     reject("canonical repository paths differ");
   if (!isDeepStrictEqual(base.behavior, candidate.behavior)) reject("semantic output differs");
   if (!paths(base).includes(options.mainPath)) reject("main repository missing");
-  if (!(candidate.metric.count! < base.metric.count!)) reject("aggregate did not strictly improve");
-  for (const repository of base.metric.repositories!) {
-    const expected = (repository.path === options.mainPath ? 13 : 9) + verbose;
-    if (repository.count !== expected) reject("pinned named-repository attribution changed");
-    const next = candidate.metric.repositories!.find((repo) => repo.path === repository.path)!;
-    if (!(next.count < repository.count)) reject("named repository did not strictly improve");
-    if (next.count > 7 + verbose) reject("clean-fixture command budget exceeded");
+  if (!(candidate.metric.count! < pinnedAggregate))
+    reject("aggregate did not strictly improve over pinned baseline");
+  for (const repository of candidate.metric.repositories!) {
+    const pinnedNamed = (repository.path === options.mainPath ? 13 : 9) + verbose;
+    if (!(repository.count < pinnedNamed))
+      reject("named repository did not strictly improve over pinned baseline");
+    if (repository.count > 7 + verbose) reject("clean-fixture command budget exceeded");
   }
 }

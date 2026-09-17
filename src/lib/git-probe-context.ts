@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { realpath, access, readFile } from "node:fs/promises";
+import { realpath, access } from "node:fs/promises";
 import { constants } from "node:fs";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { delimiter, isAbsolute, resolve } from "node:path";
 import type { RemoteTrackingTarget, RemoteTrackingFetchResult } from "./git-remote.ts";
 
 export interface ProbeCall {
@@ -678,24 +677,10 @@ export class GitProbeContext {
       return { ahead, behind };
     });
   }
-  remoteHead(id: GitIdentity, remote: string, config?: EffectiveConfig): Promise<string | null> {
+  remoteHead(id: GitIdentity, remote: string): Promise<string | null> {
     return this.#read(id, `symbolic:${remote}`, async () => {
       if (remote.startsWith("-") || !validRef(`refs/remotes/${remote}/HEAD`))
         throw failure("remote HEAD");
-      const urls = (config?.entries ?? [])
-        .filter((entry) => entry.key === `remote.${remote}.url`)
-        .map((entry) => entry.value?.toString() ?? "");
-      const localUrl = urls.length === 1 && urls[0]?.startsWith("file://") ? urls[0] : null;
-      if (localUrl) {
-        try {
-          const head = (await readFile(join(fileURLToPath(localUrl), "HEAD"), "utf8")).trim();
-          const prefix = "ref: refs/heads/";
-          const branch = head.startsWith(prefix) ? head.slice(prefix.length) : null;
-          if (branch && validRef(`refs/heads/${branch}`)) return branch;
-        } catch {
-          // Fall through to Git's local symbolic ref and remote advertisement.
-        }
-      }
       const result = await this.#run(
         id.cwd,
         ["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`],

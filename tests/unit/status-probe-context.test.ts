@@ -167,7 +167,7 @@ test("no symbolic remote HEAD is not guessed from conventional branch names", as
   expect(ledger.pending).toHaveLength(0);
 });
 
-test("an explicit configured base remains the default comparison when symbolic HEAD is unavailable", async () => {
+test("an explicit configured base stays available while symbolic default HEAD remains unresolved", async () => {
   const noHead = `refs/remotes/origin/main\0${oid}\0\0${"2 3"}\0\n`;
   const ledger = setup()
     .enqueue(refs, result(noHead))
@@ -179,8 +179,8 @@ test("an explicit configured base remains the default comparison when symbolic H
     context: context(ledger),
   });
   expect(status.baseBranch).toMatchObject({ branch: "main", state: "available" });
-  expect(status.defaultBranch).toMatchObject({ branch: "main", state: "available" });
-  expect(status.freshness?.remoteRefsRefreshed).toBe(true);
+  expect(status.defaultBranch).toEqual({ state: "skipped", branch: null, reason: "unresolved" });
+  expect(status.freshness?.remoteRefsRefreshed).toBe(false);
   expect(ledger.pending).toHaveLength(0);
 });
 

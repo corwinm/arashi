@@ -270,6 +270,7 @@ function listBehavior(stdout: string): Record<string, unknown> {
 function cliStatusBehavior(local: boolean, verbose: boolean, fixture: BenchmarkFixture) {
   return (stdout: string): Promise<Record<string, unknown>> =>
     validateCliStatusOutput(stdout, {
+      configuredBase: true,
       environment: fixture.environment,
       expectedRepositoryPaths: fixture.repositoryPaths,
       local,

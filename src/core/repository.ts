@@ -547,34 +547,16 @@ const classifyError = (path: string, error: unknown): DiscoveryError => {
  * @throws {RepositoryInvalidError} If default branch cannot be determined
  */
 export const detectDefaultBranch = async (repositoryPath: string): Promise<string> => {
-  // The common non-bare layout can be resolved without spawning Git. Discovery
-  // may inspect many repositories at once, so avoiding two subprocess rounds per
-  // repository keeps large workspaces responsive. Unusual Git layouts continue
-  // through the authoritative command-based fallback below.
-  const gitDirectory = join(repositoryPath, ".git");
-  const remoteHeadPath = join(gitDirectory, "refs", "remotes", "origin", "HEAD");
   try {
-    const remoteHead = await runtime.file(remoteHeadPath).text();
-    const match = remoteHead.trim().match(/^ref: refs\/remotes\/origin\/(.+)$/);
-    if (match?.[ONE]) return match[ONE].trim();
-  } catch {}
+    const result = await execGit(
+      ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+      repositoryPath,
+    );
 
-  for (const branch of COMMON_BRANCHES) {
-    if (await runtime.file(join(gitDirectory, "refs", "heads", branch)).exists()) return branch;
-  }
-
-  try {
-    const head = await runtime.file(join(gitDirectory, "HEAD")).text();
-    const match = head.trim().match(/^ref: refs\/heads\/(.+)$/);
-    if (match?.[ONE]) return match[ONE].trim();
-  } catch {}
-
-  try {
-    const result = await execGit(["symbolic-ref", "refs/remotes/origin/HEAD"], repositoryPath);
-
-    const match = result.stdout.trim().match(/refs\/remotes\/origin\/(.+)/);
-    if (match && match[ONE]) {
-      return match[ONE].trim();
+    const prefix = "origin/";
+    const remoteHead = result.stdout.trim();
+    if (remoteHead.startsWith(prefix) && remoteHead.length > prefix.length) {
+      return remoteHead.slice(prefix.length);
     }
   } catch {}
 

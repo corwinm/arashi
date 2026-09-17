@@ -283,14 +283,15 @@ describe("handoff command", () => {
     const json = await runArashi(workspaceRoot, ["handoff", "--json"]);
 
     expect(markdown.exitCode).toBe(0);
-    expect(markdown.stdout).toContain("base/default origin/main behind by 1");
+    expect(markdown.stdout).toContain("base origin/main behind by 1");
+    expect(markdown.stdout).not.toContain("base/default origin/main");
     expect(markdown.stdout).toContain("`arashi status --verbose`");
     const repositories = (parseJson(json.stdout).data as Record<string, unknown>)
       .repositories as Record<string, unknown>[];
     expect(repositories.find((repo) => repo.name === "Main Repository")).toMatchObject({
       baseBranch: { behind: 1, branch: "main", state: "available" },
       baseBranchSource: "workspace-config",
-      defaultBranch: { behind: 1, branch: "main", state: "available" },
+      defaultBranch: { branch: null, reason: "unresolved", state: "skipped" },
     });
   });
 

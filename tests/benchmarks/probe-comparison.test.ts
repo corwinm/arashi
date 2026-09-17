@@ -52,7 +52,7 @@ const artifact = (): ProbeComparisonArtifact => ({
       },
     ];
   }),
-  fixture: { definitionVersion: 4, sourceSha256: "f".repeat(64) },
+  fixture: { definitionVersion: 5, sourceSha256: "f".repeat(64) },
   provenance: { sameAdapterProcess: true },
   schemaVersion: 1,
 });
@@ -116,9 +116,9 @@ describe("immutable probe comparison acceptance", () => {
     },
   );
 
-  test("rejects incomplete or non-v4 fixture evidence", () => {
+  test("rejects incomplete or non-v5 fixture evidence", () => {
     const value = artifact();
     value.fixture.definitionVersion = 3;
-    expect(() => validateComparisonArtifact(value)).toThrow("fixture definition v4");
+    expect(() => validateComparisonArtifact(value)).toThrow("fixture definition v5");
   });
 });

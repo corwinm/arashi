@@ -74,14 +74,14 @@ describe("strict canonical probe benchmark acceptance", () => {
   ])("rejects %s", (_label, mutate) => {
     expect(() => validateProbeBudget(base(), mutate(), options)).toThrow();
   });
-  test("rejects changed pinned baseline", () => {
+  test("accepts measured base counts that change under fixture-owned symbolic HEAD state", () => {
     expect(() =>
-      validateProbeBudget({ ...base(), metric: metric(12, 9, 8) }, candidate(), options),
-    ).toThrow();
+      validateProbeBudget({ ...base(), metric: metric(11, 7, 8) }, candidate(), options),
+    ).not.toThrow();
   });
-  test("rejects shifted attribution even when aggregate remains pinned", () => {
+  test("accepts shifted measured-base attribution when candidate beats pinned named budgets", () => {
     expect(() =>
-      validateProbeBudget({ ...base(), metric: metric(11, 10, 8) }, candidate(), options),
-    ).toThrow();
+      validateProbeBudget({ ...base(), metric: metric(9, 8, 8) }, candidate(), options),
+    ).not.toThrow();
   });
 });

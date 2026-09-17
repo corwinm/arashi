@@ -102,6 +102,12 @@ async function addLocalRemote(
   await git(remote, ["symbolic-ref", "HEAD", "refs/heads/main"], environment);
   await git(repository, ["remote", "add", "origin", pathToFileURL(remote).href], environment);
   await git(repository, ["push", "--set-upstream", "origin", "main"], environment);
+
+  await git(
+    repository,
+    ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+    environment,
+  );
 }
 
 async function createWorkspace(options: {
@@ -137,7 +143,7 @@ async function createWorkspace(options: {
 
   await writeFile(
     join(root, ".arashi", "config.json"),
-    `${JSON.stringify({ repos, reposDir: "./repos", version: "1.0.0", worktreesDir: "../worktrees" }, null, 2)}\n`,
+    `${JSON.stringify({ baseBranch: "main", repos, reposDir: "./repos", version: "1.0.0", worktreesDir: "../worktrees" }, null, 2)}\n`,
     "utf8",
   );
   await git(root, ["add", ".arashi/config.json", ".gitignore"], options.environment);
@@ -248,7 +254,7 @@ export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFi
     return {
       cleanup: () => cleanupFixtureDirectory(base),
       coordinatedChildWorktreeCount: definition.repositoryCount * (definition.worktreeCount - 1),
-      definitionVersion: 4,
+      definitionVersion: 5,
       environment,
       id,
       refreshedRoot,
