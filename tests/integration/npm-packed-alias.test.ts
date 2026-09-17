@@ -27,8 +27,9 @@ const npmCli =
     : "";
 const npmArgs = (args: string[]): string[] =>
   process.platform === "win32" ? [npmCli, ...args] : args;
-const npmSetupCommandTimeout = 45_000;
-const packedAliasSetupTimeout = 120_000;
+// Keep genuine npm hangs bounded while allowing for hosted Windows runner contention.
+const npmSetupCommandTimeout = 90_000;
+const packedAliasSetupTimeout = 210_000;
 const fixtures: string[] = [];
 let prefix = "";
 let binDirectory = "";
