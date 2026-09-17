@@ -155,6 +155,8 @@ const psQuote = (value: string) => `'${value.replaceAll("'", "''")}'`;
 const available = (shell: string) =>
   spawnSync(shell, ["--version"], { encoding: "utf8" }).status === 0;
 const shells: Shell[] = ["bash", "zsh", "fish", "powershell"];
+const completionFilename = (shell: Shell, aliasFixture = false) =>
+  `${shell}${aliasFixture ? ".alias" : ""}.completion${shell === "powershell" ? ".ps1" : ""}`;
 let root: string;
 let ledger: string;
 const generated = renderAllCompletions(contract);
@@ -171,8 +173,8 @@ beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "arashi-static-ledger-"));
   ledger = join(root, "ledger.jsonl");
   for (const shell of shells) {
-    writeFileSync(join(root, `${shell}.completion`), generated[shell]);
-    writeFileSync(join(root, `${shell}.alias.completion`), aliasGenerated[shell]);
+    writeFileSync(join(root, completionFilename(shell)), generated[shell]);
+    writeFileSync(join(root, completionFilename(shell, true)), aliasGenerated[shell]);
   }
   // Static dispatch fails closed. Dynamic output is a fixed NUL-framed record;
   // the shim never constructs the CLI or touches workspace metadata.
@@ -192,7 +194,7 @@ afterAll(() => {
 function run(shell: Shell, fixture: Case, sabotage = false) {
   writeFileSync(ledger, "");
   const words = fixture.words.map(quote).join(" ");
-  const completionPath = join(root, `${shell}${fixture.aliasFixture ? ".alias" : ""}.completion`);
+  const completionPath = join(root, completionFilename(shell, fixture.aliasFixture));
   const source = quote(completionPath);
   const dynamicValue = fixture.words.at(-1)!.startsWith("--only=") ? "--only=probe" : "probe";
   let script: string;
