@@ -83,12 +83,10 @@ describe("resolveWorkspaceContext", () => {
     await standaloneWorktrees(context, probeContext);
 
     const ledger = probeContext.auditLedger();
-    expect(ledger.some((entry) => entry.purpose === "standalone worktree listing")).toBe(true);
-    expect(ledger.every((entry) => entry.repository !== null)).toBe(true);
-    expect(
-      ledger.every((entry) => ["canonical", "provisional"].includes(entry.repositoryAttribution)),
-    ).toBe(true);
-    expect(ledger.find((entry) => entry.purpose === "standalone worktree listing")).toMatchObject({
+    const probes = ledger.filter((entry) => entry.eventType === "probe");
+    expect(probes.some((entry) => entry.purpose === "standalone worktree listing")).toBe(true);
+    expect(probes.every((entry) => entry.repository !== null)).toBe(true);
+    expect(probes.find((entry) => entry.purpose === "standalone worktree listing")).toMatchObject({
       repositoryAttribution: "canonical",
     });
     expect(new Set(ledger.map((entry) => entry.contextId)).size).toBe(1);

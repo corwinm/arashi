@@ -4,6 +4,7 @@ import createBenchmarkEnvironment from "./environment.ts";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { waitForProcessClose } from "./process.ts";
 
 export type FixtureId = "small" | "medium" | "large";
@@ -98,13 +99,9 @@ async function addLocalRemote(
 ): Promise<void> {
   await mkdir(remote, { recursive: true });
   await git(remote, ["init", "--bare"], environment);
-  await git(repository, ["remote", "add", "origin", remote], environment);
+  await git(remote, ["symbolic-ref", "HEAD", "refs/heads/main"], environment);
+  await git(repository, ["remote", "add", "origin", pathToFileURL(remote).href], environment);
   await git(repository, ["push", "--set-upstream", "origin", "main"], environment);
-  await git(
-    repository,
-    ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
-    environment,
-  );
 }
 
 async function createWorkspace(options: {

@@ -82,6 +82,40 @@ describe("immutable probe comparison acceptance", () => {
     expect(() => validateComparisonArtifact(value)).toThrow("native verbose output differs");
   });
 
+  test("compares semantic fields independent of JSON object insertion order", () => {
+    const value = artifact();
+    const base = value.cases.find(
+      (entry) => entry.binary === "base" && entry.fixture === "small" && !entry.verbose,
+    )!;
+    const candidate = value.cases.find(
+      (entry) => entry.binary === "candidate" && entry.fixture === "small" && !entry.verbose,
+    )!;
+    base.behavior = {
+      ...base.behavior,
+      statuses: [{ defaultBranch: { branch: "main", state: "available" } }],
+    };
+    candidate.behavior = {
+      ...candidate.behavior,
+      statuses: [{ defaultBranch: { state: "available", branch: "main" } }],
+    };
+    expect(() => validateComparisonArtifact(value)).not.toThrow();
+  });
+
+  test.each(["baseBranch", "defaultBranch"] as const)(
+    "rejects full semantic status drift in %s",
+    (field) => {
+      const value = artifact();
+      const candidate = value.cases.find(
+        (entry) => entry.binary === "candidate" && entry.fixture === "small" && !entry.verbose,
+      )!;
+      candidate.behavior = {
+        ...candidate.behavior,
+        statuses: [{ [field]: { state: "skipped", reason: "drift" } }],
+      };
+      expect(() => validateComparisonArtifact(value)).toThrow("semantic status output differs");
+    },
+  );
+
   test("rejects incomplete or non-v4 fixture evidence", () => {
     const value = artifact();
     value.fixture.definitionVersion = 3;

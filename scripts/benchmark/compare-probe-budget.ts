@@ -46,17 +46,18 @@ const fail = (message: string): never => {
   throw new Error(`Probe comparison rejected: ${message}`);
 };
 
-function comparableBehavior(behavior: Record<string, unknown>): string {
-  const clone = structuredClone(behavior) as {
-    freshness?: { mode?: string; remoteRefsRefreshed?: boolean };
-    statuses?: Array<Record<string, unknown>>;
-  };
-  for (const status of clone.statuses ?? []) {
-    delete status.baseBranch;
-    delete status.defaultBranch;
-  }
-  return JSON.stringify(clone);
-}
+const canonicalizeBehavior = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonicalizeBehavior);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value)
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalizeBehavior(entry)]),
+    );
+  return value;
+};
+const comparableBehavior = (behavior: Record<string, unknown>): string =>
+  JSON.stringify(canonicalizeBehavior(behavior));
 
 export function validateComparisonArtifact(artifact: ProbeComparisonArtifact): void {
   if (artifact.schemaVersion !== 1) fail("unsupported artifact schema");
@@ -233,8 +234,13 @@ async function measure(
   verbose: boolean,
   tracePath: string,
 ): Promise<ProbeComparisonCase> {
-  await rm(tracePath, { force: true });
   const args = ["status", ...(verbose ? ["--verbose"] : []), "--json"];
+  const warmup = await invoke({ args: [], command: executable }, args, fixture.refreshedRoot, {
+    ...fixture.environment,
+  });
+  if (warmup.exitCode !== 0)
+    throw new Error(`${binary} ${fixture.id} warm-up status failed: ${warmup.stderr}`);
+  await rm(tracePath, { force: true });
   const result = await invoke({ args: [], command: executable }, args, fixture.refreshedRoot, {
     ...fixture.environment,
     GIT_TRACE2_EVENT: tracePath,
@@ -243,7 +249,7 @@ async function measure(
     throw new Error(`${binary} ${fixture.id} status failed: ${result.stderr}`);
   const behavior = await validateCliStatusOutput(result.stdout, {
     environment: fixture.environment,
-    expectedDefaultResolution: binary === "base" ? "available" : "unresolved",
+    expectedDefaultResolution: "available",
     expectedRepositoryPaths: fixture.repositoryPaths,
     local: false,
     verbose,
@@ -267,22 +273,6 @@ async function measure(
     nativeOutputSha256: nativeOutputHash(result.stdout, verbose),
     verbose,
   };
-}
-
-async function configureComparisonFixture(
-  fixture: Awaited<ReturnType<typeof createBenchmarkFixture>>,
-): Promise<void> {
-  // The approved baseline fixture has no local symbolic remote HEAD. The
-  // regular benchmark fixture creates one for deterministic general-purpose
-  // behavior, so remove only that local ref before both immutable binaries run.
-  for (const repository of fixture.repositoryPaths) {
-    await successful(
-      "git",
-      ["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
-      repository,
-      fixture.environment,
-    );
-  }
 }
 
 async function fixtureTopology(
@@ -383,7 +373,6 @@ export async function runProbeComparison(argv: string[]): Promise<ProbeCompariso
     for (const fixtureId of ["small", "large"] as FixtureId[]) {
       const fixture = await createBenchmarkFixture(fixtureId);
       fixtures.push(fixture);
-      await configureComparisonFixture(fixture);
       topology.push(await fixtureTopology(fixture, fixture.environment));
       for (const verbose of [false, true]) {
         cases.push(
@@ -433,13 +422,15 @@ export async function runProbeComparison(argv: string[]): Promise<ProbeCompariso
           "one Git Trace2 root-session sample per binary/case; named + unattributed = aggregate",
         sameAdapterProcess: true,
         samples: 1,
+        symbolicRemoteHeadSetup:
+          "Fixture v4 sets every file:// bare remote HEAD to refs/heads/main before push; both binaries use the same fixture instance without local refs/remotes/origin/HEAD mutation.",
         toolchain: {
           bun: await version(bun, ["--version"], repositoryRoot, environment),
           git: await version("git", ["--version"], repositoryRoot, environment),
           node: process.version,
           pnpm: await version(pnpm, ["--version"], repositoryRoot, environment),
         },
-        warmup: 0,
+        warmup: 1,
       },
       schemaVersion: 1,
     };

@@ -344,6 +344,43 @@ describe("section 1.5: complete normalized fingerprint", () => {
 });
 
 describe("section 1.8–1.10: epochs, linearizable reads and disposal", () => {
+  test("audit serialization is secret-free, append-only, and cleared on disposal", async () => {
+    const canary = "audit-canary-secret-do-not-serialize";
+    const gate = deferred<ReturnType<typeof result>>();
+    const ledger = new ProbeLedger().enqueue(identityArgs, gate.promise);
+    const ctx = new GitProbeContext({
+      run: ledger.run,
+      realpath: async (path: string) => path,
+      executable: "/tools/git",
+      environment: { PATH: "/tools", TOKEN: canary },
+    });
+    const pending = ctx.identity("/repo");
+    while (ledger.calls.length === 0) await Promise.resolve();
+    const observed = ctx.auditLedger()[0]!;
+    const observedBytes = JSON.stringify(observed);
+    expect(observed).toMatchObject({
+      eventType: "probe",
+      repository: "provisional:/repo",
+      repositoryAttribution: "provisional",
+    });
+    expect(observedBytes).not.toContain(canary);
+    expect(observedBytes).not.toContain("environment");
+    gate.resolve(result("/repo\n/repo/common\nfalse\n"));
+    await pending;
+    const completed = ctx.auditLedger();
+    expect(JSON.stringify(observed)).toBe(observedBytes);
+    expect(completed[0]).toEqual(observed);
+    expect(completed[1]).toMatchObject({
+      eventType: "attribution-resolution",
+      resolvesEventId: observed.eventId,
+      provisionalRepository: "provisional:/repo",
+      canonicalRepository: "/repo/common",
+    });
+    expect(JSON.stringify(completed)).not.toContain(canary);
+    ctx.dispose();
+    expect(ctx.auditLedger()).toEqual([]);
+  });
+
   test("concurrent exact fetch shares success; A then overlapping B then A reruns with new tokens", async () => {
     const gate = deferred<ReturnType<typeof result>>();
     const ledger = discover(new ProbeLedger())

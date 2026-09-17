@@ -64,15 +64,17 @@ test.each([false, true])("one context drives exact clean ledger; verbose=%s", as
   expect(ledger.calls).toHaveLength(verbose ? 7 : 6);
   expect(status.fullStatus).toBe(verbose ? "Native status with diagnostics" : undefined);
   expect(ledger.pending).toHaveLength(0);
-  expect(probeContext.auditLedger()).toEqual(
+  const audit = probeContext.auditLedger();
+  const probes = audit.filter((entry) => entry.eventType === "probe");
+  expect(probes).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         argv: identity,
         cwd: path,
         parserOwner: "GitProbeContext identity parser",
         purpose: "combined repository/worktree identity",
-        repository: "/common",
-        repositoryAttribution: "canonical",
+        repository: `provisional:${path}`,
+        repositoryAttribution: "provisional",
       }),
       expect.objectContaining({
         argv: porcelain,
@@ -83,9 +85,14 @@ test.each([false, true])("one context drives exact clean ledger; verbose=%s", as
       }),
     ]),
   );
-  expect(probeContext.auditLedger()).toHaveLength(verbose ? 7 : 6);
-  expect(probeContext.auditLedger().every((entry) => entry.purpose.length > 0)).toBe(true);
-  expect(probeContext.auditLedger().every((entry) => entry.repository !== null)).toBe(true);
+  expect(probes).toHaveLength(verbose ? 7 : 6);
+  expect(audit).toHaveLength(verbose ? 8 : 7);
+  expect(probes.every((entry) => entry.purpose.length > 0)).toBe(true);
+  expect(probes.every((entry) => entry.repository !== null)).toBe(true);
+  expect(audit.find((entry) => entry.eventType === "attribution-resolution")).toMatchObject({
+    canonicalRepository: "/common",
+    provisionalRepository: `provisional:${path}`,
+  });
 });
 test("local mode starts no transport and keeps truthful local divergence", async () => {
   const ledger = setup().enqueue(refs, result(snapshot(9, 8)));
@@ -155,7 +162,7 @@ test("no symbolic remote HEAD is not guessed from conventional branch names", as
   const status = await checkRepoStatus("repo", path, { context: context(ledger) });
   expect(status.error).toBeNull();
   expect(status.defaultBranch).toEqual({ state: "skipped", branch: null, reason: "unresolved" });
-  expect(status.freshness?.remoteRefsRefreshed).toBe(true);
+  expect(status.freshness?.remoteRefsRefreshed).toBe(false);
   expect(ledger.calls).toHaveLength(7);
   expect(ledger.pending).toHaveLength(0);
 });
@@ -193,6 +200,6 @@ test("ambiguous remaining symbolic remote HEADs are not guessed", async () => {
   const status = await checkRepoStatus("repo", path, { context: context(ledger) });
   expect(status.error).toBeNull();
   expect(status.defaultBranch).toEqual({ state: "skipped", branch: null, reason: "unresolved" });
-  expect(status.freshness?.remoteRefsRefreshed).toBe(true);
+  expect(status.freshness?.remoteRefsRefreshed).toBe(false);
   expect(ledger.pending).toHaveLength(0);
 });

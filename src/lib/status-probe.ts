@@ -55,6 +55,7 @@ const forBranch = (branch: string, refs: Map<string, RefFact>, names: string[]) 
 async function defaultTarget(
   context: GitProbeContext,
   id: GitIdentity,
+  config: EffectiveConfig,
   refs: Map<string, RefFact>,
   names: string[],
   selected: string | null,
@@ -67,7 +68,7 @@ async function defaultTarget(
   };
   for (const remote of new Set([selected, "origin"].filter((v): v is string => !!v))) {
     const branch =
-      symbolic(remote) ?? (probeRemoteHead ? await context.remoteHead(id, remote) : null);
+      symbolic(remote) ?? (probeRemoteHead ? await context.remoteHead(id, remote, config) : null);
     if (branch) {
       if (
         selected === remote ||
@@ -159,7 +160,7 @@ export async function inspectStatusWithContext(
   };
   let defaultRef = parsed.branch.isDetached
     ? null
-    : await defaultTarget(context, id, refs, names, tracking?.remote ?? null);
+    : await defaultTarget(context, id, config, refs, names, tracking?.remote ?? null);
   if (!defaultRef && base) defaultRef = base;
   if (tracking) await refresh(target(tracking.remote, tracking.branch));
   if (!parsed.branch.isDetached) {
@@ -171,6 +172,7 @@ export async function inspectStatusWithContext(
     const postFetchDefault = await defaultTarget(
       context,
       id,
+      config,
       post,
       names,
       tracking?.remote ?? null,
@@ -297,7 +299,11 @@ export async function inspectStatusWithContext(
     freshness: {
       mode: local ? "local" : "refreshed",
       remoteRefsRefreshed:
-        !local && fetches.size > 0 && [...fetches.values()].every((result) => result.ok),
+        !local &&
+        fetches.size > 0 &&
+        [...fetches.values()].every((result) => result.ok) &&
+        defaultBranch.state === "available" &&
+        (!baseName || baseBranch?.state === "available"),
     },
   };
 }

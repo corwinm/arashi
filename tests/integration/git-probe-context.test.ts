@@ -64,16 +64,20 @@ describe("real Git identity and spawn equivalence", () => {
     const ctx = context();
     const ids = await Promise.all([repo, sub, alias, linked].map((p) => ctx.identity(p)));
     expect(new Set(ids.map((i) => i.repositoryKey)).size).toBe(1);
-    for (const entry of ctx.auditLedger()) expect(await realpath(entry.cwd)).toBe(entry.cwd);
+    const audit = ctx.auditLedger();
+    const probes = audit.filter((entry) => entry.eventType === "probe");
+    const resolutions = audit.filter((entry) => entry.eventType === "attribution-resolution");
+    for (const entry of probes) expect(await realpath(entry.cwd)).toBe(entry.cwd);
     expect(
-      ctx
-        .auditLedger()
-        .some(
-          (entry) => entry.parserOwner === "GitProbeContext identity parser" && entry.cwd === sub,
-        ),
+      probes.some(
+        (entry) => entry.parserOwner === "GitProbeContext identity parser" && entry.cwd === sub,
+      ),
     ).toBe(true);
-    expect(ctx.auditLedger().every((entry) => entry.repositoryAttribution === "canonical")).toBe(
-      true,
+    expect(probes.every((entry) => entry.repositoryAttribution === "provisional")).toBe(true);
+    expect(resolutions).toHaveLength(probes.length);
+    expect(resolutions.every((entry) => entry.canonicalRepository === common)).toBe(true);
+    expect(new Set(resolutions.map((entry) => entry.resolvesEventId))).toEqual(
+      new Set(probes.map((entry) => entry.eventId)),
     );
     expect(new Set(ids.slice(0, 3).map((i) => i.worktreeKey)).size).toBe(1);
     expect(ids[3]!.worktreeKey).not.toBe(ids[0]!.worktreeKey);
@@ -208,7 +212,7 @@ describe("real Git identity and spawn equivalence", () => {
     const status = await checkRepoStatus("repo", repo);
     expect(status.branch.remoteBranch).toBe("origin/main");
     expect(status.defaultBranch).toEqual({ state: "skipped", branch: null, reason: "unresolved" });
-    expect(status.freshness?.remoteRefsRefreshed).toBe(true);
+    expect(status.freshness?.remoteRefsRefreshed).toBe(false);
   });
 
   test("detached configured-base reporting stays detached even without a remote", async () => {

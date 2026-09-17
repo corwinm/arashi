@@ -246,6 +246,39 @@ describe("CLI JSON output contract", () => {
     );
   });
 
+  test("successful fetch with unresolved default stays false in JSON and human command output", async () => {
+    const workspaceRoot = await createCommonWorkspace();
+    const repository = join(workspaceRoot, "repos", "repo-a");
+    const remote = await createBareRemote(workspaceRoot, "unresolved-default");
+    await runGit(repository, ["remote", "add", "origin", remote]);
+    await runGit(repository, ["push", "--set-upstream", "origin", "main"]);
+    const configPath = join(workspaceRoot, ".arashi", "config.json");
+    const config = JSON.parse(await runtime.file(configPath).text()) as {
+      repos: Record<string, Record<string, unknown>>;
+    };
+    delete config.repos["repo-a"]!.defaultBranch;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const jsonResult = await runArashi(workspaceRoot, ["status", "--json"]);
+    expect(jsonResult.exitCode, jsonResult.stderr).toBe(0);
+    const data = jsonData(parseSingleJsonDocument(jsonResult.stdout));
+    expect(data.freshness).toEqual({ mode: "refreshed", remoteRefsRefreshed: false });
+    expect(jsonArray(data.repositories)).toContainEqual(
+      expect.objectContaining({
+        defaultBranch: { branch: null, reason: "unresolved", state: "skipped" },
+        freshness: { mode: "refreshed", remoteRefsRefreshed: false },
+        name: "repo-a",
+      }),
+    );
+
+    const humanResult = await runArashi(workspaceRoot, ["status"], { NO_COLOR: "1" });
+    expect(humanResult.exitCode, humanResult.stderr).toBe(0);
+    expect(humanResult.stdout).toContain(
+      "Freshness: remote-tracking refresh incomplete or not applicable",
+    );
+    expect(humanResult.stdout).not.toContain("Freshness: remote-tracking refs refreshed");
+  });
+
   test.skipIf(process.platform === "win32")(
     "status --local starts no transport or credential helper on the actual CLI path",
     async () => {

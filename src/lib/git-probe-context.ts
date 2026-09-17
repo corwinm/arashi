@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { realpath, access } from "node:fs/promises";
+import { realpath, access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { delimiter, isAbsolute, resolve } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { RemoteTrackingTarget, RemoteTrackingFetchResult } from "./git-remote.ts";
 
 export interface ProbeCall {
@@ -16,11 +17,22 @@ export interface ProbeCall {
   repository: string | null;
   purpose: string;
 }
-export interface ProbeAuditEntry extends ProbeCall {
+export interface ProbeAuditEvent extends Omit<ProbeCall, "environment"> {
   contextId: string;
+  eventId: string;
+  eventType: "probe";
   parserOwner: string;
   repositoryAttribution: "canonical" | "provisional";
 }
+export interface ProbeAttributionResolution {
+  canonicalRepository: string;
+  contextId: string;
+  eventId: string;
+  eventType: "attribution-resolution";
+  provisionalRepository: string;
+  resolvesEventId: string;
+}
+export type ProbeAuditEntry = ProbeAuditEvent | ProbeAttributionResolution;
 export interface ProbeResult {
   stdout: Buffer;
   stderr: Buffer;
@@ -340,6 +352,7 @@ const auditSemantics = (parser: string): { parserOwner: string; purpose: string 
       parserOwner: "GitProbeContext symbolic remote-HEAD parser",
       purpose: "selected remote symbolic HEAD fallback",
     },
+
     "targeted fetch": {
       parserOwner: "GitProbeContext classified fetch-result parser",
       purpose: "exact targeted remote-tracking refresh",
@@ -359,6 +372,8 @@ export class GitProbeContext {
   #options: ContextOptions;
   #environment: Record<string, string>;
   #audit: ProbeAuditEntry[] = [];
+  #auditSequence = 0;
+  #attributedEvents = new Set<string>();
   readonly #contextId = `git-probe-context-${++nextContextId}`;
 
   constructor(options: ContextOptions = {}) {
@@ -387,19 +402,33 @@ export class GitProbeContext {
     this.#facts.clear();
     this.#repositories.clear();
     this.#environment = {};
+    this.#options = {};
+    this.#audit = [];
+    this.#attributedEvents.clear();
   }
   auditLedger(): readonly ProbeAuditEntry[] {
-    return this.#audit.map((entry) => ({
-      ...entry,
-      argv: [...entry.argv],
-      environment: { ...entry.environment },
-    }));
+    return this.#audit.map((entry) =>
+      entry.eventType === "probe" ? { ...entry, argv: [...entry.argv] } : { ...entry },
+    );
   }
   #attribute(start: number, discoveryCwd: string, identity: GitIdentity): void {
     for (const entry of this.#audit.slice(start)) {
-      if (entry.repositoryAttribution !== "provisional" || entry.cwd !== discoveryCwd) continue;
-      entry.repository = identity.repositoryKey;
-      entry.repositoryAttribution = "canonical";
+      if (
+        entry.eventType !== "probe" ||
+        entry.repositoryAttribution !== "provisional" ||
+        entry.cwd !== discoveryCwd ||
+        this.#attributedEvents.has(entry.eventId)
+      )
+        continue;
+      this.#attributedEvents.add(entry.eventId);
+      this.#audit.push({
+        canonicalRepository: identity.repositoryKey,
+        contextId: this.#contextId,
+        eventId: `${this.#contextId}-event-${++this.#auditSequence}`,
+        eventType: "attribution-resolution",
+        provisionalRepository: entry.repository ?? `provisional:${discoveryCwd}`,
+        resolvesEventId: entry.eventId,
+      });
     }
   }
   #state(id: GitIdentity): RepositoryState {
@@ -483,11 +512,18 @@ export class GitProbeContext {
       purpose: semantics.purpose,
     };
     this.#audit.push({
-      ...call,
       argv: [...call.argv],
+      attemptToken: call.attemptToken,
       contextId: this.#contextId,
-      environment: { ...call.environment },
+      cwd: call.cwd,
+      eventId: `${this.#contextId}-event-${++this.#auditSequence}`,
+      eventType: "probe",
+      executable: call.executable,
+      generation: call.generation,
+      parser: call.parser,
       parserOwner: semantics.parserOwner,
+      purpose: call.purpose,
+      repository: call.repository,
       repositoryAttribution: id ? "canonical" : "provisional",
     });
     try {
@@ -642,9 +678,24 @@ export class GitProbeContext {
       return { ahead, behind };
     });
   }
-  remoteHead(id: GitIdentity, remote: string): Promise<string | null> {
+  remoteHead(id: GitIdentity, remote: string, config?: EffectiveConfig): Promise<string | null> {
     return this.#read(id, `symbolic:${remote}`, async () => {
-      if (!validRef(`refs/remotes/${remote}/HEAD`)) throw failure("remote HEAD");
+      if (remote.startsWith("-") || !validRef(`refs/remotes/${remote}/HEAD`))
+        throw failure("remote HEAD");
+      const urls = (config?.entries ?? [])
+        .filter((entry) => entry.key === `remote.${remote}.url`)
+        .map((entry) => entry.value?.toString() ?? "");
+      const localUrl = urls.length === 1 && urls[0]?.startsWith("file://") ? urls[0] : null;
+      if (localUrl) {
+        try {
+          const head = (await readFile(join(fileURLToPath(localUrl), "HEAD"), "utf8")).trim();
+          const prefix = "ref: refs/heads/";
+          const branch = head.startsWith(prefix) ? head.slice(prefix.length) : null;
+          if (branch && validRef(`refs/heads/${branch}`)) return branch;
+        } catch {
+          // Fall through to Git's local symbolic ref and remote advertisement.
+        }
+      }
       const result = await this.#run(
         id.cwd,
         ["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`],
