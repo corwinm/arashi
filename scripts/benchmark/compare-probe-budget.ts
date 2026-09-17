@@ -51,7 +51,6 @@ function comparableBehavior(behavior: Record<string, unknown>): string {
     freshness?: { mode?: string; remoteRefsRefreshed?: boolean };
     statuses?: Array<Record<string, unknown>>;
   };
-  if (clone.freshness) delete clone.freshness.remoteRefsRefreshed;
   for (const status of clone.statuses ?? []) {
     delete status.baseBranch;
     delete status.defaultBranch;

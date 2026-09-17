@@ -38,7 +38,7 @@ export async function validateCliStatusOutput(
   const expectedDefault = options.expectedDefaultResolution ?? "available";
   const expectedFreshness = {
     mode: options.local ? "local" : "refreshed",
-    remoteRefsRefreshed: !options.local && expectedDefault === "available",
+    remoteRefsRefreshed: !options.local,
   };
   assertStatusEqual(freshness, expectedFreshness, "command freshness");
   assertStatusEqual(envelope.warnings ?? [], [], "warnings");

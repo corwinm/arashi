@@ -155,7 +155,7 @@ test("no symbolic remote HEAD is not guessed from conventional branch names", as
   const status = await checkRepoStatus("repo", path, { context: context(ledger) });
   expect(status.error).toBeNull();
   expect(status.defaultBranch).toEqual({ state: "skipped", branch: null, reason: "unresolved" });
-  expect(status.freshness?.remoteRefsRefreshed).toBe(false);
+  expect(status.freshness?.remoteRefsRefreshed).toBe(true);
   expect(ledger.calls).toHaveLength(7);
   expect(ledger.pending).toHaveLength(0);
 });
@@ -193,6 +193,6 @@ test("ambiguous remaining symbolic remote HEADs are not guessed", async () => {
   const status = await checkRepoStatus("repo", path, { context: context(ledger) });
   expect(status.error).toBeNull();
   expect(status.defaultBranch).toEqual({ state: "skipped", branch: null, reason: "unresolved" });
-  expect(status.freshness?.remoteRefsRefreshed).toBe(false);
+  expect(status.freshness?.remoteRefsRefreshed).toBe(true);
   expect(ledger.pending).toHaveLength(0);
 });

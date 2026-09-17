@@ -398,7 +398,6 @@ export class GitProbeContext {
   #attribute(start: number, discoveryCwd: string, identity: GitIdentity): void {
     for (const entry of this.#audit.slice(start)) {
       if (entry.repositoryAttribution !== "provisional" || entry.cwd !== discoveryCwd) continue;
-      entry.cwd = identity.cwd;
       entry.repository = identity.repositoryKey;
       entry.repositoryAttribution = "canonical";
     }

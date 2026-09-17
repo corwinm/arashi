@@ -297,14 +297,7 @@ export async function inspectStatusWithContext(
     freshness: {
       mode: local ? "local" : "refreshed",
       remoteRefsRefreshed:
-        !local &&
-        fetches.size > 0 &&
-        [...fetches.values()].every((r) => r.ok) &&
-        ![baseBranch, defaultBranch].some(
-          (comparison) =>
-            comparison?.state === "unavailable" ||
-            (comparison?.state === "skipped" && comparison.reason !== "on-default-branch"),
-        ),
+        !local && fetches.size > 0 && [...fetches.values()].every((result) => result.ok),
     },
   };
 }
