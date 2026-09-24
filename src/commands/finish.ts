@@ -360,7 +360,7 @@ export async function assessFinish(
       );
       if (matches.length !== 1 || matches[0].isMain || !matches[0].branch)
         throw new Error("REGISTRATION_INVALID");
-      repo.branch = safeLabel(matches[0].branch) ?? null;
+      repo.branch = matches[0].branch;
       if (!repo.branch) throw new Error("BRANCH_INVALID");
       repo.head = await gitValue(item.path, "rev-parse", "HEAD");
       if (!oid(repo.head)) throw new Error("HEAD_INVALID");
@@ -587,7 +587,7 @@ export function projectFinishResult(
     operations: summary.operations.map((operation) => ({
       repository: safeLabel(operation.repository) ?? "[redacted]",
       type: operation.type,
-      branch: operation.branchName ? safeLabel(operation.branchName) : null,
+      branch: operation.branchName ? (safeLabel(operation.branchName) ?? "[redacted]") : null,
       path:
         operation.worktreePath && within(resolve(parent), resolve(operation.worktreePath))
           ? relative(resolve(parent), resolve(operation.worktreePath)) || "."
@@ -615,6 +615,7 @@ export function projectFinishReport(report: FinishReport): FinishReport {
     repositories: report.repositories.map((repo) => ({
       ...repo,
       repository: label(repo.repository),
+      branch: repo.branch && label(repo.branch),
     })),
     nonparticipants: report.nonparticipants.map(label),
     confirmations: report.confirmations.map((entry) =>
@@ -627,6 +628,7 @@ export function projectFinishReport(report: FinishReport): FinishReport {
       operations: report.cleanupPlan.operations.map((entry) => ({
         ...entry,
         repository: label(entry.repository),
+        branch: entry.branch && label(entry.branch),
       })),
     },
   };
@@ -635,7 +637,13 @@ export function projectFinishReport(report: FinishReport): FinishReport {
 export async function runFinishRemoval(
   report: FinishReport,
   parent: string,
-  options: { dryRun?: boolean; force?: boolean; keepBranches?: boolean; hookInput?: boolean },
+  options: {
+    dryRun?: boolean;
+    force?: boolean;
+    json?: boolean;
+    keepBranches?: boolean;
+    hookInput?: boolean;
+  },
   invocationPath: string,
   manualTargets: Record<string, { remote: string; ref: string }> = {},
 ): Promise<{ code: number; result: RemovalSummary | null; invalidated: boolean }> {
@@ -759,6 +767,7 @@ export async function runFinishRemoval(
         checkDirty: false,
         dryRun: options.dryRun,
         force: true,
+        json: options.json,
         keepBranches: options.keepBranches,
         hookInput: options.hookInput,
       },

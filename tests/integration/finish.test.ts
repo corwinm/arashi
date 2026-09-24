@@ -464,6 +464,39 @@ describe("finish assessment with real Git repositories", () => {
     expect(JSON.parse(proc.stdout)).toMatchObject({ code: 0, invalidated: false });
     expect(await readFile(join(f.root, "hook-input"), "utf8")).toBe("tty");
   });
+  it("keeps valid plus-sign branch names for the remove plan but redacts output", async () => {
+    const f = await fixture();
+    git(f.main, "branch", "-m", "feature", "feature+api");
+    git(f.child, "branch", "-m", "other", "other+api");
+    const report = await assessFinish(f.parent, f.main);
+    expect(report.repositories.map((r) => r.branch)).toEqual(["feature+api", "other+api"]);
+    await previewFinishPlan(report, f.parent, {});
+    expect(report.readiness).toBe("ready");
+    const proc = spawnSync(
+      "bun",
+      [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--json", "--force"],
+      { cwd: f.main, encoding: "utf8" },
+    );
+    expect(proc.status).toBe(0);
+    expect(proc.stdout).not.toContain("feature+api");
+    expect(proc.stdout).not.toContain("other+api");
+  });
+  it("uses EOF for hooks in JSON mode even if the caller has a TTY", async () => {
+    const f = await fixture();
+    const configPath = join(f.main, ".arashi", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.hooks = {
+      scripts: {
+        "pre-remove": `node -e 'require("fs").writeFileSync(${JSON.stringify(join(f.root, "json-hook-input"))}, process.env.ARASHI_HOOK_INPUT)'`,
+      },
+    };
+    await writeFile(configPath, JSON.stringify(config));
+    const script = `process.stdin.isTTY = true; const { createCommand } = await import(${JSON.stringify(join(import.meta.dirname, "../../src/commands/finish.ts"))}); await createCommand().parseAsync([${JSON.stringify(f.parent)}, '--json', '--force'], {from:'user'});`;
+    const proc = spawnSync("bun", ["-e", script], { cwd: f.main, encoding: "utf8" });
+    expect(proc.status).toBe(0);
+    expect(JSON.parse(proc.stdout).ok).toBe(true);
+    expect(await readFile(join(f.root, "json-hook-input"), "utf8")).toBe("disabled");
+  });
   it("blocks an escaped missing child and a dangling symlink instead of omitting them", async () => {
     const f = await fixture();
     git(f.child, "worktree", "remove", f.nested);
