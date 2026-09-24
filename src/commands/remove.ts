@@ -983,7 +983,7 @@ export async function executeRemove(
     }
   }
 
-  if (!options.json) {
+  if (!options.json && !finishGate) {
     warnOnDefaultMainRemoval(skippedMain, defaultBranches);
   }
   if (usedPathMode.value && worktreesToRemove.length === 0) {
@@ -996,9 +996,10 @@ export async function executeRemove(
   }
 
   if (options.checkDirty !== false && worktreesToRemove.length > 0) {
-    const dirtyCheckSpinner = options.json
-      ? undefined
-      : spinner("Checking for uncommitted changes...").start();
+    const dirtyCheckSpinner =
+      options.json || finishGate
+        ? undefined
+        : spinner("Checking for uncommitted changes...").start();
     await resolveWorktreeStatuses(worktreesToRemove, true);
     dirtyCheckSpinner?.succeed("Dirty check complete");
   }
@@ -1191,7 +1192,7 @@ export async function executeRemove(
       branchPresence,
       checkDirty: options.checkDirty !== false,
       confirm: prompt.confirm,
-      quiet: options.json === true,
+      quiet: options.json === true || finishGate !== undefined,
       worktrees: worktreesToRemove,
     });
     if (confirmation === "cancelled") {
@@ -1210,7 +1211,7 @@ export async function executeRemove(
     operationData: removeHookOperationData,
     preparedLocations: preparedRemoveHooks?.["pre-remove"],
     removeTargets,
-    quiet: options.json === true,
+    quiet: options.json === true || finishGate !== undefined,
     stopOnFailure: true,
     targetRepositories: removeHookTargets,
     timeoutMs: config.hooks?.timeout,
@@ -1374,7 +1375,7 @@ export async function executeRemove(
     operationData: removeHookOperationData,
     preparedLocations: preparedRemoveHooks?.["post-remove"],
     removeTargets,
-    quiet: options.json === true,
+    quiet: options.json === true || finishGate !== undefined,
     stopOnFailure: false,
     targetRepositories: removeHookTargets,
     timeoutMs: config.hooks?.timeout,

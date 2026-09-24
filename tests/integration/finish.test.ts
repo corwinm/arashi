@@ -399,6 +399,71 @@ describe("finish assessment with real Git repositories", () => {
       untracked: false,
     });
   });
+  it("retains configured repository keys internally but redacts unsafe keys in JSON", async () => {
+    const f = await fixture();
+    const configPath = join(f.main, ".arashi", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.repos["child+api"] = config.repos.child;
+    delete config.repos.child;
+    await writeFile(configPath, JSON.stringify(config));
+    const report = await assessFinish(f.parent, f.main);
+    expect(report.repositories[1].repository).toBe("child+api");
+    await previewFinishPlan(report, f.parent, {});
+    expect(report.readiness).toBe("ready");
+    expect(report.cleanupPlan?.operations[0].repository).toBe("child+api");
+    const proc = spawnSync(
+      "bun",
+      [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--json", "--force"],
+      { cwd: f.main, encoding: "utf8" },
+    );
+    expect(proc.status).toBe(0);
+    expect(proc.stdout).not.toContain("child+api");
+    expect(JSON.parse(proc.stdout).data.repositories[1].repository).toBe("[redacted]");
+  });
+  it("requires discard consent for ignored local data and detects it as dirty", async () => {
+    const f = await fixture();
+    await writeFile(join(f.nested, ".gitignore"), ".env\n");
+    git(f.nested, "add", ".gitignore");
+    git(f.nested, "commit", "-m", "ignore env");
+    git(f.child, "merge", "other");
+    await writeFile(join(f.nested, ".env"), "SECRET_FINISH_CANARY\n");
+    const report = await assessFinish(f.parent, f.main);
+    expect(report.repositories[1].dirty).toBe(true);
+    expect(report.repositories[1].dirtyDetails?.untracked).toBe(true);
+    const proc = spawnSync(
+      "bun",
+      [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--json"],
+      { cwd: f.main, encoding: "utf8" },
+    );
+    expect(proc.status).toBe(2);
+    expect(JSON.parse(proc.stdout).error.code).toBe("DISCARD_CONFIRMATION_REQUIRED");
+    expect(await readFile(join(f.nested, ".env"), "utf8")).toContain("SECRET_FINISH_CANARY");
+  });
+  it.skipIf(process.platform !== "win32")(
+    "accepts mixed-case physical registrations on Windows",
+    async () => {
+      const f = await fixture();
+      const report = await assessFinish(f.parent.toUpperCase(), f.main);
+      expect(report.readiness).toBe("ready");
+      expect(report.repositories.map((r) => r.repository)).toEqual(["main", "child"]);
+    },
+  );
+  it("preserves interactive hook stdin while keeping the delegated remove quiet", async () => {
+    const f = await fixture();
+    const configPath = join(f.main, ".arashi", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.hooks = {
+      scripts: {
+        "pre-remove": `node -e 'const fs=require("fs");fs.writeFileSync(${JSON.stringify(join(f.root, "hook-input"))}, process.env.ARASHI_HOOK_INPUT)'`,
+      },
+    };
+    await writeFile(configPath, JSON.stringify(config));
+    const script = `process.stdin.isTTY = true; const { assessFinish, runFinishRemoval } = await import(${JSON.stringify(join(import.meta.dirname, "../../src/commands/finish.ts"))}); const r = await assessFinish(${JSON.stringify(f.parent)}, ${JSON.stringify(f.main)}); console.log(JSON.stringify(await runFinishRemoval(r, ${JSON.stringify(f.parent)}, { force: true }, ${JSON.stringify(f.main)})));`;
+    const proc = spawnSync("bun", ["-e", script], { cwd: f.main, encoding: "utf8" });
+    expect(proc.status).toBe(0);
+    expect(JSON.parse(proc.stdout)).toMatchObject({ code: 0, invalidated: false });
+    expect(await readFile(join(f.root, "hook-input"), "utf8")).toBe("tty");
+  });
   it("blocks an escaped missing child and a dangling symlink instead of omitting them", async () => {
     const f = await fixture();
     git(f.child, "worktree", "remove", f.nested);
@@ -478,6 +543,12 @@ describe("finish assessment with real Git repositories", () => {
     expect(report.repositories.every((r) => r.reasons.includes("FRESH_EVIDENCE_UNAVAILABLE"))).toBe(
       true,
     );
+  });
+  it("documents bounded GitHub correlation without promising integration proof", async () => {
+    const readme = await readFile(join(import.meta.dirname, "../../README.md"), "utf8");
+    expect(readme).toContain("GitHub PR correlation");
+    expect(readme).toContain("up to three");
+    expect(readme).not.toContain("GitHub PR correlation is not attempted in v1");
   });
   it("attempts bounded authenticated GitHub pagination only with matching identities", async () => {
     const head = "a".repeat(40),

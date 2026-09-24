@@ -253,7 +253,7 @@ export async function assessFinish(
   invocationPath: string,
   options: AssessmentOptions = {},
 ): Promise<FinishReport> {
-  const parentPath = await realpath(parent);
+  const parentPath = canonicalPhysicalPath(await realpath(parent));
   const common = await gitValue(parentPath, "rev-parse", "--git-common-dir");
   const configurationRoot = resolve(parentPath, common, "..");
   const config = await readFinishConfig(configurationRoot);
@@ -336,7 +336,7 @@ export async function assessFinish(
       }
     }
     const repo: FinishRepository = {
-      repository: safeLabel(item.repository) ?? "[redacted]",
+      repository: item.repository,
       path: relative(parentPath, item.path) || ".",
       head: null,
       branch: null,
@@ -350,7 +350,7 @@ export async function assessFinish(
     };
     report.repositories.push(repo);
     try {
-      const physical = await realpath(item.path);
+      const physical = canonicalPhysicalPath(await realpath(item.path));
       if (!within(parentPath, physical) || paths.has(physical))
         throw new Error("PATH_IDENTITY_INVALID");
       paths.add(physical);
@@ -370,17 +370,24 @@ export async function assessFinish(
         "status",
         "--porcelain=v1",
         "--untracked-files=all",
+        "--ignored=matching",
         "--no-renames",
       );
       repo.dirty = status.length > 0;
       repo.dirtyDetails = {
         staged: status
           .split("\n")
-          .some((line) => line.length >= 2 && line[0] !== " " && line[0] !== "?"),
+          .some(
+            (line) => line.length >= 2 && line[0] !== " " && line[0] !== "?" && line[0] !== "!",
+          ),
         unstaged: status
           .split("\n")
-          .some((line) => line.length >= 2 && line[1] !== " " && line[1] !== "?"),
-        untracked: status.split("\n").some((line) => line.startsWith("??")),
+          .some(
+            (line) => line.length >= 2 && line[1] !== " " && line[1] !== "?" && line[1] !== "!",
+          ),
+        untracked: status
+          .split("\n")
+          .some((line) => line.startsWith("??") || line.startsWith("!!")),
       };
       const upstreamIdentity = await git(
         item.path,
@@ -600,6 +607,31 @@ export function projectFinishResult(
   };
 }
 
+/** Keep raw identities in the gate; sanitize only the outbound report. */
+export function projectFinishReport(report: FinishReport): FinishReport {
+  const label = (value: string) => safeLabel(value) ?? "[redacted]";
+  return {
+    ...report,
+    repositories: report.repositories.map((repo) => ({
+      ...repo,
+      repository: label(repo.repository),
+    })),
+    nonparticipants: report.nonparticipants.map(label),
+    confirmations: report.confirmations.map((entry) =>
+      entry.startsWith("MANUAL_COMPLETION:")
+        ? `MANUAL_COMPLETION:${label(entry.slice("MANUAL_COMPLETION:".length))}`
+        : entry,
+    ),
+    cleanupPlan: report.cleanupPlan && {
+      ...report.cleanupPlan,
+      operations: report.cleanupPlan.operations.map((entry) => ({
+        ...entry,
+        repository: label(entry.repository),
+      })),
+    },
+  };
+}
+
 export async function runFinishRemoval(
   report: FinishReport,
   parent: string,
@@ -609,7 +641,7 @@ export async function runFinishRemoval(
 ): Promise<{ code: number; result: RemovalSummary | null; invalidated: boolean }> {
   if (!report.cleanupPlan || report.blockers.length)
     return { code: 1, result: null, invalidated: true };
-  const physicalParent = await realpath(parent);
+  const physicalParent = canonicalPhysicalPath(await realpath(parent));
   const configurationRoot = await discoverFinishRoot(parent);
   const acceptedConfig = await readFinishConfig(configurationRoot);
   try {
@@ -727,10 +759,8 @@ export async function runFinishRemoval(
         checkDirty: false,
         dryRun: options.dryRun,
         force: true,
-        json: true,
         keepBranches: options.keepBranches,
         hookInput: options.hookInput,
-        stdinIsTTY: false,
       },
       undefined,
       gate,
@@ -834,17 +864,21 @@ export function createCommand(): Command {
         },
       ) => {
         const done = (code: number, report?: FinishReport, errorCode?: string) => {
+          const visible = report && projectFinishReport(report);
           if (options.json)
             writeJsonEnvelope(
               errorCode
                 ? createJsonErrorEnvelope("finish", {
                     code: errorCode,
                     message: errorCode,
-                    details: report as unknown as Record<string, unknown>,
+                    details: visible as unknown as Record<string, unknown>,
                   })
-                : createJsonSuccessEnvelope("finish", report as unknown as Record<string, unknown>),
+                : createJsonSuccessEnvelope(
+                    "finish",
+                    visible as unknown as Record<string, unknown>,
+                  ),
             );
-          else if (report) console.log(JSON.stringify(report, null, 2));
+          else if (visible) console.log(JSON.stringify(visible, null, 2));
           else console.error(errorCode);
           process.exitCode = code;
         };
