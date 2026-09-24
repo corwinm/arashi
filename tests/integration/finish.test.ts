@@ -443,9 +443,22 @@ describe("finish assessment with real Git repositories", () => {
     "accepts mixed-case physical registrations on Windows",
     async () => {
       const f = await fixture();
-      const report = await assessFinish(f.parent.toUpperCase(), f.main);
+      const report = await assessFinish(f.parent.toUpperCase(), f.parent.toUpperCase());
       expect(report.readiness).toBe("ready");
       expect(report.repositories.map((r) => r.repository)).toEqual(["main", "child"]);
+      const proc = spawnSync(
+        "bun",
+        [
+          join(import.meta.dirname, "../../src/index.ts"),
+          "finish",
+          f.parent,
+          "--dry-run",
+          "--json",
+        ],
+        { cwd: f.main, encoding: "utf8" },
+      );
+      expect(proc.status).toBe(0);
+      expect(JSON.parse(proc.stdout).data.target).toBe("workspace");
     },
   );
   it("preserves interactive hook stdin while keeping the delegated remove quiet", async () => {
@@ -496,6 +509,29 @@ describe("finish assessment with real Git repositories", () => {
     expect(proc.status).toBe(0);
     expect(JSON.parse(proc.stdout).ok).toBe(true);
     expect(await readFile(join(f.root, "json-hook-input"), "utf8")).toBe("disabled");
+  });
+  it("accepts a tilde-prefixed explicit target as a home-relative path", async () => {
+    const f = await fixture();
+    const proc = spawnSync(
+      "bun",
+      [
+        join(import.meta.dirname, "../../src/index.ts"),
+        "finish",
+        "~/workspace",
+        "--dry-run",
+        "--json",
+      ],
+      { cwd: f.main, encoding: "utf8", env: { ...process.env, HOME: f.root, USERPROFILE: f.root } },
+    );
+    expect(proc.status).toBe(0);
+    expect(JSON.parse(proc.stdout).data.target).toBe("workspace");
+  });
+  it("validates manual base refs with Git branch syntax", async () => {
+    const { validManualBaseRef } = await import("../../src/commands/finish.ts");
+    expect(validManualBaseRef("refs/heads/release+candidate")).toBe(true);
+    expect(validManualBaseRef("refs/heads/feature/next")).toBe(true);
+    expect(validManualBaseRef("refs/tags/release+candidate")).toBe(false);
+    expect(validManualBaseRef("refs/heads/feature..bad")).toBe(false);
   });
   it("blocks an escaped missing child and a dangling symlink instead of omitting them", async () => {
     const f = await fixture();

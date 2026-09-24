@@ -1,9 +1,9 @@
 import { Command } from "commander";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { basename, isAbsolute, join, relative, resolve, sep } from "path";
+import { basename, isAbsolute, join, relative, resolve } from "path";
 import { chmod, lstat, mkdtemp, readFile, realpath, rm, stat, writeFile } from "fs/promises";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import { normalizeConfig } from "../lib/config.ts";
 import type { Config } from "../lib/config.ts";
 import {
@@ -20,7 +20,7 @@ import { confirm, input, select } from "../lib/prompts.ts";
 import { executeRemove } from "./remove.ts";
 import type { FinishRemoveGate } from "./remove.ts";
 import type { RemovalSummary } from "../types/remove.ts";
-import { normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
+import { isValidGitBranchNameLiteral, normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
 
 const run = promisify(execFile);
 const git = async (cwd: string, ...args: string[]): Promise<string> =>
@@ -87,6 +87,8 @@ const safeLabel = (value: string): string | null =>
 const within = (ancestor: string, candidate: string): boolean =>
   ancestor === candidate || isDescendantWorktreePath(ancestor, candidate);
 const reason = (code: string) => code;
+export const validManualBaseRef = (ref: string): boolean =>
+  ref.startsWith("refs/heads/") && isValidGitBranchNameLiteral(ref.slice("refs/heads/".length));
 export interface FinishRepository {
   repository: string;
   path: string | null;
@@ -265,7 +267,7 @@ export async function assessFinish(
   if (parentRecords.length !== 1 || !parentRecords[0].branch)
     throw new Error("TARGET_NOT_REGISTERED");
   if (
-    !within(parentPath, await realpath(invocationPath)) &&
+    !within(parentPath, canonicalPhysicalPath(await realpath(invocationPath))) &&
     canonicalPhysicalPath(invocationPath) !== canonicalPhysicalPath(configurationRoot)
   )
     throw new Error("TARGET_OUTSIDE_WORKSPACE");
@@ -899,10 +901,13 @@ export function createCommand(): Command {
           );
           let candidates = records;
           if (target) {
-            if (isAbsolute(target) || target.startsWith(".") || target.startsWith(`~${sep}`))
+            if (isAbsolute(target) || target.startsWith(".") || /^~[/\\]/.test(target))
               candidates = records.filter((entry) => {
                 try {
-                  return canonicalPhysicalPath(entry.path) === canonicalPhysicalPath(target);
+                  const targetPath = /^~[/\\]/.test(target)
+                    ? resolve(homedir(), target.slice(2))
+                    : target;
+                  return canonicalPhysicalPath(entry.path) === canonicalPhysicalPath(targetPath);
                 } catch {
                   return false;
                 }
@@ -942,11 +947,7 @@ export function createCommand(): Command {
           if (!options.json && process.stdin.isTTY && !options.dryRun) {
             for (const repo of report.repositories.filter((entry) => !entry.base.ref)) {
               const chosen = await input(`Full base ref for ${repo.repository} (refs/heads/...):`);
-              if (
-                chosen.status !== "ok" ||
-                !/^refs\/heads\/[a-zA-Z0-9._/-]+$/.test(chosen.value) ||
-                chosen.value.includes("..")
-              )
+              if (chosen.status !== "ok" || !validManualBaseRef(chosen.value))
                 return done(2, report, "CONFIRMATION_DECLINED");
               const remote = await input(`Remote for ${repo.repository}:`);
               if (remote.status !== "ok" || !safeLabel(remote.value))
