@@ -169,6 +169,84 @@ describe("finish assessment with real Git repositories", () => {
         .map((o) => o.repository),
     ).toEqual(["child", "main"]);
   });
+  it("keeps sibling order identical to remove in preview and execution", async () => {
+    const f = await fixture();
+    const sibling = join(f.main, "repos", "sibling");
+    await mkdir(sibling);
+    git(sibling, "init", "-b", "main");
+    git(sibling, "config", "user.name", "Test");
+    git(sibling, "config", "user.email", "test@example.com");
+    git(sibling, "config", "commit.gpgSign", "false");
+    await writeFile(join(sibling, "README.md"), "initial\n");
+    git(sibling, "add", ".");
+    git(sibling, "commit", "-m", "initial");
+    git(sibling, "remote", "add", "origin", sibling);
+    const configPath = join(f.main, ".arashi", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.repos.sibling = { path: "repos/sibling" };
+    await writeFile(configPath, JSON.stringify(config));
+    const nested = join(f.parent, "repos", "sibling");
+    git(sibling, "worktree", "add", "-b", "other-sibling", nested);
+    const report = await assessFinish(f.parent, f.main, { dryRun: true });
+    expect(
+      report.cleanupPlan?.operations
+        .filter((o) => o.type === "worktree_remove")
+        .map((o) => o.repository),
+    ).toEqual(["child", "sibling", "main"]);
+    await previewFinishPlan(report, f.parent, {});
+    expect(report.readiness).toBe("ready");
+    const outcome = await runFinishRemoval(report, f.parent, { force: true }, f.main);
+    expect(outcome).toMatchObject({ code: 0, invalidated: false });
+    expect(
+      outcome.result?.operations
+        .filter((o) => o.type === "worktree_remove")
+        .map((o) => o.repository),
+    ).toEqual(["child", "sibling", "main"]);
+  });
+  it("blocks a configured clean filter before status can execute it during preview", async () => {
+    const f = await fixture();
+    const marker = join(f.root, "filter-ran");
+    git(f.child, "config", "filter.canary.clean", `sh -c 'touch "${marker}"; cat'`);
+    await writeFile(join(f.nested, ".gitattributes"), "README.md filter=canary\n");
+    await writeFile(join(f.nested, "README.md"), "modified\n");
+    const report = await assessFinish(f.parent, f.main, { dryRun: true });
+    await previewFinishPlan(report, f.parent, {});
+    expect(report.readiness).toBe("blocked");
+    expect(report.cleanupPlan).toBeNull();
+    await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("rejects global process filters before preview even with no local filter config", async () => {
+    const f = await fixture();
+    const marker = join(f.root, "filter-ran");
+    const globalConfig = join(f.root, "global-gitconfig");
+    await writeFile(
+      globalConfig,
+      `[filter "canary"]\n\tprocess = sh -c 'touch "${marker}"; cat'\n`,
+    );
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    try {
+      process.env.GIT_CONFIG_GLOBAL = globalConfig;
+      const report = await assessFinish(f.parent, f.main, { dryRun: true });
+      expect(report.readiness).toBe("blocked");
+      expect(report.blockers).toContain("EXECUTABLE_FILTER_UNSAFE");
+      await previewFinishPlan(report, f.parent, {});
+      expect(report.cleanupPlan).toBeNull();
+      await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
+  it("rejects filters added after assessment before the remove preview", async () => {
+    const f = await fixture();
+    const report = await assessFinish(f.parent, f.main, { dryRun: true });
+    git(f.child, "config", "extensions.worktreeConfig", "true");
+    git(f.nested, "config", "--worktree", "filter.canary.clean", "cat");
+    await previewFinishPlan(report, f.parent, {});
+    expect(report.readiness).toBe("blocked");
+    expect(report.cleanupPlan).toBeNull();
+    expect(git(f.child, "worktree", "list", "--porcelain")).toContain(f.nested);
+  });
   it("retains branches when keep-branches is requested without weakening exact scope", async () => {
     const f = await fixture();
     const report = await assessFinish(f.parent, f.main, { keepBranches: true });

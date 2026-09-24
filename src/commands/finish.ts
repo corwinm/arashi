@@ -42,6 +42,17 @@ const git = async (cwd: string, ...args: string[]): Promise<string> =>
     })
   ).stdout.replace(/\s+$/, "");
 const gitValue = async (cwd: string, ...args: string[]) => (await git(cwd, ...args)).trim();
+// Git status can invoke clean/process filters even when no managed files are written.
+// Reject any configured executable filter rather than trying to predict attribute matching.
+const assertNoExecutableFilters = async (cwd: string): Promise<void> => {
+  try {
+    if (await git(cwd, "config", "--get-regexp", "^filter\\..*\\.(clean|process)$"))
+      throw new Error("EXECUTABLE_FILTER_UNSAFE");
+  } catch (error) {
+    if (Number((error as NodeJS.ErrnoException).code) === 1) return; // no matching keys
+    throw error; // config errors are unsafe too
+  }
+};
 const oid = (value: string): boolean => /^[a-f0-9]{40,64}$/.test(value);
 const safeLabel = (value: string): string | null =>
   /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(value) && !value.includes("..") ? value : null;
@@ -250,15 +261,13 @@ export async function assessFinish(
       policy: config.meta?.baseBranch,
       isParent: true,
     },
-    ...Object.entries(config.repos)
-      .toSorted(([a], [b]) => a.localeCompare(b))
-      .map(([repository, value]) => ({
-        repository,
-        source: resolve(configurationRoot, value.path),
-        path: resolve(parentPath, value.path),
-        policy: value.baseBranch,
-        isParent: false,
-      })),
+    ...Object.entries(config.repos).map(([repository, value]) => ({
+      repository,
+      source: resolve(configurationRoot, value.path),
+      path: resolve(parentPath, value.path),
+      policy: value.baseBranch,
+      isParent: false,
+    })),
   ];
   const operations: NonNullable<FinishReport["cleanupPlan"]>["operations"] = [];
   const paths = new Set<string>();
@@ -327,6 +336,7 @@ export async function assessFinish(
       if (!repo.branch) throw new Error("BRANCH_INVALID");
       repo.head = await gitValue(item.path, "rev-parse", "HEAD");
       if (!oid(repo.head)) throw new Error("HEAD_INVALID");
+      await assertNoExecutableFilters(item.path);
       const status = await git(
         item.path,
         "status",
@@ -491,9 +501,13 @@ export async function assessFinish(
           branch: repo.branch,
           status: "pending",
         });
-    } catch {
-      repo.reasons.push(reason("PARTICIPANT_INVALID"));
-      report.blockers.push("PARTICIPANT_INVALID");
+    } catch (error) {
+      const code =
+        (error as Error).message === "EXECUTABLE_FILTER_UNSAFE"
+          ? "EXECUTABLE_FILTER_UNSAFE"
+          : "PARTICIPANT_INVALID";
+      repo.reasons.push(reason(code));
+      report.blockers.push(code);
     }
     repo.reasons.sort();
   }
@@ -505,7 +519,17 @@ export async function assessFinish(
   if (!report.blockers.length)
     report.cleanupPlan = {
       operations: [
-        ...operations.filter((o) => o.type === "worktree_remove").toReversed(),
+        ...operations
+          .filter((o) => o.type === "worktree_remove")
+          .toSorted((a, b) => {
+            const aPath = resolve(parentPath, a.path!);
+            const bPath = resolve(parentPath, b.path!);
+            return isDescendantWorktreePath(aPath, bPath)
+              ? 1
+              : isDescendantWorktreePath(bPath, aPath)
+                ? -1
+                : 0;
+          }),
         ...operations.filter((o) => o.type === "branch_delete"),
       ],
       hooks: [],
@@ -560,6 +584,15 @@ export async function runFinishRemoval(
   const physicalParent = await realpath(parent);
   const configurationRoot = await discoverFinishRoot(parent);
   const acceptedConfig = await readFinishConfig(configurationRoot);
+  try {
+    for (const repo of report.repositories) {
+      await assertNoExecutableFilters(
+        repo.path === "." ? physicalParent : resolve(physicalParent, repo.path!),
+      );
+    }
+  } catch {
+    return { code: 1, result: null, invalidated: true };
+  }
   const acceptedConfigText = JSON.stringify(acceptedConfig);
   if (assessedConfiguration.get(report) !== acceptedConfigText)
     return { code: 1, result: null, invalidated: true };
