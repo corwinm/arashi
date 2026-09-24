@@ -67,6 +67,7 @@
     "test": "node scripts/test/run-tests.ts",
     "benchmark": "node --experimental-strip-types scripts/benchmark/orchestrate.ts",
     "benchmark:run": "node --experimental-strip-types scripts/benchmark/run.ts",
+    "benchmark:pull:run": "node --experimental-strip-types scripts/benchmark/pull-run.ts",
     "benchmark:test": "vitest run tests/benchmarks",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint -D no-explicit-any .",

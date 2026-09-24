@@ -158,6 +158,22 @@ describe("pull command", () => {
   });
 
   test(
+    "validates jobs as a strict positive safe integer while -j remains JSON",
+    async () => {
+      const { workspaceRoot } = await createWorkspaceWithRepo(testDir);
+      for (const invalid of ["0", "-1", "1.5", "1e2", "2foo", "9007199254740992"]) {
+        const result = await runPullCommand(workspaceRoot, ["--jobs", invalid]);
+        expect(result.exitCode, invalid).toBe(2);
+        expect(result.stderr, invalid).toContain("--jobs must be a positive safe integer");
+      }
+      const result = await runPullCommand(workspaceRoot, ["--jobs", "1", "-j"]);
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout).command).toBe("pull");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
+
+  test(
     "pulls remote changes across multiple repositories",
     async () => {
       const { workspaceRoot, mainRemote, repoRemote } = await createWorkspaceWithRepo(testDir);
@@ -384,6 +400,13 @@ describe("pull command", () => {
     "reloads parent config and reconciles changed managed paths before child processing",
     async () => {
       const { workspaceRoot, mainRemote } = await createWorkspaceWithRepo(testDir);
+      const newRemote = await createBareRemote(testDir, "new-child-remote");
+      await seedRemote(newRemote, testDir, "new-child-seed");
+      const newPath = join(workspaceRoot, "managed-repos", "new-child");
+      await mkdir(join(workspaceRoot, "managed-repos"), { recursive: true });
+      await runGit(workspaceRoot, ["clone", newRemote, newPath]);
+      await writeFile(join(workspaceRoot, ".git", "info", "exclude"), "/managed-repos/\n");
+      await createRemoteCommit(newRemote, testDir, "new-child-update", "new.txt");
       await runGit(workspaceRoot, ["add", ".arashi/config.json"]);
       await runGit(workspaceRoot, ["commit", "-m", "Track workspace config"]);
       await runGit(workspaceRoot, ["push", "origin", "HEAD:main"]);
@@ -399,7 +422,7 @@ describe("pull command", () => {
       config.reposDir = "./managed-repos";
       config.worktreesDir = "./managed-worktrees";
       (config.repos as Record<string, unknown>)["new-child"] = {
-        gitUrl: "https://example.invalid/new-child.git",
+        gitUrl: newRemote,
         path: "./managed-repos/new-child",
       };
       await writeFile(join(updater, ".arashi", "config.json"), JSON.stringify(config, null, 2));
@@ -407,13 +430,18 @@ describe("pull command", () => {
       await runGit(updater, ["commit", "-m", "Change managed paths"]);
       await runGit(updater, ["push", "origin", "HEAD:main"]);
 
-      const result = await runPullCommand(workspaceRoot);
+      const result = await runPullCommand(workspaceRoot, ["--jobs", "2"]);
       const exclude = await readFile(join(workspaceRoot, ".git", "info", "exclude"), "utf8");
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(exclude).toContain("managed-repos/");
       expect(exclude).toContain("managed-worktrees/");
-      expect(result.stdout).toContain("arashi clone");
+      expect(result.stdout).toContain("new-child: updated");
+      expect(await readFile(join(newPath, "new.txt"), "utf8")).toContain("update");
+      expect(result.stdout.indexOf("workspace: updated")).toBeLessThan(
+        result.stdout.indexOf("new-child: updated"),
+      );
+      expect(result.stdout).toContain("repo-a: skipped");
     },
     SLOW_PULL_TEST_TIMEOUT,
   );
