@@ -165,7 +165,10 @@ async function createWorkspace(options: {
   return root;
 }
 
-export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFixture> {
+export async function createBenchmarkFixture(
+  id: FixtureId,
+  options: { deterministicCommits?: boolean } = {},
+): Promise<BenchmarkFixture> {
   const definition = definitions[id];
   const base = await mkdtemp(join(tmpdir(), `arashi-benchmark-${id}-`));
   const globalConfig = join(base, "gitconfig");
@@ -184,6 +187,12 @@ export async function createBenchmarkFixture(id: FixtureId): Promise<BenchmarkFi
     GIT_TERMINAL_PROMPT: "0",
     HOME: userHome,
     USERPROFILE: userHome,
+    ...(options.deterministicCommits
+      ? {
+          GIT_AUTHOR_DATE: "2020-01-01T00:00:00+00:00",
+          GIT_COMMITTER_DATE: "2020-01-01T00:00:00+00:00",
+        }
+      : {}),
   });
 
   try {
