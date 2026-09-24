@@ -1,0 +1,1368 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-24T01:22:03.516Z",
+  "binarySourceHead": "b22d9f605143ceab44986e69910adafe630655d8",
+  "harnessHead": "b22d9f605143ceab44986e69910adafe630655d8",
+  "artifact": {
+    "filename": "arashi.bin",
+    "bytes": 64585442,
+    "sha256": "fa67877d5a15bce690d12324525fdf7a1038e9dd15d2a5c427977b4475195b6a"
+  },
+  "runtime": {
+    "runner": {
+      "method": "node-process",
+      "name": "node",
+      "version": {
+        "available": true,
+        "value": "v24.21.0"
+      }
+    },
+    "invocation": {
+      "method": "compiled-executable",
+      "name": "bun",
+      "version": {
+        "available": false,
+        "reason": "The embedded Bun runtime version is not introspected from the compiled executable."
+      }
+    },
+    "compiler": {
+      "available": false,
+      "reason": "Existing built artifact; build command not instrumented by this runner"
+    }
+  },
+  "host": {
+    "os": "darwin",
+    "arch": "arm64",
+    "release": "27.0.0"
+  },
+  "cases": [
+    {
+      "id": "pull-small",
+      "fixture": {
+        "id": "small",
+        "definitionVersion": 4,
+        "pullCaseVersion": 1,
+        "fingerprint": "cef9cf5fe2cf77bdb45d03f641ecfba148f44c9b46282c0fd2946e27b546bcec",
+        "repositoryCount": 2,
+        "coordinatedChildWorktreeCount": 2,
+        "worktreeCount": 2,
+        "repositoryNames": ["workspace", "repo-01", "repo-02"],
+        "remoteUpdates": 3
+      },
+      "command": {
+        "executable": "arashi.bin",
+        "argv": ["pull", "--json", "--jobs", "4"],
+        "cwd": "fixture-workspace-root",
+        "method": "direct-compiled-binary",
+        "remote": "local-filesystem"
+      },
+      "timing": {
+        "warmup": 1,
+        "iterations": 7,
+        "medianMs": 323.28241699999944,
+        "p95Ms": 325.9390000000003
+      },
+      "samples": [
+        {
+          "wallMs": 322.1783750000004,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 140,
+            "userMs": 220
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.082,\n        \"output\": \"Updating 258c117..071d86e\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..5a0c9de\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..366c650\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.082,
+                "output": "Updating 258c117..071d86e\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..5a0c9de\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..366c650\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 322.59179099999983,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 140,
+            "userMs": 220
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.082,\n        \"output\": \"Updating 258c117..071d86e\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..5a0c9de\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..366c650\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.082,
+                "output": "Updating 258c117..071d86e\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..5a0c9de\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..366c650\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 322.7439999999997,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 140,
+            "userMs": 220
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.081,\n        \"output\": \"Updating 258c117..071d86e\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.09,\n        \"output\": \"Updating be14ed5..5a0c9de\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.09,\n        \"output\": \"Updating be14ed5..366c650\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.081,
+                "output": "Updating 258c117..071d86e\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.09,
+                "output": "Updating be14ed5..5a0c9de\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.09,
+                "output": "Updating be14ed5..366c650\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 323.28241699999944,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 140,
+            "userMs": 220
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.082,\n        \"output\": \"Updating 258c117..071d86e\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..5a0c9de\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..366c650\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.082,
+                "output": "Updating 258c117..071d86e\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..5a0c9de\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..366c650\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 323.6334999999999,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 140,
+            "userMs": 220
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.084,\n        \"output\": \"Updating 258c117..071d86e\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..5a0c9de\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..366c650\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.084,
+                "output": "Updating 258c117..071d86e\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..5a0c9de\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..366c650\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 324.86962499999936,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 140,
+            "userMs": 230
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.084,\n        \"output\": \"Updating 258c117..071d86e\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.089,\n        \"output\": \"Updating be14ed5..5a0c9de\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.089,\n        \"output\": \"Updating be14ed5..366c650\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.084,
+                "output": "Updating 258c117..071d86e\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.089,
+                "output": "Updating be14ed5..5a0c9de\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.089,
+                "output": "Updating be14ed5..366c650\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 325.9390000000003,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 140,
+            "userMs": 230
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.084,\n        \"output\": \"Updating 258c117..071d86e\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..5a0c9de\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.088,\n        \"output\": \"Updating be14ed5..366c650\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.084,
+                "output": "Updating 258c117..071d86e\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..5a0c9de\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.088,
+                "output": "Updating be14ed5..366c650\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-small-S1Cxxh/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "pull-large",
+      "fixture": {
+        "id": "large",
+        "definitionVersion": 4,
+        "pullCaseVersion": 1,
+        "fingerprint": "1c8f56ac635a1e92169d2c706a1f2f07f17aa9e82a4e248ffdaae9ee9009e86a",
+        "repositoryCount": 8,
+        "coordinatedChildWorktreeCount": 40,
+        "worktreeCount": 6,
+        "repositoryNames": [
+          "workspace",
+          "repo-01",
+          "repo-02",
+          "repo-03",
+          "repo-04",
+          "repo-05",
+          "repo-06",
+          "repo-07",
+          "repo-08"
+        ],
+        "remoteUpdates": 9
+      },
+      "command": {
+        "executable": "arashi.bin",
+        "argv": ["pull", "--json", "--jobs", "4"],
+        "cwd": "fixture-workspace-root",
+        "method": "direct-compiled-binary",
+        "remote": "local-filesystem"
+      },
+      "timing": {
+        "warmup": 1,
+        "iterations": 7,
+        "medianMs": 500.62537500000144,
+        "p95Ms": 546.2208749999991
+      },
+      "samples": [
+        {
+          "wallMs": 482.6045830000003,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 440,
+            "userMs": 530
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.084,\n        \"output\": \"Updating d2a8688..838dc03\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.105,\n        \"output\": \"Updating be14ed5..d9827e7\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.103,\n        \"output\": \"Updating be14ed5..e661667\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..52ed657\\nFast-forward\\n pull-update-03.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-03.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-03\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.105,\n        \"output\": \"Updating be14ed5..9a402c2\\nFast-forward\\n pull-update-04.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-04.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-04\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..1ba73cc\\nFast-forward\\n pull-update-05.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-05.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-05\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.103,\n        \"output\": \"Updating be14ed5..7d31858\\nFast-forward\\n pull-update-06.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-06.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-06\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.103,\n        \"output\": \"Updating be14ed5..c7c3a3d\\nFast-forward\\n pull-update-07.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-07.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-07\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.102,\n        \"output\": \"Updating be14ed5..18b64c7\\nFast-forward\\n pull-update-08.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-08.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-08\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.084,
+                "output": "Updating d2a8688..838dc03\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.105,
+                "output": "Updating be14ed5..d9827e7\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.103,
+                "output": "Updating be14ed5..e661667\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..52ed657\nFast-forward\n pull-update-03.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-03.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-03",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.105,
+                "output": "Updating be14ed5..9a402c2\nFast-forward\n pull-update-04.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-04.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-04",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..1ba73cc\nFast-forward\n pull-update-05.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-05.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-05",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.103,
+                "output": "Updating be14ed5..7d31858\nFast-forward\n pull-update-06.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-06.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-06",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.103,
+                "output": "Updating be14ed5..c7c3a3d\nFast-forward\n pull-update-07.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-07.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-07",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.102,
+                "output": "Updating be14ed5..18b64c7\nFast-forward\n pull-update-08.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-08.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-08",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 482.6416250000002,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 440,
+            "userMs": 540
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.085,\n        \"output\": \"Updating d2a8688..838dc03\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.105,\n        \"output\": \"Updating be14ed5..d9827e7\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.105,\n        \"output\": \"Updating be14ed5..e661667\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.105,\n        \"output\": \"Updating be14ed5..52ed657\\nFast-forward\\n pull-update-03.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-03.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-03\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.106,\n        \"output\": \"Updating be14ed5..9a402c2\\nFast-forward\\n pull-update-04.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-04.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-04\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..1ba73cc\\nFast-forward\\n pull-update-05.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-05.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-05\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..7d31858\\nFast-forward\\n pull-update-06.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-06.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-06\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..c7c3a3d\\nFast-forward\\n pull-update-07.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-07.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-07\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.103,\n        \"output\": \"Updating be14ed5..18b64c7\\nFast-forward\\n pull-update-08.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-08.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-08\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.085,
+                "output": "Updating d2a8688..838dc03\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.105,
+                "output": "Updating be14ed5..d9827e7\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.105,
+                "output": "Updating be14ed5..e661667\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.105,
+                "output": "Updating be14ed5..52ed657\nFast-forward\n pull-update-03.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-03.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-03",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.106,
+                "output": "Updating be14ed5..9a402c2\nFast-forward\n pull-update-04.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-04.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-04",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..1ba73cc\nFast-forward\n pull-update-05.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-05.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-05",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..7d31858\nFast-forward\n pull-update-06.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-06.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-06",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..c7c3a3d\nFast-forward\n pull-update-07.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-07.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-07",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.103,
+                "output": "Updating be14ed5..18b64c7\nFast-forward\n pull-update-08.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-08.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-08",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 483.1158749999995,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 440,
+            "userMs": 530
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.085,\n        \"output\": \"Updating d2a8688..838dc03\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..d9827e7\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.106,\n        \"output\": \"Updating be14ed5..e661667\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.106,\n        \"output\": \"Updating be14ed5..52ed657\\nFast-forward\\n pull-update-03.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-03.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-03\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..9a402c2\\nFast-forward\\n pull-update-04.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-04.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-04\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.105,\n        \"output\": \"Updating be14ed5..1ba73cc\\nFast-forward\\n pull-update-05.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-05.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-05\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..7d31858\\nFast-forward\\n pull-update-06.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-06.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-06\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.103,\n        \"output\": \"Updating be14ed5..c7c3a3d\\nFast-forward\\n pull-update-07.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-07.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-07\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.103,\n        \"output\": \"Updating be14ed5..18b64c7\\nFast-forward\\n pull-update-08.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-08.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-08\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.085,
+                "output": "Updating d2a8688..838dc03\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..d9827e7\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.106,
+                "output": "Updating be14ed5..e661667\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.106,
+                "output": "Updating be14ed5..52ed657\nFast-forward\n pull-update-03.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-03.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-03",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..9a402c2\nFast-forward\n pull-update-04.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-04.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-04",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.105,
+                "output": "Updating be14ed5..1ba73cc\nFast-forward\n pull-update-05.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-05.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-05",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..7d31858\nFast-forward\n pull-update-06.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-06.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-06",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.103,
+                "output": "Updating be14ed5..c7c3a3d\nFast-forward\n pull-update-07.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-07.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-07",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.103,
+                "output": "Updating be14ed5..18b64c7\nFast-forward\n pull-update-08.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-08.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-08",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 500.62537500000144,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 460,
+            "userMs": 540
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.085,\n        \"output\": \"Updating d2a8688..838dc03\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.11,\n        \"output\": \"Updating be14ed5..d9827e7\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.111,\n        \"output\": \"Updating be14ed5..e661667\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.111,\n        \"output\": \"Updating be14ed5..52ed657\\nFast-forward\\n pull-update-03.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-03.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-03\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.11,\n        \"output\": \"Updating be14ed5..9a402c2\\nFast-forward\\n pull-update-04.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-04.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-04\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.114,\n        \"output\": \"Updating be14ed5..1ba73cc\\nFast-forward\\n pull-update-05.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-05.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-05\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.115,\n        \"output\": \"Updating be14ed5..7d31858\\nFast-forward\\n pull-update-06.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-06.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-06\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.114,\n        \"output\": \"Updating be14ed5..c7c3a3d\\nFast-forward\\n pull-update-07.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-07.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-07\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.114,\n        \"output\": \"Updating be14ed5..18b64c7\\nFast-forward\\n pull-update-08.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-08.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-08\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.085,
+                "output": "Updating d2a8688..838dc03\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.11,
+                "output": "Updating be14ed5..d9827e7\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.111,
+                "output": "Updating be14ed5..e661667\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.111,
+                "output": "Updating be14ed5..52ed657\nFast-forward\n pull-update-03.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-03.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-03",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.11,
+                "output": "Updating be14ed5..9a402c2\nFast-forward\n pull-update-04.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-04.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-04",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.114,
+                "output": "Updating be14ed5..1ba73cc\nFast-forward\n pull-update-05.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-05.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-05",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.115,
+                "output": "Updating be14ed5..7d31858\nFast-forward\n pull-update-06.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-06.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-06",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.114,
+                "output": "Updating be14ed5..c7c3a3d\nFast-forward\n pull-update-07.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-07.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-07",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.114,
+                "output": "Updating be14ed5..18b64c7\nFast-forward\n pull-update-08.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-08.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-08",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 535.8339590000014,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 460,
+            "userMs": 560
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.085,\n        \"output\": \"Updating d2a8688..838dc03\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.106,\n        \"output\": \"Updating be14ed5..d9827e7\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..e661667\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..52ed657\\nFast-forward\\n pull-update-03.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-03.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-03\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..9a402c2\\nFast-forward\\n pull-update-04.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-04.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-04\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..1ba73cc\\nFast-forward\\n pull-update-05.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-05.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-05\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..7d31858\\nFast-forward\\n pull-update-06.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-06.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-06\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..c7c3a3d\\nFast-forward\\n pull-update-07.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-07.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-07\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.103,\n        \"output\": \"Updating be14ed5..18b64c7\\nFast-forward\\n pull-update-08.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-08.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-08\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.085,
+                "output": "Updating d2a8688..838dc03\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.106,
+                "output": "Updating be14ed5..d9827e7\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..e661667\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..52ed657\nFast-forward\n pull-update-03.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-03.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-03",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..9a402c2\nFast-forward\n pull-update-04.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-04.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-04",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..1ba73cc\nFast-forward\n pull-update-05.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-05.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-05",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..7d31858\nFast-forward\n pull-update-06.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-06.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-06",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..c7c3a3d\nFast-forward\n pull-update-07.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-07.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-07",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.103,
+                "output": "Updating be14ed5..18b64c7\nFast-forward\n pull-update-08.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-08.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-08",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 538.4347500000003,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 510,
+            "userMs": 590
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.085,\n        \"output\": \"Updating d2a8688..838dc03\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.144,\n        \"output\": \"Updating be14ed5..d9827e7\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.146,\n        \"output\": \"Updating be14ed5..e661667\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.146,\n        \"output\": \"Updating be14ed5..52ed657\\nFast-forward\\n pull-update-03.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-03.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-03\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.145,\n        \"output\": \"Updating be14ed5..9a402c2\\nFast-forward\\n pull-update-04.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-04.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-04\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.106,\n        \"output\": \"Updating be14ed5..1ba73cc\\nFast-forward\\n pull-update-05.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-05.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-05\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.105,\n        \"output\": \"Updating be14ed5..7d31858\\nFast-forward\\n pull-update-06.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-06.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-06\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..c7c3a3d\\nFast-forward\\n pull-update-07.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-07.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-07\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..18b64c7\\nFast-forward\\n pull-update-08.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-08.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-08\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.085,
+                "output": "Updating d2a8688..838dc03\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.144,
+                "output": "Updating be14ed5..d9827e7\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.146,
+                "output": "Updating be14ed5..e661667\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.146,
+                "output": "Updating be14ed5..52ed657\nFast-forward\n pull-update-03.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-03.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-03",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.145,
+                "output": "Updating be14ed5..9a402c2\nFast-forward\n pull-update-04.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-04.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-04",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.106,
+                "output": "Updating be14ed5..1ba73cc\nFast-forward\n pull-update-05.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-05.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-05",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.105,
+                "output": "Updating be14ed5..7d31858\nFast-forward\n pull-update-06.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-06.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-06",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..c7c3a3d\nFast-forward\n pull-update-07.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-07.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-07",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..18b64c7\nFast-forward\n pull-update-08.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-08.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-08",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        },
+        {
+          "wallMs": 546.2208749999991,
+          "cpu": {
+            "available": true,
+            "method": "posix-time-p",
+            "systemMs": 470,
+            "userMs": 560
+          },
+          "stdout": "{\n  \"command\": \"pull\",\n  \"data\": {\n    \"overallStatus\": \"success\",\n    \"results\": [\n      {\n        \"elapsedSeconds\": 0.141,\n        \"output\": \"Updating d2a8688..838dc03\\nFast-forward\\n pull-update-00.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-00.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"workspace\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.107,\n        \"output\": \"Updating be14ed5..d9827e7\\nFast-forward\\n pull-update-01.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-01.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-01\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.107,\n        \"output\": \"Updating be14ed5..e661667\\nFast-forward\\n pull-update-02.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-02.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-02\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.105,\n        \"output\": \"Updating be14ed5..52ed657\\nFast-forward\\n pull-update-03.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-03.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-03\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.105,\n        \"output\": \"Updating be14ed5..9a402c2\\nFast-forward\\n pull-update-04.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-04.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-04\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.106,\n        \"output\": \"Updating be14ed5..1ba73cc\\nFast-forward\\n pull-update-05.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-05.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-05\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.106,\n        \"output\": \"Updating be14ed5..7d31858\\nFast-forward\\n pull-update-06.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-06.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-06\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..c7c3a3d\\nFast-forward\\n pull-update-07.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-07.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-07\",\n        \"status\": \"updated\"\n      },\n      {\n        \"elapsedSeconds\": 0.104,\n        \"output\": \"Updating be14ed5..18b64c7\\nFast-forward\\n pull-update-08.txt | 1 +\\n 1 file changed, 1 insertion(+)\\n create mode 100644 pull-update-08.txt\\n\\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\\n * branch            main       -> FETCH_HEAD\",\n        \"repositoryId\": \"repo-08\",\n        \"status\": \"updated\"\n      }\n    ],\n    \"managedIgnore\": {\n      \"localExcludePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"paths\": [\n        {\n          \"input\": \"./repos\",\n          \"rule\": \"/repos/\",\n          \"safety\": \"safe\",\n          \"source\": {\n            \"path\": \".gitignore\",\n            \"pattern\": \"repos/\",\n            \"type\": \"tracked\"\n          },\n          \"status\": \"already-ignored\"\n        },\n        {\n          \"input\": \"../worktrees\",\n          \"safety\": \"unsafe\",\n          \"safetyReason\": \"parent-traversal\",\n          \"status\": \"unsafe\"\n        }\n      ],\n      \"scope\": \"local\",\n      \"staleRules\": [],\n      \"storedPreference\": null,\n      \"trackedIgnorePath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore\",\n      \"appliedRules\": [],\n      \"attempted\": false,\n      \"changed\": false,\n      \"fileChanges\": {\n        \"local\": false,\n        \"preference\": false,\n        \"tracked\": false\n      },\n      \"plannedRules\": [],\n      \"restored\": false,\n      \"targetPath\": \"/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude\",\n      \"targetType\": \"local\",\n      \"warnings\": []\n    }\n  },\n  \"ok\": true,\n  \"schemaVersion\": 1,\n  \"warnings\": []\n}\n",
+          "behavior": {
+            "overallStatus": "success",
+            "results": [
+              {
+                "elapsedSeconds": 0.141,
+                "output": "Updating d2a8688..838dc03\nFast-forward\n pull-update-00.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-00.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/workspace\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "workspace",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.107,
+                "output": "Updating be14ed5..d9827e7\nFast-forward\n pull-update-01.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-01.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-01\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-01",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.107,
+                "output": "Updating be14ed5..e661667\nFast-forward\n pull-update-02.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-02.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-02\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-02",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.105,
+                "output": "Updating be14ed5..52ed657\nFast-forward\n pull-update-03.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-03.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-03\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-03",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.105,
+                "output": "Updating be14ed5..9a402c2\nFast-forward\n pull-update-04.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-04.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-04\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-04",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.106,
+                "output": "Updating be14ed5..1ba73cc\nFast-forward\n pull-update-05.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-05.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-05\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-05",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.106,
+                "output": "Updating be14ed5..7d31858\nFast-forward\n pull-update-06.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-06.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-06\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-06",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..c7c3a3d\nFast-forward\n pull-update-07.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-07.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-07\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-07",
+                "status": "updated"
+              },
+              {
+                "elapsedSeconds": 0.104,
+                "output": "Updating be14ed5..18b64c7\nFast-forward\n pull-update-08.txt | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 pull-update-08.txt\n\nFrom /var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/remotes/repo-08\n * branch            main       -> FETCH_HEAD",
+                "repositoryId": "repo-08",
+                "status": "updated"
+              }
+            ],
+            "managedIgnore": {
+              "localExcludePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "paths": [
+                {
+                  "input": "./repos",
+                  "rule": "/repos/",
+                  "safety": "safe",
+                  "source": {
+                    "path": ".gitignore",
+                    "pattern": "repos/",
+                    "type": "tracked"
+                  },
+                  "status": "already-ignored"
+                },
+                {
+                  "input": "../worktrees",
+                  "safety": "unsafe",
+                  "safetyReason": "parent-traversal",
+                  "status": "unsafe"
+                }
+              ],
+              "scope": "local",
+              "staleRules": [],
+              "storedPreference": null,
+              "trackedIgnorePath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.gitignore",
+              "appliedRules": [],
+              "attempted": false,
+              "changed": false,
+              "fileChanges": {
+                "local": false,
+                "preference": false,
+                "tracked": false
+              },
+              "plannedRules": [],
+              "restored": false,
+              "targetPath": "/private/var/folders/pc/bgp67gk96zz02py6c_d8y_2w0000gn/T/arashi-benchmark-large-gsBhxK/workspace/.git/info/exclude",
+              "targetType": "local",
+              "warnings": []
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
