@@ -42,15 +42,43 @@ const git = async (cwd: string, ...args: string[]): Promise<string> =>
     })
   ).stdout.replace(/\s+$/, "");
 const gitValue = async (cwd: string, ...args: string[]) => (await git(cwd, ...args)).trim();
-// Git status can invoke clean/process filters even when no managed files are written.
-// Reject any configured executable filter rather than trying to predict attribute matching.
+// Git status may execute clean/process filters for paths it inspects. Resolve the
+// effective attributes without running a filter, including global and worktree attrs.
 const assertNoExecutableFilters = async (cwd: string): Promise<void> => {
+  let configured: string;
   try {
-    if (await git(cwd, "config", "--get-regexp", "^filter\\..*\\.(clean|process)$"))
-      throw new Error("EXECUTABLE_FILTER_UNSAFE");
+    configured = await git(
+      cwd,
+      "config",
+      "--null",
+      "--name-only",
+      "--get-regexp",
+      "^filter\\..*\\.(clean|process)$",
+    );
   } catch (error) {
-    if (Number((error as NodeJS.ErrnoException).code) === 1) return; // no matching keys
+    if (Number((error as NodeJS.ErrnoException).code) === 1) return;
     throw error; // config errors are unsafe too
+  }
+  const filters = new Set<string>();
+  for (const key of configured.split("\0")) {
+    const match = /^filter\.(.*)\.(?:clean|process)$/i.exec(key);
+    if (match) filters.add(match[1]);
+  }
+  if (!filters.size) return;
+  const paths = [
+    ...new Set(
+      (await git(cwd, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
+        .split("\0")
+        .filter(Boolean),
+    ),
+  ];
+  for (let offset = 0; offset < paths.length; offset += 64) {
+    const attrs = (
+      await git(cwd, "check-attr", "-z", "filter", "--", ...paths.slice(offset, offset + 64))
+    ).split("\0");
+    for (let index = 0; index + 2 < attrs.length; index += 3) {
+      if (filters.has(attrs[index + 2])) throw new Error("EXECUTABLE_FILTER_UNSAFE");
+    }
   }
 };
 const oid = (value: string): boolean => /^[a-f0-9]{40,64}$/.test(value);

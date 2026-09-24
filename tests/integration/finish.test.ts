@@ -215,10 +215,35 @@ describe("finish assessment with real Git repositories", () => {
     expect(report.cleanupPlan).toBeNull();
     await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
   });
-  it("rejects global process filters before preview even with no local filter config", async () => {
+  it("allows unrelated global filters without running them or changing managed state", async () => {
     const f = await fixture();
     const marker = join(f.root, "filter-ran");
     const globalConfig = join(f.root, "global-gitconfig");
+    await writeFile(globalConfig, `[filter "canary"]\n\tclean = sh -c 'touch "${marker}"; cat'\n`);
+    const index = join(git(f.nested, "rev-parse", "--absolute-git-dir"), "index");
+    const beforeIndex = await readFile(index);
+    const beforeRef = git(f.child, "rev-parse", "other");
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    try {
+      process.env.GIT_CONFIG_GLOBAL = globalConfig;
+      const report = await assessFinish(f.parent, f.main, { dryRun: true });
+      await previewFinishPlan(report, f.parent, {});
+      expect(report.readiness).toBe("ready");
+      expect(report.cleanupPlan).not.toBeNull();
+      await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(index)).toEqual(beforeIndex);
+      expect(git(f.child, "rev-parse", "other")).toBe(beforeRef);
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
+  it("rejects applicable global process filters before preview without executing them", async () => {
+    const f = await fixture();
+    const marker = join(f.root, "filter-ran");
+    const globalConfig = join(f.root, "global-gitconfig");
+    await writeFile(join(f.nested, ".gitattributes"), "README.md filter=canary\n");
+    await writeFile(join(f.nested, "README.md"), "modified\n");
     await writeFile(
       globalConfig,
       `[filter "canary"]\n\tprocess = sh -c 'touch "${marker}"; cat'\n`,
@@ -237,11 +262,34 @@ describe("finish assessment with real Git repositories", () => {
       else process.env.GIT_CONFIG_GLOBAL = previous;
     }
   });
+  it("blocks a global attribute applying an executable filter to a tracked path", async () => {
+    const f = await fixture();
+    const marker = join(f.root, "filter-ran");
+    const attributes = join(f.root, "global-attributes");
+    await writeFile(attributes, "README.md filter=canary\n");
+    git(f.nested, "config", "core.attributesFile", attributes);
+    git(f.nested, "config", "filter.canary.clean", `sh -c 'touch "${marker}"; cat'`);
+    await writeFile(join(f.nested, "README.md"), "modified\n");
+    const report = await assessFinish(f.parent, f.main, { dryRun: true });
+    expect(report.blockers).toContain("EXECUTABLE_FILTER_UNSAFE");
+    await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("blocks an executable filter on a relevant untracked path", async () => {
+    const f = await fixture();
+    const marker = join(f.root, "filter-ran");
+    git(f.nested, "config", "filter.canary.clean", `sh -c 'touch "${marker}"; cat'`);
+    await writeFile(join(f.nested, ".gitattributes"), "new.txt filter=canary\n");
+    await writeFile(join(f.nested, "new.txt"), "new\n");
+    const report = await assessFinish(f.parent, f.main, { dryRun: true });
+    expect(report.blockers).toContain("EXECUTABLE_FILTER_UNSAFE");
+    await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
   it("rejects filters added after assessment before the remove preview", async () => {
     const f = await fixture();
     const report = await assessFinish(f.parent, f.main, { dryRun: true });
     git(f.child, "config", "extensions.worktreeConfig", "true");
     git(f.nested, "config", "--worktree", "filter.canary.clean", "cat");
+    await writeFile(join(f.nested, ".gitattributes"), "README.md filter=canary\n");
     await previewFinishPlan(report, f.parent, {});
     expect(report.readiness).toBe("blocked");
     expect(report.cleanupPlan).toBeNull();
