@@ -128,6 +128,20 @@ type PromptOutcome<T> =
   | { status: "cancelled"; reason: "exit" | "abort" };
 type RepositoryTarget = Parameters<typeof discoverAllWorktrees>[0][number];
 
+/** Internal finish handoff; ordinary remove does not use this gate. */
+export interface FinishRemoveGate {
+  roots?: { configurationRoot: string; executionRoot: string; config: Config };
+  inspect: (
+    plan: {
+      worktrees: readonly WorktreeEntry[];
+      branches: readonly { repository: string; branch: string }[];
+      hooks: readonly RemoveHookTarget[];
+    },
+    phase: "plan" | "post-hook",
+  ) => Promise<void>;
+  report: (summary: ReturnType<typeof createRemovalSummary>) => void;
+}
+
 const ZERO = 0;
 const ONE = 1;
 const TWO = 2;
@@ -353,6 +367,7 @@ export async function executeRemove(
     multiSelect: (message: string, choices: Choice<string>[]) => Promise<PromptOutcome<string[]>>;
     select?: (message: string, choices: Choice<string>[]) => Promise<PromptOutcome<string>>;
   },
+  finishGate?: FinishRemoveGate,
 ): Promise<number> {
   const startTime = Date.now();
   const hookInputMode = resolveHookInputMode({
@@ -361,7 +376,14 @@ export async function executeRemove(
     stdinIsTTY: options.stdinIsTTY ?? process.stdin.isTTY === true,
   });
 
-  const workspaceContext = await resolveWorkspaceContext();
+  const workspaceContext = finishGate?.roots
+    ? {
+        mode: "configured" as const,
+        config: finishGate.roots.config,
+        workspaceRoot: finishGate.roots.configurationRoot,
+        invocationPath: process.cwd(),
+      }
+    : await resolveWorkspaceContext();
   if (workspaceContext.mode === "standalone") {
     const prompt = promptHandlers || {
       confirm: promptConfirm,
@@ -695,13 +717,15 @@ export async function executeRemove(
   }
 
   const configurationRoot =
-    workspaceContext.mode === "configured"
+    finishGate?.roots?.configurationRoot ??
+    (workspaceContext.mode === "configured"
       ? workspaceContext.workspaceRoot
-      : await getWorkspaceRoot();
+      : await getWorkspaceRoot());
   const workspaceRoot =
-    workspaceContext.mode === "configured"
+    finishGate?.roots?.executionRoot ??
+    (workspaceContext.mode === "configured"
       ? (await findConfiguredWorkspaceRoots("remove")).executionRoot
-      : configurationRoot;
+      : configurationRoot);
   const config =
     workspaceContext.mode === "configured"
       ? workspaceContext.config
@@ -1029,6 +1053,14 @@ export async function executeRemove(
     }
   }
   const removeTargets = [...targetByTriple.values()];
+  const finishPlan = {
+    worktrees: worktreesToRemove,
+    branches: targetBranches.flatMap((branch) =>
+      (branchPresence[branch] ?? []).map((repository) => ({ repository, branch })),
+    ),
+    hooks: removeTargets,
+  };
+  if (finishGate) await finishGate.inspect(finishPlan, "plan");
   const removeHookOperationData = buildRemoveHookOperationData({
     mainRepoPath: workspaceRoot,
     targets: removeTargets,
@@ -1053,6 +1085,10 @@ export async function executeRemove(
     const message = error instanceof Error ? error.message : String(error);
     summary.errors.push(message);
     summary.duration = Date.now() - startTime;
+    if (finishGate) {
+      finishGate.report(summary);
+      return ONE;
+    }
     if (options.json) {
       writeJsonEnvelope(
         createJsonErrorEnvelope("remove", {
@@ -1070,6 +1106,10 @@ export async function executeRemove(
     summary.hookOutcomes.push(preflightFailure);
     summary.errors.push(preflightFailure.message);
     summary.duration = Date.now() - startTime;
+    if (finishGate) {
+      finishGate.report(summary);
+      return ONE;
+    }
     if (options.json) {
       writeJsonEnvelope(
         createJsonErrorEnvelope("remove", {
@@ -1127,6 +1167,10 @@ export async function executeRemove(
     });
     summary.duration = Date.now() - startTime;
 
+    if (finishGate) {
+      finishGate.report(summary);
+      return ZERO;
+    }
     if (options.json) {
       writeJsonEnvelope(
         createJsonSuccessEnvelope(
@@ -1176,6 +1220,10 @@ export async function executeRemove(
   if (preRemoveResult.summary.hookStatus === "failure") {
     summary.errors.push(formatHookFailure(GLOBAL_HOOKS.preRemove, preRemoveResult.summary));
     summary.duration = Date.now() - startTime;
+    if (finishGate) {
+      finishGate.report(summary);
+      return ONE;
+    }
     if (options.json) {
       writeJsonEnvelope(
         createJsonErrorEnvelope("remove", {
@@ -1209,6 +1257,16 @@ export async function executeRemove(
         worktreePath: invalidatedRemovalPlan.blockingWorktree.path,
       });
       summary.errors.push(message);
+    }
+  }
+
+  if (finishGate) {
+    try {
+      await finishGate.inspect(finishPlan, "post-hook");
+    } catch {
+      summary.errors.push("FINISH_PLAN_INVALIDATED");
+      finishGate.report(summary);
+      return ONE;
     }
   }
 
@@ -1328,6 +1386,10 @@ export async function executeRemove(
   }
 
   summary.duration = Date.now() - startTime;
+  if (finishGate) {
+    finishGate.report(summary);
+    return summary.errors.length > ZERO ? ONE : ZERO;
+  }
 
   if (options.json) {
     const data = removalJsonData(summary, { missingBranches, skippedMain }, configuredMetadata);
