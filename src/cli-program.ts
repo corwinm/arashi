@@ -7,6 +7,7 @@ import { createCommand as createDeleteCommand } from "./commands/delete.ts";
 import { createCommand } from "./commands/create.ts";
 import { createCommand as createDoctorCommand } from "./commands/doctor.ts";
 import { createCommand as createExecCommand } from "./commands/exec.ts";
+import { createCommand as createFinishCommand } from "./commands/finish.ts";
 import { createCommand as createHandoffCommand } from "./commands/handoff.ts";
 import { createCommand as createInitCommand } from "./commands/init.ts";
 import { createCommand as createInstallCommand } from "./commands/install.ts";
@@ -53,6 +54,7 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
     createCommand(),
     createDoctorCommand(),
     createExecCommand(),
+    createFinishCommand(),
     createHandoffCommand(),
     createMoveCommand(),
     createListCommand(),

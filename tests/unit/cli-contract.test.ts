@@ -26,6 +26,7 @@ const expectedPaths = [
   "delete",
   "doctor",
   "exec",
+  "finish",
   "handoff",
   "init",
   "install",
@@ -387,7 +388,7 @@ describe("CLI command contract", () => {
     });
   });
 
-  test("publishes invocation-only hook input policy on exactly create and remove", () => {
+  test("publishes invocation-only hook input policy on create, finish and remove", () => {
     const contract = generateCommandContract(
       buildProgram({ includeHelpBanner: false }),
       commandSemantics,
@@ -397,7 +398,7 @@ describe("CLI command contract", () => {
       .filter((command) => command.options.some((option) => option.long === "--no-hook-input"))
       .map((command) => command.path);
 
-    expect(owners).toEqual(["create", "remove"]);
+    expect(owners).toEqual(["create", "finish", "remove"]);
     for (const owner of owners) {
       const option = contract.commands
         .find((command) => command.path === owner)
@@ -1002,8 +1003,8 @@ describe("CLI command contract", () => {
     );
     const options = contract.commands.flatMap((command) => command.options);
 
-    expect(contract.commands).toHaveLength(28);
-    expect(options).toHaveLength(151);
+    expect(contract.commands).toHaveLength(29);
+    expect(options).toHaveLength(157);
     expect(new Set(options.map((option) => option.long))).toHaveLength(63);
     expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
     expect(

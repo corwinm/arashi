@@ -1701,6 +1701,145 @@
       }
     },
     {
+      "path": "finish",
+      "aliasPaths": [],
+      "description": "Assess and retire one coordinated workspace",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [
+        {
+          "hidden": false,
+          "name": "target",
+          "required": false,
+          "variadic": false,
+          "description": "Registered parent path or unique branch"
+        }
+      ],
+      "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--keep-branches",
+          "description": "Retain local branches",
+          "hidden": false,
+          "long": "--keep-branches",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--no-hook-input",
+          "description": "Run hooks with input disabled",
+          "hidden": false,
+          "long": "--no-hook-input",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "hookInput": {
+              "disabledMode": "disabled",
+              "immediateEof": true,
+              "jsonPrecedence": true,
+              "modes": ["tty", "disabled", "unavailable"],
+              "skipsHooks": false
+            },
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-f, --force",
+          "description": "Authorize discard and remove confirmation (not completion)",
+          "hidden": false,
+          "long": "--force",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-f",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Emit one JSON envelope without prompts",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-n, --dry-run",
+          "description": "Assess without cleanup prompts or mutation",
+          "hidden": false,
+          "long": "--dry-run",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-n",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "represented",
+          "reason": "Packaged workflow guidance is maintained in the coordinated documentation repository."
+        },
+        "standalone": {
+          "support": "configured-only",
+          "reason": "Finish requires a configured coordinated workspace."
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Destructive coordinated retirement is terminal-only."
+        }
+      }
+    },
+    {
       "path": "handoff",
       "aliasPaths": [],
       "description": "Generate a Markdown or JSON handoff report for the current workspace",
