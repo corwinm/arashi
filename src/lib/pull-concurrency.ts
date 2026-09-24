@@ -6,15 +6,16 @@ import { resolve, relative, isAbsolute, sep } from "node:path";
 /** A failed proof is not a user-facing probe failure: use the serial path. */
 export async function independentPullPaths(paths: readonly string[]): Promise<boolean> {
   try {
-    const identities = await Promise.all(
-      paths.map(async (path) => {
-        const physical = await realpath(path);
-        const raw = (await exec(["rev-parse", "--git-common-dir"], path)).stdout.trim();
-        if (!raw) throw new Error("Unresolved Git common directory");
-        const common = await realpath(resolve(path, raw));
-        return { physical, common };
-      }),
-    );
+    // Identity probes run serially too: the requested jobs bound applies to Git
+    // subprocesses throughout this phase, not only to the subsequent pulls.
+    const identities: { physical: string; common: string }[] = [];
+    for (const path of paths) {
+      const physical = await realpath(path);
+      const raw = (await exec(["rev-parse", "--git-common-dir"], path)).stdout.trim();
+      if (!raw) throw new Error("Unresolved Git common directory");
+      const common = await realpath(resolve(path, raw));
+      identities.push({ physical, common });
+    }
     const overlaps = (a: string, b: string) => {
       const child = relative(a, b);
       return (

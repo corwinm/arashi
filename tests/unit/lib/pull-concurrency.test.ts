@@ -1,4 +1,5 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import * as git from "../../../src/lib/git.ts";
 import {
   executeIndependentPulls,
   independentPullPaths,
@@ -25,6 +26,34 @@ async function until(predicate: () => boolean) {
 }
 
 describe("pull child worker lifecycle", () => {
+  test("identity proof does not start unbounded Git probes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pull-probe-bound-"));
+    const paths = [join(root, "first"), join(root, "second")];
+    const gates = [barrier(), barrier()];
+    const started: string[] = [];
+    const originalExec = git.exec;
+    try {
+      for (const path of paths) execFileSync("git", ["init", path], { stdio: "pipe" });
+      vi.spyOn(git, "exec").mockImplementation(async (args, cwd) => {
+        started.push(cwd!);
+        await gates[paths.indexOf(cwd!)]!.promise;
+        return originalExec(args, cwd);
+      });
+      const proof = independentPullPaths(paths);
+      await until(() => started.length > 0);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(started).toEqual([paths[0]]);
+      gates[0]!.release();
+      await until(() => started.length === 2);
+      gates[1]!.release();
+      expect(await proof).toBe(true);
+    } finally {
+      gates.forEach((gate) => gate.release());
+      vi.restoreAllMocks();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("requires distinct Git common directories and non-overlapping physical paths", async () => {
     const root = await mkdtemp(join(tmpdir(), "pull-independent-"));
     const git = (cwd: string, ...args: string[]) =>
