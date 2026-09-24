@@ -85,8 +85,18 @@ const assertNoExecutableFilters = async (cwd: string): Promise<void> => {
 const oid = (value: string): boolean => /^[a-f0-9]{40,64}$/.test(value);
 const safeLabel = (value: string): string | null =>
   /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(value) && !value.includes("..") ? value : null;
+const displayLabel = (value: string): string => safeLabel(value) ?? "[redacted]";
 const within = (ancestor: string, candidate: string): boolean =>
   ancestor === candidate || isDescendantWorktreePath(ancestor, candidate);
+export const contextualFinishCandidates = <T extends { path: string }>(
+  candidates: T[],
+  context: string,
+  canonicalize: (path: string) => string = canonicalPhysicalPath,
+): T[] => candidates.filter((entry) => within(canonicalize(entry.path), canonicalize(context)));
+export const validManualRemote = async (source: string, remote: string): Promise<boolean> =>
+  remote.length > 0 &&
+  !remote.startsWith("-") &&
+  (await gitValue(source, "remote")).split("\n").includes(remote);
 export const finishHookPath = (
   value: string,
   platform: NodeJS.Platform = process.platform,
@@ -625,6 +635,7 @@ export function projectFinishReport(report: FinishReport): FinishReport {
       ...repo,
       repository: label(repo.repository),
       branch: repo.branch && label(repo.branch),
+      base: { ...repo.base, remote: repo.base.remote && label(repo.base.remote) },
     })),
     nonparticipants: report.nonparticipants.map(label),
     confirmations: report.confirmations.map((entry) =>
@@ -857,7 +868,7 @@ export async function confirmUnknownCompletion(
   const message = unknown
     .map(
       (repo) =>
-        `${repo.repository} -> ${repo.base.remote}:${repo.base.ref} (${repo.reasons.join(", ") || "UNKNOWN"})`,
+        `${displayLabel(repo.repository)} -> ${repo.base.remote && displayLabel(repo.base.remote)}:${repo.base.ref} (${repo.reasons.join(", ") || "UNKNOWN"})`,
     )
     .join("; ");
   const confirmation = await ask(`Manually confirm completion for ALL: ${message}?`);
@@ -937,9 +948,7 @@ export function createCommand(): Command {
             return done(2, undefined, "TARGET_REQUIRED");
           if (!target && candidates.length) {
             const context = await realpath(process.cwd());
-            const contextual = candidates.filter((entry) =>
-              within(canonicalPhysicalPath(entry.path), context),
-            );
+            const contextual = contextualFinishCandidates(candidates, context);
             if (contextual.length === 1) candidates = contextual;
             else {
               const choice = await select(
@@ -966,11 +975,20 @@ export function createCommand(): Command {
           const manualTargets: Record<string, { remote: string; ref: string }> = {};
           if (!options.json && process.stdin.isTTY && !options.dryRun) {
             for (const repo of report.repositories.filter((entry) => !entry.base.ref)) {
-              const chosen = await input(`Full base ref for ${repo.repository} (refs/heads/...):`);
+              const chosen = await input(
+                `Full base ref for ${displayLabel(repo.repository)} (refs/heads/...):`,
+              );
               if (chosen.status !== "ok" || !validManualBaseRef(chosen.value))
                 return done(2, report, "CONFIRMATION_DECLINED");
-              const remote = await input(`Remote for ${repo.repository}:`);
-              if (remote.status !== "ok" || !safeLabel(remote.value))
+              const remote = await input(`Remote for ${displayLabel(repo.repository)}:`);
+              const source =
+                repo.path === "."
+                  ? configurationRoot
+                  : resolve(
+                      configurationRoot,
+                      (await readFinishConfig(configurationRoot)).repos[repo.repository].path,
+                    );
+              if (remote.status !== "ok" || !(await validManualRemote(source, remote.value)))
                 return done(2, report, "CONFIRMATION_DECLINED");
               manualTargets[repo.repository] = { ref: chosen.value, remote: remote.value };
             }
@@ -1002,7 +1020,7 @@ export function createCommand(): Command {
             if (options.json || !process.stdin.isTTY)
               return done(2, report, "DISCARD_CONFIRMATION_REQUIRED");
             const consent = await confirm(
-              `Discard dirty or unpublished changes in ${discards.map((repo) => repo.repository).join(", ")}?`,
+              `Discard dirty or unpublished changes in ${discards.map((repo) => displayLabel(repo.repository)).join(", ")}?`,
               false,
             );
             if (consent.status !== "ok" || !consent.value)

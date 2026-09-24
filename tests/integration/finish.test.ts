@@ -11,6 +11,9 @@ import {
   correlateGithub,
   discoverFinishRoot,
   finishHookPath,
+  contextualFinishCandidates,
+  validManualRemote,
+  projectFinishReport,
 } from "../../src/commands/finish.ts";
 
 const roots: string[] = [];
@@ -566,6 +569,26 @@ describe("finish assessment with real Git repositories", () => {
   it("compares hook paths with injected Windows separators and drive casing", () => {
     expect(finishHookPath("c:\\Work\\Tree", "win32")).toBe(finishHookPath("C:/Work/Tree", "win32"));
   });
+  it("canonicalizes both sides of contextual selection on case-insensitive paths", () => {
+    const entries = [{ path: "C:/Work/Feature" }, { path: "C:/Work/Other" }];
+    expect(
+      contextualFinishCandidates(entries, "C:/Work/Feature/repos/child", (path) =>
+        path.toLowerCase(),
+      ),
+    ).toEqual([entries[0]]);
+  });
+  it("accepts an existing Git remote with punctuation without using output label rules", async () => {
+    const f = await fixture(false);
+    git(f.main, "remote", "add", "upstream+mirror/team@host", f.main);
+    expect(await validManualRemote(f.main, "upstream+mirror/team@host")).toBe(true);
+    expect(await validManualRemote(f.main, "upstream+mirror/team@missing")).toBe(false);
+    expect(await validManualRemote(f.main, "-option")).toBe(false);
+    const report = await assessFinish(f.parent, f.main, {
+      manualTargets: { main: { remote: "upstream+mirror/team@host", ref: "refs/heads/main" } },
+    });
+    expect(report.repositories[0].base.remote).toBe("upstream+mirror/team@host");
+    expect(projectFinishReport(report).repositories[0].base.remote).toBe("[redacted]");
+  });
   it("prefers an exact ordinary relative target path before branch matching", async () => {
     const f = await fixture();
     await symlink(f.parent, join(f.main, "workspace"));
@@ -662,6 +685,23 @@ describe("finish assessment with real Git repositories", () => {
     expect(report.repositories.every((r) => r.reasons.includes("FRESH_EVIDENCE_UNAVAILABLE"))).toBe(
       true,
     );
+  });
+  it("redacts a configured repository key before manual completion confirmation", async () => {
+    const f = await fixture(false);
+    const report = await assessFinish(f.parent, f.main);
+    const key = "child\nConfirm ALL: yes";
+    report.repositories[1].repository = key;
+    let prompt = "";
+    expect(
+      await confirmUnknownCompletion(report, async (message) => {
+        prompt = message;
+        return { status: "ok", value: true };
+      }),
+    ).toBe(true);
+    expect(prompt).not.toContain(key);
+    expect(prompt).not.toContain("Confirm ALL: yes");
+    expect(prompt).toContain("[redacted]");
+    expect(report.confirmations).toContain(`MANUAL_COMPLETION:${key}`);
   });
   it("documents bounded GitHub correlation without promising integration proof", async () => {
     const readme = await readFile(join(import.meta.dirname, "../../README.md"), "utf8");
