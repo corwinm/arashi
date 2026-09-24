@@ -29,3 +29,33 @@ test("parity checks fixture, command boundary and all behavioral fields", () => 
   candidate.cases[0]!.fixture.fingerprint = "wrong";
   expect(() => comparePullArtifacts(base, candidate)).toThrow(/fingerprint/);
 });
+
+test("parity accepts distinct Windows fixture roots but rejects unexpected targets", () => {
+  const windows = structuredClone(base);
+  const candidate = structuredClone(base);
+  candidate.artifact.sha256 = "candidate-artifact";
+  for (const artifact of [windows, candidate]) {
+    const root = artifact === windows ? String.raw`C:\Temp\base` : String.raw`D:\Temp\candidate`;
+    for (const entry of artifact.cases) {
+      if (artifact === candidate) entry.command.argv = ["pull", "--json", "--jobs", "4"];
+      for (const sample of entry.samples) {
+        const original = sample.behavior.managedIgnore.targetPath;
+        const originalRoot = original.replace(/\/workspace\/\.git\/info\/exclude$/, "");
+        sample.behavior = JSON.parse(
+          JSON.stringify(sample.behavior)
+            .split(originalRoot)
+            .join(JSON.stringify(root).slice(1, -1)),
+        );
+        sample.behavior.managedIgnore.targetPath = `${root}\\workspace\\.git\\info\\exclude`;
+        sample.stdout = JSON.stringify({ ...JSON.parse(sample.stdout), data: sample.behavior });
+      }
+    }
+  }
+  expect(comparePullArtifacts(windows, candidate)).toHaveLength(windows.cases.length);
+  candidate.cases[0]!.samples[0]!.behavior.managedIgnore.targetPath = String.raw`D:\Temp\candidate\workspace\.git\config`;
+  candidate.cases[0]!.samples[0]!.stdout = JSON.stringify({
+    ...JSON.parse(candidate.cases[0]!.samples[0]!.stdout),
+    data: candidate.cases[0]!.samples[0]!.behavior,
+  });
+  expect(() => comparePullArtifacts(windows, candidate)).toThrow(/Unexpected fixture targetPath/);
+});

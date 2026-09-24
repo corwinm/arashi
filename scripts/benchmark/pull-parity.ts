@@ -24,7 +24,7 @@ function comparable(sample: Sample) {
   };
   const target = behavior.managedIgnore?.targetPath;
   if (!target) throw new Error("Missing fixture-owned managed-ignore targetPath");
-  const fixtureRoot = target.replace(/\/workspace\/\.git\/info\/exclude$/, "");
+  const fixtureRoot = target.replace(/[\\/]workspace[\\/]\.git[\\/]info[\\/]exclude$/, "");
   if (fixtureRoot === target) throw new Error("Unexpected fixture targetPath");
   // Preserve every field. Replace only the fixture's temporary root and measured durations.
   const normalize = (value: unknown, key = ""): unknown => {

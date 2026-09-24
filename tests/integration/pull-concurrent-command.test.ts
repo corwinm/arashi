@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "vitest";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
-import { spawn } from "node:child_process";
+import { basename, delimiter, join } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
 import { createPullBenchmarkFixture } from "../../scripts/benchmark/pull-fixture.ts";
 
 const dirs: string[] = [];
@@ -36,39 +36,32 @@ async function setup() {
   dirs.push(dir);
   const log = join(dir, "events");
   const bin = join(dir, "git");
-  await writeFile(
-    bin,
-    `#!/bin/sh
-if [ "$1" = pull ]; then
-  name=$(basename "$PWD")
-  printf 'start %s\\n' "$name" >> "$PULL_LOG"
-  IFS= read -r signal < "$PULL_BARRIERS/$name"
-  if [ "$signal" = fail ]; then
-    printf 'end %s\\n' "$name" >> "$PULL_LOG"
-    exit 1
-  fi
-  if [ "$signal" = timeout ]; then
-    printf 'end %s\\n' "$name" >> "$PULL_LOG"
-    exit 1
-  fi
-  /usr/bin/git "$@"
-  result=$?
-  printf 'end %s\\n' "$name" >> "$PULL_LOG"
-  exit "$result"
-fi
-if [ "$1" = reset ] && [ "$(basename "$PWD")" = repo-02 ]; then
-  printf 'rollback repo-02\\n' >> "$PULL_LOG"
-fi
-exec /usr/bin/git "$@"
-`,
-  );
-  await chmod(bin, 0o755);
-  for (const path of fixture.pullPaths) {
-    const name = path.split("/").at(-1)!;
-    const fifo = join(dir, name);
-    const result = spawn("mkfifo", [fifo]);
-    if ((await new Promise<number>((resolve) => result.on("close", resolve))) !== 0)
-      throw new Error("mkfifo failed");
+  let realGit = "";
+  if (process.platform === "win32") {
+    const found = spawnSync("where.exe", ["git.exe"], { encoding: "utf8" });
+    if (found.status !== 0) throw new Error(`Missing native Git: ${found.stderr}`);
+    realGit = found.stdout.trim().split(/\r?\n/)[0]!;
+    const compiled = spawnSync(
+      String.raw`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`,
+      [
+        "/nologo",
+        "/target:exe",
+        `/out:${join(dir, "git.exe")}`,
+        join(root, "tests/integration/fixtures/pull-git.cs"),
+      ],
+      { encoding: "utf8" },
+    );
+    if (compiled.status !== 0)
+      throw new Error(`Git shim compilation failed: ${compiled.stderr} ${compiled.stdout}`);
+  } else {
+    await copyFile(join(root, "tests/integration/fixtures/pull-git.sh"), bin);
+    await chmod(bin, 0o755);
+    for (const path of fixture.pullPaths) {
+      const fifo = join(dir, basename(path));
+      const result = spawn("mkfifo", [fifo]);
+      if ((await new Promise<number>((resolve) => result.on("close", resolve))) !== 0)
+        throw new Error("mkfifo failed");
+    }
   }
   const invoke = (args: string[]) => {
     const child = spawn(process.execPath, [join(root, "src/index.ts"), "pull", ...args], {
@@ -78,6 +71,8 @@ exec /usr/bin/git "$@"
         PATH: `${dir}${delimiter}${process.env.PATH}`,
         PULL_LOG: log,
         PULL_BARRIERS: dir,
+        PULL_REAL_GIT: realGit,
+        PULL_MUTEX: `arashi-pull-${process.pid}-${dir.split(/[\\/]/).at(-1)}`,
       },
     });
     let stdout = "",
@@ -123,10 +118,10 @@ test("real CLI bounds overlapping Git pulls and buffers JSON results in configur
     }
     await h.release("repo-01");
     const result = await run.done;
-    expect(result.code, result.stderr).toBe(0);
+    expect(result.code, `${result.stderr}\n${result.stdout}`).toBe(0);
     const envelope = JSON.parse(result.stdout);
     expect(envelope.data.results.map((r: { repositoryId: string }) => r.repositoryId)).toEqual(
-      h.fixture.pullPaths.map((path) => path.split("/").at(-1)),
+      h.fixture.pullPaths.map((path) => basename(path)),
     );
     const seen = await events(h.log);
     let active = 0,
@@ -243,7 +238,7 @@ test("real CLI buffers human progress and verbose Git output after out-of-order 
     }
     await h.release("repo-01");
     const result = await run.done;
-    expect(result.code, result.stderr).toBe(0);
+    expect(result.code, `${result.stderr}\n${result.stdout}`).toBe(0);
     for (let i = 1; i <= 8; i++) {
       const current = `repo-${String(i).padStart(2, "0")}: updated`;
       expect(result.stdout).toContain(current);
