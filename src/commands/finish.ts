@@ -5,6 +5,7 @@ import { basename, isAbsolute, join, relative, resolve } from "path";
 import { chmod, lstat, mkdtemp, readFile, realpath, rm, stat, writeFile } from "fs/promises";
 import { homedir, tmpdir } from "os";
 import { normalizeConfig } from "../lib/config.ts";
+import { normalizeLifecyclePath } from "../lib/hooks.ts";
 import type { Config } from "../lib/config.ts";
 import {
   canonicalPhysicalPath,
@@ -86,6 +87,13 @@ const safeLabel = (value: string): string | null =>
   /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(value) && !value.includes("..") ? value : null;
 const within = (ancestor: string, candidate: string): boolean =>
   ancestor === candidate || isDescendantWorktreePath(ancestor, candidate);
+export const finishHookPath = (
+  value: string,
+  platform: NodeJS.Platform = process.platform,
+): string => {
+  const normalized = normalizeLifecyclePath(value);
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
+};
 const reason = (code: string) => code;
 export const validManualBaseRef = (ref: string): boolean =>
   ref.startsWith("refs/heads/") && isValidGitBranchNameLiteral(ref.slice("refs/heads/".length));
@@ -256,8 +264,7 @@ export async function assessFinish(
   options: AssessmentOptions = {},
 ): Promise<FinishReport> {
   const parentPath = canonicalPhysicalPath(await realpath(parent));
-  const common = await gitValue(parentPath, "rev-parse", "--git-common-dir");
-  const configurationRoot = resolve(parentPath, common, "..");
+  const configurationRoot = await discoverFinishRoot(parentPath);
   const config = await readFinishConfig(configurationRoot);
   const mainRecords = await registered(configurationRoot, basename(configurationRoot));
   const parentRecords = mainRecords.filter(
@@ -728,12 +735,12 @@ export async function runFinishRemoval(
         .map((entry) => ({
           repository: entry.repository,
           branchName: entry.branch,
-          worktreePath: resolve(physicalParent, entry.path!),
+          worktreePath: finishHookPath(resolve(physicalParent, entry.path!)),
         }));
       const actualHooks = plan.hooks.map((entry) => ({
         repository: entry.repository,
         branchName: entry.branchName,
-        worktreePath: entry.worktreePath,
+        worktreePath: entry.worktreePath && finishHookPath(entry.worktreePath),
       }));
       if (
         JSON.stringify(actual) !== JSON.stringify(expected) ||
@@ -815,16 +822,25 @@ export async function discoverFinishRoot(invocation: string): Promise<string> {
   while (true) {
     try {
       const common = await gitValue(cursor, "rev-parse", "--git-common-dir");
-      const root = resolve(cursor, common, "..");
-      await readFinishConfig(root);
-      return root;
-    } catch {
-      try {
-        await readFinishConfig(cursor);
-        return cursor;
-      } catch {
-        /* continue to parent */
+      const commonPath = resolve(cursor, common);
+      // A bare common directory is itself the configured root; ordinary .git
+      // directories instead point to their containing checkout.
+      for (const candidate of [commonPath, resolve(commonPath, "..")]) {
+        try {
+          await readFinishConfig(candidate);
+          return candidate;
+        } catch {
+          /* check next candidate */
+        }
       }
+    } catch {
+      /* try the enclosing directory */
+    }
+    try {
+      await readFinishConfig(cursor);
+      return cursor;
+    } catch {
+      /* continue to parent */
     }
     const next = resolve(cursor, "..");
     if (next === cursor) throw new Error("CONFIGURED_WORKSPACE_REQUIRED");
@@ -901,18 +917,22 @@ export function createCommand(): Command {
           );
           let candidates = records;
           if (target) {
-            if (isAbsolute(target) || target.startsWith(".") || /^~[/\\]/.test(target))
-              candidates = records.filter((entry) => {
-                try {
-                  const targetPath = /^~[/\\]/.test(target)
-                    ? resolve(homedir(), target.slice(2))
-                    : target;
-                  return canonicalPhysicalPath(entry.path) === canonicalPhysicalPath(targetPath);
-                } catch {
-                  return false;
-                }
-              });
-            else candidates = records.filter((entry) => entry.branch.includes(target));
+            const explicitPath =
+              isAbsolute(target) || target.startsWith(".") || /^~[/\\]/.test(target);
+            const targetPath = /^~[/\\]/.test(target)
+              ? resolve(homedir(), target.slice(2))
+              : target;
+            const exact = records.filter((entry) => {
+              try {
+                return canonicalPhysicalPath(entry.path) === canonicalPhysicalPath(targetPath);
+              } catch {
+                return false;
+              }
+            });
+            candidates =
+              exact.length || explicitPath
+                ? exact
+                : records.filter((entry) => entry.branch.includes(target));
           } else if (options.json || !process.stdin.isTTY)
             return done(2, undefined, "TARGET_REQUIRED");
           if (!target && candidates.length) {

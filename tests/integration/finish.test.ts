@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile, readFile, symlink } from "fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile, realpath, symlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { spawnSync } from "child_process";
@@ -9,6 +9,8 @@ import {
   previewFinishPlan,
   confirmUnknownCompletion,
   correlateGithub,
+  discoverFinishRoot,
+  finishHookPath,
 } from "../../src/commands/finish.ts";
 
 const roots: string[] = [];
@@ -532,6 +534,54 @@ describe("finish assessment with real Git repositories", () => {
     expect(validManualBaseRef("refs/heads/feature/next")).toBe(true);
     expect(validManualBaseRef("refs/tags/release+candidate")).toBe(false);
     expect(validManualBaseRef("refs/heads/feature..bad")).toBe(false);
+  });
+  it("discovers a configured bare common directory from a linked parent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-finish-bare-"));
+    roots.push(root);
+    const bare = join(root, "main.git");
+    await mkdir(bare);
+    git(bare, "init", "--bare", "-b", "main");
+    const seed = join(root, "seed");
+    git(root, "clone", bare, seed);
+    git(seed, "config", "user.name", "Test");
+    git(seed, "config", "user.email", "test@example.com");
+    await writeFile(join(seed, "README.md"), "initial\n");
+    git(seed, "add", ".");
+    git(seed, "commit", "-m", "initial");
+    git(seed, "push", "origin", "main");
+    await mkdir(join(bare, ".arashi"));
+    await writeFile(
+      join(bare, ".arashi", "config.json"),
+      JSON.stringify({ version: "1.0.0", reposDir: "repos", baseBranch: "main", repos: {} }),
+    );
+    const parent = join(root, "workspace");
+    git(bare, "worktree", "add", "-b", "feature", parent, "main");
+    expect(await realpath(await discoverFinishRoot(parent))).toBe(await realpath(bare));
+    const report = await assessFinish(parent, parent);
+    expect(report.repositories[0].branch).toBe("feature");
+    await previewFinishPlan(report, parent, {});
+    expect(report.readiness).toBe("unknown");
+    expect(report.cleanupPlan).not.toBeNull();
+  });
+  it("compares hook paths with injected Windows separators and drive casing", () => {
+    expect(finishHookPath("c:\\Work\\Tree", "win32")).toBe(finishHookPath("C:/Work/Tree", "win32"));
+  });
+  it("prefers an exact ordinary relative target path before branch matching", async () => {
+    const f = await fixture();
+    await symlink(f.parent, join(f.main, "workspace"));
+    const proc = spawnSync(
+      "bun",
+      [
+        join(import.meta.dirname, "../../src/index.ts"),
+        "finish",
+        "workspace",
+        "--dry-run",
+        "--json",
+      ],
+      { cwd: f.main, encoding: "utf8" },
+    );
+    expect(proc.status).toBe(0);
+    expect(JSON.parse(proc.stdout).data.target).toBe("workspace");
   });
   it("blocks an escaped missing child and a dangling symlink instead of omitting them", async () => {
     const f = await fixture();
