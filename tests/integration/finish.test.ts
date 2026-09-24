@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile, readFile } from "fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile, symlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { spawnSync } from "child_process";
-import { assessFinish, runFinishRemoval } from "../../src/commands/finish.ts";
+import {
+  assessFinish,
+  runFinishRemoval,
+  previewFinishPlan,
+  confirmUnknownCompletion,
+  correlateGithub,
+} from "../../src/commands/finish.ts";
 
 const roots: string[] = [];
 const git = (cwd: string, ...args: string[]) => {
@@ -256,5 +262,244 @@ describe("finish assessment with real Git repositories", () => {
     const envelope = JSON.parse(proc.stdout);
     expect(envelope.error.code).toBe("CONFIRMATION_REQUIRED");
     expect(git(f.main, "worktree", "list", "--porcelain")).toContain(f.parent);
+  });
+  it("preserves leading porcelain columns for unstaged changes", async () => {
+    const f = await fixture();
+    await writeFile(join(f.nested, "README.md"), "modified\n");
+    const report = await assessFinish(f.parent, f.main);
+    expect(report.repositories[1].dirtyDetails).toEqual({
+      staged: false,
+      unstaged: true,
+      untracked: false,
+    });
+  });
+  it("blocks an escaped missing child and a dangling symlink instead of omitting them", async () => {
+    const f = await fixture();
+    git(f.child, "worktree", "remove", f.nested);
+    const configPath = join(f.main, ".arashi", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.repos.child.path = "../../outside";
+    await writeFile(configPath, JSON.stringify(config));
+    const escaped = await assessFinish(f.parent, f.main);
+    expect(escaped.readiness).toBe("blocked");
+    expect(escaped.nonparticipants).not.toContain("child");
+    config.repos.child.path = "repos/child";
+    await writeFile(configPath, JSON.stringify(config));
+    await symlink(join(f.root, "missing"), f.nested);
+    const dangling = await assessFinish(f.parent, f.main);
+    expect(dangling.readiness).toBe("blocked");
+    expect(dangling.nonparticipants).not.toContain("child");
+  });
+  it("blocks a missing canonical clone even if the child worktree is absent", async () => {
+    const f = await fixture();
+    git(f.child, "worktree", "remove", f.nested);
+    await rm(f.child, { recursive: true, force: true });
+    const report = await assessFinish(f.parent, f.main);
+    expect(report.readiness).toBe("blocked");
+    expect(report.nonparticipants).not.toContain("child");
+  });
+  it("resolves a slash-containing branch target instead of treating it as a path", async () => {
+    const f = await fixture();
+    git(f.main, "branch", "-m", "feature", "topic/feature");
+    const proc = spawnSync(
+      "bun",
+      [
+        join(import.meta.dirname, "../../src/index.ts"),
+        "finish",
+        "topic/feature",
+        "--dry-run",
+        "--json",
+      ],
+      { cwd: f.main, encoding: "utf8" },
+    );
+    expect(proc.status).toBe(0);
+    expect(JSON.parse(proc.stdout).data.target).toBe("workspace");
+  });
+  it("invalidates a post-hook remote change before detach", async () => {
+    const f = await fixture();
+    const configuration = join(f.main, ".arashi", "config.json");
+    const data = JSON.parse(await readFile(configuration, "utf8"));
+    data.hooks = {
+      scripts: { "pre-remove": `git -C '${f.main}' remote set-url origin '${f.child}'` },
+    };
+    await writeFile(configuration, JSON.stringify(data));
+    const report = await assessFinish(f.parent, f.main);
+    const outcome = await runFinishRemoval(report, f.parent, { force: true }, f.main);
+    expect(outcome).toMatchObject({ code: 1, invalidated: true });
+    expect(git(f.main, "worktree", "list", "--porcelain")).toContain(f.parent);
+  });
+  it("asks once for all unknown repositories and retains each reason", async () => {
+    const f = await fixture(false);
+    const report = await assessFinish(f.parent, f.main, {
+      manualTargets: {
+        main: { remote: "origin", ref: "refs/heads/missing" },
+        child: { remote: "origin", ref: "refs/heads/missing" },
+      },
+    });
+    const prompts: string[] = [];
+    const accepted = await confirmUnknownCompletion(report, async (message) => {
+      prompts.push(message);
+      return { status: "ok" as const, value: true };
+    });
+    expect(accepted).toBe(true);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("main");
+    expect(prompts[0]).toContain("child");
+    expect(report.repositories.map((r) => r.integration)).toEqual([
+      "manually-confirmed",
+      "manually-confirmed",
+    ]);
+    expect(report.repositories.every((r) => r.reasons.includes("FRESH_EVIDENCE_UNAVAILABLE"))).toBe(
+      true,
+    );
+  });
+  it("attempts bounded authenticated GitHub pagination only with matching identities", async () => {
+    const head = "a".repeat(40),
+      base = "b".repeat(40),
+      merge = "c".repeat(40);
+    const calls: string[][] = [];
+    const runner = async (...args: string[]) => {
+      calls.push(args);
+      if (args[0] === "auth") return "";
+      const page = Number(args.at(-1)?.match(/[?&]page=(\d+)/)?.[1]);
+      return JSON.stringify(
+        page === 1
+          ? [
+              {
+                state: "closed",
+                merged_at: "2026-01-01",
+                head: { sha: head, ref: "feature", repo: { full_name: "owner/repo" } },
+                base: { ref: "main", repo: { full_name: "owner/repo" } },
+                merge_commit_sha: merge,
+              },
+              ...Array(99).fill({ state: "closed" }),
+            ]
+          : [],
+      );
+    };
+    expect(
+      await correlateGithub(
+        "https://github.com/owner/repo.git",
+        "feature",
+        head,
+        "https://github.com/owner/repo.git",
+        "refs/heads/main",
+        base,
+        async (candidate) => candidate === merge,
+        runner,
+      ),
+    ).toBe("matched");
+    expect(calls.map((c) => c[0])).toEqual(["auth", "api", "api"]);
+    expect(
+      await correlateGithub(
+        "https://example.com/repo",
+        "feature",
+        head,
+        "https://github.com/owner/repo.git",
+        "refs/heads/main",
+        base,
+        async () => true,
+        runner,
+      ),
+    ).toBe("not-attempted");
+  });
+  it("never upgrades ambiguous or incomplete GitHub evidence to completion", async () => {
+    const sha = "a".repeat(40);
+    const base = "b".repeat(40);
+    const identity = "https://github.com/owner/repo.git";
+    const pr = {
+      merged_at: "2026-01-01",
+      head: { sha, ref: "feature", repo: { full_name: "owner/repo" } },
+      base: { ref: "main", repo: { full_name: "owner/repo" } },
+      merge_commit_sha: "c".repeat(40),
+    };
+    const runner = async (...args: string[]) =>
+      args[0] === "auth" ? "" : JSON.stringify([pr, pr]);
+    expect(
+      await correlateGithub(
+        identity,
+        "feature",
+        sha,
+        identity,
+        "refs/heads/main",
+        base,
+        async () => true,
+        runner,
+      ),
+    ).toBe("unavailable");
+    const full = async (...args: string[]) =>
+      args[0] === "auth" ? "" : JSON.stringify(Array(100).fill(pr));
+    expect(
+      await correlateGithub(
+        identity,
+        "feature",
+        sha,
+        identity,
+        "refs/heads/main",
+        base,
+        async () => true,
+        full,
+      ),
+    ).toBe("unavailable");
+  });
+  it("defaults to the registered parent from parent and child only on human TTY", async () => {
+    const f = await fixture();
+    const modulePath = join(import.meta.dirname, "../../src/commands/finish.ts");
+    for (const cwd of [f.parent, f.nested]) {
+      const script = `process.stdin.isTTY = true; const { createCommand } = await import(${JSON.stringify(modulePath)}); await createCommand().parseAsync(['--dry-run'], { from: 'user' });`;
+      const proc = spawnSync("bun", ["-e", script], { cwd, encoding: "utf8" });
+      expect(proc.status).toBe(0);
+      expect(JSON.parse(proc.stdout).target).toBe("workspace");
+    }
+  });
+  it("keeps an absent base remote as stable unknown evidence for manual completion", async () => {
+    const f = await fixture();
+    git(f.main, "remote", "remove", "origin");
+    const report = await assessFinish(f.parent, f.main);
+    expect(report.repositories[0].integration).toBe("unknown");
+    await previewFinishPlan(report, f.parent, {});
+    expect(report.readiness).toBe("unknown");
+    expect(report.cleanupPlan).not.toBeNull();
+  });
+  it("invalidates a newly configured base remote after accepting its absence", async () => {
+    const f = await fixture();
+    git(f.main, "remote", "remove", "origin");
+    const report = await assessFinish(f.parent, f.main);
+    git(f.main, "remote", "add", "origin", f.main);
+    const outcome = await runFinishRemoval(report, f.parent, { force: true }, f.main);
+    expect(outcome).toMatchObject({ code: 1, invalidated: true });
+    expect(git(f.main, "worktree", "list", "--porcelain")).toContain(f.parent);
+  });
+  it("does not put a credential-bearing expanded remote URL in fetch argv", async () => {
+    const f = await fixture();
+    const bin = join(f.root, "bin");
+    await mkdir(bin);
+    const marker = join(f.root, "leaked-argv");
+    const realGit = spawnSync("which", ["git"], { encoding: "utf8" }).stdout.trim();
+    await writeFile(
+      join(bin, "git"),
+      `#!/bin/sh\ncase "$*" in *CANARY_FINISH*) printf leaked > '${marker}';; esac\nexec '${realGit}' "$@"\n`,
+      { mode: 0o700 },
+    );
+    git(f.main, "remote", "set-url", "origin", "file://user:CANARY_FINISH@/nonexistent");
+    const before = process.env.PATH;
+    try {
+      process.env.PATH = `${bin}:${before}`;
+      await assessFinish(f.parent, f.main);
+    } finally {
+      process.env.PATH = before;
+    }
+    await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("previews without changing managed index, refs or config", async () => {
+    const f = await fixture();
+    const config = join(f.main, ".arashi", "config.json");
+    const index = join(f.main, git(f.main, "rev-parse", "--git-path", "index"));
+    const before = [await readFile(index), await readFile(config), git(f.main, "show-ref")];
+    const report = await assessFinish(f.parent, f.main, { dryRun: true });
+    await previewFinishPlan(report, f.parent, {});
+    expect([await readFile(index), await readFile(config), git(f.main, "show-ref")]).toEqual(
+      before,
+    );
   });
 });
