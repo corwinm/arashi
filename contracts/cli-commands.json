@@ -2412,6 +2412,21 @@
       "arguments": [],
       "options": [
         {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--jobs <count>",
+          "description": "Maximum concurrent independent child pulls (default: 1)",
+          "hidden": false,
+          "long": "--jobs",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
           "candidateKind": "group",
           "conflicts": [],
           "deprecated": false,

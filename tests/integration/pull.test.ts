@@ -158,6 +158,22 @@ describe("pull command", () => {
   });
 
   test(
+    "validates jobs as a strict positive safe integer while -j remains JSON",
+    async () => {
+      const { workspaceRoot } = await createWorkspaceWithRepo(testDir);
+      for (const invalid of ["0", "-1", "1.5", "1e2", "2foo", "9007199254740992"]) {
+        const result = await runPullCommand(workspaceRoot, ["--jobs", invalid]);
+        expect(result.exitCode, invalid).toBe(2);
+        expect(result.stderr, invalid).toContain("--jobs must be a positive safe integer");
+      }
+      const result = await runPullCommand(workspaceRoot, ["--jobs", "1", "-j"]);
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout).command).toBe("pull");
+    },
+    SLOW_PULL_TEST_TIMEOUT,
+  );
+
+  test(
     "pulls remote changes across multiple repositories",
     async () => {
       const { workspaceRoot, mainRemote, repoRemote } = await createWorkspaceWithRepo(testDir);

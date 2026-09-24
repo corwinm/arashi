@@ -186,6 +186,8 @@
   ["prune", "-j", "name", "static"],
   ["prune", "--dry-run", "name", "static"],
   ["prune", "-n", "name", "static"],
+  ["pull", "--jobs", "name", "static"],
+  ["pull", "--jobs", "value", "none/free-text"],
   ["pull", "--group", "name", "static"],
   ["pull", "-g", "name", "static"],
   ["pull", "--group", "value", "dynamic group"],

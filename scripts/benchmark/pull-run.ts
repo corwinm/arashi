@@ -19,11 +19,21 @@ function options(argv: string[]) {
     output: join(root, "benchmark-results", `pull-${platform()}-${arch()}.json`),
     binary: "",
     binarySourceHead: "",
+    jobs: 1,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
     if (arg === "--") continue;
-    if (!["--iterations", "--warmup", "--output", "--binary", "--binary-source-head"].includes(arg))
+    if (
+      ![
+        "--iterations",
+        "--warmup",
+        "--output",
+        "--binary",
+        "--binary-source-head",
+        "--jobs",
+      ].includes(arg)
+    )
       throw new Error(`Unknown pull benchmark option: ${arg}`);
     const value = argv[++index];
     if (!value) throw new Error(`${arg} requires a value`);
@@ -37,12 +47,13 @@ function options(argv: string[]) {
       if (
         !/^\d+$/.test(value) ||
         !Number.isSafeInteger(Number(value)) ||
-        (arg === "--iterations" && Number(value) === 0)
+        ((arg === "--iterations" || arg === "--jobs") && Number(value) === 0)
       )
         throw new Error(
           `${arg} requires ${arg === "--warmup" ? "a nonnegative" : "a positive"} integer`,
         );
       if (arg === "--warmup") parsed.warmup = Number(value);
+      else if (arg === "--jobs") parsed.jobs = Number(value);
       else parsed.iterations = Number(value);
     }
   }
@@ -51,6 +62,8 @@ function options(argv: string[]) {
 
 export async function runPullBenchmark(argv: string[]) {
   const settings = options(argv);
+  const pullArgv =
+    settings.jobs === 1 ? ["pull", "--json"] : ["pull", "--json", "--jobs", String(settings.jobs)];
   const executable =
     settings.binary ||
     executableNamesForPlatform(platform())
@@ -81,7 +94,7 @@ export async function runPullBenchmark(argv: string[]) {
         await fixture.prepare();
         const measured = await invoke(
           { command: executable, args: [] },
-          ["pull", "--json"],
+          pullArgv,
           fixture.refreshedRoot,
           fixture.environment,
           { measureCpu: true },
@@ -116,7 +129,7 @@ export async function runPullBenchmark(argv: string[]) {
         },
         command: {
           executable: artifact.filename,
-          argv: ["pull", "--json"],
+          argv: pullArgv,
           cwd: "fixture-workspace-root",
           method: "direct-compiled-binary",
           remote: "local-filesystem",

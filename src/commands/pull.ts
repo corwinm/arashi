@@ -37,6 +37,7 @@ import { reconcileRepositoryManagedIgnore } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { fileExists } from "../lib/filesystem.ts";
 import { exec } from "../lib/git.ts";
+import { executeIndependentPulls, independentPullPaths } from "../lib/pull-concurrency.ts";
 import { normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
 import {
   ConfiguredWorkspaceRequiredError,
@@ -87,6 +88,8 @@ export interface PullCommandOptions {
   group?: string[];
   /** Output one JSON envelope to stdout */
   json?: boolean;
+  /** Maximum concurrent independent child pulls (default: serial) */
+  jobs?: string;
   /** Only include specified repositories (repeatable flag) */
   only?: string[];
   /** Show full git output for each repository */
@@ -123,6 +126,13 @@ const excludeWorkspaceRoot = (
 ) => repositories.filter((repository) => repository.path !== workspaceRoot);
 
 const executePull = async (options: PullCommandOptions): Promise<PullSummary> => {
+  const jobs = options.jobs === undefined ? ONE : Number(options.jobs);
+  if (
+    options.jobs !== undefined &&
+    (!/^[1-9][0-9]*$/.test(options.jobs) || !Number.isSafeInteger(jobs))
+  ) {
+    throw new CliUsageError("--jobs must be a positive safe integer");
+  }
   const workspaceRoots: WorkspaceRepositoryRoots = await findConfiguredWorkspaceRoots("pull").catch(
     (error): never => {
       if (error instanceof ConfiguredWorkspaceRequiredError) {
@@ -175,6 +185,85 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
   const results: PullResult[] = [];
   let total = repositories.length;
   let timeoutMs = repositoriesResult.config.hooks?.timeout;
+
+  // Only the proven-independent, frozen post-parent child plan uses the pool.
+  const runConcurrentChildren = async (startIndex: number): Promise<boolean> => {
+    const children = repositories.slice(startIndex);
+    if (
+      jobs === ONE ||
+      children.length < 2 ||
+      !(await independentPullPaths(children.map((repo) => repo.path)))
+    )
+      return false;
+
+    const childResults = await executeIndependentPulls(
+      children,
+      jobs,
+      async (repo): Promise<PullResult> => {
+        const start = Date.now();
+        if (!(await fileExists(repo.path))) {
+          return {
+            elapsedSeconds: (Date.now() - start) / MILLISECONDS_PER_SECOND,
+            errorMessage: `Repository is not materialized; run \`arashi clone\` to create ${repo.name}.`,
+            repositoryId: repo.name,
+            status: "skipped",
+          };
+        }
+        const remoteStatus = await checkRemoteChanges(repo.name, repo.path, repo.baseBranch);
+        const configuredBase = configuredBaseOutcome(repo, remoteStatus);
+        if (remoteStatus.error) {
+          return {
+            configuredBase,
+            elapsedSeconds: (Date.now() - start) / MILLISECONDS_PER_SECOND,
+            errorMessage: `Remote check failed: ${remoteStatus.error}`,
+            repositoryId: repo.name,
+            status: "failed",
+          };
+        }
+        if (!remoteStatus.hasRemoteChanges) {
+          return {
+            configuredBase,
+            elapsedSeconds: (Date.now() - start) / MILLISECONDS_PER_SECOND,
+            repositoryId: repo.name,
+            status: "skipped",
+          };
+        }
+        const pullResult = await runPullWithRollback(repo.path, {
+          branch: remoteStatus.branch || undefined,
+          remote: remoteStatus.remote || undefined,
+          timeoutMs,
+          verbose: options.verbose,
+        });
+        return {
+          configuredBase,
+          elapsedSeconds: (Date.now() - start) / MILLISECONDS_PER_SECOND,
+          errorMessage: pullResult.errorMessage,
+          output: pullResult.output,
+          repositoryId: repo.name,
+          status: pullResult.status,
+        };
+      },
+    );
+    for (const [offset, result] of childResults.entries()) {
+      results.push(result);
+      if (!options.json) {
+        info(formatProgress(result.repositoryId, startIndex + offset + ONE, total));
+        if (options.verbose && result.output) console.log(result.output);
+        info(formatResultLine(result));
+      }
+    }
+    return true;
+  };
+
+  // No selected parent: the children are already a complete selected plan.
+  if (!selectedParent && (await runConcurrentChildren(ZERO))) {
+    const summary = { ...buildSummary(results), managedIgnore };
+    if (!options.json) console.log(formatSummary(summary));
+    if (results.some((result) => result.status === "failed" || result.status === "manual-update")) {
+      process.exitCode = ERROR_EXIT_CODE;
+    }
+    return summary;
+  }
 
   for (let index = ZERO; index < repositories.length; index += ONE) {
     const repo = repositories[index];
@@ -303,6 +392,15 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         });
         break;
       }
+      // Parent pull, config reload, and managed-ignore reconciliation have completed.
+      // A parent failure retains the serial path's established child behavior.
+      if (
+        jobs > ONE &&
+        parentResult.status !== "failed" &&
+        parentResult.status !== "manual-update" &&
+        (await runConcurrentChildren(index + ONE))
+      )
+        break;
     }
   }
 
@@ -335,6 +433,7 @@ export function createCommand(): Command {
       collectRepositoryFilterValues,
     )
     .option("-v, --verbose", "Show verbose git output")
+    .option("--jobs <count>", "Maximum concurrent independent child pulls (default: 1)")
     .option("-j, --json", "Output result as JSON")
     .action(async (options: PullCommandOptions) => {
       try {
