@@ -26,33 +26,56 @@ async function until(predicate: () => boolean) {
 }
 
 describe("pull child worker lifecycle", () => {
-  test("identity proof does not start unbounded Git probes", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pull-probe-bound-"));
-    const paths = [join(root, "first"), join(root, "second")];
-    const gates = [barrier(), barrier()];
-    const started: string[] = [];
-    const originalExec = git.exec;
-    try {
-      for (const path of paths) execFileSync("git", ["init", path], { stdio: "pipe" });
-      vi.spyOn(git, "exec").mockImplementation(async (args, cwd) => {
-        started.push(cwd!);
-        await gates[paths.indexOf(cwd!)]!.promise;
-        return originalExec(args, cwd);
-      });
-      const proof = independentPullPaths(paths);
-      await until(() => started.length > 0);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(started).toEqual([paths[0]]);
-      gates[0]!.release();
-      await until(() => started.length === 2);
-      gates[1]!.release();
-      expect(await proof).toBe(true);
-    } finally {
-      gates.forEach((gate) => gate.release());
-      vi.restoreAllMocks();
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+  test.each([false, true])(
+    "identity proof does not start unbounded Git probes (early exit: %s)",
+    async (earlyExit) => {
+      const root = await mkdtemp(join(tmpdir(), "pull-probe-bound-"));
+      const paths = [join(root, "first"), join(root, "second")];
+      const gates = [barrier(), barrier()];
+      const entered = [barrier(), barrier()];
+      const started: string[] = [];
+      const originalExec = git.exec;
+      let proof: Promise<boolean> | undefined;
+      let completed = 0;
+      const interrupted = new Error("simulate an assertion failure while a probe is held");
+      try {
+        for (const path of paths) execFileSync("git", ["init", path], { stdio: "pipe" });
+        vi.spyOn(git, "exec").mockImplementation(async (args, cwd) => {
+          const index = paths.indexOf(cwd!);
+          started.push(cwd!);
+          entered[index]!.release();
+          await gates[index]!.promise;
+          const result = await originalExec(args, cwd);
+          completed += 1;
+          return result;
+        });
+        try {
+          proof = independentPullPaths(paths);
+          // Await explicit entry signals, not a fixed number of event-loop turns:
+          // real Git processes can take longer than that on loaded Windows hosts.
+          await entered[0]!.promise;
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(started).toEqual([paths[0]]);
+          if (earlyExit) throw interrupted;
+          gates[0]!.release();
+          await entered[1]!.promise;
+          gates[1]!.release();
+          expect(await proof).toBe(true);
+        } catch (error) {
+          if (error !== interrupted) throw error;
+        } finally {
+          gates.forEach((gate) => gate.release());
+          await proof;
+          // Cleanup must see both owned probes drained, including early exits.
+          expect(completed).toBe(2);
+        }
+      } finally {
+        await proof;
+        vi.restoreAllMocks();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("requires distinct Git common directories and non-overlapping physical paths", async () => {
     const root = await mkdtemp(join(tmpdir(), "pull-independent-"));
