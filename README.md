@@ -36,7 +36,7 @@ Verify the installation:
 aw --version
 ```
 
-`aw` is the preferred command name. `arashi` remains available for existing scripts and workflows. See the [installation guide](./docs/INSTALLATION.md) for version pinning, manual installation, and troubleshooting, or the [`update` command guide](https://arashi.haphazard.dev/commands/update/) for upgrades.
+`aw` is the preferred command name. `arashi` remains available for existing scripts and workflows. See the [installation guide](https://arashi.haphazard.dev/getting-started/) for version pinning, manual installation, and troubleshooting, or the [`update` command guide](https://arashi.haphazard.dev/commands/update/) for upgrades.
 
 ## Quick start
 
@@ -125,7 +125,6 @@ files, and the containing install directory.
 - [Hooks](https://arashi.haphazard.dev/workflows/hooks/)
 - [Editor and terminal integrations](https://arashi.haphazard.dev/workflows/)
 - [Agents and automation](https://arashi.haphazard.dev/workflows/agents-and-specs/#automation-and-json)
-- [Local configuration reference](./docs/configuration.md)
 
 ## Contributing
 

@@ -43,7 +43,7 @@ warn() {
 fail() {
   printf 'error: %s\n' "$*" >&2
   printf 'Try: npm install -g arashi\n' >&2
-  printf 'Or see: https://github.com/%s/blob/main/docs/INSTALLATION.md\n' "$REPOSITORY" >&2
+  printf 'Or see: https://arashi.haphazard.dev/getting-started/\n' >&2
   exit 1
 }
 

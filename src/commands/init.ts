@@ -1513,7 +1513,7 @@ const displaySuccess = (result: InitResult, options: InitOptions): void => {
       "  • Activate one lifecycle hook: Copy-Item .arashi/hooks/pre-create.ps1.example .arashi/hooks/pre-create.ps1",
     );
     console.log(
-      "  • Setup remains POSIX-only; see docs/commands/init.md for current setup support",
+      "  • Setup remains POSIX-only; see https://arashi.haphazard.dev/commands/init/ for current setup support",
     );
   } else {
     console.log(

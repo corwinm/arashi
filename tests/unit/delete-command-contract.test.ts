@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { buildProgram } from "../../src/cli-program.ts";
 import {
@@ -153,23 +152,5 @@ describe("configured repository delete command contract", () => {
         workspaceFields: ["mode", "repositoriesBase", "workspaceRoot", "worktreesBase"],
       },
     });
-  });
-
-  test("keeps dedicated CLI README, config, and hook guidance aligned", () => {
-    const readme = readFileSync("README.md", "utf8");
-    const command = readFileSync("docs/commands/delete.md", "utf8");
-    const configuration = readFileSync("docs/configuration.md", "utf8");
-    const hooks = readFileSync("docs/hooks.md", "utf8");
-
-    expect(readme).toContain("`aw delete`");
-    expect(readme).toContain("configured repository dependencies");
-    expect(command).toContain("aw delete <repository> --dry-run");
-    expect(command).toContain("error.details.plan");
-    expect(command).toContain("argument vector");
-    expect(command).toContain("does not override");
-    expect(configuration).toContain("`aw delete <repository>`");
-    expect(configuration).toContain("managed-ignore");
-    expect(hooks).toContain("concrete `.example` template");
-    expect(hooks).toContain("user-global hooks are preserved");
   });
 });

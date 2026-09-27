@@ -1,6 +1,4 @@
 import { describe, expect, test } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 import { Command, Option } from "commander";
 import pkg from "../../package.json";
@@ -297,19 +295,6 @@ describe("CLI command contract", () => {
         nativeFiles: "metadata-only-observe-keep-skip-never-overwrite",
       },
     });
-    const configureGuide = readFileSync(
-      resolve(process.cwd(), "docs/commands/configure.md"),
-      "utf8",
-    );
-    expect(configureGuide).toContain(
-      "Inspect or interactively edit supported settings in an existing configured workspace.",
-    );
-    expect(configureGuide).toContain("Configured` or `Not configured");
-    expect(configureGuide).toContain("keep, edit, or clear");
-    expect(configureGuide).toContain("JSON form is sanitized, non-mutating");
-    expect(configureGuide).toMatch(
-      /Edit\s+`\.arashi\/config\.json` directly for other schema fields/,
-    );
   });
 
   test("publishes enforceable init zero-config option and output policy", () => {
