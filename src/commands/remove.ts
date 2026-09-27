@@ -1241,12 +1241,17 @@ export async function executeRemove(
 
   let invalidatedRemovalPlan: UnplannedConfiguredDescendant | undefined;
   if (!options.keepWorktrees) {
-    const refreshedInventory = await discoverAllWorktrees(repositories, {
-      strict: true,
-    });
-    invalidatedRemovalPlan =
-      findUnplannedRegisteredDescendant(worktreesToRemove, refreshedInventory, repositories) ??
-      findUnplannedConfiguredDescendant(worktreesToRemove, repositories, configuredChildPaths);
+    try {
+      const refreshedInventory = await discoverAllWorktrees(repositories, { strict: true });
+      invalidatedRemovalPlan =
+        findUnplannedRegisteredDescendant(worktreesToRemove, refreshedInventory, repositories) ??
+        findUnplannedConfiguredDescendant(worktreesToRemove, repositories, configuredChildPaths);
+    } catch (error) {
+      if (!finishGate) throw error;
+      summary.errors.push("FINISH_PLAN_INVALIDATED");
+      finishGate.report(summary);
+      return ONE;
+    }
     if (invalidatedRemovalPlan) {
       const message = `Removal of ${invalidatedRemovalPlan.blockingWorktree.path} blocked because unplanned configured descendant ${invalidatedRemovalPlan.repository.name}: ${invalidatedRemovalPlan.path} appeared after planning`;
       summary.operations.push({
