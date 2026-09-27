@@ -14,6 +14,12 @@ Repository development uses the guide's Node.js 24.18.0+ and pnpm 11.22.0 toolch
 `engines.node` range describes the installed npm launcher's runtime compatibility; it does not apply
 to contributor scripts, because the pinned pnpm version itself requires a newer Node.js runtime.
 
+Run installed development tools with `pnpm exec` (including the pre-commit hook's
+`pnpm exec lint-staged`); use `pnpm dlx` only when intentionally running an external tool.
+Bun remains the application runtime, both for source execution (`pnpm dev`) and compiled
+standalone binaries. Use pnpm for package management and development tooling; this does not
+change the application's runtime or distribution.
+
 ## Implementation Quality Gates
 
 For code changes in this repository, run:

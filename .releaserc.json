@@ -65,7 +65,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "echo '🔨 Building binaries with version ${nextRelease.version}...' && bun run build:all && ./scripts/generate-checksums.sh && ls -lh bin/ && echo '✅ Binaries and checksums built successfully'"
+        "prepareCmd": "echo '🔨 Building binaries with version ${nextRelease.version}...' && pnpm run build:all && ./scripts/generate-checksums.sh && ls -lh bin/ && echo '✅ Binaries and checksums built successfully'"
       }
     ],
     [
