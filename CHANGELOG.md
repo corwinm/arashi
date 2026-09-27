@@ -1,3 +1,24 @@
+## [1.37.0](https://github.com/corwinm/arashi/compare/v1.36.0...v1.37.0) (2026-09-27)
+
+### Features
+
+- add coordinated workspace finish workflow ([#194](https://github.com/corwinm/arashi/issues/194)) ([f6380e2](https://github.com/corwinm/arashi/commit/f6380e2a80b0b0e7b37d46e57ed3574190e854c5))
+- **status:** add local mode and benchmark evidence ([#190](https://github.com/corwinm/arashi/issues/190)) ([b648825](https://github.com/corwinm/arashi/commit/b648825295a5c342b6920be0585711678377b452))
+
+### Bug Fixes
+
+- **finish:** close nested cleanup and output acceptance defects ([#197](https://github.com/corwinm/arashi/issues/197)) ([486cbd0](https://github.com/corwinm/arashi/commit/486cbd08752762974ba0721b90894a0213fdf563))
+- update js-yaml security release ([#187](https://github.com/corwinm/arashi/issues/187)) ([afcacc7](https://github.com/corwinm/arashi/commit/afcacc7854155e28bc19c2b8ef81c95fca961ade))
+- update Vitest security release ([#186](https://github.com/corwinm/arashi/issues/186)) ([d2d055a](https://github.com/corwinm/arashi/commit/d2d055a6f1df1fdeca5eace3cd167d0e44fa7e8e))
+- verify current POSIX ownership manifest ([#182](https://github.com/corwinm/arashi/issues/182)) ([ef74ef3](https://github.com/corwinm/arashi/commit/ef74ef31764415c93ad061f5637bb0471e54fd68))
+
+### Performance Improvements
+
+- add repeatable CLI benchmark harness ([#188](https://github.com/corwinm/arashi/issues/188)) ([60fb3bf](https://github.com/corwinm/arashi/commit/60fb3bf7c488821169e6f84a86e1ad90f87c01c3))
+- **completion:** resolve static candidates in shells ([#192](https://github.com/corwinm/arashi/issues/192)) ([ac9a043](https://github.com/corwinm/arashi/commit/ac9a04358db5f6f56143b9ae944322f867eb7ac4)), closes [#362](https://github.com/corwinm/arashi/issues/362)
+- **list:** bound enriched probes and skip plain status ([#189](https://github.com/corwinm/arashi/issues/189)) ([166a377](https://github.com/corwinm/arashi/commit/166a377962a421d831c84fb045198e80295ec91d))
+- **pull:** bound independent child pulls with --jobs ([#193](https://github.com/corwinm/arashi/issues/193)) ([e9db8ba](https://github.com/corwinm/arashi/commit/e9db8bafcebab9a0c7bf443187f386ff1626d38f))
+
 ## [1.36.0](https://github.com/corwinm/arashi/compare/v1.35.1...v1.36.0) (2026-09-04)
 
 ### Features
