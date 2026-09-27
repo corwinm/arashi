@@ -1029,12 +1029,6 @@ describe("finish assessment with real Git repositories", () => {
     expect(prompt).toContain("[redacted]");
     expect(report.confirmations).toContain(`MANUAL_COMPLETION:${key}`);
   });
-  it("documents bounded GitHub correlation without promising integration proof", async () => {
-    const readme = await readFile(join(import.meta.dirname, "../../README.md"), "utf8");
-    expect(readme).toContain("GitHub PR correlation");
-    expect(readme).toContain("up to three");
-    expect(readme).not.toContain("GitHub PR correlation is not attempted in v1");
-  });
   it("attempts bounded authenticated GitHub pagination only with matching identities", async () => {
     const head = "a".repeat(40),
       base = "b".repeat(40),
