@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { closeSync } from "fs";
 import { buildProgram } from "./cli-program.ts";
 

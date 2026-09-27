@@ -56,7 +56,7 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "node src/index.ts",
+    "dev": "bun src/index.ts",
     "build": "pnpm run completion:check && bun build src/index.ts --compile --minify --outfile bin/arashi.bin",
     "build:debug": "pnpm run completion:check && bun build src/index.ts --compile --sourcemap --outfile bin/arashi.bin",
     "build:all": "pnpm run completion:check && pnpm run build:mac && pnpm run build:linux && pnpm run build:windows",

@@ -16,8 +16,9 @@ to contributor scripts, because the pinned pnpm version itself requires a newer 
 
 Run installed development tools with `pnpm exec` (including the pre-commit hook's
 `pnpm exec lint-staged`); use `pnpm dlx` only when intentionally running an external tool.
-Bun remains required for standalone binary compilation and tests that exercise compiled artifacts,
-not as the package manager or general-purpose source runner.
+Bun remains the application runtime, both for source execution (`pnpm dev`) and compiled
+standalone binaries. Use pnpm for package management and development tooling; this does not
+change the application's runtime or distribution.
 
 ## Implementation Quality Gates
 
