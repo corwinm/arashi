@@ -683,6 +683,70 @@ export function projectFinishReport(report: FinishReport): FinishReport {
   };
 }
 
+/** Render only the screened presentation report, never the assessment used by the gate. */
+const humanValue = (entry: string | number | boolean | null) =>
+  entry === null ? "unknown" : String(entry);
+function renderHumanFinish(report: FinishReport): string {
+  const lines = [
+    `Finish assessment: ${report.target}`,
+    `Readiness: ${report.readiness}`,
+    `Dry run: ${report.dryRun ? "yes" : "no"}`,
+    "Repositories:",
+  ];
+  for (const repo of report.repositories) {
+    lines.push(
+      `  ${repo.repository} (${humanValue(repo.path)}): ${humanValue(repo.branch)} at ${humanValue(repo.head)}`,
+      `    Changes: ${humanValue(repo.dirty)} (staged ${humanValue(repo.dirtyDetails?.staged ?? null)}, unstaged ${humanValue(repo.dirtyDetails?.unstaged ?? null)}, untracked ${humanValue(repo.dirtyDetails?.untracked ?? null)})`,
+      `    Upstream: ${humanValue(repo.upstream?.oid ?? null)} (ahead ${humanValue(repo.upstream?.ahead ?? null)}, behind ${humanValue(repo.upstream?.behind ?? null)})`,
+      `    Base: ${repo.base.source}, ${humanValue(repo.base.remote)}:${humanValue(repo.base.ref)} at ${humanValue(repo.base.oid)}`,
+      `    Integration: ${repo.integration} (${repo.integrationEvidence.source}, fresh ${repo.integrationEvidence.fresh}, correlation ${repo.integrationEvidence.correlation})`,
+      `    Reasons: ${repo.reasons.join(", ") || "none"}`,
+    );
+  }
+  lines.push(
+    `Nonparticipants: ${report.nonparticipants.join(", ") || "none"}`,
+    `Blockers: ${report.blockers.join(", ") || "none"}`,
+    `Warnings: ${report.warnings.join(", ") || "none"}`,
+    `Confirmations: ${report.confirmations.join(", ") || "none"}`,
+    "Cleanup plan:",
+  );
+  if (report.cleanupPlan) {
+    lines.push(`  Keep branches: ${report.cleanupPlan.keepBranches ? "yes" : "no"}`);
+    for (const operation of report.cleanupPlan.operations)
+      lines.push(
+        `  ${operation.repository}: ${operation.type} ${humanValue(operation.path)} ${humanValue(operation.branch)} (${operation.status})`,
+      );
+    lines.push("  Hooks:");
+    for (const hook of report.cleanupPlan.hooks as {
+      name: string;
+      repository: string;
+      scope: string;
+      availability: string;
+      reason: string | null;
+    }[])
+      lines.push(
+        `    ${hook.repository}: ${hook.name} (${hook.scope}, ${hook.availability}, ${humanValue(hook.reason)})`,
+      );
+    if (!report.cleanupPlan.hooks.length) lines.push("    none");
+  } else lines.push("  unavailable");
+  if (report.cleanupResult) {
+    const result = report.cleanupResult as {
+      operations: { repository: string; type: string; status: string; reason: string | null }[];
+      hooks: { name: string; status: string; reason: string | null }[];
+      failures: string[];
+    };
+    lines.push("Cleanup result:");
+    for (const operation of result.operations)
+      lines.push(
+        `  ${operation.repository}: ${operation.type} ${operation.status}${operation.reason ? ` (${operation.reason})` : ""}`,
+      );
+    for (const hook of result.hooks)
+      lines.push(`  Hook ${hook.name}: ${hook.status}${hook.reason ? ` (${hook.reason})` : ""}`);
+    lines.push(`  Failures: ${result.failures.join(", ") || "none"}`);
+  }
+  return lines.join("\n");
+}
+
 export async function runFinishRemoval(
   report: FinishReport,
   parent: string,
@@ -946,8 +1010,10 @@ export function createCommand(): Command {
                     visible as unknown as Record<string, unknown>,
                   ),
             );
-          else if (visible) console.log(JSON.stringify(visible, null, 2));
-          else console.error(errorCode);
+          else if (visible) {
+            console.log(renderHumanFinish(visible));
+            if (errorCode) console.error(errorCode);
+          } else console.error(errorCode);
           process.exitCode = code;
         };
         let selectedReport: FinishReport | undefined;
@@ -1029,6 +1095,11 @@ export function createCommand(): Command {
               });
             selectedReport = report;
           }
+          if (Object.keys(manualTargets).length)
+            await previewFinishPlan(report, candidates[0].path, options);
+          if (report.readiness === "blocked") return done(1, report, "FINISH_INELIGIBLE");
+          if (!options.json && process.stdin.isTTY)
+            console.log(renderHumanFinish(projectFinishReport(report)));
           if (report.readiness === "unknown") {
             if (
               options.json ||
