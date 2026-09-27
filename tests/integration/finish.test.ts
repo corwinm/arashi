@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile, readFile, realpath, symlink } from "fs/p
 import { join } from "path";
 import { tmpdir } from "os";
 import { spawnSync } from "child_process";
+import { pathToFileURL } from "node:url";
 import {
   assessFinish,
   runFinishRemoval,
@@ -106,7 +107,7 @@ describe("finish assessment with real Git repositories", () => {
     const legacy = (await readFile(path, "utf8")).replace('"1.0.0"', '"1"');
     await writeFile(path, legacy);
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--dry-run", "--json"],
       { cwd: f.main, encoding: "utf8" },
     );
@@ -334,7 +335,7 @@ describe("finish assessment with real Git repositories", () => {
   it("executes a proven, force-authorized JSON finish with a single safe envelope", async () => {
     const f = await fixture();
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--json", "--force"],
       { cwd: f.main, encoding: "utf8" },
     );
@@ -351,7 +352,7 @@ describe("finish assessment with real Git repositories", () => {
   it("finishes from the selected parent without failing after its directory is removed", async () => {
     const f = await fixture();
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--json", "--force"],
       { cwd: f.parent, encoding: "utf8" },
     );
@@ -361,7 +362,7 @@ describe("finish assessment with real Git repositories", () => {
   it("requires an explicit target in JSON mode without selecting a parent implicitly", async () => {
     const f = await fixture();
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [join(import.meta.dirname, "../../src/index.ts"), "finish", "--json", "--force"],
       { cwd: f.main, encoding: "utf8" },
     );
@@ -374,7 +375,7 @@ describe("finish assessment with real Git repositories", () => {
     const second = join(f.root, "workspace2");
     git(f.main, "worktree", "add", "-b", "feature-two", second);
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [join(import.meta.dirname, "../../src/index.ts"), "finish", "feat", "--dry-run", "--json"],
       { cwd: f.main, encoding: "utf8" },
     );
@@ -385,7 +386,7 @@ describe("finish assessment with real Git repositories", () => {
   it("never treats force as proof when current configured base is omitted", async () => {
     const f = await fixture(false);
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--json", "--force"],
       { cwd: f.main, encoding: "utf8" },
     );
@@ -417,7 +418,7 @@ describe("finish assessment with real Git repositories", () => {
     expect(report.readiness).toBe("ready");
     expect(report.cleanupPlan?.operations[0].repository).toBe("child+api");
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--json", "--force"],
       { cwd: f.main, encoding: "utf8" },
     );
@@ -436,7 +437,7 @@ describe("finish assessment with real Git repositories", () => {
     expect(report.repositories[1].dirty).toBe(true);
     expect(report.repositories[1].dirtyDetails?.untracked).toBe(true);
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--json"],
       { cwd: f.main, encoding: "utf8" },
     );
@@ -452,7 +453,7 @@ describe("finish assessment with real Git repositories", () => {
       expect(report.readiness).toBe("ready");
       expect(report.repositories.map((r) => r.repository)).toEqual(["main", "child"]);
       const proc = spawnSync(
-        "bun",
+        process.execPath,
         [
           join(import.meta.dirname, "../../src/index.ts"),
           "finish",
@@ -476,8 +477,11 @@ describe("finish assessment with real Git repositories", () => {
       },
     };
     await writeFile(configPath, JSON.stringify(config));
-    const script = `process.stdin.isTTY = true; const { assessFinish, runFinishRemoval } = await import(${JSON.stringify(join(import.meta.dirname, "../../src/commands/finish.ts"))}); const r = await assessFinish(${JSON.stringify(f.parent)}, ${JSON.stringify(f.main)}); console.log(JSON.stringify(await runFinishRemoval(r, ${JSON.stringify(f.parent)}, { force: true }, ${JSON.stringify(f.main)})));`;
-    const proc = spawnSync("bun", ["-e", script], { cwd: f.main, encoding: "utf8" });
+    const script = `process.stdin.isTTY = true; const { assessFinish, runFinishRemoval } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "../../src/commands/finish.ts")).href)}); const r = await assessFinish(${JSON.stringify(f.parent)}, ${JSON.stringify(f.main)}); console.log(JSON.stringify(await runFinishRemoval(r, ${JSON.stringify(f.parent)}, { force: true }, ${JSON.stringify(f.main)})));`;
+    const proc = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: f.main,
+      encoding: "utf8",
+    });
     expect(proc.status).toBe(0);
     expect(JSON.parse(proc.stdout)).toMatchObject({ code: 0, invalidated: false });
     expect(await readFile(join(f.root, "hook-input"), "utf8")).toBe("tty");
@@ -491,7 +495,7 @@ describe("finish assessment with real Git repositories", () => {
     await previewFinishPlan(report, f.parent, {});
     expect(report.readiness).toBe("ready");
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--json", "--force"],
       { cwd: f.main, encoding: "utf8" },
     );
@@ -509,8 +513,11 @@ describe("finish assessment with real Git repositories", () => {
       },
     };
     await writeFile(configPath, JSON.stringify(config));
-    const script = `process.stdin.isTTY = true; const { createCommand } = await import(${JSON.stringify(join(import.meta.dirname, "../../src/commands/finish.ts"))}); await createCommand().parseAsync([${JSON.stringify(f.parent)}, '--json', '--force'], {from:'user'});`;
-    const proc = spawnSync("bun", ["-e", script], { cwd: f.main, encoding: "utf8" });
+    const script = `process.stdin.isTTY = true; const { createCommand } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "../../src/commands/finish.ts")).href)}); await createCommand().parseAsync([${JSON.stringify(f.parent)}, '--json', '--force'], {from:'user'});`;
+    const proc = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: f.main,
+      encoding: "utf8",
+    });
     expect(proc.status).toBe(0);
     expect(JSON.parse(proc.stdout).ok).toBe(true);
     expect(await readFile(join(f.root, "json-hook-input"), "utf8")).toBe("disabled");
@@ -518,7 +525,7 @@ describe("finish assessment with real Git repositories", () => {
   it("accepts a tilde-prefixed explicit target as a home-relative path", async () => {
     const f = await fixture();
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [
         join(import.meta.dirname, "../../src/index.ts"),
         "finish",
@@ -593,7 +600,7 @@ describe("finish assessment with real Git repositories", () => {
     const f = await fixture();
     await symlink(f.parent, join(f.main, "workspace"));
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [
         join(import.meta.dirname, "../../src/index.ts"),
         "finish",
@@ -635,7 +642,7 @@ describe("finish assessment with real Git repositories", () => {
     const f = await fixture();
     git(f.main, "branch", "-m", "feature", "topic/feature");
     const proc = spawnSync(
-      "bun",
+      process.execPath,
       [
         join(import.meta.dirname, "../../src/index.ts"),
         "finish",
@@ -802,8 +809,11 @@ describe("finish assessment with real Git repositories", () => {
     const f = await fixture();
     const modulePath = join(import.meta.dirname, "../../src/commands/finish.ts");
     for (const cwd of [f.parent, f.nested]) {
-      const script = `process.stdin.isTTY = true; const { createCommand } = await import(${JSON.stringify(modulePath)}); await createCommand().parseAsync(['--dry-run'], { from: 'user' });`;
-      const proc = spawnSync("bun", ["-e", script], { cwd, encoding: "utf8" });
+      const script = `process.stdin.isTTY = true; const { createCommand } = await import(${JSON.stringify(pathToFileURL(modulePath).href)}); await createCommand().parseAsync(['--dry-run'], { from: 'user' });`;
+      const proc = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+        cwd,
+        encoding: "utf8",
+      });
       expect(proc.status).toBe(0);
       expect(JSON.parse(proc.stdout).target).toBe("workspace");
     }
