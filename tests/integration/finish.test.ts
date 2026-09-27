@@ -83,6 +83,105 @@ afterEach(async () => {
 });
 
 describe("finish assessment with real Git repositories", () => {
+  it("renders a screened human dry-run assessment and ordered cleanup plan", async () => {
+    const f = await fixture();
+    const proc = spawnSync(
+      "bun",
+      [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--dry-run"],
+      { cwd: f.main, encoding: "utf8" },
+    );
+    expect(proc.status).toBe(0);
+    expect(proc.stdout).toContain("Finish assessment: workspace");
+    expect(proc.stdout).toContain("Readiness: ready");
+    expect(proc.stdout).toContain("Repositories:");
+    expect(proc.stdout).toContain("Cleanup plan:");
+    expect(proc.stdout.indexOf("child: worktree_remove")).toBeLessThan(
+      proc.stdout.indexOf("main: worktree_remove"),
+    );
+    expect(() => JSON.parse(proc.stdout)).toThrow();
+    expect(git(f.main, "worktree", "list", "--porcelain")).toContain(f.parent);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "shows the full screened plan before manual completion consent and retains files on decline",
+    async () => {
+      const f = await fixture();
+      const configPath = join(f.main, ".arashi", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8"));
+      config.baseBranch = "missing";
+      await writeFile(configPath, JSON.stringify(config));
+      const proc = spawnSync(
+        process.execPath,
+        [
+          join(import.meta.dirname, "../helpers/pty-command.mjs"),
+          f.main,
+          "Manually confirm completion for ALL",
+          "n",
+          "20",
+          JSON.stringify([
+            "bun",
+            join(import.meta.dirname, "../../src/index.ts"),
+            "finish",
+            f.parent,
+            "--force",
+          ]),
+        ],
+        { encoding: "utf8", timeout: 25_000 },
+      );
+      expect(proc.status, proc.stderr).toBe(2);
+      expect(proc.stdout.indexOf("Finish assessment: workspace")).toBeGreaterThanOrEqual(0);
+      expect(proc.stdout.indexOf("Cleanup plan:")).toBeLessThan(
+        proc.stdout.indexOf("Manually confirm completion for ALL"),
+      );
+      expect(proc.stdout).toContain("FRESH_EVIDENCE_UNAVAILABLE");
+      expect(git(f.main, "worktree", "list", "--porcelain")).toContain(f.parent);
+      expect(git(f.child, "worktree", "list", "--porcelain")).toContain(f.nested);
+    },
+  );
+
+  it("renders a human success without changing JSON envelope behavior", async () => {
+    const f = await fixture();
+    const proc = spawnSync(
+      "bun",
+      [join(import.meta.dirname, "../../src/index.ts"), "finish", f.parent, "--force"],
+      { cwd: f.main, encoding: "utf8" },
+    );
+    expect(proc.status).toBe(0);
+    expect(proc.stdout).toContain("Cleanup result:");
+    expect(proc.stdout).toContain("worktree_remove success");
+    expect(() => JSON.parse(proc.stdout)).toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "shows assessment and exact plan before discard consent and retains files on decline",
+    async () => {
+      const f = await fixture();
+      const proc = spawnSync(
+        process.execPath,
+        [
+          join(import.meta.dirname, "../helpers/pty-command.mjs"),
+          f.main,
+          "Discard dirty or unpublished changes",
+          "n",
+          "20",
+          JSON.stringify([
+            "bun",
+            join(import.meta.dirname, "../../src/index.ts"),
+            "finish",
+            f.parent,
+          ]),
+        ],
+        { encoding: "utf8", timeout: 25_000 },
+      );
+      expect(proc.status, proc.stderr).toBe(2);
+      expect(proc.stdout.indexOf("Cleanup plan:")).toBeLessThan(
+        proc.stdout.indexOf("Discard dirty or unpublished changes"),
+      );
+      expect(proc.stdout).toContain("child: worktree_remove repos/child other");
+      expect(git(f.main, "worktree", "list", "--porcelain")).toContain(f.parent);
+      expect(git(f.child, "worktree", "list", "--porcelain")).toContain(f.nested);
+    },
+  );
   it("selects a registered parent from its child, inventories a differently named child and never writes the managed index or refs", async () => {
     const f = await fixture();
     const beforeIndex = await readFile(join(f.parent, ".git"));
@@ -350,7 +449,7 @@ describe("finish assessment with real Git repositories", () => {
         { encoding: "utf8", timeout: 25_000 },
       );
       expect(chosen.status, chosen.stderr).toBe(0);
-      expect(chosen.stdout).toContain('"target": "workspace"');
+      expect(chosen.stdout).toContain("Finish assessment: workspace");
       expect(chosen.stdout).not.toContain("Manually confirm completion");
       expect(chosen.stdout).not.toContain("Discard dirty");
       expect(git(f.main, "worktree", "list", "--porcelain")).toContain(f.parent);
@@ -380,7 +479,7 @@ describe("finish assessment with real Git repositories", () => {
         { encoding: "utf8", timeout: 25_000 },
       );
       expect(declined.status, declined.stderr).toBe(2);
-      expect(declined.stdout).toContain('"cleanupResult": null');
+      expect(declined.stdout).not.toContain("Cleanup result:");
       expect([git(f.main, "show-ref"), git(f.child, "show-ref")]).toEqual(before);
       expect(git(f.main, "worktree", "list", "--porcelain")).toContain(f.parent);
       expect(git(f.child, "worktree", "list", "--porcelain")).toContain(f.nested);
@@ -685,6 +784,14 @@ describe("finish assessment with real Git repositories", () => {
     config.baseBranch = "main+BASE_CANARY";
     await writeFile(configPath, JSON.stringify(config));
     const cli = join(import.meta.dirname, "../../src/index.ts");
+    const human = spawnSync("bun", [cli, "finish", f.parent, "--dry-run"], {
+      cwd: f.main,
+      encoding: "utf8",
+    });
+    expect(human.status).toBe(0);
+    expect(human.stdout).toContain("Cleanup plan:");
+    expect(human.stdout).not.toContain("BASE_CANARY");
+    expect(human.stdout).not.toContain("PATH_CANARY");
     const preview = spawnSync("bun", [cli, "finish", f.parent, "--dry-run", "--json"], {
       cwd: f.main,
       encoding: "utf8",
@@ -1167,7 +1274,7 @@ describe("finish assessment with real Git repositories", () => {
       const script = `process.stdin.isTTY = true; const { createCommand } = await import(${JSON.stringify(modulePath)}); await createCommand().parseAsync(['--dry-run'], { from: 'user' });`;
       const proc = spawnSync("bun", ["-e", script], { cwd, encoding: "utf8" });
       expect(proc.status).toBe(0);
-      expect(JSON.parse(proc.stdout).target).toBe("workspace");
+      expect(proc.stdout).toContain("Finish assessment: workspace");
     }
   });
   it("keeps an absent base remote as stable unknown evidence for manual completion", async () => {
