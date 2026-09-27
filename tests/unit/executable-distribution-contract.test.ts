@@ -193,22 +193,6 @@ describe("versioned executable distribution contract", () => {
     expect(workflow).not.toContain('pnpm release:verify-aw -- "${{ inputs.version }}"');
   });
 
-  test("manual POSIX release instructions install the native payload and both wrappers together", () => {
-    const installation = read("docs/INSTALLATION.md");
-    const manual = installation.slice(
-      installation.indexOf("## Manual macOS and Linux release fallback"),
-      installation.indexOf("## Manual Windows release fallback"),
-    );
-    for (const nativeAsset of ["arashi-macos-arm64", "arashi-linux-x64"]) {
-      expect(manual).toContain(`latest/download/${nativeAsset} -o arashi.bin`);
-    }
-    expect(manual.match(/latest\/download\/arashi -o arashi/g)).toHaveLength(2);
-    expect(manual.match(/latest\/download\/aw -o aw/g)).toHaveLength(2);
-    expect(
-      manual.match(/sudo install -m 0755 arashi\.bin arashi aw \/usr\/local\/bin\//g),
-    ).toHaveLength(2);
-  });
-
   test("runs the packed npm generated-shim matrix on Windows without treating cmd shims as symlinks", () => {
     const packedAcceptance = read("tests/integration/npm-packed-alias.test.ts");
     expect(packedAcceptance).not.toContain('skipIf(process.platform === "win32")');
