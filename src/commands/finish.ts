@@ -86,6 +86,7 @@ const oid = (value: string): boolean => /^[a-f0-9]{40,64}$/.test(value);
 const safeLabel = (value: string): string | null =>
   /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(value) && !value.includes("..") ? value : null;
 const displayLabel = (value: string): string => safeLabel(value) ?? "[redacted]";
+const displayPath = (value: string): string => (value === "." ? "." : displayLabel(value));
 const within = (ancestor: string, candidate: string): boolean =>
   ancestor === candidate || isDescendantWorktreePath(ancestor, candidate);
 export const contextualFinishCandidates = <T extends { path: string }>(
@@ -570,25 +571,47 @@ export async function assessFinish(
   if (report.blockers.length) report.readiness = "blocked";
   else if (report.repositories.some((r) => r.integration === "unknown"))
     report.readiness = "unknown";
-  if (!report.blockers.length)
+  if (!report.blockers.length) {
+    const worktrees = operations
+      .filter((o) => o.type === "worktree_remove")
+      .toSorted((a, b) => {
+        const aPath = resolve(parentPath, a.path!);
+        const bPath = resolve(parentPath, b.path!);
+        return isDescendantWorktreePath(aPath, bPath)
+          ? 1
+          : isDescendantWorktreePath(bPath, aPath)
+            ? -1
+            : 0;
+      });
+    // Remove seeds the selected parent's branch, then adds branch targets from
+    // its descendant-ordered closed worktree plan.
+    const branches = new Map<string, typeof worktrees>();
+    for (const entry of [operations[0], ...worktrees]) {
+      if (entry.type !== "worktree_remove" || !entry.branch) continue;
+      const repositories = branches.get(entry.branch) ?? [];
+      if (!repositories.some((target) => target.repository === entry.repository))
+        repositories.push(entry);
+      branches.set(entry.branch, repositories);
+    }
     report.cleanupPlan = {
       operations: [
-        ...operations
-          .filter((o) => o.type === "worktree_remove")
-          .toSorted((a, b) => {
-            const aPath = resolve(parentPath, a.path!);
-            const bPath = resolve(parentPath, b.path!);
-            return isDescendantWorktreePath(aPath, bPath)
-              ? 1
-              : isDescendantWorktreePath(bPath, aPath)
-                ? -1
-                : 0;
-          }),
-        ...operations.filter((o) => o.type === "branch_delete"),
+        ...worktrees,
+        ...(options.keepBranches
+          ? []
+          : [...branches.values()].flatMap((repositories) =>
+              repositories.map((entry) => ({
+                repository: entry.repository,
+                type: "branch_delete" as const,
+                path: null,
+                branch: entry.branch,
+                status: "pending" as const,
+              })),
+            )),
       ],
       hooks: [],
       keepBranches: options.keepBranches === true,
     };
+  }
   report.blockers.sort();
   assessedConfiguration.set(report, JSON.stringify(config));
   assessedRemotes.set(
@@ -609,7 +632,7 @@ export function projectFinishResult(
       branch: operation.branchName ? (safeLabel(operation.branchName) ?? "[redacted]") : null,
       path:
         operation.worktreePath && within(resolve(parent), resolve(operation.worktreePath))
-          ? relative(resolve(parent), resolve(operation.worktreePath)) || "."
+          ? displayPath(relative(resolve(parent), resolve(operation.worktreePath)) || ".")
           : null,
       status: operation.status,
       reason: operation.status === "failed" ? "REMOVE_OPERATION_FAILED" : null,
@@ -634,8 +657,13 @@ export function projectFinishReport(report: FinishReport): FinishReport {
     repositories: report.repositories.map((repo) => ({
       ...repo,
       repository: label(repo.repository),
+      path: repo.path && displayPath(repo.path),
       branch: repo.branch && label(repo.branch),
-      base: { ...repo.base, remote: repo.base.remote && label(repo.base.remote) },
+      base: {
+        ...repo.base,
+        remote: repo.base.remote && label(repo.base.remote),
+        ref: repo.base.ref && label(repo.base.ref),
+      },
     })),
     nonparticipants: report.nonparticipants.map(label),
     confirmations: report.confirmations.map((entry) =>
@@ -648,6 +676,7 @@ export function projectFinishReport(report: FinishReport): FinishReport {
       operations: report.cleanupPlan.operations.map((entry) => ({
         ...entry,
         repository: label(entry.repository),
+        path: entry.path && displayPath(entry.path),
         branch: entry.branch && label(entry.branch),
       })),
     },
@@ -776,6 +805,7 @@ export async function runFinishRemoval(
     },
     report: (summary) => {
       result = summary;
+      if (summary.errors.includes("FINISH_PLAN_INVALIDATED")) invalidated = true;
     },
   };
   const previous = process.cwd();
@@ -868,7 +898,7 @@ export async function confirmUnknownCompletion(
   const message = unknown
     .map(
       (repo) =>
-        `${displayLabel(repo.repository)} -> ${repo.base.remote && displayLabel(repo.base.remote)}:${repo.base.ref} (${repo.reasons.join(", ") || "UNKNOWN"})`,
+        `${displayLabel(repo.repository)} -> ${repo.base.remote && displayLabel(repo.base.remote)}:${repo.base.ref && displayLabel(repo.base.ref)} (${repo.reasons.join(", ") || "UNKNOWN"})`,
     )
     .join("; ");
   const confirmation = await ask(`Manually confirm completion for ALL: ${message}?`);
