@@ -900,6 +900,46 @@
           "variadic": false
         },
         {
+          "candidateKind": "choice",
+          "choices": ["approval-required", "auto-accept-edits", "full-access"],
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--permission <mode>",
+          "description": "T3 permission mode (defaults to full-access)",
+          "hidden": false,
+          "long": "--permission",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--prompt-file <path>",
+          "description": "Read the T3 task from a UTF-8 file (requires --t3)",
+          "hidden": false,
+          "long": "--prompt-file",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicy": {
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
           "conflicts": [],
           "deprecated": false,
           "flags": "--repo-base <repository=branch>",
@@ -995,6 +1035,26 @@
           "semanticPolicyOwner": "structural",
           "short": null,
           "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": ["--herdr", "--launch", "--sesh", "--switch", "--tab", "--tmux"],
+          "deprecated": false,
+          "flags": "--t3 [task]",
+          "description": "Hand the created parent workspace to a new T3 Code thread",
+          "hidden": false,
+          "long": "--t3",
+          "required": false,
+          "optional": true,
+          "repeatable": false,
+          "semanticPolicy": {
+            "conflicts": ["--herdr", "--launch", "--sesh", "--switch", "--tab", "--tmux"],
+            "ownership": "command",
+            "persisted": false
+          },
+          "semanticPolicyOwner": "command",
+          "short": null,
+          "valueShape": "optional",
           "variadic": false
         },
         {

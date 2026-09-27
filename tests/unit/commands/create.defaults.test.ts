@@ -44,6 +44,21 @@ describe("resolveCreateDefaults", () => {
     ).toContain("tab");
   });
 
+  test("registers the T3 prompt and closed permission interface", () => {
+    const command = createCommand();
+    expect(command.options.find((option) => option.long === "--t3")).toMatchObject({
+      optional: true,
+    });
+    expect(command.options.find((option) => option.long === "--prompt-file")).toMatchObject({
+      required: true,
+    });
+    expect(command.options.find((option) => option.long === "--permission")?.argChoices).toEqual([
+      "approval-required",
+      "auto-accept-edits",
+      "full-access",
+    ]);
+  });
+
   test("renders the default-window and fail-closed tab disposition contract", () => {
     let help = "";
     createCommand()
