@@ -53,6 +53,12 @@ Optional fast path during active edits:
 pnpm run quality:changed
 ```
 
+## Distribution maintenance
+
+See [distribution maintenance](docs/distribution-maintenance.md) for entrypoint ownership,
+build outputs, release artifacts, and installer verification. User installation guidance
+lives on the [documentation site](https://arashi.haphazard.dev/getting-started/).
+
 ## Performance benchmarks
 
 Run the opt-in, cross-platform CLI suite with `pnpm benchmark`. See

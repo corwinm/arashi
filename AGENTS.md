@@ -6,7 +6,8 @@ This repository contains the Arashi CLI implementation.
 
 - Put CLI source changes in `src/`.
 - Put tests in `tests/`.
-- Keep CLI-specific docs in this repo's `README.md` or `docs/`.
+- Keep user guides canonical at https://arashi.haphazard.dev (source: `arashi-docs`).
+- Keep the README as a concise entry point; reserve `docs/` for CLI maintainer internals.
 
 ## Working Rules
 
