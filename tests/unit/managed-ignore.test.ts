@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { Writable } from "node:stream";
+import { runtime } from "../../src/lib/runtime.ts";
 import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { tmpdir } from "node:os";
@@ -383,6 +385,57 @@ describe("managed ignore path classification", () => {
     await expect(readFile(join(root, ".gitignore"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  test.each([
+    ["EPIPE", 128, "fatal: inspection failed"],
+    ["EPIPE", 0, "stdin write failed"],
+    ["EPIPE", 1, "stdin write failed"],
+    ["EIO", 128, "stdin write failed"],
+  ])("drains Git after stdin %s with exit %i", async (code, exitCode, message) => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-stdin-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    const originalSpawn = runtime.spawn;
+    let exited = false;
+    let childExit: Promise<number> | undefined;
+    const stdin = new Writable({
+      write(_chunk, _encoding, callback) {
+        setImmediate(() => callback(Object.assign(new Error("stdin write failed"), { code })));
+      },
+    });
+    const spy = vi.spyOn(runtime, "spawn").mockImplementation((command, options) => {
+      if (command[1] !== "check-ignore") return originalSpawn(command, options);
+      // Keep a real owned child alive past the injected asynchronous write error.
+      const child = originalSpawn(
+        [
+          process.execPath,
+          "-e",
+          `process.stderr.write('fatal: inspection failed'); process.exit(${exitCode})`,
+        ],
+        { ...options, stdin: "ignore" },
+      );
+      childExit = child.exited.then((code) => {
+        exited = true;
+        return code;
+      });
+      return { ...child, exited: childExit, stdin };
+    });
+    try {
+      await expect(
+        reconcileManagedIgnore({ reposDir: "repos", workspaceRoot: root, worktreesDir: "." }),
+      ).rejects.toMatchObject({
+        code: "MANAGED_IGNORE_RECONCILIATION_FAILED",
+        message: expect.stringContaining(message),
+        details: { attempted: false, changed: false, phase: "inspection", restored: false },
+      });
+      expect(exited).toBe(true);
+      expect(stdin.destroyed).toBe(true);
+      expect(spy.mock.calls.filter(([command]) => command[1] === "check-ignore")).toHaveLength(1);
+    } finally {
+      await childExit;
+      spy.mockRestore();
+    }
   });
 
   test("propagates fatal Git ignore inspection failures", async () => {

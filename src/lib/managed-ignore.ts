@@ -1,3 +1,4 @@
+import { finished } from "node:stream/promises";
 import { dirname, isAbsolute, posix, resolve, win32 } from "path";
 import { lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { ArashiError } from "./errors.ts";
@@ -176,14 +177,31 @@ const runManagedIgnoreGit: ManagedIgnoreGitRunner = async ({ args, cwd, stdin })
     stdin: stdin === undefined ? undefined : "pipe",
     stdout: "pipe",
   });
+  // Observe write errors before sending input, and drain the child even if it
+  // closes stdin early. An EPIPE must not hide Git's fatal exit and diagnostic.
+  const inputFinished =
+    stdin !== undefined && process.stdin
+      ? finished(process.stdin, { cleanup: true }).then(
+          () => undefined,
+          (error: NodeJS.ErrnoException) => error,
+        )
+      : Promise.resolve(undefined);
   if (stdin !== undefined) {
     process.stdin?.end(stdin);
   }
-  const [stdout, stderr, exitCode] = await Promise.all([
+  const [stdout, stderr, exitCode, inputError] = await Promise.all([
     new Response(process.stdout).text(),
     new Response(process.stderr).text(),
     process.exited,
+    inputFinished,
   ]);
+  if (
+    inputError &&
+    !process.spawnError &&
+    (inputError.code !== "EPIPE" || exitCode === 0 || exitCode === 1)
+  ) {
+    throw inputError;
+  }
   return { exitCode, spawnError: process.spawnError ?? undefined, stderr, stdout };
 };
 

@@ -574,6 +574,7 @@ export const optionAuditPolicies: OptionAuditPolicies = {
     "--repo-base": { ownership: "command", persisted: false, repositoryBase: repositoryBasePolicy },
   },
   exec: selectorPolicies("configured-only"),
+  finish: { "--no-hook-input": hookInputPolicy },
   handoff: {
     "--markdown": {
       compatibility: {
@@ -1131,6 +1132,16 @@ export const commandSemantics: CommandSemantics = {
       configuredOnly("Coordinated push requires persisted repository metadata."),
     ),
     vscode: excluded("Push remains explicit terminal source-control behavior."),
+  },
+  finish: {
+    ...standard(
+      { support: "full" },
+      configuredOnly("Finish requires a configured coordinated workspace."),
+    ),
+    skills: represented(
+      "Packaged workflow guidance is maintained in the coordinated documentation repository.",
+    ),
+    vscode: excluded("Destructive coordinated retirement is terminal-only."),
   },
   remove: standard(
     {

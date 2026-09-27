@@ -16,6 +16,7 @@ const expectedCommonAliases: Record<string, Record<string, string>> = {
   delete: { "--dry-run": "-n", "--force": "-f", "--json": "-j" },
   doctor: { "--json": "-j" },
   exec: { "--group": "-g", "--json": "-j", "--only": "-o" },
+  finish: { "--dry-run": "-n", "--force": "-f", "--json": "-j" },
   handoff: { "--json": "-j" },
   init: { "--dry-run": "-n", "--force": "-f", "--json": "-j", "--verbose": "-v" },
   install: { "--json": "-j" },

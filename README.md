@@ -78,10 +78,19 @@ For a single repository without persisted Arashi configuration, use `aw init --z
 | `aw pull` / `aw push` / `aw sync` | Synchronize repositories                  |
 | `aw setup`                        | Run repository setup steps                |
 | `aw remove` / `aw prune`          | Clean up branch worktrees and metadata    |
+| `aw finish`                       | Assess and retire a coordinated workspace |
 | `aw doctor`                       | Diagnose workspace problems               |
 | `aw update`                       | Update Arashi                             |
 
 Run `aw --help`, `aw <command> --help`, or use the [complete command reference](https://arashi.haphazard.dev/commands/) for options and examples.
+
+### Finishing a coordinated workspace
+
+`aw finish <branch-or-parent-path> --dry-run` inventories the registered parent and configured children, refreshes named base/upstream refs into disposable private Git storage, and previews the exact cleanup scope and remove hooks. It does not run hooks, ask for completion/discard/removal consent, or write managed worktrees, refs, config, or index; network metadata refresh is permitted. A blocked or unknown preview still exits successfully **as a preview**, not as cleanup authorization. In main, a human TTY can omit the target to select one parent; selection is not consent. JSON/non-TTY requires an explicit target.
+
+Current `repos.<key>.baseBranch` overrides workspace `baseBranch` (`meta.baseBranch` overrides it for the parent). This is **current policy**, not a record of the create-time base or invocation-only overrides. With no configured base, preview leaves integration unknown; interactive execution can supply a repository-specific remote and full `refs/heads/...` target without saving it. Exact inspected HEAD ancestry of a freshly fetched named base can prove integration, but a negative ancestry result cannot prove non-integration after squash, rebase, or cherry-pick. GitHub PR correlation is attempted when ancestry is unproven and head/base remotes identify the same GitHub repository, including during dry-run: finish runs `gh auth status` and up to three paginated `gh api` requests. A match is only a correlation, not immutable historical merge-time HEAD proof; squash/rebase and other unproven completion still require explicit per-repository manual judgment in a human TTY. `--force` never supplies that judgment.
+
+Run `aw finish <target>` to review unknown completion, then separately consent to discarding dirty, untracked, or ignored local data and absent/ahead-upstream state and to removal. `--force` covers the latter two consents only; `--keep-branches` retains local branches. `--json` / `-j` emits one schema-versioned report and never prompts. Finish rechecks identity, policy, fresh evidence, and exact remove actions after consent and after successful pre-remove hooks before mutation. Hooks may already have side effects if that gate aborts; once removal starts, partial failures retain the existing remove ledger and require manual inspection/retry. External Git/filesystem actors can still race after the final gate: finish does **not** make deletion atomic or serialize other Arashi commands. It does not merge, push, delete remote branches, or detect later reverts.
 
 ## Shell integration
 
