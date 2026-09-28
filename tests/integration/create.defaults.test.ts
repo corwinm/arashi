@@ -6,6 +6,7 @@ import {
   isNormalizingDarwinFilesystemType,
   resolveCreateDefaults,
 } from "../../src/commands/create.ts";
+import { T3HandoffError, type T3HandoffResult } from "../../src/lib/t3-handoff.ts";
 import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -1132,6 +1133,329 @@ describe("create defaults integration", () => {
     expect(envelope.data.repositories).toEqual([
       expect.not.objectContaining({ base: expect.anything() }),
     ]);
+  });
+
+  test("T3 handoff suppresses configured launch defaults and reports structured stages", async () => {
+    const stdout: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    let launchCalls = 0;
+    let dispatchedWorkspace = "";
+    try {
+      expect(
+        await executeCreate(
+          branchName,
+          { json: true, t3: "Implement the accepted design" },
+          baseDeps({
+            dispatchT3Handoff: async (input) => {
+              dispatchedWorkspace = input.workspacePath;
+              return {
+                bridgeVersion: input.bridgeVersion,
+                dispatch: { status: "succeeded" },
+                environment: { id: "environment-1", serverVersion: "0.0.42" },
+                permission: input.request.permission,
+                project: { created: true, id: "project-1", title: "Feature" },
+                promptDigest: input.request.promptDigest,
+                receiptPath: "/workspace/.git/.arashi-t3-handoffs/receipt.json",
+                retry: { guidance: "already running", safe: false },
+                status: "succeeded",
+                thread: { id: "thread-1", title: "Task" },
+                ui: { exactThread: false, kind: "none", mode: "none", status: "skipped" },
+                workspacePath: input.workspacePath,
+              };
+            },
+            launchSwitchTarget: async () => {
+              launchCalls += 1;
+              return { command: [], disposition: "window", mode: "fallback" };
+            },
+            loadConfigWithFallback: async () =>
+              createLoadedConfig({ defaults: { create: { launch: "sesh", switch: true } } }),
+            preflightT3Bridge: async () => "0.1.0",
+          }),
+        ),
+      ).toBe(0);
+    } finally {
+      write.mockRestore();
+    }
+
+    expect(launchCalls).toBe(0);
+    expect(dispatchedWorkspace).toBe("/workspace/workspace/feature/defaults");
+    expect(stdout).toHaveLength(1);
+    expect(JSON.parse(stdout[0]!)).toMatchObject({
+      ok: true,
+      data: {
+        t3Handoff: {
+          permission: "full-access",
+          project: { id: "project-1" },
+          thread: { id: "thread-1" },
+          ui: { mode: "none" },
+        },
+      },
+    });
+  });
+
+  test("does not dispatch T3 after moving changes fails", async () => {
+    const stdout: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    const dispatch = vi.fn();
+    const repository = {
+      repositoryName: "workspace",
+      path: "/workspace",
+      branch: "main",
+      isMain: true,
+      dirty: true,
+      dirtyDetails: {
+        modifiedFiles: 1,
+        stagedFiles: 0,
+        untrackedFiles: 0,
+        deletedFiles: 0,
+        totalFiles: 1,
+        summary: "modified",
+      },
+    };
+    const workspace = {
+      label: "workspace",
+      ref: "main",
+      primaryPath: "/workspace",
+      branch: "main",
+      repositories: [repository],
+      dirtyRepositories: [repository],
+    };
+    try {
+      expect(
+        await executeCreate(
+          branchName,
+          { json: true, t3: "task", moveChanges: true },
+          baseDeps({
+            preflightT3Bridge: async () => "0.1.0",
+            dispatchT3Handoff: dispatch,
+            resolvePostCreateDirtyGuidance: async () => ({
+              guidance: null,
+              source: workspace,
+              target: {
+                ...workspace,
+                primaryPath: "/target",
+                repositories: [{ ...repository, path: "/target", dirty: false }],
+                dirtyRepositories: [],
+              },
+            }),
+            executeMovePlan: async () => ({
+              source: workspace,
+              target: workspace,
+              movedCount: 0,
+              skippedCount: 0,
+              failedCount: 1,
+              results: [
+                {
+                  repositoryName: "workspace",
+                  status: "manual-recovery",
+                  message: "apply failed",
+                  recoveryCommand: "git stash apply",
+                },
+              ],
+            }),
+          }),
+        ),
+      ).toBe(1);
+    } finally {
+      write.mockRestore();
+    }
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(JSON.parse(stdout[0]!)).toMatchObject({
+      ok: false,
+      error: {
+        code: "T3_WORKSPACE_PREPARATION_FAILED",
+        details: {
+          t3Handoff: { status: "failed", receiptPath: null },
+          moveSummary: { failedCount: 1 },
+        },
+      },
+    });
+  });
+
+  test("preserves successful creation details when T3 dispatch definitely fails", async () => {
+    const stdout: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    let created = false;
+    try {
+      expect(
+        await executeCreate(
+          branchName,
+          { json: true, t3: "Implement the accepted design" },
+          baseDeps({
+            createCoordinatedWorktrees: async () => {
+              created = true;
+              return createSummary();
+            },
+            dispatchT3Handoff: async (input) => {
+              const result: T3HandoffResult = {
+                bridgeVersion: input.bridgeVersion,
+                dispatch: { status: "failed" },
+                environment: { id: null, serverVersion: null },
+                error: { code: "T3_AUTH_FAILED", message: "not paired" },
+                permission: input.request.permission,
+                project: { created: null, id: null, title: null },
+                promptDigest: input.request.promptDigest,
+                receiptPath: "/workspace/.git/.arashi-t3-handoffs/receipt.json",
+                retry: { guidance: "pair T3, then retry", safe: true },
+                status: "failed",
+                thread: { id: null, title: null },
+                ui: { exactThread: null, kind: null, mode: "none", status: "skipped" },
+                workspacePath: input.workspacePath,
+              };
+              throw new T3HandoffError(
+                "T3_AUTH_FAILED",
+                "not paired",
+                { status: "failed" },
+                result,
+              );
+            },
+            preflightT3Bridge: async () => "0.1.0",
+          }),
+        ),
+      ).toBe(1);
+    } finally {
+      write.mockRestore();
+    }
+
+    expect(created).toBe(true);
+    expect(stdout).toHaveLength(1);
+    expect(JSON.parse(stdout[0]!)).toMatchObject({
+      ok: false,
+      error: {
+        code: "T3_AUTH_FAILED",
+        details: {
+          failureCount: 0,
+          repositories: [{ status: "success" }],
+          rolledBack: false,
+          t3Handoff: {
+            dispatch: { status: "failed" },
+            retry: { safe: true },
+            status: "failed",
+            ui: { mode: "none", status: "skipped" },
+          },
+        },
+      },
+    });
+  });
+
+  test("keeps T3 optional and reports human dry-run stages", async () => {
+    let preflightCalls = 0;
+    await expect(
+      executeCreate(
+        branchName,
+        {},
+        baseDeps({
+          preflightT3Bridge: async () => {
+            preflightCalls += 1;
+            throw new Error("ordinary create must not require t3code");
+          },
+        }),
+      ),
+    ).resolves.toBe(0);
+    expect(preflightCalls).toBe(0);
+
+    const logs: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((message) => {
+      logs.push(String(message));
+    });
+    try {
+      await expect(
+        executeCreate(
+          branchName,
+          { dryRun: true, t3: "Plan the accepted task" },
+          baseDeps({
+            createCoordinatedWorktrees: async () => {
+              const summary = createSummary();
+              return {
+                ...summary,
+                dryRunOutcome: {
+                  conflicts: [],
+                  overallStatus: "actionable" as const,
+                  plannedWorktrees: [],
+                  summaryCounts: { blockingTotal: 0, conflictTotal: 0, plannedTotal: 1 },
+                  targetActionByRepositoryPath: summary.targetActionByRepositoryPath,
+                },
+                isDryRun: true,
+              };
+            },
+            dispatchT3Handoff: async (input) => {
+              expect(input.dryRun).toBe(true);
+              return {
+                bridgeVersion: input.bridgeVersion,
+                dispatch: { status: "planned" },
+                environment: { id: null, serverVersion: null },
+                permission: input.request.permission,
+                project: { created: null, id: null, title: null },
+                promptDigest: input.request.promptDigest,
+                receiptPath: null,
+                retry: { guidance: "Dry-run only", safe: false },
+                status: "planned",
+                thread: { id: null, title: null },
+                ui: { exactThread: null, kind: null, mode: "none", status: "skipped" },
+                workspacePath: input.workspacePath,
+              };
+            },
+            preflightT3Bridge: async () => {
+              preflightCalls += 1;
+              return "0.1.0";
+            },
+          }),
+        ),
+      ).resolves.toBe(0);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(preflightCalls).toBe(1);
+    expect(logs.join("\n")).toContain("T3 permission: full-access");
+    expect(logs.join("\n")).toContain("T3 dispatch: planned");
+    expect(logs.join("\n")).toContain("T3 UI: skipped (none)");
+  });
+
+  test("rejects invalid T3 input and explicit launch before workspace resolution", async () => {
+    let resolved = false;
+    const dependencies = baseDeps({
+      resolveWorkspaceContext: async () => {
+        resolved = true;
+        throw new Error("must not resolve");
+      },
+    });
+
+    await expect(executeCreate(branchName, { t3: true }, dependencies)).rejects.toMatchObject({
+      code: "T3_PROMPT_SOURCE_REQUIRED",
+    });
+    await expect(
+      executeCreate(branchName, { launch: true, t3: "task" }, dependencies),
+    ).rejects.toMatchObject({ code: "T3_LAUNCH_CONFLICT" });
+    expect(resolved).toBe(false);
+  });
+
+  test("rejects T3 handoff when repository selection omits the parent", async () => {
+    let created = false;
+    await expect(
+      executeCreate(
+        branchName,
+        { t3: "task" },
+        baseDeps({
+          applyRepositoryFilter: async () => [],
+          createCoordinatedWorktrees: async () => {
+            created = true;
+            return createSummary();
+          },
+          preflightT3Bridge: async () => "0.1.0",
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "T3_PARENT_WORKSPACE_REQUIRED" });
+    expect(created).toBe(false);
   });
 
   test("does not apply terminal defaults to editor-hosted create without editor overrides", async () => {

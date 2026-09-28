@@ -35,6 +35,13 @@ afterEach(() => {
 });
 
 describe("lossless bounded dynamic completion query", () => {
+  test("recognizes options following a bare optional task", () => {
+    const result = runQuery(tmpdir(), ["aw", "create", "topic", "--t3", "--permission", "full"]);
+    expect(result.status).toBe(0);
+    expect(records(result.stdout).map(({ value }) => value)).toEqual(["full-access"]);
+    const option = runQuery(tmpdir(), ["aw", "create", "topic", "--t3", "--prompt"]);
+    expect(records(option.stdout).map(({ value }) => value)).toContain("--prompt-file");
+  });
   test("returns alternating NUL records and preserves shell-sensitive configured values", () => {
     const sensitiveRepository = "quote'glob*\\tab\tline\nrepo";
     const root = mkdtempSync(join(tmpdir(), "arashi-completion-"));

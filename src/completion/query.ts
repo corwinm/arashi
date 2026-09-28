@@ -92,7 +92,13 @@ function parseContext(contract: CliCommandContract, argv: string[], cursor: numb
     if (!endOfOptions && word.startsWith("-")) {
       const spelling = word.includes("=") ? word.slice(0, word.indexOf("=")) : word;
       const option = options.find((item) => optionSpellings(item).includes(spelling));
-      if (option?.valueShape !== "boolean" && !word.includes("=")) index += 1;
+      if (
+        option &&
+        option.valueShape !== "boolean" &&
+        !word.includes("=") &&
+        (option.valueShape !== "optional" || !before[index + 1]?.startsWith("-"))
+      )
+        index += 1;
       continue;
     }
     positionalIndex += 1;
@@ -103,7 +109,10 @@ function parseContext(contract: CliCommandContract, argv: string[], cursor: numb
     if (!prior.includes("=")) {
       activeOption =
         options.find(
-          (item) => item.valueShape !== "boolean" && optionSpellings(item).includes(prior),
+          (item) =>
+            item.valueShape !== "boolean" &&
+            (item.valueShape !== "optional" || !current.startsWith("-")) &&
+            optionSpellings(item).includes(prior),
         ) ?? null;
     }
   }

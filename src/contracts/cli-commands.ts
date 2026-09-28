@@ -567,6 +567,13 @@ export const optionAuditPolicies: OptionAuditPolicies = {
     ...selectorPolicies("unsupported"),
     "--base": { ownership: "command", persisted: false, repositoryBase: repositoryBasePolicy },
     "--repo-base": { ownership: "command", persisted: false, repositoryBase: repositoryBasePolicy },
+    "--t3": {
+      conflicts: ["--herdr", "--launch", "--sesh", "--switch", "--tab", "--tmux"],
+      ownership: "command",
+      persisted: false,
+    },
+    "--prompt-file": { ownership: "command", persisted: false },
+    "--permission": { ownership: "command", persisted: false },
     "--no-hook-input": hookInputPolicy,
   },
   clone: {
@@ -2023,6 +2030,7 @@ const completionArgumentKinds: Record<string, CompletionCandidateKind> = {
 
 const completionOptionKinds: Record<string, CompletionCandidateKind> = {
   "create:--conflict": "choice",
+  "create:--permission": "choice",
   "move:--from": "workspace",
   "move:--to": "workspace",
 };

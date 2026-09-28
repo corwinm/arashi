@@ -94,6 +94,16 @@ import {
   resolveBaseBranchPolicy,
   type EffectiveBaseBranch,
 } from "../lib/base-branch-policy.ts";
+import {
+  dispatchT3Handoff,
+  preflightT3Bridge,
+  resolveT3HandoffRequest,
+  T3HandoffError,
+  T3_PERMISSION_MODES,
+  type T3HandoffDependencies,
+  type T3HandoffResult,
+  type T3PermissionMode,
+} from "../lib/t3-handoff.ts";
 
 async function isCaseInsensitivePath(path: string): Promise<boolean> {
   let candidate = path;
@@ -328,6 +338,9 @@ const createCommandErrorCode = (createError: unknown): string => {
   if (createError instanceof SwitchCommandError) {
     return createError.code;
   }
+  if (createError instanceof T3HandoffError) {
+    return createError.code;
+  }
   if (createError instanceof ConflictAbortedError) {
     return "BRANCH_CONFLICT";
   }
@@ -361,6 +374,12 @@ const createCommandErrorDetails = (createError: unknown): Record<string, unknown
   }
   if (createError instanceof ConfigValidationError) {
     return createError.context;
+  }
+  if (createError instanceof T3HandoffError) {
+    return {
+      ...createError.details,
+      ...(createError.result ? { handoff: createError.result } : {}),
+    };
   }
   if (createError instanceof StandaloneDestinationNotIgnoredError) {
     return createError.details;
@@ -505,6 +524,29 @@ const createSummaryJsonData = async ({
   };
 };
 
+const printT3HandoffResult = (handoff: T3HandoffResult): void => {
+  console.log("");
+  if (handoff.status === "succeeded") {
+    success("T3 handoff succeeded");
+  } else if (handoff.status === "planned") {
+    info(`T3 handoff plan: ${handoff.workspacePath}`);
+  } else {
+    error(`T3 handoff ${handoff.status}: ${handoff.error?.message ?? "unknown failure"}`);
+  }
+  info(`T3 workspace: ${handoff.workspacePath}`);
+  info(`T3 permission: ${handoff.permission}`);
+  info(
+    `T3 environment: ${handoff.environment.id ?? "unavailable"} (server ${handoff.environment.serverVersion ?? "unknown"})`,
+  );
+  info(`T3 project: ${handoff.project.id ?? "not created"}`);
+  info(`T3 thread: ${handoff.thread.id ?? "not created"}`);
+  info(`T3 dispatch: ${handoff.dispatch.status}`);
+  info(`T3 UI: ${handoff.ui.status} (${handoff.ui.mode})`);
+  if (handoff.receiptPath) info(`T3 receipt: ${handoff.receiptPath}`);
+  info("Select the reported project/thread in a connected desktop or mobile client.");
+  if (handoff.retry.guidance) info(handoff.retry.guidance);
+};
+
 export interface CreateCommandOptions {
   /** Base branch requested for new target branches */
   base?: string;
@@ -562,6 +604,15 @@ export interface CreateCommandOptions {
 
   /** Dry run - show what would be done without making changes */
   dryRun?: boolean;
+
+  /** Start a T3 Code thread, optionally using the supplied inline task. */
+  t3?: boolean | string;
+
+  /** Read the T3 task from a UTF-8 file. */
+  promptFile?: string;
+
+  /** Effective T3 thread permission mode. */
+  permission?: T3PermissionMode;
 }
 
 const CREATE_DEFAULT_EDITOR_HOSTS = ["vscode", "cursor", "kiro"] as const;
@@ -757,6 +808,11 @@ export interface CreateCommandDependencies {
   resolveGitMainWorktree?: (path: string) => Promise<string | null>;
   /** Testable effective stdin terminal capability */
   stdinIsTTY?: boolean;
+  t3?: T3HandoffDependencies;
+  preflightT3Bridge?: typeof preflightT3Bridge;
+  dispatchT3Handoff?: typeof dispatchT3Handoff;
+  resolvePostCreateDirtyGuidance?: typeof resolvePostCreateDirtyGuidance;
+  executeMovePlan?: typeof executeMovePlan;
 }
 
 export interface CreateInvocationContext {
@@ -1192,6 +1248,10 @@ export function createCommand(): Command {
     "--conflict <strategy>",
     "Pre-select conflict resolution strategy (ABORT, REUSE_EXISTING)",
   ).choices(["ABORT", "REUSE_EXISTING"]);
+  const permissionOption = new Option(
+    "--permission <mode>",
+    "T3 permission mode (defaults to full-access)",
+  ).choices([...T3_PERMISSION_MODES]);
 
   return new Command("create")
     .description("Create coordinated worktrees across multiple repositories")
@@ -1224,6 +1284,9 @@ export function createCommand(): Command {
     .option("--sesh", "Launch using sesh mode (implies --launch)")
     .option("--herdr", "Launch using Herdr mode (implies --launch)")
     .option("--tmux", "Launch using plain tmux mode (implies --launch and --switch)")
+    .option("--t3 [task]", "Hand the created parent workspace to a new T3 Code thread")
+    .option("--prompt-file <path>", "Read the T3 task from a UTF-8 file (requires --t3)")
+    .addOption(permissionOption)
     .addOption(conflictOption)
     .option("--no-hooks", "Disable hook execution")
     .option("--no-hook-input", "Execute hooks with input disabled and immediate EOF")
@@ -1244,6 +1307,8 @@ Examples:
   $ arashi create feature-branch --only repo1,repo2
   $ arashi create feature-branch --conflict REUSE_EXISTING
   $ arashi create feature-branch --dry-run
+  $ aw create feature-branch --t3 "Implement the accepted task"
+  $ aw create feature-branch --t3 --prompt-file task.md
   $ arashi create feature-branch --no-launch --no-switch --json
 
 Configured create launch values: none | auto | sesh | herdr
@@ -1332,6 +1397,9 @@ By default, launch opens a new OS window or managed independent-session equivale
         } else if (createError instanceof SwitchCommandError) {
           error(createError.message);
           process.exit(ERROR_EXIT_CODE);
+        } else if (createError instanceof T3HandoffError) {
+          error(createError.message);
+          process.exit(ERROR_EXIT_CODE);
         } else if (createError instanceof ConflictAbortedError) {
           warn("Create aborted due to branch/worktree conflicts.");
           for (const conflict of createError.conflicts) {
@@ -1364,6 +1432,21 @@ export async function executeCreate(
   options: CreateCommandOptions,
   deps: CreateCommandDependencies = {},
 ): Promise<number> {
+  const t3Request = await resolveT3HandoffRequest(options);
+  if (
+    t3Request &&
+    (options.launch === true ||
+      options.switch === true ||
+      options.tab === true ||
+      options.tmux === true ||
+      options.sesh === true ||
+      options.herdr === true)
+  ) {
+    throw new T3HandoffError(
+      "T3_LAUNCH_CONFLICT",
+      "--t3 cannot be combined with explicit create switch or launcher flags; remove the additional launch intent.",
+    );
+  }
   const stdinIsTTY = deps.stdinIsTTY ?? process.stdin.isTTY === true;
   const hookInputMode = resolveHookInputMode({
     hookInput: options.hookInput,
@@ -1405,6 +1488,12 @@ export async function executeCreate(
 
   const workspaceContext = await (deps.resolveWorkspaceContext ?? resolveWorkspaceContext)();
   if (workspaceContext.mode === "standalone") {
+    if (t3Request) {
+      throw new T3HandoffError(
+        "T3_CONFIGURED_WORKSPACE_REQUIRED",
+        "T3 handoff currently requires a configured coordinated workspace with a parent repository.",
+      );
+    }
     const standalonePolicy = resolveBaseBranchPolicy({
       command: "create",
       config: workspaceContext.config,
@@ -1496,6 +1585,10 @@ export async function executeCreate(
     return ZERO;
   }
 
+  const t3BridgeVersion = t3Request
+    ? await (deps.preflightT3Bridge ?? preflightT3Bridge)(process.cwd(), deps.t3)
+    : null;
+
   const resolveInvocationContext =
     deps.resolveCreateInvocationContext ?? resolveCreateInvocationContext;
   const resolveIgnoreWorkspaceRoot =
@@ -1585,7 +1678,10 @@ export async function executeCreate(
       filterWorkspaceRepositories(configuredRepositories, options.only, options.group),
     );
   }
-  const createDefaults = resolveCreateDefaults(options, arashiConfig);
+  const createDefaults = resolveCreateDefaults(
+    t3Request ? { ...options, launch: false, switch: false } : options,
+    arashiConfig,
+  );
   if (options.json && createDefaults.shouldLaunch) {
     writeJsonEnvelope(unsupportedJsonModeError("create", "interactive-or-launch"));
     return ERROR_EXIT_CODE;
@@ -1626,6 +1722,12 @@ export async function executeCreate(
 
     parentRepository = metaRepo;
     allRepositories.unshift(metaRepo);
+  }
+  if (t3Request && !parentRepository) {
+    throw new T3HandoffError(
+      "T3_PARENT_WORKSPACE_REQUIRED",
+      "T3 handoff requires the coordinating parent repository to be included in create.",
+    );
   }
 
   const configuredRepositoryByCanonicalPath = new Map<
@@ -1705,6 +1807,13 @@ export async function executeCreate(
   };
 
   const selectedRepos = await filterRepositories(filter, filteredRepositories);
+
+  if (t3Request && parentRepository && !selectedRepos.includes(parentRepository)) {
+    throw new T3HandoffError(
+      "T3_PARENT_WORKSPACE_REQUIRED",
+      "T3 handoff requires the coordinating parent repository to be selected for create.",
+    );
+  }
 
   if (selectedRepos.length === ZERO) {
     resolveBaseBranchPolicy({
@@ -1992,14 +2101,86 @@ export async function executeCreate(
   }
   const dirtyGuidanceContext = options.dryRun
     ? null
-    : await resolvePostCreateDirtyGuidance(moveSourceWorkspaceRoot, arashiConfig, branchName);
+    : await (deps.resolvePostCreateDirtyGuidance ?? resolvePostCreateDirtyGuidance)(
+        moveSourceWorkspaceRoot,
+        arashiConfig,
+        branchName,
+      );
   const moveSummary =
     options.moveChanges && dirtyGuidanceContext
-      ? await executeMovePlan(
+      ? await (deps.executeMovePlan ?? executeMovePlan)(
           buildMovePlan(dirtyGuidanceContext.source, dirtyGuidanceContext.target),
         )
       : null;
   const dirtyWorkspaceGuidance = moveSummary ? null : (dirtyGuidanceContext?.guidance ?? null);
+
+  let t3Handoff: T3HandoffResult | null = null;
+  let t3HandoffError: T3HandoffError | null = null;
+  if (
+    t3Request &&
+    t3BridgeVersion &&
+    !summary.rolledBack &&
+    summary.failureCount === ZERO &&
+    (options.dryRun !== true || summary.dryRunOutcome?.overallStatus === "actionable") &&
+    parentRepository
+  ) {
+    const parentWorktreePath = worktreePathPlan.get(parentRepository)?.path;
+    if (!parentWorktreePath) {
+      throw new T3HandoffError(
+        "T3_PARENT_WORKSPACE_MISSING",
+        "Create did not return the exact parent workspace path required for T3 handoff.",
+      );
+    }
+    try {
+      if (moveSummary && moveSummary.failedCount > ZERO) {
+        throw new T3HandoffError(
+          "T3_WORKSPACE_PREPARATION_FAILED",
+          "T3 dispatch was not started because moving changes failed. Follow the move recovery instructions before retrying.",
+        );
+      }
+      t3Handoff = await (deps.dispatchT3Handoff ?? dispatchT3Handoff)({
+        branch: branchName,
+        bridgeVersion: t3BridgeVersion,
+        dependencies: deps.t3,
+        dryRun: options.dryRun === true,
+        request: t3Request,
+        workspacePath: parentWorktreePath,
+      });
+    } catch (handoffError) {
+      if (!(handoffError instanceof T3HandoffError)) throw handoffError;
+      t3HandoffError = handoffError;
+      const receiptPath =
+        typeof handoffError.details.receiptPath === "string"
+          ? handoffError.details.receiptPath
+          : null;
+      const preparationFailed = handoffError.code === "T3_WORKSPACE_PREPARATION_FAILED";
+      const status = preparationFailed
+        ? "failed"
+        : handoffError.code === "T3_HANDOFF_LOCKED"
+          ? "dispatching"
+          : "indeterminate";
+      t3Handoff = handoffError.result ?? {
+        bridgeVersion: t3BridgeVersion,
+        dispatch: { status },
+        environment: { id: null, serverVersion: null },
+        error: { code: handoffError.code, message: handoffError.message },
+        permission: t3Request.permission,
+        project: { created: null, id: null, title: null },
+        promptDigest: t3Request.promptDigest,
+        receiptPath,
+        retry: {
+          guidance: preparationFailed
+            ? "Resolve the move failures, then reuse this exact workspace. No T3 dispatch was attempted."
+            : "Inspect the exact workspace in T3 and resolve the reported receipt or lock before retrying.",
+          safe: preparationFailed,
+        },
+        status,
+        thread: { id: null, title: null },
+        ui: { exactThread: null, kind: null, mode: "none", status: "skipped" },
+        workspacePath: parentWorktreePath,
+      };
+    }
+  }
 
   // 7. Display results
   if (options.json) {
@@ -2020,17 +2201,34 @@ export async function executeCreate(
         ),
       },
     });
+    const detailsWithHandoff = t3Handoff
+      ? {
+          ...details,
+          t3Handoff,
+          ...(t3HandoffError ? { t3HandoffRecovery: t3HandoffError.details } : {}),
+        }
+      : details;
     if (summary.rolledBack || summary.failureCount > ZERO) {
       writeJsonEnvelope(
         createJsonErrorEnvelope("create", {
           code: "CREATE_FAILED",
-          details,
+          details: detailsWithHandoff,
           message: summary.errorSummary ?? "Create failed",
         }),
       );
       return ERROR_EXIT_CODE;
     }
-    writeJsonEnvelope(createJsonSuccessEnvelope("create", details));
+    if (t3HandoffError) {
+      writeJsonEnvelope(
+        createJsonErrorEnvelope("create", {
+          code: t3HandoffError.code,
+          details: detailsWithHandoff,
+          message: t3HandoffError.message,
+        }),
+      );
+      return ERROR_EXIT_CODE;
+    }
+    writeJsonEnvelope(createJsonSuccessEnvelope("create", detailsWithHandoff));
     return ZERO;
   }
 
@@ -2095,6 +2293,7 @@ export async function executeCreate(
     const summaryLabel = `${summaryCounts.plannedTotal} planned, ${summaryCounts.conflictTotal} conflicts`;
     if (overallStatus === "actionable") {
       success(`Plan status: ${statusLabel} (${summaryLabel})`);
+      if (t3Handoff) printT3HandoffResult(t3Handoff);
       info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
       return ZERO;
     }
@@ -2208,6 +2407,21 @@ export async function executeCreate(
     for (const repository of dirtyWorkspaceGuidance.changedRepositories) {
       console.log(`  • ${repository.repositoryName}: ${repository.summary}`);
     }
+  }
+
+  if (t3Handoff) printT3HandoffResult(t3Handoff);
+
+  if (t3HandoffError) {
+    console.log("");
+    warn(t3HandoffError.message);
+    if (t3HandoffError.details.promptCleanupFailed) {
+      warn(
+        `Remove the private prompt directory: ${String(t3HandoffError.details.promptDirectory)}`,
+      );
+    }
+    info("The coordinated workspace was preserved.");
+    info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
+    return ERROR_EXIT_CODE;
   }
 
   await applyPostCreateDefaults({
