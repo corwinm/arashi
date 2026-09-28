@@ -2183,7 +2183,13 @@ export async function executeCreate(
         ),
       },
     });
-    const detailsWithHandoff = t3Handoff ? { ...details, t3Handoff } : details;
+    const detailsWithHandoff = t3Handoff
+      ? {
+          ...details,
+          t3Handoff,
+          ...(t3HandoffError ? { t3HandoffRecovery: t3HandoffError.details } : {}),
+        }
+      : details;
     if (summary.rolledBack || summary.failureCount > ZERO) {
       writeJsonEnvelope(
         createJsonErrorEnvelope("create", {
@@ -2389,7 +2395,13 @@ export async function executeCreate(
 
   if (t3HandoffError) {
     console.log("");
-    warn("The coordinated workspace was preserved; only the T3 handoff failed.");
+    warn(t3HandoffError.message);
+    if (t3HandoffError.details.promptCleanupFailed) {
+      warn(
+        `Remove the private prompt directory: ${String(t3HandoffError.details.promptDirectory)}`,
+      );
+    }
+    info("The coordinated workspace was preserved.");
     info(`Total duration: ${formatDurationSeconds(summary.totalDuration)}`);
     return ERROR_EXIT_CODE;
   }

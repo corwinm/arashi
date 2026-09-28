@@ -75,6 +75,7 @@ export interface T3HandoffDependencies {
   ) => Promise<T3ProcessResult>;
   resolveGitCommonDirectory?: (workspacePath: string) => Promise<string>;
   setWindowsOwnerOnly?: (path: string) => Promise<void>;
+  removePromptDirectory?: (path: string) => Promise<void>;
 }
 
 export class T3HandoffError extends Error {
@@ -397,16 +398,18 @@ const windowsAclSet = String.raw`
 $ErrorActionPreference = 'Stop'
 $target = $env:ARASHI_T3_RECEIPT_PATH
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$acl = Get-Acl -LiteralPath $target
+$isDirectory = [System.IO.Directory]::Exists($target)
+$item = if ($isDirectory) { [System.IO.DirectoryInfo]::new($target) } else { [System.IO.FileInfo]::new($target) }
+$acl = $item.GetAccessControl()
 $acl.SetOwner($identity)
 $acl.SetAccessRuleProtection($true, $false)
 foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleAll($rule) }
 $rights = [System.Security.AccessControl.FileSystemRights]::FullControl
 $inheritance = [System.Security.AccessControl.InheritanceFlags]::None
-if ((Get-Item -LiteralPath $target).PSIsContainer) { $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit' }
+if ($isDirectory) { $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit' }
 $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, $rights, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
 $acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $target -AclObject $acl
+$item.SetAccessControl($acl)
 `;
 const execFileAsync = promisify(execFile);
 const setWindowsOwnerOnly = async (path: string): Promise<void> => {
@@ -696,6 +699,7 @@ export const dispatchT3Handoff = async (input: {
       retry: { safe: false, guidance: "Dispatch is in progress; do not start another thread." },
     };
     const temporaryDirectory = await mkdtemp(join(tmpdir(), "arashi-t3-prompt-"));
+    let promptCleanupFailed = false;
     let processResult: T3ProcessResult;
     try {
       const platform = dependencies.platform ?? process.platform;
@@ -740,7 +744,14 @@ export const dispatchT3Handoff = async (input: {
         { cwd: workspacePath, env: process.env },
       );
     } finally {
-      await rm(temporaryDirectory, { force: true, recursive: true });
+      try {
+        await (
+          dependencies.removePromptDirectory ??
+          ((path: string) => rm(path, { force: true, recursive: true }))
+        )(temporaryDirectory);
+      } catch {
+        promptCleanupFailed = true;
+      }
     }
 
     const base = {
@@ -749,6 +760,38 @@ export const dispatchT3Handoff = async (input: {
       promptDigest: input.request.promptDigest,
       receiptPath,
       workspacePath,
+    };
+    const cleanupDetails = promptCleanupFailed
+      ? { promptCleanupFailed: true, promptDirectory: temporaryDirectory }
+      : {};
+    const saveOutcome = async (result: T3HandoffResult): Promise<void> => {
+      try {
+        await persistReceipt(
+          receiptPath,
+          {
+            ...result,
+            branch: input.branch,
+            createdAt: dispatching.createdAt,
+            updatedAt: (dependencies.now ?? (() => new Date()))().toISOString(),
+            version: 1,
+          },
+          dependencies,
+        );
+      } catch {
+        throw new T3HandoffError(
+          result.error?.code ?? "T3_RECEIPT_WRITE_FAILED",
+          `${result.error?.message ?? "T3 dispatch succeeded."} The receipt could not be updated; reconcile the reported outcome before retrying.`,
+          { receiptPath, receiptWriteFailed: true, ...cleanupDetails },
+          {
+            ...result,
+            retry: {
+              safe: false,
+              guidance:
+                "The receipt still records dispatching. Reconcile the reported outcome and repair receipt storage before retrying.",
+            },
+          },
+        );
+      }
     };
     if (processResult.exitCode === 0) {
       let success: T3HandoffResult;
@@ -767,36 +810,20 @@ export const dispatchT3Handoff = async (input: {
               "Inspect T3 for a thread rooted at this workspace. If none exists, remove only the reported receipt (and its .lock peer if present) before retrying.",
           },
         } satisfies T3HandoffResult;
-        await persistReceipt(
-          receiptPath,
-          {
-            ...result,
-            branch: input.branch,
-            createdAt: dispatching.createdAt,
-            updatedAt: new Date().toISOString(),
-            version: 1,
-          },
-          dependencies,
-        );
-        throw new T3HandoffError(result.error.code, result.error.message, { receiptPath }, result);
-      }
-      try {
-        await persistReceipt(
-          receiptPath,
-          {
-            ...success,
-            branch: input.branch,
-            createdAt: dispatching.createdAt,
-            updatedAt: (dependencies.now ?? (() => new Date()))().toISOString(),
-            version: 1,
-          },
-          dependencies,
-        );
-      } catch {
+        await saveOutcome(result);
         throw new T3HandoffError(
-          "T3_RECEIPT_WRITE_FAILED",
-          "T3 dispatch succeeded, but its receipt could not be updated. Reconcile the reported thread before retrying.",
-          { receiptPath },
+          result.error.code,
+          result.error.message,
+          { receiptPath, ...cleanupDetails },
+          result,
+        );
+      }
+      await saveOutcome(success);
+      if (promptCleanupFailed) {
+        throw new T3HandoffError(
+          "T3_PROMPT_CLEANUP_FAILED",
+          `T3 dispatch succeeded, but the private prompt directory could not be removed: ${temporaryDirectory}`,
+          { receiptPath, ...cleanupDetails },
           success,
         );
       }
@@ -818,21 +845,11 @@ export const dispatchT3Handoff = async (input: {
           : "Inspect T3 for a thread rooted at this workspace. If none exists, remove only the reported receipt (and its .lock peer if present) before retrying.",
       },
     };
-    await persistReceipt(
-      receiptPath,
-      {
-        ...result,
-        branch: input.branch,
-        createdAt: dispatching.createdAt,
-        updatedAt: new Date().toISOString(),
-        version: 1,
-      },
-      dependencies,
-    );
+    await saveOutcome(result);
     throw new T3HandoffError(
       bridgeError.code,
       bridgeError.message,
-      { receiptPath, status },
+      { receiptPath, status, ...cleanupDetails },
       result,
     );
   } finally {

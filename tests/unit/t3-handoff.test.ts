@@ -128,6 +128,78 @@ describe("T3 bridge compatibility", () => {
 });
 
 describe("T3 dispatch and receipts", () => {
+  test.each([true, false])(
+    "preserves the bridge outcome after cleanup fails (success=%s)",
+    async (succeeded) => {
+      const { common, workspacePath } = await fixture();
+      const input = {
+        branch: "feature/cleanup",
+        bridgeVersion: "0.1.0",
+        dryRun: false,
+        request: (await resolveT3HandoffRequest({ t3: "cleanup task" }))!,
+        workspacePath,
+        dependencies: {
+          resolveGitCommonDirectory: async () => common,
+          removePromptDirectory: async (path: string) => {
+            temporaryRoots.push(path);
+            throw new Error("locked");
+          },
+          runProcess: async () => ({
+            exitCode: succeeded ? 0 : 1,
+            stdout: succeeded ? successEnvelope(workspacePath) : "",
+            stderr: JSON.stringify({
+              ok: false,
+              error: { code: "T3_AUTH_FAILED", message: "not paired" },
+            }),
+          }),
+        },
+      };
+      await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
+        code: succeeded ? "T3_PROMPT_CLEANUP_FAILED" : "T3_AUTH_FAILED",
+        details: { promptCleanupFailed: true, promptDirectory: expect.any(String) },
+        result: {
+          status: succeeded ? "succeeded" : "failed",
+          dispatch: { status: succeeded ? "succeeded" : "failed" },
+        },
+      });
+    },
+  );
+
+  test("preserves a bridge failure when persisting its receipt fails", async () => {
+    const { common, workspacePath } = await fixture();
+    let dispatched = false;
+    await expect(
+      dispatchT3Handoff({
+        branch: "feature/failure-write",
+        bridgeVersion: "0.1.0",
+        dryRun: false,
+        request: (await resolveT3HandoffRequest({ t3: "failure write" }))!,
+        workspacePath,
+        dependencies: {
+          platform: "win32",
+          resolveGitCommonDirectory: async () => common,
+          setWindowsOwnerOnly: async () => {
+            if (dispatched) throw new Error("disk full");
+          },
+          runProcess: async () => {
+            dispatched = true;
+            return {
+              exitCode: 1,
+              stdout: "",
+              stderr: JSON.stringify({
+                ok: false,
+                error: { code: "T3_AUTH_FAILED", message: "not paired" },
+              }),
+            };
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "T3_AUTH_FAILED",
+      details: { receiptWriteFailed: true },
+      result: { status: "failed", error: { code: "T3_AUTH_FAILED" }, retry: { safe: false } },
+    });
+  });
   test("applies native permissions through a successful dispatch", async () => {
     const { common, workspacePath } = await fixture();
     try {
