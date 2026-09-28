@@ -36,6 +36,29 @@ function source(command: string, env: NodeJS.ProcessEnv = {}) {
 }
 
 describe("POSIX alias installer contract", () => {
+  describe.each(["awk", "gawk"])("JSON escaping with %s", (awk) => {
+    const available = spawnSync(awk, ["BEGIN { exit 0 }"], { encoding: "utf8" }).status === 0;
+
+    test
+      .skipIf(awk === "gawk" && !available)
+      .each([
+        "",
+        "ordinary/path",
+        'a "quoted" value',
+        String.raw`a\backslash\n`,
+        "first\n\nlast",
+        'a "quote" and \\backslash\non another line',
+      ])("round-trips %j without diagnostics", (value) => {
+      const result = source('awk() { command "$TEST_AWK" "$@"; }; json_escape "$TEST_VALUE"', {
+        TEST_AWK: awk,
+        TEST_VALUE: value,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(`"${result.stdout}"`)).toBe(value);
+      expect(result.stderr).toBe("");
+    });
+  });
+
   test("uses aw as the primary command in post-install guidance", () => {
     expect(script).toContain("  aw init");
     expect(script).toContain("  aw add git@github.com:<your-org>/frontend.git");
