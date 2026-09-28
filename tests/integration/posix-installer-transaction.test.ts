@@ -74,6 +74,32 @@ function fixture() {
 }
 
 describe.skipIf(process.platform === "win32")("POSIX installer transaction", () => {
+  const gawk = spawnSync("bash", ["-c", "command -v gawk"], { encoding: "utf8" }).stdout?.trim();
+
+  test.skipIf(!gawk)("installs and refreshes with GNU awk without diagnostics", () => {
+    const state = fixture();
+    symlinkSync(gawk!, join(state.commands, "awk"));
+    mkdirSync(state.env.HOME, { recursive: true });
+    const profile = join(state.env.HOME, ".zshrc");
+    writeFileSync(profile, "before\n");
+
+    for (const phase of ["install", "refresh"]) {
+      const result = spawnSync("bash", [join(root, "scripts/install.sh")], {
+        encoding: "utf8",
+        env: { ...state.env, ARASHI_NO_MODIFY_PATH: "0", SHELL: "/bin/zsh" },
+      });
+      expect(result.status, `${phase}: ${result.stderr}`).toBe(0);
+      // PATH setup still prints its intentional new-shell guidance.
+      expect(result.stderr).not.toMatch(/(?:g?awk):/);
+      const ledger = JSON.parse(
+        readFileSync(join(state.install, ".arashi-managed-entrypoints.json"), "utf8"),
+      );
+      expect(ledger.installDirectory).toBe(state.install);
+      expect(ledger.pathMutation.profilePath).toBe(realpathSync(profile));
+      expect(readFileSync(profile, "utf8")).toBe(`before\n${ledger.pathMutation.insertedBytes}`);
+    }
+  });
+
   test("records only the exact PATH bytes created by this install", () => {
     const state = fixture();
     mkdirSync(state.env.HOME, { recursive: true });

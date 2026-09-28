@@ -409,7 +409,7 @@ normalize_absolute_path() {
 }
 
 json_escape() {
-  printf '%s' "$1" | awk 'BEGIN { ORS="" } { if (NR > 1) printf "\\n"; gsub(/\\/, "\\\\"); gsub(/\"/, "\\\""); printf "%s", $0 }'
+  printf '%s' "$1" | awk 'BEGIN { ORS="" } { if (NR > 1) printf "\\n"; gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); printf "%s", $0 }'
 }
 
 physical_command_path() {
