@@ -811,6 +811,8 @@ export interface CreateCommandDependencies {
   t3?: T3HandoffDependencies;
   preflightT3Bridge?: typeof preflightT3Bridge;
   dispatchT3Handoff?: typeof dispatchT3Handoff;
+  resolvePostCreateDirtyGuidance?: typeof resolvePostCreateDirtyGuidance;
+  executeMovePlan?: typeof executeMovePlan;
 }
 
 export interface CreateInvocationContext {
@@ -2099,10 +2101,14 @@ export async function executeCreate(
   }
   const dirtyGuidanceContext = options.dryRun
     ? null
-    : await resolvePostCreateDirtyGuidance(moveSourceWorkspaceRoot, arashiConfig, branchName);
+    : await (deps.resolvePostCreateDirtyGuidance ?? resolvePostCreateDirtyGuidance)(
+        moveSourceWorkspaceRoot,
+        arashiConfig,
+        branchName,
+      );
   const moveSummary =
     options.moveChanges && dirtyGuidanceContext
-      ? await executeMovePlan(
+      ? await (deps.executeMovePlan ?? executeMovePlan)(
           buildMovePlan(dirtyGuidanceContext.source, dirtyGuidanceContext.target),
         )
       : null;
@@ -2126,6 +2132,12 @@ export async function executeCreate(
       );
     }
     try {
+      if (moveSummary && moveSummary.failedCount > ZERO) {
+        throw new T3HandoffError(
+          "T3_WORKSPACE_PREPARATION_FAILED",
+          "T3 dispatch was not started because moving changes failed. Follow the move recovery instructions before retrying.",
+        );
+      }
       t3Handoff = await (deps.dispatchT3Handoff ?? dispatchT3Handoff)({
         branch: branchName,
         bridgeVersion: t3BridgeVersion,
@@ -2141,7 +2153,12 @@ export async function executeCreate(
         typeof handoffError.details.receiptPath === "string"
           ? handoffError.details.receiptPath
           : null;
-      const status = handoffError.code === "T3_HANDOFF_LOCKED" ? "dispatching" : "indeterminate";
+      const preparationFailed = handoffError.code === "T3_WORKSPACE_PREPARATION_FAILED";
+      const status = preparationFailed
+        ? "failed"
+        : handoffError.code === "T3_HANDOFF_LOCKED"
+          ? "dispatching"
+          : "indeterminate";
       t3Handoff = handoffError.result ?? {
         bridgeVersion: t3BridgeVersion,
         dispatch: { status },
@@ -2152,9 +2169,10 @@ export async function executeCreate(
         promptDigest: t3Request.promptDigest,
         receiptPath,
         retry: {
-          guidance:
-            "Inspect the exact workspace in T3 and resolve the reported receipt or lock before retrying.",
-          safe: false,
+          guidance: preparationFailed
+            ? "Resolve the move failures, then reuse this exact workspace. No T3 dispatch was attempted."
+            : "Inspect the exact workspace in T3 and resolve the reported receipt or lock before retrying.",
+          safe: preparationFailed,
         },
         status,
         thread: { id: null, title: null },

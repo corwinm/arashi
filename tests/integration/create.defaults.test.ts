@@ -1196,6 +1196,88 @@ describe("create defaults integration", () => {
     });
   });
 
+  test("does not dispatch T3 after moving changes fails", async () => {
+    const stdout: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    const dispatch = vi.fn();
+    const repository = {
+      repositoryName: "workspace",
+      path: "/workspace",
+      branch: "main",
+      isMain: true,
+      dirty: true,
+      dirtyDetails: {
+        modifiedFiles: 1,
+        stagedFiles: 0,
+        untrackedFiles: 0,
+        deletedFiles: 0,
+        totalFiles: 1,
+        summary: "modified",
+      },
+    };
+    const workspace = {
+      label: "workspace",
+      ref: "main",
+      primaryPath: "/workspace",
+      branch: "main",
+      repositories: [repository],
+      dirtyRepositories: [repository],
+    };
+    try {
+      expect(
+        await executeCreate(
+          branchName,
+          { json: true, t3: "task", moveChanges: true },
+          baseDeps({
+            preflightT3Bridge: async () => "0.1.0",
+            dispatchT3Handoff: dispatch,
+            resolvePostCreateDirtyGuidance: async () => ({
+              guidance: null,
+              source: workspace,
+              target: {
+                ...workspace,
+                primaryPath: "/target",
+                repositories: [{ ...repository, path: "/target", dirty: false }],
+                dirtyRepositories: [],
+              },
+            }),
+            executeMovePlan: async () => ({
+              source: workspace,
+              target: workspace,
+              movedCount: 0,
+              skippedCount: 0,
+              failedCount: 1,
+              results: [
+                {
+                  repositoryName: "workspace",
+                  status: "manual-recovery",
+                  message: "apply failed",
+                  recoveryCommand: "git stash apply",
+                },
+              ],
+            }),
+          }),
+        ),
+      ).toBe(1);
+    } finally {
+      write.mockRestore();
+    }
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(JSON.parse(stdout[0]!)).toMatchObject({
+      ok: false,
+      error: {
+        code: "T3_WORKSPACE_PREPARATION_FAILED",
+        details: {
+          t3Handoff: { status: "failed", receiptPath: null },
+          moveSummary: { failedCount: 1 },
+        },
+      },
+    });
+  });
+
   test("preserves successful creation details when T3 dispatch definitely fails", async () => {
     const stdout: string[] = [];
     const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {

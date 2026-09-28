@@ -76,6 +76,7 @@ export interface T3HandoffDependencies {
   resolveGitCommonDirectory?: (workspacePath: string) => Promise<string>;
   setWindowsOwnerOnly?: (path: string) => Promise<void>;
   removePromptDirectory?: (path: string) => Promise<void>;
+  syncDirectory?: (path: string) => Promise<void>;
 }
 
 export class T3HandoffError extends Error {
@@ -442,6 +443,16 @@ const secureReceiptDirectory = async (
     await (dependencies.setWindowsOwnerOnly ?? setWindowsOwnerOnly)(directory);
   } else {
     await chmod(directory, 0o700);
+    await (dependencies.syncDirectory ?? syncDirectory)(dirname(directory));
+  }
+};
+
+const syncDirectory = async (path: string): Promise<void> => {
+  const handle = await open(path, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 };
 
@@ -518,6 +529,9 @@ const persistReceipt = async (
       await (dependencies.setWindowsOwnerOnly ?? setWindowsOwnerOnly)(temporary);
     }
     await rename(temporary, path);
+    if ((dependencies.platform ?? process.platform) !== "win32") {
+      await (dependencies.syncDirectory ?? syncDirectory)(directory);
+    }
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => undefined);
     throw error;

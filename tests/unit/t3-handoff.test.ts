@@ -128,6 +128,35 @@ describe("T3 bridge compatibility", () => {
 });
 
 describe("T3 dispatch and receipts", () => {
+  test("requires a directory sync after the dispatching receipt rename before spawning", async () => {
+    const { common, workspacePath } = await fixture();
+    let spawned = false;
+    const synced: string[] = [];
+    await expect(
+      dispatchT3Handoff({
+        branch: "feature/durable",
+        bridgeVersion: "0.1.0",
+        dryRun: false,
+        request: (await resolveT3HandoffRequest({ t3: "durable task" }))!,
+        workspacePath,
+        dependencies: {
+          platform: "linux",
+          resolveGitCommonDirectory: async () => common,
+          syncDirectory: async (path) => {
+            synced.push(path);
+            if (path.endsWith(".arashi-t3-handoffs")) throw new Error("directory sync failed");
+          },
+          runProcess: async () => {
+            spawned = true;
+            return { exitCode: 0, stderr: "", stdout: successEnvelope(workspacePath) };
+          },
+        },
+      }),
+    ).rejects.toThrow("directory sync failed");
+    expect(synced).toContain(common);
+    expect(synced.at(-1)).toBe(join(common, ".arashi-t3-handoffs"));
+    expect(spawned).toBe(false);
+  });
   test.each([true, false])(
     "preserves the bridge outcome after cleanup fails (success=%s)",
     async (succeeded) => {
@@ -283,6 +312,7 @@ describe("T3 dispatch and receipts", () => {
         workspacePath,
         dependencies: {
           platform,
+          syncDirectory: async () => {},
           resolveGitCommonDirectory: async () => common,
           setWindowsOwnerOnly: async (path) => {
             aclPaths.push(path);
