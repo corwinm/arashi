@@ -172,7 +172,11 @@ function renderLocalDispatch(
       owner(id, { ...option, description: `Value for ${option.long}` });
       options.push([
         spellings.map((spelling) => `${commandId}:${spelling}`),
-        set("option", literal(id)) + set("takes", literal(option.valueShape === "boolean" ? 0 : 1)),
+        set("option", literal(id)) +
+          set(
+            "takes",
+            literal(option.valueShape === "boolean" ? 0 : option.valueShape === "optional" ? 2 : 1),
+          ),
       ]);
       if (option.hidden) return;
       const blocked = command.options.flatMap((other, otherIndex) => {
@@ -256,7 +260,19 @@ function renderLocalDispatch(
     cases(ref("cmd"), boundaries) +
       set("token", word) +
       increment("i") +
-      when(eq(ref("pending"), literal("")), "", set("pending", literal("")) + "continue\n") +
+      when(
+        eq(ref("pending"), literal("")),
+        "",
+        when(
+          eq(ref("takes"), literal(2)),
+          when(
+            starts("token", "-"),
+            set("pending", literal("")),
+            set("pending", literal("")) + "continue\n",
+          ),
+          set("pending", literal("")) + "continue\n",
+        ),
+      ) +
       when(
         eq(ref("ended"), literal(0)),
         when(eq(ref("token"), literal("--")), set("ended", literal(1)) + "continue\n"),
@@ -269,7 +285,7 @@ function renderLocalDispatch(
             lookup() +
             set("used", ps ? '$used + $option + "|"' : '"$used$option|"') +
             when(
-              eq(ref("takes"), literal(1)),
+              num(ref("takes"), "gt", literal(0)),
               when(contains("token", "="), "", set("pending", ref("option"))),
             ) +
             "continue\n",
@@ -289,6 +305,10 @@ function renderLocalDispatch(
   );
   // The current slot owns completion: inline/separate options override the
   // positional owner, but a consumed variadic argument ends our dispatch.
+  body += when(
+    eq(ref("takes"), literal(2)),
+    when(starts("current", "-"), set("pending", literal(""))),
+  );
   body += cases(ref("cmd"), boundaries);
   body += cases(ref("cmd"), arguments_);
   body += when(eq(ref("pending"), literal("")), "", set("owner", ref("pending")));
@@ -302,7 +322,7 @@ function renderLocalDispatch(
           set("spelling", split("current", "name")) +
             lookup() +
             when(
-              eq(ref("takes"), literal(1)),
+              num(ref("takes"), "gt", literal(0)),
               set("owner", ref("option")) +
                 set("assignment", ps ? '$spelling + "="' : '"$spelling="') +
                 set("current", split("current", "value")),

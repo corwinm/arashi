@@ -128,6 +128,68 @@ describe("T3 bridge compatibility", () => {
 });
 
 describe("T3 dispatch and receipts", () => {
+  test("applies native permissions through a successful dispatch", async () => {
+    const { common, workspacePath } = await fixture();
+    try {
+      const result = await dispatchT3Handoff({
+        branch: "feature/native-acl",
+        bridgeVersion: "0.1.0",
+        dryRun: false,
+        request: (await resolveT3HandoffRequest({ t3: "native permissions" }))!,
+        workspacePath,
+        dependencies: {
+          resolveGitCommonDirectory: async () => common,
+          runProcess: async () => ({
+            exitCode: 0,
+            stderr: "",
+            stdout: successEnvelope(workspacePath),
+          }),
+        },
+      });
+      expect(result.status).toBe("succeeded");
+    } catch (error) {
+      throw new Error(`${String(error)}\n${(error as { stderr?: string }).stderr ?? ""}`, {
+        cause: error,
+      });
+    }
+  });
+
+  test("preserves proven remote success when the final receipt write fails", async () => {
+    const { common, workspacePath } = await fixture();
+    let dispatched = false;
+    const input = {
+      branch: "feature/receipt-write",
+      bridgeVersion: "0.1.0",
+      dryRun: false,
+      request: (await resolveT3HandoffRequest({ t3: "receipt write failure" }))!,
+      workspacePath,
+      dependencies: {
+        platform: "win32" as const,
+        resolveGitCommonDirectory: async () => common,
+        setWindowsOwnerOnly: async () => {
+          if (dispatched) throw new Error("storage unavailable");
+        },
+        runProcess: async () => {
+          dispatched = true;
+          return { exitCode: 0, stderr: "", stdout: successEnvelope(workspacePath) };
+        },
+      },
+    };
+    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
+      code: "T3_RECEIPT_WRITE_FAILED",
+      result: {
+        status: "succeeded",
+        project: { id: "project-1" },
+        thread: { id: "11111111-1111-1111-1111-111111111111" },
+        retry: { safe: false },
+      },
+    });
+    input.dependencies.setWindowsOwnerOnly = async () => {};
+    await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
+      code: "T3_DUPLICATE_HANDOFF_BLOCKED",
+      result: { status: "dispatching" },
+    });
+  });
   test.each(["darwin", "linux", "win32"] as const)(
     "uses exact argv, private paths, and sanitized receipts on %s",
     async (platform) => {

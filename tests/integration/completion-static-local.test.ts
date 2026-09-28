@@ -21,6 +21,22 @@ type Case = {
 };
 const cases: Case[] = [
   {
+    name: "optional task before option",
+    words: ["aw", "create", "topic", "--t3", "--prompt"],
+    exact: ["--prompt-file"],
+  },
+  {
+    name: "optional task before permission",
+    words: ["aw", "create", "topic", "--t3", "--permission", "full"],
+    exact: ["full-access"],
+  },
+  {
+    name: "optional task consumed",
+    words: ["aw", "create", "topic", "--t3", "my task", "--prompt"],
+    exact: ["--prompt-file"],
+  },
+  { name: "optional inline task", words: ["aw", "create", "topic", "--t3="], exact: [] },
+  {
     name: "contract-derived command alias",
     words: ["arashi", "sh-test", "i"],
     exact: ["init", "install"],

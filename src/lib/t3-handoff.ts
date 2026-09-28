@@ -394,6 +394,7 @@ export const t3ReceiptPath = async (
 };
 
 const windowsAclSet = String.raw`
+$ErrorActionPreference = 'Stop'
 $target = $env:ARASHI_T3_RECEIPT_PATH
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $acl = Get-Acl -LiteralPath $target
@@ -403,7 +404,7 @@ foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleAll($rule) }
 $rights = [System.Security.AccessControl.FileSystemRights]::FullControl
 $inheritance = [System.Security.AccessControl.InheritanceFlags]::None
 if ((Get-Item -LiteralPath $target).PSIsContainer) { $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit' }
-$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, $rights, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, $rights, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
 $acl.AddAccessRule($rule)
 Set-Acl -LiteralPath $target -AclObject $acl
 `;
@@ -750,17 +751,9 @@ export const dispatchT3Handoff = async (input: {
       workspacePath,
     };
     if (processResult.exitCode === 0) {
+      let success: T3HandoffResult;
       try {
-        const success = parseBridgeSuccess(processResult.stdout, base);
-        const receipt: T3HandoffReceipt = {
-          ...success,
-          branch: input.branch,
-          createdAt: dispatching.createdAt,
-          updatedAt: (dependencies.now ?? (() => new Date()))().toISOString(),
-          version: 1,
-        };
-        await persistReceipt(receiptPath, receipt, dependencies);
-        return success;
+        success = parseBridgeSuccess(processResult.stdout, base);
       } catch {
         const result = {
           ...emptyResult({ ...base, status: "indeterminate" }),
@@ -787,6 +780,27 @@ export const dispatchT3Handoff = async (input: {
         );
         throw new T3HandoffError(result.error.code, result.error.message, { receiptPath }, result);
       }
+      try {
+        await persistReceipt(
+          receiptPath,
+          {
+            ...success,
+            branch: input.branch,
+            createdAt: dispatching.createdAt,
+            updatedAt: (dependencies.now ?? (() => new Date()))().toISOString(),
+            version: 1,
+          },
+          dependencies,
+        );
+      } catch {
+        throw new T3HandoffError(
+          "T3_RECEIPT_WRITE_FAILED",
+          "T3 dispatch succeeded, but its receipt could not be updated. Reconcile the reported thread before retrying.",
+          { receiptPath },
+          success,
+        );
+      }
+      return success;
     }
 
     const bridgeError =
