@@ -128,6 +128,73 @@ describe("T3 bridge compatibility", () => {
 });
 
 describe("T3 dispatch and receipts", () => {
+  test("reports retained prompts when preparation and cleanup both fail", async () => {
+    const { common, workspacePath } = await fixture();
+    let spawned = false;
+    await expect(
+      dispatchT3Handoff({
+        branch: "feature/setup-cleanup",
+        bridgeVersion: "0.1.0",
+        dryRun: false,
+        request: (await resolveT3HandoffRequest({ t3: "private task" }))!,
+        workspacePath,
+        dependencies: {
+          platform: "win32",
+          resolveGitCommonDirectory: async () => common,
+          setWindowsOwnerOnly: async (path) => {
+            if (path.endsWith("task.md")) throw new Error("staging failed");
+          },
+          removePromptDirectory: async (path) => {
+            temporaryRoots.push(path);
+            throw new Error("cleanup failed");
+          },
+          runProcess: async () => {
+            spawned = true;
+            return { exitCode: 0, stderr: "", stdout: successEnvelope(workspacePath) };
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "T3_PREPARATION_FAILED",
+      cause: { message: "staging failed" },
+      details: { promptCleanupFailed: true, promptDirectory: expect.any(String) },
+    });
+    expect(spawned).toBe(false);
+  });
+
+  test.each([true, false])(
+    "reports lock cleanup failure without losing the outcome (success=%s)",
+    async (succeeded) => {
+      const { common, workspacePath } = await fixture();
+      const input = {
+        branch: "feature/lock-cleanup",
+        bridgeVersion: "0.1.0",
+        dryRun: false,
+        request: (await resolveT3HandoffRequest({ t3: "lock cleanup" }))!,
+        workspacePath,
+        dependencies: {
+          resolveGitCommonDirectory: async () => common,
+          removeReceiptLock: async () => {
+            throw new Error("lock busy");
+          },
+          runProcess: async () => ({
+            exitCode: succeeded ? 0 : 1,
+            stdout: succeeded ? successEnvelope(workspacePath) : "",
+            stderr: JSON.stringify({
+              ok: false,
+              error: { code: "T3_AUTH_FAILED", message: "not paired" },
+            }),
+          }),
+        },
+      };
+      await expect(dispatchT3Handoff(input)).rejects.toMatchObject({
+        code: succeeded ? "T3_LOCK_CLEANUP_FAILED" : "T3_AUTH_FAILED",
+        details: { lockCleanupFailed: true, lockPath: expect.any(String) },
+        result: { status: succeeded ? "succeeded" : "failed", retry: { safe: false } },
+      });
+      await expect(dispatchT3Handoff(input)).rejects.toMatchObject({ code: "T3_HANDOFF_LOCKED" });
+    },
+  );
   test("requires a directory sync after the dispatching receipt rename before spawning", async () => {
     const { common, workspacePath } = await fixture();
     let spawned = false;
@@ -152,7 +219,10 @@ describe("T3 dispatch and receipts", () => {
           },
         },
       }),
-    ).rejects.toThrow("directory sync failed");
+    ).rejects.toMatchObject({
+      code: "T3_PREPARATION_FAILED",
+      cause: { message: "directory sync failed" },
+    });
     expect(synced).toContain(common);
     expect(synced.at(-1)).toBe(join(common, ".arashi-t3-handoffs"));
     expect(spawned).toBe(false);

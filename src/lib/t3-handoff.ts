@@ -77,6 +77,7 @@ export interface T3HandoffDependencies {
   setWindowsOwnerOnly?: (path: string) => Promise<void>;
   removePromptDirectory?: (path: string) => Promise<void>;
   syncDirectory?: (path: string) => Promise<void>;
+  removeReceiptLock?: (path: string) => Promise<void>;
 }
 
 export class T3HandoffError extends Error {
@@ -504,7 +505,9 @@ const acquireReceiptLock = async (
   }
   await handle?.close();
   return async () => {
-    await rm(lockPath, { force: true });
+    await (dependencies.removeReceiptLock ?? ((path: string) => rm(path, { force: true })))(
+      lockPath,
+    );
   };
 };
 
@@ -660,7 +663,7 @@ export const dispatchT3Handoff = async (input: {
 
   const receiptPath = await t3ReceiptPath(workspacePath, dependencies);
   const releaseReceiptLock = await acquireReceiptLock(receiptPath, dependencies);
-  try {
+  const execute = async (): Promise<T3HandoffResult> => {
     const existing = await readReceipt(receiptPath);
     if (existing) {
       if (existing.workspacePath !== workspacePath) {
@@ -714,7 +717,8 @@ export const dispatchT3Handoff = async (input: {
     };
     const temporaryDirectory = await mkdtemp(join(tmpdir(), "arashi-t3-prompt-"));
     let promptCleanupFailed = false;
-    let processResult: T3ProcessResult;
+    let processResult: T3ProcessResult | undefined;
+    let preparationFailure: unknown;
     try {
       const platform = dependencies.platform ?? process.platform;
       if (platform === "win32") {
@@ -757,6 +761,8 @@ export const dispatchT3Handoff = async (input: {
         ],
         { cwd: workspacePath, env: process.env },
       );
+    } catch (error) {
+      preparationFailure = error;
     } finally {
       try {
         await (
@@ -778,6 +784,17 @@ export const dispatchT3Handoff = async (input: {
     const cleanupDetails = promptCleanupFailed
       ? { promptCleanupFailed: true, promptDirectory: temporaryDirectory }
       : {};
+    if (!processResult) {
+      const failure = new T3HandoffError(
+        preparationFailure instanceof T3HandoffError
+          ? preparationFailure.code
+          : "T3_PREPARATION_FAILED",
+        "T3 handoff preparation or bridge invocation failed. Inspect the receipt before retrying.",
+        { receiptPath, ...cleanupDetails },
+      );
+      failure.cause = preparationFailure;
+      throw failure;
+    }
     const saveOutcome = async (result: T3HandoffResult): Promise<void> => {
       try {
         await persistReceipt(
@@ -866,7 +883,41 @@ export const dispatchT3Handoff = async (input: {
       { receiptPath, status, ...cleanupDetails },
       result,
     );
-  } finally {
-    await releaseReceiptLock().catch(() => undefined);
+  };
+  let outcome: T3HandoffResult | undefined;
+  let failure: unknown;
+  try {
+    outcome = await execute();
+  } catch (error) {
+    failure = error;
   }
+  try {
+    await releaseReceiptLock();
+  } catch (error) {
+    const original = failure instanceof T3HandoffError ? failure : undefined;
+    const knownOutcome = outcome ?? original?.result;
+    const lockFailure = new T3HandoffError(
+      original?.code ?? "T3_LOCK_CLEANUP_FAILED",
+      `${original?.message ?? "T3 handoff completed."} The receipt lock could not be removed; reconcile it before retrying.`,
+      {
+        ...original?.details,
+        receiptPath,
+        lockPath: `${receiptPath}.lock`,
+        lockCleanupFailed: true,
+      },
+      knownOutcome
+        ? {
+            ...knownOutcome,
+            retry: {
+              safe: false,
+              guidance: `Reconcile the reported outcome and remove the retained lock before retrying: ${receiptPath}.lock`,
+            },
+          }
+        : undefined,
+    );
+    lockFailure.cause = failure ?? error;
+    throw lockFailure;
+  }
+  if (failure) throw failure;
+  return outcome!;
 };
