@@ -45,7 +45,7 @@ describe("POSIX alias installer contract", () => {
         "",
         "ordinary/path",
         'a "quoted" value',
-        "a\\backslash\\n",
+        String.raw`a\backslash\n`,
         "first\n\nlast",
         'a "quote" and \\backslash\non another line',
       ])("round-trips %j without diagnostics", (value) => {
