@@ -1,3 +1,13 @@
+## [1.38.0](https://github.com/corwinm/arashi/compare/v1.37.0...v1.38.0) (2026-09-28)
+
+### Features
+
+- **create:** add optional T3 Code handoff ([#202](https://github.com/corwinm/arashi/issues/202)) ([31f9f76](https://github.com/corwinm/arashi/commit/31f9f761cedcad592766243a52c1a1ce8def1e8d))
+
+### Bug Fixes
+
+- show finish assessment before cleanup consent ([#201](https://github.com/corwinm/arashi/issues/201)) ([2286d7a](https://github.com/corwinm/arashi/commit/2286d7a4aec4ef116211b1d44dce1c46402dfa12))
+
 ## [1.37.0](https://github.com/corwinm/arashi/compare/v1.36.0...v1.37.0) (2026-09-27)
 
 ### Features
