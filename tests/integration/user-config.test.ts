@@ -415,6 +415,31 @@ describe("user configuration integration", () => {
     }
   });
 
+  test("pull from a linked workspace preserves personal ignore coverage in the primary checkout", async () => {
+    const { home, root } = await repository("linked-pull-ignore");
+    const child = await repository("linked-pull-child");
+    await mkdir(join(root, ".arashi"));
+    await writeFile(
+      join(root, ".arashi", "config.json"),
+      JSON.stringify({ version: "1.0.0", reposDir: "repos", repos: {} }),
+    );
+    await writeUserConfig(home, { worktreesDir: ".personal-trees" });
+    const added = await arashi(root, ["add", child.root, "--name", "child", "--json"], home);
+    expect(added.exitCode, added.stdout + added.stderr).toBe(0);
+    await run(root, ["git", "add", ".arashi/config.json"]);
+    await run(root, ["git", "commit", "-m", "workspace config"]);
+    const created = await arashi(root, ["create", "linked-pull", "--json"], home);
+    expect(created.exitCode, created.stdout + created.stderr).toBe(0);
+    const linked = JSON.parse(created.stdout).data.repositories[0].worktreePath;
+    expect((await run(child.root, ["git", "branch", "linked-pull"])).exitCode).toBe(0);
+    const pulled = await arashi(linked, ["pull", "--only", "child", "--json"], home);
+    expect(pulled.exitCode, pulled.stdout + pulled.stderr).toBe(0);
+    expect(
+      (await run(root, ["git", "check-ignore", "--no-index", "-q", "--", ".personal-trees/probe"]))
+        .exitCode,
+    ).toBe(0);
+  });
+
   test("delete preview reports the effective personal root", async () => {
     const { home, root } = await repository("delete-report");
     const child = await repository("delete-report-child");

@@ -165,7 +165,10 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
   let managedIgnore;
   if (!selectedParent) {
     managedIgnore = await reconcileRepositoryManagedIgnore(
-      await personalManagedIgnoreOptions(workspaceRoot, repositoriesResult.config),
+      await personalManagedIgnoreOptions(
+        workspaceRoots.configurationRoot,
+        repositoriesResult.config,
+      ),
     );
     if (!options.json) {
       for (const warning of managedIgnore.warnings) {
@@ -372,7 +375,10 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
       }
       try {
         managedIgnore = await reconcileRepositoryManagedIgnore(
-          await personalManagedIgnoreOptions(workspaceRoot, repositoriesResult.config),
+          await personalManagedIgnoreOptions(
+            workspaceRoots.configurationRoot,
+            repositoriesResult.config,
+          ),
         );
         if (!options.json) {
           for (const warning of managedIgnore.warnings) {
