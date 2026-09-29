@@ -1,5 +1,6 @@
 import { access, realpath, rmdir } from "fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
+import { dirname, join, relative, resolve } from "path";
+import { standaloneIgnoreLayout } from "./worktree-location.ts";
 import { exec } from "./git.ts";
 import { parseGitIgnoreVerbose } from "./git-ignore.ts";
 import {
@@ -353,13 +354,10 @@ export async function createStandaloneWorktree(
       ? `${context.repository.name}-${branchComponent}`
       : branchComponent;
   const destination = join(worktreesBase, ...namespace.split("/"));
-  const relativeBase = relative(context.mainRoot, worktreesBase);
-  const baseIsInsideRepository =
-    relativeBase !== "" &&
-    relativeBase !== ".." &&
-    !relativeBase.startsWith(`..${sep}`) &&
-    !isAbsolute(relativeBase);
-  const ignoreRule = `${relativeBase.split(sep).join("/").replace(/\/+$/, "")}/`;
+  const { applicable: baseIsInsideRepository, rule: ignoreRule } = standaloneIgnoreLayout(
+    context.mainRoot,
+    worktreesBase,
+  );
   const effectiveIgnore = baseIsInsideRepository
     ? await inspectStandaloneIgnore(context, destination)
     : { ignored: true, pattern: null, source: null };

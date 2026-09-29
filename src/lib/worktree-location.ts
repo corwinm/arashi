@@ -1,4 +1,18 @@
-import { isAbsolute, posix, resolve } from "path";
+import { isAbsolute, join, posix, relative, resolve, sep } from "path";
+
+export function standaloneIgnoreLayout(mainRoot: string, worktreesBase: string) {
+  const relativeBase = relative(mainRoot, worktreesBase);
+  const applicable =
+    relativeBase !== "" &&
+    relativeBase !== ".." &&
+    !relativeBase.startsWith(`..${sep}`) &&
+    !isAbsolute(relativeBase);
+  return {
+    applicable,
+    probe: join(worktreesBase, ".arashi-ignore-probe"),
+    rule: applicable ? `${relativeBase.split(sep).join("/").replace(/\/+$/, "")}/` : ".worktrees/",
+  };
+}
 
 export const DEFAULT_WORKTREES_DIR = ".arashi/worktrees";
 export const DEFAULT_WORKTREES_GITIGNORE_ENTRY = ".arashi/worktrees/";

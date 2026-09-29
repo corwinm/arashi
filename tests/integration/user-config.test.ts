@@ -3,6 +3,11 @@ import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "fs/pr
 import { basename, join } from "path";
 import { tmpdir } from "os";
 import { spawn } from "../helpers/node-runtime.ts";
+import {
+  bootstrapZeroConfig,
+  ZeroConfigBootstrapError,
+} from "../../src/lib/zero-config-bootstrap.ts";
+import { vi } from "vitest";
 
 const roots: string[] = [];
 
@@ -52,6 +57,7 @@ async function writeUserConfig(home: string, value: Record<string, unknown>) {
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
@@ -70,6 +76,14 @@ describe("user configuration integration", () => {
     );
     expect(await readFile(join(root, ".git", "info", "exclude"), "utf8")).toContain(
       ".personal-trees/",
+    );
+    const doctor = await arashi(root, ["doctor", "--json"], home);
+    const findings =
+      JSON.parse(doctor.stdout).data?.findings ??
+      JSON.parse(doctor.stdout).error?.details?.findings;
+    expect(findings).toBeDefined();
+    expect(findings.map((finding: { code: string }) => finding.code)).not.toContain(
+      "STANDALONE_WORKTREES_NOT_IGNORED",
     );
 
     const first = await arashi(root, ["create", "feat/one", "--json"], home);
@@ -155,13 +169,81 @@ describe("user configuration integration", () => {
     const listed = await arashi(legacyPath, ["list", "--json"], home);
     expect(listed.exitCode, listed.stderr).toBe(0);
     expect(
-      (JSON.parse(listed.stdout).data.worktrees as { path: string }[]).map(({ path }) => path),
-    ).toContain(legacyPath);
+      await Promise.all(
+        (JSON.parse(listed.stdout).data.worktrees as { path: string }[]).map(({ path }) =>
+          realpath(path),
+        ),
+      ),
+    ).toContain(await realpath(legacyPath));
 
     const removed = await arashi(root, ["remove", "legacy", "--force", "--json"], home);
     expect(removed.exitCode, removed.stderr).toBe(0);
     await expect(access(legacyPath)).rejects.toThrow();
   });
+
+  test("legacy migration preserves the omitted workspace directory across repeated invocations", async () => {
+    const { home, root } = await repository("migration");
+    await writeUserConfig(home, { worktreesDir: ".personal-trees" });
+    await mkdir(join(root, ".arashi"));
+    const configPath = join(root, ".arashi", "config.json");
+    await writeFile(configPath, JSON.stringify({ version: "1", reposDir: "repos", repos: {} }));
+    for (let invocation = 0; invocation < 2; invocation++) {
+      const result = await arashi(root, ["config", "effective", "--json"], home);
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout).data.settings.worktreesDir).toEqual({
+        source: "user",
+        value: join(await realpath(root), ".personal-trees"),
+      });
+    }
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ version: "1.0.0" });
+    expect(JSON.parse(await readFile(configPath, "utf8")).worktreesDir).toBeUndefined();
+  });
+
+  test("doctor skips ignore checks for an external personal root", async () => {
+    const { home, root } = await repository("external-doctor");
+    await writeUserConfig(home, { worktreesDir: join(home, "shared") });
+    const before = await readFile(join(root, ".git", "info", "exclude"), "utf8");
+    expect((await arashi(root, ["init", "--zero-config", "--json"], home)).exitCode).toBe(0);
+    const result = await arashi(root, ["doctor", "--json"], home);
+    const envelope = JSON.parse(result.stdout);
+    const findings = envelope.data?.findings ?? envelope.error?.details?.findings;
+    expect(findings).toBeDefined();
+    expect(findings.map((finding: { code: string }) => finding.code)).not.toContain(
+      "STANDALONE_WORKTREES_NOT_IGNORED",
+    );
+    expect(await readFile(join(root, ".git", "info", "exclude"), "utf8")).toBe(before);
+  });
+
+  test.each([false, true])(
+    "bootstrap removes only created ancestors on verification failure (existing parent: %s)",
+    async (existingParent) => {
+      const { home, root } = await repository("rollback");
+      await writeUserConfig(home, { worktreesDir: ".personal/trees" });
+      vi.stubEnv("HOME", home);
+      const parent = join(root, ".personal");
+      if (existingParent) await mkdir(parent);
+      const exclude = join(root, ".git", "info", "exclude");
+      const before = await readFile(exclude, "utf8");
+      let failure: ZeroConfigBootstrapError | undefined;
+      try {
+        await bootstrapZeroConfig(root, {
+          dependencies: { effectiveIgnore: async () => ({ ignored: false }) },
+        });
+      } catch (error) {
+        failure = error as ZeroConfigBootstrapError;
+      }
+      expect(failure).toBeInstanceOf(ZeroConfigBootstrapError);
+      expect(failure?.details).toMatchObject({
+        restored: { localExclude: true, worktreesDirectory: true },
+        finalState: { localExcludeChanged: false, worktreesDirectoryChanged: false },
+        restorationWarnings: [],
+      });
+      await expect(access(join(parent, "trees"))).rejects.toThrow();
+      if (existingParent) await expect(access(parent)).resolves.toBeUndefined();
+      else await expect(access(parent)).rejects.toThrow();
+      expect(await readFile(exclude, "utf8")).toBe(before);
+    },
+  );
 
   test("invalid user configuration fails without silently changing workspace mode", async () => {
     const { home, root } = await repository("invalid");

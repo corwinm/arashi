@@ -1595,7 +1595,11 @@ export const loadConfig = async (repoPath: string): Promise<Config> => {
   emitConfigDiagnostics(configPath, normalized.diagnostics);
 
   if (normalized.migratedFromVersion && normalized.diagnostics.length === ZERO) {
-    await saveConfig(repoPath, normalized.config);
+    const persisted = { ...normalized.config };
+    if (isRecord(data) && !("worktreesDir" in data) && !("worktrees_dir" in data)) {
+      delete persisted.worktreesDir;
+    }
+    await saveConfig(repoPath, persisted);
   }
 
   return normalized.config;
@@ -1632,8 +1636,10 @@ export const loadConfigWithFallback = async (
   const localPath = getConfigPath(workspaceRoot);
 
   try {
-    const config = await loadConfig(workspaceRoot);
+    if (!(await configExists(workspaceRoot))) throw new ConfigNotFoundError(localPath);
     const localText = await runtime.file(localPath).text();
+    // Preserve original field authorship before the migration-capable loader rewrites the file.
+    const config = await loadConfig(workspaceRoot);
     return {
       config,
       configPath: localPath,

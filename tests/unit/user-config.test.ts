@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
-import { join } from "path";
+import { basename, dirname, join } from "path";
 import { tmpdir } from "os";
 import { CURRENT_CONFIG_VERSION, type Config } from "../../src/lib/config.ts";
 import {
@@ -129,8 +129,7 @@ describe("user configuration", () => {
     const second = await resolveFor(join(home, "two", "app"));
     expect(first.worktreesBase).toBe(repeated.worktreesBase);
     expect(first.worktreesBase).not.toBe(second.worktreesBase);
-    expect(first.worktreesBase).toMatch(
-      new RegExp(`^${shared.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/app-[a-f0-9]{8}$`),
-    );
+    expect(dirname(first.worktreesBase)).toBe(shared);
+    expect(basename(first.worktreesBase)).toMatch(/^app-[a-f0-9]{8}$/);
   });
 });

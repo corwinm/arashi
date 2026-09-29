@@ -1,12 +1,11 @@
 import { access, lstat, mkdir, readFile, rmdir, unlink, writeFile } from "fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
+import { dirname, isAbsolute, resolve } from "path";
 import { configExists, CURRENT_CONFIG_VERSION } from "./config.ts";
 import { exec } from "./git.ts";
 import { parseGitIgnoreVerbose } from "./git-ignore.ts";
 import { resolveGitMainWorktree } from "./workspace-context.ts";
 import { resolveEffectivePersonalConfig } from "./user-config.ts";
-
-const DEFAULT_RULE = ".worktrees/";
+import { standaloneIgnoreLayout } from "./worktree-location.ts";
 
 export interface ZeroConfigBootstrapResult {
   attempted: { localExclude: boolean; worktreesDirectory: boolean };
@@ -148,18 +147,11 @@ export async function bootstrapZeroConfig(
     workspaceWorktreesDirAuthored: false,
   });
   const worktreesPath = effective.worktreesBase;
-  const relativeBase = relative(mainRoot, worktreesPath);
-  const baseIsInsideRepository =
-    relativeBase !== "" &&
-    relativeBase !== ".." &&
-    !relativeBase.startsWith(`..${sep}`) &&
-    !isAbsolute(relativeBase);
-  const rule = baseIsInsideRepository
-    ? `${relativeBase.split(sep).join("/").replace(/\/+$/, "")}/`
-    : DEFAULT_RULE;
-  const probe = baseIsInsideRepository
-    ? join(worktreesPath, ".arashi-ignore-probe")
-    : worktreesPath;
+  const {
+    applicable: baseIsInsideRepository,
+    probe,
+    rule,
+  } = standaloneIgnoreLayout(mainRoot, worktreesPath);
   const excludePath = await localExcludePath(mainRoot);
   const directoryExists = await exists(worktreesPath);
   const initialIgnore = baseIsInsideRepository
@@ -196,13 +188,23 @@ export async function bootstrapZeroConfig(
 
   let originalExclude: Buffer | null = null;
   let excludeExisted = false;
-  let directoryCreated = false;
+  const createdDirectories: string[] = [];
   let excludeWritten = false;
   try {
     if (!directoryExists) {
       result.attempted.worktreesDirectory = true;
-      await dependencies.mkdir(worktreesPath, { recursive: true });
-      directoryCreated = true;
+      const missing: string[] = [];
+      let ancestor = worktreesPath;
+      while (!(await exists(ancestor))) {
+        missing.push(ancestor);
+        const parent = dirname(ancestor);
+        if (parent === ancestor) break;
+        ancestor = parent;
+      }
+      for (const directory of missing.toReversed()) {
+        await dependencies.mkdir(directory);
+        createdDirectories.push(directory);
+      }
     }
     if (needsRule) {
       result.attempted.localExclude = true;
@@ -249,14 +251,17 @@ export async function bootstrapZeroConfig(
         restorationFailures.push(`exclude restoration failed: ${(restoreError as Error).message}`);
       }
     }
-    if (directoryCreated) {
-      try {
-        await dependencies.rmdir(worktreesPath);
-        restored.worktreesDirectory = true;
-      } catch (restoreError) {
-        restorationFailures.push(
-          `directory restoration failed: ${(restoreError as Error).message}`,
-        );
+    if (createdDirectories.length > 0) {
+      restored.worktreesDirectory = true;
+      for (const directory of createdDirectories.toReversed()) {
+        try {
+          await dependencies.rmdir(directory);
+        } catch (restoreError) {
+          restored.worktreesDirectory = false;
+          restorationFailures.push(
+            `directory restoration failed at ${directory}: ${(restoreError as Error).message}`,
+          );
+        }
       }
     }
     let localExcludeChanged = false;
@@ -271,7 +276,9 @@ export async function bootstrapZeroConfig(
     } catch {
       localExcludeChanged = excludeExisted;
     }
-    const worktreesDirectoryChanged = !directoryExists && (await exists(worktreesPath));
+    const worktreesDirectoryChanged = (await Promise.all(createdDirectories.map(exists))).some(
+      Boolean,
+    );
     const originalFailure = error instanceof Error ? error.message : String(error);
     const suffix = restorationFailures.length > 0 ? ` (${restorationFailures.join("; ")})` : "";
     throw new ZeroConfigBootstrapError(`${originalFailure}${suffix}`, {
