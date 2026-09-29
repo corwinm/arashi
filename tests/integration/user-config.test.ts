@@ -341,6 +341,9 @@ describe("user configuration integration", () => {
     );
     const added = await arashi(root, ["add", child.root, "--name", "child", "--json"], home);
     expect(added.exitCode, added.stdout + added.stderr).toBe(0);
+    expect(JSON.parse(await readFile(configPath, "utf8")).worktreesDir).toBeUndefined();
+    // Exercise clone materialization, not its already-present no-op path.
+    await rm(join(root, "repos", "child"), { recursive: true, force: true });
     for (const args of [
       ["clone", "--all", "--json"],
       ["pull", "--only", "child", "--json"],
