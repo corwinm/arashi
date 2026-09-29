@@ -13,6 +13,7 @@ import {
   type WorktreeNamingConfig,
 } from "./config.ts";
 import { runtime } from "./runtime.ts";
+import { WorktreeLocationValidationError } from "./worktree-location.ts";
 
 export const DEFAULT_USER_CONFIG_SCHEMA_URL =
   "https://unpkg.com/arashi/schema/user-config.schema.json";
@@ -243,6 +244,11 @@ export const resolveEffectivePersonalConfig = async (options: {
     worktreesSource === "user" && isAbsolute(authoredDirectory)
       ? qualifyAbsoluteUserRoot(options.mainRoot, authoredDirectory)
       : resolve(options.mainRoot, authoredDirectory);
+  if (worktreesSource === "user" && worktreesBase === resolve(options.mainRoot)) {
+    throw new WorktreeLocationValidationError(
+      "User worktreesDir must not resolve to the primary repository root. Choose a subdirectory or an external directory.",
+    );
+  }
 
   const effective: Config = {
     ...workspace,

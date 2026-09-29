@@ -1809,6 +1809,13 @@ export const saveConfig = async (repoPath: string, config: Config): Promise<void
   }
 };
 
+/** Load editable workspace state without persisting normalization-only defaults. */
+export const loadConfigForUpdate = async (repoPath: string): Promise<Config> => {
+  const loaded = await loadConfigWithFallback(repoPath);
+  if (!loaded.authoredWorktreesDir) delete loaded.config.worktreesDir;
+  return loaded.config;
+};
+
 /**
  * Add a repository to the configuration
  *
@@ -1830,7 +1837,7 @@ export const addRepo = async (
   name: string,
   repoConfig: RepoConfig,
 ): Promise<void> => {
-  const config = await loadConfig(repoPath);
+  const config = await loadConfigForUpdate(repoPath);
 
   // Check if repository name already exists
   if (config.repos[name] !== undefined) {
@@ -1860,7 +1867,7 @@ export const addRepo = async (
  * ```
  */
 export const removeRepo = async (repoPath: string, name: string): Promise<void> => {
-  const config = await loadConfig(repoPath);
+  const config = await loadConfigForUpdate(repoPath);
 
   // Remove repository (idempotent - no error if doesn't exist)
   delete config.repos[name];
@@ -1882,7 +1889,7 @@ export const loadWorkspaceRepositories = async (
     typeof workspaceRoots === "string"
       ? { configurationRoot: workspaceRoots, executionRoot: workspaceRoots }
       : workspaceRoots;
-  const config = options.config ?? (await loadConfig(configurationRoot));
+  const config = options.config ?? (await loadConfigForUpdate(configurationRoot));
   const repositories: WorkspaceRepository[] = [];
   const mainName = basename(configurationRoot);
 

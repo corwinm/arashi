@@ -312,6 +312,60 @@ describe("user configuration integration", () => {
     expect((await run(root, ["git", "branch", "--list", "unsafe-branch"])).stdout).toBe("");
   });
 
+  test("configured create refuses a personal base equal to the main checkout", async () => {
+    const { home, root } = await repository("configured-root-base");
+    await mkdir(join(root, ".arashi"));
+    await writeFile(
+      join(root, ".arashi", "config.json"),
+      JSON.stringify({ version: "1.0.0", reposDir: "repos", repos: {} }),
+    );
+    await writeUserConfig(home, { worktreesDir: "." });
+    const result = await arashi(root, ["create", "unsafe-branch", "--json"], home);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "must not resolve to the primary repository root",
+    );
+    await expect(access(join(root, "unsafe-branch"))).rejects.toThrow();
+    expect((await run(root, ["git", "branch", "--list", "unsafe-branch"])).stdout).toBe("");
+  });
+
+  test("repository mutations preserve omitted workspace settings and personal ignore coverage", async () => {
+    const { home, root } = await repository("mutation");
+    const child = await repository("mutation-child");
+    await mkdir(join(root, ".arashi"));
+    const configPath = join(root, ".arashi", "config.json");
+    await writeFile(configPath, JSON.stringify({ version: "1.0.0", reposDir: "repos", repos: {} }));
+    await writeUserConfig(home, { worktreesDir: ".personal-trees" });
+    expect((await arashi(root, ["create", "personal-before-add", "--json"], home)).exitCode).toBe(
+      0,
+    );
+    const added = await arashi(root, ["add", child.root, "--name", "child", "--json"], home);
+    expect(added.exitCode, added.stdout + added.stderr).toBe(0);
+    for (const args of [
+      ["clone", "--all", "--json"],
+      ["pull", "--only", "child", "--json"],
+      ["init", "--ignore-scope", "local", "--json"],
+    ]) {
+      const result = await arashi(root, args, home);
+      expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+      expect(JSON.parse(await readFile(configPath, "utf8")).worktreesDir).toBeUndefined();
+      const effective = await arashi(root, ["config", "effective", "--json"], home);
+      expect(JSON.parse(effective.stdout).data.settings.worktreesDir.source).toBe("user");
+      expect(
+        (
+          await run(root, [
+            "git",
+            "check-ignore",
+            "--no-index",
+            "-q",
+            "--",
+            ".personal-trees/probe",
+          ])
+        ).exitCode,
+      ).toBe(0);
+    }
+  });
+
   test.each([false, true])(
     "bootstrap removes only created ancestors on verification failure (existing parent: %s)",
     async (existingParent) => {

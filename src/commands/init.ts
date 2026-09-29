@@ -11,7 +11,7 @@ import {
   DEFAULT_CONFIG_SCHEMA_URL,
   configExists,
   getConfigPath,
-  loadConfig,
+  loadConfigForUpdate,
   saveConfig,
 } from "../lib/config.ts";
 import {
@@ -19,6 +19,7 @@ import {
   WorktreeLocationValidationError,
   normalizeWorktreesDir,
 } from "../lib/worktree-location.ts";
+import { personalManagedIgnoreOptions } from "../lib/personal-managed-ignore.ts";
 import {
   DiskFullError,
   PermissionError,
@@ -1031,15 +1032,14 @@ export const executeInit = async (
       options.reposDir === undefined &&
       options.worktreesDir === undefined
     ) {
-      const existingConfig = await loadConfig(workspaceRoot);
-      const worktreesDir = existingConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR;
+      const existingConfig = await loadConfigForUpdate(workspaceRoot);
+      const ignoreOptions = await personalManagedIgnoreOptions(workspaceRoot, existingConfig);
+      const worktreesDir = ignoreOptions.worktreesDir;
       const managedIgnore = await reconcileRepositoryManagedIgnore({
         dryRun: options.dryRun,
         repositoryType,
-        reposDir: existingConfig.reposDir,
+        ...ignoreOptions,
         requestedScope: options.ignoreScope,
-        workspaceRoot,
-        worktreesDir,
       });
       return {
         configPath: getConfigPath(workspaceRoot),
