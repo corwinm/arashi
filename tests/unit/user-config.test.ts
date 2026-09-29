@@ -25,6 +25,16 @@ afterEach(async () => {
 });
 
 describe("user configuration", () => {
+  test
+    .runIf(process.platform !== "win32")
+    .each([" C:\\trees ", "\tC:/trees\t", " \\\\server\\share "])(
+    "rejects unsupported Windows absolute paths after trimming (%s)",
+    (worktreesDir) => {
+      expect(() => normalizeUserConfig({ version: CURRENT_CONFIG_VERSION, worktreesDir })).toThrow(
+        "Windows absolute paths are not valid",
+      );
+    },
+  );
   test("resolves existing symlink ancestors before accepting personal roots", async () => {
     const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
     roots.push(home);

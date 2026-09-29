@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { lstatSync, realpathSync } from "fs";
 import { homedir } from "os";
-import { basename, dirname, isAbsolute, join, resolve } from "path";
+import { basename, dirname, isAbsolute, join, resolve, win32 } from "path";
 import {
   ConfigError,
   ConfigParseError,
@@ -75,7 +75,11 @@ export const normalizeUserConfig = (value: unknown): UserConfig => {
   if (value.worktreesDir !== undefined) {
     if (typeof value.worktreesDir !== "string" || !value.worktreesDir.trim()) {
       errors.push("worktreesDir: must be a non-empty string if present");
-    } else if (/^[a-zA-Z]:[\\/]/.test(value.worktreesDir) && process.platform !== "win32") {
+    } else if (
+      process.platform !== "win32" &&
+      win32.isAbsolute(value.worktreesDir.trim()) &&
+      !isAbsolute(value.worktreesDir.trim())
+    ) {
       errors.push("worktreesDir: Windows absolute paths are not valid on this platform");
     }
   }
