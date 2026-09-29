@@ -96,6 +96,44 @@ describe("user configuration integration", () => {
     expect(JSON.parse(second.stdout).data.worktreePath).toBe(
       join(await realpath(root), ".personal-trees", `${basename(root)}-feat-two`),
     );
+    const mainBranch = (await run(root, ["git", "branch", "--show-current"])).stdout.trim();
+    for (const args of [
+      ["status", "--local", "--json"],
+      ["handoff", "--json"],
+      ["move", "--from", mainBranch, "--to", "feat/one", "--json"],
+    ]) {
+      if (args[0] === "move") await writeFile(join(root, "README.md"), "pending move\n");
+      const result = await arashi(root, args, home);
+      expect(result.exitCode, `${args.join(" ")}: ${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(JSON.parse(result.stdout).data.worktreesBase).toBe(
+        join(await realpath(root), ".personal-trees"),
+      );
+    }
+  });
+
+  test.each(
+    process.platform === "win32"
+      ? [".trees[1]", "#trees", "!trees"]
+      : [".trees[1]", ".trees*literal", ".trees?literal", "#trees", "!trees"],
+  )("standalone bootstrap ignores a literal personal directory (%s)", async (worktreesDir) => {
+    const { home, root } = await repository("literal-ignore");
+    await writeUserConfig(home, { worktreesDir });
+    const initialized = await arashi(root, ["init", "--zero-config", "--json"], home);
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    const created = await arashi(root, ["create", "literal-branch", "--json"], home);
+    expect(created.exitCode, created.stderr).toBe(0);
+    expect(
+      (
+        await run(root, [
+          "git",
+          "check-ignore",
+          "--no-index",
+          "-q",
+          "--",
+          join(root, worktreesDir, "literal-branch"),
+        ])
+      ).exitCode,
+    ).toBe(0);
   });
 
   test("effective inspection reports files and supports CLI provenance", async () => {
@@ -144,6 +182,17 @@ describe("user configuration integration", () => {
       "worktreeNaming.branchSlashes": { source: "user", value: "flatten" },
       worktreesDir: { source: "user", value: join(await realpath(root), ".user-trees") },
     });
+    for (const args of [
+      ["status", "--local", "--json"],
+      ["handoff", "--json"],
+      ["prune", "--dry-run", "--json"],
+    ]) {
+      const result = await arashi(root, args, home);
+      expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout).data.worktreesBase).toBe(
+        join(await realpath(root), ".user-trees"),
+      );
+    }
 
     const created = await arashi(root, ["create", "feat/configured", "--json"], home);
     expect(created.exitCode, created.stderr).toBe(0);

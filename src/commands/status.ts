@@ -20,7 +20,11 @@ import {
 } from "../lib/json-output.ts";
 import type { Config } from "../lib/config.ts";
 import { loadWorkspaceRepositories } from "../lib/config.ts";
-import { findConfiguredWorkspaceRoots, resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import {
+  findConfiguredWorkspaceRoots,
+  resolveWorkspaceContext,
+  workspaceJsonMetadata,
+} from "../lib/workspace-context.ts";
 import { standaloneWorktrees } from "../lib/standalone.ts";
 import { exec as gitExec, getFullGitStatus, getGitStatus } from "../lib/git.ts";
 import { normalizeLogicalBranchName } from "../lib/git-branch-name.ts";
@@ -29,7 +33,7 @@ import { info, error as logError, spinner } from "../lib/logger.ts";
 import { Command } from "commander";
 import { filterRepositories } from "../lib/config/filter-repos.ts";
 import { collectRepositoryFilterValues, EmptyRepositoryFiltersError } from "../lib/repo-filter.ts";
-import { basename, join, resolve } from "path";
+import { basename, resolve } from "path";
 import { realpath, stat } from "fs/promises";
 
 type DefaultBranchComparison = Awaited<ReturnType<typeof compareCurrentBranchToDefaultBranch>>;
@@ -1192,7 +1196,7 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
             summary,
             workspaceRoot: workspaceContext.mainRoot,
             worktrees: statuses,
-            worktreesBase: join(workspaceContext.mainRoot, ".worktrees"),
+            worktreesBase: workspaceJsonMetadata(workspaceContext).worktreesBase,
           },
           collectStatusWarnings(statuses),
         ),
@@ -1351,7 +1355,10 @@ const statusCommand = async (options: StatusOptions): Promise<void> => {
           repositories: statuses,
           summary,
           workspaceRoot,
-          worktreesBase: resolve(workspaceRoot, config.worktreesDir ?? "../.worktrees"),
+          worktreesBase:
+            workspaceContext.mode === "configured"
+              ? workspaceJsonMetadata(workspaceContext).worktreesBase
+              : resolve(workspaceRoot, config.worktreesDir ?? "../.worktrees"),
         },
         collectStatusWarnings(statuses),
       ),

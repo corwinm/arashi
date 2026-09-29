@@ -12,10 +12,16 @@ export function standaloneIgnoreLayout(mainRoot: string, worktreesBase: string) 
     relativeBase !== ".." &&
     !relativeBase.startsWith(`..${sep}`) &&
     !isAbsolute(relativeBase);
+  const literalDirectory = relativeBase
+    .split(sep)
+    .join("/")
+    .replace(/\/+$/, "")
+    .replace(/([\\*?[\]])/g, "\\$1")
+    .replace(/^([#!])/, "\\$1");
   return {
     applicable,
     probe: join(worktreesBase, ".arashi-ignore-probe"),
-    rule: applicable ? `${relativeBase.split(sep).join("/").replace(/\/+$/, "")}/` : ".worktrees/",
+    rule: applicable ? `${literalDirectory}/` : ".worktrees/",
   };
 }
 

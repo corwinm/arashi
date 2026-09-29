@@ -20,10 +20,14 @@ import {
 } from "../lib/json-output.ts";
 import { loadWorkspaceRepositories } from "../lib/config.ts";
 import { exec as gitExec } from "../lib/git.ts";
-import { findConfiguredWorkspaceRoots, resolveWorkspaceContext } from "../lib/workspace-context.ts";
+import {
+  findConfiguredWorkspaceRoots,
+  resolveWorkspaceContext,
+  workspaceJsonMetadata,
+} from "../lib/workspace-context.ts";
 import { standaloneWorktrees } from "../lib/standalone.ts";
 import { info, error as logError, warn } from "../lib/logger.ts";
-import { basename, join, relative, resolve } from "path";
+import { basename, relative, resolve } from "path";
 import { realpath } from "fs/promises";
 import { Command, Option } from "commander";
 
@@ -415,7 +419,7 @@ const runHandoff = async (options: HandoffOptions): Promise<void> => {
           branch: selectedCallerStatus?.branch.localBranch || "unknown",
           path: context.mainRoot,
         },
-        worktreesBase: join(context.mainRoot, ".worktrees"),
+        worktreesBase: workspaceJsonMetadata(context).worktreesBase,
       };
       if (options.json)
         writeJsonEnvelope(
@@ -476,10 +480,10 @@ const runHandoff = async (options: HandoffOptions): Promise<void> => {
       workspaceBranch,
       workspaceRoot: workspaceRoots.configurationRoot,
     });
-    data.worktreesBase = resolve(
-      workspaceRoots.configurationRoot,
-      config.worktreesDir ?? "../.worktrees",
-    );
+    data.worktreesBase =
+      context.mode === "configured"
+        ? workspaceJsonMetadata(context).worktreesBase
+        : resolve(workspaceRoots.configurationRoot, config.worktreesDir ?? "../.worktrees");
     const warnings: JsonWarning[] = collectStatusWarnings(statuses);
 
     if (options.json) {
