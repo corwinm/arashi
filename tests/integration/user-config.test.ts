@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "fs/promises";
 import { basename, join } from "path";
 import { tmpdir } from "os";
+import { pathToFileURL } from "url";
 import { spawn } from "../helpers/node-runtime.ts";
 import {
   bootstrapZeroConfig,
@@ -420,7 +421,11 @@ describe("user configuration integration", () => {
     expect((await arashi(root, ["create", "personal-before-add", "--json"], home)).exitCode).toBe(
       0,
     );
-    const added = await arashi(root, ["add", child.root, "--name", "child", "--json"], home);
+    const added = await arashi(
+      root,
+      ["add", pathToFileURL(child.root).href, "--name", "child", "--json"],
+      home,
+    );
     expect(added.exitCode, added.stdout + added.stderr).toBe(0);
     expect(JSON.parse(await readFile(configPath, "utf8")).worktreesDir).toBeUndefined();
     // Exercise clone materialization, not its already-present no-op path.
@@ -459,7 +464,11 @@ describe("user configuration integration", () => {
       JSON.stringify({ version: "1.0.0", reposDir: "repos", repos: {} }),
     );
     await writeUserConfig(home, { worktreesDir: ".personal-trees" });
-    const added = await arashi(root, ["add", child.root, "--name", "child", "--json"], home);
+    const added = await arashi(
+      root,
+      ["add", pathToFileURL(child.root).href, "--name", "child", "--json"],
+      home,
+    );
     expect(added.exitCode, added.stdout + added.stderr).toBe(0);
     await run(root, ["git", "add", ".arashi/config.json"]);
     await run(root, ["git", "commit", "-m", "workspace config"]);
@@ -485,7 +494,13 @@ describe("user configuration integration", () => {
     );
     await writeUserConfig(home, { worktreesDir: ".personal-trees" });
     expect(
-      (await arashi(root, ["add", child.root, "--name", "child", "--json"], home)).exitCode,
+      (
+        await arashi(
+          root,
+          ["add", pathToFileURL(child.root).href, "--name", "child", "--json"],
+          home,
+        )
+      ).exitCode,
     ).toBe(0);
     const preview = await arashi(root, ["delete", "child", "--dry-run", "--json"], home);
     expect(preview.exitCode, preview.stdout + preview.stderr).toBe(0);

@@ -21,7 +21,7 @@ import {
 } from "../commands/status.ts";
 import type { Config, WorkspaceRepositoryRoots } from "./config.ts";
 import { getConfigPath, loadWorkspaceRepositories } from "./config.ts";
-import { findConfiguredWorkspaceRoots } from "./workspace-context.ts";
+import { findConfiguredWorkspaceRoots, resolveGitMainWorktree } from "./workspace-context.ts";
 import { discoverPrunableWorktrees } from "../core/remove.ts";
 import { readdir } from "fs/promises";
 import { inspectRepositoryManagedIgnore, type ManagedIgnoreInspection } from "./managed-ignore.ts";
@@ -297,15 +297,18 @@ const collectManagedIgnoreFindings = async (
   personalWorktreesDir = false,
 ): Promise<DoctorFinding[]> => {
   try {
+    const ignoreRoot = personalWorktreesDir
+      ? ((await resolveGitMainWorktree(workspaceRoot)) ?? workspaceRoot)
+      : workspaceRoot;
     const worktreesDir = personalWorktreesDir
-      ? relative(workspaceRoot, config.worktreesDir!)
+      ? relative(ignoreRoot, config.worktreesDir!)
       : (config.worktreesDir ?? DEFAULT_WORKTREES_DIR);
     const skipWorktreesDir =
       personalWorktreesDir &&
       (worktreesDir === ".." || worktreesDir.startsWith(`..${sep}`) || isAbsolute(worktreesDir));
     const inspection = await inspectRepositoryManagedIgnore({
       reposDir: config.reposDir,
-      workspaceRoot,
+      workspaceRoot: ignoreRoot,
       worktreesDir,
       skipWorktreesDir,
     });
