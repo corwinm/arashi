@@ -482,6 +482,26 @@ describe("user configuration integration", () => {
       (await run(root, ["git", "check-ignore", "--no-index", "-q", "--", ".personal-trees/probe"]))
         .exitCode,
     ).toBe(0);
+    await run(root, ["git", "config", "--local", "arashi.ignoreScope", "tracked"]);
+    await writeFile(join(root, ".git", "info", "exclude"), "");
+    await writeFile(join(root, ".gitignore"), "/repos/\n/.personal-trees/\n");
+    for (const [activeIgnore, missingRepos] of [
+      ["# no repository rule\n", true],
+      ["/repos/\n", false],
+    ] as const) {
+      await writeFile(join(linked, ".gitignore"), activeIgnore);
+      const diagnostic = await arashi(linked, ["doctor", "--json"], home);
+      const envelope = JSON.parse(diagnostic.stdout);
+      const data = envelope.data ?? envelope.error?.details;
+      expect(data).toBeDefined();
+      const findings = data.findings;
+      const missing = findings.filter(
+        (finding: { code: string }) => finding.code === "MANAGED_IGNORE_MISSING",
+      );
+      expect(missing.map((finding: { details: { path: string } }) => finding.details.path)).toEqual(
+        missingRepos ? ["repos"] : [],
+      );
+    }
   });
 
   test("delete preview reports the effective personal root", async () => {

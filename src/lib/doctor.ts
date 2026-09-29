@@ -308,10 +308,33 @@ const collectManagedIgnoreFindings = async (
       (worktreesDir === ".." || worktreesDir.startsWith(`..${sep}`) || isAbsolute(worktreesDir));
     const inspection = await inspectRepositoryManagedIgnore({
       reposDir: config.reposDir,
-      workspaceRoot: ignoreRoot,
+      workspaceRoot,
       worktreesDir,
       skipWorktreesDir,
     });
+    if (personalWorktreesDir && resolve(ignoreRoot) !== resolve(workspaceRoot)) {
+      // Repository paths and tracked ignore rules belong to the active branch;
+      // personal worktree coverage belongs to the primary checkout. Include the
+      // personal rule in the active inventory so shared local rules aren't stale.
+      const personalInspection = await inspectRepositoryManagedIgnore({
+        reposDir: config.reposDir,
+        workspaceRoot: ignoreRoot,
+        worktreesDir,
+        skipWorktreesDir,
+      });
+      return [
+        ...managedIgnoreToDoctorFindings({
+          ...inspection,
+          paths: inspection.paths.filter((path) => path.input === config.reposDir),
+        }),
+        ...managedIgnoreToDoctorFindings({
+          ...personalInspection,
+          paths: personalInspection.paths.filter((path) => path.input === worktreesDir),
+          // Staleness is diagnosed in the active workspace, not another branch.
+          staleRules: [],
+        }),
+      ];
+    }
     return managedIgnoreToDoctorFindings(inspection);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
