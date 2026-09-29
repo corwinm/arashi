@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { spawn } from "../helpers/node-runtime.ts";
 import {
   classifyManagedPaths,
+  combineManagedIgnoreReconciliations,
   inspectManagedIgnore,
   inspectRepositoryManagedIgnore,
   reconcileManagedIgnore,
@@ -684,6 +685,33 @@ describe("managed ignore path classification", () => {
     await restoreManagedIgnore(result);
     expect(await readFile(excludePath, "utf8")).toBe(original);
     expect(result).toMatchObject({ attempted: true, changed: false, restored: true });
+  });
+
+  test("scoped reconciliation preserves complementary rules and restores the shared file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "arashi-managed-ignore-"));
+    testRoots.push(root);
+    await git(root, ["init"]);
+    const exclude = join(root, ".git", "info", "exclude");
+    const original = await readFile(exclude, "utf8");
+    const repos = await reconcileManagedIgnore({
+      reposDir: "repos",
+      worktreesDir: ".personal-trees",
+      workspaceRoot: root,
+      skipWorktreesDir: true,
+      preserveOwnedRules: ["/.personal-trees/"],
+    });
+    const personal = await reconcileManagedIgnore({
+      reposDir: "repos",
+      worktreesDir: ".personal-trees",
+      workspaceRoot: root,
+      skipReposDir: true,
+      preserveOwnedRules: ["/repos/"],
+    });
+    expect(await readFile(exclude, "utf8")).toContain("/repos/\n/.personal-trees/");
+    const combined = combineManagedIgnoreReconciliations(repos, personal);
+    expect(combined.paths).toHaveLength(2);
+    await restoreManagedIgnore(combined);
+    expect(await readFile(exclude, "utf8")).toBe(original);
   });
 
   test("discovers local and global sources and resolves linked-worktree common excludes", async () => {

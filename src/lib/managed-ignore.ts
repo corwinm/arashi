@@ -1,4 +1,5 @@
 import { finished } from "node:stream/promises";
+import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, posix, resolve, win32 } from "path";
 import { lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { ArashiError } from "./errors.ts";
@@ -66,6 +67,10 @@ export interface InspectManagedIgnoreOptions {
   worktreesDir: string;
   /** External personal roots have no working-tree ignore requirement. */
   skipWorktreesDir?: boolean;
+  /** Scoped reconciliation may leave the other checkout's paths untouched. */
+  skipReposDir?: boolean;
+  preserveOwnedRules?: string[];
+  preserveUnselectedRules?: boolean;
 }
 
 export interface RepositoryManagedIgnoreOptions extends InspectManagedIgnoreOptions {
@@ -433,6 +438,9 @@ export const inspectManagedIgnore = async (
     workspaceRoot,
     worktreesDir,
     skipWorktreesDir,
+    skipReposDir,
+    preserveOwnedRules,
+    preserveUnselectedRules,
   }: InspectManagedIgnoreOptions,
   runGit: ManagedIgnoreGitRunner = runManagedIgnoreGit,
 ): Promise<ManagedIgnoreInspection> => {
@@ -462,9 +470,10 @@ export const inspectManagedIgnore = async (
   const localPathResult = await gitExec(["rev-parse", "--git-path", "info/exclude"], workspaceRoot);
   const localExcludePath = resolveGitPath(workspaceRoot, localPathResult.stdout.trim());
   const trackedIgnorePath = resolve(workspaceRoot, ".gitignore");
-  const classifications = classifyManagedPaths(
-    skipWorktreesDir ? [reposDir] : [reposDir, worktreesDir],
-  );
+  const classifications = classifyManagedPaths([
+    ...(skipReposDir ? [] : [reposDir]),
+    ...(skipWorktreesDir ? [] : [worktreesDir]),
+  ]);
   const paths: ManagedIgnorePathResult[] = [];
 
   for (const classification of classifications) {
@@ -496,7 +505,10 @@ export const inspectManagedIgnore = async (
     });
   }
 
-  const safeRules = new Set(paths.flatMap((path) => (path.rule ? [path.rule] : [])));
+  const safeRules = new Set([
+    ...paths.flatMap((path) => (path.rule ? [path.rule] : [])),
+    ...(preserveOwnedRules ?? []),
+  ]);
   const staleRules: ManagedIgnoreStaleRule[] = [];
   for (const [target, path] of [
     ["local", localExcludePath],
@@ -504,7 +516,9 @@ export const inspectManagedIgnore = async (
   ] as const) {
     const rules = getOwnedRules(await readOptionalFile(path));
     staleRules.push(
-      ...rules.filter((rule) => !safeRules.has(rule)).map((rule) => ({ path, rule, target })),
+      ...rules
+        .filter((rule) => !preserveUnselectedRules && !safeRules.has(rule))
+        .map((rule) => ({ path, rule, target })),
     );
   }
 
@@ -635,10 +649,15 @@ export const reconcileManagedIgnore = async (
     local: getOwnedRules(fileStates.local.content),
     tracked: getOwnedRules(fileStates.tracked.content),
   };
-  const safeRules = new Set(
-    inspection.paths.flatMap((path) => (path.safety === "safe" && path.rule ? [path.rule] : [])),
-  );
+  const safeRules = new Set([
+    ...inspection.paths.flatMap((path) => (path.safety === "safe" && path.rule ? [path.rule] : [])),
+    ...(options.preserveOwnedRules ?? []),
+    ...(options.preserveUnselectedRules ? [...ownedRules.local, ...ownedRules.tracked] : []),
+  ]);
   const staleRules = inspection.staleRules;
+  const preserveOnOtherTarget = (rule: string) =>
+    options.preserveOwnedRules?.includes(rule) ||
+    (options.preserveUnselectedRules && !inspection.paths.some((path) => path.rule === rule));
   const migrateOwnedRules =
     options.requestedScope !== undefined || inspection.storedPreference !== null;
   const otherType =
@@ -685,7 +704,10 @@ export const reconcileManagedIgnore = async (
               ),
             )
           : migrateOwnedRules
-            ? replaceOwnedBlock(fileStates.local.content, [])
+            ? replaceOwnedBlock(
+                fileStates.local.content,
+                ownedRules.local.filter(preserveOnOtherTarget),
+              )
             : fileStates.local.content,
     tracked:
       targetType === undefined
@@ -698,7 +720,10 @@ export const reconcileManagedIgnore = async (
               ),
             )
           : migrateOwnedRules
-            ? replaceOwnedBlock(fileStates.tracked.content, [])
+            ? replaceOwnedBlock(
+                fileStates.tracked.content,
+                ownedRules.tracked.filter(preserveOnOtherTarget),
+              )
             : fileStates.tracked.content,
   };
   const filePlans = (["local", "tracked"] as const).filter(
@@ -840,7 +865,7 @@ export const inspectBareManagedIgnore = async (
   const scope =
     (options.requestedScope as ManagedIgnoreScope | undefined) ?? storedPreference ?? "local";
   const paths: ManagedIgnorePathResult[] = classifyManagedPaths([
-    options.reposDir,
+    ...(options.skipReposDir ? [] : [options.reposDir]),
     ...(options.skipWorktreesDir ? [] : [options.worktreesDir]),
   ]).map((path) =>
     path.safety === "unsafe"
@@ -961,6 +986,44 @@ export const reconcileRepositoryManagedIgnore = async (
   } catch (error) {
     throw wrapManagedIgnoreInspectionError(error);
   }
+};
+
+/** Combine scoped changes, retaining the earliest snapshot of shared files. */
+export const combineManagedIgnoreReconciliations = (
+  first: ManagedIgnoreReconciliation,
+  second: ManagedIgnoreReconciliation,
+): ManagedIgnoreReconciliation => {
+  const result: ManagedIgnoreReconciliation = {
+    ...first,
+    paths: [...first.paths, ...second.paths],
+    staleRules: [...first.staleRules, ...second.staleRules],
+    warnings: [...first.warnings, ...second.warnings],
+    appliedRules: [...first.appliedRules, ...second.appliedRules],
+    plannedRules: [...first.plannedRules, ...second.plannedRules],
+    changed: first.changed || second.changed,
+    attempted: first.attempted || second.attempted,
+    fileChanges: {
+      local: first.fileChanges.local || second.fileChanges.local,
+      tracked: first.fileChanges.tracked || second.fileChanges.tracked,
+      preference: first.fileChanges.preference || second.fileChanges.preference,
+    },
+  };
+  const initial = reconciliationSnapshots.get(first);
+  const subsequent = reconciliationSnapshots.get(second);
+  if (initial && subsequent) {
+    const key = (path: string) => {
+      try {
+        return realpathSync.native(path);
+      } catch {
+        return resolve(path);
+      }
+    };
+    const files = new Map(initial.files.map((file) => [key(file.path), file]));
+    for (const file of subsequent.files)
+      if (!files.has(key(file.path))) files.set(key(file.path), file);
+    reconciliationSnapshots.set(result, { ...initial, files: [...files.values()] });
+  }
+  return result;
 };
 
 export const verifyManagedIgnoreRestored = async (

@@ -502,6 +502,19 @@ describe("user configuration integration", () => {
         missingRepos ? ["repos"] : [],
       );
     }
+    const primaryIgnore =
+      "/repos/\n# BEGIN Arashi managed ignore rules\n/primary-only/\n# END Arashi managed ignore rules\n";
+    await writeFile(join(root, ".gitignore"), primaryIgnore);
+    const linkedIgnore = "/repos/\n/.personal-trees/\n";
+    await writeFile(join(linked, ".gitignore"), linkedIgnore);
+    const nested = await arashi(linked, ["create", "personal-after-linked", "--json"], home);
+    expect(nested.exitCode, nested.stdout + nested.stderr).toBe(0);
+    expect(
+      (await run(root, ["git", "check-ignore", "--no-index", "-q", "--", ".personal-trees/probe"]))
+        .exitCode,
+    ).toBe(0);
+    expect(await readFile(join(linked, ".gitignore"), "utf8")).toBe(linkedIgnore);
+    expect(await readFile(join(root, ".gitignore"), "utf8")).toContain("/primary-only/");
   });
 
   test("delete preview reports the effective personal root", async () => {
