@@ -155,6 +155,12 @@ describe("user configuration integration", () => {
         "defaults.create.switch": { source: "cli", value: false },
         "defaults.switch.mode": { source: "user", value: "cd" },
         worktreesDir: { source: "built-in" },
+        "defaults.editors.vscode.create.switch": { source: "built-in", value: false },
+        "defaults.editors.vscode.create.launch": { source: "built-in", value: "none" },
+        "defaults.editors.cursor.create.switch": { source: "built-in", value: false },
+        "defaults.editors.cursor.create.launch": { source: "built-in", value: "none" },
+        "defaults.editors.kiro.create.switch": { source: "built-in", value: false },
+        "defaults.editors.kiro.create.launch": { source: "built-in", value: "none" },
       },
     });
     await expect(access(join(root, ".arashi", "config.json"))).rejects.toThrow();
@@ -367,6 +373,25 @@ describe("user configuration integration", () => {
         ).exitCode,
       ).toBe(0);
     }
+  });
+
+  test("delete preview reports the effective personal root", async () => {
+    const { home, root } = await repository("delete-report");
+    const child = await repository("delete-report-child");
+    await mkdir(join(root, ".arashi"));
+    await writeFile(
+      join(root, ".arashi", "config.json"),
+      JSON.stringify({ version: "1.0.0", reposDir: "repos", repos: {} }),
+    );
+    await writeUserConfig(home, { worktreesDir: ".personal-trees" });
+    expect(
+      (await arashi(root, ["add", child.root, "--name", "child", "--json"], home)).exitCode,
+    ).toBe(0);
+    const preview = await arashi(root, ["delete", "child", "--dry-run", "--json"], home);
+    expect(preview.exitCode, preview.stdout + preview.stderr).toBe(0);
+    expect(JSON.parse(preview.stdout).data.workspace.worktreesBase).toBe(
+      join(await realpath(root), ".personal-trees"),
+    );
   });
 
   test.each([false, true])(

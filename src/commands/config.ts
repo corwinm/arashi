@@ -40,9 +40,9 @@ const inspectableEntries = (effective: EffectivePersonalConfig): Record<string, 
   };
   for (const host of ["vscode", "cursor", "kiro"] as const) {
     values[`defaults.editors.${host}.create.switch`] =
-      config.defaults?.editors?.[host]?.create?.switch ?? null;
+      config.defaults?.editors?.[host]?.create?.switch ?? false;
     values[`defaults.editors.${host}.create.launch`] =
-      config.defaults?.editors?.[host]?.create?.launch ?? null;
+      config.defaults?.editors?.[host]?.create?.launch ?? "none";
   }
   return Object.fromEntries(
     Object.entries(values).map(([field, value]) => [
