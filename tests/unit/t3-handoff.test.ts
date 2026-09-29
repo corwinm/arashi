@@ -420,25 +420,31 @@ describe("native T3 receipt protection", () => {
   test("receipt persistence failure after acceptance cannot lead to duplicate dispatch", async () => {
     const fixture = await handoffFixture();
     let syncs = 0;
-    fixture.input.dependencies.syncDirectory = async () => {
+    const failAfterAcceptance = async () => {
       syncs++;
       if (fixture.messages.length > 0) throw new Error("disk failure");
     };
+    // Windows deliberately skips directory fsync; exercise its receipt ACL step.
+    fixture.input.dependencies.syncDirectory = failAfterAcceptance;
+    fixture.input.dependencies.setWindowsOwnerOnly = failAfterAcceptance;
     await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
       code: "T3_RECEIPT_WRITE_FAILED",
       result: { status: "succeeded", retry: { safe: false } },
     });
     expect(syncs).toBeGreaterThan(0);
     delete fixture.input.dependencies.syncDirectory;
+    delete fixture.input.dependencies.setWindowsOwnerOnly;
     await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({ status: "succeeded" });
     expect(fixture.commands).toHaveLength(3);
   });
 
-  test("sync failure before dispatch prevents every remote mutation", async () => {
+  test("receipt security or sync failure before dispatch prevents every remote mutation", async () => {
     const fixture = await handoffFixture();
-    fixture.input.dependencies.syncDirectory = async () => {
+    const failReceipt = async () => {
       throw new Error("no durability");
     };
+    fixture.input.dependencies.syncDirectory = failReceipt;
+    fixture.input.dependencies.setWindowsOwnerOnly = failReceipt;
     await expect(dispatchT3Handoff(fixture.input)).rejects.toThrow();
     expect(fixture.commands).toHaveLength(0);
   });
