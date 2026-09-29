@@ -370,10 +370,10 @@ export function resolveT3Selection(
   const instanceId = identifier(provider.instanceId);
   if (!instanceId)
     return fail("T3_CATALOG_INVALID", "T3 omitted the provider instance identifier.");
-  const useSaved = saved.instanceId === instanceId && !settings.model;
+  const sameProvider = saved.instanceId === instanceId;
   const models = records(provider.models);
   const wanted =
-    settings.model ?? (useSaved && typeof saved.model === "string" ? saved.model : undefined);
+    settings.model ?? (sameProvider && typeof saved.model === "string" ? saved.model : undefined);
   const matches = wanted
     ? models.filter(
         (model) =>
@@ -386,6 +386,11 @@ export function resolveT3Selection(
       "Select a model advertised by the selected T3 provider with --t3-model, or configure a supported T3 default.",
     );
   const model = matches[0]!;
+  const useSaved =
+    sameProvider &&
+    typeof saved.model === "string" &&
+    (saved.model === model.slug ||
+      (Array.isArray(model.aliases) && model.aliases.includes(saved.model)));
   const descriptors = records(record(model.capabilities).optionDescriptors);
   const authored = useSaved ? records(saved.options) : [];
   const options: T3Selection["options"] = [];

@@ -220,6 +220,51 @@ describe("official T3 discovery and auth", () => {
 });
 
 describe("catalog selection and preferences", () => {
+  test.each(["project", "server"])(
+    "preserves %s options when pinning the same model slug or alias",
+    (source) => {
+      const config = nativeConfig();
+      const model = { ...config.providers[0]!.models[0]!, aliases: ["same-model"] };
+      config.providers[0]!.models[0] = model;
+      const saved = {
+        instanceId: "codex",
+        model: "catalog-default",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      const settings =
+        source === "server" ? { ...config, settings: { defaultModelSelection: saved } } : config;
+      const project = source === "project" ? { defaultModelSelection: saved } : undefined;
+      for (const model of ["catalog-default", "same-model"]) {
+        expect(resolveT3Selection(settings, { model }, project)).toEqual({
+          instanceId: "codex",
+          model: "catalog-default",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        });
+        expect(resolveT3Selection(settings, { model, effort: "low" }, project).options).toEqual([
+          { id: "reasoningEffort", value: "low" },
+        ]);
+      }
+      saved.model = "same-model";
+      expect(resolveT3Selection(settings, { model: "catalog-default" }, project).options).toEqual([
+        { id: "reasoningEffort", value: "high" },
+      ]);
+      const changed = { ...model, slug: "different-model", aliases: [], isDefault: false };
+      config.providers[0]!.models.push(changed);
+      expect(resolveT3Selection(settings, { model: "different-model" }, project).options).toEqual([
+        { id: "reasoningEffort", value: "medium" },
+      ]);
+      config.providers.push({ ...config.providers[0]!, instanceId: "other-provider" });
+      expect(
+        resolveT3Selection(
+          settings,
+          { provider: "other-provider", model: "catalog-default" },
+          project,
+        ).options,
+      ).toEqual([{ id: "reasoningEffort", value: "medium" }]);
+      saved.options.push({ id: "not-advertised", value: "invalid" });
+      expect(() => resolveT3Selection(settings, { model: "catalog-default" }, project)).toThrow();
+    },
+  );
   test("resolves explicit model/effort without a hardcoded model", () => {
     const config = nativeConfig();
     config.providers[0]!.models[0]!.slug = "gpt-6.1-sol";
