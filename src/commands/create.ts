@@ -2081,18 +2081,21 @@ export async function executeCreate(
         : context.workspaceRoot,
       effectivePersonalConfig.worktreesBase,
     );
-    const managedWorktreesDir =
+    const worktreesInsideOwner =
       worktreesRelativeToOwner !== "" &&
       worktreesRelativeToOwner !== ".." &&
       !worktreesRelativeToOwner.startsWith(`..${sep}`) &&
-      !isAbsolute(worktreesRelativeToOwner)
-        ? worktreesRelativeToOwner
-        : effectivePersonalConfig.worktreesBase;
+      !isAbsolute(worktreesRelativeToOwner);
+    const managedWorktreesDir = worktreesInsideOwner
+      ? worktreesRelativeToOwner
+      : effectivePersonalConfig.worktreesBase;
     managedIgnore = await reconcileIgnore({
       dryRun: options.dryRun,
       reposDir: arashiConfig.reposDir,
       workspaceRoot: managedIgnoreWorkspaceRoot,
       worktreesDir: managedWorktreesDir,
+      skipWorktreesDir:
+        effectivePersonalConfig.sources.worktreesDir === "user" && !worktreesInsideOwner,
     });
     if (
       temporaryIgnoreWorkspace &&

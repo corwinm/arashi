@@ -365,6 +365,12 @@ describe("user configuration integration", () => {
         finding.code.startsWith("MANAGED_IGNORE_"),
       ),
     ).toEqual([]);
+    const created = await arashi(root, ["create", "external-personal", "--json"], home);
+    expect(created.exitCode, created.stdout + created.stderr).toBe(0);
+    const creation = JSON.parse(created.stdout).data;
+    expect(creation.managedIgnore.paths).toHaveLength(1);
+    expect(creation.managedIgnore.paths[0].input).toBe("repos");
+    expect(creation.managedIgnore.paths[0].safety).toBe("safe");
   });
 
   test("standalone refuses a worktree base equal to the main checkout before mutation", async () => {
