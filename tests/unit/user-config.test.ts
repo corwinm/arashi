@@ -110,7 +110,9 @@ describe("user configuration", () => {
       branchSlashes: "flatten",
       style: "branch",
     });
-    expect(effective.worktreesBase).toBe(join(root, ".personal-trees"));
+    expect(effective.worktreesBase).toBe(
+      join(await realpath(home), "workspace", ".personal-trees"),
+    );
     expect(effective.sources).toMatchObject({
       "defaults.create.launch": "workspace",
       "defaults.create.switch": "workspace",
@@ -143,7 +145,7 @@ describe("user configuration", () => {
     const second = await resolveFor(join(home, "two", "app"));
     expect(first.worktreesBase).toBe(repeated.worktreesBase);
     expect(first.worktreesBase).not.toBe(second.worktreesBase);
-    expect(dirname(first.worktreesBase)).toBe(shared);
+    expect(dirname(first.worktreesBase)).toBe(join(await realpath(home), "shared"));
     expect(basename(first.worktreesBase)).toMatch(/^app-[a-f0-9]{8}$/);
   });
 

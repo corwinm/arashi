@@ -63,6 +63,52 @@ afterEach(async () => {
 });
 
 describe("user configuration integration", () => {
+  test.each(["relative", "external", "later", "explicit"])(
+    "fresh configured init preserves personal fallback (%s)",
+    async (mode) => {
+      const { home, root } = await repository("fresh-configured");
+      const directory = mode === "external" ? join(home, "shared") : ".personal-trees";
+      if (mode !== "later") await writeUserConfig(home, { worktreesDir: directory });
+      const initialized = await arashi(
+        root,
+        [
+          "init",
+          "--no-discover",
+          "--json",
+          ...(mode === "explicit" ? ["--worktrees-dir", ".project-trees"] : []),
+        ],
+        home,
+      );
+      expect(initialized.exitCode, initialized.stdout + initialized.stderr).toBe(0);
+      const authored = JSON.parse(await readFile(join(root, ".arashi", "config.json"), "utf8"));
+      expect(authored.worktreesDir).toBe(mode === "explicit" ? ".project-trees" : undefined);
+      if (mode === "later") await writeUserConfig(home, { worktreesDir: directory });
+      const effective = await arashi(root, ["config", "effective", "--json"], home);
+      const setting = JSON.parse(effective.stdout).data.settings.worktreesDir;
+      expect(setting.source).toBe(mode === "explicit" ? "workspace" : "user");
+      if (mode !== "external")
+        expect(setting.value).toBe(
+          join(await realpath(root), mode === "explicit" ? ".project-trees" : directory),
+        );
+      const created = await arashi(root, ["create", "fresh-personal", "--json"], home);
+      expect(created.exitCode, created.stdout + created.stderr).toBe(0);
+      if (mode === "external")
+        expect(JSON.parse(created.stdout).data.managedIgnore.paths).toHaveLength(1);
+      else
+        expect(
+          (
+            await run(root, [
+              "git",
+              "check-ignore",
+              "--no-index",
+              "-q",
+              "--",
+              `${mode === "explicit" ? ".project-trees" : directory}/probe`,
+            ])
+          ).exitCode,
+        ).toBe(0);
+    },
+  );
   test.each([false, true])(
     "symlinked personal roots inside the checkout stay ignored (configured=%s)",
     async (configured) => {
