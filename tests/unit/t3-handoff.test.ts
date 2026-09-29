@@ -440,8 +440,9 @@ describe("native T3 receipt protection", () => {
 
   test("receipt security or sync failure before dispatch prevents every remote mutation", async () => {
     const fixture = await handoffFixture();
+    const durabilityError = new Error("no durability");
     const failReceipt = async () => {
-      throw new Error("no durability");
+      throw durabilityError;
     };
     fixture.input.dependencies.syncDirectory = failReceipt;
     fixture.input.dependencies.setWindowsOwnerOnly = failReceipt;
