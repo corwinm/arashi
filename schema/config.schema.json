@@ -299,20 +299,32 @@
       "properties": {
         "baseDir": {
           "description": "Official T3 data directory (absolute path).",
+          "minLength": 1,
+          "pattern": "^(?=(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\))(?=[\\s\\S]*\\S)[^\\u0000-\\u001F]+$(?![\\s\\S])",
           "type": "string"
         },
         "cli": {
           "description": "Installed official t3 executable (command name or absolute path).",
+          "minLength": 1,
+          "pattern": "^(?=(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\|[^/\\\\]+$))(?=[\\s\\S]*\\S)[^\\u0000-\\u001F]+$(?![\\s\\S])",
           "type": "string"
         },
         "effort": {
+          "description": "Supported reasoning effort.",
+          "minLength": 1,
+          "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001F]+$(?![\\s\\S])",
           "type": "string"
         },
         "model": {
+          "description": "Supported model slug or alias.",
+          "minLength": 1,
+          "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001F]+$(?![\\s\\S])",
           "type": "string"
         },
         "provider": {
           "description": "Configured provider instance id, or an unambiguous driver name.",
+          "minLength": 1,
+          "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000-\\u001F]+$(?![\\s\\S])",
           "type": "string"
         }
       },

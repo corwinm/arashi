@@ -1,5 +1,5 @@
 import { nativeConfig, nativeEnvironment } from "../helpers/t3-native.ts";
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -179,6 +179,49 @@ async function handoffFixture() {
 }
 
 describe("native T3 receipt protection", () => {
+  test("reuses a project whose directory alias identifies the exact checkout", async () => {
+    const fixture = await handoffFixture();
+    const alias = `${fixture.input.workspacePath}-alias`;
+    await symlink(fixture.input.workspacePath, alias, "junction");
+    fixture.projects.push({ id: "existing-project", workspaceRoot: alias, deletedAt: null });
+    const result = await dispatchT3Handoff(fixture.input);
+    expect(result.project).toMatchObject({ id: "existing-project", created: false });
+    expect(fixture.commands.map((command) => command.type)).toEqual([
+      "thread.create",
+      "thread.turn.start",
+    ]);
+  });
+
+  test("alias-equivalent projects remain ambiguous instead of creating another project", async () => {
+    const fixture = await handoffFixture();
+    const alias = `${fixture.input.workspacePath}-alias`;
+    await symlink(fixture.input.workspacePath, alias, "junction");
+    fixture.projects.push(
+      { id: "project-1", workspaceRoot: fixture.input.workspacePath, deletedAt: null },
+      { id: "project-2", workspaceRoot: alias, deletedAt: null },
+    );
+    await expect(dispatchT3Handoff(fixture.input)).rejects.toMatchObject({
+      code: "T3_PROJECT_AMBIGUOUS",
+    });
+    expect(fixture.commands).toHaveLength(0);
+  });
+
+  test.skipIf(process.platform !== "win32")(
+    "Windows casing and separators reuse the same project",
+    async () => {
+      const fixture = await handoffFixture();
+      const alternate = fixture.input.workspacePath.toUpperCase().replaceAll("\\", "/");
+      fixture.projects.push({ id: "existing-project", workspaceRoot: alternate, deletedAt: null });
+      await expect(dispatchT3Handoff(fixture.input)).resolves.toMatchObject({
+        project: { id: "existing-project", created: false },
+      });
+      expect(fixture.commands.map((command) => command.type)).toEqual([
+        "thread.create",
+        "thread.turn.start",
+      ]);
+    },
+  );
+
   test("uses exact project selection before server defaults for effort-only overrides", async () => {
     const fixture = await handoffFixture();
     const config = nativeConfig();

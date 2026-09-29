@@ -1428,7 +1428,8 @@ describe("create defaults integration", () => {
                 workspacePath: input.workspacePath,
               };
             },
-            preflightT3Native: async () => {
+            preflightT3Native: async (_cwd, _dependencies, _settings, dryRun) => {
+              expect(dryRun).toBe(true);
               preflightCalls += 1;
               return {
                 baseDir: "/t3",

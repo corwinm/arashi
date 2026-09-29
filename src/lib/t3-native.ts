@@ -432,6 +432,7 @@ export async function preflightT3Native(
   cwd: string,
   dependencies: T3NativeDependencies = {},
   settings: T3Settings = {},
+  dryRun = false,
 ): Promise<T3NativeEnvironment> {
   const cli = settings.cli ?? "t3";
   const version = await (dependencies.runProcess ?? runProcess)([cli, "--version"], {
@@ -469,6 +470,8 @@ export async function preflightT3Native(
     settings,
     config: {},
   };
+  // Preview verifies only read-only local/runtime metadata, never auth state.
+  if (dryRun) return environment;
   environment.config = await withT3Session(
     environment,
     cwd,

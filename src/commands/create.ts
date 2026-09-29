@@ -1691,7 +1691,12 @@ export async function executeCreate(
       )
     : {};
   const t3Environment = t3Request
-    ? await (deps.preflightT3Native ?? preflightT3Native)(process.cwd(), deps.t3, t3Settings)
+    ? await (deps.preflightT3Native ?? preflightT3Native)(
+        process.cwd(),
+        deps.t3,
+        t3Settings,
+        options.dryRun === true,
+      )
     : null;
 
   // 2. Discover repositories (child repos in reposDir)

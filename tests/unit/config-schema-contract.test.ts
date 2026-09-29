@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { join } from "path";
 import { readFile } from "fs/promises";
+import { validateT3Settings } from "../../src/lib/t3-settings.ts";
 
 interface JsonSchemaDefinition {
   enum?: string[];
@@ -12,6 +13,49 @@ interface ConfigSchema {
 }
 
 describe("generated config schema contracts", () => {
+  test("T3 schema constraints agree with runtime validation", async () => {
+    const schema = JSON.parse(
+      await readFile(join(import.meta.dirname, "../../schema/config.schema.json"), "utf8"),
+    ) as ConfigSchema;
+    const fields = schema.definitions.T3Settings!.properties!;
+    const samples = [
+      "",
+      " ",
+      "\t",
+      "medium",
+      " medium ",
+      "codex",
+      "/data/t3",
+      "./t3",
+      "relative/file",
+      "C:\\T3",
+      "C:/T3",
+      "\\\\server\\share\\t3",
+      "\\relative",
+      "line\nbreak",
+      "codex\n",
+      "\u2028codex",
+      "\u2029codex",
+      "\0secret",
+      "x\u001f",
+      "x\u007f",
+    ];
+    for (const key of ["baseDir", "cli", "provider", "model", "effort"]) {
+      const field = fields[key]!;
+      expect(field.minLength).toBe(1);
+      expect(field.type).toBe("string");
+      const pattern = new RegExp(field.pattern!, "u");
+      for (const value of samples) {
+        let valid = true;
+        try {
+          validateT3Settings({ [key]: value }, "defaults.t3");
+        } catch {
+          valid = false;
+        }
+        expect(pattern.test(value), `${key}: ${JSON.stringify(value)}`).toBe(valid);
+      }
+    }
+  });
   test("shares exact Git branch constraints across root, meta, and child base fields", async () => {
     const schemaPath = join(import.meta.dirname, "..", "..", "schema", "config.schema.json");
     const schema = JSON.parse(await readFile(schemaPath, "utf8")) as ConfigSchema;

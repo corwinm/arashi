@@ -4,13 +4,30 @@ import { join } from "node:path";
 
 /** Personal handoff choices; credentials and transport addresses never belong here. */
 export interface T3Settings {
-  /** Official T3 data directory (absolute path). */
+  /** Official T3 data directory (absolute path).
+   * @minLength 1
+   * @pattern ^(?=(?:/|[A-Za-z]:[\\/]|\\\\))(?=[\s\S]*\S)[^\u0000-\u001F]+$(?![\s\S])
+   */
   baseDir?: string;
-  /** Installed official t3 executable (command name or absolute path). */
+  /** Installed official t3 executable (command name or absolute path).
+   * @minLength 1
+   * @pattern ^(?=(?:/|[A-Za-z]:[\\/]|\\\\|[^/\\]+$))(?=[\s\S]*\S)[^\u0000-\u001F]+$(?![\s\S])
+   */
   cli?: string;
-  /** Configured provider instance id, or an unambiguous driver name. */
+  /** Configured provider instance id, or an unambiguous driver name.
+   * @minLength 1
+   * @pattern ^(?=[\s\S]*\S)[^\u0000-\u001F]+$(?![\s\S])
+   */
   provider?: string;
+  /** Supported model slug or alias.
+   * @minLength 1
+   * @pattern ^(?=[\s\S]*\S)[^\u0000-\u001F]+$(?![\s\S])
+   */
   model?: string;
+  /** Supported reasoning effort.
+   * @minLength 1
+   * @pattern ^(?=[\s\S]*\S)[^\u0000-\u001F]+$(?![\s\S])
+   */
   effort?: string;
 }
 

@@ -2,7 +2,7 @@ import { T3HandoffError } from "./t3-error.ts";
 export { T3HandoffError } from "./t3-error.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, lstat, open, mkdir, readFile, realpath, rename, rm } from "node:fs/promises";
+import { chmod, lstat, open, mkdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { exec } from "./git.ts";
@@ -21,6 +21,32 @@ import {
   type T3Selection,
 } from "./t3-native.ts";
 export { preflightT3Native } from "./t3-native.ts";
+
+// Compare existing directory identities rather than folding case: Windows can
+// also host case-sensitive directories, while POSIX hosts can be insensitive.
+const projectUsesWorkspace = async (root: unknown, workspacePath: string): Promise<boolean> => {
+  if (typeof root !== "string" || !isAbsolute(root)) return false;
+  try {
+    const physical = await realpath(root);
+    if (physical === workspacePath) return true;
+    const [project, workspace] = await Promise.all([
+      stat(physical, { bigint: true }),
+      stat(workspacePath, { bigint: true }),
+    ]);
+    return (
+      project.isDirectory() &&
+      project.ino !== 0n &&
+      project.dev === workspace.dev &&
+      project.ino === workspace.ino
+    );
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
+    throw new T3HandoffError(
+      "T3_WORKSPACE_UNVERIFIED",
+      "An existing T3 project root could not be verified. Reconcile local project paths before retrying.",
+    );
+  }
+};
 
 export const T3_PERMISSION_MODES = [
   "approval-required",
@@ -694,9 +720,15 @@ export const dispatchT3Handoff = async (input: {
           const snapshot = await request("/api/orchestration/snapshot");
           if (!Array.isArray(snapshot.projects) || !Array.isArray(snapshot.threads))
             throw new T3HandoffError("T3_RESPONSE_INVALID", "T3 snapshot is incompatible.");
-          const projects = records(snapshot.projects).filter(
-            (project) => project.deletedAt === null && project.workspaceRoot === workspacePath,
-          );
+          const projects: Record<string, unknown>[] = [];
+          for (const candidate of records(snapshot.projects)) {
+            if (
+              candidate.deletedAt === null &&
+              (await projectUsesWorkspace(candidate.workspaceRoot, workspacePath))
+            ) {
+              projects.push(candidate);
+            }
+          }
           if (projects.length > 1)
             throw new T3HandoffError(
               "T3_PROJECT_AMBIGUOUS",

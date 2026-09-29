@@ -104,6 +104,11 @@ describe("official T3 discovery and auth", () => {
       }) as typeof fetch,
     };
     await expect(
+      preflightT3Native(".", dependencies, { baseDir: fixture.baseDir }, true),
+    ).resolves.toMatchObject({ serverVersion: "0.0.43", config: {} });
+    expect(seen).toEqual([["t3", "--version"]]);
+    seen.length = 0;
+    await expect(
       preflightT3Native(".", dependencies, { baseDir: fixture.baseDir }),
     ).resolves.toMatchObject({ serverVersion: "0.0.43" });
     expect(seen[0]).toEqual(["t3", "--version"]);
