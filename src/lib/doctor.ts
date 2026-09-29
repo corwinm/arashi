@@ -1279,6 +1279,7 @@ const collectShellAndInstallHints = (): DoctorFinding[] => [];
 
 export const runDoctor = async (
   platform: NodeJS.Platform = process.platform,
+  effectiveConfig?: Config,
 ): Promise<DoctorResult> => {
   const findings: DoctorFinding[] = [];
   let workspaceRoot: string | null = null;
@@ -1318,6 +1319,7 @@ export const runDoctor = async (
       workspaceRoots,
       {
         allowUnavailableMaterializationSource: true,
+        config: effectiveConfig,
       },
     ));
   } catch (error) {

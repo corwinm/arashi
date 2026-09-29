@@ -209,7 +209,10 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
     }
     return hasBlockingFindings ? ERROR_EXIT_CODE : ZERO;
   }
-  const result = await runDoctor();
+  const result = await runDoctor(
+    process.platform,
+    context.mode === "configured" ? context.config : undefined,
+  );
   const hasBlockingFindings = result.summary.error > ZERO;
   const configuredData = {
     ...result,

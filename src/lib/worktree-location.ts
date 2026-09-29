@@ -2,6 +2,11 @@ import { isAbsolute, join, posix, relative, resolve, sep } from "path";
 
 export function standaloneIgnoreLayout(mainRoot: string, worktreesBase: string) {
   const relativeBase = relative(mainRoot, worktreesBase);
+  if (relativeBase === "") {
+    throw new WorktreeLocationValidationError(
+      "Standalone worktreesDir must not resolve to the primary repository root. Choose a subdirectory or an external directory.",
+    );
+  }
   const applicable =
     relativeBase !== "" &&
     relativeBase !== ".." &&

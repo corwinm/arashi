@@ -153,6 +153,15 @@ describe("user configuration integration", () => {
     expect(await readFile(join(root, ".git", "info", "exclude"), "utf8")).toContain(
       "/.user-trees/",
     );
+    const doctor = await arashi(root, ["doctor", "--json"], home);
+    const doctorEnvelope = JSON.parse(doctor.stdout);
+    const doctorData = doctorEnvelope.data ?? doctorEnvelope.error?.details;
+    expect(doctorData.worktreesBase).toBe(join(await realpath(root), ".user-trees"));
+    expect(
+      doctorData.findings.filter(
+        (finding: { code: string }) => finding.code === "MANAGED_IGNORE_MISSING",
+      ),
+    ).toEqual([]);
     const persisted = JSON.parse(await readFile(workspacePath, "utf8"));
     expect(persisted.worktreesDir).toBeUndefined();
     expect(persisted.worktreeNaming).toBeUndefined();
@@ -212,6 +221,26 @@ describe("user configuration integration", () => {
       "STANDALONE_WORKTREES_NOT_IGNORED",
     );
     expect(await readFile(join(root, ".git", "info", "exclude"), "utf8")).toBe(before);
+  });
+
+  test("standalone refuses a worktree base equal to the main checkout before mutation", async () => {
+    const { home, root } = await repository("root-base");
+    await writeUserConfig(home, { worktreesDir: "." });
+    const exclude = join(root, ".git", "info", "exclude");
+    const before = await readFile(exclude, "utf8");
+    for (const args of [
+      ["init", "--zero-config", "--json"],
+      ["create", "unsafe-branch", "--json"],
+    ]) {
+      const result = await arashi(root, args, home);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain(
+        "must not resolve to the primary repository root",
+      );
+    }
+    expect(await readFile(exclude, "utf8")).toBe(before);
+    await expect(access(join(root, "unsafe-branch"))).rejects.toThrow();
+    expect((await run(root, ["git", "branch", "--list", "unsafe-branch"])).stdout).toBe("");
   });
 
   test.each([false, true])(

@@ -1876,13 +1876,13 @@ export const removeRepo = async (repoPath: string, name: string): Promise<void> 
  */
 export const loadWorkspaceRepositories = async (
   workspaceRoots: string | WorkspaceRepositoryRoots,
-  options: { allowUnavailableMaterializationSource?: boolean } = {},
+  options: { allowUnavailableMaterializationSource?: boolean; config?: Config } = {},
 ): Promise<{ config: Config; repositories: WorkspaceRepository[] }> => {
   const { configurationRoot, executionRoot } =
     typeof workspaceRoots === "string"
       ? { configurationRoot: workspaceRoots, executionRoot: workspaceRoots }
       : workspaceRoots;
-  const config = await loadConfig(configurationRoot);
+  const config = options.config ?? (await loadConfig(configurationRoot));
   const repositories: WorkspaceRepository[] = [];
   const mainName = basename(configurationRoot);
 
