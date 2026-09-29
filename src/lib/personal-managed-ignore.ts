@@ -10,6 +10,7 @@ export async function personalManagedIgnoreOptions(workspaceRoot: string, config
   const effective = await resolveEffectivePersonalConfig({
     mainRoot,
     workspaceConfig: config,
+    workspaceRoot,
     workspaceWorktreesDirAuthored: config.worktreesDir !== undefined,
     builtInWorktreesDir: DEFAULT_WORKTREES_DIR,
   });

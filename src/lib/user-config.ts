@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { homedir } from "os";
-import { basename, dirname, isAbsolute, join, resolve } from "path";
+import { basename, isAbsolute, join, resolve } from "path";
 import {
   ConfigError,
   ConfigParseError,
@@ -169,6 +169,7 @@ export const resolveEffectivePersonalConfig = async (options: {
   builtInWorktreesDir: string;
   mainRoot: string;
   workspaceConfig: Config;
+  workspaceRoot?: string;
   workspaceConfigPath?: string | null;
   workspaceWorktreesDirAuthored?: boolean;
   env?: NodeJS.ProcessEnv;
@@ -240,9 +241,9 @@ export const resolveEffectivePersonalConfig = async (options: {
     options.builtInWorktreesDir,
   );
   sources.worktreesDir = worktreesSource;
-  const workspaceRoot = options.workspaceConfigPath
-    ? dirname(dirname(options.workspaceConfigPath))
-    : options.mainRoot;
+  // Config provenance may identify tracked bare-repository content rather than
+  // a filesystem path. Use the actual workspace root for workspace-owned paths.
+  const workspaceRoot = options.workspaceRoot ?? options.mainRoot;
   const worktreesBase =
     worktreesSource === "user" && isAbsolute(authoredDirectory)
       ? qualifyAbsoluteUserRoot(options.mainRoot, authoredDirectory)

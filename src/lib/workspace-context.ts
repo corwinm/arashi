@@ -87,6 +87,7 @@ async function discoverConfigured(startPath: string): Promise<ConfiguredWorkspac
       builtInWorktreesDir: DEFAULT_WORKTREES_DIR,
       mainRoot,
       workspaceConfig: loaded.config,
+      workspaceRoot,
       workspaceConfigPath: loaded.configPath,
       workspaceWorktreesDirAuthored: loaded.authoredWorktreesDir === true,
     });

@@ -132,4 +132,30 @@ describe("user configuration", () => {
     expect(dirname(first.worktreesBase)).toBe(shared);
     expect(basename(first.worktreesBase)).toMatch(/^app-[a-f0-9]{8}$/);
   });
+
+  test("anchors workspace paths explicitly, independently of config provenance", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
+    roots.push(home);
+    const mainRoot = join(home, "main.git");
+    const linkedRoot = join(home, "linked");
+    for (const [workspaceRoot, workspaceConfigPath] of [
+      [mainRoot, `${mainRoot}:.arashi/config.json`],
+      [linkedRoot, join(linkedRoot, ".arashi", "config.json")],
+    ]) {
+      for (const authored of [true, false]) {
+        const effective = await resolveEffectivePersonalConfig({
+          builtInWorktreesDir: ".arashi/worktrees",
+          env: { HOME: home },
+          mainRoot,
+          workspaceConfig: workspace(),
+          workspaceConfigPath,
+          workspaceRoot,
+          workspaceWorktreesDirAuthored: authored,
+        });
+        expect(effective.worktreesBase).toBe(join(workspaceRoot, ".arashi", "worktrees"));
+        expect(effective.files.workspace).toBe(workspaceConfigPath);
+        expect(effective.sources.worktreesDir).toBe(authored ? "workspace" : "built-in");
+      }
+    }
+  });
 });

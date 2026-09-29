@@ -1665,6 +1665,7 @@ export async function executeCreate(
         ? (workspaceContext.effective?.mainRoot ?? context.workspaceRoot)
         : context.workspaceRoot,
     workspaceConfig: loadedConfig.config,
+    workspaceRoot: context.workspaceRoot,
     workspaceConfigPath: loadedConfig.configPath,
     workspaceWorktreesDirAuthored: loadedConfig.authoredWorktreesDir === true,
   });
