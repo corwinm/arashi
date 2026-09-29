@@ -165,6 +165,18 @@ const qualifyAbsoluteUserRoot = (configuredRoot: string, directory: string): str
   return join(directory, `${name}-${digest}`);
 };
 
+export const resolveUserWorktreesBase = (mainRoot: string, directory: string): string => {
+  const base = isAbsolute(directory)
+    ? qualifyAbsoluteUserRoot(mainRoot, directory)
+    : resolve(mainRoot, directory);
+  if (base === resolve(mainRoot)) {
+    throw new WorktreeLocationValidationError(
+      "User worktreesDir must not resolve to the primary repository root. Choose a subdirectory or an external directory.",
+    );
+  }
+  return base;
+};
+
 export const resolveEffectivePersonalConfig = async (options: {
   builtInWorktreesDir: string;
   mainRoot: string;
@@ -245,14 +257,9 @@ export const resolveEffectivePersonalConfig = async (options: {
   // a filesystem path. Use the actual workspace root for workspace-owned paths.
   const workspaceRoot = options.workspaceRoot ?? options.mainRoot;
   const worktreesBase =
-    worktreesSource === "user" && isAbsolute(authoredDirectory)
-      ? qualifyAbsoluteUserRoot(options.mainRoot, authoredDirectory)
-      : resolve(worktreesSource === "user" ? options.mainRoot : workspaceRoot, authoredDirectory);
-  if (worktreesSource === "user" && worktreesBase === resolve(options.mainRoot)) {
-    throw new WorktreeLocationValidationError(
-      "User worktreesDir must not resolve to the primary repository root. Choose a subdirectory or an external directory.",
-    );
-  }
+    worktreesSource === "user"
+      ? resolveUserWorktreesBase(options.mainRoot, authoredDirectory)
+      : resolve(workspaceRoot, authoredDirectory);
 
   const effective: Config = {
     ...workspace,

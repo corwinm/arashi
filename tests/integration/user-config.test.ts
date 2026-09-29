@@ -77,6 +77,14 @@ describe("user configuration integration", () => {
     expect(await readFile(join(root, ".git", "info", "exclude"), "utf8")).toContain(
       ".personal-trees/",
     );
+    const initialCompletions = await arashi(
+      root,
+      ["completion", "__query", "2", "--", "aw", "switch", ""],
+      home,
+    );
+    expect(initialCompletions.exitCode, initialCompletions.stderr).toBe(0);
+    if (process.platform !== "win32")
+      expect(initialCompletions.stdout.split("\0")).toContain("main");
     const doctor = await arashi(root, ["doctor", "--json"], home);
     const findings =
       JSON.parse(doctor.stdout).data?.findings ??
@@ -90,6 +98,13 @@ describe("user configuration integration", () => {
     expect(first.exitCode, first.stderr).toBe(0);
     const firstPath = join(await realpath(root), ".personal-trees", `${basename(root)}-feat-one`);
     expect(JSON.parse(first.stdout).data.worktreePath).toBe(firstPath);
+    const completions = await arashi(
+      root,
+      ["completion", "__query", "2", "--", "aw", "switch", ""],
+      home,
+    );
+    expect(completions.exitCode, completions.stderr).toBe(0);
+    if (process.platform !== "win32") expect(completions.stdout.split("\0")).toContain("feat/one");
 
     const second = await arashi(firstPath, ["create", "feat/two", "--json"], home);
     expect(second.exitCode, second.stderr).toBe(0);
