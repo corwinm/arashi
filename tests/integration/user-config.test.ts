@@ -136,6 +136,46 @@ describe("user configuration integration", () => {
     ).toBe(0);
   });
 
+  test("workspace-owned relative bases stay anchored at the active linked workspace", async () => {
+    const { home, root } = await repository("linked-workspace-base");
+    await writeUserConfig(home, { worktreesDir: ".personal-trees" });
+    await mkdir(join(root, ".arashi"));
+    await writeFile(
+      join(root, ".arashi", "config.json"),
+      JSON.stringify({
+        version: "1.0.0",
+        reposDir: "repos",
+        worktreesDir: ".project-trees",
+        repos: {},
+      }),
+    );
+    await run(root, ["git", "add", ".arashi/config.json"]);
+    await run(root, ["git", "commit", "-m", "workspace config"]);
+    const created = await arashi(root, ["create", "linked-workspace", "--json"], home);
+    expect(created.exitCode, created.stdout + created.stderr).toBe(0);
+    const linked = JSON.parse(created.stdout).data.repositories[0].worktreePath;
+    const expectedBase = join(linked, ".project-trees");
+    const inspection = await arashi(linked, ["config", "effective", "--json"], home);
+    expect(JSON.parse(inspection.stdout).data.settings.worktreesDir).toEqual({
+      source: "workspace",
+      value: expectedBase,
+    });
+    for (const args of [
+      ["status", "--local", "--json"],
+      ["handoff", "--json"],
+      ["prune", "--dry-run", "--json"],
+    ]) {
+      const result = await arashi(linked, args, home);
+      expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout).data.worktreesBase).toBe(expectedBase);
+    }
+    const nested = await arashi(linked, ["create", "linked-next", "--json"], home);
+    expect(nested.exitCode, nested.stdout + nested.stderr).toBe(0);
+    expect(JSON.parse(nested.stdout).data.repositories[0].worktreePath).toBe(
+      join(expectedBase, "linked-next"),
+    );
+  });
+
   test("effective inspection reports files and supports CLI provenance", async () => {
     const { home, root } = await repository("inspect");
     await writeUserConfig(home, {

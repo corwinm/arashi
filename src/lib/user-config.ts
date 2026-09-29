@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { homedir } from "os";
-import { basename, isAbsolute, join, resolve } from "path";
+import { basename, dirname, isAbsolute, join, resolve } from "path";
 import {
   ConfigError,
   ConfigParseError,
@@ -240,10 +240,13 @@ export const resolveEffectivePersonalConfig = async (options: {
     options.builtInWorktreesDir,
   );
   sources.worktreesDir = worktreesSource;
+  const workspaceRoot = options.workspaceConfigPath
+    ? dirname(dirname(options.workspaceConfigPath))
+    : options.mainRoot;
   const worktreesBase =
     worktreesSource === "user" && isAbsolute(authoredDirectory)
       ? qualifyAbsoluteUserRoot(options.mainRoot, authoredDirectory)
-      : resolve(options.mainRoot, authoredDirectory);
+      : resolve(worktreesSource === "user" ? options.mainRoot : workspaceRoot, authoredDirectory);
   if (worktreesSource === "user" && worktreesBase === resolve(options.mainRoot)) {
     throw new WorktreeLocationValidationError(
       "User worktreesDir must not resolve to the primary repository root. Choose a subdirectory or an external directory.",
