@@ -189,6 +189,20 @@ describe("user configuration integration", () => {
     expect(JSON.parse(nested.stdout).data.repositories[0].worktreePath).toBe(
       join(expectedBase, "linked-next"),
     );
+    for (const checkout of [root, linked]) {
+      expect(
+        (
+          await run(checkout, [
+            "git",
+            "check-ignore",
+            "--no-index",
+            "-q",
+            "--",
+            ".project-trees/probe",
+          ])
+        ).exitCode,
+      ).toBe(0);
+    }
   });
 
   test("effective inspection reports files and supports CLI provenance", async () => {

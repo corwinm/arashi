@@ -2075,16 +2075,18 @@ export async function executeCreate(
       : context.executionPath;
   let managedIgnore: ManagedIgnoreReconciliation;
   try {
-    const worktreesRelativeToMain = relative(
-      effectivePersonalConfig.mainRoot,
+    const worktreesRelativeToOwner = relative(
+      effectivePersonalConfig.sources.worktreesDir === "user"
+        ? effectivePersonalConfig.mainRoot
+        : context.workspaceRoot,
       effectivePersonalConfig.worktreesBase,
     );
     const managedWorktreesDir =
-      worktreesRelativeToMain !== "" &&
-      worktreesRelativeToMain !== ".." &&
-      !worktreesRelativeToMain.startsWith(`..${sep}`) &&
-      !isAbsolute(worktreesRelativeToMain)
-        ? worktreesRelativeToMain
+      worktreesRelativeToOwner !== "" &&
+      worktreesRelativeToOwner !== ".." &&
+      !worktreesRelativeToOwner.startsWith(`..${sep}`) &&
+      !isAbsolute(worktreesRelativeToOwner)
+        ? worktreesRelativeToOwner
         : effectivePersonalConfig.worktreesBase;
     managedIgnore = await reconcileIgnore({
       dryRun: options.dryRun,
