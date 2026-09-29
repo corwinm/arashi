@@ -2304,7 +2304,7 @@
           "conflicts": [],
           "deprecated": false,
           "flags": "--worktrees-dir <path>",
-          "description": "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
+          "description": "Shared repo worktree base (otherwise user default, then .. for bare repositories or .arashi/worktrees)",
           "hidden": false,
           "long": "--worktrees-dir",
           "required": true,
