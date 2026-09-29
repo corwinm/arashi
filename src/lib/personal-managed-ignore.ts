@@ -15,15 +15,16 @@ export async function personalManagedIgnoreOptions(workspaceRoot: string, config
     builtInWorktreesDir: DEFAULT_WORKTREES_DIR,
   });
   const personal = effective.sources.worktreesDir === "user";
-  // Personal roots belong to the primary checkout, even when a mutation runs
-  // from a linked checkout. Reconcile their coverage in that same checkout.
+  // Personal roots belong to primary, but repository rules belong to the active
+  // configuration checkout. Scoped reconciliation preserves that distinction.
   const ignoreRoot = personal ? mainRoot : workspaceRoot;
   const worktreesDir = personal
     ? relative(ignoreRoot, effective.worktreesBase)
     : (config.worktreesDir ?? DEFAULT_WORKTREES_DIR);
   return {
     reposDir: config.reposDir,
-    workspaceRoot: ignoreRoot,
+    workspaceRoot,
+    worktreesWorkspaceRoot: personal ? ignoreRoot : undefined,
     worktreesDir,
     skipWorktreesDir:
       personal &&

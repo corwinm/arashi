@@ -1184,6 +1184,7 @@ export const executeInit = async (
             requestedScope: options.ignoreScope,
             workspaceRoot,
             worktreesDir: ignoreOptions.worktreesDir,
+            worktreesWorkspaceRoot: ignoreOptions.worktreesWorkspaceRoot,
             skipWorktreesDir: ignoreOptions.skipWorktreesDir,
           });
     if (options.dryRun && managedIgnore.targetPath) {

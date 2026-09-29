@@ -66,8 +66,6 @@ import {
 } from "../lib/switch-launcher.ts";
 import {
   reconcileRepositoryManagedIgnore,
-  classifyManagedPaths,
-  combineManagedIgnoreReconciliations,
   restoreManagedIgnore,
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
@@ -2091,43 +2089,18 @@ export async function executeCreate(
     const managedWorktreesDir = worktreesInsideOwner
       ? worktreesRelativeToOwner
       : effectivePersonalConfig.worktreesBase;
-    const splitPersonalIgnore =
-      effectivePersonalConfig.sources.worktreesDir === "user" &&
-      worktreesInsideOwner &&
-      (await realpath(managedIgnoreWorkspaceRoot)) !==
-        (await realpath(effectivePersonalConfig.mainRoot));
-    const personalRule = classifyManagedPaths([managedWorktreesDir]).flatMap((path) =>
-      path.safety === "safe" ? [path.rule] : [],
-    );
     managedIgnore = await reconcileIgnore({
       dryRun: options.dryRun,
       reposDir: arashiConfig.reposDir,
       workspaceRoot: managedIgnoreWorkspaceRoot,
       worktreesDir: managedWorktreesDir,
       skipWorktreesDir:
-        splitPersonalIgnore ||
-        (effectivePersonalConfig.sources.worktreesDir === "user" && !worktreesInsideOwner),
-      preserveOwnedRules: splitPersonalIgnore ? personalRule : undefined,
+        effectivePersonalConfig.sources.worktreesDir === "user" && !worktreesInsideOwner,
+      worktreesWorkspaceRoot:
+        effectivePersonalConfig.sources.worktreesDir === "user" && worktreesInsideOwner
+          ? effectivePersonalConfig.mainRoot
+          : undefined,
     });
-    if (splitPersonalIgnore) {
-      try {
-        const personalIgnore = await reconcileIgnore({
-          dryRun: options.dryRun,
-          reposDir: arashiConfig.reposDir,
-          workspaceRoot: effectivePersonalConfig.mainRoot,
-          worktreesDir: managedWorktreesDir,
-          skipReposDir: true,
-          preserveUnselectedRules: true,
-          preserveOwnedRules: classifyManagedPaths([arashiConfig.reposDir]).flatMap((path) =>
-            path.safety === "safe" ? [path.rule] : [],
-          ),
-        });
-        managedIgnore = combineManagedIgnoreReconciliations(managedIgnore, personalIgnore);
-      } catch (error) {
-        if (managedIgnore.changed) await restoreIgnore(managedIgnore);
-        throw error;
-      }
-    }
     if (
       temporaryIgnoreWorkspace &&
       managedIgnore.targetType === "tracked" &&

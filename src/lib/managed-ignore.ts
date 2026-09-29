@@ -75,6 +75,7 @@ export interface InspectManagedIgnoreOptions {
 
 export interface RepositoryManagedIgnoreOptions extends InspectManagedIgnoreOptions {
   repositoryType?: "bare" | "non-bare";
+  worktreesWorkspaceRoot?: string;
 }
 
 export interface ManagedIgnoreReconciliation extends ManagedIgnoreInspection {
@@ -980,6 +981,33 @@ export const reconcileRepositoryManagedIgnore = async (
   options: RepositoryManagedIgnoreOptions,
 ): Promise<ManagedIgnoreReconciliation> => {
   try {
+    if (
+      options.worktreesWorkspaceRoot &&
+      !options.skipWorktreesDir &&
+      realpathSync.native(options.workspaceRoot) !==
+        realpathSync.native(options.worktreesWorkspaceRoot)
+    ) {
+      const scoped = { ...options, worktreesWorkspaceRoot: undefined };
+      const repository = await reconcileRepositoryManagedIgnore({
+        ...scoped,
+        skipWorktreesDir: true,
+        preserveOwnedRules: classifyManagedPaths([options.worktreesDir]).flatMap((path) =>
+          path.safety === "safe" ? [path.rule] : [],
+        ),
+      });
+      try {
+        const personal = await reconcileRepositoryManagedIgnore({
+          ...scoped,
+          workspaceRoot: options.worktreesWorkspaceRoot,
+          skipReposDir: true,
+          preserveUnselectedRules: true,
+        });
+        return combineManagedIgnoreReconciliations(repository, personal);
+      } catch (error) {
+        if (repository.changed) await restoreManagedIgnore(repository);
+        throw error;
+      }
+    }
     return (await resolveManagedIgnoreRepositoryType(options)) === "bare"
       ? await reconcileBareManagedIgnore(options)
       : await reconcileManagedIgnore(options);

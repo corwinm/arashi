@@ -588,6 +588,15 @@ describe("user configuration integration", () => {
     ).toBe(0);
     expect(await readFile(join(linked, ".gitignore"), "utf8")).toBe(linkedIgnore);
     expect(await readFile(join(root, ".gitignore"), "utf8")).toContain("/primary-only/");
+    const primaryBeforePull = await readFile(join(root, ".gitignore"), "utf8");
+    await writeFile(join(linked, ".gitignore"), "# missing active repository rule\n");
+    const trackedPull = await arashi(linked, ["pull", "--only", "child", "--json"], home);
+    expect(trackedPull.exitCode, trackedPull.stdout + trackedPull.stderr).toBe(0);
+    expect(
+      (await run(linked, ["git", "check-ignore", "--no-index", "-q", "--", "repos/probe"]))
+        .exitCode,
+    ).toBe(0);
+    expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(primaryBeforePull);
   });
 
   test("delete preview reports the effective personal root", async () => {
