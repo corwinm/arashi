@@ -211,7 +211,12 @@ export const executeDoctor = async (options: DoctorOptions = {}): Promise<number
   }
   const result = await runDoctor(
     process.platform,
-    context.mode === "configured" ? context.config : undefined,
+    context.mode === "configured"
+      ? {
+          config: context.config,
+          personalWorktreesDir: context.effective?.sources.worktreesDir === "user",
+        }
+      : {},
   );
   const hasBlockingFindings = result.summary.error > ZERO;
   const configuredData = {

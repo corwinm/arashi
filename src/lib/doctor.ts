@@ -13,7 +13,7 @@ import {
   validateHook,
 } from "./hooks.ts";
 import type { LifecycleHookPreparationCandidate } from "./hooks.ts";
-import { basename, join, resolve } from "path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "path";
 import {
   checkAllRepos,
   isMissingRepositoryStatus,
@@ -294,12 +294,20 @@ export const managedIgnoreToDoctorFindings = (
 const collectManagedIgnoreFindings = async (
   workspaceRoot: string,
   config: Config,
+  personalWorktreesDir = false,
 ): Promise<DoctorFinding[]> => {
   try {
+    const worktreesDir = personalWorktreesDir
+      ? relative(workspaceRoot, config.worktreesDir!)
+      : (config.worktreesDir ?? DEFAULT_WORKTREES_DIR);
+    const skipWorktreesDir =
+      personalWorktreesDir &&
+      (worktreesDir === ".." || worktreesDir.startsWith(`..${sep}`) || isAbsolute(worktreesDir));
     const inspection = await inspectRepositoryManagedIgnore({
       reposDir: config.reposDir,
       workspaceRoot,
-      worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+      worktreesDir,
+      skipWorktreesDir,
     });
     return managedIgnoreToDoctorFindings(inspection);
   } catch (error) {
@@ -1279,7 +1287,7 @@ const collectShellAndInstallHints = (): DoctorFinding[] => [];
 
 export const runDoctor = async (
   platform: NodeJS.Platform = process.platform,
-  effectiveConfig?: Config,
+  options: { config?: Config; personalWorktreesDir?: boolean } = {},
 ): Promise<DoctorResult> => {
   const findings: DoctorFinding[] = [];
   let workspaceRoot: string | null = null;
@@ -1319,7 +1327,7 @@ export const runDoctor = async (
       workspaceRoots,
       {
         allowUnavailableMaterializationSource: true,
-        config: effectiveConfig,
+        config: options.config,
       },
     ));
   } catch (error) {
@@ -1346,7 +1354,7 @@ export const runDoctor = async (
   }
 
   const phaseResults = await Promise.allSettled([
-    collectManagedIgnoreFindings(configurationRoot, config),
+    collectManagedIgnoreFindings(configurationRoot, config, options.personalWorktreesDir),
     collectRepositoryFindings(executionRoot, config),
     collectWorktreeFindings(executionRoot, config),
     collectHookFindings(configurationRoot, executionRoot, config, platform),

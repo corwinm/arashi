@@ -64,6 +64,8 @@ export interface InspectManagedIgnoreOptions {
   requestedScope?: string;
   workspaceRoot: string;
   worktreesDir: string;
+  /** External personal roots have no working-tree ignore requirement. */
+  skipWorktreesDir?: boolean;
 }
 
 export interface RepositoryManagedIgnoreOptions extends InspectManagedIgnoreOptions {
@@ -425,7 +427,13 @@ const inspectEffectiveSource = async ({
 };
 
 export const inspectManagedIgnore = async (
-  { reposDir, requestedScope, workspaceRoot, worktreesDir }: InspectManagedIgnoreOptions,
+  {
+    reposDir,
+    requestedScope,
+    workspaceRoot,
+    worktreesDir,
+    skipWorktreesDir,
+  }: InspectManagedIgnoreOptions,
   runGit: ManagedIgnoreGitRunner = runManagedIgnoreGit,
 ): Promise<ManagedIgnoreInspection> => {
   let storedValue: string | null = null;
@@ -454,7 +462,9 @@ export const inspectManagedIgnore = async (
   const localPathResult = await gitExec(["rev-parse", "--git-path", "info/exclude"], workspaceRoot);
   const localExcludePath = resolveGitPath(workspaceRoot, localPathResult.stdout.trim());
   const trackedIgnorePath = resolve(workspaceRoot, ".gitignore");
-  const classifications = classifyManagedPaths([reposDir, worktreesDir]);
+  const classifications = classifyManagedPaths(
+    skipWorktreesDir ? [reposDir] : [reposDir, worktreesDir],
+  );
   const paths: ManagedIgnorePathResult[] = [];
 
   for (const classification of classifications) {
@@ -831,7 +841,7 @@ export const inspectBareManagedIgnore = async (
     (options.requestedScope as ManagedIgnoreScope | undefined) ?? storedPreference ?? "local";
   const paths: ManagedIgnorePathResult[] = classifyManagedPaths([
     options.reposDir,
-    options.worktreesDir,
+    ...(options.skipWorktreesDir ? [] : [options.worktreesDir]),
   ]).map((path) =>
     path.safety === "unsafe"
       ? {

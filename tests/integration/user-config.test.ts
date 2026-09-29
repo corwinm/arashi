@@ -158,8 +158,8 @@ describe("user configuration integration", () => {
     const doctorData = doctorEnvelope.data ?? doctorEnvelope.error?.details;
     expect(doctorData.worktreesBase).toBe(join(await realpath(root), ".user-trees"));
     expect(
-      doctorData.findings.filter(
-        (finding: { code: string }) => finding.code === "MANAGED_IGNORE_MISSING",
+      doctorData.findings.filter((finding: { code: string }) =>
+        finding.code.startsWith("MANAGED_IGNORE_"),
       ),
     ).toEqual([]);
     const persisted = JSON.parse(await readFile(workspacePath, "utf8"));
@@ -221,6 +221,26 @@ describe("user configuration integration", () => {
       "STANDALONE_WORKTREES_NOT_IGNORED",
     );
     expect(await readFile(join(root, ".git", "info", "exclude"), "utf8")).toBe(before);
+  });
+
+  test("configured doctor treats an external personal root as non-applicable", async () => {
+    const { home, root } = await repository("configured-external-doctor");
+    await writeUserConfig(home, { worktreesDir: join(home, "shared") });
+    await mkdir(join(root, ".arashi"));
+    await writeFile(
+      join(root, ".arashi", "config.json"),
+      JSON.stringify({ version: "1.0.0", reposDir: "repos", repos: {} }),
+    );
+    await run(root, ["git", "config", "--local", "arashi.ignoreScope", "local"]);
+    await writeFile(join(root, ".git", "info", "exclude"), "/repos/\n");
+    const result = await arashi(root, ["doctor", "--json"], home);
+    const envelope = JSON.parse(result.stdout);
+    const data = envelope.data ?? envelope.error?.details;
+    expect(
+      data.findings.filter((finding: { code: string }) =>
+        finding.code.startsWith("MANAGED_IGNORE_"),
+      ),
+    ).toEqual([]);
   });
 
   test("standalone refuses a worktree base equal to the main checkout before mutation", async () => {
