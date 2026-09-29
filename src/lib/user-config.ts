@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
+import { lstatSync, realpathSync } from "fs";
 import { homedir } from "os";
-import { basename, isAbsolute, join, resolve } from "path";
+import { basename, dirname, isAbsolute, join, resolve } from "path";
 import {
   ConfigError,
   ConfigParseError,
@@ -165,16 +166,43 @@ const qualifyAbsoluteUserRoot = (configuredRoot: string, directory: string): str
   return join(directory, `${name}-${digest}`);
 };
 
+const resolveExistingAncestors = (path: string): string => {
+  let ancestor = resolve(path);
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      return join(realpathSync.native(ancestor), ...suffix);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      try {
+        if (lstatSync(ancestor).isSymbolicLink()) {
+          throw new WorktreeLocationValidationError(
+            "User worktreesDir traverses an unresolved symbolic link.",
+          );
+        }
+      } catch (inspectionError) {
+        if ((inspectionError as NodeJS.ErrnoException).code !== "ENOENT") throw inspectionError;
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) throw error;
+      suffix.unshift(basename(ancestor));
+      ancestor = parent;
+    }
+  }
+};
+
 export const resolveUserWorktreesBase = (mainRoot: string, directory: string): string => {
+  const canonicalMain = resolveExistingAncestors(mainRoot);
   const base = isAbsolute(directory)
-    ? qualifyAbsoluteUserRoot(mainRoot, directory)
-    : resolve(mainRoot, directory);
-  if (base === resolve(mainRoot)) {
+    ? qualifyAbsoluteUserRoot(canonicalMain, directory)
+    : resolve(canonicalMain, directory);
+  const canonicalBase = resolveExistingAncestors(base);
+  if (canonicalBase === canonicalMain) {
     throw new WorktreeLocationValidationError(
       "User worktreesDir must not resolve to the primary repository root. Choose a subdirectory or an external directory.",
     );
   }
-  return base;
+  return canonicalBase;
 };
 
 export const resolveEffectivePersonalConfig = async (options: {

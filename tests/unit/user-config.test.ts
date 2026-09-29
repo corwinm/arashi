@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "fs/promises";
 import { basename, dirname, join } from "path";
 import { tmpdir } from "os";
 import { CURRENT_CONFIG_VERSION, type Config } from "../../src/lib/config.ts";
@@ -8,6 +8,7 @@ import {
   loadUserConfig,
   normalizeUserConfig,
   resolveEffectivePersonalConfig,
+  resolveUserWorktreesBase,
 } from "../../src/lib/user-config.ts";
 
 const roots: string[] = [];
@@ -24,6 +25,19 @@ afterEach(async () => {
 });
 
 describe("user configuration", () => {
+  test("resolves existing symlink ancestors before accepting personal roots", async () => {
+    const home = await mkdtemp(join(tmpdir(), "arashi-user-config-"));
+    roots.push(home);
+    const root = join(home, "repo");
+    const alias = join(home, "alias");
+    await mkdir(root);
+    await symlink(root, alias, process.platform === "win32" ? "junction" : "dir");
+    expect(() => resolveUserWorktreesBase(root, "../alias")).toThrow("primary repository root");
+    expect(resolveUserWorktreesBase(root, "../alias/nested/trees")).toBe(
+      join(await realpath(root), "nested", "trees"),
+    );
+    expect(dirname(resolveUserWorktreesBase(root, alias))).toBe(await realpath(root));
+  });
   test("accepts a partial personal scope but requires version metadata", () => {
     expect(
       normalizeUserConfig({

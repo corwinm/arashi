@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "fs/promises";
-import { basename, join } from "path";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "fs/promises";
+import { basename, dirname, join } from "path";
 import { tmpdir } from "os";
 import { pathToFileURL } from "url";
 import { spawn } from "../helpers/node-runtime.ts";
@@ -63,6 +63,33 @@ afterEach(async () => {
 });
 
 describe("user configuration integration", () => {
+  test.each([false, true])(
+    "symlinked personal roots inside the checkout stay ignored (configured=%s)",
+    async (configured) => {
+      const { home, root } = await repository("symlink-root");
+      await symlink(
+        root,
+        join(dirname(root), "alias"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      await writeUserConfig(home, { worktreesDir: "../alias/nested/trees" });
+      if (configured) {
+        await mkdir(join(root, ".arashi"));
+        await writeFile(
+          join(root, ".arashi", "config.json"),
+          JSON.stringify({ version: "1.0.0", reposDir: "repos", repos: {} }),
+        );
+      } else {
+        expect((await arashi(root, ["init", "--zero-config", "--json"], home)).exitCode).toBe(0);
+      }
+      const created = await arashi(root, ["create", "symlink-personal", "--json"], home);
+      expect(created.exitCode, created.stdout + created.stderr).toBe(0);
+      expect(
+        (await run(root, ["git", "check-ignore", "--no-index", "-q", "--", "nested/trees/probe"]))
+          .exitCode,
+      ).toBe(0);
+    },
+  );
   test("standalone bootstrap, linked invocation, naming, and ignore handling share the main root", async () => {
     const { home, root } = await repository("standalone");
     await writeUserConfig(home, {
