@@ -1,21 +1,26 @@
+import { T3HandoffError } from "./t3-error.ts";
+export { T3HandoffError } from "./t3-error.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import {
-  chmod,
-  lstat,
-  open,
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rename,
-  rm,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
+import { chmod, lstat, open, mkdir, readFile, realpath, rename, rm } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { exec } from "./git.ts";
-import { runtime } from "./runtime.ts";
+import {
+  identifier,
+  record,
+  records,
+  resolveT3Selection,
+  readT3Config,
+  t3Http,
+  verifyT3Protocol,
+  verifyT3Version,
+  withT3Session,
+  type T3NativeDependencies,
+  type T3NativeEnvironment,
+  type T3Selection,
+} from "./t3-native.ts";
+export { preflightT3Native } from "./t3-native.ts";
 
 export const T3_PERMISSION_MODES = [
   "approval-required",
@@ -40,7 +45,17 @@ export interface T3ProcessResult {
 
 export interface T3HandoffResult {
   status: T3HandoffStatus;
-  bridgeVersion: string;
+  bridgeVersion?: string; // Present only in bridge-era receipts.
+  adapterVersion?: "1";
+  adapter?: "native";
+  selection?: T3Selection;
+  native?: {
+    environmentId: string;
+    projectId: string;
+    threadId: string;
+    messageId: string;
+    phase: "preparing" | "submitting" | "accepted";
+  };
   workspacePath: string;
   permission: T3PermissionMode;
   promptDigest: string;
@@ -60,13 +75,13 @@ export interface T3HandoffResult {
 }
 
 interface T3HandoffReceipt extends T3HandoffResult {
-  version: 1;
+  version: 1 | 2;
   branch: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface T3HandoffDependencies {
+export interface T3HandoffDependencies extends T3NativeDependencies {
   now?: () => Date;
   platform?: NodeJS.Platform;
   runProcess?: (
@@ -75,55 +90,9 @@ export interface T3HandoffDependencies {
   ) => Promise<T3ProcessResult>;
   resolveGitCommonDirectory?: (workspacePath: string) => Promise<string>;
   setWindowsOwnerOnly?: (path: string) => Promise<void>;
-  removePromptDirectory?: (path: string) => Promise<void>;
   syncDirectory?: (path: string) => Promise<void>;
   removeReceiptLock?: (path: string) => Promise<void>;
 }
-
-export class T3HandoffError extends Error {
-  readonly code: string;
-  readonly details: Record<string, unknown>;
-  readonly result?: T3HandoffResult;
-
-  constructor(
-    code: string,
-    message: string,
-    details: Record<string, unknown> = {},
-    result?: T3HandoffResult,
-  ) {
-    super(message);
-    this.name = "T3HandoffError";
-    this.code = code;
-    this.details = details;
-    this.result = result;
-  }
-}
-
-const runT3Process = async (
-  command: readonly string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv },
-): Promise<T3ProcessResult> => {
-  try {
-    const proc = runtime.spawn([...command], {
-      cwd: options.cwd,
-      env: options.env,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { exitCode, stderr, stdout };
-  } catch (error) {
-    return {
-      exitCode: -1,
-      stderr: error instanceof Error ? error.message : String(error),
-      stdout: "",
-    };
-  }
-};
 
 const readUtf8Strict = async (path: string): Promise<string> => {
   const bytes = await readFile(path);
@@ -217,163 +186,8 @@ export const resolveT3HandoffRequest = async (options: {
   };
 };
 
-export const preflightT3Bridge = async (
-  cwd: string,
-  dependencies: T3HandoffDependencies = {},
-): Promise<string> => {
-  const result = await (dependencies.runProcess ?? runT3Process)(["t3code", "--version"], {
-    cwd,
-    env: process.env,
-  });
-  if (result.exitCode === -1) {
-    throw new T3HandoffError(
-      "T3_BRIDGE_NOT_FOUND",
-      "T3 handoff requires an installed compatible bridge. Install the evaluated version with `npm install --global @bvdm/t3code-cli@0.1.2`.",
-    );
-  }
-  if (result.exitCode !== 0) {
-    throw new T3HandoffError(
-      "T3_BRIDGE_VERSION_FAILED",
-      "Unable to determine the installed t3code bridge version.",
-    );
-  }
-  const match = result.stdout.trim().match(/(?:^|\s)v?(\d+)\.(\d+)\.(\d+)(?:\s|$)/);
-  if (!match) {
-    throw new T3HandoffError(
-      "T3_BRIDGE_VERSION_INVALID",
-      "The installed t3code bridge returned an unrecognized version.",
-    );
-  }
-  const version = `${match[1]}.${match[2]}.${match[3]}`;
-  if (match[1] !== "0" || match[2] !== "1") {
-    throw new T3HandoffError(
-      "T3_BRIDGE_VERSION_UNSUPPORTED",
-      `Unsupported t3code bridge version ${version}; install @bvdm/t3code-cli@0.1.2 (reported 0.1.x contract).`,
-      { version },
-    );
-  }
-  return version;
-};
-
-const stringValue = (value: unknown): string | null => (typeof value === "string" ? value : null);
-const objectValue = (value: unknown): Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-const pathsEqual = (left: string, right: string): boolean => {
-  const canonical = (value: string): string => normalize(resolve(value)).replace(/[\\/]+$/u, "");
-  const normalizedLeft = canonical(left);
-  const normalizedRight = canonical(right);
-  return process.platform === "win32"
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-};
-
-const parseBridgeSuccess = (
-  stdout: string,
-  base: Omit<
-    T3HandoffResult,
-    "environment" | "project" | "thread" | "dispatch" | "ui" | "retry" | "status"
-  >,
-): T3HandoffResult => {
-  let envelope: Record<string, unknown>;
-  try {
-    envelope = objectValue(JSON.parse(stdout));
-  } catch {
-    throw new T3HandoffError(
-      "T3_BRIDGE_RESPONSE_INVALID",
-      "t3code returned malformed JSON after dispatch.",
-    );
-  }
-  if (envelope.ok !== true) {
-    throw new T3HandoffError(
-      "T3_BRIDGE_RESPONSE_INVALID",
-      "t3code did not return a success envelope after dispatch.",
-    );
-  }
-  const data = objectValue(envelope.data);
-  const runtimeData = objectValue(data.runtime);
-  const workspaceData = objectValue(data.workspace);
-  const projectData = objectValue(data.project);
-  const threadData = objectValue(data.thread);
-  const openedData = objectValue(data.opened);
-  const threadId = stringValue(threadData.id);
-  const projectId = stringValue(projectData.id);
-  const returnedWorkspace = stringValue(workspaceData.workspaceRoot);
-  const projectWorkspace = stringValue(projectData.workspaceRoot);
-  if (
-    !threadId ||
-    !projectId ||
-    stringValue(runtimeData.environmentId) === null ||
-    returnedWorkspace === null ||
-    !pathsEqual(returnedWorkspace, base.workspacePath) ||
-    projectWorkspace === null ||
-    !pathsEqual(projectWorkspace, base.workspacePath)
-  ) {
-    throw new T3HandoffError(
-      "T3_BRIDGE_RESPONSE_INVALID",
-      "t3code success output omitted required identifiers.",
-    );
-  }
-  return {
-    ...base,
-    status: "succeeded",
-    environment: {
-      id: stringValue(runtimeData.environmentId),
-      serverVersion: stringValue(runtimeData.serverVersion),
-    },
-    project: {
-      created: typeof data.projectCreated === "boolean" ? data.projectCreated : null,
-      id: projectId,
-      title: null,
-    },
-    thread: { id: threadId, title: null },
-    dispatch: { status: "succeeded" },
-    ui: {
-      exactThread: typeof openedData.exactThread === "boolean" ? openedData.exactThread : null,
-      kind: stringValue(openedData.kind),
-      mode: "none",
-      status: "skipped",
-    },
-    retry: {
-      safe: false,
-      guidance:
-        "The task is already running. Select the reported project/thread in a connected T3 client.",
-    },
-  };
-};
-
-const safeFailureCodes = new Set([
-  "CONFIG_READ_FAILED",
-  "INVALID_CONFIG",
-  "INVALID_THREAD_OPTION",
-  "PROCESS_START_FAILED",
-  "PROJECT_NOT_FOUND",
-  "PROMPT_REQUIRED",
-  "PROMPT_SOURCE_REQUIRED",
-  "T3_AUTH_FAILED",
-  "WORKSPACE_NOT_DIRECTORY",
-  "WORKSPACE_NOT_FOUND",
-]);
-
-const parseBridgeError = (stderr: string): { code: string; message: string; safe: boolean } => {
-  try {
-    const envelope = objectValue(JSON.parse(stderr));
-    const bridgeError = objectValue(envelope.error);
-    const code = stringValue(bridgeError.code) ?? "T3_BRIDGE_FAILED";
-    return {
-      code,
-      message: stringValue(bridgeError.message) ?? "t3code handoff failed.",
-      safe: safeFailureCodes.has(code),
-    };
-  } catch {
-    return {
-      code: "T3_BRIDGE_FAILED",
-      message: "t3code handoff failed without a valid error envelope.",
-      safe: false,
-    };
-  }
-};
+const objectValue = record;
+const nullableString = (value: unknown): boolean => value === null || typeof value === "string";
 
 const resolveCommonDirectory = async (workspacePath: string): Promise<string> => {
   const raw = (await exec(["rev-parse", "--git-common-dir"], workspacePath)).stdout.trim();
@@ -541,7 +355,6 @@ const persistReceipt = async (
   }
 };
 
-const nullableString = (value: unknown): boolean => value === null || typeof value === "string";
 const isT3HandoffReceipt = (value: unknown): value is T3HandoffReceipt => {
   const receipt = objectValue(value);
   const environment = objectValue(receipt.environment);
@@ -552,9 +365,32 @@ const isT3HandoffReceipt = (value: unknown): value is T3HandoffReceipt => {
   const retry = objectValue(receipt.retry);
   const error = receipt.error === undefined ? null : objectValue(receipt.error);
   return (
-    receipt.version === 1 &&
+    (receipt.version === 1 || receipt.version === 2) &&
+    (receipt.version !== 2 ||
+      (receipt.adapter === "native" &&
+        identifier(objectValue(receipt.native).environmentId) !== null &&
+        identifier(objectValue(receipt.native).projectId) !== null &&
+        identifier(objectValue(receipt.native).threadId) !== null &&
+        identifier(objectValue(receipt.native).messageId) !== null &&
+        ["preparing", "submitting", "accepted"].includes(
+          objectValue(receipt.native).phase as string,
+        ))) &&
+    (receipt.selection === undefined ||
+      (identifier(objectValue(receipt.selection).instanceId) !== null &&
+        typeof objectValue(receipt.selection).model === "string" &&
+        /^[a-zA-Z0-9][a-zA-Z0-9_.:/+-]{0,199}$/u.test(
+          objectValue(receipt.selection).model as string,
+        ) &&
+        Array.isArray(objectValue(receipt.selection).options) &&
+        records(objectValue(receipt.selection).options).every(
+          (option) =>
+            identifier(option.id) !== null &&
+            (typeof option.value === "boolean" || identifier(option.value) !== null),
+        ))) &&
     typeof receipt.branch === "string" &&
-    typeof receipt.bridgeVersion === "string" &&
+    (receipt.version === 1
+      ? typeof receipt.bridgeVersion === "string"
+      : receipt.adapterVersion === "1") &&
     typeof receipt.createdAt === "string" &&
     typeof receipt.updatedAt === "string" &&
     typeof receipt.workspacePath === "string" &&
@@ -563,12 +399,12 @@ const isT3HandoffReceipt = (value: unknown): value is T3HandoffReceipt => {
     /^[0-9a-f]{64}$/u.test(receipt.promptDigest) &&
     T3_PERMISSION_MODES.includes(receipt.permission as T3PermissionMode) &&
     ["dispatching", "succeeded", "failed", "indeterminate"].includes(receipt.status as string) &&
-    nullableString(environment.id) &&
+    (environment.id === null || identifier(environment.id) !== null) &&
     nullableString(environment.serverVersion) &&
-    nullableString(project.id) &&
+    (project.id === null || identifier(project.id) !== null) &&
     project.title === null &&
     (project.created === null || typeof project.created === "boolean") &&
-    nullableString(thread.id) &&
+    (thread.id === null || identifier(thread.id) !== null) &&
     thread.title === null &&
     ["dispatching", "succeeded", "failed", "indeterminate"].includes(dispatch.status as string) &&
     ui.mode === "none" &&
@@ -597,7 +433,62 @@ const readReceipt = async (path: string): Promise<T3HandoffReceipt | null> => {
         `T3 handoff receipt has an invalid or mismatched schema: ${path}`,
       );
     }
-    return receipt;
+    // Legacy bridge errors/guidance and unknown extension fields may contain raw output.
+    // Keep duplicate protection, but return only the known credential-free receipt surface.
+    return {
+      version: receipt.version,
+      branch: receipt.branch,
+      createdAt: receipt.createdAt,
+      updatedAt: receipt.updatedAt,
+      status: receipt.status,
+      workspacePath: receipt.workspacePath,
+      permission: receipt.permission,
+      promptDigest: receipt.promptDigest,
+      receiptPath: receipt.receiptPath,
+      ...(receipt.version === 1
+        ? { bridgeVersion: receipt.bridgeVersion }
+        : {
+            adapter: "native" as const,
+            adapterVersion: "1" as const,
+            native: {
+              environmentId: receipt.native!.environmentId,
+              projectId: receipt.native!.projectId,
+              threadId: receipt.native!.threadId,
+              messageId: receipt.native!.messageId,
+              phase: receipt.native!.phase,
+            },
+            ...(receipt.selection
+              ? {
+                  selection: {
+                    instanceId: receipt.selection.instanceId,
+                    model: receipt.selection.model,
+                    options: receipt.selection.options.map((option) => ({
+                      id: option.id,
+                      value: option.value,
+                    })),
+                  },
+                }
+              : {}),
+          }),
+      environment: { id: receipt.environment.id, serverVersion: receipt.environment.serverVersion },
+      project: { id: receipt.project.id, title: null, created: receipt.project.created },
+      thread: { id: receipt.thread.id, title: null },
+      dispatch: { status: receipt.dispatch.status },
+      ui: { mode: "none", kind: "none", exactThread: false, status: "skipped" },
+      retry: {
+        safe: receipt.version === 2 && receipt.retry.safe,
+        guidance:
+          "Reconcile the saved identifiers and submission phase before retrying. Legacy receipts require manual reconciliation.",
+      },
+      ...(receipt.error
+        ? {
+            error: {
+              code: "T3_PREVIOUS_HANDOFF_FAILED",
+              message: "A previous handoff failed; reconcile its saved identifiers.",
+            },
+          }
+        : {}),
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     if (error instanceof T3HandoffError) throw error;
@@ -609,7 +500,7 @@ const readReceipt = async (path: string): Promise<T3HandoffReceipt | null> => {
 };
 
 const emptyResult = (input: {
-  bridgeVersion: string;
+  adapterVersion: "1";
   permission: T3PermissionMode;
   promptDigest: string;
   receiptPath: string | null;
@@ -630,13 +521,13 @@ const emptyResult = (input: {
             ? "failed"
             : "indeterminate",
   },
-  ui: { exactThread: null, kind: null, mode: "none", status: "skipped" },
+  ui: { exactThread: false, kind: "none", mode: "none", status: "skipped" },
   retry: { safe: input.status === "failed", guidance: "" },
 });
 
 export const dispatchT3Handoff = async (input: {
   branch: string;
-  bridgeVersion: string;
+  environment: T3NativeEnvironment;
   dryRun: boolean;
   request: T3HandoffRequest;
   workspacePath: string;
@@ -649,7 +540,7 @@ export const dispatchT3Handoff = async (input: {
   if (input.dryRun) {
     return {
       ...emptyResult({
-        bridgeVersion: input.bridgeVersion,
+        adapterVersion: "1",
         permission: input.request.permission,
         promptDigest: input.request.promptDigest,
         receiptPath: null,
@@ -665,224 +556,314 @@ export const dispatchT3Handoff = async (input: {
   const releaseReceiptLock = await acquireReceiptLock(receiptPath, dependencies);
   const execute = async (): Promise<T3HandoffResult> => {
     const existing = await readReceipt(receiptPath);
-    if (existing) {
-      if (existing.workspacePath !== workspacePath) {
-        throw new T3HandoffError(
-          "T3_RECEIPT_INVALID",
-          "The T3 handoff receipt does not match the canonical workspace path.",
-          { receiptPath },
-        );
-      }
-      const matchingIntent =
-        existing.promptDigest === input.request.promptDigest &&
-        existing.permission === input.request.permission;
-      if (existing.status !== "failed" || !matchingIntent) {
-        const code = matchingIntent ? "T3_DUPLICATE_HANDOFF_BLOCKED" : "T3_HANDOFF_INTENT_CHANGED";
-        const blockedResult = matchingIntent
-          ? existing
-          : {
-              ...existing,
-              retry: {
-                safe: false,
-                guidance:
-                  "The receipt belongs to a different task or permission. Reconcile T3 and remove only the reported receipt before starting the changed intent.",
-              },
-            };
-        throw new T3HandoffError(
-          code,
-          matchingIntent
-            ? `T3 handoff is ${existing.status}; reconcile the reported project/thread before another dispatch.`
-            : "The existing receipt records a different prompt or permission; reconcile it before starting a new handoff.",
-          { receiptPath, status: existing.status },
-          blockedResult,
-        );
-      }
+    if (existing && existing.workspacePath !== workspacePath) {
+      throw new T3HandoffError(
+        "T3_RECEIPT_INVALID",
+        "Receipt does not match the canonical workspace.",
+        { receiptPath },
+      );
     }
-
+    const matchingIntent =
+      !existing ||
+      (existing.promptDigest === input.request.promptDigest &&
+        existing.permission === input.request.permission &&
+        (!existing.selection ||
+          Object.entries(input.environment.settings).every(([key, value]) =>
+            key === "provider"
+              ? value === existing.selection!.instanceId ||
+                records(input.environment.config.providers).some(
+                  (provider) =>
+                    provider.instanceId === existing.selection!.instanceId &&
+                    provider.driver === value,
+                )
+              : key === "model"
+                ? value === existing.selection!.model ||
+                  records(input.environment.config.providers).some(
+                    (provider) =>
+                      provider.instanceId === existing.selection!.instanceId &&
+                      records(provider.models).some(
+                        (model) =>
+                          model.slug === existing.selection!.model &&
+                          Array.isArray(model.aliases) &&
+                          model.aliases.includes(value),
+                      ),
+                  )
+                : key === "effort"
+                  ? existing.selection!.options.some(
+                      (option) =>
+                        ["effort", "reasoningEffort"].includes(option.id) && option.value === value,
+                    )
+                  : true,
+          )));
+    if (
+      !matchingIntent ||
+      (existing && (existing.version === 1 || existing.status === "succeeded"))
+    ) {
+      throw new T3HandoffError(
+        matchingIntent ? "T3_DUPLICATE_HANDOFF_BLOCKED" : "T3_HANDOFF_INTENT_CHANGED",
+        "Reconcile the existing handoff before starting another task.",
+        { receiptPath },
+        existing ?? undefined,
+      );
+    }
+    if (existing?.native && existing.native.environmentId !== input.environment.environmentId) {
+      throw new T3HandoffError(
+        "T3_ENVIRONMENT_CHANGED",
+        "The receipt belongs to a different T3 environment. Select that environment and reconcile it.",
+        { receiptPath },
+        existing,
+      );
+    }
     const now = (dependencies.now ?? (() => new Date()))().toISOString();
-    const dispatching: T3HandoffReceipt = {
+    let receipt: T3HandoffReceipt = {
       ...emptyResult({
-        bridgeVersion: input.bridgeVersion,
+        adapterVersion: "1",
         permission: input.request.permission,
         promptDigest: input.request.promptDigest,
         receiptPath,
         status: "dispatching",
         workspacePath,
       }),
+      adapter: "native",
       branch: input.branch,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-      version: 1,
-      retry: { safe: false, guidance: "Dispatch is in progress; do not start another thread." },
+      version: 2,
+      environment: {
+        id: input.environment.environmentId,
+        serverVersion: input.environment.serverVersion,
+      },
+      native: existing?.native ?? {
+        environmentId: input.environment.environmentId,
+        projectId: randomUUID(),
+        threadId: randomUUID(),
+        messageId: randomUUID(),
+        phase: "preparing",
+      },
+      ...(existing?.selection ? { selection: existing.selection } : {}),
+      project: existing?.project ?? { id: null, title: null, created: null },
+      thread: existing?.thread ?? { id: null, title: null },
+      retry: {
+        safe: false,
+        guidance: "Reconcile saved identifiers before retrying; no blind resubmission.",
+      },
     };
-    const temporaryDirectory = await mkdtemp(join(tmpdir(), "arashi-t3-prompt-"));
-    let promptCleanupFailed = false;
-    let processResult: T3ProcessResult | undefined;
-    let preparationFailure: unknown;
-    try {
-      const platform = dependencies.platform ?? process.platform;
-      if (platform === "win32") {
-        await (dependencies.setWindowsOwnerOnly ?? setWindowsOwnerOnly)(temporaryDirectory);
-      } else {
-        await chmod(temporaryDirectory, 0o700);
-      }
-      const promptPath = join(temporaryDirectory, "task.md");
-      const promptHandle = await open(promptPath, "wx", 0o600);
+    const save = async (): Promise<void> => {
+      receipt.updatedAt = (dependencies.now ?? (() => new Date()))().toISOString();
       try {
-        await promptHandle.writeFile(input.request.prompt, "utf8");
-        if (platform !== "win32") await promptHandle.chmod(0o600);
-      } finally {
-        await promptHandle.close();
-      }
-      if (platform === "win32") {
-        await (dependencies.setWindowsOwnerOnly ?? setWindowsOwnerOnly)(promptPath);
-      }
-
-      await persistReceipt(receiptPath, dispatching, dependencies);
-      processResult = await (dependencies.runProcess ?? runT3Process)(
-        [
-          "t3code",
-          "--json",
-          "handover",
-          "--cwd",
-          workspacePath,
-          "--workspace-mode",
-          "folder",
-          "--project-policy",
-          "create",
-          "--checkout",
-          "current",
-          "--open",
-          "none",
-          "--permission",
-          input.request.permission,
-          "--prompt-file",
-          promptPath,
-        ],
-        { cwd: workspacePath, env: process.env },
-      );
-    } catch (error) {
-      preparationFailure = error;
-    } finally {
-      try {
-        await (
-          dependencies.removePromptDirectory ??
-          ((path: string) => rm(path, { force: true, recursive: true }))
-        )(temporaryDirectory);
-      } catch {
-        promptCleanupFailed = true;
-      }
-    }
-
-    const base = {
-      bridgeVersion: input.bridgeVersion,
-      permission: input.request.permission,
-      promptDigest: input.request.promptDigest,
-      receiptPath,
-      workspacePath,
-    };
-    const cleanupDetails = promptCleanupFailed
-      ? { promptCleanupFailed: true, promptDirectory: temporaryDirectory }
-      : {};
-    if (!processResult) {
-      const failure = new T3HandoffError(
-        preparationFailure instanceof T3HandoffError
-          ? preparationFailure.code
-          : "T3_PREPARATION_FAILED",
-        "T3 handoff preparation or bridge invocation failed. Inspect the receipt before retrying.",
-        { receiptPath, ...cleanupDetails },
-      );
-      failure.cause = preparationFailure;
-      throw failure;
-    }
-    const saveOutcome = async (result: T3HandoffResult): Promise<void> => {
-      try {
-        await persistReceipt(
-          receiptPath,
-          {
-            ...result,
-            branch: input.branch,
-            createdAt: dispatching.createdAt,
-            updatedAt: (dependencies.now ?? (() => new Date()))().toISOString(),
-            version: 1,
-          },
-          dependencies,
-        );
+        await persistReceipt(receiptPath, receipt, dependencies);
       } catch {
         throw new T3HandoffError(
-          result.error?.code ?? "T3_RECEIPT_WRITE_FAILED",
-          `${result.error?.message ?? "T3 dispatch succeeded."} The receipt could not be updated; reconcile the reported outcome before retrying.`,
-          { receiptPath, receiptWriteFailed: true, ...cleanupDetails },
+          "T3_RECEIPT_WRITE_FAILED",
+          "The handoff receipt could not be saved. Reconcile the reported identifiers before retrying.",
+          { receiptPath, receiptWriteFailed: true },
           {
-            ...result,
+            ...receipt,
             retry: {
               safe: false,
-              guidance:
-                "The receipt still records dispatching. Reconcile the reported outcome and repair receipt storage before retrying.",
+              guidance: "Repair receipt storage and reconcile T3 before retrying.",
             },
           },
         );
       }
     };
-    if (processResult.exitCode === 0) {
-      let success: T3HandoffResult;
-      try {
-        success = parseBridgeSuccess(processResult.stdout, base);
-      } catch {
-        const result = {
-          ...emptyResult({ ...base, status: "indeterminate" }),
-          error: {
-            code: "T3_BRIDGE_RESPONSE_INVALID",
-            message: "Bridge output could not prove the created thread.",
-          },
-          retry: {
+    await save();
+    try {
+      return await withT3Session(
+        input.environment,
+        workspacePath,
+        dependencies,
+        async (request, token) => {
+          const descriptor = await t3Http(
+            input.environment.origin,
+            undefined,
+            dependencies,
+          )("/.well-known/t3/environment");
+          verifyT3Version(descriptor.serverVersion);
+          verifyT3Protocol(descriptor);
+          if (descriptor.environmentId !== receipt.native!.environmentId)
+            throw new T3HandoffError(
+              "T3_ENVIRONMENT_CHANGED",
+              "The selected T3 environment changed after preflight.",
+            );
+          const liveConfig = await (dependencies.getConfig ?? readT3Config)(
+            input.environment.origin,
+            token,
+            request,
+          );
+          const snapshot = await request("/api/orchestration/snapshot");
+          if (!Array.isArray(snapshot.projects) || !Array.isArray(snapshot.threads))
+            throw new T3HandoffError("T3_RESPONSE_INVALID", "T3 snapshot is incompatible.");
+          const projects = records(snapshot.projects).filter(
+            (project) => project.deletedAt === null && project.workspaceRoot === workspacePath,
+          );
+          if (projects.length > 1)
+            throw new T3HandoffError(
+              "T3_PROJECT_AMBIGUOUS",
+              "Multiple T3 projects use this exact checkout; reconcile them before continuing.",
+            );
+          const project = projects[0];
+          if (existing?.project.id && (!project || project.id !== existing.project.id))
+            throw new T3HandoffError(
+              "T3_PROJECT_CHANGED",
+              "The recorded project is missing or changed; reconcile it before retrying.",
+            );
+          if (project) {
+            const projectId = identifier(project.id);
+            if (!projectId)
+              throw new T3HandoffError(
+                "T3_RESPONSE_INVALID",
+                "T3 project identifier is incompatible.",
+              );
+            receipt.native!.projectId = projectId;
+            receipt.project = {
+              id: projectId,
+              title: null,
+              created: existing?.project.created ?? false,
+            };
+          }
+          receipt.selection ??= resolveT3Selection(liveConfig, input.environment.settings, project);
+          if (receipt.native!.phase === "preparing") {
+            resolveT3Selection(
+              liveConfig,
+              { provider: receipt.selection.instanceId },
+              { defaultModelSelection: receipt.selection },
+            );
+          }
+          await save();
+          const post = async (command: Record<string, unknown>): Promise<void> => {
+            const response = await request("/api/orchestration/dispatch", command);
+            if (typeof response.sequence !== "number")
+              throw new T3HandoffError(
+                "T3_RESPONSE_INVALID",
+                "T3 dispatch acknowledgement is incompatible; reconcile saved identifiers.",
+              );
+          };
+          if (!project) {
+            await post({
+              type: "project.create",
+              commandId: `arashi-project-${receipt.native!.projectId}`,
+              projectId: receipt.native!.projectId,
+              title: input.branch,
+              workspaceRoot: workspacePath,
+              createdAt: now,
+            });
+            receipt.project = { id: receipt.native!.projectId, title: null, created: true };
+            await save();
+          }
+          const thread = records(snapshot.threads).find(
+            (value) => value.id === receipt.native!.threadId,
+          );
+          if (
+            thread &&
+            (thread.projectId !== receipt.native!.projectId ||
+              thread.worktreePath !== null ||
+              thread.deletedAt !== null)
+          )
+            throw new T3HandoffError(
+              "T3_THREAD_CHANGED",
+              "The recorded T3 thread is missing or no longer uses the exact parent checkout.",
+            );
+          if (
+            !thread &&
+            existing?.native?.phase !== undefined &&
+            existing.native.phase !== "preparing"
+          )
+            throw new T3HandoffError(
+              "T3_DISPATCH_UNCERTAIN",
+              "The submitted thread is not visible; reconcile it before retrying.",
+            );
+          if (!thread) {
+            await post({
+              type: "thread.create",
+              commandId: `arashi-thread-${receipt.native!.threadId}`,
+              threadId: receipt.native!.threadId,
+              projectId: receipt.native!.projectId,
+              title: input.branch,
+              modelSelection: receipt.selection,
+              runtimeMode: input.request.permission,
+              interactionMode: "default",
+              branch: input.branch,
+              worktreePath: null,
+              createdAt: now,
+            });
+          }
+          receipt.thread = { id: receipt.native!.threadId, title: null };
+          await save();
+          if (existing?.native?.phase !== undefined && existing.native.phase !== "preparing") {
+            const detail = await request(`/api/orchestration/threads/${receipt.native!.threadId}`);
+            const messages = records(record(detail.thread).messages);
+            if (
+              !messages.some(
+                (message) => message.id === receipt.native!.messageId && message.role === "user",
+              )
+            )
+              throw new T3HandoffError(
+                "T3_DISPATCH_UNCERTAIN",
+                "No conclusive acceptance evidence for the saved task. Do not resubmit; reconcile this thread in T3.",
+              );
+          } else {
+            receipt.native!.phase = "submitting";
+            await save(); // Durable uncertainty marker precedes the only task submission.
+            await post({
+              type: "thread.turn.start",
+              commandId: `arashi-turn-${receipt.native!.messageId}`,
+              threadId: receipt.native!.threadId,
+              message: {
+                messageId: receipt.native!.messageId,
+                role: "user",
+                text: input.request.prompt,
+                attachments: [],
+              },
+              modelSelection: receipt.selection,
+              runtimeMode: input.request.permission,
+              interactionMode: "default",
+              createdAt: now,
+            });
+          }
+          receipt.native!.phase = "accepted";
+          receipt.status = "succeeded";
+          receipt.dispatch = { status: "succeeded" };
+          receipt.retry = {
             safe: false,
             guidance:
-              "Inspect T3 for a thread rooted at this workspace. If none exists, remove only the reported receipt (and its .lock peer if present) before retrying.",
-          },
-        } satisfies T3HandoffResult;
-        await saveOutcome(result);
-        throw new T3HandoffError(
-          result.error.code,
-          result.error.message,
-          { receiptPath, ...cleanupDetails },
-          result,
-        );
+              "The task was accepted. Manually select the reported project/thread in a connected T3 client; no host UI was opened.",
+          };
+          delete receipt.error;
+          await save();
+          return receipt;
+        },
+      );
+    } catch (error) {
+      if (error instanceof T3HandoffError && error.details.receiptWriteFailed) throw error;
+      const failure =
+        error instanceof T3HandoffError
+          ? error
+          : new T3HandoffError(
+              "T3_HANDOFF_FAILED",
+              "Native T3 handoff failed. Reconcile saved identifiers before retrying.",
+            );
+      const safe = receipt.native!.phase === "preparing";
+      // A cleanup failure after proven acceptance does not erase success.
+      if (receipt.status !== "succeeded") {
+        receipt.status = safe ? "failed" : "indeterminate";
+        receipt.dispatch = { status: receipt.status };
+        receipt.retry = {
+          safe,
+          guidance: safe
+            ? "Fix the problem and reuse this workspace with the same intent; saved project/thread identifiers are reconciled before continuing."
+            : "Reconcile the recorded thread and message. A retry can confirm acceptance but will never resubmit an uncertain task.",
+        };
+        receipt.error = { code: failure.code, message: failure.message };
+        await save();
       }
-      await saveOutcome(success);
-      if (promptCleanupFailed) {
-        throw new T3HandoffError(
-          "T3_PROMPT_CLEANUP_FAILED",
-          `T3 dispatch succeeded, but the private prompt directory could not be removed: ${temporaryDirectory}`,
-          { receiptPath, ...cleanupDetails },
-          success,
-        );
-      }
-      return success;
+      throw new T3HandoffError(
+        failure.code,
+        failure.message,
+        { ...failure.details, receiptPath },
+        receipt,
+      );
     }
-
-    const bridgeError =
-      processResult.exitCode === -1
-        ? { code: "T3_BRIDGE_START_FAILED", message: "Unable to start t3code handoff.", safe: true }
-        : parseBridgeError(processResult.stderr);
-    const status: T3HandoffStatus = bridgeError.safe ? "failed" : "indeterminate";
-    const result: T3HandoffResult = {
-      ...emptyResult({ ...base, status }),
-      error: { code: bridgeError.code, message: bridgeError.message },
-      retry: {
-        safe: bridgeError.safe,
-        guidance: bridgeError.safe
-          ? "Fix the reported problem, then rerun create with --conflict REUSE_EXISTING and the same T3 prompt."
-          : "Inspect T3 for a thread rooted at this workspace. If none exists, remove only the reported receipt (and its .lock peer if present) before retrying.",
-      },
-    };
-    await saveOutcome(result);
-    throw new T3HandoffError(
-      bridgeError.code,
-      bridgeError.message,
-      { receiptPath, status, ...cleanupDetails },
-      result,
-    );
   };
   let outcome: T3HandoffResult | undefined;
   let failure: unknown;
