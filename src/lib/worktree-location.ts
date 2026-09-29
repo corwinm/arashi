@@ -45,6 +45,9 @@ export function normalizeWorktreesDirWithDefault(worktreesDir?: string): string 
 }
 
 export function resolveWorktreesBasePath(workspaceRoot: string, worktreesDir?: string): string {
+  if (worktreesDir !== undefined && isAbsolute(worktreesDir.trim())) {
+    return resolve(worktreesDir.trim());
+  }
   return resolve(workspaceRoot, normalizeWorktreesDirWithDefault(worktreesDir));
 }
 

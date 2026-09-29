@@ -5,13 +5,14 @@ import {
   ConfigParseError,
   CURRENT_CONFIG_VERSION,
   findWorkspaceRoot,
-  loadConfig,
+  loadConfigWithFallback,
 } from "./config.ts";
 import type { Config, WorkspaceRepository, WorkspaceRepositoryRoots } from "./config.ts";
 import { exec } from "./git.ts";
 import { createJsonErrorEnvelope, writeJsonEnvelope } from "./json-output.ts";
 import { error as logError } from "./logger.ts";
 import { DEFAULT_WORKTREES_DIR } from "./worktree-location.ts";
+import { resolveEffectivePersonalConfig, type EffectivePersonalConfig } from "./user-config.ts";
 
 export { ConfigParseError } from "./config.ts";
 
@@ -22,11 +23,13 @@ interface WorkspaceContextBase {
 
 export interface ConfiguredWorkspaceContext extends WorkspaceContextBase {
   config: Config;
+  effective?: EffectivePersonalConfig;
   mode: "configured";
 }
 
 export interface StandaloneWorkspaceContext extends WorkspaceContextBase {
   config: Config;
+  effective?: EffectivePersonalConfig;
   mainRoot: string;
   mode: "standalone";
   repository: WorkspaceRepository;
@@ -60,9 +63,12 @@ export const workspaceJsonMetadata = (
       : resolve(context.workspaceRoot, context.config.reposDir),
   workspaceRoot: context.workspaceRoot,
   worktreesBase:
-    context.mode === "standalone"
-      ? resolve(context.mainRoot, ".worktrees")
-      : resolve(context.workspaceRoot, context.config.worktreesDir ?? DEFAULT_WORKTREES_DIR),
+    context.effective?.worktreesBase ??
+    resolve(
+      context.mode === "standalone" ? context.mainRoot : context.workspaceRoot,
+      context.config.worktreesDir ??
+        (context.mode === "standalone" ? ".worktrees" : DEFAULT_WORKTREES_DIR),
+    ),
 });
 
 const standaloneConfig = (): Config => ({
@@ -75,8 +81,18 @@ const standaloneConfig = (): Config => ({
 async function discoverConfigured(startPath: string): Promise<ConfiguredWorkspaceContext | null> {
   try {
     const workspaceRoot = await findWorkspaceRoot(startPath);
+    const loaded = await loadConfigWithFallback(workspaceRoot);
+    const mainRoot = (await resolveGitMainWorktree(workspaceRoot)) ?? workspaceRoot;
+    const effective = await resolveEffectivePersonalConfig({
+      builtInWorktreesDir: DEFAULT_WORKTREES_DIR,
+      mainRoot,
+      workspaceConfig: loaded.config,
+      workspaceConfigPath: loaded.configPath,
+      workspaceWorktreesDirAuthored: loaded.authoredWorktreesDir === true,
+    });
     return {
-      config: await loadConfig(workspaceRoot),
+      config: effective.config,
+      effective,
       invocationPath: startPath,
       mode: "configured",
       workspaceRoot,
@@ -90,6 +106,18 @@ async function discoverConfigured(startPath: string): Promise<ConfiguredWorkspac
 async function isDirectory(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function hasLinkedWorktrees(mainRoot: string): Promise<boolean> {
+  try {
+    const listing = await exec(
+      ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
+      mainRoot,
+    );
+    return listing.stdout.split(/\r?\n/).filter((line) => line.startsWith("worktree ")).length > 1;
   } catch {
     return false;
   }
@@ -175,7 +203,14 @@ export async function resolveWorkspaceContext(
   const mainConfigured = await discoverConfigured(mainRoot);
   if (mainConfigured) return { ...mainConfigured, invocationPath: absoluteInvocationPath };
 
-  if (!(await isDirectory(resolve(mainRoot, ".worktrees")))) {
+  const effective = await resolveEffectivePersonalConfig({
+    builtInWorktreesDir: ".worktrees",
+    mainRoot,
+    workspaceConfig: standaloneConfig(),
+    workspaceConfigPath: null,
+    workspaceWorktreesDirAuthored: false,
+  });
+  if (!(await isDirectory(effective.worktreesBase)) && !(await hasLinkedWorktrees(mainRoot))) {
     return {
       invocationPath: absoluteInvocationPath,
       mode: "unavailable",
@@ -184,7 +219,8 @@ export async function resolveWorkspaceContext(
   }
 
   return {
-    config: standaloneConfig(),
+    config: effective.config,
+    effective,
     invocationPath: absoluteInvocationPath,
     mainRoot,
     mode: "standalone",

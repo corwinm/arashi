@@ -19,6 +19,8 @@ const expectedPaths = [
   "clone",
   "completion",
   "completion __query",
+  "config",
+  "config effective",
   "configure",
   "create",
   "delete",
@@ -988,9 +990,9 @@ describe("CLI command contract", () => {
     );
     const options = contract.commands.flatMap((command) => command.options);
 
-    expect(contract.commands).toHaveLength(29);
-    expect(options).toHaveLength(160);
-    expect(new Set(options.map((option) => option.long))).toHaveLength(66);
+    expect(contract.commands).toHaveLength(31);
+    expect(options).toHaveLength(168);
+    expect(new Set(options.map((option) => option.long))).toHaveLength(70);
     expect(options.every((option) => option.semanticPolicyOwner.length > 0)).toBe(true);
     expect(
       contract.commands

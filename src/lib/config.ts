@@ -256,6 +256,8 @@ export interface LoadedConfig {
   config: Config;
   source: ConfigSourceType;
   configPath: string;
+  /** Whether the source document explicitly authored worktreesDir (or its legacy alias). */
+  authoredWorktreesDir?: boolean;
 }
 
 export interface DeprecatedSwitchLaunchModeDiagnostic {
@@ -1612,6 +1614,11 @@ const parseAndValidateConfig = (text: string, configPath: string): Config => {
   return normalized.config;
 };
 
+const hasAuthoredWorktreesDir = (text: string): boolean => {
+  const value = JSON.parse(text) as unknown;
+  return isRecord(value) && ("worktreesDir" in value || "worktrees_dir" in value);
+};
+
 /**
  * Load configuration from local filesystem first, then optionally from tracked
  * repository content in the default branch.
@@ -1625,10 +1632,13 @@ export const loadConfigWithFallback = async (
   const localPath = getConfigPath(workspaceRoot);
 
   try {
+    const config = await loadConfig(workspaceRoot);
+    const localText = await runtime.file(localPath).text();
     return {
-      config: await loadConfig(workspaceRoot),
+      config,
       configPath: localPath,
       source: "local-file",
+      authoredWorktreesDir: hasAuthoredWorktreesDir(localText),
     };
   } catch (error) {
     if (!(error instanceof ConfigNotFoundError) || !options.bareRepoPath) {
@@ -1649,6 +1659,7 @@ export const loadConfigWithFallback = async (
       config: parseAndValidateConfig(text, `${barePath}:${repoConfigPath}`),
       configPath: `${barePath}:${repoConfigPath}`,
       source: "repository-content",
+      authoredWorktreesDir: hasAuthoredWorktreesDir(text),
     };
   } catch (error) {
     if (error instanceof ConfigError) {

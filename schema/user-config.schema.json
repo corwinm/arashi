@@ -1,0 +1,153 @@
+{
+  "$ref": "#/definitions/UserConfig",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "CommandDefaultsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "$ref": "#/definitions/CreateCommandDefaults"
+        },
+        "editors": {
+          "$ref": "#/definitions/EditorDefaultsConfig"
+        },
+        "switch": {
+          "$ref": "#/definitions/SwitchCommandDefaults"
+        }
+      },
+      "type": "object"
+    },
+    "ConfigVersion": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "CreateCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "launch": {
+          "$ref": "#/definitions/CreateLaunchMode",
+          "description": "Post-create launch choice; omitted preserves built-in no-launch behavior"
+        },
+        "switch": {
+          "description": "Default to switching to the new worktree after create",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CreateLaunchMode": {
+      "enum": ["none", "auto", "sesh", "herdr"],
+      "type": "string"
+    },
+    "EditorCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "$ref": "#/definitions/EditorCreateCommandDefaults",
+          "description": "Editor-scoped create defaults"
+        }
+      },
+      "type": "object"
+    },
+    "EditorCreateCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "launch": {
+          "$ref": "#/definitions/CreateLaunchMode",
+          "description": "Post-create launch choice; omitted preserves built-in no-launch behavior"
+        },
+        "switch": {
+          "description": "Default to switching to the new worktree after create",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "EditorDefaultsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "$ref": "#/definitions/EditorCommandDefaults"
+        },
+        "kiro": {
+          "$ref": "#/definitions/EditorCommandDefaults"
+        },
+        "vscode": {
+          "$ref": "#/definitions/EditorCommandDefaults"
+        }
+      },
+      "type": "object"
+    },
+    "SwitchCommandDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/definitions/SwitchMode",
+          "description": "Preferred switch behavior and launcher when running switch"
+        }
+      },
+      "type": "object"
+    },
+    "SwitchMode": {
+      "enum": ["auto", "cd", "launch", "sesh", "herdr"],
+      "type": "string"
+    },
+    "UserConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "$schema": {
+          "description": "JSON Schema URL for editor validation/autocomplete",
+          "type": "string"
+        },
+        "defaults": {
+          "$ref": "#/definitions/CommandDefaultsConfig",
+          "description": "Personal command and editor defaults"
+        },
+        "version": {
+          "$ref": "#/definitions/ConfigVersion",
+          "description": "User configuration schema version"
+        },
+        "worktreeNaming": {
+          "$ref": "#/definitions/WorktreeNamingConfig",
+          "description": "Personal fallback worktree naming policy"
+        },
+        "worktreesDir": {
+          "description": "Personal fallback worktree directory; absolute paths are repository-qualified",
+          "type": "string"
+        }
+      },
+      "required": ["version"],
+      "type": "object"
+    },
+    "WorktreeNamingBranchSlashes": {
+      "enum": ["preserve", "flatten"],
+      "type": "string"
+    },
+    "WorktreeNamingConfig": {
+      "additionalProperties": false,
+      "description": "Filesystem naming policy for configured create destinations.",
+      "properties": {
+        "branchSlashes": {
+          "$ref": "#/definitions/WorktreeNamingBranchSlashes",
+          "description": "Preserve branch slash hierarchy or flatten slashes to hyphens"
+        },
+        "maxPathLength": {
+          "description": "Maximum UTF-16 code units for each absolute newly planned configured-worktree destination",
+          "maximum": 2147483647,
+          "minimum": 1,
+          "multipleOf": 1,
+          "type": "number"
+        },
+        "style": {
+          "$ref": "#/definitions/WorktreeNamingStyle",
+          "description": "Repository-shape-aware default, branch-only, or repository-prefixed naming"
+        }
+      },
+      "type": "object"
+    },
+    "WorktreeNamingStyle": {
+      "enum": ["default", "branch", "repo-branch"],
+      "type": "string"
+    }
+  }
+}

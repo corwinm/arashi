@@ -25,7 +25,7 @@ import {
   calculateWorktreePathPlan,
   createCoordinatedWorktrees,
 } from "../core/worktree.ts";
-import { basename, dirname, isAbsolute, join, resolve } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { existsSync, lstatSync } from "node:fs";
 import { lstat, mkdtemp, realpath, rm, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -71,6 +71,7 @@ import {
 } from "../lib/managed-ignore.ts";
 import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
 import { resolveWorkspaceContext, workspaceJsonMetadata } from "../lib/workspace-context.ts";
+import { resolveEffectivePersonalConfig } from "../lib/user-config.ts";
 import { releaseHookInterruptGuards, resolveHookInputMode } from "../lib/hooks.ts";
 import { formatCreateHookSummary } from "../lib/create-hook-output.ts";
 import {
@@ -1655,7 +1656,19 @@ export async function executeCreate(
     throw loadError;
   });
 
-  const arashiConfig = loadedConfig.config;
+  // Workspace context applies user fallbacks without mutating or reserializing the
+  // authored workspace document loaded above.
+  const effectivePersonalConfig = await resolveEffectivePersonalConfig({
+    builtInWorktreesDir: DEFAULT_WORKTREES_DIR,
+    mainRoot:
+      deps.resolveCreateInvocationContext === undefined && workspaceContext.mode === "configured"
+        ? (workspaceContext.effective?.mainRoot ?? context.workspaceRoot)
+        : context.workspaceRoot,
+    workspaceConfig: loadedConfig.config,
+    workspaceConfigPath: loadedConfig.configPath,
+    workspaceWorktreesDirAuthored: loadedConfig.authoredWorktreesDir === true,
+  });
+  const arashiConfig = effectivePersonalConfig.config;
 
   // 2. Discover repositories (child repos in reposDir)
   // Convert reposDir to absolute path since it may be relative (e.g., "./repos")
@@ -2061,11 +2074,22 @@ export async function executeCreate(
       : context.executionPath;
   let managedIgnore: ManagedIgnoreReconciliation;
   try {
+    const worktreesRelativeToMain = relative(
+      effectivePersonalConfig.mainRoot,
+      effectivePersonalConfig.worktreesBase,
+    );
+    const managedWorktreesDir =
+      worktreesRelativeToMain !== "" &&
+      worktreesRelativeToMain !== ".." &&
+      !worktreesRelativeToMain.startsWith(`..${sep}`) &&
+      !isAbsolute(worktreesRelativeToMain)
+        ? worktreesRelativeToMain
+        : effectivePersonalConfig.worktreesBase;
     managedIgnore = await reconcileIgnore({
       dryRun: options.dryRun,
       reposDir: arashiConfig.reposDir,
       workspaceRoot: managedIgnoreWorkspaceRoot,
-      worktreesDir: arashiConfig.worktreesDir ?? DEFAULT_WORKTREES_DIR,
+      worktreesDir: managedWorktreesDir,
     });
     if (
       temporaryIgnoreWorkspace &&
