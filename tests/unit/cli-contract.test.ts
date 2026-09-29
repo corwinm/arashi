@@ -332,7 +332,7 @@ describe("CLI command contract", () => {
     );
 
     expect(worktreesOption?.description).toBe(
-      "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
+      "Shared repo worktree base (otherwise user default, then .. for bare repositories or .arashi/worktrees)",
     );
   });
 
