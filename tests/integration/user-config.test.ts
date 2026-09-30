@@ -298,6 +298,17 @@ describe("user configuration integration", () => {
     const created = await arashi(root, ["create", "linked-workspace", "--json"], home);
     expect(created.exitCode, created.stdout + created.stderr).toBe(0);
     const linked = JSON.parse(created.stdout).data.repositories[0].worktreePath;
+    const inspected = await arashi(
+      linked,
+      ["config", "effective", "--worktrees-dir", ".cli-trees", "--json"],
+      home,
+    );
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const override = JSON.parse(inspected.stdout).data.settings.worktreesDir;
+    expect(override.source).toBe("cli");
+    expect(join(await realpath(dirname(override.value)), basename(override.value))).toBe(
+      join(await realpath(linked), ".cli-trees"),
+    );
     const expectedBase = join(linked, ".project-trees");
     const inspection = await arashi(linked, ["config", "effective", "--json"], home);
     expect(JSON.parse(inspection.stdout).data.settings.worktreesDir).toEqual({
@@ -637,6 +648,9 @@ describe("user configuration integration", () => {
     await writeFile(join(linked, ".gitignore"), linkedIgnore);
     const nested = await arashi(linked, ["create", "personal-after-linked", "--json"], home);
     expect(nested.exitCode, nested.stdout + nested.stderr).toBe(0);
+    expect(await realpath(JSON.parse(nested.stdout).data.managedIgnore.targetPath)).toBe(
+      await realpath(join(root, ".gitignore")),
+    );
     expect(
       (await run(root, ["git", "check-ignore", "--no-index", "-q", "--", ".personal-trees/probe"]))
         .exitCode,

@@ -1016,13 +1016,22 @@ export const reconcileRepositoryManagedIgnore = async (
   }
 };
 
+const hasRuleChanges = (item: ManagedIgnoreReconciliation) =>
+  item.appliedRules.length > 0 || item.plannedRules.length > 0 || item.staleRules.length > 0;
+
 /** Combine scoped changes, retaining the earliest snapshot of shared files. */
 export const combineManagedIgnoreReconciliations = (
   first: ManagedIgnoreReconciliation,
   second: ManagedIgnoreReconciliation,
 ): ManagedIgnoreReconciliation => {
+  // A no-op on the active checkout must not hide a primary-checkout write.
+  // Planned rules also select the correct target for dry-run reporting.
+  let target = first;
+  if (!hasRuleChanges(first) && hasRuleChanges(second)) target = second;
   const result: ManagedIgnoreReconciliation = {
     ...first,
+    targetPath: target.targetPath,
+    targetType: target.targetType,
     paths: [...first.paths, ...second.paths],
     staleRules: [...first.staleRules, ...second.staleRules],
     warnings: [...first.warnings, ...second.warnings],

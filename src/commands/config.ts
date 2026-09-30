@@ -96,6 +96,7 @@ const effectiveWithoutBootstrap = async (): Promise<{
 const applyCliInspectionOverrides = (
   effective: EffectivePersonalConfig,
   options: EffectiveOptions,
+  workspaceRoot: string,
 ): EffectivePersonalConfig => {
   const config = structuredClone(effective.config);
   const sources = { ...effective.sources };
@@ -121,7 +122,7 @@ const applyCliInspectionOverrides = (
   if (options.worktreesDir !== undefined) {
     worktreesBase = isAbsolute(options.worktreesDir)
       ? resolve(options.worktreesDir)
-      : resolve(effective.mainRoot, options.worktreesDir);
+      : resolve(workspaceRoot, options.worktreesDir);
     config.worktreesDir = worktreesBase;
     sources.worktreesDir = "cli";
   }
@@ -155,7 +156,11 @@ const createEffectiveCommand = (): Command =>
     .action(async (options: EffectiveOptions) => {
       try {
         const resolved = await effectiveWithoutBootstrap();
-        const effective = applyCliInspectionOverrides(resolved.effective, options);
+        const effective = applyCliInspectionOverrides(
+          resolved.effective,
+          options,
+          resolved.context.workspaceRoot,
+        );
         const data = {
           files: effective.files,
           mode: resolved.context.mode,
