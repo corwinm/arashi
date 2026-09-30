@@ -817,6 +817,15 @@ export const commandSemantics: CommandSemantics = {
     standalone: notApplicable("The query degrades silently when workspace state is unavailable."),
     vscode: excluded("The internal native-shell protocol is outside VS Code extension scope."),
   },
+  config: {
+    ...standard(unsupported("The config group delegates output to its subcommands."), standalone()),
+    vscode: excluded("Effective configuration inspection is a terminal-owned workflow."),
+  },
+  "config effective": {
+    ...standard({ support: "full" }, standalone()),
+    docs: excluded("This subcommand is documented on the parent config command page."),
+    vscode: excluded("Effective configuration inspection is a terminal-owned workflow."),
+  },
   configure: {
     ...standard(
       { support: "full" },
@@ -2029,6 +2038,8 @@ const completionArgumentKinds: Record<string, CompletionCandidateKind> = {
 };
 
 const completionOptionKinds: Record<string, CompletionCandidateKind> = {
+  "config effective:--create-launch": "choice",
+  "config effective:--switch-mode": "choice",
   "create:--conflict": "choice",
   "create:--permission": "choice",
   "move:--from": "workspace",

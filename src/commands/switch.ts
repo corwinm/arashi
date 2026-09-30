@@ -384,7 +384,13 @@ export async function executeSwitch(
   const commandEnv = deps.env ?? process.env;
   const directiveContext = getDirectiveContext(commandEnv);
   const resolution = resolveSwitchResolution({
-    configMode: workspace.config?.defaults?.switch?.mode,
+    configMode:
+      (deps.loadWorkspaceRepositories === undefined &&
+      deps.findWorkspaceRoot === undefined &&
+      context.mode !== "unavailable" &&
+      context.effective?.sources["defaults.switch.mode"] !== "built-in"
+        ? context.config.defaults?.switch?.mode
+        : undefined) ?? workspace.config?.defaults?.switch?.mode,
     managedContextActive: detectManagedSwitchContext(commandEnv) !== null,
     options,
     shellIntegrationActive: directiveContext !== null,

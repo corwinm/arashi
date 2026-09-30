@@ -326,7 +326,7 @@ describe("existing config, force, and preference authority", () => {
 
   test.each([
     ["configured", "legacy-location"],
-    ["legacy omission", ".arashi/worktrees"],
+    ["legacy omission", ".."],
   ] as const)("preference-only init reports %s config authority", async (_label, expected) => {
     const fixture = await createBareFixture();
     const config = {
@@ -626,7 +626,7 @@ describe("init output and persisted create placement", () => {
       command: "init",
       data: {
         preferenceOnly: true,
-        worktreesDir: configuredValue ?? ".arashi/worktrees",
+        worktreesDir: configuredValue ?? "..",
       },
       ok: true,
     });

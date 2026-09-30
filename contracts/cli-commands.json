@@ -523,6 +523,188 @@
       }
     },
     {
+      "path": "config",
+      "aliasPaths": [],
+      "description": "Inspect Arashi configuration",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "unsupported",
+          "reason": "The config group delegates output to its subcommands."
+        },
+        "docs": {
+          "expectation": "required"
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "standalone": {
+          "support": "full"
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Effective configuration inspection is a terminal-owned workflow."
+        }
+      }
+    },
+    {
+      "path": "config effective",
+      "aliasPaths": [],
+      "description": "Inspect effective personal settings and their provenance",
+      "aliases": [],
+      "hidden": false,
+      "arguments": [],
+      "options": [
+        {
+          "candidateKind": "choice",
+          "choices": ["auto", "herdr", "none", "sesh"],
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--create-launch <mode>",
+          "description": "Inspect with an explicit create launcher",
+          "hidden": false,
+          "long": "--create-launch",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--create-switch",
+          "description": "Inspect with create switching explicitly enabled",
+          "hidden": false,
+          "long": "--create-switch",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--no-create-switch",
+          "description": "Inspect with create switching explicitly disabled",
+          "hidden": false,
+          "long": "--no-create-switch",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "candidateKind": "choice",
+          "choices": ["auto", "cd", "herdr", "launch", "sesh"],
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--switch-mode <mode>",
+          "description": "Inspect with an explicit switch mode",
+          "hidden": false,
+          "long": "--switch-mode",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "--worktrees-dir <path>",
+          "description": "Inspect with an explicit worktree directory",
+          "hidden": false,
+          "long": "--worktrees-dir",
+          "required": true,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": null,
+          "valueShape": "required",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-h, --help",
+          "description": "display help for command",
+          "hidden": false,
+          "long": "--help",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-h",
+          "valueShape": "boolean",
+          "variadic": false
+        },
+        {
+          "conflicts": [],
+          "deprecated": false,
+          "flags": "-j, --json",
+          "description": "Output result as JSON",
+          "hidden": false,
+          "long": "--json",
+          "required": false,
+          "optional": false,
+          "repeatable": false,
+          "semanticPolicyOwner": "structural",
+          "short": "-j",
+          "valueShape": "boolean",
+          "variadic": false
+        }
+      ],
+      "semantics": {
+        "json": {
+          "support": "full"
+        },
+        "docs": {
+          "expectation": "excluded",
+          "reason": "This subcommand is documented on the parent config command page."
+        },
+        "skills": {
+          "expectation": "required"
+        },
+        "standalone": {
+          "support": "full"
+        },
+        "vscode": {
+          "expectation": "excluded",
+          "reason": "Effective configuration inspection is a terminal-owned workflow."
+        }
+      }
+    },
+    {
       "path": "configure",
       "aliasPaths": [],
       "description": "Inspect or interactively edit supported workspace configuration",
@@ -2122,7 +2304,7 @@
           "conflicts": [],
           "deprecated": false,
           "flags": "--worktrees-dir <path>",
-          "description": "Custom worktree base (default: .. for bare repositories; .arashi/worktrees otherwise)",
+          "description": "Shared repo worktree base (otherwise user default, then .. for bare repositories or .arashi/worktrees)",
           "hidden": false,
           "long": "--worktrees-dir",
           "required": true,

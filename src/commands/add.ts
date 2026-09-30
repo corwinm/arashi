@@ -16,6 +16,7 @@ import {
   configExists,
   getConfigPath,
   loadConfig,
+  loadConfigForUpdate,
   saveConfig,
   serializeConfig,
 } from "../lib/config.ts";
@@ -44,7 +45,7 @@ import {
   inspectRepositoryManagedIgnore,
   type ManagedIgnoreReconciliation,
 } from "../lib/managed-ignore.ts";
-import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
+import { personalManagedIgnoreOptions } from "../lib/personal-managed-ignore.ts";
 import {
   createJsonErrorEnvelope,
   createJsonSuccessEnvelope,
@@ -715,7 +716,7 @@ export const executeAdd = async (
     const configSnapshot = await withConfigLock(
       configPath,
       async () => {
-        const loadedConfig = await loadConfig(workspaceRoot);
+        const loadedConfig = await loadConfigForUpdate(workspaceRoot);
         const bytesAfterLoad = await readFile(configPath);
         await afterConfigLoad?.();
         const bytesAfterHook = await readFile(configPath);
@@ -799,11 +800,9 @@ export const executeAdd = async (
     }
 
     if (coordinated) {
-      const inspection = await inspectRepositoryManagedIgnore({
-        reposDir: config.reposDir,
-        workspaceRoot,
-        worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-      });
+      const inspection = await inspectRepositoryManagedIgnore(
+        await personalManagedIgnoreOptions(workspaceRoot, config),
+      );
       if (
         inspection.scope === "tracked" &&
         !(await inspectEffectiveIgnore(canonicalRoot, configuredRepositoryPath))
@@ -817,11 +816,9 @@ export const executeAdd = async (
       }
     }
 
-    managedIgnore = await reconcileRepositoryManagedIgnore({
-      reposDir: config.reposDir,
-      workspaceRoot,
-      worktreesDir: config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-    });
+    managedIgnore = await reconcileRepositoryManagedIgnore(
+      await personalManagedIgnoreOptions(workspaceRoot, config),
+    );
     if (coordinated && managedIgnore.scope !== "none") {
       const canonicalCovered = await inspectEffectiveIgnore(
         canonicalRoot,

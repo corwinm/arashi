@@ -50,6 +50,7 @@ import resolveUnaliasedPhysicalPath from "../lib/physical-path.ts";
 import {
   ConfiguredWorkspaceRequiredError,
   resolveWorkspaceContext,
+  workspaceJsonMetadata,
 } from "../lib/workspace-context.ts";
 
 export interface DeleteCommandOptions {
@@ -1534,10 +1535,18 @@ export const executeDelete = async (
   let snapshot: ConfigureSnapshot;
   let existingReceipt: ValidatedDeleteReceipt | null = null;
   let earlyWorkspace: DeleteOrchestrationContext["workspace"] | null = null;
+  let reportedWorktreesBase = "";
   try {
     const context = await resolveWorkspaceContext();
     if (context.mode === "standalone") throw new ConfiguredWorkspaceRequiredError("delete");
     snapshot = await loadConfigureSnapshot();
+    reportedWorktreesBase =
+      context.mode === "configured"
+        ? workspaceJsonMetadata(context).worktreesBase
+        : resolve(
+            snapshot.executionRoot ?? snapshot.workspaceRoot,
+            snapshot.config.worktreesDir ?? ".arashi/worktrees",
+          );
     earlyWorkspace = {
       mode: "configured",
       repositoriesBase: resolve(
@@ -1545,10 +1554,7 @@ export const executeDelete = async (
         snapshot.config.reposDir,
       ),
       workspaceRoot: snapshot.workspaceRoot,
-      worktreesBase: resolve(
-        snapshot.executionRoot ?? snapshot.workspaceRoot,
-        snapshot.config.worktreesDir ?? ".arashi/worktrees",
-      ),
+      worktreesBase: reportedWorktreesBase,
     };
     if (repository !== undefined)
       existingReceipt = await probeDeleteReceipt(repository, snapshot.workspaceRoot);
@@ -1608,10 +1614,7 @@ export const executeDelete = async (
             snapshot.config.reposDir,
           ),
           workspaceRoot: snapshot.workspaceRoot,
-          worktreesBase: resolve(
-            snapshot.executionRoot ?? snapshot.workspaceRoot,
-            snapshot.config.worktreesDir ?? ".arashi/worktrees",
-          ),
+          worktreesBase: reportedWorktreesBase,
         },
       },
       repository,
@@ -2028,10 +2031,7 @@ export const executeDelete = async (
                 snapshot.config.reposDir,
               ),
               workspaceRoot: snapshot.workspaceRoot,
-              worktreesBase: resolve(
-                snapshot.executionRoot ?? snapshot.workspaceRoot,
-                snapshot.config.worktreesDir ?? ".arashi/worktrees",
-              ),
+              worktreesBase: reportedWorktreesBase,
             },
             repositoryKey: repository ?? null,
             dryRun: options.dryRun === true,
@@ -2054,10 +2054,7 @@ export const executeDelete = async (
       snapshot.config.reposDir,
     ),
     workspaceRoot: snapshot.workspaceRoot,
-    worktreesBase: resolve(
-      snapshot.executionRoot ?? snapshot.workspaceRoot,
-      snapshot.config.worktreesDir ?? ".arashi/worktrees",
-    ),
+    worktreesBase: reportedWorktreesBase,
   };
   const data = first
     ? {

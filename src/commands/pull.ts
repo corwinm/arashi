@@ -34,7 +34,7 @@ import {
 import { info } from "../lib/logger.ts";
 import { runPullWithRollback } from "../lib/pull-runner.ts";
 import { reconcileRepositoryManagedIgnore } from "../lib/managed-ignore.ts";
-import { DEFAULT_WORKTREES_DIR } from "../lib/worktree-location.ts";
+import { personalManagedIgnoreOptions } from "../lib/personal-managed-ignore.ts";
 import { fileExists } from "../lib/filesystem.ts";
 import { exec } from "../lib/git.ts";
 import { executeIndependentPulls, independentPullPaths } from "../lib/pull-concurrency.ts";
@@ -164,11 +164,12 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
   }
   let managedIgnore;
   if (!selectedParent) {
-    managedIgnore = await reconcileRepositoryManagedIgnore({
-      reposDir: repositoriesResult.config.reposDir,
-      workspaceRoot,
-      worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-    });
+    managedIgnore = await reconcileRepositoryManagedIgnore(
+      await personalManagedIgnoreOptions(
+        workspaceRoots.configurationRoot,
+        repositoriesResult.config,
+      ),
+    );
     if (!options.json) {
       for (const warning of managedIgnore.warnings) {
         info(`Warning: ${warning}`);
@@ -373,11 +374,12 @@ const executePull = async (options: PullCommandOptions): Promise<PullSummary> =>
         }
       }
       try {
-        managedIgnore = await reconcileRepositoryManagedIgnore({
-          reposDir: repositoriesResult.config.reposDir,
-          workspaceRoot,
-          worktreesDir: repositoriesResult.config.worktreesDir ?? DEFAULT_WORKTREES_DIR,
-        });
+        managedIgnore = await reconcileRepositoryManagedIgnore(
+          await personalManagedIgnoreOptions(
+            workspaceRoots.configurationRoot,
+            repositoriesResult.config,
+          ),
+        );
         if (!options.json) {
           for (const warning of managedIgnore.warnings) {
             info(`Warning: ${warning}`);

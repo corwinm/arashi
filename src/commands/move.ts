@@ -20,11 +20,15 @@ import {
   unsupportedJsonModeError,
   writeJsonEnvelope,
 } from "../lib/json-output.ts";
-import { resolveWorkspaceContext, requireAvailableWorkspace } from "../lib/workspace-context.ts";
+import {
+  resolveWorkspaceContext,
+  requireAvailableWorkspace,
+  workspaceJsonMetadata,
+} from "../lib/workspace-context.ts";
 import { info, error as logError, success, warn } from "../lib/logger.ts";
 import { Command } from "commander";
 import { select as promptSelect } from "../lib/prompts.ts";
-import { join, resolve } from "path";
+import { resolve } from "path";
 
 interface MoveCommandOptions {
   from?: string;
@@ -208,7 +212,7 @@ export async function executeMove(
           mode: "standalone" as const,
           repositoryPath: context.mainRoot,
           workspaceRoot: context.mainRoot,
-          worktreesBase: join(context.mainRoot, ".worktrees"),
+          worktreesBase: workspaceJsonMetadata(context).worktreesBase,
         }
       : { ...summary, mode: "configured" as const, workspaceRoot };
 

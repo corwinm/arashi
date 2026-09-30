@@ -256,6 +256,8 @@ export interface LoadedConfig {
   config: Config;
   source: ConfigSourceType;
   configPath: string;
+  /** Whether the source document explicitly authored worktreesDir (or its legacy alias). */
+  authoredWorktreesDir?: boolean;
 }
 
 export interface DeprecatedSwitchLaunchModeDiagnostic {
@@ -1593,7 +1595,11 @@ export const loadConfig = async (repoPath: string): Promise<Config> => {
   emitConfigDiagnostics(configPath, normalized.diagnostics);
 
   if (normalized.migratedFromVersion && normalized.diagnostics.length === ZERO) {
-    await saveConfig(repoPath, normalized.config);
+    const persisted = { ...normalized.config };
+    if (isRecord(data) && !("worktreesDir" in data) && !("worktrees_dir" in data)) {
+      delete persisted.worktreesDir;
+    }
+    await saveConfig(repoPath, persisted);
   }
 
   return normalized.config;
@@ -1612,6 +1618,11 @@ const parseAndValidateConfig = (text: string, configPath: string): Config => {
   return normalized.config;
 };
 
+const hasAuthoredWorktreesDir = (text: string): boolean => {
+  const value = JSON.parse(text) as unknown;
+  return isRecord(value) && ("worktreesDir" in value || "worktrees_dir" in value);
+};
+
 /**
  * Load configuration from local filesystem first, then optionally from tracked
  * repository content in the default branch.
@@ -1625,10 +1636,15 @@ export const loadConfigWithFallback = async (
   const localPath = getConfigPath(workspaceRoot);
 
   try {
+    if (!(await configExists(workspaceRoot))) throw new ConfigNotFoundError(localPath);
+    const localText = await runtime.file(localPath).text();
+    // Preserve original field authorship before the migration-capable loader rewrites the file.
+    const config = await loadConfig(workspaceRoot);
     return {
-      config: await loadConfig(workspaceRoot),
+      config,
       configPath: localPath,
       source: "local-file",
+      authoredWorktreesDir: hasAuthoredWorktreesDir(localText),
     };
   } catch (error) {
     if (!(error instanceof ConfigNotFoundError) || !options.bareRepoPath) {
@@ -1649,6 +1665,7 @@ export const loadConfigWithFallback = async (
       config: parseAndValidateConfig(text, `${barePath}:${repoConfigPath}`),
       configPath: `${barePath}:${repoConfigPath}`,
       source: "repository-content",
+      authoredWorktreesDir: hasAuthoredWorktreesDir(text),
     };
   } catch (error) {
     if (error instanceof ConfigError) {
@@ -1792,6 +1809,13 @@ export const saveConfig = async (repoPath: string, config: Config): Promise<void
   }
 };
 
+/** Load editable workspace state without persisting normalization-only defaults. */
+export const loadConfigForUpdate = async (repoPath: string): Promise<Config> => {
+  const loaded = await loadConfigWithFallback(repoPath);
+  if (!loaded.authoredWorktreesDir) delete loaded.config.worktreesDir;
+  return loaded.config;
+};
+
 /**
  * Add a repository to the configuration
  *
@@ -1813,7 +1837,7 @@ export const addRepo = async (
   name: string,
   repoConfig: RepoConfig,
 ): Promise<void> => {
-  const config = await loadConfig(repoPath);
+  const config = await loadConfigForUpdate(repoPath);
 
   // Check if repository name already exists
   if (config.repos[name] !== undefined) {
@@ -1843,7 +1867,7 @@ export const addRepo = async (
  * ```
  */
 export const removeRepo = async (repoPath: string, name: string): Promise<void> => {
-  const config = await loadConfig(repoPath);
+  const config = await loadConfigForUpdate(repoPath);
 
   // Remove repository (idempotent - no error if doesn't exist)
   delete config.repos[name];
@@ -1859,13 +1883,13 @@ export const removeRepo = async (repoPath: string, name: string): Promise<void> 
  */
 export const loadWorkspaceRepositories = async (
   workspaceRoots: string | WorkspaceRepositoryRoots,
-  options: { allowUnavailableMaterializationSource?: boolean } = {},
+  options: { allowUnavailableMaterializationSource?: boolean; config?: Config } = {},
 ): Promise<{ config: Config; repositories: WorkspaceRepository[] }> => {
   const { configurationRoot, executionRoot } =
     typeof workspaceRoots === "string"
       ? { configurationRoot: workspaceRoots, executionRoot: workspaceRoots }
       : workspaceRoots;
-  const config = await loadConfig(configurationRoot);
+  const config = options.config ?? (await loadConfigForUpdate(configurationRoot));
   const repositories: WorkspaceRepository[] = [];
   const mainName = basename(configurationRoot);
 

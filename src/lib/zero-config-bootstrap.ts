@@ -1,12 +1,11 @@
 import { access, lstat, mkdir, readFile, rmdir, unlink, writeFile } from "fs/promises";
-import { dirname, isAbsolute, join, resolve } from "path";
-import { configExists } from "./config.ts";
+import { dirname, isAbsolute, resolve } from "path";
+import { configExists, CURRENT_CONFIG_VERSION } from "./config.ts";
 import { exec } from "./git.ts";
 import { parseGitIgnoreVerbose } from "./git-ignore.ts";
 import { resolveGitMainWorktree } from "./workspace-context.ts";
-
-const RULE = ".worktrees/";
-const PROBE = ".worktrees/.arashi-ignore-probe";
+import { resolveEffectivePersonalConfig } from "./user-config.ts";
+import { standaloneIgnoreLayout } from "./worktree-location.ts";
 
 export interface ZeroConfigBootstrapResult {
   attempted: { localExclude: boolean; worktreesDirectory: boolean };
@@ -17,7 +16,7 @@ export interface ZeroConfigBootstrapResult {
     changed: boolean;
     path: string;
     planned: boolean;
-    rule: typeof RULE;
+    rule: string;
     source?: string;
   };
   mode: "standalone";
@@ -99,11 +98,11 @@ async function localExcludePath(root: string): Promise<string> {
   return isAbsolute(path) ? path : resolve(root, path);
 }
 
-function appendRule(original: Buffer): Buffer {
+function appendRule(original: Buffer, rule: string): Buffer {
   const text = original.toString("utf8");
   const newline = text.includes("\r\n") ? "\r\n" : "\n";
   const boundary = text.length > 0 && !text.endsWith("\n") ? newline : "";
-  return Buffer.from(`${text}${boundary}${RULE}${newline}`);
+  return Buffer.from(`${text}${boundary}${rule}${newline}`);
 }
 
 export async function bootstrapZeroConfig(
@@ -135,11 +134,30 @@ export async function bootstrapZeroConfig(
     );
   }
 
-  const worktreesPath = join(mainRoot, ".worktrees");
+  const effective = await resolveEffectivePersonalConfig({
+    builtInWorktreesDir: ".worktrees",
+    mainRoot,
+    workspaceConfig: {
+      repos: {},
+      reposDir: "./repos",
+      version: CURRENT_CONFIG_VERSION,
+      worktreesDir: ".worktrees",
+    },
+    workspaceConfigPath: null,
+    workspaceWorktreesDirAuthored: false,
+  });
+  const worktreesPath = effective.worktreesBase;
+  const {
+    applicable: baseIsInsideRepository,
+    probe,
+    rule,
+  } = standaloneIgnoreLayout(mainRoot, worktreesPath);
   const excludePath = await localExcludePath(mainRoot);
   const directoryExists = await exists(worktreesPath);
-  const initialIgnore = await dependencies.effectiveIgnore(mainRoot, PROBE);
-  const needsRule = !initialIgnore.ignored;
+  const initialIgnore = baseIsInsideRepository
+    ? await dependencies.effectiveIgnore(mainRoot, probe)
+    : { ignored: true };
+  const needsRule = baseIsInsideRepository && !initialIgnore.ignored;
   const result: ZeroConfigBootstrapResult = {
     attempted: { localExclude: false, worktreesDirectory: false },
     changed: !options.dryRun && (!directoryExists || needsRule),
@@ -152,7 +170,7 @@ export async function bootstrapZeroConfig(
       changed: !options.dryRun && needsRule,
       path: excludePath,
       planned: needsRule,
-      rule: RULE,
+      rule,
       ...(initialIgnore.source ? { source: initialIgnore.source } : {}),
     },
     mode: "standalone",
@@ -170,13 +188,23 @@ export async function bootstrapZeroConfig(
 
   let originalExclude: Buffer | null = null;
   let excludeExisted = false;
-  let directoryCreated = false;
+  const createdDirectories: string[] = [];
   let excludeWritten = false;
   try {
     if (!directoryExists) {
       result.attempted.worktreesDirectory = true;
-      await dependencies.mkdir(worktreesPath);
-      directoryCreated = true;
+      const missing: string[] = [];
+      let ancestor = worktreesPath;
+      while (!(await exists(ancestor))) {
+        missing.push(ancestor);
+        const parent = dirname(ancestor);
+        if (parent === ancestor) break;
+        ancestor = parent;
+      }
+      for (const directory of missing.toReversed()) {
+        await dependencies.mkdir(directory);
+        createdDirectories.push(directory);
+      }
     }
     if (needsRule) {
       result.attempted.localExclude = true;
@@ -196,12 +224,12 @@ export async function bootstrapZeroConfig(
         originalExclude = Buffer.alloc(0);
       }
       await dependencies.mkdir(dirname(excludePath), { recursive: true });
-      await dependencies.writeFile(excludePath, appendRule(originalExclude));
+      await dependencies.writeFile(excludePath, appendRule(originalExclude, rule));
       excludeWritten = true;
-      const verified = await dependencies.effectiveIgnore(mainRoot, PROBE);
+      const verified = await dependencies.effectiveIgnore(mainRoot, probe);
       if (!verified.ignored) {
         throw new ZeroConfigBootstrapError(
-          "The local .worktrees/ exclude is defeated by a higher-precedence Git ignore rule; restore ignore safety manually.",
+          `The repository-local ${rule} exclude is defeated by a higher-precedence Git ignore rule; restore ignore safety manually.`,
         );
       }
       result.localExclude.source = verified.source;
@@ -223,14 +251,17 @@ export async function bootstrapZeroConfig(
         restorationFailures.push(`exclude restoration failed: ${(restoreError as Error).message}`);
       }
     }
-    if (directoryCreated) {
-      try {
-        await dependencies.rmdir(worktreesPath);
-        restored.worktreesDirectory = true;
-      } catch (restoreError) {
-        restorationFailures.push(
-          `directory restoration failed: ${(restoreError as Error).message}`,
-        );
+    if (createdDirectories.length > 0) {
+      restored.worktreesDirectory = true;
+      for (const directory of createdDirectories.toReversed()) {
+        try {
+          await dependencies.rmdir(directory);
+        } catch (restoreError) {
+          restored.worktreesDirectory = false;
+          restorationFailures.push(
+            `directory restoration failed at ${directory}: ${(restoreError as Error).message}`,
+          );
+        }
       }
     }
     let localExcludeChanged = false;
@@ -245,7 +276,9 @@ export async function bootstrapZeroConfig(
     } catch {
       localExcludeChanged = excludeExisted;
     }
-    const worktreesDirectoryChanged = !directoryExists && (await exists(worktreesPath));
+    const worktreesDirectoryChanged = (await Promise.all(createdDirectories.map(exists))).some(
+      Boolean,
+    );
     const originalFailure = error instanceof Error ? error.message : String(error);
     const suffix = restorationFailures.length > 0 ? ` (${restorationFailures.join("; ")})` : "";
     throw new ZeroConfigBootstrapError(`${originalFailure}${suffix}`, {
